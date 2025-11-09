@@ -43,13 +43,15 @@ check_dependencies() {
         print_error "curl is required but not installed"
         exit 1
     fi
-    
+
     if ! command -v jq &> /dev/null; then
         print_error "jq is required for JSON processing. Please install it:"
-        echo "  macOS: brew install jq"
-        echo "  Ubuntu: sudo apt-get install jq"
+        echo "  macOS: brew install jq" >&2
+        echo "  Ubuntu: sudo apt-get install jq" >&2
         exit 1
     fi
+
+    return 0
 }
 
 # Load configuration
@@ -59,6 +61,13 @@ load_config() {
         print_info "Copy and customize: cp ../configs/spaceship-config.json.txt $CONFIG_FILE"
         exit 1
     fi
+
+    if ! jq empty "$CONFIG_FILE" 2>/dev/null; then
+        print_error "Invalid JSON in configuration file: $CONFIG_FILE"
+        exit 1
+    fi
+
+    return 0
 }
 
 # Get account configuration
