@@ -66,6 +66,7 @@ load_config() {
         echo "  Ubuntu: sudo apt-get install jq"
         exit 1
     fi
+    return 0
 }
 
 # Get account configuration
@@ -86,6 +87,7 @@ get_account_config() {
     fi
     
     echo "$account_config"
+    return 0
 }
 
 # Set AWS credentials for account
@@ -100,6 +102,7 @@ set_aws_credentials() {
         print_error "Invalid AWS credentials for account '$account_name'"
         exit 1
     fi
+    return 0
 }
 
 # List all configured accounts
@@ -111,6 +114,7 @@ list_accounts() {
         local region=$(jq -r ".accounts.\"$account\".region" "$CONFIG_FILE")
         echo "  - $account ($region) - $description"
     done
+    return 0
 }
 
 # Get sending quota
@@ -120,6 +124,7 @@ get_sending_quota() {
     
     print_info "Getting sending quota for account: $account_name"
     aws ses get-send-quota --output table
+    return 0
 }
 
 # Get sending statistics
@@ -129,6 +134,7 @@ get_sending_statistics() {
     
     print_info "Getting sending statistics for account: $account_name"
     aws ses get-send-statistics --output table
+    return 0
 }
 
 # List verified email addresses
@@ -138,15 +144,17 @@ list_verified_emails() {
     
     print_info "Verified email addresses for account: $account_name"
     aws ses list-verified-email-addresses --output table
+    return 0
 }
 
 # List verified domains
 list_verified_domains() {
     local account_name="$1"
     set_aws_credentials "$account_name"
-    
+
     print_info "Verified domains for account: $account_name"
     aws ses list-identities --identity-type Domain --output table
+    return 0
 }
 
 # Get identity verification attributes
@@ -162,6 +170,7 @@ get_identity_verification() {
     
     print_info "Getting verification attributes for: $identity"
     aws ses get-identity-verification-attributes --identities "$identity" --output table
+    return 0
 }
 
 # Get reputation
@@ -174,15 +183,17 @@ get_reputation() {
     echo ""
     print_info "Reputation tracking:"
     aws ses describe-reputation-tracking --output table
+    return 0
 }
 
 # List suppressed destinations (bounces/complaints)
 list_suppressed_destinations() {
     local account_name="$1"
     set_aws_credentials "$account_name"
-    
+
     print_info "Suppressed destinations (bounces/complaints) for account: $account_name"
     aws sesv2 list-suppressed-destinations --output table
+    return 0
 }
 
 # Get suppression list details
