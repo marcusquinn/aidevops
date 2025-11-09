@@ -506,6 +506,7 @@ main() {
     local account_name="$3"
     local repo_name="$4"
     local description="$5"
+    local private_flag="$6"
 
     check_dependencies
 
@@ -514,28 +515,28 @@ main() {
             list_platforms
             ;;
         "github-repos")
-            github_list_repositories "$2" "$3"
+            github_list_repositories "$platform" "$account_name"
             ;;
         "github-create")
-            github_create_repository "$2" "$3" "$4" "$5"
+            github_create_repository "$platform" "$account_name" "$repo_name" "$description"
             ;;
         "gitlab-projects")
-            gitlab_list_projects "$2" "$3"
+            gitlab_list_projects "$platform" "$account_name"
             ;;
         "gitlab-create")
-            gitlab_create_project "$2" "$3" "$4" "$5"
+            gitlab_create_project "$platform" "$account_name" "$repo_name" "$description"
             ;;
         "gitea-repos")
-            gitea_list_repositories "$2"
+            gitea_list_repositories "$platform"
             ;;
         "gitea-create")
-            gitea_create_repository "$2" "$3" "$4" "$5"
+            gitea_create_repository "$platform" "$account_name" "$repo_name" "$description"
             ;;
         "local-init")
-            local_git_init "$2" "$3"
+            local_git_init "$platform" "$account_name"
             ;;
         "local-list")
-            local_git_list "$2"
+            local_git_list "$platform"
             ;;
         "clone")
             clone_repository "$platform" "$account_name" "$repo_name" "$description"
