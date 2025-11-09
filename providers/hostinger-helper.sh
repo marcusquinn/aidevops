@@ -69,7 +69,6 @@ list_sites() {
 }
 
 # Connect to a specific site
-    return 0
 connect_site() {
     local site="$1"
     check_config
@@ -105,9 +104,9 @@ connect_site() {
     
     # Connect with sshpass
     sshpass -f "$password_file" ssh -p "$port" "$username@$server" -t "cd $domain_path && bash"
+    return 0
 }
 
-    return 0
 # Execute command on site
 exec_on_site() {
     local site="$1"
@@ -135,8 +134,8 @@ exec_on_site() {
     print_info "Executing '$command' on $site..."
     
     sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $command"
-}
     return 0
+}
 
 # API operations
 api_call() {
