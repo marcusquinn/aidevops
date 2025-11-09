@@ -61,6 +61,7 @@ load_config() {
         print_info "Copy and customize: cp ../configs/101domains-config.json.txt $CONFIG_FILE"
         exit 1
     fi
+    return 0
 }
 
 # Get account configuration
@@ -125,6 +126,7 @@ list_accounts() {
         local username=$(jq -r ".accounts.\"$account\".username" "$CONFIG_FILE")
         echo "  - $account ($username) - $description"
     done
+    return 0
 }
 
 # List domains
