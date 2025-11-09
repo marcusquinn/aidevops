@@ -189,9 +189,12 @@ main() {
         echo ""
         print_info "To bypass this check (not recommended), use:"
         print_info "  git commit --no-verify"
-        
+
         exit 1
     fi
+
+    # Explicit return for successful completion
+    return 0
 }
 
 main "$@"

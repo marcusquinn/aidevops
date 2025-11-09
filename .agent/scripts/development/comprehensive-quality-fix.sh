@@ -76,9 +76,10 @@ add_missing_returns() {
             ;;
    
         *)
-            echo "Unknown option: $1"
+            echo "Unknown option: $file"
             return 1
-            ;; esac
+            ;;
+    esac
     return 0
 }
 

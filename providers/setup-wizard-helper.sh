@@ -11,6 +11,9 @@ RED='\033[0;31m'
 PURPLE='\033[0;35m'
 NC='\033[0m' # No Color
 
+# String literal constants
+readonly PROMPT_CHOICE_1_4="Enter your choice (1-4): "
+
 print_info() {
     local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
@@ -100,7 +103,7 @@ ask_setup_needs() {
     echo "3. Medium team (6-20 people)"
     echo "4. Large team (20+ people)"
     
-    read -r -p "Enter your choice (1-4): " team_size
+    read -r -p "$PROMPT_CHOICE_1_4" team_size
     save_response "team_size" "$team_size"
     
     # Budget assessment
@@ -110,7 +113,7 @@ ask_setup_needs() {
     echo "3. Medium (\$200-500/month)"
     echo "4. Large (\$500+/month)"
     
-    read -r -p "Enter your choice (1-4): " budget
+    read -r -p "$PROMPT_CHOICE_1_4" budget
     save_response "budget" "$budget"
     
     # Technical expertise
@@ -120,7 +123,7 @@ ask_setup_needs() {
     echo "3. Advanced (experienced with DevOps)"
     echo "4. Expert (DevOps professional)"
     
-    read -r -p "Enter your choice (1-4): " expertise
+    read -r -p "$PROMPT_CHOICE_1_4" expertise
     save_response "expertise" "$expertise"
     
     # Current infrastructure
@@ -130,7 +133,7 @@ ask_setup_needs() {
     echo "3. Yes, using VPS/cloud servers"
     echo "4. Yes, using multiple providers"
     
-    read -r -p "Enter your choice (1-4): " current_infra
+    read -r -p "$PROMPT_CHOICE_1_4" current_infra
     save_response "current_infra" "$current_infra"
     return 0
 }
@@ -159,12 +162,12 @@ analyze_and_recommend() {
     print_info "🏗️ HOSTING & INFRASTRUCTURE:"
     case "$budget" in
         "1")
-            echo "  ✅ Hostinger - Budget-friendly shared hosting ($3-12/month)"
-            echo "  ✅ Hetzner Cloud - Excellent value VPS ($3-20/month)"
+            echo "  ✅ Hostinger - Budget-friendly shared hosting (\$3-12/month)"
+            echo "  ✅ Hetzner Cloud - Excellent value VPS (\$3-20/month)"
             ;;
         "2"|"3")
-            echo "  ✅ Hetzner Cloud - Excellent value VPS ($3-50/month)"
-            echo "  ✅ Closte - Competitive VPS pricing ($5-30/month)"
+            echo "  ✅ Hetzner Cloud - Excellent value VPS (\$3-50/month)"
+            echo "  ✅ Closte - Competitive VPS pricing (\$5-30/month)"
             echo "  ✅ Coolify - Self-hosted deployment platform (free + server costs)"
             ;;
         "4")

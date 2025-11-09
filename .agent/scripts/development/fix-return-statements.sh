@@ -9,6 +9,7 @@ FILE="providers/101domains-helper.sh"
 add_return_statement() {
     local line_num=$1
     sed -i "${line_num}i\\    return 0" "$FILE"
+    return 0
 }
 
 # Lines where functions end (based on SonarCloud analysis)

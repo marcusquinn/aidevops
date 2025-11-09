@@ -494,6 +494,8 @@ main() {
     local instance_name="$2"
     local user_email="$3"
     local password_length="$4"
+    local param5="$5"
+    local param6="$6"
 
     check_dependencies
 
@@ -532,10 +534,10 @@ main() {
             get_username "$param2" "$param3"
             ;;
         "create")
-            create_vault_item "$param2" "$param3" "$param4" "$5" "$6"
+            create_vault_item "$instance_name" "$user_email" "$password_length" "$param5" "$param6"
             ;;
         "update")
-            update_vault_item "$param2" "$param3" "$param4" "$5"
+            update_vault_item "$instance_name" "$user_email" "$password_length" "$param5"
             ;;
         "delete")
             delete_vault_item "$param2" "$param3"

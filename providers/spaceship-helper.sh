@@ -5,13 +5,8 @@
 
 # Colors for output
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
-readonly ERROR_ACCOUNT_REQUIRED="$ERROR_ACCOUNT_REQUIRED"
-readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
-readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
-readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
-readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
-readonly ERROR_INVALID_JSON="$ERROR_INVALID_JSON"
+readonly ERROR_DOMAIN_NAME_REQUIRED="$ERROR_DOMAIN_NAME_REQUIRED"
+readonly DOMAINS_ENDPOINT="domains"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -164,7 +159,7 @@ check_domain_availability() {
     local domain="$2"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -197,7 +192,7 @@ purchase_domain() {
     local auto_renew="${4:-false}"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -268,7 +263,7 @@ get_domain_details() {
     local domain="$2"
     
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
     
@@ -289,7 +284,7 @@ list_dns_records() {
     local domain="$2"
     
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
     
@@ -399,7 +394,7 @@ get_nameservers() {
     local domain="$2"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -447,7 +442,7 @@ check_availability() {
     local domain="$2"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -476,7 +471,7 @@ get_domain_contacts() {
     local domain="$2"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -527,7 +522,7 @@ get_transfer_status() {
     local domain="$2"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -548,7 +543,7 @@ audit_domain() {
     local domain="$2"
 
     if [[ -z "$domain" ]]; then
-        print_error "Domain name is required"
+        print_error "$ERROR_DOMAIN_NAME_REQUIRED"
         exit 1
     fi
 
@@ -635,6 +630,11 @@ main() {
     local command="${1:-help}"
     local account_name="$2"
     local domain="$3"
+    local param4="$4"
+    local param5="$5"
+    local param6="$6"
+    local param7="$7"
+    local param8="$8"
 
     check_dependencies
 
@@ -652,16 +652,16 @@ main() {
             list_dns_records "$account_name" "$domain"
             ;;
         "add-dns")
-            add_dns_record "$param2" "$param3" "$param4" "$5" "$6" "$7"
+            add_dns_record "$account_name" "$domain" "$param4" "$param5" "$param6" "$param7"
             ;;
         "update-dns")
-            update_dns_record "$param2" "$param3" "$param4" "$5" "$6" "$7" "$8"
+            update_dns_record "$account_name" "$domain" "$param4" "$param5" "$param6" "$param7" "$param8"
             ;;
         "delete-dns")
-            delete_dns_record "$param2" "$param3" "$param4"
+            delete_dns_record "$account_name" "$domain" "$param4"
             ;;
         "nameservers")
-            get_nameservers "$param2" "$param3"
+            get_nameservers "$account_name" "$domain"
             ;;
         "update-ns")
             shift 3
