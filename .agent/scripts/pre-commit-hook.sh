@@ -70,13 +70,10 @@ validate_positional_parameters() {
     print_info "Validating positional parameters..."
 
     for file in "$@"; do
-        if [[ -f "$file" ]]; then
-            # Check for direct positional parameter usage
-            if grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' > /dev/null; then
-                print_error "Direct positional parameter usage in $file"
-                grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | head -3
-                ((violations++))
-            fi
+        if [[ -f "$file" ]] && grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' > /dev/null; then
+            print_error "Direct positional parameter usage in $file"
+            grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | head -3
+            ((violations++))
         fi
     done
     
@@ -111,11 +108,9 @@ run_shellcheck() {
     print_info "Running ShellCheck validation..."
 
     for file in "$@"; do
-        if [[ -f "$file" ]]; then
-            if ! shellcheck "$file"; then
-                print_error "ShellCheck violations in $file"
-                ((violations++))
-            fi
+        if [[ -f "$file" ]] && ! shellcheck "$file"; then
+            print_error "ShellCheck violations in $file"
+            ((violations++))
         fi
     done
     

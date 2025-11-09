@@ -43,12 +43,13 @@ print_info() {
 
 backup_files() {
     print_info "Creating backup of provider files..."
-    
+
     local backup_dir="backups/$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
-    
+
     cp providers/*.sh "$backup_dir/"
     print_success "Backup created in $backup_dir"
+    return 0
 }
 
 fix_return_statements() {
@@ -113,6 +114,7 @@ fix_return_statements() {
     done
     
     print_success "Return statements: Fixed $files_fixed files"
+    return 0
 }
 
 fix_positional_parameters() {
@@ -123,7 +125,7 @@ fix_positional_parameters() {
     for file in providers/*.sh; do
         if [[ -f "$file" ]]; then
             local temp_file=$(mktemp)
-            local fixed_params=0
+
             
             # Process main() functions specifically
             if grep -q "^main() {" "$file"; then
@@ -152,6 +154,7 @@ fix_positional_parameters() {
     done
     
     print_success "Positional parameters: Fixed $files_fixed files"
+    return 0
 }
 
 analyze_string_literals() {
@@ -188,6 +191,7 @@ analyze_string_literals() {
     fi
     
     rm -f "$constants_file"
+    return 0
 }
 
 validate_fixes() {
@@ -209,6 +213,7 @@ validate_fixes() {
     else
         print_warning "$validation_errors files still have ShellCheck issues"
     fi
+    return 0
 }
 
 main() {

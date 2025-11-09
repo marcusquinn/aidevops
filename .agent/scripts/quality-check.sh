@@ -172,11 +172,9 @@ run_shellcheck() {
     local violations=0
     
     for file in providers/*.sh; do
-        if [[ -f "$file" ]]; then
-            if ! shellcheck "$file" > /dev/null 2>&1; then
-                ((violations++))
-                print_warning "ShellCheck violations in $file"
-            fi
+        if [[ -f "$file" ]] && ! shellcheck "$file" > /dev/null 2>&1; then
+            ((violations++))
+            print_warning "ShellCheck violations in $file"
         fi
     done
     
