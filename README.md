@@ -22,7 +22,7 @@
 
 <!-- Repository Stats -->
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/ai-assisted-dev-ops)](https://github.com/marcusquinn/ai-assisted-dev-ops)
-[![Lines of code](https://img.shields.io/tokei/lines/github/marcusquinn/ai-assisted-dev-ops)](https://github.com/marcusquinn/ai-assisted-dev-ops)
+[![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/ai-assisted-dev-ops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/ai-assisted-dev-ops)](https://github.com/marcusquinn/ai-assisted-dev-ops)
 [![GitHub top language](https://img.shields.io/github/languages/top/marcusquinn/ai-assisted-dev-ops)](https://github.com/marcusquinn/ai-assisted-dev-ops)
 
