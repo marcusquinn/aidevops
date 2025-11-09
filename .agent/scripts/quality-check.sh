@@ -265,6 +265,11 @@ main() {
     echo ""
 
     check_quality_clis
+
+    echo ""
+    print_info "📝 Markdown Formatting Tools Available:"
+    print_info "Run: bash .agent/scripts/markdown-lint-fix.sh manual . (for quick fixes)"
+    print_info "Run: bash .agent/scripts/markdown-formatter.sh format . (for comprehensive formatting)"
     echo ""
 
     # Final summary
