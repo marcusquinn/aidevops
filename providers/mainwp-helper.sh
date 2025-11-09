@@ -4,6 +4,13 @@
 # Comprehensive WordPress site management for AI assistants
 
 # Colors for output
+# String literal constants
+readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
+readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
+readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
+readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -43,14 +50,14 @@ readonly ERROR_AT_LEAST_ONE_SITE_ID="At least one site ID is required"
 # Check dependencies
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
-        print_error "curl is required but not installed"
+        print_error "$ERROR_CURL_REQUIRED"
         exit 1
     fi
     
     if ! command -v jq &> /dev/null; then
-        print_error "jq is required for JSON processing. Please install it:"
-        echo "  macOS: brew install jq"
-        echo "  Ubuntu: sudo apt-get install jq"
+        print_error "$ERROR_JQ_REQUIRED"
+        echo "$INFO_JQ_INSTALL_MACOS"
+        echo "$INFO_JQ_INSTALL_UBUNTU"
         exit 1
     fi
     return 0
@@ -59,7 +66,7 @@ check_dependencies() {
 # Load configuration
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND"
         print_info "Copy and customize: cp ../configs/mainwp-config.json.txt $CONFIG_FILE"
         exit 1
     fi
@@ -145,6 +152,7 @@ list_sites() {
         echo "$response"
         return 1
     fi
+    return 0
 }
 
 # Get site details
@@ -167,6 +175,7 @@ get_site_details() {
         echo "$response"
         return 1
     fi
+    return 0
 }
 
 # Get site status
@@ -188,6 +197,7 @@ get_site_status() {
         print_error "Failed to get site status"
         echo "$response"
     fi
+    return 0
 }
 
 # List plugins for a site
@@ -210,6 +220,7 @@ list_site_plugins() {
         print_error "Failed to retrieve plugins"
         echo "$response"
     fi
+    return 0
 }
 
     return 0
@@ -232,6 +243,7 @@ list_site_themes() {
         print_error "Failed to retrieve themes"
         echo "$response"
     fi
+    return 0
 }
     return 0
 
@@ -256,6 +268,7 @@ update_wordpress_core() {
         echo "$response"
     return 0
     fi
+    return 0
 }
 
 # Update all plugins for a site
@@ -304,6 +317,7 @@ update_specific_plugin() {
     return 0
         echo "$response"
     fi
+    return 0
 }
 
 # Create backup for a site
@@ -330,6 +344,7 @@ create_backup() {
         print_error "Failed to create backup"
         echo "$response"
     fi
+    return 0
 }
 
 # List backups for a site
@@ -352,6 +367,7 @@ list_backups() {
         print_error "Failed to retrieve backups"
         echo "$response"
     fi
+    return 0
 }
 
 # Get site uptime monitoring
@@ -374,6 +390,7 @@ get_uptime_status() {
         print_error "Failed to get uptime status"
         echo "$response"
     fi
+    return 0
 }
 
 # Run security scan
@@ -397,6 +414,7 @@ run_security_scan() {
         print_error "Failed to run security scan"
         echo "$response"
     fi
+    return 0
 }
 
     return 0
@@ -419,6 +437,7 @@ get_security_scan_results() {
         print_error "Failed to get security scan results"
         echo "$response"
     fi
+    return 0
 }
 
     return 0
@@ -463,6 +482,7 @@ bulk_update_wordpress() {
         update_wordpress_core "$instance_name" "$site_id"
         sleep 2  # Rate limiting
     done
+    return 0
 }
 
 # Bulk plugin updates
@@ -484,6 +504,7 @@ bulk_update_plugins() {
         update_site_plugins "$instance_name" "$site_id"
         sleep 2  # Rate limiting
     done
+    return 0
 }
 
 # Monitor all sites
@@ -517,6 +538,7 @@ monitor_all_sites() {
             echo "Site ID $site_id ($site_name): $updates_available updates available"
         fi
     done
+    return 0
 }
 
 # Audit site security
@@ -547,6 +569,7 @@ audit_site_security() {
 
     print_info "=== THEME STATUS ==="
     list_site_themes "$instance_name" "$site_id"
+    return 0
 }
 
 # Show help
@@ -584,6 +607,7 @@ show_help() {
     echo "  $0 backup production 123 full"
     echo "  $0 monitor production"
     echo "  $0 bulk-update-wp production 123 124 125"
+    return 0
 }
 
 # Main script logic

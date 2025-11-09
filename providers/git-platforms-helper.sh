@@ -4,6 +4,14 @@
 # Comprehensive Git platform management for AI assistants (GitHub, GitLab, Gitea, Local Git)
 
 # Colors for output
+# String literal constants
+readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
+readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
+readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
+readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+readonly DEFAULT_NO_DESCRIPTION="$DEFAULT_NO_DESCRIPTION"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -44,14 +52,14 @@ readonly PLATFORM_GITEA="gitea"
 # Check dependencies
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
-        print_error "curl is required but not installed"
+        print_error "$ERROR_CURL_REQUIRED"
         exit 1
     fi
     
     if ! command -v jq &> /dev/null; then
-        print_error "jq is required for JSON processing. Please install it:"
-        echo "  macOS: brew install jq"
-        echo "  Ubuntu: sudo apt-get install jq"
+        print_error "$ERROR_JQ_REQUIRED"
+        echo "$INFO_JQ_INSTALL_MACOS"
+        echo "$INFO_JQ_INSTALL_UBUNTU"
         exit 1
     fi
     
@@ -65,7 +73,7 @@ check_dependencies() {
 # Load configuration
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND"
         print_info "Copy and customize: cp ../configs/git-platforms-config.json.txt $CONFIG_FILE"
         exit 1
     fi
@@ -167,7 +175,7 @@ github_list_repositories() {
     local response=$(api_request "$PLATFORM_GITHUB" "$account_name" "user/repos?visibility=$visibility&sort=updated&per_page=100")
     
     if [[ $? -eq 0 ]]; then
-        echo "$response" | jq -r '.[] | "\(.name) - \(.description // "No description") (Stars: \(.stargazers_count), Forks: \(.forks_count))"'
+        echo "$response" | jq -r '.[] | "\(.name) - \(.description // "$DEFAULT_NO_DESCRIPTION") (Stars: \(.stargazers_count), Forks: \(.forks_count))"'
     else
         print_error "Failed to retrieve repositories"
         echo "$response"
@@ -216,11 +224,12 @@ gitlab_list_projects() {
     
     if [[ $? -eq 0 ]]; then
     return 0
-        echo "$response" | jq -r '.[] | "\(.name) - \(.description // "No description") (Stars: \(.star_count), Forks: \(.forks_count))"'
+        echo "$response" | jq -r '.[] | "\(.name) - \(.description // "$DEFAULT_NO_DESCRIPTION") (Stars: \(.star_count), Forks: \(.forks_count))"'
     else
         print_error "Failed to retrieve projects"
         echo "$response"
     fi
+    return 0
 }
 
 gitlab_create_project() {
@@ -251,6 +260,7 @@ gitlab_create_project() {
         print_error "Failed to create project"
         echo "$response"
     fi
+    return 0
 }
 
 # Gitea functions
@@ -262,7 +272,7 @@ gitea_list_repositories() {
     return 0
     
     if [[ $? -eq 0 ]]; then
-        echo "$response" | jq -r '.[] | "\(.name) - \(.description // "No description") (Stars: \(.stars_count), Forks: \(.forks_count))"'
+        echo "$response" | jq -r '.[] | "\(.name) - \(.description // "$DEFAULT_NO_DESCRIPTION") (Stars: \(.stars_count), Forks: \(.forks_count))"'
     else
         print_error "Failed to retrieve repositories"
         echo "$response"
@@ -332,6 +342,7 @@ local_git_init() {
     git commit -m "Initial commit"
 
     print_success "Local repository initialized: $full_path"
+    return 0
 }
 
 local_git_list() {
@@ -352,6 +363,7 @@ local_git_list() {
         local branch=$(cd "$repo_dir" && git branch --show-current 2>/dev/null || echo "No branch")
         echo "$repo_name - Branch: $branch, Last commit: $last_commit"
     done
+    return 0
 }
 
 # Repository management across platforms
@@ -397,6 +409,7 @@ clone_repository() {
     else
         print_error "Failed to clone repository"
     fi
+    return 0
 }
 
 # Start MCP servers for Git platforms

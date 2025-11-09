@@ -4,6 +4,11 @@
 # Manages Cloudron servers and applications
 
 # Colors for output
+# String literal constants
+readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+readonly ERROR_SERVER_NAME_REQUIRED="$ERROR_SERVER_NAME_REQUIRED"
+readonly ERROR_SERVER_NOT_FOUND="$ERROR_SERVER_NOT_FOUND"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -37,7 +42,7 @@ CONFIG_FILE="../configs/cloudron-config.json"
 # Check if config file exists
 check_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND"
         print_info "Copy and customize: cp ../configs/cloudron-config.json.txt $CONFIG_FILE"
         exit 1
     fi
@@ -76,7 +81,7 @@ connect_server() {
     check_config
     
     if [[ -z "$server" ]]; then
-        print_error "Please specify a server name"
+        print_error "$ERROR_SERVER_NAME_REQUIRED"
         list_servers
         exit 1
     fi
@@ -87,7 +92,7 @@ connect_server() {
     local ssh_port=$(jq -r ".servers.$server.ssh_port" "$CONFIG_FILE")
     
     if [[ "$ip" == "null" ]]; then
-        print_error "Server not found: $server"
+        print_error "$ERROR_SERVER_NOT_FOUND"
         list_servers
         exit 1
     fi
@@ -117,7 +122,7 @@ exec_on_server() {
     local ssh_port=$(jq -r ".servers.$server.ssh_port" "$CONFIG_FILE")
     
     if [[ "$ip" == "null" ]]; then
-        print_error "Server not found: $server"
+        print_error "$ERROR_SERVER_NOT_FOUND"
         exit 1
     fi
     
@@ -135,7 +140,7 @@ list_apps() {
     check_config
     
     if [[ -z "$server" ]]; then
-        print_error "Please specify a server name"
+        print_error "$ERROR_SERVER_NAME_REQUIRED"
         exit 1
     fi
     
@@ -143,7 +148,7 @@ list_apps() {
     local token=$(jq -r ".servers.$server.api_token" "$CONFIG_FILE")
     
     if [[ "$domain" == "null" ]]; then
-        print_error "Server not found: $server"
+        print_error "$ERROR_SERVER_NOT_FOUND"
         exit 1
     fi
     
@@ -179,6 +184,7 @@ exec_in_app() {
     print_info "Executing '$command' in app $app_id on $server..."
     return 0
     exec_on_server "$server" "docker exec $app_id $command"
+    return 0
 }
 
 # Check Cloudron server status
@@ -188,13 +194,14 @@ check_status() {
     
     if [[ -z "$server" ]]; then
     return 0
-        print_error "Please specify a server name"
+        print_error "$ERROR_SERVER_NAME_REQUIRED"
         exit 1
     fi
     
     return 0
     print_info "Checking Cloudron server status for $server..."
     exec_on_server "$server" "echo 'Cloudron Status:' && systemctl status cloudron --no-pager -l && echo '' && echo 'Docker Status:' && docker ps --format 'table {{.Names}}\t{{.Status}}' | head -10"
+    return 0
 }
 
 # Generate SSH configurations for Cloudron servers

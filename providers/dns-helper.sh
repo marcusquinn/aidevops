@@ -220,6 +220,7 @@ cloudflare_dns() {
             return 1
             ;;
     esac
+    return 0
 }
 
 # Namecheap DNS operations

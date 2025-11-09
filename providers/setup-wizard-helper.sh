@@ -49,6 +49,7 @@ init_wizard() {
     if [[ ! -f "$WIZARD_CONFIG" ]]; then
         echo '{}' > "$WIZARD_CONFIG"
     fi
+    return 0
 }
 
 # Save response to wizard config
@@ -58,6 +59,7 @@ save_response() {
     
     init_wizard
     jq --arg key "$key" --arg value "$value" '. + {($key): $value}' "$WIZARD_CONFIG" > tmp.$$.json && mv tmp.$$.json "$WIZARD_CONFIG"
+    return 0
 }
 
 # Get saved response
@@ -67,6 +69,7 @@ get_response() {
     if [[ -f "$WIZARD_CONFIG" ]]; then
         jq -r --arg key "$key" '.[$key] // empty' "$WIZARD_CONFIG"
     fi
+    return 0
 }
 
 # Ask user about their setup needs
@@ -129,6 +132,7 @@ ask_setup_needs() {
     
     read -r -p "Enter your choice (1-4): " current_infra
     save_response "current_infra" "$current_infra"
+    return 0
 }
 
 # Analyze needs and recommend services
@@ -220,6 +224,7 @@ analyze_and_recommend() {
         fi
         echo ""
     fi
+    return 0
 }
 
 # Generate setup checklist
@@ -266,6 +271,7 @@ generate_setup_checklist() {
     echo "  [ ] SonarCloud account - https://sonarcloud.io"
     echo "      → Connect with GitHub/GitLab"
     echo ""
+    return 0
 }
 
 # Generate API keys guide
@@ -349,6 +355,7 @@ generate_api_keys_guide() {
     echo "   3. Generate new token"
     echo "   4. Copy token to configs/code-audit-config.json"
     echo ""
+    return 0
 }
 
 # Configuration file generator
@@ -379,6 +386,7 @@ generate_config_files() {
     echo "3. Test connections using the helper scripts"
     echo ""
     print_warning "⚠️  Remember to keep your API keys secure and never commit them to version control!"
+    return 0
 }
 
 # Test connections
@@ -421,6 +429,7 @@ test_connections() {
 
     echo ""
     print_info "Connection testing complete!"
+    return 0
 }
 
 # Show help
@@ -441,6 +450,7 @@ show_help() {
     echo "  $0 assess"
     echo "  $0 full-setup"
     echo "  $0 test-connections"
+    return 0
 }
 
 # Full setup wizard
@@ -480,6 +490,7 @@ full_setup_wizard() {
     echo "3. Update configuration files with your credentials"
     echo "4. Run 'test-connections' to verify everything works"
     echo "5. Start using the AI-Assisted DevOps Framework!"
+    return 0
 }
 
 # Main script logic
@@ -511,6 +522,7 @@ main() {
             show_help
             ;;
     esac
+    return 0
 }
 
 main "$@"

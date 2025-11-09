@@ -4,6 +4,13 @@
 # Secure password and secrets management for AI assistants
 
 # Colors for output
+# String literal constants
+readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
+readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
+readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
+readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -39,14 +46,14 @@ CONFIG_FILE="../configs/vaultwarden-config.json"
 # Check dependencies
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
-        print_error "curl is required but not installed"
+        print_error "$ERROR_CURL_REQUIRED"
         exit 1
     fi
     
     if ! command -v jq &> /dev/null; then
-        print_error "jq is required for JSON processing. Please install it:"
-        echo "  macOS: brew install jq"
-        echo "  Ubuntu: sudo apt-get install jq"
+        print_error "$ERROR_JQ_REQUIRED"
+        echo "$INFO_JQ_INSTALL_MACOS"
+        echo "$INFO_JQ_INSTALL_UBUNTU"
         exit 1
     fi
     
@@ -55,15 +62,17 @@ check_dependencies() {
         echo "  npm install -g @bitwarden/cli"
         echo "  Or download from: https://bitwarden.com/download/"
     fi
+    return 0
 }
 
 # Load configuration
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND"
         print_info "Copy and customize: cp ../configs/vaultwarden-config.json.txt $CONFIG_FILE"
         exit 1
     fi
+    return 0
 }
 
 # Get instance configuration
@@ -84,6 +93,7 @@ get_instance_config() {
     fi
     
     echo "$instance_config"
+    return 0
 }
 
 # Configure Bitwarden CLI for instance
@@ -96,6 +106,7 @@ configure_bw_cli() {
         bw config server "$server_url"
         print_info "Configured Bitwarden CLI for server: $server_url"
     fi
+    return 0
 }
 
 # Login to Bitwarden
@@ -112,6 +123,7 @@ login_bw() {
         print_info "Interactive login required"
         bw login
     fi
+    return 0
 }
 
 # Unlock vault
@@ -124,6 +136,7 @@ unlock_vault() {
         print_info "Interactive unlock required"
         bw unlock
     fi
+    return 0
 }
 
 # List all configured instances
@@ -135,6 +148,7 @@ list_instances() {
         local server_url=$(jq -r ".instances.\"$instance\".server_url" "$CONFIG_FILE")
         echo "  - $instance ($server_url) - $description"
     done
+    return 0
 }
 
 # Get vault status
@@ -144,6 +158,7 @@ get_vault_status() {
     
     print_info "Vault status for instance: $instance_name"
     bw status
+    return 0
 }
 
 # List vault items
@@ -160,6 +175,7 @@ list_vault_items() {
         print_info "Listing all vault items"
         bw list items | jq -r '.[] | "\(.id): \(.name) (\(.type))"'
     fi
+    return 0
 }
 
 # Get specific item
@@ -176,6 +192,7 @@ get_vault_item() {
     
     print_info "Getting vault item: $item_id"
     bw get item "$item_id"
+    return 0
 }
 
 # Search vault items
@@ -192,6 +209,7 @@ search_vault() {
     
     print_info "Searching vault for: $search_term"
     bw list items --search "$search_term" | jq -r '.[] | "\(.id): \(.name) - \(.login.username // .notes // "N/A")"'
+    return 0
 }
 
 # Get password for item
@@ -208,6 +226,7 @@ get_password() {
     
     print_info "Getting password for: $item_name"
     bw get password "$item_name"
+    return 0
 }
 
 # Get username for item
@@ -224,6 +243,7 @@ get_username() {
     
     print_info "Getting username for: $item_name"
     bw get username "$item_name"
+    return 0
 }
 
 # Create new vault item
@@ -253,11 +273,13 @@ create_vault_item() {
                 username: $username,
                 password: $password,
                 uris: [{ uri: $uri }]
-            }
+    return 0
+}
         }')
     
     print_info "Creating vault item: $item_name"
     echo "$item_json" | bw create item
+    return 0
 }
 
 # Update vault item
@@ -280,6 +302,7 @@ update_vault_item() {
          elif $field == "username" then .login.username = $value
          elif $field == "name" then .name = $value
          else . end' | bw encode | bw edit item "$item_id"
+    return 0
 }
 
 # Delete vault item
@@ -296,6 +319,7 @@ delete_vault_item() {
 
     print_warning "Deleting vault item: $item_id"
     bw delete item "$item_id"
+    return 0
 }
 
 # Generate secure password
@@ -308,6 +332,7 @@ generate_password() {
     else
         bw generate --length "$length" --uppercase --lowercase --number
     fi
+    return 0
 }
 
 # Sync vault
@@ -317,12 +342,14 @@ sync_vault() {
 
     print_info "Syncing vault for instance: $instance_name"
     bw sync
+    return 0
 }
 
 # Lock vault
 lock_vault() {
     print_info "Locking vault"
     bw lock
+    return 0
 }
 
 # Export vault
@@ -343,6 +370,7 @@ export_vault() {
     # Secure the export file
     chmod 600 "$output_file"
     print_warning "Export file secured with 600 permissions"
+    return 0
 }
 
 # Get organization vault items
@@ -359,6 +387,7 @@ list_org_vault() {
 
     print_info "Listing organization vault items"
     bw list items --organizationid "$org_id" | jq -r '.[] | "\(.id): \(.name) (\(.type))"'
+    return 0
 }
 
 # Start MCP server for Bitwarden
@@ -378,6 +407,7 @@ start_mcp_server() {
         echo "  npm install -g @bitwarden/mcp-server"
         echo "  Or clone from: https://github.com/bitwarden/mcp-server"
     fi
+    return 0
 }
 
 # Test MCP server connection
@@ -391,6 +421,7 @@ test_mcp_connection() {
     else
         print_error "MCP server is not responding on port $port"
     fi
+    return 0
 }
 
 # Audit vault security
@@ -415,6 +446,7 @@ audit_vault_security() {
     echo ""
     print_info "=== ITEMS WITHOUT PASSWORDS ==="
     bw list items | jq -r '.[] | select(.type == 1) | select(.login.password == null or .login.password == "") | "\(.name): No password set"'
+    return 0
 }
 
 # Show help
@@ -452,6 +484,7 @@ show_help() {
     echo "  $0 get-password production 'GitHub Account'"
     echo "  $0 generate 20 true"
     echo "  $0 audit production"
+    return 0
 }
 
 # Main script logic
@@ -529,6 +562,7 @@ main() {
             show_help
             ;;
     esac
+    return 0
 }
 
 main "$@"

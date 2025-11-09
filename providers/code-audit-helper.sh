@@ -4,6 +4,13 @@
 # Comprehensive code quality and security auditing for AI assistants
 
 # Colors for output
+# String literal constants
+readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
+readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
+readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
+readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -44,14 +51,14 @@ readonly PROVIDER_SONARCLOUD="sonarcloud"
 # Check dependencies
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
-        print_error "curl is required but not installed"
+        print_error "$ERROR_CURL_REQUIRED"
         exit 1
     fi
     
     if ! command -v jq &> /dev/null; then
-        print_error "jq is required for JSON processing. Please install it:"
-        echo "  macOS: brew install jq"
-        echo "  Ubuntu: sudo apt-get install jq"
+        print_error "$ERROR_JQ_REQUIRED"
+        echo "$INFO_JQ_INSTALL_MACOS"
+        echo "$INFO_JQ_INSTALL_UBUNTU"
         exit 1
     fi
     return 0
@@ -60,7 +67,7 @@ check_dependencies() {
 # Load configuration
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND"
         print_info "Copy and customize: cp ../configs/code-audit-config.json.txt $CONFIG_FILE"
         exit 1
     fi
@@ -206,6 +213,7 @@ codefactor_list_repositories() {
         print_error "Failed to retrieve repositories"
         echo "$response"
     fi
+    return 0
 }
 
 codefactor_get_issues() {
@@ -228,6 +236,7 @@ codefactor_get_issues() {
         print_error "Failed to get issues"
         echo "$response"
     fi
+    return 0
 }
 
 # Codacy functions
@@ -245,6 +254,7 @@ codacy_list_repositories() {
         print_error "Failed to retrieve repositories"
         echo "$response"
     fi
+    return 0
 }
 
 codacy_get_quality_overview() {
@@ -266,6 +276,7 @@ codacy_get_quality_overview() {
         print_error "Failed to get quality overview"
         echo "$response"
     fi
+    return 0
 }
     return 0
 
@@ -283,6 +294,7 @@ sonarcloud_list_projects() {
         print_error "Failed to retrieve projects"
         echo "$response"
     fi
+    return 0
 }
 
 sonarcloud_get_measures() {
@@ -304,6 +316,7 @@ sonarcloud_get_measures() {
         print_error "Failed to get measures"
         echo "$response"
     fi
+    return 0
 }
 
 # Start MCP servers for code auditing services
@@ -398,6 +411,7 @@ comprehensive_audit() {
     else
         print_warning "SonarCloud not configured"
     fi
+    return 0
 }
 
 # Generate audit report

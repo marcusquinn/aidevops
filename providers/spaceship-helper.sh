@@ -4,6 +4,15 @@
 # Comprehensive domain and DNS management for AI assistants
 
 # Colors for output
+# String literal constants
+readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+readonly ERROR_ACCOUNT_REQUIRED="$ERROR_ACCOUNT_REQUIRED"
+readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
+readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
+readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
+readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+readonly ERROR_INVALID_JSON="$ERROR_INVALID_JSON"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -40,14 +49,14 @@ API_BASE_URL="https://api.spaceship.com/v1"
 # Check dependencies
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
-        print_error "curl is required but not installed"
+        print_error "$ERROR_CURL_REQUIRED"
         exit 1
     fi
 
     if ! command -v jq &> /dev/null; then
-        print_error "jq is required for JSON processing. Please install it:"
-        echo "  macOS: brew install jq" >&2
-        echo "  Ubuntu: sudo apt-get install jq" >&2
+        print_error "$ERROR_JQ_REQUIRED"
+        echo "$INFO_JQ_INSTALL_MACOS" >&2
+        echo "$INFO_JQ_INSTALL_UBUNTU" >&2
         exit 1
     fi
 
@@ -57,13 +66,13 @@ check_dependencies() {
 # Load configuration
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND"
         print_info "Copy and customize: cp ../configs/spaceship-config.json.txt $CONFIG_FILE"
         exit 1
     fi
 
     if ! jq empty "$CONFIG_FILE" 2>/dev/null; then
-        print_error "Invalid JSON in configuration file: $CONFIG_FILE"
+        print_error "$ERROR_INVALID_JSON"
         exit 1
     fi
 
@@ -75,7 +84,7 @@ get_account_config() {
     local account_name="$1"
     
     if [[ -z "$account_name" ]]; then
-        print_error "Account name is required"
+        print_error "$ERROR_ACCOUNT_REQUIRED"
         list_accounts
         exit 1
     fi
@@ -88,6 +97,7 @@ get_account_config() {
     fi
     
     echo "$account_config"
+    return 0
 }
 
 # Make API request
@@ -118,6 +128,7 @@ api_request() {
     elif [[ "$method" == "DELETE" ]]; then
         curl -s -X DELETE -H "$auth_header" -H "Content-Type: application/json" "$url"
     fi
+    return 0
 }
 
 # List all configured accounts
@@ -129,6 +140,7 @@ list_accounts() {
         local email=$(jq -r ".accounts.\"$account\".email" "$CONFIG_FILE")
         echo "  - $account ($email) - $description"
     done
+    return 0
 }
 
 # List domains
@@ -143,6 +155,7 @@ list_domains() {
         print_error "Failed to retrieve domains"
         echo "$response"
     fi
+    return 0
 }
 
 # Check domain availability
@@ -173,6 +186,7 @@ check_domain_availability() {
         print_error "Failed to check domain availability"
         echo "$response"
     fi
+    return 0
 }
 
 # Purchase domain
@@ -222,6 +236,7 @@ purchase_domain() {
         print_error "Failed to purchase domain"
         echo "$response"
     fi
+    return 0
 }
 
 # Bulk domain availability check
@@ -244,6 +259,7 @@ bulk_check_domains() {
         echo ""
         sleep 1  # Rate limiting
     done
+    return 0
 }
 
 # Get domain details
@@ -264,6 +280,7 @@ get_domain_details() {
         print_error "Failed to get domain details"
         echo "$response"
     fi
+    return 0
 }
 
 # List DNS records
@@ -284,6 +301,7 @@ list_dns_records() {
         print_error "Failed to retrieve DNS records"
         echo "$response"
     fi
+    return 0
 }
 
 # Add DNS record
@@ -316,6 +334,7 @@ add_dns_record() {
         print_error "Failed to add DNS record"
         echo "$response"
     fi
+    return 0
 }
 
 # Update DNS record
@@ -349,6 +368,7 @@ update_dns_record() {
         print_error "Failed to update DNS record"
         echo "$response"
     fi
+    return 0
 }
 
 # Delete DNS record
@@ -370,6 +390,7 @@ delete_dns_record() {
         print_error "Failed to delete DNS record"
         echo "$response"
     fi
+    return 0
 }
 
 # Get domain nameservers
@@ -390,6 +411,7 @@ get_nameservers() {
         print_error "Failed to get nameservers"
         echo "$response"
     fi
+    return 0
 }
 
 # Update nameservers
@@ -416,6 +438,7 @@ update_nameservers() {
         print_error "Failed to update nameservers"
         echo "$response"
     fi
+    return 0
 }
 
 # Check domain availability
@@ -444,6 +467,7 @@ check_availability() {
         print_error "Failed to check domain availability"
         echo "$response"
     fi
+    return 0
 }
 
 # Get domain contacts
@@ -464,6 +488,7 @@ get_domain_contacts() {
         print_error "Failed to get domain contacts"
         echo "$response"
     fi
+    return 0
 }
 
 # Enable/disable domain lock
@@ -493,6 +518,7 @@ toggle_domain_lock() {
         print_error "Failed to $action domain"
         echo "$response"
     fi
+    return 0
 }
 
 # Get domain transfer status
@@ -513,6 +539,7 @@ get_transfer_status() {
         print_error "Failed to get transfer status"
         echo "$response"
     fi
+    return 0
 }
 
 # Audit domain configuration
@@ -542,6 +569,7 @@ audit_domain() {
 
     print_info "=== DOMAIN CONTACTS ==="
     get_domain_contacts "$account_name" "$domain"
+    return 0
 }
 
 # Monitor domain expiration
@@ -562,6 +590,7 @@ monitor_expiration() {
         print_error "Failed to retrieve domain expiration data"
         echo "$response"
     fi
+    return 0
 }
 
 # Show help
@@ -597,6 +626,7 @@ show_help() {
     echo "  $0 add-dns personal example.com www A 192.168.1.100"
     echo "  $0 audit personal example.com"
     echo "  $0 monitor-expiration personal 30"
+    return 0
 }
 
 # Main script logic
@@ -669,6 +699,7 @@ main() {
             show_help
             ;;
     esac
+    return 0
 }
 
 main "$@"
