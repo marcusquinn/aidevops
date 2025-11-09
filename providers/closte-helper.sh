@@ -44,6 +44,7 @@ check_config() {
         print_info "Copy and customize: cp ../configs/closte-config.json.txt $CONFIG_FILE"
         exit 1
     fi
+    return 0
 }
 
 # List all servers
@@ -58,6 +59,7 @@ list_servers() {
         port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
         echo "  - $server: $description ($ip:$port)"
     done
+    return 0
 }
 
 # Connect to a specific server
@@ -96,6 +98,7 @@ connect_server() {
 
     # Connect with sshpass
     sshpass -f "$password_file" ssh -p "$port" "$username@$ip"
+    return 0
 }
 
 # Execute command on server

@@ -10,10 +10,26 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info() {
+    local message="$1"
+    echo -e "${BLUE}[INFO]${NC} $message"
+    return 0
+}
+print_success() {
+    local message="$1"
+    echo -e "${GREEN}[SUCCESS]${NC} $message"
+    return 0
+}
+print_warning() {
+    local message="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $message"
+    return 0
+}
+print_error() {
+    local message="$1"
+    echo -e "${RED}[ERROR]${NC} $message" >&2
+    return 0
+}
 
 # Configuration file
 CONFIG_FILE="../configs/cloudron-config.json"
@@ -25,6 +41,7 @@ check_config() {
         print_info "Copy and customize: cp ../configs/cloudron-config.json.txt $CONFIG_FILE"
         exit 1
     fi
+    return 0
 }
 
 # Check if Cloudron CLI is installed
