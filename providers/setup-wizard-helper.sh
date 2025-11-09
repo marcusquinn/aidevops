@@ -11,11 +11,35 @@ RED='\033[0;31m'
 PURPLE='\033[0;35m'
 NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_question() { echo -e "${PURPLE}[QUESTION]${NC} $1"; }
+print_info() {
+    local msg="$1"
+    echo -e "${BLUE}[INFO]${NC} $msg"
+    return 0
+}
+
+print_success() {
+    local msg="$1"
+    echo -e "${GREEN}[SUCCESS]${NC} $msg"
+    return 0
+}
+
+print_warning() {
+    local msg="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $msg"
+    return 0
+}
+
+print_error() {
+    local msg="$1"
+    echo -e "${RED}[ERROR]${NC} $msg" >&2
+    return 0
+}
+
+print_question() {
+    local msg="$1"
+    echo -e "${PURPLE}[QUESTION]${NC} $msg"
+    return 0
+}
 
 # Setup wizard configuration
 WIZARD_CONFIG="../configs/setup-wizard-responses.json"
