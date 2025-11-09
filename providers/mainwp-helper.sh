@@ -547,53 +547,64 @@ show_help() {
 
 # Main script logic
 main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local instance_name="$2"
+    local site_id="$3"
+    local plugin_name="$4"
+    local theme_name="$5"
+    local backup_name="$6"
+    local user_name="$7"
+    local user_email="$8"
+    local user_role="$9"
+
     check_dependencies
 
-    case "${1:-help}" in
+    case "$command" in
         "instances")
             list_instances
             ;;
         "sites")
-            list_sites "$2"
+            list_sites "$instance_name"
             ;;
         "site-details")
-            get_site_details "$2" "$3"
+            get_site_details "$instance_name" "$site_id"
             ;;
         "site-status")
-            get_site_status "$2" "$3"
+            get_site_status "$instance_name" "$site_id"
             ;;
         "plugins")
-            list_site_plugins "$2" "$3"
+            list_site_plugins "$instance_name" "$site_id"
             ;;
         "themes")
-            list_site_themes "$2" "$3"
+            list_site_themes "$instance_name" "$site_id"
             ;;
         "update-core")
-            update_wordpress_core "$2" "$3"
+            update_wordpress_core "$instance_name" "$site_id"
             ;;
         "update-plugins")
-            update_site_plugins "$2" "$3"
+            update_site_plugins "$instance_name" "$site_id"
             ;;
         "update-plugin")
-            update_specific_plugin "$2" "$3" "$4"
+            update_specific_plugin "$instance_name" "$site_id" "$plugin_name"
             ;;
         "backup")
-            create_backup "$2" "$3" "$4"
+            create_backup "$instance_name" "$site_id" "$backup_name"
             ;;
         "backups")
-            list_backups "$2" "$3"
+            list_backups "$instance_name" "$site_id"
             ;;
         "uptime")
-            get_uptime_status "$2" "$3"
+            get_uptime_status "$instance_name" "$site_id"
             ;;
         "security-scan")
-            run_security_scan "$2" "$3"
+            run_security_scan "$instance_name" "$site_id"
             ;;
         "security-results")
-            get_security_scan_results "$2" "$3"
+            get_security_scan_results "$instance_name" "$site_id"
             ;;
         "sync")
-            sync_site "$2" "$3"
+            sync_site "$instance_name" "$site_id"
             ;;
         "bulk-update-wp")
             shift 2
@@ -613,6 +624,7 @@ main() {
             show_help
             ;;
     esac
+    return 0
 }
 
 main "$@"
