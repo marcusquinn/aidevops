@@ -262,8 +262,10 @@ show_codacy_status() {
 
     # Check CLI installation
     if check_codacy_cli; then
+        print_info "Expected version: $CODACY_CLI_VERSION"
         echo ""
     else
+        print_info "Expected version: $CODACY_CLI_VERSION"
         print_info "Run: $0 install"
         echo ""
     fi

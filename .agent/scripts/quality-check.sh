@@ -16,7 +16,6 @@ readonly MAX_TOTAL_ISSUES=100
 readonly MAX_RETURN_ISSUES=0
 readonly MAX_POSITIONAL_ISSUES=0
 readonly MAX_STRING_LITERAL_ISSUES=0
-readonly MAX_UNUSED_VAR_ISSUES=0
 
 print_header() {
     echo -e "${BLUE}🎯 AI-Assisted DevOps Framework - Multi-Platform Quality Check${NC}"

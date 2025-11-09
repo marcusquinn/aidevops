@@ -122,10 +122,10 @@ ask_setup_needs() {
     
     # Budget assessment
     print_question "What's your monthly budget for DevOps services?"
-    echo "1. Minimal (\\$0-50/month)"
-    echo "2. Small (\\$50-200/month)"
-    echo "3. Medium (\\$200-500/month)"
-    echo "4. Large (\\$500+/month)"
+    printf "1. Minimal (\$0-50/month)\n"
+    printf "2. Small (\$50-200/month)\n"
+    printf "3. Medium (\$200-500/month)\n"
+    printf "4. Large (\$500+/month)\n"
     
     read -r -p "$PROMPT_CHOICE_1_4" budget
     save_response "budget" "$budget"
@@ -176,12 +176,12 @@ analyze_and_recommend() {
     print_info "🏗️ HOSTING & INFRASTRUCTURE:"
     case "$budget" in
         "1")
-            echo "  ✅ Hostinger - Budget-friendly shared hosting (\\$3-12/month)"
-            echo "  ✅ Hetzner Cloud - Excellent value VPS (\\$3-20/month)"
+            printf "  ✅ Hostinger - Budget-friendly shared hosting (\$3-12/month)\n"
+            printf "  ✅ Hetzner Cloud - Excellent value VPS (\$3-20/month)\n"
             ;;
         "2"|"3")
-            echo "  ✅ Hetzner Cloud - Excellent value VPS (\\$3-50/month)"
-            echo "  ✅ Closte - Competitive VPS pricing (\\$5-30/month)"
+            printf "  ✅ Hetzner Cloud - Excellent value VPS (\$3-50/month)\n"
+            printf "  ✅ Closte - Competitive VPS pricing (\$5-30/month)\n"
             echo "  ✅ Coolify - Self-hosted deployment platform (free + server costs)"
             ;;
         "4")

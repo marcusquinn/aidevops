@@ -146,16 +146,28 @@ case "$server" in
         case "$command" in
             "connect"|"ssh"|"")
                 print_info "Connecting to $host..."
-                ssh "$host"
+                if [[ -n "$port" && "$port" != "22" ]]; then
+                    ssh -p "$port" "$host"
+                else
+                    ssh "$host"
+                fi
                 ;;
             "status")
                 print_info "Checking status of $host..."
-                ssh "$host" "echo 'Server: \$(hostname)' && echo 'Uptime: \$(uptime)' && echo 'Load: \$(cat /proc/loadavg)' && echo 'Memory:' && free -h"
+                if [[ -n "$port" && "$port" != "22" ]]; then
+                    ssh -p "$port" "$host" "echo 'Server: \$(hostname)' && echo 'Uptime: \$(uptime)' && echo 'Load: \$(cat /proc/loadavg)' && echo 'Memory:' && free -h"
+                else
+                    ssh "$host" "echo 'Server: \$(hostname)' && echo 'Uptime: \$(uptime)' && echo 'Load: \$(cat /proc/loadavg)' && echo 'Memory:' && free -h"
+                fi
                 ;;
             "exec")
                 if [[ -n "$args" ]]; then
                     print_info "Executing '$args' on $host..."
-                    ssh "$host" "$args"
+                    if [[ -n "$port" && "$port" != "22" ]]; then
+                        ssh -p "$port" "$host" "$args"
+                    else
+                        ssh "$host" "$args"
+                    fi
                 else
                     print_error "No command specified for exec"
                 fi

@@ -95,6 +95,7 @@ fix_return_statements() {
                             echo "    return 0" >> "$temp_file"
                             echo "}" >> "$temp_file"
                             ((fixed_functions++))
+                            print_info "Fixed function: $function_name"
                         fi
                         
                         in_function=false
