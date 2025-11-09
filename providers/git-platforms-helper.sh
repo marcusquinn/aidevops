@@ -172,6 +172,7 @@ github_list_repositories() {
         print_error "Failed to retrieve repositories"
         echo "$response"
     fi
+    return 0
 }
 
 github_create_repository() {
@@ -266,6 +267,7 @@ gitea_list_repositories() {
         print_error "Failed to retrieve repositories"
         echo "$response"
     fi
+    return 0
 }
 
 gitea_create_repository() {

@@ -270,7 +270,6 @@ update_site_plugins() {
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
-    return 0
         exit 1
     fi
 

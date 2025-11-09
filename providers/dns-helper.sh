@@ -254,6 +254,7 @@ namecheap_dns() {
             return 1
             ;;
     esac
+    return 0
 }
 
 # Generic DNS operations dispatcher
@@ -289,6 +290,7 @@ dns_operation() {
             list_providers
             ;;
     esac
+    return 0
 }
 
 # Main command handler
