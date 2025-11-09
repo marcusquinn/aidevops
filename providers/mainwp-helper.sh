@@ -17,6 +17,9 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common constants
+readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+
 print_info() {
     local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
@@ -115,13 +118,13 @@ api_request() {
     local auth_header="Authorization: Basic $(echo -n "$consumer_key:$consumer_secret" | base64)"
     
     if [[ "$method" == "GET" ]]; then
-        curl -s -H "$auth_header" -H "Content-Type: application/json" "$url"
+        curl -s -H "$auth_header" -H "$CONTENT_TYPE_JSON" "$url"
     elif [[ "$method" == "POST" ]]; then
-        curl -s -X POST -H "$auth_header" -H "Content-Type: application/json" -d "$data" "$url"
+        curl -s -X POST -H "$auth_header" -H "$CONTENT_TYPE_JSON" -d "$data" "$url"
     elif [[ "$method" == "PUT" ]]; then
-        curl -s -X PUT -H "$auth_header" -H "Content-Type: application/json" -d "$data" "$url"
+        curl -s -X PUT -H "$auth_header" -H "$CONTENT_TYPE_JSON" -d "$data" "$url"
     elif [[ "$method" == "DELETE" ]]; then
-        curl -s -X DELETE -H "$auth_header" -H "Content-Type: application/json" "$url"
+        curl -s -X DELETE -H "$auth_header" -H "$CONTENT_TYPE_JSON" "$url"
     fi
     return 0
 }
