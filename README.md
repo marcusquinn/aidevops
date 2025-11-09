@@ -215,6 +215,27 @@ Automated SSH config generation and management:
 - Key standardization across servers
 - Secure access patterns
 
+## 📁 **Repository Structure**
+
+```
+ai-assisted-dev-ops/
+├── 📄 README.md              # Main documentation
+├── 📄 AGENTS.md              # AI agent integration guide
+├── 📄 LICENSE                # MIT license
+├── 🔧 setup.sh               # Main setup script
+├── 🔧 servers-helper.sh      # Main entry point
+├── ⚙️  sonar-project.properties # Quality analysis config
+├── 📁 providers/             # Core functionality scripts (25+ services)
+├── 📁 configs/               # Configuration templates
+├── 📁 docs/                  # Comprehensive documentation
+├── 📁 templates/             # Reusable templates
+├── 📁 ssh/                   # SSH utilities
+└── 📁 .agent/                # AI agent development tools
+    ├── 📁 scripts/           # Quality automation tools
+    ├── 📁 spec/              # Technical specifications
+    └── 📁 wiki/              # Internal documentation
+```
+
 ## 🚀 **Quick Start**
 
 ### 1. Clone and Setup
