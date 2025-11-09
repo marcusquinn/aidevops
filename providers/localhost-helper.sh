@@ -44,6 +44,7 @@ check_config() {
         print_info "Copy and customize: cp ../configs/localhost-config.json.txt $CONFIG_FILE"
         exit 1
     fi
+    return 0
 }
 
 # Check required tools
@@ -131,6 +132,7 @@ setup_local_dns() {
         echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/local
         print_success "macOS resolver configured for .local domains"
     fi
+    return 0
 }
 
 # Generate SSL certificate for local domain

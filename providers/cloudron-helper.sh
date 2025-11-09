@@ -67,6 +67,7 @@ list_servers() {
         ip=$(jq -r ".servers.$server.ip" "$CONFIG_FILE")
         echo "  - $server: $description ($domain - $ip)"
     done
+    return 0
 }
 
 # Connect to Cloudron server (SSH as root initially)
