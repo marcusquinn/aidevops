@@ -202,7 +202,7 @@ list_site_plugins() {
     local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
     return 0

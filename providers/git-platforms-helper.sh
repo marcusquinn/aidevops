@@ -443,11 +443,11 @@ audit_repositories() {
     echo ""
 
     case "$platform" in
-        "github")
+        "$PLATFORM_GITHUB")
             print_info "=== GITHUB REPOSITORIES ==="
             github_list_repositories "$account_name"
             ;;
-        "gitlab")
+        "$PLATFORM_GITLAB")
             print_info "=== GITLAB PROJECTS ==="
             gitlab_list_projects "$account_name"
             ;;

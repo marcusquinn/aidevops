@@ -317,7 +317,7 @@ start_mcp_servers() {
     print_info "Starting MCP server for $service on port $port"
 
     case "$service" in
-        "coderabbit")
+        "$PROVIDER_CODERABBIT")
             if command -v coderabbit-mcp-server &> /dev/null; then
                 coderabbit-mcp-server --port "$port"
             else
@@ -325,19 +325,17 @@ start_mcp_servers() {
                 echo "  https://docs.coderabbit.ai/context-enrichment/mcp-server-integrations"
             fi
             ;;
-        "codacy")
+        "$PROVIDER_CODACY")
             if command -v codacy-mcp-server &> /dev/null; then
                 codacy-mcp-server --port "$port"
             else
-    return 0
                 print_warning "Codacy MCP server not found. Install from:"
                 echo "  https://github.com/codacy/codacy-mcp-server"
             fi
             ;;
-        "sonarcloud")
+        "$PROVIDER_SONARCLOUD")
             if command -v sonarqube-mcp-server &> /dev/null; then
                 sonarqube-mcp-server --port "$port"
-    return 0
             else
                 print_warning "SonarQube MCP server not found. Install from:"
                 echo "  https://github.com/SonarSource/sonarqube-mcp-server"

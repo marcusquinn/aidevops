@@ -265,7 +265,7 @@ dns_operation() {
     local record_value="$6"
     
     case "$provider" in
-        "cloudflare")
+        "$PROVIDER_CLOUDFLARE")
             cloudflare_dns "$action" "$domain" "$record_name" "$record_type" "$record_value"
             ;;
         "namecheap")
