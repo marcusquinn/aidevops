@@ -55,6 +55,8 @@ get_provider_config() {
             echo ""  # No fallback - provider must be specified
             ;;
     esac
+
+    return 0
 }
 
 # Check if provider config file exists
