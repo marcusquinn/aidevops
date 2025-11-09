@@ -141,6 +141,7 @@ list_domains() {
         print_error "Failed to retrieve domains"
         echo "$response"
     fi
+    return 0
 }
 
 # Get domain details
@@ -161,6 +162,7 @@ get_domain_details() {
         print_error "Failed to get domain details"
         echo "$response"
     fi
+    return 0
 }
 
 # List DNS records
@@ -181,6 +183,7 @@ list_dns_records() {
         print_error "Failed to retrieve DNS records"
         echo "$response"
     fi
+    return 0
 }
 
 # Add DNS record
@@ -214,6 +217,7 @@ add_dns_record() {
         print_error "Failed to add DNS record"
         echo "$response"
     fi
+    return 0
 }
 
 # Update DNS record
@@ -249,6 +253,7 @@ update_dns_record() {
         print_error "Failed to update DNS record"
         echo "$response"
     fi
+    return 0
 }
 
 # Delete DNS record
