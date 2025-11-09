@@ -224,7 +224,7 @@ list_site_themes() {
     local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     return 0
     fi
@@ -246,7 +246,7 @@ update_wordpress_core() {
     local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     return 0
     fi
@@ -269,7 +269,7 @@ update_site_plugins() {
     local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
     return 0
         exit 1
     fi
@@ -319,7 +319,7 @@ create_backup() {
     local backup_type="${3:-full}"
 
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
     return 0
         exit 1
     fi
@@ -345,7 +345,7 @@ list_backups() {
     local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     return 0
     fi
@@ -367,7 +367,7 @@ get_uptime_status() {
     local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
     return 0
         exit 1
     fi
@@ -390,7 +390,7 @@ run_security_scan() {
 
     return 0
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
 
@@ -413,7 +413,7 @@ get_security_scan_results() {
     local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
 
@@ -435,7 +435,7 @@ sync_site() {
     local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
 
@@ -458,7 +458,7 @@ bulk_update_wordpress() {
     local site_ids=("$@")
 
     if [[ ${#site_ids[@]} -eq 0 ]]; then
-        print_error "At least one site ID is required"
+        print_error "$ERROR_AT_LEAST_ONE_SITE_ID"
         exit 1
     fi
 
@@ -478,7 +478,7 @@ bulk_update_plugins() {
     local site_ids=("$@")
 
     if [[ ${#site_ids[@]} -eq 0 ]]; then
-        print_error "At least one site ID is required"
+        print_error "$ERROR_AT_LEAST_ONE_SITE_ID"
         exit 1
     return 0
     fi
@@ -532,7 +532,7 @@ audit_site_security() {
 
     return 0
     if [[ -z "$site_id" ]]; then
-        print_error "Site ID is required"
+        print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
 
