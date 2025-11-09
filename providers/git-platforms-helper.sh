@@ -374,10 +374,10 @@ clone_repository() {
         "$PLATFORM_GITHUB")
             clone_url="https://github.com/$username/$repo_identifier.git"
             ;;
-        "gitlab")
+        "$PLATFORM_GITLAB")
             clone_url="$base_url/$username/$repo_identifier.git"
             ;;
-        "gitea")
+        "$PLATFORM_GITEA")
             clone_url="$base_url/$username/$repo_identifier.git"
             ;;
         *)
