@@ -43,7 +43,7 @@ cp configs/coolify-config.json.txt configs/coolify-config.json
       "ssh_key": "~/.ssh/id_ed25519"
     },
     "coolify-staging": {
-      "name": "Staging Coolify Server", 
+      "name": "Staging Coolify Server",
       "host": "staging-coolify.yourdomain.com",
       "ip": "staging-server-ip",
       "coolify_url": "https://staging-coolify.yourdomain.com",

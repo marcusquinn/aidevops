@@ -37,7 +37,7 @@ main() {
     local command="${1:-help}"
     local account_name="$2"
     local target="$3"
-    
+
     case "$command" in
         "list")
             list_items "$account_name"  # Use local variable
@@ -136,7 +136,7 @@ curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_ai-as
 # Return statement violations
 grep -L "return [01]" providers/*.sh
 
-# Positional parameter violations  
+# Positional parameter violations
 grep -n '\$[1-9]' providers/*.sh | grep -v 'local.*=.*\$[1-9]'
 
 # String literal analysis
@@ -156,7 +156,7 @@ done
 
 **Remaining Work (Highly Manageable):**
 - **S7682 Return Statements**: 83 issues
-- **S7679 Positional Parameters**: 79 issues  
+- **S7679 Positional Parameters**: 79 issues
 - **S1192 String Literals**: 3 issues
 - **Target**: Zero issues across all categories
 

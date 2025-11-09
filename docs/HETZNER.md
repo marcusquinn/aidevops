@@ -41,13 +41,13 @@ cp configs/hetzner-config.json.txt configs/hetzner-config.json
       "account": "your-email@domain.com"
     },
     "client-project": {
-      "api_token": "YOUR_CLIENT_PROJECT_HETZNER_API_TOKEN_HERE", 
+      "api_token": "YOUR_CLIENT_PROJECT_HETZNER_API_TOKEN_HERE",
       "description": "Client project account",
       "account": "your-email@domain.com"
     },
     "storagebox": {
       "api_token": "YOUR_STORAGEBOX_HETZNER_API_TOKEN_HERE",
-      "description": "Storage and backup account", 
+      "description": "Storage and backup account",
       "account": "your-email@domain.com"
     }
   },
@@ -174,7 +174,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" https://api.hetzner.cloud/v1/servers
 
 ### **Server Types:**
 - **CX series**: Shared vCPU, cost-effective
-- **CPX series**: Dedicated vCPU, consistent performance  
+- **CPX series**: Dedicated vCPU, consistent performance
 - **CCX series**: Dedicated CPU, high-performance computing
 
 ### **Storage Options:**

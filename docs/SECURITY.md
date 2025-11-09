@@ -45,19 +45,19 @@ ssh-keygen -p -f ~/.ssh/id_ed25519
 Host *
     # Disable password authentication when keys are available
     PasswordAuthentication no
-    
+
     # Use only secure key exchange algorithms
     KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
-    
+
     # Use only secure ciphers
     Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
-    
+
     # Use only secure MAC algorithms
     MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com
-    
+
     # Disable X11 forwarding by default
     ForwardX11 no
-    
+
     # Connection timeout
     ConnectTimeout 10
 ```

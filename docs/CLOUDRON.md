@@ -44,7 +44,7 @@ cp configs/cloudron-config.json.txt configs/cloudron-config.json
       "apps_count": 15
     },
     "staging": {
-      "hostname": "staging-cloudron.yourdomain.com", 
+      "hostname": "staging-cloudron.yourdomain.com",
       "ip": "192.168.1.101",
       "api_token": "YOUR_STAGING_CLOUDRON_API_TOKEN_HERE",
       "description": "Staging Cloudron server",

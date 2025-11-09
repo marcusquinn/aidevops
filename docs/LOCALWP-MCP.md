@@ -11,7 +11,7 @@ LocalWP MCP is a Model Context Protocol server that gives AI assistants like Cla
 ### **Before MCP (AI Flying Blind)**
 ```sql
 -- AI guesses at table structure
-SELECT post_id, activity_meta FROM wp_user_activity 
+SELECT post_id, activity_meta FROM wp_user_activity
 WHERE user_id=123 AND activity_type='quiz';
 -- ❌ Error: activity_meta column doesn't exist!
 ```
@@ -19,9 +19,9 @@ WHERE user_id=123 AND activity_type='quiz';
 ### **After MCP (AI With X-Ray Vision)**
 ```sql
 -- AI sees actual table structure and relationships
-SELECT ua.post_id, ua.activity_id, uam.activity_meta_key, uam.activity_meta_value 
+SELECT ua.post_id, ua.activity_id, uam.activity_meta_key, uam.activity_meta_value
 FROM wp_user_activity ua
-LEFT JOIN wp_user_activity_meta uam ON ua.activity_id = uam.activity_id 
+LEFT JOIN wp_user_activity_meta uam ON ua.activity_id = uam.activity_id
 WHERE ua.user_id=123 AND ua.activity_type='quiz';
 -- ✅ Perfect query on first try!
 ```
@@ -99,9 +99,9 @@ Execute read-only SQL queries against your WordPress database.
 **Examples:**
 ```sql
 -- Get recent posts
-SELECT ID, post_title, post_date, post_status 
-FROM wp_posts 
-WHERE post_type = 'post' AND post_status = 'publish' 
+SELECT ID, post_title, post_date, post_status
+FROM wp_posts
+WHERE post_type = 'post' AND post_status = 'publish'
 ORDER BY post_date DESC LIMIT 5;
 
 -- Parameterized queries
@@ -141,7 +141,7 @@ WHERE ua.activity_type = 'quiz' AND ua.user_id = 123;
 SELECT p.ID, p.post_date, pm.meta_key, pm.meta_value
 FROM wp_posts p
 JOIN wp_postmeta pm ON p.ID = pm.post_id
-WHERE p.post_type = 'shop_order' 
+WHERE p.post_type = 'shop_order'
 AND pm.meta_key IN ('_order_total', '_billing_email')
 ORDER BY p.post_date DESC LIMIT 10;
 ```
@@ -223,12 +223,12 @@ DEBUG=mcp-local-wp ./providers/localhost-helper.sh start-mcp
 
 ## 🎉 **Benefits for AI Development**
 
-✅ **No more schema guessing** - AI sees actual tables and columns  
-✅ **Accurate JOIN operations** - AI understands table relationships  
-✅ **Real data validation** - AI verifies data exists before suggesting queries  
-✅ **Plugin-aware development** - AI adapts to any plugin's custom tables  
-✅ **Instant debugging** - Complex queries become 5-second tasks  
-✅ **Zero configuration** - Works automatically with Local by Flywheel  
+✅ **No more schema guessing** - AI sees actual tables and columns
+✅ **Accurate JOIN operations** - AI understands table relationships
+✅ **Real data validation** - AI verifies data exists before suggesting queries
+✅ **Plugin-aware development** - AI adapts to any plugin's custom tables
+✅ **Instant debugging** - Complex queries become 5-second tasks
+✅ **Zero configuration** - Works automatically with Local by Flywheel
 
 ---
 

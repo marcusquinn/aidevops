@@ -171,7 +171,7 @@ This guide outlines proven best practices for infrastructure management and help
 
 ### **Port Management**
 - **WordPress sites**: 10000-10999 range
-- **API services**: 8000-8999 range  
+- **API services**: 8000-8999 range
 - **MCP servers**: 8080+ range (sequential allocation)
 - **Databases**: 5432 (PostgreSQL), 3306 (MySQL), 6379 (Redis)
 

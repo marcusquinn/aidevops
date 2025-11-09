@@ -6,7 +6,7 @@ This folder contains helper scripts for all 25+ service integrations in the AI-A
 
 ### **Infrastructure & Hosting**
 - `hostinger-helper.sh` - Shared hosting management
-- `hetzner-helper.sh` - Cloud VPS management  
+- `hetzner-helper.sh` - Cloud VPS management
 - `closte-helper.sh` - VPS hosting management
 - `cloudron-helper.sh` - App platform management
 

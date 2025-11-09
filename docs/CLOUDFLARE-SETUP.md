@@ -37,7 +37,7 @@ This guide shows you how to securely set up Cloudflare API access for local AI-a
 ```
 Zone:Read          - Read zone information
 Zone:Edit          - Modify zone settings (optional)
-DNS:Read           - Read DNS records  
+DNS:Read           - Read DNS records
 DNS:Edit           - Modify DNS records
 Zone Settings:Read - Read zone settings (optional)
 ```

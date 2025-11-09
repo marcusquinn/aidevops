@@ -92,7 +92,7 @@ cp configs/context7-mcp-config.json.txt configs/context7-mcp-config.json
 resolve-library-id("next.js")
 # Returns: "/vercel/next.js"
 
-resolve-library-id("react")  
+resolve-library-id("react")
 # Returns: "/facebook/react"
 
 resolve-library-id("supabase")
@@ -288,12 +288,12 @@ get-library-docs("/facebook/react", tokens=2000)
 
 ## 📈 **Benefits for Your Development**
 
-✅ **Always Current** - Documentation is continuously updated  
-✅ **Version Aware** - Access docs for specific versions you're using  
-✅ **AI Optimized** - Content formatted for better AI understanding  
-✅ **Comprehensive** - Covers thousands of popular development tools  
-✅ **Fast Access** - Real-time retrieval without manual searching  
-✅ **Context Aware** - AI understands your specific development context  
+✅ **Always Current** - Documentation is continuously updated
+✅ **Version Aware** - Access docs for specific versions you're using
+✅ **AI Optimized** - Content formatted for better AI understanding
+✅ **Comprehensive** - Covers thousands of popular development tools
+✅ **Fast Access** - Real-time retrieval without manual searching
+✅ **Context Aware** - AI understands your specific development context
 
 ---
 
