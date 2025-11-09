@@ -100,6 +100,7 @@ temp/
 tmp.*.json
 
 # AI Assistant working directories
+# Ignore all files in tmp and memory directories except README.md
 .agent/tmp/*
 !.agent/tmp/README.md
 .agent/memory/*
