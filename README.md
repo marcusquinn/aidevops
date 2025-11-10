@@ -6,7 +6,7 @@
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/ai-assisted-dev-ops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/ai-assisted-dev-ops)
 [![Codacy Badge](https://img.shields.io/badge/Codacy-Ready%20for%20Integration-blue)](https://app.codacy.com/gh/marcusquinn/ai-assisted-dev-ops/dashboard)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=marcusquinn_ai-assisted-dev-ops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=marcusquinn_ai-assisted-dev-ops)
-[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/marcusquinn/ai-assisted-dev-ops?utm_source=oss&utm_medium=github&utm_campaign=marcusquinn%2Fai-assisted-dev-ops&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
+[![CodeRabbit](https://img.shields.io/badge/CodeRabbit-AI%20Reviews-FF570A?logo=coderabbit&logoColor=white)](https://coderabbit.ai)
 
 <!-- License & Legal -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -38,7 +38,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-25+-brightgreen.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops#-service-categories)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-8+-orange.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops#-advanced-mcp-server-integration)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-9+-orange.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops#-advanced-mcp-server-integration)
 
 A comprehensive, production-ready framework that gives your AI assistant seamless access to your entire DevOps infrastructure including servers, hosting providers, security services, code auditing, and development tools through standardized helper scripts, SSH configurations, and MCP (Model Context Protocol) integrations.
 
@@ -434,7 +434,7 @@ cp configs/hetzner-config.json.txt configs/hetzner-config.json
     ├── 101DOMAINS.md                  # 101domains registrar guide
     ├── CLOUDRON.md                    # Cloudron app platform guide
     ├── LOCALHOST.md                   # Localhost development guide
-    ├── MCP-SERVERS.md                 # MCP servers configuration guide
+    ├── MCP-INTEGRATIONS.md            # Advanced MCP integrations guide
     ├── DNS-PROVIDERS.md               # DNS providers configuration guide
     ├── CLOUDFLARE-SETUP.md            # Cloudflare API token setup guide
     ├── COOLIFY-SETUP.md               # Coolify deployment platform guide

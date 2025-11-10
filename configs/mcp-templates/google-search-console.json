@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "google-search-console": {
+      "command": "npx",
+      "args": [
+        "mcp-server-gsc@latest"
+      ],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/your/service-account-key.json"
+      }
+    }
+  }
+}

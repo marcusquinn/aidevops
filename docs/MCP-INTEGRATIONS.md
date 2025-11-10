@@ -12,9 +12,14 @@ This document provides comprehensive setup and usage instructions for advanced M
 ### **🔍 SEO & Research Tools**
 - **Ahrefs MCP**: SEO analysis, backlink research, keyword data
 - **Perplexity MCP**: AI-powered web search and research
+- **Google Search Console MCP**: Search performance data and insights
 
 ### **⚡ Development Tools**
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
+
+### **📚 Legacy MCP Servers (from MCP-SERVERS.md)**
+- **Context7 MCP**: Real-time documentation access for development libraries
+- **LocalWP MCP**: Direct WordPress database access for local development
 
 ## 🎯 **Quick Setup Commands**
 
@@ -52,6 +57,13 @@ claude mcp add ahrefs npx ahrefs-mcp@latest
 # Setup Perplexity integration
 export PERPLEXITY_API_KEY="your_api_key_here"
 claude mcp add perplexity npx perplexity-mcp@latest
+```
+
+### **Google Search Console MCP**
+```bash
+# Setup Google Search Console integration
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+claude mcp add google-search-console npx mcp-server-gsc@latest
 ```
 
 ## 🔧 **Configuration Examples**

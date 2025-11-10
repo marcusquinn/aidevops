@@ -28,12 +28,13 @@ get_mcp_command() {
         "ahrefs") echo "npx ahrefs-mcp@latest" ;;
         "perplexity") echo "npx perplexity-mcp@latest" ;;
         "nextjs-devtools") echo "npx next-devtools-mcp@latest" ;;
+        "google-search-console") echo "npx mcp-server-gsc@latest" ;;
         *) echo "" ;;
     esac
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console"
 
 # Check prerequisites
 check_prerequisites() {
@@ -108,6 +109,15 @@ install_mcp() {
             print_info "Setting up Next.js DevTools MCP..."
             if command -v claude &> /dev/null; then
                 claude mcp add nextjs-devtools "$mcp_command"
+            fi
+            ;;
+        "google-search-console")
+            print_warning "Google Search Console MCP requires Google API credentials"
+            print_info "Set GOOGLE_APPLICATION_CREDENTIALS environment variable"
+            print_info "Get credentials from: https://console.cloud.google.com/"
+            print_info "Enable Search Console API in your Google Cloud project"
+            if command -v claude &> /dev/null; then
+                claude mcp add google-search-console "$mcp_command"
             fi
             ;;
     esac
