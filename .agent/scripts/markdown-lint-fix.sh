@@ -146,7 +146,7 @@ fix_markdown_with_markdownlint() {
         print_info "Fixing: $target"
         markdownlint --fix "$target"
         
-        if [[ $? -eq 0 ]]; then
+        if markdownlint --fix "$target"; then
             print_success "Fixed markdown issues in: $target"
         else
             print_warning "Some issues may require manual fixing in: $target"
@@ -155,7 +155,7 @@ fix_markdown_with_markdownlint() {
         print_info "Fixing all markdown files in: $target"
         markdownlint --fix "$target/**/*.md"
         
-        if [[ $? -eq 0 ]]; then
+        if markdownlint --fix "$target"/*.md; then
             print_success "Fixed markdown issues in directory: $target"
         else
             print_warning "Some issues may require manual fixing"

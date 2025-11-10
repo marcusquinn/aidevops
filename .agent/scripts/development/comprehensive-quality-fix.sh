@@ -3,7 +3,7 @@
 # Comprehensive script to fix remaining SonarCloud issues
 # Targets: S7679 (positional parameters), S7682 (return statements), S1192 (string literals)
 
-cd providers
+cd providers || exit
 
 echo "🚀 Starting comprehensive quality fix..."
 
@@ -36,12 +36,12 @@ replace_string_literals() {
             ;;
         "dns-helper.sh")
             # Replace remaining cloudflare occurrences in case statements
-            sed -i 's/"namecheap"/"$PROVIDER_NAMECHEAP"/g' "$file"
-            sed -i 's/"route53"/"$PROVIDER_ROUTE53"/g' "$file"
+            sed -i "s/\"namecheap\"/\"\$PROVIDER_NAMECHEAP\"/g" "$file"
+            sed -i "s/\"route53\"/\"\$PROVIDER_ROUTE53\"/g" "$file"
             ;;
         "git-platforms-helper.sh")
             # Replace remaining platform occurrences
-            sed -i 's/"gitea"/"$PLATFORM_GITEA"/g' "$file"
+            sed -i "s/\"gitea\"/\"\$PLATFORM_GITEA\"/g" "$file"
             ;;
         *)
             echo "No string literal replacements needed for $file"

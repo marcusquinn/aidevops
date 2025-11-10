@@ -107,7 +107,11 @@ jobs:
         echo "📊 Code Quality Analysis Summary"
         echo "================================"
         echo "✅ SonarCloud: Analysis completed"
-        echo "$(if [[ -n "${{ secrets.CODACY_API_TOKEN }}" ]]; then echo '✅ Codacy: Analysis completed'; else echo '⚠️  Codacy: Skipped (token not configured)'; fi)"
+        if [[ -n "${{ secrets.CODACY_API_TOKEN }}" ]]; then
+          echo "✅ Codacy: Analysis completed"
+        else
+          echo "⚠️  Codacy: Skipped (token not configured)"
+        fi
         echo ""
         echo "🔗 View Results:"
         echo "   SonarCloud: https://sonarcloud.io/project/overview?id=marcusquinn_ai-assisted-dev-ops"

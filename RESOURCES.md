@@ -64,30 +64,35 @@ bash .agent/scripts/linter-manager.sh install python
 #### Platform Comparison
 
 **CodeRabbit**:
+
 - AI-powered code review
 - Pull request analysis
 - Contextual suggestions
 - No auto-fix capabilities
 
 **Codacy**:
+
 - Comprehensive code analysis
 - 40+ languages supported
 - Auto-fix for safe violations
 - Web dashboard + CLI
 
 **SonarCloud**:
+
 - Enterprise-grade analysis
 - Security vulnerability detection
 - Technical debt tracking
 - Analysis only (no auto-fix)
 
 **Qlty**:
+
 - Universal linting platform
 - 70+ tools, 40+ languages
 - Auto-formatting capabilities
 - Account-wide and organization-specific access
 
 **CodeFactor**:
+
 - Comprehensive linter collection
 - Reference for tool selection
 - Web-based analysis
@@ -119,27 +124,33 @@ bash .agent/scripts/linter-manager.sh install python
 #### Configuration Files by Tool
 
 **Python**:
+
 - `setup.cfg`: pycodestyle, flake8
 - `.pylintrc`: Pylint configuration
 - `.bandit`: Bandit security rules
 - `pyproject.toml`: Modern Python configuration
 
 **JavaScript/TypeScript**:
+
 - `.eslintrc.js/.json/.yaml`: ESLint rules
 - `tsconfig.json`: TypeScript configuration
 - `.oxlintrc.json`: Oxlint configuration
 
 **CSS/SCSS**:
+
 - `.stylelintrc.json/.yaml`: Stylelint rules
 - `stylelint.config.js`: JavaScript configuration
 
 **Shell**:
+
 - `.shellcheckrc`: ShellCheck configuration
 
 **Docker**:
+
 - `.hadolint.yaml`: Hadolint rules
 
 **YAML**:
+
 - `.yamllint.yaml`: Yamllint configuration
 
 ### Best Practices

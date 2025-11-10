@@ -307,6 +307,7 @@ bash .agent/scripts/qlty-cli.sh check 10 mycompany
 - **Performance**: Fast execution with caching and concurrency
 
 **🔧 Linter Manager - CodeFactor-Inspired Multi-Language Support:**
+
 ```bash
 # Detect languages in current project
 bash .agent/scripts/linter-manager.sh detect
@@ -322,6 +323,7 @@ bash .agent/scripts/linter-manager.sh install python
 ```
 
 **📚 LINTER MANAGER FEATURES:**
+
 - **Language Detection**: Automatic project language identification
 - **CodeFactor Collection**: Based on CodeFactor's comprehensive linter set
 - **Multi-Language Support**: Python, JavaScript, CSS, Shell, Docker, YAML, Security

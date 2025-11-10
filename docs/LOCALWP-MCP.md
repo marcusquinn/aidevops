@@ -196,7 +196,7 @@ The MCP server automatically detects your active Local by Flywheel MySQL instanc
 
 ### **Local Directory Structure**
 
-```
+```text
 ~/Library/Application Support/Local/run/
 ├── lx97vbzE7/                    # Dynamic site ID (changes on restart)
 │   ├── conf/mysql/my.cnf        # MySQL configuration
