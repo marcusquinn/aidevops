@@ -3,7 +3,7 @@
 # Script to fix misplaced return statements in mainwp-helper.sh
 # These were introduced by the earlier mass fix script
 
-cd providers
+cd providers || exit
 
 echo "🔧 Fixing misplaced return statements in mainwp-helper.sh..."
 

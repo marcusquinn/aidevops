@@ -491,7 +491,7 @@ monitor|audit|status    # Service monitoring and auditing
 
 ## 📁 **Complete Repository Structure**
 
-```
+```text
 ai-assisted-dev-ops/
 ├── 📄 README.md              # Main project documentation
 ├── 📄 AGENTS.md              # AI agent integration guide (this file)
@@ -854,7 +854,7 @@ done
 
 Include quality metrics in every commit:
 
-```
+```text
 🔧 FEATURE: Description of changes
 
 ✅ QUALITY IMPROVEMENTS:

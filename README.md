@@ -247,7 +247,7 @@ Automated SSH config generation and management:
 
 ## 📁 **Repository Structure**
 
-```
+```text
 ai-assisted-dev-ops/
 ├── 📄 README.md              # Main project documentation (this file)
 ├── 📄 AGENTS.md              # AI agent integration guide
@@ -372,7 +372,7 @@ cp configs/hetzner-config.json.txt configs/hetzner-config.json
 
 ## 📁 **File Structure**
 
-```
+```text
 ~/git/ai-assisted-dev-ops/
 ├── README.md                          # This guide
 ├── servers-helper.sh                  # Global server access
@@ -781,6 +781,6 @@ This framework is free for commercial use under the MIT License. Companies and i
 
 **🎯 This framework transforms your AI assistant into a powerful infrastructure management tool, giving you seamless access to all your servers and services through simple, standardized commands.**
 
-# Trigger GitHub Actions
+## Trigger GitHub Actions
 
-# Test GitHub Actions with Codacy Integration
+## Test GitHub Actions with Codacy Integration
