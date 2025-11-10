@@ -380,11 +380,28 @@ bash .agent/scripts/quality-cli-manager.sh status all
 
 **API Key Setup (Secure Local Configuration):**
 
+#### **🔧 Code Quality & Analysis APIs**
 - **CodeRabbit**: Get from https://app.coderabbit.ai → Settings → API Keys
 - **Codacy**: Get from https://app.codacy.com → Account → API Tokens
 - **SonarCloud**: Get from https://sonarcloud.io/account/security/
+- **Qlty**: Get from https://qlty.sh → Account → API Keys
+
+#### **🔍 SEO & Research APIs**
+- **Ahrefs**: Get from https://ahrefs.com/api → API Access
+- **Google Search Console**: Setup via Google Cloud Console → Service Account
+- **Perplexity**: Get from https://docs.perplexity.ai/ → API Keys
+
+#### **🌐 Infrastructure & Hosting APIs**
+- **Hostinger**: Get from Hostinger Panel → API Access
+- **Hetzner**: Get from Hetzner Cloud Console → API Tokens
+- **Cloudflare**: Get from Cloudflare Dashboard → API Tokens
+- **AWS (Route 53/SES)**: Get from AWS IAM → Access Keys
+
+#### **🔐 Security Best Practices**
 - **Never commit API keys** - Use local configuration only
 - **Local storage**: Secure permissions (600) in user config directories
+- **Minimal permissions**: Scope API keys to required operations only
+- **Regular rotation**: Update API keys periodically for security
 
 #### **Shell Script Best Practices (MANDATORY PATTERNS)**
 
@@ -599,9 +616,22 @@ ai-assisted-dev-ops/
 
 - Spaceship (with purchasing), 101domains, Cloudflare DNS, Namecheap DNS, Route 53
 
-### **Development & Local (4 services)**
+### **Development & Local (9 MCP integrations)**
 
-- Localhost, LocalWP, Context7 MCP, MCP Servers
+#### **🌐 Web & Browser Automation MCPs**
+- **Chrome DevTools MCP**: Browser automation, performance analysis, debugging
+- **Playwright MCP**: Cross-browser testing and automation
+- **Cloudflare Browser Rendering MCP**: Server-side web scraping
+
+#### **🔍 SEO & Research MCPs**
+- **Ahrefs MCP**: SEO analysis, backlink research, keyword data
+- **Perplexity MCP**: AI-powered web search and research
+- **Google Search Console MCP**: Search performance data and insights
+
+#### **⚡ Development & Documentation MCPs**
+- **Next.js DevTools MCP**: Next.js development and debugging assistance
+- **Context7 MCP**: Real-time documentation access for development libraries
+- **LocalWP MCP**: Direct WordPress database access for local development
 
 ### **Setup & Configuration (1 service)**
 
@@ -649,6 +679,16 @@ ai-assisted-dev-ops/
 # Real-time data access through MCP servers:
 Port 3001: LocalWP WordPress database access
 Port 3002: Vaultwarden secure credential retrieval
+
+# Advanced MCP integrations (via npx):
+Chrome DevTools MCP: Browser automation and performance analysis
+Playwright MCP: Cross-browser testing and automation
+Cloudflare Browser Rendering: Server-side web scraping
+Ahrefs MCP: SEO analysis and keyword research
+Perplexity MCP: AI-powered web search and research
+Google Search Console MCP: Search performance insights
+Next.js DevTools MCP: Next.js development assistance
+Context7 MCP: Real-time documentation access
 Port 3003: CodeRabbit code analysis
 Port 3004: Codacy quality metrics
 Port 3005: SonarCloud security analysis
