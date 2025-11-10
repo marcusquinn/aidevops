@@ -4,40 +4,80 @@
 
 Qlty CLI provides universal code quality analysis and auto-formatting for 40+ languages with 70+ static analysis tools. This guide covers complete configuration for multi-organization support.
 
-## Organization Configuration
+## Qlty Credential Types & Configuration
 
-### Required Components
+### Credential Hierarchy
 
-1. **Coverage Token** (`qltcw_...`): Required for Qlty CLI functionality
-2. **Workspace ID** (UUID): Optional but recommended for workspace-specific features
+Qlty CLI supports multiple credential types with intelligent selection:
+
+1. **Account API Key** (`qltp_...`) - **PREFERRED**
+   - Account-wide access to all workspaces
+   - Broader permissions and functionality
+   - Single credential for entire account
+
+2. **Coverage Token** (`qltcw_...`) - Organization-specific
+   - Workspace-specific access
+   - Used when account API key unavailable
+   - Organization-scoped permissions
+
+3. **Workspace ID** (UUID) - Context identifier
+   - Optional but recommended
+   - Provides workspace context for operations
+   - Used with either credential type
 
 ### Storage Format
 
 ```bash
-# Coverage Token
+# Account-level API Key (preferred)
+qlty-account-api-key=qltp_your_account_api_key_here
+
+# Organization-specific Coverage Token
 qlty-ORGNAME=qltcw_your_coverage_token_here
 
-# Workspace ID  
+# Workspace ID (optional but recommended)
 qlty-ORGNAME-workspace-id=your-workspace-uuid-here
 ```
 
+### Intelligent Credential Selection
+
+The CLI automatically selects the best available credential:
+
+1. **Account API Key** - Used if available (preferred for broader access)
+2. **Coverage Token** - Used as fallback for organization-specific access
+3. **Workspace ID** - Always loaded when available for context
+
 ## Current Configuration
+
+### Account-Level Configuration
+
+- **Account API Key**: `REDACTED_API_KEY`
+- **Access Level**: Account-wide (all workspaces)
+- **Status**: ✅ Active and preferred
 
 ### marcusquinn Organization
 
-- **Coverage Token**: `REDACTED_COVERAGE_TOKEN`
+- **Coverage Token**: `REDACTED_COVERAGE_TOKEN` (fallback)
 - **Workspace ID**: `REDACTED_WORKSPACE_ID`
-- **Status**: ✅ Fully configured and tested
+- **Status**: ✅ Fully configured (used for workspace context)
+
+### Credential Selection Logic
+
+- **Primary**: Account API Key provides account-wide access
+- **Context**: Workspace ID provides organization-specific context
+- **Fallback**: Coverage Token available if account key unavailable
 
 ## Setup Instructions
 
-### 1. Store Organization Configuration
+### 1. Store Qlty Configuration
 
 ```bash
-# Store Coverage Token
+# PREFERRED: Store Account API Key (account-wide access)
+bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key YOUR_ACCOUNT_API_KEY
+
+# ALTERNATIVE: Store Coverage Token (organization-specific)
 bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME YOUR_COVERAGE_TOKEN
 
-# Store Workspace ID (optional)
+# OPTIONAL: Store Workspace ID (context for operations)
 bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME-workspace-id YOUR_WORKSPACE_ID
 ```
 
