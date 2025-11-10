@@ -5,12 +5,12 @@
 ### **1. Environment Variables (Primary Method)**
 ```bash
 # Set for current session
-export CODACY_API_TOKEN="3FcN6TvVmFB3kR2mjzX2"
-export SONAR_TOKEN="your_sonar_token_here"
+export CODACY_API_TOKEN="YOUR_CODACY_API_TOKEN_HERE"
+export SONAR_TOKEN="YOUR_SONAR_TOKEN_HERE"
 
 # Add to shell profile for persistence
-echo 'export CODACY_API_TOKEN="3FcN6TvVmFB3kR2mjzX2"' >> ~/.bashrc
-echo 'export SONAR_TOKEN="your_sonar_token_here"' >> ~/.bashrc
+echo 'export CODACY_API_TOKEN="YOUR_CODACY_API_TOKEN_HERE"' >> ~/.bashrc
+echo 'export SONAR_TOKEN="YOUR_SONAR_TOKEN_HERE"' >> ~/.bashrc
 ```
 
 ### **2. Local Configuration Files (Gitignored)**
@@ -35,7 +35,7 @@ GITHUB_TOKEN                         # Automatic (provided by GitHub)
 ## 🔑 **CURRENT API KEY STATUS**
 
 ### **✅ CONFIGURED:**
-- **Codacy API Token**: `3FcN6TvVmFB3kR2mjzX2` (Local environment + config file)
+- **Codacy API Token**: `[CONFIGURED LOCALLY]` (Local environment + config file)
 - **CodeRabbit CLI**: Stored in `~/.config/coderabbit/api_key`
 
 ### **❌ MISSING (CAUSING GITHUB ACTION FAILURES):**
@@ -54,13 +54,13 @@ GITHUB_TOKEN                         # Automatic (provided by GitHub)
 2. Click "New repository secret"
 3. Add:
    - Name: `SONAR_TOKEN`, Value: [Your SonarCloud token]
-   - Name: `CODACY_API_TOKEN`, Value: `3FcN6TvVmFB3kR2mjzX2`
+   - Name: `CODACY_API_TOKEN`, Value: [Your Codacy API token]
 
 ### **3. Set Local Environment Variables**
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
-export CODACY_API_TOKEN="3FcN6TvVmFB3kR2mjzX2"
-export SONAR_TOKEN="your_sonar_token_here"
+export CODACY_API_TOKEN="YOUR_CODACY_API_TOKEN_HERE"
+export SONAR_TOKEN="YOUR_SONAR_TOKEN_HERE"
 
 # Reload shell configuration
 source ~/.bashrc
