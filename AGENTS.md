@@ -259,31 +259,42 @@ bash .agent/scripts/qlty-cli.sh fmt --all myorg
 bash .agent/scripts/qlty-cli.sh smells --all
 ```
 
-**🔐 Qlty Organization Configuration Management:**
+**🔐 Qlty Credential Management - Multi-Level Access:**
 
 ```bash
+# 🌟 ACCOUNT-LEVEL API KEY (Preferred - Account-wide access)
+bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key YOUR_API_KEY
+
+# 🎯 ORGANIZATION-SPECIFIC CREDENTIALS
 # Store Coverage Token for organization
 bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME YOUR_COVERAGE_TOKEN
 
 # Store Workspace ID for organization (optional but recommended)
 bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME-workspace-id YOUR_WORKSPACE_ID
 
-# List configured organizations
+# List all configurations
 bash .agent/scripts/setup-local-api-keys.sh list
 
 # Example: Complete setup for 'mycompany' organization
 bash .agent/scripts/setup-local-api-keys.sh set qlty-mycompany qltcw_abc123...
 bash .agent/scripts/setup-local-api-keys.sh set qlty-mycompany-workspace-id 12345678-abcd-...
 
-# Use with specific organization
+# Use with any organization (account API key provides access to all)
 bash .agent/scripts/qlty-cli.sh check 10 mycompany
 ```
 
+**🎯 Intelligent Credential Selection:**
+
+1. **Account API Key** (`qltp_...`) - **Preferred** for account-wide access to all workspaces
+2. **Coverage Token** (`qltcw_...`) - Organization-specific access when account key unavailable
+
 **📊 Current Qlty Configuration:**
+
+- **🌟 Account API Key**: ✅ `qltp_WTc5AqtTGUWZNVLjsAWD4Ev6c8jslv1j2MsLI6qA` (account-wide access)
 - **marcusquinn Organization**: ✅ Coverage Token + Workspace ID configured
-- **Coverage Token**: `qltcw_scEDR369Uu3JU7UH` (securely stored)
-- **Workspace ID**: `19642b88-f0d2-45d5-8a09-c539049b0d20` (securely stored)
-- **Ready for**: Additional organization tokens and workspace IDs
+  - **Coverage Token**: `qltcw_scEDR369Uu3JU7UH` (fallback if needed)
+  - **Workspace ID**: `19642b88-f0d2-45d5-8a09-c539049b0d20` (organization context)
+- **Smart Selection**: Account API Key used for broader access, workspace ID for context
 
 **🌟 QLTY FEATURES:**
 
