@@ -38,7 +38,7 @@ This guide shows you how to securely set up Cloudflare API access for local AI-a
 
 **Permissions**:
 
-```
+```text
 Zone:Read          - Read zone information
 Zone:Edit          - Modify zone settings (optional)
 DNS:Read           - Read DNS records
@@ -48,19 +48,19 @@ Zone Settings:Read - Read zone settings (optional)
 
 **Zone Resources**:
 
-```
+```text
 Include: Specific zones → [Select your domains]
 ```
 
 **Client IP Address Filtering** (Recommended):
 
-```
+```text
 Include: [Your home/office IP address]
 ```
 
 **TTL (Time to Live)**:
 
-```
+```text
 Set expiration: 1 year maximum
 ```
 
