@@ -342,7 +342,10 @@ run_sonar_analysis() {
         print_info "Debug mode enabled"
     fi
 
-    print_info "Executing: $cmd"
+    # Create safe command for logging (mask the token)
+    local safe_cmd
+    safe_cmd=$(echo "$cmd" | sed 's/-Dsonar\.token=[^ ]*/-Dsonar.token=[MASKED]/g')
+    print_info "Executing: $safe_cmd"
     eval "$cmd"
 
     if [[ $? -eq 0 ]]; then
