@@ -1,0 +1,39 @@
+{
+  "api_token": "YOUR_CODACY_API_TOKEN_HERE",
+  "provider": "gh",
+  "organization": "YOUR_GITHUB_USERNAME",
+  "repository": "YOUR_REPOSITORY_NAME",
+  "project_token": "YOUR_PROJECT_TOKEN_HERE",
+  "base_url": "https://api.codacy.com",
+  "analysis": {
+    "format": "sarif",
+    "output_file": "codacy-results.sarif",
+    "tools": [
+      "lizard",
+      "pmd",
+      "pylint", 
+      "revive",
+      "semgrep",
+      "trivy",
+      "eslint"
+    ],
+    "languages": [
+      "bash",
+      "python",
+      "yaml",
+      "json",
+      "javascript"
+    ]
+  },
+  "thresholds": {
+    "security": "A",
+    "duplication": "A", 
+    "complexity": "A",
+    "coverage": "A",
+    "issues": "A"
+  },
+  "notifications": {
+    "slack_webhook": "",
+    "email": ""
+  }
+}

@@ -28,6 +28,8 @@ readonly NC='\033[0m' # No Color
 readonly CODACY_CLI_VERSION="1.0.0-main.361.sha.f961a76"
 readonly CODACY_CONFIG_DIR=".codacy"
 readonly CODACY_CONFIG_FILE="$CODACY_CONFIG_DIR/codacy.yaml"
+readonly CODACY_API_CONFIG="configs/codacy-config.json"
+# API token loaded from environment variable CODACY_API_TOKEN
 
 # Print functions
 print_success() {
@@ -46,6 +48,43 @@ print_warning() {
     local message="$1"
     echo -e "${YELLOW}⚠️  $message${NC}"
     return 0
+}
+
+# Load API configuration
+load_api_config() {
+    if [[ -f "$CODACY_API_CONFIG" ]]; then
+        print_info "Loading Codacy API configuration from $CODACY_API_CONFIG"
+
+        # API token should be set in environment variable CODACY_API_TOKEN
+        if [[ -z "$CODACY_API_TOKEN" ]]; then
+            print_error "CODACY_API_TOKEN environment variable not set"
+            return 1
+        fi
+
+        # Set organization and repository from config if available
+        if command -v jq >/dev/null 2>&1; then
+            local org
+            org=$(jq -r '.organization // empty' "$CODACY_API_CONFIG" 2>/dev/null)
+            local repo
+            repo=$(jq -r '.repository // empty' "$CODACY_API_CONFIG" 2>/dev/null)
+
+            if [[ -n "$org" && -n "$repo" ]]; then
+                export CODACY_ORGANIZATION="$org"
+                export CODACY_REPOSITORY="$repo"
+                print_success "Configured for organization: $org, repository: $repo"
+            fi
+        fi
+
+        return 0
+    else
+        print_warning "API configuration file not found: $CODACY_API_CONFIG"
+        print_info "Using default configuration with environment API token"
+        if [[ -z "$CODACY_API_TOKEN" ]]; then
+            print_error "CODACY_API_TOKEN environment variable not set"
+            return 1
+        fi
+        return 1
+    fi
 }
 
 print_error() {
@@ -168,7 +207,10 @@ run_codacy_analysis() {
     local output_file="${3:-codacy-results.sarif}"
     
     print_header "Running Codacy Code Analysis"
-    
+
+    # Load API configuration
+    load_api_config
+
     if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
         print_error "Configuration file not found. Run 'init' first."
         return 1

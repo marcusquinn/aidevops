@@ -11,6 +11,28 @@ This is the **SINGLE SOURCE OF TRUTH** for AI agents working on this repository.
 - **String Literals**: Major progress (75+ violations eliminated)
 - **Platform Ratings**: A+ Codacy, A-grade CodeFactor maintained
 
+## 🚨 **CRITICAL SECURITY REQUIREMENTS**
+
+### **🔐 API Key Security (ZERO TOLERANCE)**
+```bash
+# ✅ CORRECT: Use environment variables
+export CODACY_API_TOKEN="your_token_here"
+export SONAR_TOKEN="your_token_here"
+
+# ✅ CORRECT: GitHub Actions use secrets
+env:
+  CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+
+# ❌ NEVER: Hardcode API keys in code
+readonly API_TOKEN="abc123"  # SECURITY BREACH!
+```
+
+**MANDATORY RULES:**
+- **NEVER** commit API keys to repository
+- **ALWAYS** use environment variables or GitHub secrets
+- **IMMEDIATELY** revoke any exposed keys
+- **ALWAYS** add sensitive configs to .gitignore
+
 ## 🚨 **MANDATORY QUALITY REQUIREMENTS**
 
 ### **Shell Script Standards (NON-NEGOTIABLE)**

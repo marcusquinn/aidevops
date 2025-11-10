@@ -11,6 +11,7 @@ configs/101domains-config.json
 configs/mainwp-config.json
 configs/vaultwarden-config.json
 configs/code-audit-config.json
+configs/codacy-config.json
 configs/git-platforms-config.json
 configs/dns-config.json
 configs/localhost-config.json
