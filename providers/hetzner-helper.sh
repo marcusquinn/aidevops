@@ -15,6 +15,11 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly HELP_USAGE_INFO="$HELP_USAGE_INFO"
+
 # Common constants
 readonly AUTH_BEARER_PREFIX="Authorization: Bearer"
 
@@ -223,14 +228,14 @@ case "$command" in
         ;;
     "help"|"-h"|"--help"|"")
         echo "Hetzner Helper Script"
-        echo "Usage: $0 [command] [options]"
+        echo "$USAGE_COMMAND_OPTIONS"
         echo ""
         echo "Commands:"
         echo "  list                    - List all servers across projects"
         echo "  connect [server]        - Connect to server via SSH"
         echo "  exec [server] [command] - Execute command on server"
         echo "  generate-ssh-configs    - Generate SSH configurations"
-        echo "  help                    - Show this help message"
+        echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"
         echo "  $0 list"
@@ -240,7 +245,7 @@ case "$command" in
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
-        print_info "Use '$0 help' for usage information"
+        print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac

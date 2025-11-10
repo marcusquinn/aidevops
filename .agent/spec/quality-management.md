@@ -2,8 +2,11 @@
 
 ## Zero Technical Debt Methodology
 
+> **⚠️ IMPORTANT**: This document is supplementary to the [MASTER-GUIDE.md](../MASTER-GUIDE.md).
+> For any conflicts, the Master Guide takes precedence as the single source of truth.
+
 ### Overview
-This document defines the systematic approach for achieving and maintaining zero technical debt in the AI-Assisted DevOps Framework. Our methodology has successfully reduced SonarCloud issues from 349 to 42 (88% reduction) while enhancing functionality.
+This document provides detailed methodology and historical context for our systematic approach to achieving zero technical debt. Current status: SonarCloud issues reduced from 349 to 66 (81% reduction) while enhancing functionality.
 
 ### Core Principles
 

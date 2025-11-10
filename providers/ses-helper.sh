@@ -11,6 +11,10 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+
 print_info() {
     local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
@@ -500,7 +504,7 @@ show_help() {
     echo "  monitor [account]                  - Monitor email delivery"
     echo "  audit [account]                    - Audit SES configuration"
     echo "  debug [account] [email]            - Debug delivery issues"
-    echo "  help                               - Show this help"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
     echo ""
     echo "Examples:"
     echo "  $0 accounts"

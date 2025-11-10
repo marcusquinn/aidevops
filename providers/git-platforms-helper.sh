@@ -11,6 +11,10 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+
 # Common constants
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
@@ -505,7 +509,7 @@ show_help() {
     echo "  clone [platform] [account] [repo] [path]    - Clone repository"
     echo "  start-mcp [platform] [port]                 - Start MCP server for platform"
     echo "  audit [platform] [account]                  - Audit repositories"
-    echo "  help                                        - Show this help"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
     echo ""
     echo "Examples:"
     echo "  $0 platforms"

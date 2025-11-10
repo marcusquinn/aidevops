@@ -313,7 +313,7 @@ case "$command" in
         ;;
     "help"|"-h"|"--help"|"")
         echo "Coolify Helper Script"
-        echo "Usage: $0 [command] [options]"
+        echo "$USAGE_COMMAND_OPTIONS"
         echo ""
         echo "Server Management Commands:"
         echo "  list                        - List all configured Coolify servers"
@@ -345,7 +345,7 @@ case "$command" in
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
-        print_info "Use '$0 help' for usage information"
+        print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac

@@ -2,8 +2,11 @@
 
 ## Comprehensive Quality Management Tools
 
+> **⚠️ IMPORTANT**: This document is supplementary to the [MASTER-GUIDE.md](../MASTER-GUIDE.md).
+> For any conflicts, the Master Guide takes precedence as the single source of truth.
+
 ### Overview
-This guide documents the complete quality automation ecosystem for maintaining zero technical debt in the AI-Assisted DevOps Framework.
+This guide provides detailed documentation of our quality automation tools and their usage patterns.
 
 ### Core Quality Scripts
 

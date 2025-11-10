@@ -178,14 +178,14 @@ case "$command" in
         ;;
     "help"|"-h"|"--help"|"")
         echo "Hostinger Helper Script"
-        echo "Usage: $0 [command] [options]"
+        echo "$USAGE_COMMAND_OPTIONS"
         echo ""
         echo "Commands:"
         echo "  list              - List all configured sites"
         echo "  connect [site]    - Connect to site directory via SSH"
         echo "  exec [site] [cmd] - Execute command on site"
         echo "  api [endpoint]    - Make API call to Hostinger"
-        echo "  help              - Show this help message"
+        echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"
         echo "  $0 list"
@@ -195,7 +195,7 @@ case "$command" in
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
-        print_info "Use '$0 help' for usage information"
+        print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac

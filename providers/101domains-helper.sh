@@ -13,6 +13,10 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+
 # Common constants
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
@@ -570,7 +574,7 @@ show_help() {
     echo "  disable-privacy [account] [domain]          - Disable domain privacy"
     echo "  audit [account] [domain]                    - Audit domain configuration"
     echo "  monitor-expiration [account] [days]         - Monitor domain expiration"
-    echo "  help                                        - Show this help"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
     echo ""
     echo "Examples:"
     echo "  $0 accounts"

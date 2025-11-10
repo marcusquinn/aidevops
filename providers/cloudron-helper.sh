@@ -275,7 +275,7 @@ case "$command" in
         ;;
     "help"|"-h"|"--help"|"")
         echo "Cloudron Helper Script"
-        echo "Usage: $0 [command] [options]"
+        echo "$USAGE_COMMAND_OPTIONS"
         echo ""
         echo "Commands:"
         echo "  list                           - List all Cloudron servers"
@@ -285,7 +285,7 @@ case "$command" in
         echo "  exec-app [server] [app] [cmd]  - Execute command in app container"
         echo "  status [server]                - Check Cloudron server status"
         echo "  generate-ssh-configs           - Generate SSH configurations"
-        echo "  help                           - Show this help message"
+        echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Examples:"
         echo "  $0 list"
@@ -299,7 +299,7 @@ case "$command" in
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
-        print_info "Use '$0 help' for usage information"
+        print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac

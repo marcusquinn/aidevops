@@ -465,7 +465,7 @@ show_help() {
     echo "  generate-configs       - Generate configuration files from templates"
     echo "  test-connections       - Test service connections"
     echo "  full-setup             - Run complete setup wizard"
-    echo "  help                   - Show this help"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
     echo ""
     echo "Examples:"
     echo "  $0 assess"

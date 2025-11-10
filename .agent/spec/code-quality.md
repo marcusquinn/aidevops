@@ -1,17 +1,20 @@
 # Code Quality Standards - Multi-Platform Excellence
 
-## 🎯 **MANDATORY QUALITY COMPLIANCE**
+> **⚠️ IMPORTANT**: This document is supplementary to the [MASTER-GUIDE.md](../MASTER-GUIDE.md).
+> For any conflicts, the Master Guide takes precedence as the single source of truth.
 
-This framework maintains **PERFECT A-GRADE** ratings across multiple quality platforms:
-- **SonarCloud**: A-grade Security, Reliability, Maintainability
-- **CodeFactor**: A-grade overall (84.6% A-grade files)
+## 🎯 **CURRENT QUALITY STATUS**
+
+This framework maintains excellent ratings across multiple quality platforms:
+- **SonarCloud**: 66 issues (Target: <50) - 81% improvement from 349
+- **CodeFactor**: A-grade overall maintained
 - **Codacy**: Enterprise-grade compliance
-- **ShellCheck**: Zero violations across all scripts
+- **Critical Issues**: S7679 & S1481 = 0 (✅ RESOLVED)
 
-## 🚨 **CRITICAL QUALITY RULES (ZERO TOLERANCE)**
+## 🚨 **DETAILED QUALITY PATTERNS**
 
-### **S7682 - Return Statements (83 remaining)**
-**EVERY function MUST end with explicit return statement:**
+### **S7682 - Return Statements**
+**Reference**: See MASTER-GUIDE.md for current requirements
 
 ```bash
 # ✅ CORRECT - Always explicit return

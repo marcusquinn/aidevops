@@ -17,6 +17,10 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+
 # Common constants
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
@@ -600,7 +604,7 @@ show_help() {
     echo "  bulk-update-plugins [instance] [site_id1] [site_id2...] - Bulk plugin updates"
     echo "  monitor [instance]                         - Monitor all sites"
     echo "  audit-security [instance] [site_id]       - Comprehensive security audit"
-    echo "  help                                       - Show this help"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
     echo ""
     echo "Examples:"
     echo "  $0 instances"

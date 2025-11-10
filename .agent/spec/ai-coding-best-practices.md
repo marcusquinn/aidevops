@@ -2,8 +2,11 @@
 
 ## Framework-Specific Guidelines for AI Agents
 
+> **⚠️ IMPORTANT**: This document is supplementary to the [MASTER-GUIDE.md](../MASTER-GUIDE.md).
+> For any conflicts, the Master Guide takes precedence as the single source of truth.
+
 ### Overview
-This document provides specific guidelines for AI agents working on the AI-Assisted DevOps Framework to maintain our zero technical debt status and high-quality standards.
+This document provides detailed implementation examples and advanced patterns for AI agents working on the AI-Assisted DevOps Framework.
 
 ### Code Quality Requirements
 

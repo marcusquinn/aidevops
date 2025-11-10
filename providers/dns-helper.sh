@@ -10,7 +10,14 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Common message constants
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly HELP_USAGE_INFO="$HELP_USAGE_INFO"
+
 # Common constants
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 readonly AUTH_BEARER_PREFIX="Authorization: Bearer"
 
 print_info() {
@@ -194,14 +201,14 @@ cloudflare_dns() {
             print_info "Listing DNS records for $domain..."
             curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records" \
                 -H "$AUTH_BEARER_PREFIX $api_token" \
-                -H "Content-Type: application/json" | \
+                -H "$CONTENT_TYPE_JSON" | \
                 jq -r '.result[] | "\(.name) \(.type) \(.content) (TTL: \(.ttl))"'
             ;;
         "add")
             print_info "Adding DNS record: $record_name.$domain $record_type $record_value"
             curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records" \
                 -H "$AUTH_BEARER_PREFIX $api_token" \
-                -H "Content-Type: application/json" \
+                -H "$CONTENT_TYPE_JSON" \
                 --data "{\"type\":\"$record_type\",\"name\":\"$record_name\",\"content\":\"$record_value\",\"ttl\":300}"
             ;;
         "delete")
@@ -321,14 +328,14 @@ case "$command" in
         ;;
     "help"|"-h"|"--help"|"")
         echo "DNS Management Helper Script"
-        echo "Usage: $0 [command] [options]"
+        echo "$USAGE_COMMAND_OPTIONS"
         echo ""
         echo "Commands:"
         echo "  list                                    - List all DNS providers and domains"
         echo "  records [provider] [domain]             - List DNS records for domain"
         echo "  add [provider] [domain] [name] [type] [value] - Add DNS record"
         echo "  delete [provider] [domain] [name]       - Delete DNS record"
-        echo "  help                                    - Show this help message"
+        echo "  help                 - $HELP_SHOW_MESSAGE"
         echo ""
         echo "Cloudflare Multi-Account Support:"
         echo "  records cloudflare [account] [domain]   - List records for specific account"
@@ -352,7 +359,7 @@ case "$command" in
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
-        print_info "Use '$0 help' for usage information"
+        print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac

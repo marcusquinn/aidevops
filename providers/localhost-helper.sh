@@ -531,7 +531,7 @@ stop_localwp_mcp() {
         ;;
     "help"|"-h"|"--help"|"")
         echo "Localhost Development Helper Script"
-        echo "Usage: $0 [command] [options]"
+        echo "$USAGE_COMMAND_OPTIONS"
         echo ""
         echo "DNS & Proxy Commands:"
         echo "  setup-dns                           - Setup local DNS resolution for .local domains"
@@ -567,7 +567,7 @@ stop_localwp_mcp() {
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
-        print_info "Use '$0 help' for usage information"
+        print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
