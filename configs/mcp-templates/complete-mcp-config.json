@@ -1,0 +1,58 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest",
+        "--channel=canary",
+        "--headless=true",
+        "--isolated=true",
+        "--viewport=1920x1080"
+      ]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "playwright-mcp@latest",
+        "--browser=chromium",
+        "--headless=true"
+      ]
+    },
+    "cloudflare-browser": {
+      "command": "npx",
+      "args": [
+        "cloudflare-browser-rendering-mcp@latest"
+      ],
+      "env": {
+        "CLOUDFLARE_ACCOUNT_ID": "your_account_id_here",
+        "CLOUDFLARE_API_TOKEN": "your_api_token_here"
+      }
+    },
+    "ahrefs": {
+      "command": "npx",
+      "args": [
+        "ahrefs-mcp@latest"
+      ],
+      "env": {
+        "AHREFS_API_KEY": "your_ahrefs_api_key_here"
+      }
+    },
+    "perplexity": {
+      "command": "npx",
+      "args": [
+        "perplexity-mcp@latest"
+      ],
+      "env": {
+        "PERPLEXITY_API_KEY": "your_perplexity_api_key_here"
+      }
+    },
+    "nextjs-devtools": {
+      "command": "npx",
+      "args": [
+        "next-devtools-mcp@latest",
+        "--dev-mode=true",
+        "--hot-reload=true"
+      ]
+    }
+  }
+}

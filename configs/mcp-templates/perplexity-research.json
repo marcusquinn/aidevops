@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "perplexity": {
+      "command": "npx",
+      "args": [
+        "perplexity-mcp@latest"
+      ],
+      "env": {
+        "PERPLEXITY_API_KEY": "your_perplexity_api_key_here"
+      }
+    }
+  }
+}

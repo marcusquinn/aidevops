@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "cloudflare-browser": {
+      "command": "npx",
+      "args": [
+        "cloudflare-browser-rendering-mcp@latest"
+      ],
+      "env": {
+        "CLOUDFLARE_ACCOUNT_ID": "your_account_id_here",
+        "CLOUDFLARE_API_TOKEN": "your_api_token_here"
+      }
+    }
+  }
+}

@@ -2,24 +2,6 @@
   "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
   "runs": [
     {
-      "invocations": [
-        {
-          "executionSuccessful": true,
-          "toolConfigurationNotifications": [],
-          "toolExecutionNotifications": []
-        }
-      ],
-      "results": [],
-      "tool": {
-        "driver": {
-          "informationUri": "https://docs.pmd-code.org/latest/",
-          "name": "PMD",
-          "rules": null,
-          "version": "7.11.0"
-        }
-      }
-    },
-    {
       "results": [],
       "tool": {
         "driver": {
@@ -118,6 +100,24 @@
           "name": "Lizard",
           "rules": null,
           "version": "1.17.10"
+        }
+      }
+    },
+    {
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolConfigurationNotifications": [],
+          "toolExecutionNotifications": []
+        }
+      ],
+      "results": [],
+      "tool": {
+        "driver": {
+          "informationUri": "https://docs.pmd-code.org/latest/",
+          "name": "PMD",
+          "rules": null,
+          "version": "7.11.0"
         }
       }
     }

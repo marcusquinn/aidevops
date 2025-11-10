@@ -38,7 +38,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-25+-brightgreen.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops#-service-categories)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-8+-orange.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops#-mcp-server-integration)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-8+-orange.svg)](https://github.com/marcusquinn/ai-assisted-dev-ops#-advanced-mcp-server-integration)
 
 A comprehensive, production-ready framework that gives your AI assistant seamless access to your entire DevOps infrastructure including servers, hosting providers, security services, code auditing, and development tools through standardized helper scripts, SSH configurations, and MCP (Model Context Protocol) integrations.
 
@@ -630,8 +630,35 @@ alias coolify='~/git/ai-assistant-server-access/providers/coolify-helper.sh'
 
 ## 📚 **Advanced Features**
 
-### MCP Server Integration
+### 🚀 Advanced MCP Server Integration
 
+Our framework now includes **6 powerful MCP integrations** for comprehensive AI-assisted development:
+
+#### **🌐 Web & Browser Automation**
+- **Chrome DevTools MCP**: Browser automation, performance analysis, debugging
+- **Playwright MCP**: Cross-browser testing and automation
+- **Cloudflare Browser Rendering**: Server-side web scraping and rendering
+
+#### **🔍 SEO & Research Tools**
+- **Ahrefs MCP**: SEO analysis, backlink research, keyword data
+- **Perplexity MCP**: AI-powered web search and research
+
+#### **⚡ Development Tools**
+- **Next.js DevTools MCP**: Next.js development and debugging assistance
+
+#### **Quick Setup**
+```bash
+# Install all MCP integrations
+bash .agent/scripts/setup-mcp-integrations.sh all
+
+# Validate setup
+bash .agent/scripts/validate-mcp-integrations.sh
+
+# Install specific integration
+bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
+```
+
+#### **Legacy MCP Support**
 ```bash
 # Start LocalWP MCP server for WordPress database access
 ./providers/localhost-helper.sh start-mcp
@@ -639,6 +666,8 @@ alias coolify='~/git/ai-assistant-server-access/providers/coolify-helper.sh'
 # Configure in your AI assistant
 # See configs/mcp-servers-config.json.txt for full configuration
 ```
+
+📚 **[Complete MCP Integration Guide](docs/MCP-INTEGRATIONS.md)**
 
 ### SSH Management
 
