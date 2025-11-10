@@ -259,21 +259,31 @@ bash .agent/scripts/qlty-cli.sh fmt --all myorg
 bash .agent/scripts/qlty-cli.sh smells --all
 ```
 
-**🔐 Qlty Organization Token Management:**
+**🔐 Qlty Organization Configuration Management:**
 
 ```bash
-# Store token for organization
-bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME YOUR_TOKEN
+# Store Coverage Token for organization
+bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME YOUR_COVERAGE_TOKEN
+
+# Store Workspace ID for organization (optional but recommended)
+bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME-workspace-id YOUR_WORKSPACE_ID
 
 # List configured organizations
 bash .agent/scripts/setup-local-api-keys.sh list
 
-# Example: Store token for 'mycompany' organization
+# Example: Complete setup for 'mycompany' organization
 bash .agent/scripts/setup-local-api-keys.sh set qlty-mycompany qltcw_abc123...
+bash .agent/scripts/setup-local-api-keys.sh set qlty-mycompany-workspace-id 12345678-abcd-...
 
 # Use with specific organization
 bash .agent/scripts/qlty-cli.sh check 10 mycompany
 ```
+
+**📊 Current Qlty Configuration:**
+- **marcusquinn Organization**: ✅ Coverage Token + Workspace ID configured
+- **Coverage Token**: `REDACTED_COVERAGE_TOKEN` (securely stored)
+- **Workspace ID**: `REDACTED_WORKSPACE_ID` (securely stored)
+- **Ready for**: Additional organization tokens and workspace IDs
 
 **🌟 QLTY FEATURES:**
 
