@@ -148,6 +148,15 @@ install_clis() {
         ((total_count++))
         echo ""
     fi
+
+    if [[ "$target_cli" == "all" || "$target_cli" == "linters" ]]; then
+        print_info "Installing CodeFactor-inspired linters..."
+        if bash "$(dirname "$0")/linter-manager.sh" install-detected; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
     
     print_info "Installation Summary: $success_count/$total_count CLIs installed successfully"
     
@@ -350,6 +359,7 @@ show_help() {
     echo "  codacy-fix           - Codacy CLI with auto-fix (applies fixes when available)"
     echo "  sonar                - SonarScanner CLI for SonarQube Cloud analysis"
     echo "  qlty                 - Qlty CLI for universal linting and auto-formatting"
+    echo "  linters              - Linter Manager for CodeFactor-inspired multi-language linters"
     echo "  all                  - All quality CLIs (default)"
     echo ""
     echo "Examples:"
@@ -358,6 +368,7 @@ show_help() {
     echo "  $0 analyze coderabbit"
     echo "  $0 analyze codacy-fix      # Auto-fix issues when possible"
     echo "  $0 analyze qlty            # Universal linting and formatting"
+    echo "  $0 install linters         # Install CodeFactor-inspired linters"
     echo "  $0 analyze all"
     echo "  $0 status sonar"
     echo ""

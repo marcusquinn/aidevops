@@ -306,6 +306,29 @@ bash .agent/scripts/qlty-cli.sh check 10 mycompany
 - **Git-Aware**: Focus on newly introduced quality issues
 - **Performance**: Fast execution with caching and concurrency
 
+**🔧 Linter Manager - CodeFactor-Inspired Multi-Language Support:**
+```bash
+# Detect languages in current project
+bash .agent/scripts/linter-manager.sh detect
+
+# Install linters for detected languages
+bash .agent/scripts/linter-manager.sh install-detected
+
+# Install all supported linters
+bash .agent/scripts/linter-manager.sh install-all
+
+# Install linters for specific language
+bash .agent/scripts/linter-manager.sh install python
+```
+
+**📚 LINTER MANAGER FEATURES:**
+- **Language Detection**: Automatic project language identification
+- **CodeFactor Collection**: Based on CodeFactor's comprehensive linter set
+- **Multi-Language Support**: Python, JavaScript, CSS, Shell, Docker, YAML, Security
+- **Smart Installation**: Install only what your project needs
+- **Professional Tools**: pycodestyle, Pylint, ESLint, Stylelint, ShellCheck, Hadolint
+- **Reference Documentation**: Complete tool collection in RESOURCES.md
+
 **🔬 SonarScanner CLI - SonarQube Cloud Analysis:**
 
 ```bash
@@ -838,6 +861,7 @@ Include quality metrics in every commit:
 - **Qlty Universal**: `bash .agent/scripts/qlty-cli.sh check` 🌟 **70+ TOOLS**
 - **Qlty Auto-Format**: `bash .agent/scripts/qlty-cli.sh fmt --all` ⚡ **UNIVERSAL FORMATTING**
 - **SonarScanner**: `bash .agent/scripts/sonarscanner-cli.sh analyze`
+- **Linter Manager**: `bash .agent/scripts/linter-manager.sh install-detected` 🔧 **CODEFACTOR-INSPIRED**
 
 #### **🚀 AUTOMATED FIX CAPABILITIES:**
 
