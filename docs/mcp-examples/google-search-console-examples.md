@@ -3,6 +3,7 @@
 ## 🎯 **Search Performance Analysis**
 
 ### **Query Performance Metrics**
+
 ```javascript
 // Get search performance data for specific queries
 await googleSearchConsole.getSearchAnalytics({
@@ -15,6 +16,7 @@ await googleSearchConsole.getSearchAnalytics({
 ```
 
 ### **Top Performing Pages**
+
 ```javascript
 // Analyze top performing pages by clicks
 await googleSearchConsole.getTopPages({
@@ -29,6 +31,7 @@ await googleSearchConsole.getTopPages({
 ## 🔍 **Keyword Research & Analysis**
 
 ### **Top Search Queries**
+
 ```javascript
 // Get top search queries driving traffic
 await googleSearchConsole.getTopQueries({
@@ -41,6 +44,7 @@ await googleSearchConsole.getTopQueries({
 ```
 
 ### **Query Position Tracking**
+
 ```javascript
 // Track specific keyword positions over time
 await googleSearchConsole.trackKeywordPositions({
@@ -55,6 +59,7 @@ await googleSearchConsole.trackKeywordPositions({
 ## 📱 **Device & Geographic Analysis**
 
 ### **Device Performance Breakdown**
+
 ```javascript
 // Analyze performance across different devices
 await googleSearchConsole.getDevicePerformance({
@@ -67,6 +72,7 @@ await googleSearchConsole.getDevicePerformance({
 ```
 
 ### **Geographic Performance**
+
 ```javascript
 // Get performance data by country
 await googleSearchConsole.getGeographicPerformance({
@@ -81,6 +87,7 @@ await googleSearchConsole.getGeographicPerformance({
 ## 🛠️ **Technical SEO Monitoring**
 
 ### **Index Coverage Analysis**
+
 ```javascript
 // Check index coverage status
 await googleSearchConsole.getIndexCoverage({
@@ -91,6 +98,7 @@ await googleSearchConsole.getIndexCoverage({
 ```
 
 ### **Core Web Vitals Monitoring**
+
 ```javascript
 // Monitor Core Web Vitals performance
 await googleSearchConsole.getCoreWebVitals({
@@ -103,6 +111,7 @@ await googleSearchConsole.getCoreWebVitals({
 ## 📈 **Competitive Analysis**
 
 ### **Search Appearance Features**
+
 ```javascript
 // Analyze search appearance features (rich snippets, etc.)
 await googleSearchConsole.getSearchAppearance({
@@ -114,6 +123,7 @@ await googleSearchConsole.getSearchAppearance({
 ```
 
 ### **Click-Through Rate Optimization**
+
 ```javascript
 // Identify pages with high impressions but low CTR
 await googleSearchConsole.getCTROpportunities({
@@ -129,6 +139,7 @@ await googleSearchConsole.getCTROpportunities({
 ## 🚨 **Issue Detection & Monitoring**
 
 ### **Manual Actions Check**
+
 ```javascript
 // Check for manual actions against the site
 await googleSearchConsole.getManualActions({
@@ -137,6 +148,7 @@ await googleSearchConsole.getManualActions({
 ```
 
 ### **Security Issues Monitoring**
+
 ```javascript
 // Monitor security issues
 await googleSearchConsole.getSecurityIssues({
@@ -147,6 +159,7 @@ await googleSearchConsole.getSecurityIssues({
 ## 📊 **Reporting & Analytics**
 
 ### **Monthly Performance Report**
+
 ```javascript
 // Generate comprehensive monthly report
 await googleSearchConsole.generateMonthlyReport({
@@ -159,6 +172,7 @@ await googleSearchConsole.generateMonthlyReport({
 ```
 
 ### **Competitor Comparison**
+
 ```javascript
 // Compare performance with competitor keywords
 await googleSearchConsole.compareWithCompetitors({
@@ -173,6 +187,7 @@ await googleSearchConsole.compareWithCompetitors({
 ## 🔧 **Setup Requirements**
 
 ### **Google Cloud Console Setup**
+
 1. Create a Google Cloud Project
 2. Enable the Search Console API
 3. Create a Service Account
@@ -180,11 +195,13 @@ await googleSearchConsole.compareWithCompetitors({
 5. Set `GOOGLE_APPLICATION_CREDENTIALS` environment variable
 
 ### **Search Console Property Verification**
+
 1. Verify your website in Google Search Console
 2. Grant access to your service account email
 3. Ensure proper permissions for data access
 
 ### **Environment Configuration**
+
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 export GSC_SITE_URL="https://your-website.com"

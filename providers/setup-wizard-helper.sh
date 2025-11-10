@@ -25,9 +25,15 @@ RED='\033[0;31m'
 PURPLE='\033[0;35m'
 NC='\033[0m' # No Color
 
-# Error message constants
+# Error message constants (used in help functions)
 readonly HELP_MESSAGE_SUFFIX="Show this help message"
 readonly USAGE_PREFIX="Usage:"
+
+# Function to display help message
+show_help() {
+    echo "$USAGE_PREFIX $0 [command]"
+    echo "  help - $HELP_MESSAGE_SUFFIX"
+}
 
 # String literal constants
 readonly PROMPT_CHOICE_1_4="Enter your choice (1-4): "

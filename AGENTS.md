@@ -381,23 +381,27 @@ bash .agent/scripts/quality-cli-manager.sh status all
 **API Key Setup (Secure Local Configuration):**
 
 #### **🔧 Code Quality & Analysis APIs**
+
 - **CodeRabbit**: Get from https://app.coderabbit.ai → Settings → API Keys
 - **Codacy**: Get from https://app.codacy.com → Account → API Tokens
 - **SonarCloud**: Get from https://sonarcloud.io/account/security/
 - **Qlty**: Get from https://qlty.sh → Account → API Keys
 
 #### **🔍 SEO & Research APIs**
+
 - **Ahrefs**: Get from https://ahrefs.com/api → API Access
 - **Google Search Console**: Setup via Google Cloud Console → Service Account
 - **Perplexity**: Get from https://docs.perplexity.ai/ → API Keys
 
 #### **🌐 Infrastructure & Hosting APIs**
+
 - **Hostinger**: Get from Hostinger Panel → API Access
 - **Hetzner**: Get from Hetzner Cloud Console → API Tokens
 - **Cloudflare**: Get from Cloudflare Dashboard → API Tokens
 - **AWS (Route 53/SES)**: Get from AWS IAM → Access Keys
 
 #### **🔐 Security Best Practices**
+
 - **Never commit API keys** - Use local configuration only
 - **Local storage**: Secure permissions (600) in user config directories
 - **Minimal permissions**: Scope API keys to required operations only
@@ -619,16 +623,19 @@ ai-assisted-dev-ops/
 ### **Development & Local (9 MCP integrations)**
 
 #### **🌐 Web & Browser Automation MCPs**
+
 - **Chrome DevTools MCP**: Browser automation, performance analysis, debugging
 - **Playwright MCP**: Cross-browser testing and automation
 - **Cloudflare Browser Rendering MCP**: Server-side web scraping
 
 #### **🔍 SEO & Research MCPs**
+
 - **Ahrefs MCP**: SEO analysis, backlink research, keyword data
 - **Perplexity MCP**: AI-powered web search and research
 - **Google Search Console MCP**: Search performance data and insights
 
 #### **⚡ Development & Documentation MCPs**
+
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 - **Context7 MCP**: Real-time documentation access for development libraries
 - **LocalWP MCP**: Direct WordPress database access for local development

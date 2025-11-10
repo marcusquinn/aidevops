@@ -53,10 +53,10 @@ readonly AUTH_BEARER_PREFIX="Authorization: Bearer"
         fi
         
         # Replace occurrences - handle different patterns
-        sed -i '' 's/"Authorization: Bearer \$api_token"/"$AUTH_BEARER_PREFIX $api_token"/g' "$file"
-        sed -i '' 's/"Authorization: Bearer \${api_token}"/"$AUTH_BEARER_PREFIX ${api_token}"/g' "$file"
-        sed -i '' 's/"Authorization: Bearer \$token"/"$AUTH_BEARER_PREFIX $token"/g' "$file"
-        sed -i '' 's/"Authorization: Bearer \${token}"/"$AUTH_BEARER_PREFIX ${token}"/g' "$file"
+        sed -i '' "s/\"Authorization: Bearer \\\$api_token\"/\"\$AUTH_BEARER_PREFIX \$api_token\"/g" "$file"
+        sed -i '' "s/\"Authorization: Bearer \\\${api_token}\"/\"\$AUTH_BEARER_PREFIX \${api_token}\"/g" "$file"
+        sed -i '' "s/\"Authorization: Bearer \\\$token\"/\"\$AUTH_BEARER_PREFIX \$token\"/g" "$file"
+        sed -i '' "s/\"Authorization: Bearer \\\${token}\"/\"\$AUTH_BEARER_PREFIX \${token}\"/g" "$file"
         
         # Verify
         local new_count

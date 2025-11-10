@@ -100,7 +100,7 @@ execute_cli_command() {
     fi
     
     print_info "Executing: $cli_name $command $args"
-    bash "$script" "$command" $args
+    bash "$script" "$command" "$args"
     return $?
 }
 
@@ -238,7 +238,7 @@ analyze_with_clis() {
 
     if [[ "$target_cli" == "all" || "$target_cli" == "coderabbit" ]]; then
         print_info "Running CodeRabbit analysis..."
-        if execute_cli_command "coderabbit" "review" $args; then
+        if execute_cli_command "coderabbit" "review" "$args"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -247,7 +247,7 @@ analyze_with_clis() {
 
     if [[ "$target_cli" == "all" || "$target_cli" == "codacy" ]]; then
         print_info "Running Codacy analysis..."
-        if execute_cli_command "codacy" "analyze" $args; then
+        if execute_cli_command "codacy" "analyze" "$args"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -266,7 +266,7 @@ analyze_with_clis() {
 
     if [[ "$target_cli" == "all" || "$target_cli" == "sonar" ]]; then
         print_info "Running SonarQube analysis..."
-        if execute_cli_command "sonar" "analyze" $args; then
+        if execute_cli_command "sonar" "analyze" "$args"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -280,7 +280,7 @@ analyze_with_clis() {
         if [[ -n "$QLTY_ORG" ]]; then
             qlty_args="$args $QLTY_ORG"
         fi
-        if execute_cli_command "qlty" "check" $qlty_args; then
+        if execute_cli_command "qlty" "check" "$qlty_args"; then
             ((success_count++))
         fi
         ((total_count++))

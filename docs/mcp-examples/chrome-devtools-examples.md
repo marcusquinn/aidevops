@@ -3,6 +3,7 @@
 ## 🎯 **Performance Analysis**
 
 ### **Lighthouse Performance Audit**
+
 ```javascript
 // Request a Lighthouse audit for performance optimization
 await chromeDevTools.lighthouse({
@@ -13,6 +14,7 @@ await chromeDevTools.lighthouse({
 ```
 
 ### **Core Web Vitals Monitoring**
+
 ```javascript
 // Monitor Core Web Vitals in real-time
 await chromeDevTools.measureWebVitals({
@@ -25,6 +27,7 @@ await chromeDevTools.measureWebVitals({
 ## 🕷️ **Web Scraping & Data Extraction**
 
 ### **Extract Page Content**
+
 ```javascript
 // Extract structured data from a webpage
 await chromeDevTools.extractData({
@@ -38,6 +41,7 @@ await chromeDevTools.extractData({
 ```
 
 ### **Screenshot Generation**
+
 ```javascript
 // Generate full-page screenshots
 await chromeDevTools.screenshot({
@@ -51,6 +55,7 @@ await chromeDevTools.screenshot({
 ## 🐛 **Debugging & Testing**
 
 ### **Console Log Analysis**
+
 ```javascript
 // Capture and analyze console errors
 await chromeDevTools.captureConsole({
@@ -61,6 +66,7 @@ await chromeDevTools.captureConsole({
 ```
 
 ### **Network Request Monitoring**
+
 ```javascript
 // Monitor network requests and responses
 await chromeDevTools.monitorNetwork({
@@ -74,6 +80,7 @@ await chromeDevTools.monitorNetwork({
 ## 📱 **Mobile Testing**
 
 ### **Device Emulation**
+
 ```javascript
 // Test mobile responsiveness
 await chromeDevTools.emulateDevice({
@@ -84,6 +91,7 @@ await chromeDevTools.emulateDevice({
 ```
 
 ### **Touch Event Testing**
+
 ```javascript
 // Simulate touch interactions
 await chromeDevTools.simulateTouch({
@@ -98,6 +106,7 @@ await chromeDevTools.simulateTouch({
 ## 🔍 **SEO Analysis**
 
 ### **Meta Tag Extraction**
+
 ```javascript
 // Extract SEO-relevant meta tags
 await chromeDevTools.extractSEO({
@@ -107,6 +116,7 @@ await chromeDevTools.extractSEO({
 ```
 
 ### **Structured Data Validation**
+
 ```javascript
 // Validate structured data markup
 await chromeDevTools.validateStructuredData({
@@ -118,6 +128,7 @@ await chromeDevTools.validateStructuredData({
 ## 🚀 **Automation Workflows**
 
 ### **Multi-Page Analysis**
+
 ```javascript
 // Analyze multiple pages in sequence
 const urls = [
@@ -137,6 +148,7 @@ for (const url of urls) {
 ```
 
 ### **A/B Testing Support**
+
 ```javascript
 // Compare two versions of a page
 await chromeDevTools.comparePages({
@@ -149,6 +161,7 @@ await chromeDevTools.comparePages({
 ## 🎨 **Visual Testing**
 
 ### **Visual Regression Testing**
+
 ```javascript
 // Capture baseline and compare screenshots
 await chromeDevTools.visualRegression({
@@ -160,6 +173,7 @@ await chromeDevTools.visualRegression({
 ```
 
 ### **CSS Coverage Analysis**
+
 ```javascript
 // Analyze unused CSS
 await chromeDevTools.analyzeCSSCoverage({

@@ -109,7 +109,8 @@ connect_server() {
     fi
     
     # Find server across all projects
-    local server_info=$(get_server_details "$server_name")
+    local server_info
+    server_info=$(get_server_details "$server_name")
     if [[ -z "$server_info" ]]; then
         print_error "Server not found: $server_name"
         exit 1
@@ -132,7 +133,8 @@ exec_on_server() {
         exit 1
     fi
     
-    local server_info=$(get_server_details "$server_name")
+    local server_info
+    server_info=$(get_server_details "$server_name")
     if [[ -z "$server_info" ]]; then
         print_error "Server not found: $server_name"
         exit 1

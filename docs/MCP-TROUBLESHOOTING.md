@@ -5,6 +5,7 @@
 ### **Chrome DevTools MCP Issues**
 
 #### **Issue: Chrome not launching**
+
 ```bash
 # Solution: Install Chrome Canary
 brew install --cask google-chrome-canary
@@ -14,6 +15,7 @@ npx chrome-devtools-mcp@latest --channel=stable
 ```
 
 #### **Issue: Permission denied errors**
+
 ```bash
 # Solution: Fix permissions
 sudo chown -R $(whoami) ~/.cache/puppeteer
@@ -21,6 +23,7 @@ chmod +x ~/.cache/puppeteer/*/chrome-*/chrome
 ```
 
 #### **Issue: Headless mode not working**
+
 ```bash
 # Solution: Enable headless mode explicitly
 npx chrome-devtools-mcp@latest --headless=true --no-sandbox
@@ -29,6 +32,7 @@ npx chrome-devtools-mcp@latest --headless=true --no-sandbox
 ### **Playwright MCP Issues**
 
 #### **Issue: Browsers not installed**
+
 ```bash
 # Solution: Install all browsers
 npx playwright install
@@ -38,12 +42,14 @@ npx playwright install chromium
 ```
 
 #### **Issue: Browser launch timeout**
+
 ```bash
 # Solution: Increase timeout and disable sandbox
 npx playwright-mcp@latest --timeout=60000 --no-sandbox
 ```
 
 #### **Issue: WebKit not working on Linux**
+
 ```bash
 # Solution: Install WebKit dependencies
 sudo apt-get install libwoff1 libopus0 libwebp6 libwebpdemux2 libenchant1c2a libgudev-1.0-0 libsecret-1-0 libhyphen0 libgdk-pixbuf2.0-0 libegl1 libnotify4 libxss1 libasound2
@@ -52,6 +58,7 @@ sudo apt-get install libwoff1 libopus0 libwebp6 libwebpdemux2 libenchant1c2a lib
 ### **API-Based MCP Issues**
 
 #### **Issue: Ahrefs API authentication failed**
+
 ```bash
 # Solution: Verify API key
 export AHREFS_API_KEY="your_actual_api_key"
@@ -59,12 +66,14 @@ curl -H "Authorization: Bearer $AHREFS_API_KEY" https://apiv2.ahrefs.com/v2/subs
 ```
 
 #### **Issue: Perplexity API rate limiting**
+
 ```bash
 # Solution: Implement rate limiting
 export PERPLEXITY_RATE_LIMIT="10" # requests per minute
 ```
 
 #### **Issue: Cloudflare API errors**
+
 ```bash
 # Solution: Verify credentials
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
@@ -76,6 +85,7 @@ curl -X GET "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_I
 ## 🔍 **Debugging Steps**
 
 ### **1. Check MCP Server Status**
+
 ```bash
 # Test if MCP server is responding
 npx chrome-devtools-mcp@latest --test-connection
@@ -85,6 +95,7 @@ tail -f /tmp/chrome-mcp.log
 ```
 
 ### **2. Validate Configuration**
+
 ```bash
 # Validate JSON configuration
 python -m json.tool configs/mcp-templates/complete-mcp-config.json
@@ -94,6 +105,7 @@ npx chrome-devtools-mcp@latest --config-test
 ```
 
 ### **3. Network Connectivity**
+
 ```bash
 # Test network access
 curl -I https://api.ahrefs.com
@@ -102,6 +114,7 @@ curl -I https://api.cloudflare.com
 ```
 
 ### **4. Environment Variables**
+
 ```bash
 # Check environment variables
 echo $AHREFS_API_KEY
@@ -113,6 +126,7 @@ echo $CLOUDFLARE_API_TOKEN
 ## 🛠️ **Performance Optimization**
 
 ### **Chrome DevTools Optimization**
+
 ```json
 {
   "chrome-devtools": {
@@ -128,6 +142,7 @@ echo $CLOUDFLARE_API_TOKEN
 ```
 
 ### **Playwright Optimization**
+
 ```json
 {
   "playwright": {
@@ -144,6 +159,7 @@ echo $CLOUDFLARE_API_TOKEN
 ## 📊 **Monitoring & Logging**
 
 ### **Enable Debug Logging**
+
 ```bash
 # Chrome DevTools debug
 DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest
@@ -153,6 +169,7 @@ DEBUG=pw:api npx playwright-mcp@latest
 ```
 
 ### **Log File Locations**
+
 ```text
 Chrome DevTools: /tmp/chrome-mcp.log
 Playwright: /tmp/playwright-mcp.log
@@ -160,6 +177,7 @@ API MCPs: ~/.mcp/logs/
 ```
 
 ### **Health Check Script**
+
 ```bash
 #!/bin/bash
 # MCP Health Check
@@ -190,6 +208,7 @@ fi
 ## 🔄 **Recovery Procedures**
 
 ### **Reset MCP Configuration**
+
 ```bash
 # Backup current config
 cp ~/.config/mcp/config.json ~/.config/mcp/config.json.backup
@@ -200,6 +219,7 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 ```
 
 ### **Clear Cache and Restart**
+
 ```bash
 # Clear browser cache
 rm -rf ~/.cache/puppeteer
@@ -210,6 +230,7 @@ npx playwright install --force
 ```
 
 ### **Emergency Fallback**
+
 ```bash
 # Use basic configuration without advanced features
 npx chrome-devtools-mcp@latest --safe-mode
@@ -219,6 +240,7 @@ npx playwright-mcp@latest --basic-mode
 ## 📞 **Getting Help**
 
 ### **Log Collection for Support**
+
 ```bash
 # Collect diagnostic information
 bash .agent/scripts/collect-mcp-diagnostics.sh
@@ -227,11 +249,13 @@ bash .agent/scripts/collect-mcp-diagnostics.sh
 ```
 
 ### **Community Resources**
+
 - [MCP GitHub Discussions](https://github.com/modelcontextprotocol/discussions)
 - [Chrome DevTools MCP Issues](https://github.com/chromedevtools/chrome-devtools-mcp/issues)
 - [Playwright Community](https://playwright.dev/community)
 
 ### **Professional Support**
+
 - Ahrefs API Support: [support@ahrefs.com](mailto:support@ahrefs.com)
 - Cloudflare Support: [Cloudflare Support Portal](https://support.cloudflare.com/)
 - Perplexity API: [Perplexity Documentation](https://docs.perplexity.ai/)
