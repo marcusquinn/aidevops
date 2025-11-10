@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nextjs-devtools": {
+      "command": "npx",
+      "args": [
+        "next-devtools-mcp@latest",
+        "--dev-mode=true",
+        "--hot-reload=true"
+      ]
+    }
+  }
+}
