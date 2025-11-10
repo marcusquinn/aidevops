@@ -227,6 +227,16 @@ analyze_with_clis() {
         echo ""
     fi
 
+    # Add auto-fix option for Codacy
+    if [[ "$target_cli" == "codacy-fix" ]]; then
+        print_info "Running Codacy analysis with auto-fix..."
+        if execute_cli_command "codacy" "analyze" "--fix"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
     if [[ "$target_cli" == "all" || "$target_cli" == "sonar" ]]; then
         print_info "Running SonarQube analysis..."
         if execute_cli_command "sonar" "analyze" $args; then
@@ -290,6 +300,7 @@ show_help() {
     echo "CLIs:"
     echo "  coderabbit           - CodeRabbit CLI for AI-powered code review"
     echo "  codacy               - Codacy CLI v2 for comprehensive code analysis"
+    echo "  codacy-fix           - Codacy CLI with auto-fix (applies fixes when available)"
     echo "  sonar                - SonarScanner CLI for SonarQube Cloud analysis"
     echo "  all                  - All quality CLIs (default)"
     echo ""
@@ -297,6 +308,7 @@ show_help() {
     echo "  $0 install all"
     echo "  $0 init codacy"
     echo "  $0 analyze coderabbit"
+    echo "  $0 analyze codacy-fix      # Auto-fix issues when possible"
     echo "  $0 analyze all"
     echo "  $0 status sonar"
     echo ""

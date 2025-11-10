@@ -217,7 +217,8 @@ run_codacy_analysis() {
     local tool="$1"
     local output_format="${2:-sarif}"
     local output_file="${3:-codacy-results.sarif}"
-    
+    local auto_fix="$4"
+
     print_header "Running Codacy Code Analysis"
 
     # Load API configuration
@@ -227,22 +228,27 @@ run_codacy_analysis() {
         print_error "Configuration file not found. Run 'init' first."
         return 1
     fi
-    
+
     # Build analysis command
     local cmd="codacy-cli analyze"
-    
-    if [[ -n "$tool" ]]; then
+
+    # Handle auto-fix flag
+    if [[ "$tool" == "--fix" ]]; then
+        cmd="$cmd --fix"
+        print_info "Auto-fix enabled: Will apply fixes when available"
+        print_info "Running analysis with all configured tools"
+    elif [[ -n "$tool" ]]; then
         cmd="$cmd --tool $tool"
         print_info "Running analysis with tool: $tool"
     else
         print_info "Running analysis with all configured tools"
     fi
-    
+
     if [[ "$output_format" == "sarif" ]]; then
         cmd="$cmd --format sarif --output $output_file"
         print_info "Output format: SARIF → $output_file"
     fi
-    
+
     # Execute analysis
     print_info "Executing: $cmd"
     eval "$cmd"
@@ -361,7 +367,7 @@ show_help() {
     echo "  install              - Install Codacy CLI v2"
     echo "  init                 - Initialize project configuration"
     echo "  install-tools        - Install tools and runtimes"
-    echo "  analyze [tool]       - Run code analysis (optionally with specific tool)"
+    echo "  analyze [tool|--fix] - Run code analysis (optionally with specific tool or auto-fix)"
     echo "  upload [sarif] [commit] - Upload SARIF results to Codacy"
     echo "  status               - Check CLI status and configuration"
     echo "  help                 - Show this help message"
@@ -371,6 +377,7 @@ show_help() {
     echo "  $0 init"
     echo "  $0 analyze"
     echo "  $0 analyze eslint"
+    echo "  $0 analyze --fix          # Auto-fix issues when possible"
     echo "  $0 upload results.sarif abc123"
     echo ""
     echo "Environment Variables:"
