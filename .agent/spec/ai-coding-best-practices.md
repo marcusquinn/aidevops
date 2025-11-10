@@ -158,7 +158,7 @@ bash .agent/scripts/sonarscanner-cli.sh analyze
 
 **Include quality metrics in commit messages:**
 
-```
+```text
 🔧 FEATURE: Enhanced SSH functionality with port support
 
 ✅ QUALITY IMPROVEMENTS:

@@ -3,7 +3,7 @@
 # Mass fix script to add return statements to all functions that need them
 # Based on SonarCloud S7682 analysis
 
-cd providers
+cd providers || exit
 
 # Files and their function ending line numbers that need return statements
 declare -A FILES_LINES=(
@@ -45,7 +45,7 @@ for file in "${!FILES_LINES[@]}"; do
         lines="${FILES_LINES[$file]}"
         
         # Process lines in reverse order to avoid line number shifts
-        for line_num in $(echo $lines | tr ' ' '\n' | sort -nr); do
+        for line_num in $(echo "$lines" | tr ' ' '\n' | sort -nr); do
             add_return_statement "$file" "$line_num"
         done
     else
