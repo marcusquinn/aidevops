@@ -66,6 +66,7 @@ bash providers/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,html}"
 ## 📄 **Supported Formats**
 
 ### **📋 Document Formats**
+
 - **Microsoft Word**: `.docx`, `.doc`
 - **PDF**: `.pdf` (requires pdftotext)
 - **OpenDocument**: `.odt`
@@ -73,24 +74,28 @@ bash providers/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,html}"
 - **LaTeX**: `.tex`, `.latex`
 
 ### **🌐 Web & eBook Formats**
+
 - **HTML**: `.html`, `.htm`
 - **EPUB**: `.epub`
 - **MediaWiki**: `.mediawiki`
 - **TWiki**: `.twiki`
 
 ### **📊 Data Formats**
+
 - **JSON**: `.json`
 - **CSV**: `.csv`
 - **TSV**: `.tsv`
 - **XML**: `.xml`
 
 ### **📝 Markup Formats**
+
 - **reStructuredText**: `.rst`
 - **Org-mode**: `.org`
 - **Textile**: `.textile`
 - **OPML**: `.opml`
 
 ### **📊 Presentation Formats**
+
 - **PowerPoint**: `.pptx`, `.ppt` (limited support)
 - **Excel**: `.xlsx`, `.xls` (limited support)
 
@@ -198,6 +203,7 @@ The helper script automatically:
 ### **Common Issues**
 
 #### **PDF Conversion Problems**
+
 ```bash
 # Install PDF support
 brew install poppler          # macOS
@@ -205,12 +211,14 @@ sudo apt install poppler-utils # Ubuntu
 ```
 
 #### **Encoding Issues**
+
 ```bash
 # Specify input encoding
 pandoc -f html -t markdown --from=html+smart input.html -o output.md
 ```
 
 #### **Large File Processing**
+
 ```bash
 # For large files, consider splitting or using specific options
 pandoc --verbose input.pdf -o output.md
