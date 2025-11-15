@@ -9,18 +9,21 @@ The Agno integration brings enterprise-grade AI agent capabilities to the AI Dev
 ## 🌟 **Key Features**
 
 ### **🔒 Privacy & Security**
+
 - **Complete Data Ownership**: All processing happens locally
 - **Zero Data Transmission**: No conversations sent to external services
 - **Private by Default**: Enterprise-grade security and privacy
 - **Your Infrastructure**: Runs entirely in your environment
 
 ### **🚀 Agent Capabilities**
+
 - **Multi-Agent Framework**: Deploy specialized AI agents for different tasks
 - **Production Runtime**: FastAPI-based server for reliable operation
 - **Real-time Chat Interface**: Beautiful web UI for agent interaction
 - **Tool Integration**: Extensive toolkit for DevOps operations
 
 ### **🛠️ DevOps-Optimized Agents**
+
 - **DevOps Assistant**: Infrastructure automation and management
 - **Code Review Agent**: Quality analysis and best practices
 - **Documentation Agent**: Technical writing and documentation
@@ -128,9 +131,11 @@ PORT=3000
 ## 🤖 **Available Agents**
 
 ### **1. DevOps Assistant**
+
 **Specialization**: Infrastructure automation and management
 
 **Capabilities**:
+
 - Infrastructure automation and management
 - CI/CD pipeline optimization
 - Cloud platform integration
@@ -139,15 +144,18 @@ PORT=3000
 - Container orchestration
 
 **Tools**:
+
 - Web search (DuckDuckGo)
 - File operations
 - Shell commands (safe mode)
 - Python scripting (safe mode)
 
 ### **2. Code Review Assistant**
+
 **Specialization**: Code quality analysis and best practices
 
 **Capabilities**:
+
 - Code quality and best practices analysis
 - Security vulnerability detection
 - Performance optimization opportunities
@@ -155,13 +163,16 @@ PORT=3000
 - Testing coverage and strategies
 
 **Tools**:
+
 - File operations
 - Python code analysis
 
 ### **3. Documentation Assistant**
+
 **Specialization**: Technical writing and documentation
 
 **Capabilities**:
+
 - API documentation and guides
 - Architecture documentation
 - User manuals and tutorials
@@ -169,6 +180,7 @@ PORT=3000
 - Runbooks and operational procedures
 
 **Tools**:
+
 - File operations
 - Web search for research
 - Document generation
@@ -307,6 +319,7 @@ tail -f ~/.aidevops/agent-ui/.next/trace
 ### **Common Issues**
 
 #### **Port Conflicts**
+
 ```bash
 # Check what's using ports
 lsof -i :8000  # AgentOS
@@ -318,6 +331,7 @@ export AGENT_UI_PORT=3001
 ```
 
 #### **API Key Issues**
+
 ```bash
 # Verify API key configuration
 cd ~/.aidevops/agno
@@ -326,6 +340,7 @@ python -c "import os; print('OPENAI_API_KEY:', 'SET' if os.getenv('OPENAI_API_KE
 ```
 
 #### **Permission Issues**
+
 ```bash
 # Fix script permissions
 chmod +x ~/.aidevops/scripts/*.sh
@@ -336,6 +351,7 @@ chmod +x ~/.aidevops/agent-ui/start_agent_ui.sh
 ### **Performance Optimization**
 
 #### **Memory Usage**
+
 ```bash
 # Monitor memory usage
 ps aux | grep -E "(python.*agent_os|npm.*run.*dev)"
@@ -346,6 +362,7 @@ export PYTHONDONTWRITEBYTECODE=1
 ```
 
 #### **Response Speed**
+
 ```python
 # Optimize model configuration
 model = OpenAIChat(
@@ -359,18 +376,21 @@ model = OpenAIChat(
 ## 🌟 **Best Practices**
 
 ### **Security**
+
 - **API Keys**: Store in `.env` files, never commit to version control
 - **Network**: Run on localhost only for development
 - **Access**: Use authentication for production deployments
 - **Updates**: Keep Agno and dependencies updated
 
 ### **Performance**
+
 - **Model Selection**: Use appropriate models for tasks (gpt-4o-mini for speed)
 - **Tool Limits**: Enable safe mode for shell and Python tools
 - **Memory**: Monitor memory usage with multiple agents
 - **Caching**: Enable response caching for development
 
 ### **Development**
+
 - **Testing**: Test agents individually before integration
 - **Logging**: Enable debug mode during development
 - **Monitoring**: Use status scripts to monitor services
@@ -379,6 +399,7 @@ model = OpenAIChat(
 ## 🔗 **Integration Examples**
 
 ### **With Pandoc Conversion**
+
 ```bash
 # Convert documents for agent processing
 bash providers/pandoc-helper.sh batch ./project-docs ./agent-ready
@@ -388,6 +409,7 @@ bash providers/pandoc-helper.sh batch ./project-docs ./agent-ready
 ```
 
 ### **With Version Management**
+
 ```bash
 # Get current version for agent context
 VERSION=$(bash .agent/scripts/version-manager.sh get)
@@ -397,6 +419,7 @@ VERSION=$(bash .agent/scripts/version-manager.sh get)
 ```
 
 ### **With Quality Monitoring**
+
 ```bash
 # Ask agent to review quality reports
 # "Review the latest SonarCloud analysis and suggest improvements"
