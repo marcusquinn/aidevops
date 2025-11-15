@@ -1,0 +1,92 @@
+{
+  "name": "DSPy Configuration Template",
+  "description": "Configuration for DSPy prompt optimization and language model integration",
+  "version": "1.0.0",
+  "environment": {
+    "python_env_path": "../python-env/dspy-env",
+    "virtual_env_activation": "source ../python-env/dspy-env/bin/activate",
+    "requirements_file": "../requirements.txt"
+  },
+  "language_models": {
+    "default_provider": "openai",
+    "providers": {
+      "openai": {
+        "api_key": "YOUR_OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "models": {
+          "gpt-4": "gpt-4",
+          "gpt-4-turbo": "gpt-4-turbo-preview",
+          "gpt-3.5-turbo": "gpt-3.5-turbo"
+        },
+        "default_model": "gpt-3.5-turbo"
+      },
+      "anthropic": {
+        "api_key": "YOUR_ANTHROPIC_API_KEY",
+        "base_url": "https://api.anthropic.com",
+        "models": {
+          "claude-3-opus": "claude-3-opus-20240229",
+          "claude-3-sonnet": "claude-3-sonnet-20240229",
+          "claude-3-haiku": "claude-3-haiku-20240307"
+        },
+        "default_model": "claude-3-sonnet-20240229"
+      },
+      "local": {
+        "base_url": "http://localhost:11434/v1",
+        "api_key": "ollama",
+        "models": {
+          "llama2": "llama2:latest",
+          "codellama": "codellama:latest",
+          "mistral": "mistral:latest"
+        },
+        "default_model": "llama2:latest"
+      }
+    }
+  },
+  "optimization": {
+    "default_optimizer": "BootstrapFewShot",
+    "optimizers": {
+      "BootstrapFewShot": {
+        "max_bootstrapped_demos": 4,
+        "max_labeled_demos": 16,
+        "teacher_settings": {},
+        "student_settings": {}
+      },
+      "COPRO": {
+        "metric": "accuracy",
+        "breadth": 10,
+        "depth": 3,
+        "init_temperature": 1.4
+      },
+      "MIPRO": {
+        "metric": "accuracy",
+        "num_candidates": 10,
+        "init_temperature": 1.0
+      }
+    },
+    "evaluation": {
+      "metric_functions": ["accuracy", "f1_score", "exact_match"],
+      "cross_validation_folds": 3,
+      "test_size": 0.2
+    }
+  },
+  "datasets": {
+    "storage_path": "../data/dspy",
+    "formats": ["json", "csv", "parquet"],
+    "examples": {
+      "training_examples": 100,
+      "validation_examples": 50,
+      "test_examples": 50
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "../logs/dspy.log",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  },
+  "integration": {
+    "aidevops_framework": true,
+    "export_formats": ["json", "yaml", "python"],
+    "auto_backup": true,
+    "version_control": true
+  }
+}

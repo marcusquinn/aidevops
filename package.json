@@ -1,0 +1,40 @@
+{
+  "name": "aidevops-dspy-integration",
+  "version": "1.0.0",
+  "description": "AI DevOps Framework with DSPy and DSPyGround integration",
+  "main": "index.js",
+  "scripts": {
+    "dspy:init": "dspyground init",
+    "dspy:dev": "dspyground dev",
+    "dspy:build": "dspyground build",
+    "install:python": "python3 -m venv python-env/dspy-env && source python-env/dspy-env/bin/activate && pip install -r requirements.txt",
+    "setup": "npm run install:python && npm install",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "dspy",
+    "dspyground",
+    "ai",
+    "devops",
+    "prompt-optimization",
+    "llm"
+  ],
+  "author": "AI DevOps Framework",
+  "license": "MIT",
+  "dependencies": {
+    "dspyground": "^0.1.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marcusquinn/aidevops.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marcusquinn/aidevops/issues"
+  },
+  "homepage": "https://github.com/marcusquinn/aidevops#readme"
+}
