@@ -13,23 +13,16 @@ Always respect LinkedIn's Terms of Service and use responsibly.
 import time
 import random
 import os
-import sys
-from typing import List, Dict, Optional
-import json
 from datetime import datetime
 
 try:
-    from playwright.sync_api import sync_playwright, Page, Browser
+    from playwright.sync_api import sync_playwright, Page
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
 try:
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.chrome.options import Options
+    # Selenium imports would go here if needed
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False

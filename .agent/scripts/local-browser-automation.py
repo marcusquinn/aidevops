@@ -19,23 +19,17 @@ Always respect website Terms of Service and use responsibly.
 import time
 import random
 import os
-import sys
-from typing import List, Dict, Optional
-import json
 from datetime import datetime
 
 # Local browser automation imports (no cloud dependencies)
 try:
-    from playwright.sync_api import sync_playwright, Page, Browser
+    from playwright.sync_api import sync_playwright, Page
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
 try:
     from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.chrome.options import Options as ChromeOptions
     from selenium.webdriver.firefox.options import Options as FirefoxOptions
     SELENIUM_AVAILABLE = True
