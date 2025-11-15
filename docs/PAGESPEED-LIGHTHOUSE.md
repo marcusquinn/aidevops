@@ -223,7 +223,7 @@ The PageSpeed MCP server provides real-time access to performance data for AI as
 ```json
 {
   "pagespeed_audit": "Audit website performance",
-  "lighthouse_analysis": "Comprehensive website analysis", 
+  "lighthouse_analysis": "Comprehensive website analysis",
   "performance_metrics": "Get Core Web Vitals",
   "optimization_recommendations": "Get actionable improvements"
 }

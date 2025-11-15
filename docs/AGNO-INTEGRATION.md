@@ -233,7 +233,7 @@ security_agent = Agent(
     instructions=[
         "You are a security expert focusing on:",
         "- Security vulnerability assessment",
-        "- Compliance checking and reporting", 
+        "- Compliance checking and reporting",
         "- Security best practices implementation",
         "- Threat modeling and risk assessment"
     ]

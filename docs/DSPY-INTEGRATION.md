@@ -89,10 +89,10 @@ class BasicQA(dspy.Signature):
 
 # Create a module
 class QAModule(dspy.Module):
-    def __init__(self):
-        super().__init__()
+    def **init**(self):
+        super().**init**()
         self.generate_answer = dspy.ChainOfThought(BasicQA)
-    
+
     def forward(self, question):
         return self.generate_answer(question=question)
 
