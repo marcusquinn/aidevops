@@ -59,12 +59,14 @@ activate_env() {
         exit 1
     fi
     print_success "Python virtual environment activated"
+    return 0
 }
 
 # Setup directories
 setup_directories() {
     mkdir -p "$DATA_DIR" "$LOGS_DIR"
     print_success "Created directories: $DATA_DIR, $LOGS_DIR"
+    return 0
 }
 
 # Install DSPy dependencies
@@ -80,6 +82,7 @@ install_deps() {
         print_error "Failed to install DSPy dependencies"
         exit 1
     fi
+    return 0
 }
 
 # Test DSPy installation
@@ -108,6 +111,7 @@ sys.exit(0)
         print_error "DSPy installation test failed"
         exit 1
     fi
+    return 0
 }
 
 # Initialize DSPy project
@@ -189,6 +193,7 @@ EOF
     
     print_success "DSPy project initialized: $project_dir"
     print_info "Edit $project_dir/main.py to customize your DSPy application"
+    return 0
 }
 
 # Run DSPy optimization
@@ -209,6 +214,7 @@ optimize() {
     
     cd "$project_dir" || return 1
     python3 main.py
+    return 0
 }
 
 # Show help
@@ -232,6 +238,7 @@ show_help() {
     echo "Configuration:"
     echo "  Edit $CONFIG_FILE to customize settings"
     echo ""
+    return 0
 }
 
 # Main command handler
