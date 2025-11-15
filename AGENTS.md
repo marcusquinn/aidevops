@@ -2,7 +2,7 @@
 
 **🔒 AUTHORITATIVE SOURCE: This is the single source of truth for all AI assistant instructions. All other AGENTS.md files are minimal templates that reference this file.**
 
-This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 25+ services.
+This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 26+ services.
 
 ## ⚠️ **CRITICAL: Consistency Requirements**
 
@@ -557,7 +557,7 @@ local used_variable="$1"
 ### **Framework Architecture**
 
 ```bash
-# Unified command pattern across all 25+ services:
+# Unified command pattern across all 26+ services:
 ./providers/[service]-helper.sh [command] [account/instance] [target] [options]
 
 # Standard commands available for all services:
@@ -577,7 +577,7 @@ aidevops/
 ├── 🔧 scripts/
 │   └── servers-helper.sh      # Main entry point script
 ├── ⚙️  sonar-project.properties # Quality analysis configuration
-├── 📁 providers/             # Core functionality scripts (25+ services)
+├── 📁 providers/             # Core functionality scripts (26+ services)
 ├── 📁 configs/               # Configuration templates for users
 ├── 📁 docs/                  # Comprehensive user documentation
 ├── 📁 templates/             # Reusable templates and examples
@@ -696,6 +696,10 @@ aidevops/
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 - **Context7 MCP**: Real-time documentation access for development libraries
 - **LocalWP MCP**: Direct WordPress database access for local development
+
+### **Data Format & Conversion (1 service)**
+
+- **TOON Format**: Token-Oriented Object Notation for efficient LLM data exchange
 
 ### **Setup & Configuration (1 service)**
 
