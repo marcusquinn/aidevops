@@ -6,17 +6,16 @@
 # Author: AI DevOps Framework
 # Version: 1.0.0
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m' # No Color
+# Load shared constants and functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=providers/shared-constants.sh
+source "$SCRIPT_DIR/shared-constants.sh"
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Use shared print functions with fallback for compatibility
+print_info() { print_shared_info "$1"; }
+print_success() { print_shared_success "$1"; }
+print_warning() { print_shared_warning "$1"; }
+print_error() { print_shared_error "$1"; }
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,7 +28,7 @@ LOGS_DIR="$PROJECT_ROOT/logs"
 # Check if config file exists
 check_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND: $CONFIG_FILE"
         print_info "Copy and customize: cp ../configs/dspy-config.json.txt $CONFIG_FILE"
         exit 1
     fi

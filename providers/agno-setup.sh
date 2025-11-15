@@ -418,6 +418,7 @@ EOF
     print_success "Agno AgentOS setup complete"
     print_info "Directory: $AGNO_DIR"
     print_info "Configure your API keys in .env file"
+    return 0
 }
 
 # Function to setup Agent-UI
@@ -459,6 +460,7 @@ EOF
     
     print_success "Agent-UI setup complete"
     print_info "Directory: $AGENT_UI_DIR"
+    return 0
 }
 
 # Function to create management scripts
@@ -586,6 +588,7 @@ EOF
     chmod +x "$script_dir/agno-status.sh"
 
     print_success "Management scripts created in $script_dir"
+    return 0
 }
 
 # Function to show usage information
@@ -607,6 +610,7 @@ show_usage() {
     echo "  $0 setup    # Full setup"
     echo "  $0 start    # Start services"
     echo "  $0 status   # Check status"
+    return 0
 }
 
 # Main function
