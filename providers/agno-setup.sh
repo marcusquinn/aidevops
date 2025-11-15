@@ -69,7 +69,7 @@ setup_agno() {
     
     # Create directory
     mkdir -p "$AGNO_DIR"
-    cd "$AGNO_DIR"
+    cd "$AGNO_DIR" || exit
     
     # Create virtual environment
     if [[ ! -d "venv" ]]; then
@@ -424,7 +424,7 @@ setup_agent_ui() {
     
     # Create directory
     mkdir -p "$AGENT_UI_DIR"
-    cd "$AGENT_UI_DIR"
+    cd "$AGENT_UI_DIR" || exit
     
     # Check if already initialized
     if [[ ! -f "package.json" ]]; then

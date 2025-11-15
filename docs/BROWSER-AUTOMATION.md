@@ -9,6 +9,7 @@ The AI DevOps Framework includes comprehensive **LOCAL-ONLY** browser automation
 ## 🔒 **Privacy & Security First**
 
 ### **🏠 Local-Only Operation**
+
 - **Complete Privacy**: All browser automation runs locally on your machine
 - **No Cloud Services**: No data sent to external browser services
 - **Full Control**: You maintain complete control over browser and data
@@ -18,6 +19,7 @@ The AI DevOps Framework includes comprehensive **LOCAL-ONLY** browser automation
 ## ⚠️ **Important Ethical Guidelines**
 
 ### **🔒 Responsible Automation**
+
 - **Respect Terms of Service**: Always comply with website ToS
 - **Rate Limiting**: Use appropriate delays between actions
 - **Privacy**: Respect user privacy and data protection
@@ -25,6 +27,7 @@ The AI DevOps Framework includes comprehensive **LOCAL-ONLY** browser automation
 - **Legal Compliance**: Ensure all automation is legally compliant
 
 ### **🚫 Prohibited Activities**
+
 - Spam or inappropriate content
 - Fake engagement or manipulation
 - Violation of platform policies
@@ -34,9 +37,11 @@ The AI DevOps Framework includes comprehensive **LOCAL-ONLY** browser automation
 ## 🤖 **Available Agents**
 
 ### **🔗 LinkedIn Automation Assistant (Local Browser Only)**
+
 **Specialization**: LinkedIn automation using LOCAL browsers with complete privacy
 
 **Capabilities**:
+
 - Automated post engagement (liking, commenting) via local Playwright/Selenium
 - Timeline monitoring and content analysis with local browser instances
 - Connection management and networking through local automation
@@ -45,21 +50,25 @@ The AI DevOps Framework includes comprehensive **LOCAL-ONLY** browser automation
 - Analytics and engagement tracking using local data collection
 
 **Privacy & Security Features**:
+
 - **Complete Local Operation**: All automation runs on your machine
 - **No Cloud Dependencies**: Zero external browser services
 - **Full Data Control**: You maintain complete control over browser and data
 - **Enterprise Security**: Perfect for sensitive automation needs
 
 **Safety Features**:
+
 - Respects LinkedIn Terms of Service
 - Reasonable delays between actions (2-5 seconds)
 - Daily action limits to avoid rate limiting
 - Ethical engagement strategies only
 
 ### **🌐 Web Automation Assistant (Local Browser Only)**
+
 **Specialization**: General web automation using LOCAL browsers with complete privacy
 
 **Capabilities**:
+
 - Browser automation with LOCAL Playwright and Selenium instances
 - Web scraping and data extraction using local browser control
 - Form filling and submission automation with local browsers
@@ -68,12 +77,14 @@ The AI DevOps Framework includes comprehensive **LOCAL-ONLY** browser automation
 - Social media automation (ethical) with complete privacy
 
 **Privacy & Security Features**:
+
 - **Complete Local Operation**: All automation runs on your machine
 - **No Cloud Dependencies**: Zero external browser services
 - **Full Data Control**: You maintain complete control over browser and data
 - **Enterprise Security**: Perfect for sensitive automation needs
 
 **Safety Features**:
+
 - Respects robots.txt and website policies
 - Appropriate delays and rate limiting
 - Graceful error handling with retries
@@ -139,6 +150,7 @@ LINKEDIN_HEADLESS=false
 ### **LinkedIn Automation**
 
 #### **Through Agno Agents**
+
 ```bash
 # Start Agno with browser automation
 ~/.aidevops/scripts/start-agno-stack.sh
@@ -149,6 +161,7 @@ LINKEDIN_HEADLESS=false
 ```
 
 #### **Direct Script Usage (Local Browser)**
+
 ```bash
 # Set credentials for LOCAL browser automation
 export LINKEDIN_EMAIL=your@email.com
@@ -167,6 +180,7 @@ python .agent/scripts/linkedin-automation.py
 ### **Web Automation Examples**
 
 #### **Social Media Automation**
+
 ```python
 # Example: Instagram automation
 agent_prompt = """
@@ -181,6 +195,7 @@ Use ethical practices and respect rate limits.
 ```
 
 #### **Web Scraping**
+
 ```python
 # Example: E-commerce monitoring
 agent_prompt = """
@@ -195,6 +210,7 @@ Respect robots.txt and use appropriate delays.
 ```
 
 #### **Form Automation**
+
 ```python
 # Example: Application automation
 agent_prompt = """
@@ -281,6 +297,7 @@ ps aux | grep -E "(chrome|firefox|playwright)"
 ### **Common Issues**
 
 #### **Browser Not Starting**
+
 ```bash
 # Check browser installation
 playwright install --help
@@ -294,6 +311,7 @@ chmod +x ~/.cache/ms-playwright/*/chrome-linux/chrome
 ```
 
 #### **LinkedIn Login Issues**
+
 ```bash
 # Check credentials
 echo $LINKEDIN_EMAIL
@@ -307,6 +325,7 @@ export LINKEDIN_HEADLESS=false
 ```
 
 #### **Rate Limiting**
+
 ```bash
 # Increase delays
 export BROWSER_DELAY_MIN=5
@@ -332,6 +351,7 @@ watch -n 5 'ps aux | grep -E "(chrome|firefox)" | head -10'
 ## 🌟 **Best Practices**
 
 ### **Ethical Automation**
+
 1. **Respect Platform Rules**: Always follow website Terms of Service
 2. **Human-like Behavior**: Use random delays and realistic interaction patterns
 3. **Quality over Quantity**: Focus on meaningful, valuable interactions
@@ -339,6 +359,7 @@ watch -n 5 'ps aux | grep -E "(chrome|firefox)" | head -10'
 5. **Privacy Protection**: Respect user privacy and data protection laws
 
 ### **Technical Excellence**
+
 1. **Error Handling**: Implement robust error handling and recovery
 2. **Logging**: Maintain detailed logs for debugging and compliance
 3. **Rate Limiting**: Respect API limits and implement backoff strategies
@@ -346,6 +367,7 @@ watch -n 5 'ps aux | grep -E "(chrome|firefox)" | head -10'
 5. **Monitoring**: Track performance and success metrics
 
 ### **LinkedIn Specific**
+
 1. **Daily Limits**: Stay within reasonable daily action limits (50-100 actions)
 2. **Authentic Engagement**: Only engage with content you genuinely find valuable
 3. **Professional Focus**: Maintain professional networking standards
@@ -394,4 +416,5 @@ VERSION=$(bash .agent/scripts/version-manager.sh get)
 **Automate your web presence responsibly with AI-powered browser automation!** 🌐🤖✨
 
 **Remember**: Always use automation ethically and in compliance with platform terms of service. Focus on adding genuine value and maintaining authentic professional relationships.
+
 ```

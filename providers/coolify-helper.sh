@@ -101,8 +101,10 @@ connect_server() {
     host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
     local port
     port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
-    local username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
-    local ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
+    local username
+    username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
+    local ssh_key
+    ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
     
     if [[ "$host" == "null" ]]; then
         print_error "Server '$server' not found in configuration"
@@ -126,7 +128,8 @@ open_coolify() {
     
     check_config
     
-    local coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
+    local coolify_url
+    coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
     
     if [[ "$coolify_url" == "null" ]]; then
         print_error "Coolify URL not found for server '$server'"
@@ -155,7 +158,8 @@ list_apps() {
     
     print_info "Applications on $server:"
     
-    local apps=$(jq -r ".applications.${server}[]?.name" "$CONFIG_FILE" 2>/dev/null)
+    local apps
+    apps=$(jq -r ".applications.${server}[]?.name" "$CONFIG_FILE" 2>/dev/null)
     if [[ -z "$apps" ]]; then
         print_warning "No applications configured for server '$server'"
         return 1
@@ -163,8 +167,10 @@ list_apps() {
     
     echo "$apps" | while read -r app; do
         if [[ -n "$app" ]]; then
-            local type=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .type" "$CONFIG_FILE")
-            local domain=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .domain" "$CONFIG_FILE")
+            local type
+            type=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .type" "$CONFIG_FILE")
+            local domain
+            domain=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .domain" "$CONFIG_FILE")
             local branch=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .branch" "$CONFIG_FILE")
             
             echo "  - $app ($type)"

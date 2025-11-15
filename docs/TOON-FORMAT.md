@@ -45,10 +45,13 @@ npx @toon-format/cli --help
 ## 📊 **Format Examples**
 
 ### **Simple Object**
+
 ```json
 {"id": 1, "name": "Alice", "active": true}
 ```
+
 **TOON:**
+
 ```toon
 id: 1
 name: Alice
@@ -56,6 +59,7 @@ active: true
 ```
 
 ### **Tabular Data (Most Efficient)**
+
 ```json
 {
   "users": [
@@ -64,7 +68,9 @@ active: true
   ]
 }
 ```
+
 **TOON:**
+
 ```toon
 users[2]{id,name,role}:
   1,Alice,admin
@@ -72,6 +78,7 @@ users[2]{id,name,role}:
 ```
 
 ### **Nested Structures**
+
 ```json
 {
   "project": {
@@ -83,7 +90,9 @@ users[2]{id,name,role}:
   }
 }
 ```
+
 **TOON:**
+
 ```toon
 project:
   name: AI DevOps
@@ -131,6 +140,7 @@ cat data.toon | ./providers/toon-helper.sh stdin-decode
 ## 🎯 **AI DevOps Use Cases**
 
 ### **1. Configuration Data**
+
 Perfect for server configurations, deployment settings, and infrastructure data:
 
 ```bash
@@ -139,6 +149,7 @@ Perfect for server configurations, deployment settings, and infrastructure data:
 ```
 
 ### **2. API Response Formatting**
+
 Reduce token costs when sending API responses to LLMs:
 
 ```bash
@@ -147,6 +158,7 @@ curl -s "https://api.example.com/data" | ./providers/toon-helper.sh stdin-encode
 ```
 
 ### **3. Database Exports**
+
 Efficient format for database query results:
 
 ```bash
@@ -155,6 +167,7 @@ mysql -e "SELECT * FROM users" --json | ./providers/toon-helper.sh stdin-encode 
 ```
 
 ### **4. Log Analysis**
+
 Structure log data for AI analysis:
 
 ```bash
@@ -183,6 +196,7 @@ cp configs/toon-config.json.txt configs/toon-config.json
 ```
 
 Key configuration options:
+
 - **default_delimiter**: Choose between `,`, `\t`, or `|`
 - **key_folding**: Enable path compression for nested data
 - **batch_processing**: Configure concurrent conversions
@@ -191,6 +205,7 @@ Key configuration options:
 ## 🤖 **LLM Integration**
 
 ### **Sending TOON to LLMs**
+
 ```markdown
 Data is in TOON format (2-space indent, arrays show length and fields):
 
@@ -202,6 +217,7 @@ users[3]{id,name,role,lastLogin}:
 ```
 
 Task: Return only users with role "user" as TOON.
+
 ```
 
 ### **Generating TOON from LLMs**
