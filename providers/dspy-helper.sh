@@ -55,8 +55,7 @@ check_python_env() {
 
 # Activate Python environment
 activate_env() {
-    source "$PYTHON_ENV_PATH/bin/activate"
-    if [[ $? -ne 0 ]]; then
+    if ! source "$PYTHON_ENV_PATH/bin/activate"; then
         print_error "Failed to activate Python virtual environment"
         exit 1
     fi
@@ -76,9 +75,7 @@ install_deps() {
     activate_env
     
     pip install --upgrade pip
-    pip install -r "$PROJECT_ROOT/requirements.txt"
-    
-    if [[ $? -eq 0 ]]; then
+    if pip install -r "$PROJECT_ROOT/requirements.txt"; then
         print_success "DSPy dependencies installed successfully"
     else
         print_error "Failed to install DSPy dependencies"
@@ -99,8 +96,14 @@ print(f'DSPy version: {dspy.__version__}')
 print('DSPy installation test: SUCCESS')
 sys.exit(0)
 " 2>/dev/null
-    
-    if [[ $? -eq 0 ]]; then
+
+    if python3 -c "
+import dspy
+import sys
+print(f'DSPy version: {dspy.__version__}')
+print('DSPy installation test: SUCCESS')
+sys.exit(0)
+" 2>/dev/null; then
         print_success "DSPy installation test passed"
     else
         print_error "DSPy installation test failed"
@@ -205,7 +208,7 @@ optimize() {
         exit 1
     fi
     
-    cd "$project_dir"
+    cd "$project_dir" || return 1
     python3 main.py
 }
 
@@ -237,18 +240,23 @@ main() {
     case "${1:-help}" in
         "install")
             install_deps
+            return $?
             ;;
         "test")
             test_installation
+            return $?
             ;;
         "init")
             init_project "$2"
+            return $?
             ;;
         "optimize")
             optimize "$2"
+            return $?
             ;;
         "help"|*)
             show_help
+            return 0
             ;;
     esac
 }

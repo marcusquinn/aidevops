@@ -43,7 +43,8 @@ check_nodejs() {
         exit 1
     fi
     
-    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    local node_version
+    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
     if [[ $node_version -lt 18 ]]; then
         print_error "Node.js 18+ is required, found v$node_version"
         exit 1
@@ -65,7 +66,8 @@ check_dspyground() {
         exit 1
     fi
     
-    local version=$(dspyground --version)
+    local version
+    version=$(dspyground --version)
     print_success "DSPyGround v$version found"
 }
 
@@ -74,9 +76,7 @@ install() {
     print_info "Installing DSPyGround..."
     check_nodejs
     
-    npm install -g dspyground
-    
-    if [[ $? -eq 0 ]]; then
+    if npm install -g dspyground; then
         print_success "DSPyGround installed successfully"
         dspyground --version
     else
@@ -106,12 +106,10 @@ init_project() {
     fi
     
     mkdir -p "$project_dir"
-    cd "$project_dir"
-    
+    cd "$project_dir" || return 1
+
     # Initialize DSPyGround
-    dspyground init
-    
-    if [[ $? -eq 0 ]]; then
+    if dspyground init; then
         print_success "DSPyGround project initialized: $project_dir"
         print_info "Edit dspyground.config.ts to customize your agent environment"
         print_info "Create .env file with your API keys"
@@ -137,7 +135,7 @@ start_dev() {
         exit 1
     fi
     
-    cd "$project_dir"
+    cd "$project_dir" || return 1
     
     # Check for .env file
     if [[ ! -f ".env" ]]; then
@@ -166,10 +164,9 @@ build() {
         exit 1
     fi
     
-    cd "$project_dir"
-    dspyground build
-    
-    if [[ $? -eq 0 ]]; then
+    cd "$project_dir" || return 1
+
+    if dspyground build; then
         print_success "DSPyGround project built successfully"
     else
         print_error "Failed to build DSPyGround project"
@@ -189,7 +186,8 @@ list_projects() {
     local count=0
     for project in "$PROJECTS_DIR"/*; do
         if [[ -d "$project" ]]; then
-            local name=$(basename "$project")
+            local name
+            name=$(basename "$project")
             echo "  - $name"
             count=$((count + 1))
         fi
@@ -236,21 +234,27 @@ main() {
     case "${1:-help}" in
         "install")
             install
+            return $?
             ;;
         "init")
             init_project "$2"
+            return $?
             ;;
         "dev"|"start")
             start_dev "$2"
+            return $?
             ;;
         "build")
             build "$2"
+            return $?
             ;;
         "list")
             list_projects
+            return $?
             ;;
         "help"|*)
             show_help
+            return 0
             ;;
     esac
 }
