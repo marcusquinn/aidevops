@@ -1,0 +1,87 @@
+{
+  "name": "DSPyGround Configuration Template",
+  "description": "Configuration for DSPyGround prompt optimization playground",
+  "version": "1.0.0",
+  "server": {
+    "port": 3000,
+    "host": "localhost",
+    "auto_open": true,
+    "hot_reload": true
+  },
+  "ai_gateway": {
+    "api_key": "YOUR_AI_GATEWAY_API_KEY",
+    "base_url": "https://api.aigateway.com",
+    "models": {
+      "chat_model": "openai/gpt-4o-mini",
+      "optimization_model": "openai/gpt-4o-mini",
+      "reflection_model": "openai/gpt-4o"
+    }
+  },
+  "openai": {
+    "api_key": "YOUR_OPENAI_API_KEY",
+    "base_url": "https://api.openai.com/v1",
+    "models": {
+      "whisper": "whisper-1",
+      "gpt4": "gpt-4o",
+      "gpt4_mini": "gpt-4o-mini"
+    }
+  },
+  "optimization": {
+    "batch_size": 3,
+    "num_rollouts": 10,
+    "selected_metrics": ["accuracy"],
+    "use_structured_output": false,
+    "optimize_structured_output": false
+  },
+  "voice_feedback": {
+    "enabled": true,
+    "transcription_model": "whisper-1",
+    "extraction_model": "openai/gpt-4o-mini"
+  },
+  "data_storage": {
+    "local_path": ".dspyground/data/",
+    "backup_enabled": true,
+    "auto_save": true
+  },
+  "metrics": {
+    "evaluation_instructions": "You are an expert AI evaluator. Assess responses across multiple dimensions.",
+    "dimensions": {
+      "accuracy": {
+        "name": "Accuracy",
+        "description": "Is the information factually correct and relevant?",
+        "weight": 1.0
+      },
+      "tone": {
+        "name": "Tone",
+        "description": "Is the communication style appropriate and professional?",
+        "weight": 0.8
+      },
+      "efficiency": {
+        "name": "Efficiency",
+        "description": "Does the response use tools and resources efficiently?",
+        "weight": 0.7
+      },
+      "tool_accuracy": {
+        "name": "Tool Accuracy",
+        "description": "Are the right tools selected and used correctly?",
+        "weight": 0.9
+      },
+      "guardrails": {
+        "name": "Guardrails",
+        "description": "Does the response follow safety and ethical guidelines?",
+        "weight": 1.0
+      }
+    }
+  },
+  "integration": {
+    "aidevops_framework": true,
+    "export_formats": ["typescript", "json", "markdown"],
+    "auto_backup": true,
+    "version_control": true
+  },
+  "development": {
+    "debug_mode": false,
+    "verbose_logging": false,
+    "performance_monitoring": true
+  }
+}

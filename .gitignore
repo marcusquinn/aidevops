@@ -22,6 +22,8 @@ configs/route53-dns-config.json
 configs/other-dns-providers-config.json
 configs/context7-mcp-config.json
 configs/setup-wizard-responses.json
+configs/dspy-config.json
+configs/dspyground-config.json
 
 # Allow template files and agent directory to be committed
 !configs/*.txt
@@ -83,6 +85,23 @@ tmp.*.json
 # Logs
 *.log
 logs/
+
+# Python virtual environments
+python-env/
+venv/
+env/
+.venv/
+
+# DSPy and DSPyGround data directories
+data/dspy/
+data/dspyground/
+.dspyground/
+
+# Node.js dependencies
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
 
 # OS generated files
 .DS_Store

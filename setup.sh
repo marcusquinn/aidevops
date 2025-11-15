@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 1.5.0
+# Version: 1.6.0
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -207,6 +207,92 @@ configure_ai_clis() {
     fi
 }
 
+# Setup Python environment for DSPy
+setup_python_env() {
+    print_info "Setting up Python environment for DSPy..."
+
+    # Check if Python 3 is available
+    if ! command -v python3 &> /dev/null; then
+        print_warning "Python 3 not found - DSPy setup skipped"
+        print_info "Install Python 3.8+ to enable DSPy integration"
+        return
+    fi
+
+    local python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
+    local version_check=$(python3 -c "import sys; print(1 if sys.version_info >= (3, 8) else 0)")
+
+    if [[ "$version_check" != "1" ]]; then
+        print_warning "Python 3.8+ required for DSPy, found $python_version - DSPy setup skipped"
+        return
+    fi
+
+    # Create Python virtual environment
+    if [[ ! -d "python-env/dspy-env" ]]; then
+        print_info "Creating Python virtual environment for DSPy..."
+        mkdir -p python-env
+        python3 -m venv python-env/dspy-env
+
+        if [[ $? -eq 0 ]]; then
+            print_success "Python virtual environment created"
+        else
+            print_warning "Failed to create Python virtual environment - DSPy setup skipped"
+            return
+        fi
+    else
+        print_info "Python virtual environment already exists"
+    fi
+
+    # Install DSPy dependencies
+    print_info "Installing DSPy dependencies..."
+    source python-env/dspy-env/bin/activate
+    pip install --upgrade pip > /dev/null 2>&1
+    pip install -r requirements.txt > /dev/null 2>&1
+
+    if [[ $? -eq 0 ]]; then
+        print_success "DSPy dependencies installed successfully"
+    else
+        print_warning "Failed to install DSPy dependencies - check requirements.txt"
+    fi
+}
+
+# Setup Node.js environment for DSPyGround
+setup_nodejs_env() {
+    print_info "Setting up Node.js environment for DSPyGround..."
+
+    # Check if Node.js is available
+    if ! command -v node &> /dev/null; then
+        print_warning "Node.js not found - DSPyGround setup skipped"
+        print_info "Install Node.js 18+ to enable DSPyGround integration"
+        return
+    fi
+
+    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    if [[ $node_version -lt 18 ]]; then
+        print_warning "Node.js 18+ required for DSPyGround, found v$node_version - DSPyGround setup skipped"
+        return
+    fi
+
+    # Check if npm is available
+    if ! command -v npm &> /dev/null; then
+        print_warning "npm not found - DSPyGround setup skipped"
+        return
+    fi
+
+    # Install DSPyGround globally if not already installed
+    if ! command -v dspyground &> /dev/null; then
+        print_info "Installing DSPyGround globally..."
+        npm install -g dspyground > /dev/null 2>&1
+
+        if [[ $? -eq 0 ]]; then
+            print_success "DSPyGround installed successfully"
+        else
+            print_warning "Failed to install DSPyGround globally"
+        fi
+    else
+        print_success "DSPyGround already installed"
+    fi
+}
+
 # Main setup function
 main() {
     echo "🤖 AI Assistant Server Access Framework Setup"
@@ -222,6 +308,8 @@ main() {
     setup_aliases
     deploy_ai_templates
     configure_ai_clis
+    setup_python_env
+    setup_nodejs_env
 
     echo ""
     print_success "🎉 Setup complete!"
@@ -234,7 +322,9 @@ main() {
     echo "5. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
     echo "6. Test access: ./scripts/servers-helper.sh list"
     echo "7. Test TOON format: ./providers/toon-helper.sh info"
-    echo "8. Read documentation in docs/ for provider-specific setup"
+    echo "8. Setup DSPy: ./providers/dspy-helper.sh install && ./providers/dspy-helper.sh test"
+    echo "9. Setup DSPyGround: ./providers/dspyground-helper.sh install"
+    echo "10. Read documentation in docs/ for provider-specific setup"
     echo ""
     echo "AI CLI Tools (configured to read AGENTS.md automatically):"
     echo "• aider-guided    - Aider with AGENTS.md context"
@@ -253,6 +343,13 @@ main() {
     echo "• ~/.cursorrules  - Cursor AI rules file"
     echo "• ~/.github/copilot-instructions.md - GitHub Copilot instructions"
     echo "• ~/.codeium/windsurf/memories/global_rules.md - Windsurf global rules"
+    echo ""
+    echo "DSPy & DSPyGround Integration:"
+    echo "• ./providers/dspy-helper.sh        - DSPy prompt optimization toolkit"
+    echo "• ./providers/dspyground-helper.sh  - DSPyGround playground interface"
+    echo "• python-env/dspy-env/              - Python virtual environment for DSPy"
+    echo "• data/dspy/                        - DSPy projects and datasets"
+    echo "• data/dspyground/                  - DSPyGround projects and configurations"
     echo ""
     echo "Security reminders:"
     echo "- Never commit configuration files with real credentials"
