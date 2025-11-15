@@ -27,6 +27,10 @@ This folder contains helper scripts for all 25+ service integrations in the AI D
 
 - `code-audit-helper.sh` - Multi-platform code auditing
 
+### **Data Format & Conversion**
+
+- `toon-helper.sh` - TOON format conversion for efficient LLM data exchange
+
 ### **Version Control & Git Platforms**
 
 - `git-platforms-helper.sh` - GitHub, GitLab, Gitea, Local Git

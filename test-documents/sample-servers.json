@@ -1,0 +1,44 @@
+{
+  "servers": [
+    {
+      "id": 1,
+      "name": "web-server-01",
+      "provider": "hetzner",
+      "region": "eu-central",
+      "cpu": 4,
+      "memory": 8192,
+      "storage": 160,
+      "status": "running",
+      "created": "2025-01-01T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "db-server-01",
+      "provider": "hetzner",
+      "region": "eu-central",
+      "cpu": 8,
+      "memory": 16384,
+      "storage": 320,
+      "status": "running",
+      "created": "2025-01-02T14:30:00Z"
+    },
+    {
+      "id": 3,
+      "name": "api-server-01",
+      "provider": "hostinger",
+      "region": "us-east",
+      "cpu": 2,
+      "memory": 4096,
+      "storage": 80,
+      "status": "stopped",
+      "created": "2025-01-03T09:15:00Z"
+    }
+  ],
+  "metadata": {
+    "total_servers": 3,
+    "active_servers": 2,
+    "total_cpu": 14,
+    "total_memory": 28672,
+    "last_updated": "2025-01-15T12:00:00Z"
+  }
+}

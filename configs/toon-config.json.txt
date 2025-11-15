@@ -1,0 +1,46 @@
+{
+  "description": "TOON Format Configuration for AI DevOps Framework",
+  "version": "1.0.0",
+  "settings": {
+    "default_delimiter": ",",
+    "default_indent": 2,
+    "default_strict_mode": true,
+    "default_show_stats": false,
+    "key_folding": "off",
+    "expand_paths": "off"
+  },
+  "directories": {
+    "input_dir": "./data/json",
+    "output_dir": "./data/toon",
+    "temp_dir": "./tmp/toon-conversion"
+  },
+  "file_patterns": {
+    "json_extension": ".json",
+    "toon_extension": ".toon",
+    "backup_extension": ".bak"
+  },
+  "batch_processing": {
+    "max_concurrent": 5,
+    "create_backups": true,
+    "overwrite_existing": false,
+    "log_conversions": true
+  },
+  "optimization": {
+    "preferred_delimiter": "\\t",
+    "use_key_folding": false,
+    "compress_output": false,
+    "validate_after_conversion": true
+  },
+  "integration": {
+    "auto_install_cli": true,
+    "update_check": true,
+    "cache_results": true,
+    "log_level": "info"
+  },
+  "ai_prompts": {
+    "include_format_explanation": true,
+    "show_token_savings": true,
+    "add_structure_hints": true,
+    "use_tabular_format": true
+  }
+}

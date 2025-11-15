@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-1.4.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-1.5.0-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -214,6 +214,31 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 # Install specific integration
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
+```
+
+### **🎒 TOON Format Integration**
+
+**Token-Oriented Object Notation (TOON)** - Compact, human-readable, schema-aware JSON for LLM prompts.
+
+- **20-60% token reduction** compared to JSON
+- **Human-readable tabular format** for structured data
+- **Better LLM comprehension** and generation accuracy
+- **Perfect for AI DevOps** configuration and data exchange
+
+**Quick Start:**
+
+```bash
+# Convert JSON to TOON format
+./providers/toon-helper.sh encode data.json output.toon
+
+# Show token efficiency comparison
+./providers/toon-helper.sh compare large-dataset.json
+
+# Batch convert directory
+./providers/toon-helper.sh batch ./json-files ./toon-files json-to-toon
+
+# Get format information
+./providers/toon-helper.sh info
 ```
 
 ## 🚀 **Usage Examples**

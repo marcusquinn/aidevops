@@ -1,0 +1,10 @@
+servers[3]{id,name,provider,region,cpu,memory,storage,status,created}:
+  1,web-server-01,hetzner,eu-central,4,8192,160,running,"2025-01-01T10:00:00Z"
+  2,db-server-01,hetzner,eu-central,8,16384,320,running,"2025-01-02T14:30:00Z"
+  3,api-server-01,hostinger,us-east,2,4096,80,stopped,"2025-01-03T09:15:00Z"
+metadata:
+  total_servers: 3
+  active_servers: 2
+  total_cpu: 14
+  total_memory: 28672
+  last_updated: "2025-01-15T12:00:00Z"

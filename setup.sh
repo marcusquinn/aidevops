@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 1.4.0
+# Version: 1.5.0
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -233,7 +233,8 @@ main() {
     echo "4. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
     echo "5. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
     echo "6. Test access: ./scripts/servers-helper.sh list"
-    echo "7. Read documentation in docs/ for provider-specific setup"
+    echo "7. Test TOON format: ./providers/toon-helper.sh info"
+    echo "8. Read documentation in docs/ for provider-specific setup"
     echo ""
     echo "AI CLI Tools (configured to read AGENTS.md automatically):"
     echo "• aider-guided    - Aider with AGENTS.md context"
