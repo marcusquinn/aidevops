@@ -160,7 +160,7 @@ generate_ssl_cert() {
     cd ~/.local-ssl-certs || exit
     mkcert "$domain" "*.$domain"
     
-    if [[ $? -eq 0 ]]; then
+    if docker --version >/dev/null 2>&1; then
         print_success "SSL certificate generated for $domain"
         print_info "Certificate files:"
         print_info "  - ~/.local-ssl-certs/$domain+1.pem (certificate)"

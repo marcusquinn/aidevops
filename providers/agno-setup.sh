@@ -34,7 +34,8 @@ check_prerequisites() {
         return 1
     fi
     
-    local python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
+    local python_version
+    python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
     if [[ $(echo "$python_version >= 3.8" | bc -l) -eq 0 ]]; then
         print_error "Python 3.8+ is required, found $python_version"
         return 1
@@ -47,7 +48,8 @@ check_prerequisites() {
         return 1
     fi
     
-    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    local node_version
+    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
     if [[ $node_version -lt 18 ]]; then
         print_error "Node.js 18+ is required, found v$node_version"
         return 1
