@@ -80,10 +80,10 @@ class DevOpsAssistant(dspy.Signature):
     solution = dspy.OutputField(desc="Detailed, actionable solution")
 
 class DevOpsModule(dspy.Module):
-    def __init__(self):
-        super().__init__()
+    def **init**(self):
+        super().**init**()
         self.generate_solution = dspy.ChainOfThought(DevOpsAssistant)
-    
+
     def forward(self, query):
         return self.generate_solution(query=query)
 
@@ -107,15 +107,15 @@ optimized_assistant = teleprompter.compile(DevOpsModule(), trainset=trainset)
 ```typescript
 export default {
   systemPrompt: `You are a senior software engineer conducting code reviews.
-  
+
   Focus on:
   - Code quality and maintainability
   - Security vulnerabilities
   - Performance implications
   - Best practices adherence
-  
+
   Provide constructive feedback with specific suggestions.`,
-  
+
   tools: {
     analyzeCode: tool({
       description: 'Analyze code for issues',
@@ -129,7 +129,7 @@ export default {
       },
     }),
   },
-  
+
   preferences: {
     selectedMetrics: ['accuracy', 'tone', 'efficiency'],
     batchSize: 5,
@@ -147,10 +147,10 @@ class CodeReview(dspy.Signature):
     review = dspy.OutputField(desc="Detailed code review with suggestions")
 
 class CodeReviewModule(dspy.Module):
-    def __init__(self):
-        super().__init__()
+    def **init**(self):
+        super().**init**()
         self.review_code = dspy.ChainOfThought(CodeReview)
-    
+
     def forward(self, code, language):
         return self.review_code(code=code, language=language)
 
@@ -174,26 +174,26 @@ def devops_accuracy_metric(example, pred, trace=None):
     """Evaluate DevOps solution accuracy."""
     # Check for security considerations
     security_score = check_security_mentions(pred.solution)
-    
+
     # Verify technical accuracy
     technical_score = verify_technical_details(pred.solution, example.query)
-    
+
     # Assess actionability
     actionability_score = assess_actionability(pred.solution)
-    
+
     return (security_score + technical_score + actionability_score) / 3
 
 def code_review_quality_metric(example, pred, trace=None):
     """Evaluate code review quality."""
     # Check for common issues identification
     issue_detection = check_issue_detection(pred.review, example.code)
-    
+
     # Assess suggestion quality
     suggestion_quality = evaluate_suggestions(pred.review)
-    
+
     # Verify constructive tone
     tone_score = assess_constructive_tone(pred.review)
-    
+
     return (issue_detection + suggestion_quality + tone_score) / 3
 ```
 
@@ -202,13 +202,13 @@ def code_review_quality_metric(example, pred, trace=None):
 ```typescript
 metricsPrompt: {
   evaluation_instructions: `You are an expert evaluator for DevOps AI assistants.
-  
+
   Evaluate responses across these dimensions:
   - Technical accuracy and completeness
   - Security awareness and best practices
   - Clarity and actionability of instructions
   - Appropriate level of detail for the context`,
-  
+
   dimensions: {
     technical_accuracy: {
       name: 'Technical Accuracy',

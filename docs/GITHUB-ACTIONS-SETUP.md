@@ -51,7 +51,7 @@
 ### **Automatic Execution:**
 
 - **Push to main**: ✅ Triggers full analysis
-- **Push to develop**: ✅ Triggers full analysis  
+- **Push to develop**: ✅ Triggers full analysis
 - **Pull Request to main**: ✅ Triggers full analysis
 
 ### **Analysis Jobs:**

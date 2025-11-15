@@ -85,13 +85,13 @@ import { z } from 'zod'
 export default {
   // System prompt for your agent
   systemPrompt: `You are a helpful DevOps assistant specialized in infrastructure management.
-  
+
   You help users with:
   - Server configuration and deployment
   - CI/CD pipeline optimization
   - Infrastructure monitoring
   - Security best practices
-  
+
   Always provide practical, actionable advice.`,
 
   // AI SDK tools (optional)
@@ -282,7 +282,7 @@ tools: {
    ```bash
    # Check Node.js version
    node --version  # Should be 18+
-   
+
    # Check port availability
    lsof -i :3000
    ```
@@ -291,7 +291,7 @@ tools: {
    ```bash
    # Verify environment variables
    cat .env
-   
+
    # Test API connectivity
    curl -H "Authorization: Bearer $AI_GATEWAY_API_KEY" \
         https://api.aigateway.com/v1/models
