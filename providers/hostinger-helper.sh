@@ -88,11 +88,12 @@ connect_site() {
     fi
     
     # Get site configuration
-    local server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
-    local port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
-    local username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
-    local password_file=$(jq -r ".sites.$site.password_file" "$CONFIG_FILE")
-    local domain_path=$(jq -r ".sites.$site.domain_path" "$CONFIG_FILE")
+    local server port username password_file domain_path
+    server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
+    port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
+    username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
+    password_file=$(jq -r ".sites.$site.password_file" "$CONFIG_FILE")
+    domain_path=$(jq -r ".sites.$site.domain_path" "$CONFIG_FILE")
     
     if [[ "$server" == "null" ]]; then
         print_error "Site not found: $site"
