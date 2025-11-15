@@ -188,6 +188,7 @@ format_score() {
     else
         echo -e "${RED}${int_percentage}%${NC}"
     fi
+    return 0
 }
 
 # Run Lighthouse CLI audit

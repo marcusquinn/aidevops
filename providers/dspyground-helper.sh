@@ -55,6 +55,7 @@ check_nodejs() {
     fi
     
     print_success "Node.js $(node --version) and npm $(npm --version) found"
+    return 0
 }
 
 # Check DSPyGround installation
@@ -68,6 +69,7 @@ check_dspyground() {
     local version
     version=$(dspyground --version)
     print_success "DSPyGround v$version found"
+    return 0
 }
 
 # Install DSPyGround
@@ -82,6 +84,7 @@ install() {
         print_error "Failed to install DSPyGround"
         exit 1
     fi
+    return 0
 }
 
 # Initialize DSPyGround project
@@ -116,6 +119,7 @@ init_project() {
         print_error "Failed to initialize DSPyGround project"
         exit 1
     fi
+    return 0
 }
 
 # Start DSPyGround development server
@@ -146,6 +150,7 @@ start_dev() {
     
     print_info "Starting development server on http://localhost:$DSPYGROUND_PORT"
     dspyground dev
+    return 0
 }
 
 # Build DSPyGround project
@@ -171,6 +176,7 @@ build() {
         print_error "Failed to build DSPyGround project"
         exit 1
     fi
+    return 0
 }
 
 # List DSPyGround projects
@@ -197,6 +203,7 @@ list_projects() {
     else
         print_success "Found $count project(s)"
     fi
+    return 0
 }
 
 # Show help
@@ -226,6 +233,7 @@ show_help() {
     echo "  AI_GATEWAY_API_KEY   - Required for AI Gateway access"
     echo "  OPENAI_API_KEY       - Optional for voice feedback feature"
     echo ""
+    return 0
 }
 
 # Main command handler
