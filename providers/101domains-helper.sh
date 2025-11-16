@@ -103,16 +103,20 @@ api_request() {
     local endpoint="$3"
     local data="$4"
     
-    local config=$(get_account_config "$account_name")
-    local api_key=$(echo "$config" | jq -r '.api_key')
-    local username=$(echo "$config" | jq -r '.username')
+    local config
+    config=$(get_account_config "$account_name")
+    local api_key
+    local username
+    api_key=$(echo "$config" | jq -r '.api_key')
+    username=$(echo "$config" | jq -r '.username')
     
     if [[ "$api_key" == "null" || "$username" == "null" ]]; then
         print_error "Invalid API credentials for account '$account_name'"
         exit 1
     fi
     
-    local auth_header="Authorization: Basic $(echo -n "$username:$api_key" | base64)"
+    local auth_header
+    auth_header="Authorization: Basic $(echo -n "$username:$api_key" | base64)"
     local url="$API_BASE_URL/$endpoint"
     
     if [[ "$method" == "GET" ]]; then
@@ -133,8 +137,10 @@ list_accounts() {
     load_config
     print_info "Available 101domains accounts:"
     jq -r '.accounts | keys[]' "$CONFIG_FILE" | while read -r account; do
-        local description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
-        local username=$(jq -r ".accounts.\"$account\".username" "$CONFIG_FILE")
+        local description
+        description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
+        local username
+        username=$(jq -r ".accounts.\"$account\".username" "$CONFIG_FILE")
         echo "  - $account ($username) - $description"
     done
     return 0
@@ -203,7 +209,7 @@ add_dns_record() {
     local domain="$2"
     local name="$3"
     local type="$4"
-    local content="$param5"
+    local content="$5"
     local ttl="${6:-3600}"
     
     if [[ -z "$domain" || -z "$name" || -z "$type" || -z "$content" ]]; then
@@ -211,7 +217,8 @@ add_dns_record() {
         exit 1
     fi
     
-    local data=$(jq -n \
+    local data
+    data=$(jq -n \
         --arg domain "$domain" \
         --arg name "$name" \
         --arg type "$type" \
@@ -237,8 +244,8 @@ update_dns_record() {
     local domain="$2"
     local record_id="$3"
     local name="$4"
-    local type="$param5"
-    local content="$param6"
+    local type="$5"
+    local content="$6"
     local ttl="${7:-3600}"
 
     if [[ -z "$domain" || -z "$record_id" || -z "$name" || -z "$type" || -z "$content" ]]; then
@@ -595,10 +602,10 @@ main() {
     local account_name="$2"
     local domain="$3"
     local record_name="$4"
-    local record_type="$param5"
-    local record_content="$param6"
-    local record_ttl="$param7"
-    local record_id="$param8"
+    local record_type="$5"
+    local record_content="$6"
+    local record_ttl="$7"
+    local record_id="$8"
 
     check_dependencies
 

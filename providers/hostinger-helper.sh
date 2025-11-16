@@ -89,7 +89,11 @@ connect_site() {
     fi
     
     # Get site configuration
-    local server port username password_file domain_path
+    local server
+    local port
+    local username
+    local password_file
+    local domain_path
     server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
     port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
     username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
@@ -129,11 +133,16 @@ exec_on_site() {
     fi
     
     # Get site configuration
-    local server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
-    local port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
-    local username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
-    local password_file=$(jq -r ".sites.$site.password_file" "$CONFIG_FILE")
-    local domain_path=$(jq -r ".sites.$site.domain_path" "$CONFIG_FILE")
+    local server
+    local port
+    local username
+    local password_file
+    local domain_path
+    server=$(jq -r ".sites.$site.server" "$CONFIG_FILE")
+    port=$(jq -r ".sites.$site.port" "$CONFIG_FILE")
+    username=$(jq -r ".sites.$site.username" "$CONFIG_FILE")
+    password_file=$(jq -r ".sites.$site.password_file" "$CONFIG_FILE")
+    domain_path=$(jq -r ".sites.$site.domain_path" "$CONFIG_FILE")
     
     if [[ "$server" == "null" ]]; then
         print_error "Site not found: $site"
@@ -152,8 +161,10 @@ api_call() {
     local endpoint="$1"
     check_config
     
-    local api_token=$(jq -r '.api.token' "$CONFIG_FILE")
-    local base_url=$(jq -r '.api.base_url' "$CONFIG_FILE")
+    local api_token
+    local base_url
+    api_token=$(jq -r '.api.token' "$CONFIG_FILE")
+    base_url=$(jq -r '.api.base_url' "$CONFIG_FILE")
     
     if [[ "$api_token" == "null" || "$api_token" == "YOUR_HOSTINGER_API_TOKEN_HERE" ]]; then
         print_error "API token not configured"
@@ -168,9 +179,6 @@ api_call() {
 command="${1:-help}"
 param2="$2"
 param3="$3"
-param4="$4"
-param5="$5"
-param6="$6"
 
 # Main command handler
 case "$command" in
