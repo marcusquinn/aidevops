@@ -3,10 +3,11 @@
 # Localhost Development Helper Script
 # Sets up local Docker apps with .local domains and SSL certificates
 
-# Colors for output
-# String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
+# Source shared constants if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
+# Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -14,8 +15,8 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Error message constants
-# readonly USAGE_PREFIX="Usage:"  # Currently unused
 readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
+readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 print_info() {
     local msg="$1"
@@ -171,30 +172,27 @@ generate_ssl_cert() {
     fi
     return 0
 }
-    return 0
-    return 0
 
 # List configured local apps
 list_apps() {
     check_config
     print_info "Configured local development apps:"
-    
+
     apps=$(jq -r '.apps | keys[]' "$CONFIG_FILE")
     for app in $apps; do
         domain=$(jq -r ".apps.$app.domain" "$CONFIG_FILE")
         port=$(jq -r ".apps.$app.port" "$CONFIG_FILE")
         ssl=$(jq -r ".apps.$app.ssl" "$CONFIG_FILE")
         description=$(jq -r ".apps.$app.description" "$CONFIG_FILE")
-        
+
         ssl_status="HTTP"
         if [[ "$ssl" == "true" ]]; then
             ssl_status="HTTPS"
         fi
-        
+
         echo "  - $app: $description"
         echo "    URL: $ssl_status://$domain (port $port)"
         echo ""
-    return 0
     done
     return 0
 }
@@ -271,10 +269,8 @@ EOF
     # Start Traefik
     cd ~/.local-dev-proxy || exit
     docker-compose up -d
-    return 0
-    
+
     print_success "Traefik reverse proxy started"
-    return 0
     print_info "Dashboard available at: http://localhost:8080"
     return 0
 }
@@ -335,11 +331,9 @@ setup_localwp_domain() {
 
         # Add to Traefik configuration
         setup_localwp_traefik "$site_name" "$domain" "$port"
-    return 0
 
         print_success "LocalWP site $site_name now available at: https://$domain"
     else
-    return 0
         print_error "LocalWP configuration not found for: $site_name"
     fi
     return 0
@@ -495,13 +489,16 @@ stop_localwp_mcp() {
     return 0
 }
 
+# Assign positional parameters to local variables
+command="${1:-help}"
+param2="$2"
+param3="$3"
+param4="$4"
+param5="$5"
+param6="$6"
+
 # Main command handler
-# Assign positional parameters to variables
-    command="$1"
-    param2="$2"
-    param3="$3"
-    
-    case "$command" in
+case "$command" in
     "setup-dns")
         check_requirements && setup_local_dns
         ;;
@@ -571,3 +568,5 @@ stop_localwp_mcp() {
         exit 1
         ;;
 esac
+
+return 0

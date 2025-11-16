@@ -247,6 +247,12 @@ generate_ssh_configs() {
 
 # Assign positional parameters to local variables
 command="${1:-help}"
+param2="$2"
+param3="$3"
+param4="$4"
+param5="$5"
+param6="$6"
+
 server_name="$param2"
 command_to_run="$param3"
 
@@ -303,3 +309,5 @@ case "$command" in
         exit 1
         ;;
 esac
+
+return 0

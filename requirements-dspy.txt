@@ -1,3 +1,8 @@
+# AI DevOps Framework - Full Dependency Lock File
+# Generated with pip freeze to ensure reproducible builds with exact versions
+# Contains all dependencies including transitive ones for DSPy integration
+# Use this file for production deployments to ensure version consistency
+
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.2
 aiosignal==1.4.0
