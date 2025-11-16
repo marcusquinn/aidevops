@@ -355,3 +355,5 @@ case "$command" in
         exit 1
         ;;
 esac
+
+return 0

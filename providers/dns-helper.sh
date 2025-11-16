@@ -3,6 +3,10 @@
 # DNS Management Helper Script
 # Manages DNS records across multiple providers
 
+# Source shared constants if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -11,13 +15,11 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Common message constants
-readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
-readonly HELP_USAGE_INFO="$HELP_USAGE_INFO"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [options]"
+readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 readonly AUTH_BEARER_PREFIX="Authorization: Bearer"
 
 print_info() {
@@ -306,6 +308,12 @@ dns_operation() {
 
 # Assign positional parameters to local variables
 command="${1:-help}"
+param2="$2"
+param3="$3"
+param4="$4"
+param5="$5"
+param6="$6"
+
 provider="$param2"
 domain="$param3"
 record_type="$param4"
@@ -363,3 +371,5 @@ case "$command" in
         exit 1
         ;;
 esac
+
+return 0
