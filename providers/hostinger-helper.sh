@@ -3,11 +3,11 @@
 # Hostinger Helper Script
 # Manages Hostinger shared hosting sites and API operations
 
-# Colors for output
-# String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
-readonly ERROR_INVALID_JSON="$ERROR_INVALID_JSON"
+# Source shared constants if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
+# Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -15,8 +15,9 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Error message constants
-# readonly USAGE_PREFIX="Usage:"  # Currently unused
 readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 print_info() {
     local msg="$1"
@@ -163,6 +164,14 @@ api_call() {
     return 0
 }
 
+# Assign positional parameters to local variables
+command="${1:-help}"
+param2="$2"
+param3="$3"
+param4="$4"
+param5="$5"
+param6="$6"
+
 # Main command handler
 case "$command" in
     "list")
@@ -200,3 +209,5 @@ case "$command" in
         exit 1
         ;;
 esac
+
+return 0

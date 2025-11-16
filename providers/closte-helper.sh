@@ -1,2 +1,4 @@
 #!/bin/bash
 # Closte Helper - Placeholder for future implementation
+
+return 0
