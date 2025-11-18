@@ -10,7 +10,7 @@
 
 **DevOps Superpowers for AI:**
 
-- **Multi-Service Management**: 25+ APIs (hosting, Git, security, monitoring)
+- **Multi-Service Management**: 28+ APIs (hosting, Git, security, monitoring)
 - **Real-Time Operations**: SSH, domain management, database operations
 - **Cross-Service Intelligence**: Connect patterns across your entire ecosystem
 - **Unlimited Scope**: Full access to your development infrastructure
@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-1.5.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-1.7.2-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -90,9 +90,14 @@ cd aidevops && ./setup.sh
 # "Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative guidance"
 ```
 
-**That's it! Your AI assistant now has access to 25+ service integrations.**
+**That's it! Your AI assistant now has access to 28+ service integrations.**
 
-**Recommended CLI AI Assistants:** Augment Code, Claude Desktop, Warp AI, Factory AI Droid, OpenAI Codex
+**Recommended CLI AI Assistants:**
+*   **Factory AI Droid** (Enterprise-grade AI)
+*   **Augment Code** (Professional coding assistant)
+*   **Claude Desktop** (Advanced reasoning)
+*   **Warp AI** (Terminal-integrated)
+*   **OpenAI Codex** (Code-focused model)
 
 ## 🎯 **Core Capabilities**
 
@@ -105,7 +110,7 @@ cd aidevops && ./setup.sh
 
 **🏗️ Unified Interface:**
 
-- Standardized commands across 25+ providers
+- Standardized commands across 28+ providers
 - Automated SSH configuration and multi-account support
 - Security-first design with comprehensive logging
 
@@ -113,7 +118,7 @@ cd aidevops && ./setup.sh
 
 - **Qlty Integration**: Automated quality control with actionable quick-fixes
 - **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit
-- **Security Monitoring**: Real-time vulnerability detection and remediation
+- **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
 - **Performance Auditing**: PageSpeed Insights and Lighthouse integration
 
 ## 📋 **Requirements**
@@ -136,7 +141,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **Closte**: Managed hosting, application deployment
 - **Coolify**: Self-hosted PaaS, application management
 - **Cloudron**: Server and app management platform
-- **AWS/DigitalOcean**: Cloud infrastructure
+- **AWS/DigitalOcean**: Cloud infrastructure support via standard protocols
 
 ### **🌐 Domain & DNS (5 providers)**
 
@@ -152,8 +157,8 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **GitLab**: Self-hosted and cloud Git platform
 - **Gitea**: Lightweight Git service
 - **LocalWP**: WordPress development environment
-- **Pandoc**: Document conversion to markdown for AI processing
 - **Agno**: Local AI agent operating system for DevOps automation
+- **Pandoc**: Document conversion to markdown for AI processing
 - **Browser Automation**: LinkedIn automation, web scraping, social media management
 
 ### **🔐 Security & Quality (5 platforms)**
@@ -164,8 +169,14 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **Codacy**: Multi-tool analysis (0 findings)
 - **CodeRabbit**: AI-powered code reviews
 
-### **📊 Performance & Analytics (2 integrations)**
+### **🧠 AI Prompt Optimization (2 tools)**
 
+- **DSPy**: Framework for programming with language models
+- **DSPyGround**: Interactive playground for prompt optimization
+
+### **📊 Performance & Monitoring (3 integrations)**
+
+- **Updown.io**: Website uptime and SSL monitoring
 - **PageSpeed Insights**: Website performance auditing
 - **Lighthouse**: Comprehensive web app analysis
 
@@ -173,12 +184,6 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 - **Context7**: Real-time documentation access
 - **LocalWP**: WordPress database queries
-
-### **🔧 Quality Control & Monitoring**
-
-- **Qlty**: Automated quality control with actionable quick-fixes
-- **Multi-platform analysis**: Real-time security monitoring
-- **Performance auditing**: Website optimization recommendations
 
 ## 🤖 **MCP Integrations**
 
@@ -233,12 +238,6 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 
 # Show token efficiency comparison
 ./providers/toon-helper.sh compare large-dataset.json
-
-# Batch convert directory
-./providers/toon-helper.sh batch ./json-files ./toon-files json-to-toon
-
-# Get format information
-./providers/toon-helper.sh info
 ```
 
 ## 🚀 **Usage Examples**
@@ -255,6 +254,16 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 
 # Execute commands remotely
 ./providers/hostinger-helper.sh exec example.com "uptime"
+```
+
+### **Monitoring & Uptime (Updown.io)**
+
+```bash
+# List all monitors
+./providers/updown-helper.sh list
+
+# Add a new website check
+./providers/updown-helper.sh add https://example.com "My Website"
 ```
 
 ### **Domain & DNS Management**
@@ -277,18 +286,6 @@ bash .agent/scripts/qlty-cli.sh fix
 
 # Audit website performance
 ./providers/pagespeed-helper.sh wordpress https://example.com
-./providers/pagespeed-helper.sh lighthouse https://example.com json
-```
-
-### **WordPress Management**
-
-```bash
-# Manage WordPress sites via MainWP
-./providers/mainwp-helper.sh list-sites
-./providers/mainwp-helper.sh backup example.com
-
-# Local WordPress development
-./providers/localhost-helper.sh create-site mysite.local
 ```
 
 ## 📚 **Documentation & Resources**
@@ -313,20 +310,13 @@ aidevops/
 ├── 🔧 setup.sh                       # Main setup script
 ├── 📄 AGENTS.md                      # AI agent guidance
 ├── 🔧 scripts/servers-helper.sh      # Global server access
-├── 📁 providers/                     # 25+ service helper scripts
+├── 📁 providers/                     # 28+ service helper scripts
 ├── 📁 configs/                       # Configuration templates
 ├── 📁 docs/                          # Comprehensive documentation
 ├── 📁 .agent/                        # AI agent development tools
 ├── 📁 ssh/                           # SSH key management
 └── 📁 templates/                     # Reusable templates and examples
 ```
-
-**Key Components:**
-
-- **25+ Provider Scripts**: Standardized access to all services
-- **Configuration Templates**: Secure setup for all integrations
-- **Comprehensive Documentation**: 25+ guides covering all aspects
-- **AI Agent Tools**: Quality automation and development utilities
 
 ## 🔧 **Configuration & Setup**
 
@@ -338,42 +328,10 @@ cp configs/hetzner-config.json.txt configs/hetzner-config.json
 
 # 2. Test connections
 ./scripts/servers-helper.sh list
-./providers/hostinger-helper.sh list
-./providers/hetzner-helper.sh list
 
 # 3. Install MCP integrations (optional)
 bash .agent/scripts/setup-mcp-integrations.sh all
 ```
-
-## 🔧 **Qlty Quality Control Integration**
-
-**Automated quality control with actionable quick-fixes ready to quickly adopt:**
-
-```bash
-# Run quality analysis with auto-fixes
-bash .agent/scripts/qlty-cli.sh check 10
-bash .agent/scripts/qlty-cli.sh fix
-
-# Apply systematic improvements
-export PATH="$HOME/.qlty/bin:$PATH"
-qlty check --fix --sample=20
-qlty fmt  # Format all files
-```
-
-**Qlty Features:**
-
-- **🔧 Automated Quick-Fixes**: Apply fixes for common issues instantly
-- **📊 Quality Metrics**: Real-time maintainability scoring
-- **🛡️ Security Monitoring**: Continuous vulnerability detection
-- **⚡ Performance Analysis**: Code performance optimization suggestions
-- **🎯 Actionable Feedback**: Specific, implementable recommendations
-
-**Multi-Platform Quality Excellence:**
-
-- **SonarCloud**: A-grade ratings (0 bugs, 0 vulnerabilities)
-- **CodeFactor**: A+ maintainability score
-- **Codacy**: 0 findings across 8 analysis tools
-- **CodeRabbit**: AI-powered code reviews and security analysis
 
 ## 🔐 **Security & Best Practices**
 
@@ -389,28 +347,6 @@ qlty fmt  # Format all files
 - Multi-platform analysis (SonarCloud, CodeFactor, Codacy, CodeRabbit)
 - Automated security monitoring and vulnerability detection
 - Qlty integration for continuous quality improvement
-- Enterprise-grade security validation across all components
-
-## 🛠️ **Customization & Troubleshooting**
-
-**Adding New Providers:**
-
-1. Create `providers/newprovider-helper.sh`
-2. Add configuration template in `configs/`
-3. Update `scripts/servers-helper.sh` to include new provider
-
-**Common Issues:**
-
-- **SSH timeouts**: Check network connectivity and SSH config
-- **Permission denied**: Verify SSH keys and file permissions
-- **API errors**: Check API tokens and rate limits
-
-**Debug Mode:**
-
-```bash
-export DEBUG=1
-./providers/hetzner-helper.sh list main
-```
 
 ## 🤝 **Contributing & License**
 
@@ -431,7 +367,7 @@ export DEBUG=1
 
 **🎯 For You:**
 
-- Unified infrastructure management across 25+ services
+- Unified infrastructure management across 28+ services
 - AI-powered automation with standardized commands
 - Enterprise-grade security and quality assurance
 - Time savings through consistent interfaces
@@ -441,7 +377,7 @@ export DEBUG=1
 - Structured access to entire DevOps ecosystem
 - Real-time documentation via Context7 MCP
 - Quality control with Qlty automated fixes
-- Performance monitoring with PageSpeed integration
+- Performance monitoring with PageSpeed and Updown.io
 
 **🚀 Get Started:**
 
