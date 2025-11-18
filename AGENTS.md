@@ -51,13 +51,20 @@ When using this framework, AI assistants have access to:
 **Official Service Status Pages:**
 
 *   **GitHub**: [https://www.githubstatus.com/](https://www.githubstatus.com/)
+*   **GitLab**: [https://status.gitlab.com/](https://status.gitlab.com/)
 *   **OpenAI**: [https://status.openai.com/](https://status.openai.com/)
 *   **Anthropic (Claude)**: [https://status.anthropic.com/](https://status.anthropic.com/)
 *   **Cloudflare**: [https://www.cloudflarestatus.com/](https://www.cloudflarestatus.com/)
 *   **Hetzner**: [https://status.hetzner.com/](https://status.hetzner.com/)
-*   **AWS**: [https://health.aws.amazon.com/health/status](https://health.aws.amazon.com/health/status)
+*   **Hostinger**: [https://status.hostinger.com/](https://status.hostinger.com/)
+*   **AWS (Global)**: [https://health.aws.amazon.com/health/status](https://health.aws.amazon.com/health/status)
 *   **Vercel**: [https://www.vercel-status.com/](https://www.vercel-status.com/)
 *   **DigitalOcean**: [https://www.digitaloceanstatus.com/](https://www.digitaloceanstatus.com/)
+*   **SonarCloud**: [https://sonarcloudstatus.io/](https://sonarcloudstatus.io/)
+*   **Codacy**: [https://status.codacy.com/](https://status.codacy.com/)
+*   **CodeRabbit**: [https://status.coderabbit.ai/](https://status.coderabbit.ai/)
+*   **MainWP**: [https://status.mainwp.com/](https://status.mainwp.com/)
+*   **Namecheap**: [https://www.namecheap.com/status-updates/](https://www.namecheap.com/status-updates/)
 
 ## 🤖 **Agent Behavior & Standards**
 
@@ -427,6 +434,22 @@ bash ~/git/aidevops/.agent/scripts/setup-linters-wizard.sh install
 - **AI Agent Knowledge Integration**: Updates agent understanding of your environment
 - **Professional Guidance**: Based on enterprise-grade linter collections
 
+**🔧 Updown.io Helper - Uptime Monitoring:**
+
+```bash
+# Configure API Key (stored securely)
+bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh set updown-api-key YOUR_API_KEY
+
+# List all checks
+bash ~/git/aidevops/providers/updown-helper.sh list
+
+# Add new check (default 1h interval)
+bash ~/git/aidevops/providers/updown-helper.sh add https://example.com "My Website"
+
+# Get raw JSON data
+bash ~/git/aidevops/providers/updown-helper.sh json
+```
+
 **🔬 SonarScanner CLI - SonarQube Cloud Analysis:**
 
 ```bash
@@ -715,6 +738,10 @@ aidevops/
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 - **Context7 MCP**: Real-time documentation access for development libraries
 - **LocalWP MCP**: Direct WordPress database access for local development
+
+### **Monitoring & Uptime (1 service)**
+
+- **Updown.io**: Website uptime and SSL monitoring
 
 ### **Data Format & Conversion (1 service)**
 

@@ -7,6 +7,7 @@ Complete guide to Model Context Protocol (MCP) integrations in the AI DevOps Fra
 The framework includes 10 MCP servers that provide real-time integration between AI assistants and various development tools, services, and documentation.
 
 **Benefits**:
+
 - Real-time access to documentation and APIs
 - Browser automation and testing capabilities
 - SEO analysis and research tools
@@ -18,9 +19,11 @@ The framework includes 10 MCP servers that provide real-time integration between
 ### Web & Browser Automation (3 servers)
 
 #### Chrome DevTools MCP
+
 Browser automation, debugging, and performance analysis.
 
 **Installation**:
+
 ```bash
 # Add to Claude Desktop
 claude mcp add chrome-devtools npx chrome-devtools-mcp@latest
@@ -30,6 +33,7 @@ npm install -g chrome-devtools-mcp
 ```
 
 **Configuration**:
+
 ```json
 {
   "mcpServers": {
@@ -47,6 +51,7 @@ npm install -g chrome-devtools-mcp
 ```
 
 **Use Cases**:
+
 - Performance debugging
 - Core Web Vitals analysis
 - JavaScript debugging
@@ -56,15 +61,18 @@ npm install -g chrome-devtools-mcp
 ---
 
 #### Playwright MCP
+
 Cross-browser testing and automation.
 
 **Installation**:
+
 ```bash
 npm install -g playwright-mcp
 playwright-mcp --install-browsers
 ```
 
 **Configuration**:
+
 ```json
 {
   "mcpServers": {
@@ -77,6 +85,7 @@ playwright-mcp --install-browsers
 ```
 
 **Use Cases**:
+
 - E2E testing
 - Cross-browser compatibility
 - Visual regression testing
@@ -86,15 +95,18 @@ playwright-mcp --install-browsers
 ---
 
 #### Cloudflare Browser Rendering
+
 Server-side web scraping and rendering.
 
 **Installation**:
+
 ```bash
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 export CLOUDFLARE_API_TOKEN="your_api_token"
 ```
 
 **Configuration**:
+
 ```json
 {
   "mcpServers": {
@@ -111,6 +123,7 @@ export CLOUDFLARE_API_TOKEN="your_api_token"
 ```
 
 **Use Cases**:
+
 - Server-side web scraping
 - JavaScript-heavy page rendering
 - Content extraction
@@ -121,9 +134,11 @@ export CLOUDFLARE_API_TOKEN="your_api_token"
 ### SEO & Research Tools (3 servers)
 
 #### Ahrefs MCP
+
 SEO analysis, backlink research, and keyword data.
 
 **Installation**:
+
 ```bash
 export AHREFS_API_KEY="your_api_key"
 claude mcp add ahrefs npx ahrefs-mcp@latest
@@ -132,6 +147,7 @@ claude mcp add ahrefs npx ahrefs-mcp@latest
 **API Key**: Get from [Ahrefs API Dashboard](https://ahrefs.com/api)
 
 **Use Cases**:
+
 - Keyword research
 - Backlink analysis
 - Competitor analysis
@@ -141,9 +157,11 @@ claude mcp add ahrefs npx ahrefs-mcp@latest
 ---
 
 #### Perplexity MCP
+
 AI-powered web search and research.
 
 **Installation**:
+
 ```bash
 export PERPLEXITY_API_KEY="your_api_key"
 claude mcp add perplexity npx perplexity-mcp@latest
@@ -152,6 +170,7 @@ claude mcp add perplexity npx perplexity-mcp@latest
 **API Key**: Get from [Perplexity API](https://docs.perplexity.ai/)
 
 **Use Cases**:
+
 - Research automation
 - Content ideation
 - Fact-checking
@@ -161,9 +180,11 @@ claude mcp add perplexity npx perplexity-mcp@latest
 ---
 
 #### Google Search Console MCP
+
 Search performance data and insights.
 
 **Installation**:
+
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 claude mcp add google-search-console npx mcp-server-gsc@latest
@@ -172,6 +193,7 @@ claude mcp add google-search-console npx mcp-server-gsc@latest
 **Setup**: Requires Google Cloud service account with Search Console API access
 
 **Use Cases**:
+
 - Search performance tracking
 - Query analysis
 - Click-through rate optimization
@@ -183,14 +205,17 @@ claude mcp add google-search-console npx mcp-server-gsc@latest
 ### Performance & Analytics (1 server)
 
 #### PageSpeed Insights MCP
+
 Website performance auditing and optimization.
 
 **Installation**:
+
 ```bash
 bash .agent/scripts/setup-mcp-integrations.sh pagespeed
 ```
 
 **Use Cases**:
+
 - Performance scoring
 - Core Web Vitals
 - Mobile optimization
@@ -202,14 +227,17 @@ bash .agent/scripts/setup-mcp-integrations.sh pagespeed
 ### Development Tools (3 servers)
 
 #### Next.js DevTools MCP
+
 Next.js development and debugging assistance.
 
 **Installation**:
+
 ```bash
 npm install -g nextjs-devtools-mcp
 ```
 
 **Use Cases**:
+
 - Route debugging
 - SSR/SSG optimization
 - Build analysis
@@ -219,9 +247,11 @@ npm install -g nextjs-devtools-mcp
 ---
 
 #### Context7 MCP
+
 Real-time documentation access for thousands of libraries.
 
 **Installation**:
+
 ```bash
 bash .agent/scripts/setup-mcp-integrations.sh context7
 ```
@@ -229,6 +259,7 @@ bash .agent/scripts/setup-mcp-integrations.sh context7
 **Supported Libraries**: React, Vue, Angular, Node.js, Python, and 1000+ more
 
 **Use Cases**:
+
 - API reference lookup
 - Code examples
 - Best practices
@@ -238,9 +269,11 @@ bash .agent/scripts/setup-mcp-integrations.sh context7
 ---
 
 #### LocalWP MCP
+
 Direct WordPress database access for local development.
 
 **Installation**:
+
 ```bash
 bash .agent/scripts/setup-mcp-integrations.sh localwp
 ```
@@ -248,6 +281,7 @@ bash .agent/scripts/setup-mcp-integrations.sh localwp
 **Requirements**: Local by Flywheel or similar WordPress environment
 
 **Use Cases**:
+
 - Database queries
 - Content management
 - Plugin development
@@ -411,11 +445,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 **Scenario**: Website is slow, need to identify bottlenecks
 
 **Tools**:
+
 - Chrome DevTools MCP: Analyze runtime performance
 - PageSpeed MCP: Get optimization recommendations
 - Lighthouse: Comprehensive audit
 
 **Workflow**:
+
 ```text
 AI: "Analyze performance of https://example.com"
 → Chrome DevTools runs performance profile
@@ -430,11 +466,13 @@ AI: "Analyze performance of https://example.com"
 **Scenario**: Improve search rankings for target keywords
 
 **Tools**:
+
 - Ahrefs MCP: Keyword and backlink research
 - Google Search Console MCP: Current performance data
 - Perplexity MCP: Content research
 
 **Workflow**:
+
 ```text
 AI: "Analyze SEO competition for 'cloud hosting'"
 → Ahrefs finds top-ranking pages
@@ -450,11 +488,13 @@ AI: "Analyze SEO competition for 'cloud hosting'"
 **Scenario**: Need comprehensive cross-browser testing
 
 **Tools**:
+
 - Playwright MCP: Multi-browser automation
 - Chrome DevTools MCP: Debugging
 - Visual regression testing
 
 **Workflow**:
+
 ```text
 AI: "Test checkout flow across all browsers"
 → Playwright runs tests on Chrome, Firefox, Safari
@@ -470,11 +510,13 @@ AI: "Test checkout flow across all browsers"
 **Scenario**: Building Next.js app, need real-time help
 
 **Tools**:
+
 - Context7 MCP: Documentation lookup
 - Next.js DevTools MCP: Debugging
 - Chrome DevTools MCP: Performance
 
 **Workflow**:
+
 ```text
 AI: "How do I optimize this Next.js page?"
 → Context7 provides Next.js best practices
@@ -492,6 +534,7 @@ bash .agent/scripts/validate-mcp-integrations.sh
 ```
 
 **Expected Output**:
+
 ```text
 ✅ Chrome DevTools MCP: Installed
 ✅ Playwright MCP: Installed
@@ -525,6 +568,7 @@ npx context7-mcp@latest search "React useState"
 **Problem**: MCP server not starting
 
 **Solution**:
+
 ```bash
 # Check if port is already in use
 lsof -i :port_number
@@ -539,6 +583,7 @@ tail -f /tmp/chrome-mcp.log
 **Problem**: API key not recognized
 
 **Solution**:
+
 ```bash
 # Verify environment variable is set
 echo $AHREFS_API_KEY
@@ -555,6 +600,7 @@ curl -H "Authorization: Bearer $AHREFS_API_KEY" https://api.ahrefs.com/v3/ping
 **Problem**: Chrome not found
 
 **Solution**:
+
 ```bash
 # Install Chrome Canary
 brew install --cask google-chrome-canary
@@ -566,18 +612,21 @@ npx chrome-devtools-mcp@latest --chromePath=/Applications/Google\ Chrome.app/Con
 ## Best Practices
 
 ### Security
+
 - Store API keys in secure files with 600 permissions
 - Never commit API keys to repositories
 - Use environment variables for sensitive data
 - Rotate API keys regularly
 
 ### Performance
+
 - Use headless mode for Chrome when possible
 - Cache Context7 documentation locally
 - Limit concurrent browser instances
 - Close MCP servers when not in use
 
 ### Development
+
 - Test MCP integrations in isolation first
 - Use validation script after configuration changes
 - Keep MCP servers updated to latest versions
@@ -620,6 +669,7 @@ export PLAYWRIGHT_BROWSERS_PATH=/custom/path
 ## Resources
 
 ### Official Documentation
+
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
 - [Chrome DevTools MCP](https://github.com/modelcontextprotocol/servers/tree/main/chrome-devtools)
 - [Playwright Documentation](https://playwright.dev/)
@@ -627,6 +677,7 @@ export PLAYWRIGHT_BROWSERS_PATH=/custom/path
 - [Perplexity API Docs](https://docs.perplexity.ai/)
 
 ### Internal Documentation
+
 - [MCP Integration Setup Script](../.agent/scripts/setup-mcp-integrations.sh)
 - [MCP Validation Script](../.agent/scripts/validate-mcp-integrations.sh)
 - [API Integrations Guide](../docs/API-INTEGRATIONS.md)

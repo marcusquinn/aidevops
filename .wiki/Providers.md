@@ -15,6 +15,7 @@ All provider scripts follow this pattern:
 ```
 
 Common commands across providers:
+
 - `list` - List available resources
 - `connect` - Establish SSH connection
 - `exec` - Execute remote command
@@ -30,6 +31,7 @@ Common commands across providers:
 Manage Hostinger shared hosting, domains, and email services.
 
 **Commands**:
+
 ```bash
 # List all configured servers
 ./providers/hostinger-helper.sh list
@@ -47,6 +49,7 @@ Manage Hostinger shared hosting, domains, and email services.
 **Configuration**: `configs/hostinger-config.json`
 
 **Features**:
+
 - SSH connection management
 - Remote command execution
 - Server information retrieval
@@ -61,6 +64,7 @@ Manage Hostinger shared hosting, domains, and email services.
 Manage Hetzner VPS servers, networking, and load balancers.
 
 **Commands**:
+
 ```bash
 # List servers in project
 ./providers/hetzner-helper.sh list [project-name]
@@ -84,6 +88,7 @@ Manage Hetzner VPS servers, networking, and load balancers.
 **Configuration**: `configs/hetzner-config.json`
 
 **Features**:
+
 - Multi-project support
 - Server lifecycle management
 - Network configuration
@@ -98,6 +103,7 @@ Manage Hetzner VPS servers, networking, and load balancers.
 Manage Coolify self-hosted PaaS and application deployments.
 
 **Commands**:
+
 ```bash
 # List applications
 ./providers/coolify-helper.sh list
@@ -115,6 +121,7 @@ Manage Coolify self-hosted PaaS and application deployments.
 **Configuration**: `configs/coolify-config.json`
 
 **Features**:
+
 - Application deployment
 - Container management
 - Log monitoring
@@ -129,6 +136,7 @@ Manage Coolify self-hosted PaaS and application deployments.
 Manage Cloudron server and application platform.
 
 **Commands**:
+
 ```bash
 # List installed apps
 ./providers/cloudron-helper.sh list
@@ -148,6 +156,7 @@ Manage Cloudron server and application platform.
 **Configuration**: `configs/cloudron-config.json`
 
 **Features**:
+
 - App marketplace integration
 - Automated backups
 - User management
@@ -162,6 +171,7 @@ Manage Cloudron server and application platform.
 Manage Closte managed hosting and application deployment.
 
 **Commands**:
+
 ```bash
 # List sites
 ./providers/closte-helper.sh list
@@ -183,6 +193,7 @@ Manage Closte managed hosting and application deployment.
 Unified DNS management across multiple providers with focus on Cloudflare.
 
 **Commands**:
+
 ```bash
 # List DNS zones
 ./providers/dns-helper.sh cloudflare list-zones
@@ -210,6 +221,7 @@ Unified DNS management across multiple providers with focus on Cloudflare.
 **Configuration**: `configs/cloudflare-config.json`
 
 **Features**:
+
 - DNS record management (A, AAAA, CNAME, MX, TXT)
 - SSL/TLS configuration
 - Zone management
@@ -224,6 +236,7 @@ Unified DNS management across multiple providers with focus on Cloudflare.
 Domain registration and management via Spaceship.
 
 **Commands**:
+
 ```bash
 # Check domain availability
 ./providers/spaceship-helper.sh check-availability [domain]
@@ -247,6 +260,7 @@ Domain registration and management via Spaceship.
 **Configuration**: `configs/spaceship-config.json`
 
 **Features**:
+
 - Domain availability checking
 - Domain registration
 - Nameserver management
@@ -261,6 +275,7 @@ Domain registration and management via Spaceship.
 Domain purchasing and DNS management via 101domains.
 
 **Commands**:
+
 ```bash
 # Check availability
 ./providers/101domains-helper.sh check-availability [domain]
@@ -282,6 +297,7 @@ Domain purchasing and DNS management via 101domains.
 **Configuration**: `configs/101domains-config.json`
 
 **Features**:
+
 - Domain search and registration
 - DNS management
 - Bulk domain operations
@@ -298,6 +314,7 @@ Domain purchasing and DNS management via 101domains.
 Unified interface for GitHub, GitLab, and Gitea.
 
 **Commands**:
+
 ```bash
 # GitHub operations
 ./providers/git-platforms-helper.sh github list-repos
@@ -319,6 +336,7 @@ Unified interface for GitHub, GitLab, and Gitea.
 **Configuration**: `configs/git-platforms-config.json`
 
 **Features**:
+
 - Multi-platform support (GitHub, GitLab, Gitea)
 - Repository management
 - Issue tracking
@@ -333,6 +351,7 @@ Unified interface for GitHub, GitLab, and Gitea.
 Document format conversion for AI processing.
 
 **Commands**:
+
 ```bash
 # Convert to markdown
 ./providers/pandoc-helper.sh to-markdown [input-file] [output-file]
@@ -348,6 +367,7 @@ Document format conversion for AI processing.
 ```
 
 **Supported Formats**:
+
 - Markdown
 - HTML
 - PDF
@@ -356,6 +376,7 @@ Document format conversion for AI processing.
 - LaTeX
 
 **Features**:
+
 - Multi-format conversion
 - Batch processing
 - Template support
@@ -370,6 +391,7 @@ Document format conversion for AI processing.
 Local AI agent operating system for DevOps automation.
 
 **Commands**:
+
 ```bash
 # Install Agno
 ./providers/agno-setup.sh install
@@ -390,6 +412,7 @@ Local AI agent operating system for DevOps automation.
 **Configuration**: `configs/agno-config.json`
 
 **Features**:
+
 - Local AI agent orchestration
 - DevOps workflow automation
 - Tool integration
@@ -404,6 +427,7 @@ Local AI agent operating system for DevOps automation.
 WordPress local development environment management.
 
 **Commands**:
+
 ```bash
 # Create new site
 ./providers/localhost-helper.sh create-site [site-name]
@@ -424,6 +448,7 @@ WordPress local development environment management.
 ```
 
 **Features**:
+
 - WordPress site creation
 - Database management
 - Plugin/theme installation
@@ -440,6 +465,7 @@ WordPress local development environment management.
 Centralized WordPress management via MainWP.
 
 **Commands**:
+
 ```bash
 # List all sites
 ./providers/mainwp-helper.sh list-sites
@@ -465,6 +491,7 @@ Centralized WordPress management via MainWP.
 **Configuration**: `configs/mainwp-config.json`
 
 **Features**:
+
 - Multi-site management
 - Automated backups
 - Bulk updates
@@ -482,6 +509,7 @@ Centralized WordPress management via MainWP.
 Amazon Simple Email Service management.
 
 **Commands**:
+
 ```bash
 # Send email
 ./providers/ses-helper.sh send [to] [subject] [body]
@@ -503,6 +531,7 @@ Amazon Simple Email Service management.
 **Configuration**: `configs/ses-config.json`
 
 **Features**:
+
 - Email sending
 - Domain verification
 - Bounce handling
@@ -519,6 +548,7 @@ Amazon Simple Email Service management.
 Password and secrets management via Vaultwarden.
 
 **Commands**:
+
 ```bash
 # List items
 ./providers/vaultwarden-helper.sh list
@@ -542,6 +572,7 @@ Password and secrets management via Vaultwarden.
 **Configuration**: `configs/vaultwarden-config.json`
 
 **Features**:
+
 - Secure password storage
 - API key management
 - Secret sharing
@@ -558,6 +589,7 @@ Password and secrets management via Vaultwarden.
 Website performance auditing and optimization.
 
 **Commands**:
+
 ```bash
 # Run PageSpeed audit
 ./providers/pagespeed-helper.sh audit [url]
@@ -578,6 +610,7 @@ Website performance auditing and optimization.
 **Configuration**: `configs/pagespeed-config.json`
 
 **Features**:
+
 - Performance scoring
 - Core Web Vitals
 - Optimization suggestions
@@ -593,6 +626,7 @@ Website performance auditing and optimization.
 Code quality and security auditing.
 
 **Commands**:
+
 ```bash
 # Run audit
 ./providers/code-audit-helper.sh audit [directory]
@@ -605,6 +639,7 @@ Code quality and security auditing.
 ```
 
 **Features**:
+
 - Static code analysis
 - Security vulnerability detection
 - Code quality metrics
@@ -621,6 +656,7 @@ Code quality and security auditing.
 DSPy framework integration for prompt optimization.
 
 **Commands**:
+
 ```bash
 # Install DSPy
 ./providers/dspy-helper.sh install
@@ -638,6 +674,7 @@ DSPy framework integration for prompt optimization.
 **Configuration**: `configs/dspy-config.json`
 
 **Features**:
+
 - Prompt optimization
 - Model evaluation
 - Chain-of-thought reasoning
@@ -652,6 +689,7 @@ DSPy framework integration for prompt optimization.
 DSPyGround playground for prompt experimentation.
 
 **Commands**:
+
 ```bash
 # Start playground
 ./providers/dspyground-helper.sh start
@@ -674,6 +712,7 @@ DSPyGround playground for prompt experimentation.
 Token-Oriented Object Notation for efficient LLM data exchange.
 
 **Commands**:
+
 ```bash
 # Encode JSON to TOON
 ./providers/toon-helper.sh encode [input.json] [output.toon]
@@ -692,6 +731,7 @@ Token-Oriented Object Notation for efficient LLM data exchange.
 ```
 
 **Features**:
+
 - 20-60% token reduction
 - Human-readable format
 - Schema preservation
@@ -708,6 +748,7 @@ Token-Oriented Object Notation for efficient LLM data exchange.
 Interactive setup wizard for initial configuration.
 
 **Commands**:
+
 ```bash
 # Run full setup
 ./providers/setup-wizard-helper.sh
@@ -723,6 +764,7 @@ Interactive setup wizard for initial configuration.
 ```
 
 **Features**:
+
 - Interactive configuration
 - Credential management
 - Connection testing
@@ -737,6 +779,7 @@ Interactive setup wizard for initial configuration.
 Common variables and functions used across all providers.
 
 **Usage**:
+
 ```bash
 # Source in scripts
 source "$(dirname "$0")/shared-constants.sh"
@@ -749,6 +792,7 @@ echo "$LOG_DIR"
 ```
 
 **Provides**:
+
 - Color codes for output
 - Standard paths
 - Common functions
@@ -834,17 +878,20 @@ Always use configuration files, never hardcode credentials:
 ### Creating New Provider
 
 1. Copy template:
+
 ```bash
 cp providers/template-helper.sh providers/newprovider-helper.sh
 ```
 
 2. Implement standard functions:
+
 - `list()` - List resources
 - `connect()` - Connect to service
 - `exec()` - Execute operations
 - `info()` - Display information
 
 3. Add configuration:
+
 ```bash
 cp configs/template-config.json.txt configs/newprovider-config.json
 ```

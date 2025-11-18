@@ -44,6 +44,7 @@ cd aidevops
 ```
 
 The setup script will:
+
 - Install required dependencies
 - Create necessary directories
 - Set up SSH configurations
@@ -166,6 +167,7 @@ Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative gu
 ```
 
 **Recommended CLI AI Assistants:**
+
 - Qoder (Claude)
 - Augment Code
 - Claude Desktop
@@ -278,6 +280,7 @@ qlty fmt
 **Problem**: `Permission denied (publickey)`
 
 **Solution**:
+
 ```bash
 # Verify SSH key is added
 ssh-add -l
@@ -294,6 +297,7 @@ ssh -v user@host
 **Problem**: `401 Unauthorized`
 
 **Solution**:
+
 ```bash
 # Verify API token in config
 cat configs/provider-config.json
@@ -307,6 +311,7 @@ cat configs/provider-config.json
 **Problem**: `Cannot read config file`
 
 **Solution**:
+
 ```bash
 # Verify file exists
 ls -la configs/

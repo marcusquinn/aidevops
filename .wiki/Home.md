@@ -39,21 +39,27 @@ Welcome to the AI DevOps Framework documentation. This comprehensive guide provi
 ## Service Coverage
 
 ### Infrastructure & Hosting (6)
+
 Hostinger, Hetzner Cloud, Closte, Coolify, Cloudron, AWS/DigitalOcean
 
 ### Domain & DNS (5)
+
 Cloudflare, Spaceship, 101domains, Route 53, Namecheap
 
 ### Development & Git (7)
+
 GitHub, GitLab, Gitea, LocalWP, Pandoc, Agno, Browser Automation
 
 ### Security & Quality (5)
+
 Vaultwarden, SonarCloud, CodeFactor, Codacy, CodeRabbit
 
 ### Performance & Analytics (2)
+
 PageSpeed Insights, Lighthouse
 
 ### AI & Documentation (2)
+
 Context7, LocalWP MCP
 
 ## Quick Start
