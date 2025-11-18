@@ -33,12 +33,26 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+# Function to backup existing file
+backup_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        # Check if it's already managed by us (optional optimization, but safer to always backup if content differs)
+        # For now, just backup
+        local backup="${file}.backup.$(date +%Y%m%d_%H%M%S)"
+        log_warning "Existing config found at $file. Backing up to $backup"
+        cp "$file" "$backup"
+    fi
+}
+
 # Function to create Aider configuration
 configure_aider() {
     log_info "Configuring Aider to read AGENTS.md automatically..."
     
     local aider_config="$HOME/.aider.conf.yml"
     
+    backup_file "$aider_config"
+
     cat > "$aider_config" << 'EOF'
 # Aider Configuration - Auto-read AGENTS.md
 # This ensures Aider always reads AI agent guidance first
@@ -89,6 +103,8 @@ configure_openai_cli() {
     local openai_config="$HOME/.openai/config.yaml"
     mkdir -p "$(dirname "$openai_config")" 2>/dev/null || true
     
+    backup_file "$openai_config"
+
     cat > "$openai_config" << 'EOF'
 # OpenAI CLI Configuration - Auto-read AGENTS.md
 # This ensures OpenAI CLI includes AI agent guidance
@@ -117,6 +133,8 @@ configure_claude_cli() {
     local claude_config="$HOME/.claude/config.json"
     mkdir -p "$(dirname "$claude_config")" 2>/dev/null || true
     
+    backup_file "$claude_config"
+
     cat > "$claude_config" << 'EOF'
 {
   "model": "claude-3-sonnet-20240229",
@@ -151,6 +169,8 @@ EOF
     else
         log_info "Qwen memory file already exists at $qwen_memory"
     fi
+
+    backup_file "$qwen_config"
 
     cat > "$qwen_config" << 'EOF'
 {
@@ -266,6 +286,8 @@ configure_ai_shell() {
     local ai_shell_config="$HOME/.ai-shell/config.json"
     mkdir -p "$(dirname "$ai_shell_config")" 2>/dev/null || true
     
+    backup_file "$ai_shell_config"
+
     cat > "$ai_shell_config" << 'EOF'
 {
   "model": "gpt-4",
@@ -287,6 +309,8 @@ configure_litellm() {
 
     local litellm_config="$HOME/.litellm/config.yaml"
     mkdir -p "$(dirname "$litellm_config")" 2>/dev/null || true
+
+    backup_file "$litellm_config"
 
     cat > "$litellm_config" << 'EOF'
 # LiteLLM Configuration - Auto-read AGENTS.md
@@ -318,7 +342,7 @@ EOF
 
 # Function to create shell aliases for AI tools
 configure_shell_aliases() {
-    log_info "Creating shell aliases for AI tools with AGENTS.md context..."
+    log_info "Checking shell aliases for AI tools with AGENTS.md context..."
 
     local shell_config=""
     if [[ -f "$HOME/.zshrc" ]]; then
@@ -330,7 +354,14 @@ configure_shell_aliases() {
         return
     fi
 
+    # Check if aliases already exist
+    if grep -q "# AI CLI Tools - Auto-read AGENTS.md" "$shell_config"; then
+        log_info "AI CLI aliases already exist in $shell_config - Skipping"
+        return
+    fi
+
     # Add AI tool aliases
+    log_info "Adding AI tool aliases to $shell_config..."
     cat >> "$shell_config" << 'EOF'
 
 # AI CLI Tools - Auto-read AGENTS.md
@@ -360,6 +391,9 @@ alias agents-home='cat ~/AGENTS.md'
 
 # Navigate to AI framework
 alias cdai='cd ~/git/aidevops'
+
+# Droid CLI with context
+alias droid-guided='droid "$(cat ~/AGENTS.md)"'
 
 EOF
 
@@ -536,18 +570,18 @@ EOF
         log_success "Created GitHub Copilot instructions at $copilot_instructions"
     fi
 
-    # Factory.ai/Drone memory (if directory exists)
+    # Factory.ai/Droid memory (if directory exists)
     if [[ -d "$HOME/.factory" ]]; then
-        local factory_memory="$HOME/.factory/DRONE.md"
+        local factory_memory="$HOME/.factory/DROID.md"
         if [[ ! -f "$factory_memory" ]]; then
             cat > "$factory_memory" << 'EOF'
-# Factory.ai Drone Memory File
+# Factory.ai Droid Memory File
 
 At the beginning of each session, read ~/AGENTS.md to get additional context and instructions.
 
-This file provides persistent memory for Factory.ai Drone sessions. The authoritative DevOps framework documentation is maintained at ~/git/aidevops/AGENTS.md.
+This file provides persistent memory for Factory.ai Droid sessions. The authoritative DevOps framework documentation is maintained at ~/git/aidevops/AGENTS.md.
 EOF
-            log_success "Created Factory.ai Drone memory file at $factory_memory"
+            log_success "Created Factory.ai Droid memory file at $factory_memory"
         fi
     fi
 

@@ -135,7 +135,7 @@ show_manual_instructions() {
     echo "• Claude Desktop: https://claude.ai/"
     echo "• AMP Code: https://amp.dev/"
     echo "• OpenAI Codex: https://openai.com/codex/"
-    echo "• Factory AI Dron: https://www.factory.ai/"
+    echo "• Factory AI Droid: https://www.factory.ai/"
     echo "• Qwen: https://qwenlm.github.io/"
     echo "• Warp AI: https://www.warp.dev/"
     echo

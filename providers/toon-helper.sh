@@ -13,10 +13,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $command"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $command"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $command"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $command"; }
 
 # Check if TOON CLI is available
 check_toon() {
@@ -40,8 +40,8 @@ check_toon() {
 
 # Convert JSON to TOON format
 json_to_toon() {
-    local input_file="$1"
-    local output_file="$2"
+    local input_file="$command"
+    local output_file="$account_name"
     local delimiter="${3:-,}"
     local show_stats="${4:-false}"
     
@@ -83,12 +83,13 @@ json_to_toon() {
         print_error "Failed to convert JSON to TOON"
         return 1
     fi
+    return 0
 }
 
 # Convert TOON to JSON format
 toon_to_json() {
-    local input_file="$1"
-    local output_file="$2"
+    local input_file="$command"
+    local output_file="$account_name"
     local strict_mode="${3:-true}"
     
     if [[ -z "$input_file" ]]; then
@@ -123,11 +124,12 @@ toon_to_json() {
         print_error "Failed to convert TOON to JSON"
         return 1
     fi
+    return 0
 }
 
 # Convert from stdin
 convert_stdin() {
-    local format="$1"
+    local format="$command"
     local delimiter="${2:-,}"
     local show_stats="${3:-false}"
     
@@ -163,13 +165,14 @@ convert_stdin() {
         print_error "Failed to convert from stdin"
         return 1
     fi
+    return 0
 }
 
 # Batch convert directory
 batch_convert() {
-    local source_dir="$1"
-    local target_dir="$2"
-    local format="$3"
+    local source_dir="$command"
+    local target_dir="$account_name"
+    local format="$target"
     local delimiter="${4:-,}"
     
     if [[ -z "$source_dir" || -z "$target_dir" || -z "$format" ]]; then
@@ -228,7 +231,7 @@ batch_convert() {
 
 # Compare token efficiency
 compare_formats() {
-    local input_file="$1"
+    local input_file="$command"
 
     if [[ -z "$input_file" ]]; then
         print_error "Input file is required"
@@ -252,7 +255,7 @@ compare_formats() {
 
 # Validate TOON format
 validate_toon() {
-    local input_file="$1"
+    local input_file="$command"
 
     if [[ -z "$input_file" ]]; then
         print_error "Input file is required"
@@ -274,6 +277,7 @@ validate_toon() {
         print_error "TOON format validation failed"
         return 1
     fi
+    return 0
 }
 
 # Show TOON CLI version and info
@@ -356,12 +360,22 @@ show_help() {
 
 # Main script logic
 main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     local command="${1:-help}"
 
     case "$command" in
         "encode"|"json-to-toon")
-            local input_file="$2"
-            local output_file="$3"
+            local input_file="$account_name"
+            local output_file="$target"
             local delimiter="${4:-,}"
             local show_stats="${5:-false}"
 
@@ -370,8 +384,8 @@ main() {
             fi
             ;;
         "decode"|"toon-to-json")
-            local input_file="$2"
-            local output_file="$3"
+            local input_file="$account_name"
+            local output_file="$target"
             local strict_mode="${4:-true}"
 
             if check_toon; then
@@ -392,9 +406,9 @@ main() {
             fi
             ;;
         "batch")
-            local source_dir="$2"
-            local target_dir="$3"
-            local format="$4"
+            local source_dir="$account_name"
+            local target_dir="$target"
+            local format="$options"
             local delimiter="${5:-,}"
 
             if check_toon; then
@@ -402,14 +416,14 @@ main() {
             fi
             ;;
         "compare")
-            local input_file="$2"
+            local input_file="$account_name"
 
             if check_toon; then
                 compare_formats "$input_file"
             fi
             ;;
         "validate")
-            local input_file="$2"
+            local input_file="$account_name"
 
             if check_toon; then
                 validate_toon "$input_file"

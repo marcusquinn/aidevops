@@ -114,21 +114,25 @@ readonly COLOR_RESET='\033[0m'
 # Print error message with consistent formatting
 print_shared_error() {
     echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $1" >&2
+    return 0
 }
 
 # Print success message with consistent formatting
 print_shared_success() {
     echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $1"
+    return 0
 }
 
 # Print warning message with consistent formatting
 print_shared_warning() {
     echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $1"
+    return 0
 }
 
 # Print info message with consistent formatting
 print_shared_info() {
     echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $1"
+    return 0
 }
 
 # Validate required parameter
