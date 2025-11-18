@@ -22,25 +22,25 @@ readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -81,7 +81,7 @@ load_config() {
 
 # Get instance configuration
 get_instance_config() {
-    local instance_name="$command"
+    local instance_name="$1"
     
     if [[ -z "$instance_name" ]]; then
         print_error "Instance name is required"
@@ -102,7 +102,7 @@ get_instance_config() {
 
 # Configure Bitwarden CLI for instance
 configure_bw_cli() {
-    local instance_name="$command"
+    local instance_name="$1"
     local config=$(get_instance_config "$instance_name")
     local server_url=$(echo "$config" | jq -r '.server_url')
     
@@ -115,9 +115,9 @@ configure_bw_cli() {
 
 # Login to Bitwarden
 login_bw() {
-    local instance_name="$command"
-    local email="$account_name"
-    local password="$target"
+    local instance_name="$1"
+    local email="$2"
+    local password="$3"
     
     configure_bw_cli "$instance_name"
     
@@ -132,7 +132,7 @@ login_bw() {
 
 # Unlock vault
 unlock_vault() {
-    local password="$command"
+    local password="$1"
     
     if [[ -n "$password" ]]; then
         echo "$password" | bw unlock --raw
@@ -157,7 +157,7 @@ list_instances() {
 
 # Get vault status
 get_vault_status() {
-    local instance_name="$command"
+    local instance_name="$1"
     configure_bw_cli "$instance_name"
     
     print_info "Vault status for instance: $instance_name"
@@ -167,7 +167,7 @@ get_vault_status() {
 
 # List vault items
 list_vault_items() {
-    local instance_name="$command"
+    local instance_name="$1"
     local item_type="${2:-}"
     
     configure_bw_cli "$instance_name"
@@ -184,8 +184,8 @@ list_vault_items() {
 
 # Get specific item
 get_vault_item() {
-    local instance_name="$command"
-    local item_id="$account_name"
+    local instance_name="$1"
+    local item_id="$2"
     
     configure_bw_cli "$instance_name"
     
@@ -201,8 +201,8 @@ get_vault_item() {
 
 # Search vault items
 search_vault() {
-    local instance_name="$command"
-    local search_term="$account_name"
+    local instance_name="$1"
+    local search_term="$2"
     
     configure_bw_cli "$instance_name"
     
@@ -218,8 +218,8 @@ search_vault() {
 
 # Get password for item
 get_password() {
-    local instance_name="$command"
-    local item_name="$account_name"
+    local instance_name="$1"
+    local item_name="$2"
     
     configure_bw_cli "$instance_name"
     
@@ -235,8 +235,8 @@ get_password() {
 
 # Get username for item
 get_username() {
-    local instance_name="$command"
-    local item_name="$account_name"
+    local instance_name="$1"
+    local item_name="$2"
     
     configure_bw_cli "$instance_name"
     
@@ -252,10 +252,10 @@ get_username() {
 
 # Create new vault item
 create_vault_item() {
-    local instance_name="$command"
-    local item_name="$account_name"
-    local username="$target"
-    local password="$options"
+    local instance_name="$1"
+    local item_name="$2"
+    local username="$3"
+    local password="$4"
     local uri="$param5"
     
     configure_bw_cli "$instance_name"
@@ -288,10 +288,10 @@ create_vault_item() {
 
 # Update vault item
 update_vault_item() {
-    local instance_name="$command"
-    local item_id="$account_name"
-    local field="$target"
-    local value="$options"
+    local instance_name="$1"
+    local item_id="$2"
+    local field="$3"
+    local value="$4"
 
     configure_bw_cli "$instance_name"
 
@@ -311,8 +311,8 @@ update_vault_item() {
 
 # Delete vault item
 delete_vault_item() {
-    local instance_name="$command"
-    local item_id="$account_name"
+    local instance_name="$1"
+    local item_id="$2"
 
     configure_bw_cli "$instance_name"
 
@@ -341,7 +341,7 @@ generate_password() {
 
 # Sync vault
 sync_vault() {
-    local instance_name="$command"
+    local instance_name="$1"
     configure_bw_cli "$instance_name"
 
     print_info "Syncing vault for instance: $instance_name"
@@ -358,9 +358,9 @@ lock_vault() {
 
 # Export vault
 export_vault() {
-    local instance_name="$command"
+    local instance_name="$1"
     local format="${2:-json}"
-    local output_file="$target"
+    local output_file="$3"
 
     configure_bw_cli "$instance_name"
 
@@ -379,8 +379,8 @@ export_vault() {
 
 # Get organization vault items
 list_org_vault() {
-    local instance_name="$command"
-    local org_id="$account_name"
+    local instance_name="$1"
+    local org_id="$2"
 
     configure_bw_cli "$instance_name"
 
@@ -396,7 +396,7 @@ list_org_vault() {
 
 # Start MCP server for Bitwarden
 start_mcp_server() {
-    local instance_name="$command"
+    local instance_name="$1"
     local port="${2:-3002}"
 
     configure_bw_cli "$instance_name"
@@ -430,7 +430,7 @@ test_mcp_connection() {
 
 # Audit vault security
 audit_vault_security() {
-    local instance_name="$command"
+    local instance_name="$1"
     configure_bw_cli "$instance_name"
 
     print_info "Auditing vault security for instance: $instance_name"
@@ -495,16 +495,11 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
+    local account_name="$2"
+    local target="$3"
+    local options="$4"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
     local instance_name="$account_name"
     local user_email="$target"
     local password_length="$options"

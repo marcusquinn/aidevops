@@ -498,7 +498,7 @@ param5="$5"
 param6="$6"
 
 # Main command handler
-case "$command" in
+case "$1" in
     "setup-dns")
         check_requirements && setup_local_dns
         ;;
@@ -563,7 +563,7 @@ case "$command" in
         echo "  - @verygoodplugins/mcp-local-wp (optional, for AI database access)"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $command"
+        print_error "$ERROR_UNKNOWN_COMMAND $1"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;

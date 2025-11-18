@@ -321,7 +321,7 @@ record_name="$param5"
 record_value="$param6"
 
 # Main command handler
-case "$command" in
+case "$1" in
     "list")
         list_providers
         ;;
@@ -366,7 +366,7 @@ case "$command" in
         echo "  $0 delete cloudflare personal example.com www"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $command"
+        print_error "$ERROR_UNKNOWN_COMMAND $1"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;

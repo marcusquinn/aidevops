@@ -169,8 +169,8 @@ validate_file_exists() {
 validate_command_exists() {
     local command_name="$1"
     
-    if ! command -v "$command_name" &> /dev/null; then
-        print_shared_error "Required command not found: $command_name"
+    if ! command -v "$1_name" &> /dev/null; then
+        print_shared_error "Required command not found: $1_name"
         return 1
     fi
     return 0

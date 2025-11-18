@@ -127,7 +127,7 @@ exec_on_site() {
     local command="$2"
     check_config
     
-    if [[ -z "$site" || -z "$command" ]]; then
+    if [[ -z "$site" || -z "$1" ]]; then
         print_error "Usage: exec [site] [command]"
         exit 1
     fi
@@ -150,9 +150,9 @@ exec_on_site() {
     fi
     
     password_file="${password_file/\~/$HOME}"
-    print_info "Executing '$command' on $site..."
+    print_info "Executing '$1' on $site..."
     
-    sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $command"
+    sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $1"
     return 0
 }
 
@@ -181,7 +181,7 @@ param2="$2"
 param3="$3"
 
 # Main command handler
-case "$command" in
+case "$1" in
     "list")
         list_sites
         ;;
@@ -212,7 +212,7 @@ case "$command" in
         echo "  $0 api domains"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $command"
+        print_error "$ERROR_UNKNOWN_COMMAND $1"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;

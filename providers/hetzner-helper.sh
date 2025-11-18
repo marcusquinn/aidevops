@@ -129,7 +129,7 @@ exec_on_server() {
     local command="$2"
     check_config
     
-    if [[ -z "$server_name" || -z "$command" ]]; then
+    if [[ -z "$server_name" || -z "$1" ]]; then
         print_error "Usage: exec [server] [command]"
         exit 1
     fi
@@ -142,8 +142,8 @@ exec_on_server() {
     fi
     
     read -r ip name project <<< "$server_info"
-    print_info "Executing '$command' on $name..."
-    ssh "root@$ip" "$command"
+    print_info "Executing '$1' on $name..."
+    ssh "root@$ip" "$1"
     return 0
 }
 
@@ -409,7 +409,7 @@ param5="$5"
 param6="$6"
 
 # Main command handler
-case "$command" in
+case "$1" in
     "list")
         list_servers
         ;;
@@ -468,7 +468,7 @@ case "$command" in
         echo "  Image: ubuntu-24.04 (Ubuntu 24.04 LTS)"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $command"
+        print_error "$ERROR_UNKNOWN_COMMAND $1"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;

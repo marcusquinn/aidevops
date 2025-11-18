@@ -13,10 +13,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $command"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $command"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $command"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $command"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Check if pandoc is installed
 check_pandoc() {
@@ -36,7 +36,7 @@ check_pandoc() {
 
 # Function to detect file format
 detect_format() {
-    local file="$command"
+    local file="$1"
     local extension="${file##*.}"
     
     case "$(echo "$extension" | tr '[:upper:]' '[:lower:]')" in
@@ -66,10 +66,10 @@ detect_format() {
 
 # Function to convert single file to markdown
 convert_to_markdown() {
-    local input_file="$command"
-    local output_file="$account_name"
-    local input_format="$target"
-    local options="$options"
+    local input_file="$1"
+    local output_file="$2"
+    local input_format="$3"
+    local options="$4"
     
     if [[ ! -f "$input_file" ]]; then
         print_error "Input file not found: $input_file"
@@ -105,8 +105,8 @@ convert_to_markdown() {
     pandoc_cmd="$pandoc_cmd --wrap=none --markdown-headings=atx"
     
     # Add custom options if provided
-    if [[ -n "$options" ]]; then
-        pandoc_cmd="$pandoc_cmd $options"
+    if [[ -n "$4" ]]; then
+        pandoc_cmd="$pandoc_cmd $4"
     fi
     
     # Add input and output files
@@ -141,10 +141,10 @@ convert_to_markdown() {
 
 # Function to convert multiple files in a directory
 convert_directory() {
-    local input_dir="$command"
-    local output_dir="$account_name"
-    local pattern="$target"
-    local input_format="$options"
+    local input_dir="$1"
+    local output_dir="$2"
+    local pattern="$3"
+    local input_format="$4"
     local options="$5"
     
     if [[ ! -d "$input_dir" ]]; then
@@ -178,7 +178,7 @@ convert_directory() {
         local basename=$(basename "$file")
         local output_file="$output_dir/${basename%.*}.md"
         
-        if convert_to_markdown "$file" "$output_file" "$input_format" "$options"; then
+        if convert_to_markdown "$file" "$output_file" "$input_format" "$4"; then
             success=$((success + 1))
         fi
         echo ""
@@ -230,14 +230,10 @@ show_formats() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
+    local account_name="$2"
+    local target="$3"
+    local options="$4"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
     local action="$command"
     shift
 
@@ -251,7 +247,6 @@ main() {
             local input_file="$command"
             local output_file="$account_name"
             local input_format="$target"
-            local options="$options"
 
             if [[ -z "$input_file" ]]; then
                 print_error "Input file required. Usage: $0 convert <input_file> [output_file] [format] [options]"
