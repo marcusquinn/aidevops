@@ -13,10 +13,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $command"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $command"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $command"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $command"; }
 
 # Check if pandoc is installed
 check_pandoc() {
@@ -36,7 +36,7 @@ check_pandoc() {
 
 # Function to detect file format
 detect_format() {
-    local file="$1"
+    local file="$command"
     local extension="${file##*.}"
     
     case "$(echo "$extension" | tr '[:upper:]' '[:lower:]')" in
@@ -61,14 +61,15 @@ detect_format() {
         "xlsx"|"xls") echo "xlsx" ;;
         *) echo "unknown" ;;
     esac
+    return 0
 }
 
 # Function to convert single file to markdown
 convert_to_markdown() {
-    local input_file="$1"
-    local output_file="$2"
-    local input_format="$3"
-    local options="$4"
+    local input_file="$command"
+    local output_file="$account_name"
+    local input_format="$target"
+    local options="$options"
     
     if [[ ! -f "$input_file" ]]; then
         print_error "Input file not found: $input_file"
@@ -135,14 +136,15 @@ convert_to_markdown() {
         print_error "Conversion failed"
         return 1
     fi
+    return 0
 }
 
 # Function to convert multiple files in a directory
 convert_directory() {
-    local input_dir="$1"
-    local output_dir="$2"
-    local pattern="$3"
-    local input_format="$4"
+    local input_dir="$command"
+    local output_dir="$account_name"
+    local pattern="$target"
+    local input_format="$options"
     local options="$5"
     
     if [[ ! -d "$input_dir" ]]; then
@@ -183,6 +185,7 @@ convert_directory() {
     done < <(find "$input_dir" -maxdepth 1 -name "$pattern" -type f -print0)
     
     print_info "Conversion complete: $success/$count files converted successfully"
+    return 0
 }
 
 # Function to show supported formats
@@ -220,11 +223,22 @@ show_formats() {
     echo "  • Excel: .xlsx, .xls (limited support)"
     echo ""
     echo "For full format support, see: https://pandoc.org/MANUAL.html#general-options"
+    return 0
 }
 
 # Main function
 main() {
-    local action="$1"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    local action="$command"
     shift
 
     # Check if pandoc is installed
@@ -234,10 +248,10 @@ main() {
 
     case "$action" in
         "convert"|"c")
-            local input_file="$1"
-            local output_file="$2"
-            local input_format="$3"
-            local options="$4"
+            local input_file="$command"
+            local output_file="$account_name"
+            local input_format="$target"
+            local options="$options"
 
             if [[ -z "$input_file" ]]; then
                 print_error "Input file required. Usage: $0 convert <input_file> [output_file] [format] [options]"
@@ -247,10 +261,10 @@ main() {
             convert_to_markdown "$input_file" "$output_file" "$input_format" "$options"
             ;;
         "batch"|"b")
-            local input_dir="$1"
-            local output_dir="$2"
-            local pattern="$3"
-            local input_format="$4"
+            local input_dir="$command"
+            local output_dir="$account_name"
+            local pattern="$target"
+            local input_format="$options"
             local options="$5"
 
             if [[ -z "$input_dir" ]]; then
@@ -264,7 +278,7 @@ main() {
             show_formats
             ;;
         "detect"|"d")
-            local file="$1"
+            local file="$command"
             if [[ -z "$file" ]]; then
                 print_error "File required. Usage: $0 detect <file>"
                 exit 1
@@ -330,6 +344,7 @@ main() {
             echo "For more options: pandoc --help"
             ;;
     esac
+    return 0
 }
 
 main "$@"

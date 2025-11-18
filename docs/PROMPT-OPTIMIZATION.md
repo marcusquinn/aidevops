@@ -7,6 +7,7 @@ This guide covers comprehensive prompt optimization strategies using both DSPy (
 ## 🔄 **Optimization Workflow**
 
 ### **Phase 1: Initial Development (DSPyGround)**
+
 1. **Bootstrap with Basic Prompt**
    - Start with simple, clear instructions
    - Define core functionality and constraints
@@ -23,6 +24,7 @@ This guide covers comprehensive prompt optimization strategies using both DSPy (
    - Organize samples into logical groups
 
 ### **Phase 2: Automated Optimization (DSPy)**
+
 1. **Data Preparation**
    - Export samples from DSPyGround
    - Convert to DSPy training format
@@ -43,11 +45,13 @@ This guide covers comprehensive prompt optimization strategies using both DSPy (
 ### **DevOps Assistant Optimization**
 
 #### **Initial Prompt (DSPyGround)**
+
 ```typescript
 systemPrompt: `You are a DevOps assistant. Help with server management.`
 ```
 
 #### **Refined Prompt (After DSPyGround)**
+
 ```typescript
 systemPrompt: `You are an expert DevOps engineer with 10+ years of experience.
 
@@ -70,6 +74,7 @@ Always prioritize security, reliability, and maintainability.`
 ```
 
 #### **DSPy Optimization Code**
+
 ```python
 import dspy
 from dspy.teleprompt import BootstrapFewShot
@@ -104,6 +109,7 @@ optimized_assistant = teleprompter.compile(DevOpsModule(), trainset=trainset)
 ### **Code Review Assistant**
 
 #### **DSPyGround Configuration**
+
 ```typescript
 export default {
   systemPrompt: `You are a senior software engineer conducting code reviews.
@@ -139,6 +145,7 @@ export default {
 ```
 
 #### **DSPy Implementation**
+
 ```python
 class CodeReview(dspy.Signature):
     """Comprehensive code review with actionable feedback."""
@@ -237,24 +244,28 @@ metricsPrompt: {
 ## 🔄 **Iterative Improvement Process**
 
 ### **Week 1: Foundation**
+
 1. Create basic prompts in DSPyGround
 2. Collect 50+ diverse samples
 3. Run initial GEPA optimization
 4. Deploy improved prompts
 
 ### **Week 2: Refinement**
+
 1. Monitor real-world performance
 2. Collect edge cases and failures
 3. Add negative examples to training
 4. Re-optimize with expanded dataset
 
 ### **Week 3: Specialization**
+
 1. Create domain-specific variants
 2. Optimize for specific use cases
 3. A/B test different approaches
 4. Measure business impact
 
 ### **Ongoing: Maintenance**
+
 1. Regular performance monitoring
 2. Quarterly re-optimization
 3. Adaptation to new requirements
@@ -263,18 +274,21 @@ metricsPrompt: {
 ## 🎯 **Best Practices**
 
 ### **Sample Quality**
+
 - **Diversity**: Cover various scenarios and edge cases
 - **Quality**: Use real-world, high-quality examples
 - **Balance**: Include both positive and negative examples
 - **Context**: Preserve conversation context and nuance
 
 ### **Optimization Strategy**
+
 - **Start Simple**: Begin with basic optimizers
 - **Iterate Gradually**: Make incremental improvements
 - **Measure Everything**: Track multiple metrics consistently
 - **Validate Thoroughly**: Test on held-out datasets
 
 ### **Production Deployment**
+
 - **Gradual Rollout**: Deploy to small user groups first
 - **Monitor Closely**: Track performance and user satisfaction
 - **Rollback Ready**: Maintain previous versions for quick rollback
@@ -283,12 +297,14 @@ metricsPrompt: {
 ## 🔗 **Integration Points**
 
 ### **With AI DevOps Framework**
+
 - Export optimized prompts to provider scripts
 - Integrate with quality control workflows
 - Use in documentation generation
 - Apply to server management tasks
 
 ### **With External Systems**
+
 - CI/CD pipeline integration
 - Monitoring and alerting systems
 - Code review platforms

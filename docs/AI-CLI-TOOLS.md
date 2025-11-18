@@ -36,7 +36,7 @@ This document provides a comprehensive list of CLI AI assistants and tools that 
 - **Best For**: Code generation, API integrations, automation scripts
 - **Framework Integration**: Good - strong API and scripting capabilities
 
-#### **[Factory AI Dron](https://www.factory.ai/)**
+#### **[Factory AI Droid](https://www.factory.ai/)**
 
 - **Description**: Enterprise AI development platform
 - **Installation**: Visit [factory.ai](https://www.factory.ai/) for enterprise setup
@@ -146,7 +146,7 @@ warp-cli workflow create devops-setup \
 - **AMP Code**: https://amp.dev/
 - **Claude**: https://claude.ai/
 - **OpenAI Codex**: https://openai.com/codex/
-- **Factory AI**: https://www.factory.ai/
+- **Factory AI (Droid)**: https://www.factory.ai/
 - **Qwen**: https://qwenlm.github.io/
 - **Warp**: https://www.warp.dev/
 

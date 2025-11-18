@@ -1,0 +1,100 @@
+name: Version Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  version-consistency:
+    name: Version Consistency Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Version Consistency Validation
+      run: |
+        echo "🔍 AI DevOps Framework - Version Consistency Validation"
+        echo "====================================================="
+        echo ""
+        
+        # Make validation script executable
+        chmod +x .agent/scripts/validate-version-consistency.sh
+        
+        # Run version validation
+        if ./.agent/scripts/validate-version-consistency.sh; then
+          echo ""
+          echo "✅ Version Validation: PASSED"
+          echo "All version references are consistent across the framework."
+        else
+          echo ""
+          echo "❌ Version Validation: FAILED"
+          echo "Version inconsistencies detected. Please fix before merging."
+          exit 1
+        fi
+
+    - name: Version Information Summary
+      run: |
+        echo ""
+        echo "📊 Version Information Summary"
+        echo "=============================="
+        
+        # Get current version
+        if [ -f "VERSION" ]; then
+          CURRENT_VERSION=$(cat VERSION)
+          echo "📦 Current Version: $CURRENT_VERSION"
+        else
+          echo "⚠️  VERSION file not found"
+        fi
+        
+        # Check README badge
+        if [ -f "README.md" ]; then
+          README_VERSION=$(grep -o "Version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue" README.md | head -1 || echo "not found")
+          echo "🏷️  README Badge: $README_VERSION"
+        fi
+        
+        # Check sonar properties
+        if [ -f "sonar-project.properties" ]; then
+          SONAR_VERSION=$(grep "sonar.projectVersion=" sonar-project.properties | cut -d'=' -f2 || echo "not found")
+          echo "🔍 SonarCloud Version: $SONAR_VERSION"
+        fi
+        
+        # Check setup script
+        if [ -f "setup.sh" ]; then
+          SETUP_VERSION=$(grep "# Version:" setup.sh | cut -d':' -f2 | xargs || echo "not found")
+          echo "⚙️  Setup Script Version: $SETUP_VERSION"
+        fi
+        
+        echo ""
+        echo "🎯 Version validation ensures consistency across all framework components."
+
+    - name: Release Readiness Check
+      if: github.ref == 'refs/heads/main'
+      run: |
+        echo ""
+        echo "🚀 Release Readiness Assessment"
+        echo "==============================="
+        
+        # Check if this is a potential release commit
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        echo "📝 Commit Message: $COMMIT_MSG"
+        
+        # Check for version bump indicators
+        if echo "$COMMIT_MSG" | grep -qE "(BREAKING|MAJOR|💥|🚨)"; then
+          echo "🔴 MAJOR version bump detected"
+        elif echo "$COMMIT_MSG" | grep -qE "(FEATURE|FEAT|NEW|ADD|✨|🚀|📦)"; then
+          echo "🟡 MINOR version bump detected"
+        elif echo "$COMMIT_MSG" | grep -qE "(FIX|PATCH|BUG|IMPROVE|UPDATE|🔧|🐛|📝)"; then
+          echo "🟢 PATCH version bump detected"
+        else
+          echo "⚪ No version bump indicators found"
+        fi
+        
+        echo ""
+        echo "💡 To create a release:"
+        echo "   ./.agent/scripts/version-manager.sh release [major|minor|patch]"
+        echo ""
+        echo "✅ Framework is ready for release when version validation passes."

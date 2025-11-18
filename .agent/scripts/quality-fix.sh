@@ -99,7 +99,7 @@ fix_return_statements() {
                         
                         if [[ ! $last_line =~ return[[:space:]]+[01] ]]; then
                             # Remove the closing brace and add return statement
-                            sed -i '$ d' "$temp_file"
+                            sed -i '' '$ d' "$temp_file"
                             echo "    return 0" >> "$temp_file"
                             echo "}" >> "$temp_file"
                             ((fixed_functions++))
@@ -149,7 +149,7 @@ fix_positional_parameters() {
                 }' "$file" > "$temp_file"
                 
                 # Replace direct positional parameter usage in case statements
-                sed -i 's/\$1/$command/g; s/\$2/$account_name/g; s/\$3/$target/g; s/\$4/$options/g' "$temp_file"
+                sed -i '' 's/\$1/$command/g; s/\$2/$account_name/g; s/\$3/$target/g; s/\$4/$options/g' "$temp_file"
                 
                 if ! diff -q "$file" "$temp_file" > /dev/null; then
                     mv "$temp_file" "$file"
@@ -176,7 +176,7 @@ analyze_string_literals() {
             echo "=== $file ===" >> "$constants_file"
             
             # Find repeated strings (3+ occurrences)
-            grep -o '"[^"]*"' "$file" | sort | uniq -c | sort -nr | awk '$1 >= 3 {
+            (grep -o '"[^"]*"' "$file" || true) | sort | uniq -c | sort -nr | awk '$1 >= 3 {
                 gsub(/"/, "", $2)
                 constant_name = toupper($2)
                 gsub(/[^A-Z0-9_]/, "_", constant_name)

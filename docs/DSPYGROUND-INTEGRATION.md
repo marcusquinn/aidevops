@@ -26,11 +26,13 @@ dspyground --version
 ### **Configuration**
 
 1. **Copy configuration template:**
+
    ```bash
    cp configs/dspyground-config.json.txt configs/dspyground-config.json
    ```
 
 2. **Edit configuration:**
+
    ```bash
    # Customize settings for your use case
    nano configs/dspyground-config.json
@@ -169,23 +171,27 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 ## 🎯 **Optimization Workflow**
 
 ### **1. Chat and Sample**
+
 - Start conversations with your agent
 - Test different scenarios and use cases
 - Save good responses as positive samples
 - Mark problematic responses as negative samples
 
 ### **2. Organize Samples**
+
 - Create sample groups (e.g., "Deployment Tasks", "Security Questions")
 - Categorize samples by use case or complexity
 - Build a comprehensive test suite
 
 ### **3. Run Optimization**
+
 - Click "Optimize" to start GEPA optimization
 - Watch real-time progress and metrics
 - Review generated candidate prompts
 - Select the best performing prompt
 
 ### **4. Export Results**
+
 - Copy optimized prompt from history
 - Update your `dspyground.config.ts`
 - Deploy to production systems
@@ -222,11 +228,13 @@ metricsPrompt: {
 ## 🔧 **Advanced Features**
 
 ### **Voice Feedback**
+
 - Press and hold spacebar in feedback dialogs
 - Record voice feedback for samples
 - Automatic transcription and analysis
 
 ### **Structured Output**
+
 ```typescript
 schema: z.object({
   task_type: z.enum(['deployment', 'monitoring', 'troubleshooting']),
@@ -238,6 +246,7 @@ schema: z.object({
 ```
 
 ### **Tool Integration**
+
 ```typescript
 tools: {
   deployApp: tool({
@@ -257,18 +266,21 @@ tools: {
 ## 🎨 **UI Features**
 
 ### **Chat Interface**
+
 - Real-time streaming responses
 - Structured output visualization
 - Tool call execution display
 - Sample saving with feedback
 
 ### **Optimization Dashboard**
+
 - Progress tracking with real-time updates
 - Pareto frontier visualization
 - Metric score evolution
 - Candidate prompt comparison
 
 ### **History Management**
+
 - Complete optimization run history
 - Prompt evolution tracking
 - Performance metrics over time
@@ -279,6 +291,7 @@ tools: {
 ### **Common Issues**
 
 1. **Server Won't Start**
+
    ```bash
    # Check Node.js version
    node --version  # Should be 18+
@@ -288,6 +301,7 @@ tools: {
    ```
 
 2. **API Key Issues**
+
    ```bash
    # Verify environment variables
    cat .env
@@ -298,6 +312,7 @@ tools: {
    ```
 
 3. **Optimization Failures**
+
    ```typescript
    // Reduce batch size for stability
    preferences: {

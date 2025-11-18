@@ -63,6 +63,69 @@ bump_version() {
     echo "$new_version"
 }
 
+# Function to validate version consistency across files
+validate_version_consistency() {
+    local expected_version="$1"
+    local errors=0
+
+    print_info "Validating version consistency across files..."
+
+    # Check VERSION file
+    if [[ -f "$VERSION_FILE" ]]; then
+        local version_file_content
+        version_file_content=$(cat "$VERSION_FILE")
+        if [[ "$version_file_content" != "$expected_version" ]]; then
+            print_error "VERSION file contains '$version_file_content', expected '$expected_version'"
+            errors=$((errors + 1))
+        else
+            print_success "VERSION file: $expected_version ✓"
+        fi
+    else
+        print_error "VERSION file not found"
+        errors=$((errors + 1))
+    fi
+
+    # Check README badge
+    if [[ -f "$REPO_ROOT/README.md" ]]; then
+        if grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
+            print_success "README.md badge: $expected_version ✓"
+        else
+            print_error "README.md badge does not contain version $expected_version"
+            errors=$((errors + 1))
+        fi
+    else
+        print_warning "README.md not found"
+    fi
+
+    # Check sonar-project.properties
+    if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
+        if grep -q "sonar.projectVersion=$expected_version" "$REPO_ROOT/sonar-project.properties"; then
+            print_success "sonar-project.properties: $expected_version ✓"
+        else
+            print_error "sonar-project.properties does not contain version $expected_version"
+            errors=$((errors + 1))
+        fi
+    fi
+
+    # Check setup.sh
+    if [[ -f "$REPO_ROOT/setup.sh" ]]; then
+        if grep -q "# Version: $expected_version" "$REPO_ROOT/setup.sh"; then
+            print_success "setup.sh: $expected_version ✓"
+        else
+            print_error "setup.sh does not contain version $expected_version"
+            errors=$((errors + 1))
+        fi
+    fi
+
+    if [[ $errors -eq 0 ]]; then
+        print_success "All version references are consistent: $expected_version"
+        return 0
+    else
+        print_error "Found $errors version inconsistencies"
+        return 1
+    fi
+}
+
 # Function to update version in files
 update_version_in_files() {
     local new_version="$1"
@@ -83,8 +146,20 @@ update_version_in_files() {
     
     # Update README version badge
     if [[ -f "$REPO_ROOT/README.md" ]]; then
+        # Use more robust regex pattern for version numbers (handles single and multi-digit)
+        # macOS sed requires different syntax for extended regex
         sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
-        print_success "Updated README.md version badge"
+
+        # Validate the update was successful
+        if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
+            print_success "Updated README.md version badge to $new_version"
+        else
+            print_error "Failed to update README.md version badge"
+            print_info "Please manually update the version badge in README.md"
+            return 1
+        fi
+    else
+        print_warning "README.md not found, skipping version badge update"
     fi
 }
 
@@ -261,10 +336,19 @@ main() {
             new_version=$(bump_version "$bump_type")
 
             if [[ $? -eq 0 ]]; then
+                print_info "Updating version references in files..."
                 update_version_in_files "$new_version"
-                create_git_tag "$new_version"
-                create_github_release "$new_version"
-                print_success "Release $new_version created successfully!"
+
+                print_info "Validating version consistency..."
+                if validate_version_consistency "$new_version"; then
+                    print_success "Version validation passed"
+                    create_git_tag "$new_version"
+                    create_github_release "$new_version"
+                    print_success "Release $new_version created successfully!"
+                else
+                    print_error "Version validation failed. Please fix inconsistencies before creating release."
+                    exit 1
+                fi
             else
                 exit 1
             fi
@@ -273,6 +357,11 @@ main() {
             local version
             version=$(get_current_version)
             create_github_release "$version"
+            ;;
+        "validate")
+            local version
+            version=$(get_current_version)
+            validate_version_consistency "$version"
             ;;
         *)
             echo "AI DevOps Framework Version Manager"
@@ -285,12 +374,14 @@ main() {
             echo "  tag                           Create git tag for current version"
             echo "  github-release                Create GitHub release for current version"
             echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
+            echo "  validate                      Validate version consistency across all files"
             echo ""
             echo "Examples:"
             echo "  $0 get"
             echo "  $0 bump minor"
             echo "  $0 release patch"
             echo "  $0 github-release"
+            echo "  $0 validate"
             ;;
     esac
 }

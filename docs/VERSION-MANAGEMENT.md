@@ -64,8 +64,21 @@ The AI DevOps Framework uses professional semantic versioning with automated too
 #### **Complete Release Process**
 
 ```bash
-# Bump version, update files, create tag, and create GitHub release
+# Bump version, update files, validate consistency, create tag, and create GitHub release
 ./.agent/scripts/version-manager.sh release minor
+```
+
+#### **Version Validation**
+
+```bash
+# Validate current version consistency across all files
+./.agent/scripts/version-manager.sh validate
+
+# Or use the standalone validator
+./.agent/scripts/validate-version-consistency.sh
+
+# Validate specific version
+./.agent/scripts/validate-version-consistency.sh 1.6.0
 ```
 
 ### **Automatic Version Detection**
@@ -106,6 +119,38 @@ The AI DevOps Framework uses professional semantic versioning with automated too
 2. **README.md**: Version badge
 3. **sonar-project.properties**: SonarCloud version
 4. **setup.sh**: Script version header
+
+### **Version Validation & Consistency**
+
+The framework now includes comprehensive version validation to ensure all version references stay synchronized:
+
+#### **Automatic Validation**
+
+- **Release Process**: Validates version consistency before creating releases
+- **Improved Regex**: Handles single and multi-digit version numbers correctly
+- **Error Detection**: Identifies mismatched versions across files
+- **Validation Feedback**: Clear success/error messages for each file
+
+#### **Manual Validation**
+
+```bash
+# Validate current version consistency
+./.agent/scripts/validate-version-consistency.sh
+
+# Validate specific version
+./.agent/scripts/validate-version-consistency.sh 1.6.0
+
+# Through version manager
+./.agent/scripts/version-manager.sh validate
+```
+
+#### **Validation Coverage**
+
+- ✅ **VERSION file**: Central version source
+- ✅ **README.md badge**: Version display badge
+- ✅ **sonar-project.properties**: SonarCloud integration
+- ✅ **setup.sh**: Script version header
+- ⚠️ **Optional files**: Warns if missing but doesn't fail
 
 ### **Update Process**
 
