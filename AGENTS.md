@@ -94,7 +94,7 @@ This framework works excellently with these CLI AI assistants:
 
 #### **Enterprise & Specialized Tools**
 
-- **[Factory AI Dron](https://www.factory.ai/)** - Enterprise AI development platform
+- **[Factory AI Droid](https://www.factory.ai/)** - Enterprise AI development platform
 - **[OpenAI Codex](https://openai.com/codex/)** - OpenAI's code-focused AI model
 - **[Qwen](https://qwenlm.github.io/)** - Alibaba's multilingual AI assistant
 

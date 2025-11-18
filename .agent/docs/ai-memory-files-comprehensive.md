@@ -44,10 +44,10 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 - **Behavior**: Persistent instructions for GitHub Copilot
 - **Status**: **CREATED** - Home directory instructions
 
-### **6. Factory.ai Drone** - **IMPLEMENTED** ✅
+### **6. Factory.ai Droid** - **IMPLEMENTED** ✅
 
-- **Memory File**: `~/.factory/DRONE.md`
-- **Behavior**: Persistent memory for Factory.ai Drone sessions
+- **Memory File**: `~/.factory/DROID.md`
+- **Behavior**: Persistent memory for Factory.ai Droid sessions
 - **Status**: **CREATED** - Detected Factory.ai installation and created file
 
 ## **🔧 IMPLEMENTATION DETAILS:**
@@ -60,7 +60,7 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 ~/.qwen/QWEN.md                       # Qwen CLI memory (existing)
 ~/.cursorrules                        # Cursor AI rules
 ~/.github/copilot-instructions.md     # GitHub Copilot instructions
-~/.factory/DRONE.md                   # Factory.ai Drone memory
+~/.factory/DROID.md                   # Factory.ai Droid memory
 ```
 
 ### **✅ PROJECT-LEVEL MEMORY FILES:**
@@ -107,7 +107,7 @@ create_project_memory_files()  # Creates all project-level memory files
 - ✅ **Gemini**: `~/GEMINI.md` + project `GEMINI.md`
 - ✅ **Cursor**: `~/.cursorrules` + project `.cursorrules`
 - ✅ **GitHub Copilot**: `~/.github/copilot-instructions.md`
-- ✅ **Factory.ai Drone**: `~/.factory/DRONE.md`
+- ✅ **Factory.ai Droid**: `~/.factory/DROID.md`
 
 ### **✅ SETUP SCRIPT UPDATED:**
 
@@ -130,7 +130,7 @@ create_project_memory_files()  # Creates all project-level memory files
 - ✅ **Gemini CLI**: Uses `GEMINI.md` files - **IMPLEMENTED**
 - ✅ **Cursor AI**: Uses `.cursorrules` files - **IMPLEMENTED**
 - ✅ **GitHub Copilot**: Uses `.github/copilot-instructions.md` - **IMPLEMENTED**
-- ✅ **Factory.ai Drone**: Uses `DRONE.md` files - **IMPLEMENTED**
+- ✅ **Factory.ai Droid**: Uses `DROID.md` files - **IMPLEMENTED**
 - ✅ **Warp AI**: No specific memory files found (terminal-based AI)
 - ✅ **Amp Code**: No specific memory files found (uses project context)
 

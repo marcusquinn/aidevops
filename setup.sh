@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 1.6.0
+# Version: 1.7.1
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -88,6 +88,8 @@ setup_configs() {
                 cp "$template" "$config_file"
                 print_success "Created $(basename "$config_file")"
                 print_warning "Please edit $(basename "$config_file") with your actual credentials"
+            else
+                print_info "Found existing config: $(basename "$config_file") - Skipping"
             fi
         fi
     done
@@ -97,6 +99,8 @@ setup_configs() {
         cp "ai-context.md.txt" "ai-context.md"
         print_success "Created ai-context.md"
         print_warning "Please customize ai-context.md with your infrastructure details"
+    else
+        print_info "Found existing ai-context.md - Skipping"
     fi
 }
 
@@ -131,7 +135,7 @@ setup_aliases() {
     
     # Check if aliases already exist
     if grep -q "# AI Assistant Server Access" "$shell_rc" 2>/dev/null; then
-        print_info "Aliases already configured"
+        print_info "Server Access aliases already configured in $shell_rc - Skipping"
         return
     fi
     
@@ -149,6 +153,8 @@ alias aws-helper='./providers/aws-helper.sh'
 EOF
         print_success "Aliases added to $shell_rc"
         print_info "Run 'source $shell_rc' or restart your terminal to use aliases"
+    else
+        print_info "Skipped alias setup by user request"
     fi
 }
 
@@ -342,6 +348,7 @@ main() {
     echo "• ~/WINDSURF.md   - Windsurf IDE memory file"
     echo "• ~/.cursorrules  - Cursor AI rules file"
     echo "• ~/.github/copilot-instructions.md - GitHub Copilot instructions"
+    echo "• ~/.factory/DROID.md   - Factory.ai Droid memory file"
     echo "• ~/.codeium/windsurf/memories/global_rules.md - Windsurf global rules"
     echo ""
     echo "DSPy & DSPyGround Integration:"

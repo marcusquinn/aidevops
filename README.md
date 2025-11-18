@@ -92,7 +92,7 @@ cd aidevops && ./setup.sh
 
 **That's it! Your AI assistant now has access to 25+ service integrations.**
 
-**Recommended CLI AI Assistants:** Augment Code, Claude Desktop, Warp AI, Factory AI, OpenAI Codex
+**Recommended CLI AI Assistants:** Augment Code, Claude Desktop, Warp AI, Factory AI Droid, OpenAI Codex
 
 ## 🎯 **Core Capabilities**
 

@@ -66,8 +66,16 @@ update_version_badge() {
     local readme_file="$REPO_ROOT/README.md"
 
     if [[ -f "$readme_file" ]]; then
+        # Use more robust regex pattern for version numbers (handles single and multi-digit)
+        # macOS sed requires different syntax for extended regex
         sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$readme_file"
-        print_success "Updated version badge in README.md"
+
+        # Validate the update was successful
+        if grep -q "Version-$new_version-blue" "$readme_file"; then
+            print_success "Updated version badge in README.md to $new_version"
+        else
+            print_error "Failed to update version badge in README.md"
+        fi
     fi
 }
 

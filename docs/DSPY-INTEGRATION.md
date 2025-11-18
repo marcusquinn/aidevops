@@ -25,17 +25,20 @@ DSPy (Declarative Self-improving Python) is a framework for algorithmically opti
 ### **Configuration**
 
 1. **Copy configuration template:**
+
    ```bash
    cp configs/dspy-config.json.txt configs/dspy-config.json
    ```
 
 2. **Edit configuration:**
+
    ```bash
    # Add your API keys and customize settings
    nano configs/dspy-config.json
    ```
 
 3. **Set environment variables (if not already set):**
+
    ```bash
    # DSPy automatically uses your terminal session's API keys
    export OPENAI_API_KEY="your-api-key-here"
@@ -172,16 +175,19 @@ result = compiled_qa(question="Explain neural networks")
 ## 📊 **Available Optimizers**
 
 ### **BootstrapFewShot**
+
 - **Purpose**: Automatically generate few-shot examples
 - **Best for**: General prompt optimization
 - **Configuration**: `max_bootstrapped_demos`, `max_labeled_demos`
 
 ### **COPRO (Coordinate Ascent)**
+
 - **Purpose**: Iterative prompt optimization
 - **Best for**: Complex reasoning tasks
 - **Configuration**: `metric`, `breadth`, `depth`
 
 ### **MIPRO (Multi-Prompt Optimization)**
+
 - **Purpose**: Multi-stage prompt optimization
 - **Best for**: Multi-step reasoning
 - **Configuration**: `metric`, `num_candidates`
@@ -189,6 +195,7 @@ result = compiled_qa(question="Explain neural networks")
 ## 🎯 **Best Practices**
 
 ### **1. Start Simple**
+
 ```python
 # Begin with basic signatures
 class SimpleQA(dspy.Signature):
@@ -197,6 +204,7 @@ class SimpleQA(dspy.Signature):
 ```
 
 ### **2. Use Quality Training Data**
+
 ```python
 # Provide diverse, high-quality examples
 trainset = [
@@ -206,6 +214,7 @@ trainset = [
 ```
 
 ### **3. Choose Appropriate Metrics**
+
 ```python
 # Define custom metrics for your use case
 def custom_metric(example, pred, trace=None):
@@ -213,6 +222,7 @@ def custom_metric(example, pred, trace=None):
 ```
 
 ### **4. Iterate and Refine**
+
 ```python
 # Test different optimizers and configurations
 optimizers = [
@@ -226,18 +236,21 @@ optimizers = [
 ### **Common Issues**
 
 1. **Import Errors**
+
    ```bash
    # Ensure virtual environment is activated
    source python-env/dspy-env/bin/activate
    ```
 
 2. **API Key Issues**
+
    ```bash
    # Check environment variables
    echo $OPENAI_API_KEY
    ```
 
 3. **Memory Issues**
+
    ```python
    # Reduce batch sizes for large datasets
    dspy.settings.configure(lm=lm, max_tokens=1000)
