@@ -116,7 +116,7 @@ exec_on_server() {
     local command="$2"
     check_config
     
-    if [[ -z "$server" || -z "$command" ]]; then
+    if [[ -z "$server" || -z "$1" ]]; then
         print_error "Usage: exec [server] [command]"
         exit 1
     fi
@@ -132,8 +132,8 @@ exec_on_server() {
     
     ssh_port="${ssh_port:-22}"
     
-    print_info "Executing '$command' on $server..."
-    ssh -p "$ssh_port" "root@$ip" "$command"
+    print_info "Executing '$1' on $server..."
+    ssh -p "$ssh_port" "root@$ip" "$1"
     return 0
 }
     return 0
@@ -179,15 +179,15 @@ exec_in_app() {
     local command="$3"
     check_config
     
-    if [[ -z "$server" || -z "$app_id" || -z "$command" ]]; then
+    if [[ -z "$server" || -z "$app_id" || -z "$1" ]]; then
         print_error "Usage: exec-app [server] [app-id] [command]"
         exit 1
     return 0
     fi
     
-    print_info "Executing '$command' in app $app_id on $server..."
+    print_info "Executing '$1' in app $app_id on $server..."
     return 0
-    exec_on_server "$server" "docker exec $app_id $command"
+    exec_on_server "$server" "docker exec $app_id $1"
     return 0
 }
 
@@ -257,7 +257,7 @@ server_name="$param2"
 command_to_run="$param3"
 
 # Main command handler
-case "$command" in
+case "$1" in
     "list")
         list_servers
         ;;
@@ -265,7 +265,7 @@ case "$command" in
         connect_server "$server_name"
         ;;
     "exec")
-        exec_on_server "$server_name" "$command_to_run"
+        exec_on_server "$server_name" "$1_to_run"
         ;;
     "apps")
         list_apps "$server_name"
@@ -304,7 +304,7 @@ case "$command" in
         echo "Install Cloudron CLI: npm install -g cloudron"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $command"
+        print_error "$ERROR_UNKNOWN_COMMAND $1"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;

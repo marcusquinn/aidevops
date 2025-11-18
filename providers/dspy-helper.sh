@@ -12,10 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh"
 
 # Use shared print functions with fallback for compatibility
-print_info() { print_shared_info "$command"; }
-print_success() { print_shared_success "$command"; }
-print_warning() { print_shared_warning "$command"; }
-print_error() { print_shared_error "$command"; }
+print_info() { print_shared_info "$1"; }
+print_success() { print_shared_success "$1"; }
+print_warning() { print_shared_warning "$1"; }
+print_error() { print_shared_error "$1"; }
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -252,23 +252,18 @@ main() {
     case "$command" in
         "install")
             install_deps
-            return $?
             ;;
         "test")
             test_installation
-            return $?
             ;;
         "init")
             init_project "$account_name"
-            return $?
             ;;
         "optimize")
             optimize "$account_name"
-            return $?
             ;;
         "help"|*)
             show_help
-            return 0
             ;;
     esac
     return 0
@@ -276,3 +271,4 @@ main() {
 
 # Run main function
 main "$@"
+return 0

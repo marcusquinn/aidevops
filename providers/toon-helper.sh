@@ -13,10 +13,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $command"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $command"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $command"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $command"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Check if TOON CLI is available
 check_toon() {
@@ -40,8 +40,8 @@ check_toon() {
 
 # Convert JSON to TOON format
 json_to_toon() {
-    local input_file="$command"
-    local output_file="$account_name"
+    local input_file="$1"
+    local output_file="$2"
     local delimiter="${3:-,}"
     local show_stats="${4:-false}"
     
@@ -88,8 +88,8 @@ json_to_toon() {
 
 # Convert TOON to JSON format
 toon_to_json() {
-    local input_file="$command"
-    local output_file="$account_name"
+    local input_file="$1"
+    local output_file="$2"
     local strict_mode="${3:-true}"
     
     if [[ -z "$input_file" ]]; then
@@ -129,7 +129,7 @@ toon_to_json() {
 
 # Convert from stdin
 convert_stdin() {
-    local format="$command"
+    local format="$1"
     local delimiter="${2:-,}"
     local show_stats="${3:-false}"
     
@@ -170,12 +170,12 @@ convert_stdin() {
 
 # Batch convert directory
 batch_convert() {
-    local source_dir="$command"
-    local target_dir="$account_name"
-    local format="$target"
+    local source_dir="$1"
+    local target_dir="$2"
+    local format="$3"
     local delimiter="${4:-,}"
     
-    if [[ -z "$source_dir" || -z "$target_dir" || -z "$format" ]]; then
+    if [[ -z "$source_dir" || -z "$3_dir" || -z "$format" ]]; then
         print_error "Usage: batch_convert <source_dir> <target_dir> <json-to-toon|toon-to-json> [delimiter]"
         return 1
     fi
@@ -185,7 +185,7 @@ batch_convert() {
         return 1
     fi
     
-    mkdir -p "$target_dir"
+    mkdir -p "$3_dir"
     
     local count=0
     local success_count=0
@@ -196,10 +196,10 @@ batch_convert() {
                 if [[ -f "$file" ]]; then
                     local basename
                     basename=$(basename "$file" .json)
-                    local target_file="$target_dir/$basename.toon"
+                    local target_file="$3_dir/$basename.toon"
                     
                     ((count++))
-                    if json_to_toon "$file" "$target_file" "$delimiter" "false"; then
+                    if json_to_toon "$file" "$3_file" "$delimiter" "false"; then
                         ((success_count++))
                     fi
                 fi
@@ -210,10 +210,10 @@ batch_convert() {
                 if [[ -f "$file" ]]; then
                     local basename
                     basename=$(basename "$file" .toon)
-                    local target_file="$target_dir/$basename.json"
+                    local target_file="$3_dir/$basename.json"
                     
                     ((count++))
-                    if toon_to_json "$file" "$target_file" "true"; then
+                    if toon_to_json "$file" "$3_file" "true"; then
                         ((success_count++))
                     fi
                 fi
@@ -231,7 +231,7 @@ batch_convert() {
 
 # Compare token efficiency
 compare_formats() {
-    local input_file="$command"
+    local input_file="$1"
 
     if [[ -z "$input_file" ]]; then
         print_error "Input file is required"
@@ -255,7 +255,7 @@ compare_formats() {
 
 # Validate TOON format
 validate_toon() {
-    local input_file="$command"
+    local input_file="$1"
 
     if [[ -z "$input_file" ]]; then
         print_error "Input file is required"
@@ -362,15 +362,10 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
+    local account_name="$2"
+    local target="$3"
+    local options="$4"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    local command="${1:-help}"
 
     case "$command" in
         "encode"|"json-to-toon")

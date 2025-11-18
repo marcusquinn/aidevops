@@ -13,10 +13,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $command"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $command"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $command"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $command"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Configuration
 AGNO_DIR="$HOME/.aidevops/agno"
@@ -617,14 +617,10 @@ show_usage() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
+    local account_name="$2"
+    local target="$3"
+    local options="$4"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
     local action="$command"
 
     case "$action" in

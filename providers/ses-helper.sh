@@ -16,25 +16,25 @@ readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -76,18 +76,18 @@ load_config() {
 
 # Get account configuration
 get_account_config() {
-    local account_name="$command"
+    local account_name="$1"
     
-    if [[ -z "$account_name" ]]; then
+    if [[ -z "$2" ]]; then
         print_error "Account name is required"
         list_accounts
         exit 1
     fi
     
     local account_config
-    account_config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE")
+    account_config=$(jq -r ".accounts.\"$2\"" "$CONFIG_FILE")
     if [[ "$account_config" == "null" ]]; then
-        print_error "Account '$account_name' not found in configuration"
+        print_error "Account '$2' not found in configuration"
         list_accounts
         exit 1
     fi
@@ -98,15 +98,15 @@ get_account_config() {
 
 # Set AWS credentials for account
 set_aws_credentials() {
-    local account_name="$command"
+    local account_name="$1"
     local config
-    config=$(get_account_config "$account_name")
+    config=$(get_account_config "$2")
     
     export AWS_ACCESS_KEY_ID=$(echo "$config" | jq -r '.aws_access_key_id')
     export AWS_SECRET_ACCESS_KEY=$(echo "$config" | jq -r '.aws_secret_access_key')
     
     if [[ "$AWS_ACCESS_KEY_ID" == "null" || "$AWS_SECRET_ACCESS_KEY" == "null" ]]; then
-        print_error "Invalid AWS credentials for account '$account_name'"
+        print_error "Invalid AWS credentials for account '$2'"
         exit 1
     fi
     return 0
@@ -126,49 +126,49 @@ list_accounts() {
 
 # Get sending quota
 get_sending_quota() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
     
-    print_info "Getting sending quota for account: $account_name"
+    print_info "Getting sending quota for account: $2"
     aws ses get-send-quota --output table
     return 0
 }
 
 # Get sending statistics
 get_sending_statistics() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
     
-    print_info "Getting sending statistics for account: $account_name"
+    print_info "Getting sending statistics for account: $2"
     aws ses get-send-statistics --output table
     return 0
 }
 
 # List verified email addresses
 list_verified_emails() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
     
-    print_info "Verified email addresses for account: $account_name"
+    print_info "Verified email addresses for account: $2"
     aws ses list-verified-email-addresses --output table
     return 0
 }
 
 # List verified domains
 list_verified_domains() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
 
-    print_info "Verified domains for account: $account_name"
+    print_info "Verified domains for account: $2"
     aws ses list-identities --identity-type Domain --output table
     return 0
 }
 
 # Get identity verification attributes
 get_identity_verification() {
-    local account_name="$command"
-    local identity="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local identity="$2"
+    set_aws_credentials "$2"
     
     if [[ -z "$identity" ]]; then
         print_error "$ERROR_IDENTITY_REQUIRED"
@@ -182,10 +182,10 @@ get_identity_verification() {
 
 # Get reputation
 get_reputation() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
     
-    print_info "Getting account reputation for: $account_name"
+    print_info "Getting account reputation for: $2"
     aws ses get-account-sending-enabled --output table
     echo ""
     print_info "Reputation tracking:"
@@ -195,19 +195,19 @@ get_reputation() {
 
 # List suppressed destinations (bounces/complaints)
 list_suppressed_destinations() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
 
-    print_info "Suppressed destinations (bounces/complaints) for account: $account_name"
+    print_info "Suppressed destinations (bounces/complaints) for account: $2"
     aws sesv2 list-suppressed-destinations --output table
     return 0
 }
 
 # Get suppression list details
 get_suppression_details() {
-    local account_name="$command"
-    local email="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local email="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$email" ]]; then
         print_error "Email address is required"
@@ -221,9 +221,9 @@ get_suppression_details() {
 
 # Remove from suppression list
 remove_from_suppression() {
-    local account_name="$command"
-    local email="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local email="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$email" ]]; then
         print_error "Email address is required"
@@ -244,12 +244,12 @@ remove_from_suppression() {
 
 # Send test email
 send_test_email() {
-    local account_name="$command"
-    local from_email="$account_name"
-    local to_email="$target"
-    local subject="$options"
+    local account_name="$1"
+    local from_email="$2"
+    local to_email="$3"
+    local subject="$4"
     local body="$param5"
-    set_aws_credentials "$account_name"
+    set_aws_credentials "$2"
 
     if [[ -z "$from_email" || -z "$to_email" ]]; then
         print_error "From and to email addresses are required"
@@ -279,19 +279,19 @@ send_test_email() {
 
 # Get configuration sets
 list_configuration_sets() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
 
-    print_info "Configuration sets for account: $account_name"
+    print_info "Configuration sets for account: $2"
     aws ses list-configuration-sets --output table
     return 0
 }
 
 # Get bounce and complaint notifications
 get_bounce_complaint_notifications() {
-    local account_name="$command"
-    local identity="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local identity="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$identity" ]]; then
         print_error "$ERROR_IDENTITY_REQUIRED"
@@ -305,9 +305,9 @@ get_bounce_complaint_notifications() {
 
 # Verify email address
 verify_email() {
-    local account_name="$command"
-    local email="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local email="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$email" ]]; then
         print_error "Email address is required"
@@ -327,9 +327,9 @@ verify_email() {
 
 # Verify domain
 verify_domain() {
-    local account_name="$command"
-    local domain="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local domain="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$domain" ]]; then
         print_error "Domain is required"
@@ -352,9 +352,9 @@ verify_domain() {
 
 # Get DKIM attributes
 get_dkim_attributes() {
-    local account_name="$command"
-    local identity="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local identity="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$identity" ]]; then
         print_error "$ERROR_IDENTITY_REQUIRED"
@@ -368,9 +368,9 @@ get_dkim_attributes() {
 
 # Enable DKIM
 enable_dkim() {
-    local account_name="$command"
-    local identity="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local identity="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$identity" ]]; then
         print_error "$ERROR_IDENTITY_REQUIRED"
@@ -381,7 +381,7 @@ enable_dkim() {
     aws ses put-identity-dkim-attributes --identity "$identity" --dkim-enabled
     if [[ $? -eq 0 ]]; then
         print_success "DKIM enabled for $identity"
-        get_dkim_attributes "$account_name" "$identity"
+        get_dkim_attributes "$2" "$identity"
     else
         print_error "Failed to enable DKIM"
     return 0
@@ -391,62 +391,62 @@ enable_dkim() {
 
 # Monitor email delivery
 monitor_delivery() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
 
-    print_info "Email delivery monitoring for account: $account_name"
+    print_info "Email delivery monitoring for account: $2"
     echo ""
 
     print_info "=== SENDING QUOTA ==="
-    get_sending_quota "$account_name"
+    get_sending_quota "$2"
     echo ""
 
     print_info "=== SENDING STATISTICS (Last 24 hours) ==="
-    get_sending_statistics "$account_name"
+    get_sending_statistics "$2"
     echo ""
 
     print_info "=== REPUTATION STATUS ==="
-    get_reputation "$account_name"
+    get_reputation "$2"
     echo ""
 
     return 0
     print_info "=== SUPPRESSED DESTINATIONS ==="
-    list_suppressed_destinations "$account_name"
+    list_suppressed_destinations "$2"
     return 0
 }
 
 # Audit SES configuration
 audit_configuration() {
-    local account_name="$command"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    set_aws_credentials "$2"
 
-    print_info "SES Configuration Audit for account: $account_name"
+    print_info "SES Configuration Audit for account: $2"
     echo ""
 
     print_info "=== VERIFIED IDENTITIES ==="
     print_info "Verified Email Addresses:"
-    list_verified_emails "$account_name"
+    list_verified_emails "$2"
     echo ""
 
     print_info "Verified Domains:"
-    list_verified_domains "$account_name"
+    list_verified_domains "$2"
     echo ""
 
     print_info "=== CONFIGURATION SETS ==="
-    list_configuration_sets "$account_name"
+    list_configuration_sets "$2"
     echo ""
     return 0
 
     print_info "=== ACCOUNT STATUS ==="
-    get_reputation "$account_name"
+    get_reputation "$2"
     return 0
 }
 
 # Debug delivery issues
 debug_delivery() {
-    local account_name="$command"
-    local email="$account_name"
-    set_aws_credentials "$account_name"
+    local account_name="$1"
+    local email="$2"
+    set_aws_credentials "$2"
 
     if [[ -z "$email" ]]; then
         print_error "Email address is required for debugging"
@@ -459,22 +459,22 @@ debug_delivery() {
     print_info "=== SUPPRESSION STATUS ==="
     if aws sesv2 get-suppressed-destination --email-address "$email" &>/dev/null; then
         print_warning "$email is in the suppression list"
-        get_suppression_details "$account_name" "$email"
+        get_suppression_details "$2" "$email"
         echo ""
         print_info "To remove from suppression list, run:"
-        echo "  $0 remove-suppression $account_name $email"
+        echo "  $0 remove-suppression $2 $email"
     else
         print_success "$email is not in the suppression list"
     fi
     echo ""
 
     print_info "=== RECENT SENDING STATISTICS ==="
-    get_sending_statistics "$account_name"
+    get_sending_statistics "$2"
     return 0
     echo ""
 
     print_info "=== ACCOUNT REPUTATION ==="
-    get_reputation "$account_name"
+    get_reputation "$2"
     return 0
 }
 
@@ -520,17 +520,11 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
+    local account_name="$2"
+    local target="$3"
+    local options="$4"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
     # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
     local identity="$target"
     local destination="$options"
     local subject="$param5"
