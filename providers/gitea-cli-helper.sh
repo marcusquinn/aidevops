@@ -32,6 +32,14 @@ readonly ERROR_NOT_LOGGED_IN="Gitea CLI is not authenticated. Run 'tea login'"
 readonly ERROR_ACCOUNT_MISSING="Account configuration not found"
 readonly ERROR_ARGS_MISSING="Missing required arguments"
 readonly ERROR_API_FAILED="Gitea API request failed"
+readonly ERROR_REPO_NAME_REQUIRED="Repository name is required"
+readonly ERROR_ISSUE_TITLE_REQUIRED="Issue title is required"
+readonly ERROR_ISSUE_NUMBER_REQUIRED="Issue number is required"
+readonly ERROR_PR_NUMBER_REQUIRED="Pull request number is required"
+readonly ERROR_BRANCH_NAME_REQUIRED="Branch name is required"
+readonly ERROR_REPO_NOT_FOUND="Repository not found"
+readonly ERROR_OWNER_NOT_CONFIGURED="Owner not configured for account"
+readonly ERROR_FAILED_TO_READ_CONFIG="Failed to read configuration"
 
 # Success Messages
 readonly SUCCESS_REPO_CREATED="Repository created successfully"
@@ -41,8 +49,9 @@ readonly SUCCESS_BRANCH_CREATED="Branch created successfully"
 readonly SUCCESS_ISSUE_CLOSED="Issue closed successfully"
 readonly SUCCESS_PR_MERGED="Pull request merged successfully"
 
-# Help Messages
-readonly HELP_SHOW_MESSAGE="Show this help message"
+# Common constants
+readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly AUTH_HEADER_TOKEN="Authorization: token"
 
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
@@ -125,7 +134,7 @@ get_account_config() {
 
     local config
     if ! config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE" 2>/dev/null); then
-        print_error "Failed to read configuration"
+        print_error "$ERROR_FAILED_TO_READ_CONFIG"
         return 1
     fi
 
@@ -147,7 +156,7 @@ get_repo_full_name() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -162,7 +171,7 @@ get_repo_info() {
     repo_full_name=$(get_repo_full_name "$account_name" "$repo_name") || exit 1
 
     local repo_info
-    if repo_info=$(tea repos list --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --output json 2>/dev/null); then
+    if repo_info=$(tea repos list --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --output json 2>/dev/null); then
         echo "$repo_info"
         return 0
     fi
@@ -185,11 +194,12 @@ list_repos() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
     local tea_args=()
+    tea_args+=("--login" "$account_name")
     tea_args+=("--owner" "$owner")
     
     if [[ -n "$owner_filter" ]]; then
@@ -213,7 +223,7 @@ create_repo() {
     local auto_init="${5:-false}"
 
     if [[ -z "$repo_name" ]]; then
-        print_error "Repository name is required"
+        print_error "$ERROR_REPO_NAME_REQUIRED"
         print_info "Usage: gitea-cli-helper.sh create-repo <account> <repo-name> [description] [visibility] [init]"
         return 1
     fi
@@ -224,13 +234,14 @@ create_repo() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
     print_info "Creating repository: $owner/$repo_name"
 
     local tea_args=()
+    tea_args+=("--login" "$account_name")
     tea_args+=("--name" "$repo_name" "--owner" "$owner")
     
     if [[ -n "$repo_description" ]]; then
@@ -293,7 +304,7 @@ delete_repo() {
 
     print_info "Deleting repository: $repo_full_name"
     
-    if tea repos delete --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}"; then
+    if tea repos delete --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}"; then
         print_success "Repository deleted successfully"
         
         # Remove from configuration
@@ -319,7 +330,7 @@ get_repo_details() {
     repo_full_name=$(get_repo_full_name "$account_name" "$repo_name") || exit 1
 
     print_info "Repository details for $repo_full_name:"
-    tea repos show --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --output json | jq .
+    tea repos show --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --output json | jq .
     return 0
 }
 
@@ -341,7 +352,7 @@ list_issues() {
     repo_full_name=$(get_repo_full_name "$account_name" "$repo_name") || exit 1
 
     print_info "Listing issues for $repo_full_name (state: $state)"
-    tea issues list --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --state "$state" --limit 50 --output tsb
+    tea issues list --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --state "$state" --limit 50 --output tsb
     return 0
 }
 
@@ -352,7 +363,7 @@ create_issue() {
     local body="${4:-}"
 
     if [[ -z "$title" ]]; then
-        print_error "Issue title is required"
+        print_error "$ERROR_ISSUE_TITLE_REQUIRED"
         return 1
     fi
 
@@ -362,6 +373,7 @@ create_issue() {
     print_info "Creating issue in $repo_full_name"
 
     local tea_args=()
+    tea_args+=("--login" "$account_name")
     tea_args+=("--title" "$title" "--owner" "${repo_full_name%/*}" "--repo" "${repo_full_name#*/}")
     
     if [[ -n "$body" ]]; then
@@ -383,7 +395,7 @@ close_issue() {
     local issue_number="$3"
 
     if [[ -z "$issue_number" ]]; then
-        print_error "Issue number is required"
+        print_error "$ERROR_ISSUE_NUMBER_REQUIRED"
         return 1
     fi
 
@@ -392,7 +404,7 @@ close_issue() {
 
     print_info "Closing issue #$issue_number in $repo_full_name"
 
-    if tea issues close --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --index "$issue_number"; then
+    if tea issues close --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --index "$issue_number"; then
         print_success "$SUCCESS_ISSUE_CLOSED"
     else
         print_error "Failed to close issue"
@@ -419,7 +431,7 @@ list_prs() {
     repo_full_name=$(get_repo_full_name "$account_name" "$repo_name") || exit 1
 
     print_info "Listing pull requests for $repo_full_name (state: $state)"
-    tea pulls list --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --state "$state" --limit 50 --output tsb
+    tea pulls list --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --state "$state" --limit 50 --output tsb
     return 0
 }
 
@@ -442,6 +454,7 @@ create_pr() {
     print_info "Creating pull request in $repo_full_name"
 
     local tea_args=()
+    tea_args+=("--login" "$account_name")
     tea_args+=("--title" "$title" "--head" "$head_branch" "--base" "$base_branch")
     tea_args+=("--owner" "${repo_full_name%/*}" "--repo" "${repo_full_name#*/}")
     
@@ -465,7 +478,7 @@ merge_pr() {
     local merge_method="${4:-merge}"
 
     if [[ -z "$pr_number" ]]; then
-        print_error "Pull request number is required"
+        print_error "$ERROR_PR_NUMBER_REQUIRED"
         return 1
     fi
 
@@ -475,6 +488,7 @@ merge_pr() {
     print_info "Merging pull request #$pr_number in $repo_full_name"
 
     local tea_args=()
+    tea_args+=("--login" "$account_name")
     tea_args+=("--owner" "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --index "$pr_number")
     
     case "$merge_method" in
@@ -515,7 +529,7 @@ list_branches() {
     repo_full_name=$(get_repo_full_name "$account_name" "$repo_name") || exit 1
 
     print_info "Listing branches for $repo_full_name"
-    tea repos branches --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --output tsb
+    tea repos branches --login "$account_name" --owner "${repo_full_name%/*}" --repo "${repo_full_name#*/}" --output tsb
     return 0
 }
 
@@ -526,7 +540,7 @@ create_branch() {
     local source_branch="${4:-main}"
 
     if [[ -z "$branch_name" ]]; then
-        print_error "Branch name is required"
+        print_error "$ERROR_BRANCH_NAME_REQUIRED"
         return 1
     fi
 
@@ -536,7 +550,7 @@ create_branch() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -559,8 +573,8 @@ create_branch() {
 
     local curl_args=()
     curl_args+=("-X" "POST" "$api_url/repos/$owner/$repo_name/branches")
-    curl_args+=("-H" "Authorization: token $token")
-    curl_args+=("-H" "Content-Type: application/json")
+    curl_args+=("-H" "$AUTH_HEADER_TOKEN $token")
+    curl_args+=("-H" "$CONTENT_TYPE_JSON")
     curl_args+=("-d" "$branch_data")
 
     if curl "${curl_args[@]}" &>/dev/null; then
@@ -656,7 +670,10 @@ main() {
             list_repos "$account_name" "$target"
             ;;
         "create-repo")
-            create_repo "$account_name" "$target" "$options" "$5" "$6"
+            local repo_desc="$options"
+            local repo_vis="$5"
+            local repo_init="$6"
+            create_repo "$account_name" "$target" "$repo_desc" "$repo_vis" "$repo_init"
             ;;
         "delete-repo")
             delete_repo "$account_name" "$target"
@@ -668,7 +685,8 @@ main() {
             list_issues "$account_name" "$target" "$options"
             ;;
         "create-issue")
-            create_issue "$account_name" "$target" "$options" "$5"
+            local issue_body="$5"
+            create_issue "$account_name" "$target" "$options" "$issue_body"
             ;;
         "close-issue")
             close_issue "$account_name" "$target" "$options"
@@ -677,16 +695,22 @@ main() {
             list_prs "$account_name" "$target" "$options"
             ;;
         "create-pr")
-            create_pr "$account_name" "$target" "$options" "$5" "$6" "$7"
+            local pr_title="$options"
+            local pr_head="$5"
+            local pr_base="$6"
+            local pr_body="$7"
+            create_pr "$account_name" "$target" "$pr_title" "$pr_head" "$pr_base" "$pr_body"
             ;;
         "merge-pr")
-            merge_pr "$account_name" "$target" "$options" "$5"
+            local merge_method="$5"
+            merge_pr "$account_name" "$target" "$options" "$merge_method"
             ;;
         "list-branches")
             list_branches "$account_name" "$target"
             ;;
         "create-branch")
-            create_branch "$account_name" "$target" "$options" "$5"
+            local source_branch="$5"
+            create_branch "$account_name" "$target" "$options" "$source_branch"
             ;;
         "list-accounts")
             list_accounts
