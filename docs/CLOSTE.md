@@ -1,26 +1,53 @@
 # Closte Provider Guide
 
-Closte is a VPS hosting provider offering competitive pricing and flexible server configurations with good performance.
+Closte is a managed cloud hosting provider optimized for WordPress, offering automatic scaling and a pay-as-you-go model.
 
 ## 🏢 **Provider Overview**
 
 ### **Closte Characteristics:**
 
-- **Infrastructure Type**: VPS hosting, dedicated servers
-- **Locations**: Multiple global locations
-- **SSH Access**: Full root access with password authentication
-- **Control Panel**: Web-based control panel
-- **API Support**: Limited API functionality (under development)
-- **Pricing**: Competitive pricing with good value
-- **Performance**: SSD storage, good network performance
+- **Infrastructure Type**: Managed WordPress Cloud (Google Cloud Platform / Litespeed)
+- **Locations**: Global (GCP network)
+- **SSH Access**: Restricted shell access with password authentication (keys not supported)
+- **Control Panel**: Custom Closte Dashboard
+- **Caching**: Integrated Litespeed Cache + CDN + Object Cache (Redis)
+- **Pricing**: Pay-as-you-go based on resource usage
+- **Performance**: High-performance Litespeed stack
 
-### **Best Use Cases:**
+## ⚠️ **Critical: Caching & AI Content Editing**
 
-- **VPS hosting** for applications requiring dedicated resources
-- **Development environments** with full control
-- **Small to medium applications** with moderate traffic
-- **Cost-effective hosting** for multiple projects
-- **Learning environments** for server administration
+**Issue:** Closte uses aggressive caching (Litespeed Page Cache + Object Cache/Redis + CDN). When updating content via WP-CLI or SSH, the Admin Dashboard and Frontend may show stale data even after flushing standard caches.
+
+**Solution:** You must enable **Development Mode** before performing bulk edits or debugging via CLI/SSH.
+
+### **Enabling Development Mode**
+
+Development Mode disables all caching layers (Page, Object, CDN) to ensure you see the real-time state of the database.
+
+**Via WP-CLI (Recommended):**
+
+```bash
+# Enable Dev Mode
+wp closte devmode enable
+
+# Disable Dev Mode (Restore Caching)
+wp closte devmode disable
+```
+
+**Via Dashboard:**
+
+1. Go to Closte Dashboard > Sites > [Your Site].
+2. Navigate to **Settings**.
+3. Toggle **Development Mode** to ON.
+
+**Manual Object Cache Flush:**
+If changes are still stuck in the Admin Panel (e.g., "Last edited 7 days ago"), flush the object cache specifically:
+
+```bash
+wp cache flush
+# If using multisite, specify URL:
+wp cache flush --url=https://example.com
+```
 
 ## 🔧 **Configuration**
 
@@ -29,8 +56,6 @@ Closte is a VPS hosting provider offering competitive pricing and flexible serve
 ```bash
 # Copy template
 cp configs/closte-config.json.txt configs/closte-config.json
-
-# Edit with your actual server details
 ```
 
 ### **Configuration Structure:**
@@ -39,244 +64,85 @@ cp configs/closte-config.json.txt configs/closte-config.json
 {
   "servers": {
     "web-server": {
-      "ip": "192.168.1.100",
+      "ip": "mysql.cluster",
       "port": 22,
-      "username": "root",
-      "password_file": "~/.ssh/closte_web_password",
-      "description": "Main web server"
+      "username": "u12345678",
+      "password_file": "~/.ssh/closte_password",
+      "description": "Closte Site Container"
     }
   },
   "default_settings": {
-    "username": "root",
+    "username": "u12345678",
     "port": 22,
     "password_file": "~/.ssh/closte_password"
-  },
-  "api": {
-    "key": "your-closte-api-key",
-    "base_url": "https://app.closte.com/api/v1",
-    "endpoints": {
-      "servers": "servers",
-      "server_details": "servers/{id}",
-      "server_actions": "servers/{id}/actions"
-    }
   }
 }
 ```
 
-### **Password File Setup:**
+**Note:** Hostname often resolves to `mysql.cluster` or specific IP. Use the IP/Host provided in the Closte Dashboard under "Access".
+
+### **Password Authentication:**
+
+Closte **does not support SSH keys**. You must use `sshpass` with a stored password file.
 
 ```bash
-# Create secure password file
+# Install sshpass
+brew install sshpass  # macOS
+sudo apt-get install sshpass  # Linux
+
+# Store password
 echo 'your-closte-password' > ~/.ssh/closte_password
 chmod 600 ~/.ssh/closte_password
 
-# Install sshpass for password authentication
-brew install sshpass  # macOS
-sudo apt-get install sshpass  # Linux
+# Connect
+sshpass -f ~/.ssh/closte_password ssh user@host
 ```
 
 ## 🚀 **Usage Examples**
 
-### **Basic Commands:**
+### **WP-CLI Operations (Multisite):**
+
+Closte often hosts Multisite networks. Always specify `--url` to target the correct site.
 
 ```bash
-# List all Closte servers
-./providers/closte-helper.sh list
+# List sites
+wp site list --fields=blog_id,url
 
-# Connect to a server
-./providers/closte-helper.sh connect web-server
+# Update Post on Specific Site
+wp post update 123 content.txt --url=https://subsite.example.com
 
-# Execute command on server
-./providers/closte-helper.sh exec web-server 'ls -la'
-
-# Upload files to server
-./providers/closte-helper.sh upload web-server /local/path /remote/path
-
-# Download files from server
-./providers/closte-helper.sh download web-server /remote/path /local/path
+# Flush Cache for Specific Site
+wp cache flush --url=https://subsite.example.com
 ```
 
-### **Server Management:**
+### **File Operations:**
 
 ```bash
-# Check server status
-./providers/closte-helper.sh status web-server
+# Upload file
+sshpass -f ~/.ssh/closte_pass scp local.txt user@host:public_html/remote.txt
 
-# Monitor server resources
-./providers/closte-helper.sh exec web-server 'htop'
-./providers/closte-helper.sh exec web-server 'df -h'
-
-# System updates
-./providers/closte-helper.sh exec web-server 'apt update && apt upgrade -y'
+# Recursive Download
+sshpass -f ~/.ssh/closte_pass scp -r user@host:public_html/wp-content/themes/my-theme ./local-theme
 ```
-
-### **API Operations (if available):**
-
-```bash
-# Test API access
-./providers/closte-helper.sh api servers GET
-
-# Get server details
-./providers/closte-helper.sh api servers/123 GET
-
-# Server actions
-./providers/closte-helper.sh api servers/123/actions/restart POST
-```
-
-## 🛡️ **Security Best Practices**
-
-### **Password Security:**
-
-- **Strong passwords**: Use complex, unique passwords
-- **Secure storage**: Store passwords in files with 600 permissions
-- **Regular rotation**: Change passwords periodically
-- **Never commit**: Add password files to .gitignore
-
-### **Server Security:**
-
-```bash
-# Configure firewall
-./providers/closte-helper.sh exec web-server 'ufw allow 22/tcp'
-./providers/closte-helper.sh exec web-server 'ufw allow 80/tcp'
-./providers/closte-helper.sh exec web-server 'ufw allow 443/tcp'
-./providers/closte-helper.sh exec web-server 'ufw enable'
-
-# Disable root login (after setting up user account)
-./providers/closte-helper.sh exec web-server 'sed -i "s/PermitRootLogin yes/PermitRootLogin no/" /etc/ssh/sshd_config'
-
-# Change SSH port (optional)
-./providers/closte-helper.sh exec web-server 'sed -i "s/#Port 22/Port 2222/" /etc/ssh/sshd_config'
-```
-
-### **Access Control:**
-
-- **IP restrictions**: Limit SSH access to specific IPs when possible
-- **User accounts**: Create non-root users for daily operations
-- **SSH keys**: Set up SSH keys for key-based authentication
-- **Fail2ban**: Install fail2ban for brute force protection
 
 ## 🔍 **Troubleshooting**
 
-### **Common Issues:**
+### **Changes Not Visible:**
 
-#### **Connection Refused:**
+1. **Check Dev Mode:** Ensure `wp closte devmode enable` is run.
+2. **Flush Object Cache:** Run `wp cache flush`.
+3. **Check CDN:** Purge CDN via Closte Dashboard if static assets are stale.
+4. **Browser Cache:** Use Incognito mode.
 
-```bash
-# Check server status in Closte control panel
-# Verify IP address and port
-# Ensure SSH service is running
-./providers/closte-helper.sh exec web-server 'systemctl status ssh'
-```
+### **Database Connection:**
 
-#### **Permission Denied:**
+Closte uses `mysql.cluster` as DB_HOST. Ensure your scripts/WP-CLI config respect this.
 
-```bash
-# Verify password is correct
-# Check password file permissions (should be 600)
-# Ensure sshpass is installed
-which sshpass
-```
+### **Permissions:**
 
-#### **Server Performance Issues:**
-
-```bash
-# Check system resources
-./providers/closte-helper.sh exec web-server 'top'
-./providers/closte-helper.sh exec web-server 'free -h'
-./providers/closte-helper.sh exec web-server 'df -h'
-
-# Check network connectivity
-./providers/closte-helper.sh exec web-server 'ping -c 4 8.8.8.8'
-```
-
-## 📊 **Performance Optimization**
-
-### **Server Optimization:**
-
-```bash
-# Update system packages
-./providers/closte-helper.sh exec web-server 'apt update && apt upgrade -y'
-
-# Install performance monitoring tools
-./providers/closte-helper.sh exec web-server 'apt install htop iotop nethogs -y'
-
-# Configure swap (if needed)
-./providers/closte-helper.sh exec web-server 'fallocate -l 2G /swapfile'
-./providers/closte-helper.sh exec web-server 'chmod 600 /swapfile'
-./providers/closte-helper.sh exec web-server 'mkswap /swapfile'
-./providers/closte-helper.sh exec web-server 'swapon /swapfile'
-```
-
-### **Application Performance:**
-
-- **Web server optimization**: Configure Nginx/Apache for optimal performance
-- **Database tuning**: Optimize MySQL/PostgreSQL configurations
-- **Caching**: Implement Redis or Memcached for application caching
-- **CDN integration**: Use CDN for static asset delivery
-
-## 🔄 **Backup & Disaster Recovery**
-
-### **Automated Backups:**
-
-```bash
-# Create backup script
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-./providers/closte-helper.sh exec web-server "tar -czf /tmp/backup_$DATE.tar.gz /var/www /etc"
-./providers/closte-helper.sh download web-server /tmp/backup_$DATE.tar.gz ./backups/
-```
-
-### **Database Backups:**
-
-```bash
-# MySQL backup
-./providers/closte-helper.sh exec web-server 'mysqldump -u root -p --all-databases > /tmp/mysql_backup.sql'
-
-# PostgreSQL backup
-./providers/closte-helper.sh exec web-server 'pg_dumpall -U postgres > /tmp/postgres_backup.sql'
-```
-
-## 📚 **Best Practices**
-
-### **Server Management:**
-
-1. **Regular updates**: Keep system packages updated
-2. **Monitoring**: Monitor server resources and performance
-3. **Backups**: Implement regular backup procedures
-4. **Security**: Follow security best practices
-5. **Documentation**: Document server configurations and procedures
-
-### **Application Deployment:**
-
-- **Version control**: Use Git for application code
-- **Environment separation**: Separate dev, staging, and production
-- **Configuration management**: Use environment variables for configuration
-- **Process management**: Use systemd or PM2 for process management
-
-### **Monitoring:**
-
-- **System monitoring**: Monitor CPU, memory, disk usage
-- **Application monitoring**: Monitor application performance and errors
-- **Log management**: Centralize and analyze log files
-- **Alerting**: Set up alerts for critical issues
-
-## 🎯 **AI Assistant Integration**
-
-### **Automated Tasks:**
-
-- **Server provisioning**: Automated server setup and configuration
-- **Application deployment**: Automated deployment processes
-- **Backup management**: Automated backup scheduling and verification
-- **Security monitoring**: Automated security scanning and updates
-- **Performance monitoring**: Automated performance analysis and optimization
-
-### **Development Workflows:**
-
-- **Environment management**: Automated environment provisioning
-- **CI/CD integration**: Automated testing and deployment pipelines
-- **Database management**: Automated database operations and migrations
-- **SSL management**: Automated certificate management
+Files should generally be owned by the user (e.g., `u12345678`) and group `u12345678`.
+Standard permissions: `755` for directories, `644` for files.
 
 ---
 
-**Closte provides good value VPS hosting with competitive pricing, making it suitable for various hosting needs from development to production.** 🚀
+**Closte is powerful but requires strict cache management for development workflows.** 🚀

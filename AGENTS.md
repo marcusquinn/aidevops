@@ -44,27 +44,27 @@ When using this framework, AI assistants have access to:
 
 **AI assistants must handle external service interruptions gracefully:**
 
-1.  **Check Service Status First**: Before reporting a failure as a bug, check the official status page.
-2.  **Verify Network Connectivity**: Ensure local network connectivity before assuming service failure.
-3.  **Implement Retries**: Use exponential backoff for transient network issues.
+1. **Check Service Status First**: Before reporting a failure as a bug, check the official status page.
+2. **Verify Network Connectivity**: Ensure local network connectivity before assuming service failure.
+3. **Implement Retries**: Use exponential backoff for transient network issues.
 
 **Official Service Status Pages:**
 
-*   **GitHub**: [https://www.githubstatus.com/](https://www.githubstatus.com/)
-*   **GitLab**: [https://status.gitlab.com/](https://status.gitlab.com/)
-*   **OpenAI**: [https://status.openai.com/](https://status.openai.com/)
-*   **Anthropic (Claude)**: [https://status.anthropic.com/](https://status.anthropic.com/)
-*   **Cloudflare**: [https://www.cloudflarestatus.com/](https://www.cloudflarestatus.com/)
-*   **Hetzner**: [https://status.hetzner.com/](https://status.hetzner.com/)
-*   **Hostinger**: [https://status.hostinger.com/](https://status.hostinger.com/)
-*   **AWS (Global)**: [https://health.aws.amazon.com/health/status](https://health.aws.amazon.com/health/status)
-*   **Vercel**: [https://www.vercel-status.com/](https://www.vercel-status.com/)
-*   **DigitalOcean**: [https://www.digitaloceanstatus.com/](https://www.digitaloceanstatus.com/)
-*   **SonarCloud**: [https://sonarcloudstatus.io/](https://sonarcloudstatus.io/)
-*   **Codacy**: [https://status.codacy.com/](https://status.codacy.com/)
-*   **CodeRabbit**: [https://status.coderabbit.ai/](https://status.coderabbit.ai/)
-*   **MainWP**: [https://status.mainwp.com/](https://status.mainwp.com/)
-*   **Namecheap**: [https://www.namecheap.com/status-updates/](https://www.namecheap.com/status-updates/)
+- **GitHub**: [https://www.githubstatus.com/](https://www.githubstatus.com/)
+- **GitLab**: [https://status.gitlab.com/](https://status.gitlab.com/)
+- **OpenAI**: [https://status.openai.com/](https://status.openai.com/)
+- **Anthropic (Claude)**: [https://status.anthropic.com/](https://status.anthropic.com/)
+- **Cloudflare**: [https://www.cloudflarestatus.com/](https://www.cloudflarestatus.com/)
+- **Hetzner**: [https://status.hetzner.com/](https://status.hetzner.com/)
+- **Hostinger**: [https://status.hostinger.com/](https://status.hostinger.com/)
+- **AWS (Global)**: [https://health.aws.amazon.com/health/status](https://health.aws.amazon.com/health/status)
+- **Vercel**: [https://www.vercel-status.com/](https://www.vercel-status.com/)
+- **DigitalOcean**: [https://www.digitaloceanstatus.com/](https://www.digitaloceanstatus.com/)
+- **SonarCloud**: [https://sonarcloudstatus.io/](https://sonarcloudstatus.io/)
+- **Codacy**: [https://status.codacy.com/](https://status.codacy.com/)
+- **CodeRabbit**: [https://status.coderabbit.ai/](https://status.coderabbit.ai/)
+- **MainWP**: [https://status.mainwp.com/](https://status.mainwp.com/)
+- **Namecheap**: [https://www.namecheap.com/status-updates/](https://www.namecheap.com/status-updates/)
 
 ## 🤖 **Agent Behavior & Standards**
 
