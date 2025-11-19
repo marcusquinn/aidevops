@@ -29,6 +29,7 @@ get_current_version() {
     else
         echo "1.0.0"
     fi
+    return 0
 }
 
 # Function to bump version
@@ -287,6 +288,7 @@ bash setup.sh
 
 **Copyright © Marcus Quinn 2025** - All rights reserved under MIT License
 EOF
+    return 0
 }
 
 # Main function
