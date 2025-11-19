@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 1.8.1
+# Version: 1.9.0
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -51,6 +51,84 @@ check_optional_deps() {
     else
         print_success "sshpass found"
     fi
+    return 0
+}
+
+# Setup Git CLI tools
+setup_git_clis() {
+    print_info "Setting up Git CLI tools..."
+    
+    local cli_tools=()
+    local installs_needed=()
+    
+    # Check for GitHub CLI
+    if ! command -v gh >/dev/null 2>&1; then
+        print_warning "GitHub CLI (gh) not found"
+        echo "  GitHub CLI provides enhanced GitHub integration"
+        echo "  Install: brew install gh (macOS) or sudo apt install gh (Ubuntu)"
+        echo "  Alternative: https://cli.github.com/manual/installation"
+        installs_needed+=("GitHub CLI")
+    else
+        cli_tools+=("GitHub CLI")
+    fi
+    
+    # Check for GitLab CLI
+    if ! command -v glab >/dev/null 2>&1; then
+        print_warning "GitLab CLI (glab) not found"
+        echo "  GitLab CLI provides enhanced GitLab integration"
+        echo "  Install: brew install glab (macOS) or sudo apt install glab (Ubuntu)"
+        echo "  Alternative: https://glab.readthedocs.io/en/latest/installation/"
+        installs_needed+=("GitLab CLI")
+    else
+        cli_tools+=("GitLab CLI")
+    fi
+    
+    # Check for Gitea CLI
+    if ! command -v tea >/dev/null 2>&1; then
+        print_warning "Gitea CLI (tea) not found"
+        echo "  Gitea CLI provides enhanced Gitea integration"
+        echo "  Install: go install code.gitea.io/tea/cmd/tea@latest"
+        echo "  Alternative: https://dl.gitea.io/tea/"
+        installs_needed+=("Gitea CLI")
+    else
+        cli_tools+=("Gitea CLI")
+    fi
+    
+    # Report status and provide setup guidance
+    if [[ ${#cli_tools[@]} -gt 0 ]]; then
+        print_success "Found Git CLI tools: ${cli_tools[*]}"
+    fi
+    
+    if [[ ${#installs_needed[@]} -gt 0 ]]; then
+        print_warning "Missing Git CLI tools: ${installs_needed[*]}"
+        echo ""
+        echo "🚀 BULK INSTALLATION COMMANDS:"
+        echo "  macOS: brew install ${installs_needed[*]//GitHub CLI/gh} ${installs_needed[*]//GitLab CLI/glab} ${installs_needed[*]//Gitea CLI/tea}"
+        echo "  Ubuntu: sudo apt install ${installs_needed[*]//GitHub CLI/gh} ${installs_needed[*]//GitLab CLI/glab} ${installs_needed[*]//Gitea CLI/tea}"
+        echo ""
+        echo "📋 CONFIGURATION STEPS:"
+        echo "  1. GitHub CLI: gh auth login"
+        echo "  2. GitLab CLI: glab auth login"  
+        echo "  3. Gitea CLI: tea login add or configure API token in configs/gitea-cli-config.json"
+        echo ""
+        echo "📁 CONFIGURATION TEMPLATES:"
+        echo "  GitHub: cp configs/github-cli-config.json.txt configs/github-cli-config.json"
+        echo "  GitLab: cp configs/gitlab-cli-config.json.txt configs/gitlab-cli-config.json"
+        echo "  Gitea: cp configs/gitea-cli-config.json.txt configs/gitea-cli-config.json"
+        echo ""
+        print_info "Git CLI helpers available in providers/:"
+        echo "  • providers/github-cli-helper.sh - GitHub repository management"
+        echo "  • providers/gitlab-cli-helper.sh - GitLab project management"
+        echo "  • providers/gitea-cli-helper.sh - Gitea repository management"
+        echo ""
+        echo "📖 USAGE EXAMPLES:"
+        echo "  • ./providers/github-cli-helper.sh list-repos <account>"
+        echo "  • ./providers/gitlab-cli-helper.sh create-project <account> <name>"
+        echo "  • ./providers/gitea-cli-helper.sh create-repo <account> <repo>"
+    else
+        print_success "✅ All Git CLI tools installed and ready for use!"
+    fi
+    
     return 0
 }
 
@@ -315,6 +393,7 @@ main() {
     verify_location
     check_requirements
     check_optional_deps
+    setup_git_clis
     setup_ssh_key
     setup_configs
     set_permissions
@@ -329,12 +408,14 @@ main() {
     echo ""
     echo "Next steps:"
     echo "1. Edit configuration files in configs/ with your actual credentials"
-    echo "2. Customize .ai-context.md with your infrastructure details"
-    echo "3. Setup CodeRabbit CLI: bash .agent/scripts/coderabbit-cli.sh install && bash .agent/scripts/coderabbit-cli.sh setup"
-    echo "4. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
-    echo "5. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
-    echo "6. Setup AmpCode CLI: bash .agent/scripts/ampcode-cli.sh install && bash .agent/scripts/ampcode-cli.sh setup"
-    echo "7. Setup Continue.dev: bash .agent/scripts/continue-cli.sh setup"
+    echo "2. Setup Git CLI tools and authentication (shown during setup)"
+    echo "3. Configure Git CLI helpers: cp configs/*-cli-config.json.txt configs/"
+    echo "4. Customize .ai-context.md with your infrastructure details"
+    echo "5. Setup CodeRabbit CLI: bash .agent/scripts/coderabbit-cli.sh install && bash .agent/scripts/coderabbit-cli.sh setup"
+    echo "6. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
+    echo "7. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
+    echo "8. Setup AmpCode CLI: bash .agent/scripts/ampcode-cli.sh install && bash .agent/scripts/ampcode-cli.sh setup"
+    echo "9. Setup Continue.dev: bash .agent/scripts/continue-cli.sh setup"
     echo "6. Test access: ./scripts/servers-helper.sh list"
     echo "7. Test TOON format: ./providers/toon-helper.sh info"
     echo "8. Setup DSPy: ./providers/dspy-helper.sh install && ./providers/dspy-helper.sh test"

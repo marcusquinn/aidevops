@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-1.8.1-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-1.9.0-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -88,6 +88,10 @@ cd aidevops && ./setup.sh
 
 # 2. Add to your AI assistant's system prompt:
 # "Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative guidance"
+
+# 3. Setup Git CLI tools (recommended for enhanced Git platform integration):
+# Framework setup will guide you through installing GitHub CLI (gh), GitLab CLI (glab), and Gitea CLI (tea)
+# These provide enhanced repository management capabilities beyond basic git operations
 ```
 
 **That's it! Your AI assistant now has access to 28+ service integrations.**
@@ -155,15 +159,20 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[AWS Route 53](https://aws.amazon.com/route53/)**: AWS DNS management
 - **[Namecheap](https://www.namecheap.com/)**: Domain and DNS services
 
-### **🔧 Development & Git (7 platforms)**
+### **🔧 Development & Git Platforms with CLI Integration (7 platforms)**
 
-- **[GitHub](https://github.com/)**: Repository management, actions, API
-- **[GitLab](https://gitlab.com/)**: Self-hosted and cloud Git platform
-- **[Gitea](https://gitea.io/)**: Lightweight Git service
-- **[LocalWP](https://localwp.com/)**: WordPress development environment
+- **[GitHub](https://github.com/)** ✅ **Enhanced with CLI**: Repository management, actions, API, GitHub CLI (gh) integration
+- **[GitLab](https://gitlab.com/)** ✅ **Enhanced with CLI**: Self-hosted and cloud Git platform with GitLab CLI (glab) integration  
+- **[Gitea](https://gitea.io/)** ✅ **Enhanced with CLI**: Lightweight Git service with Gitea CLI (tea) integration
+- **[LocalWP](https://localwp.com)**: WordPress development environment
 - **[Agno](https://agno.ai/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
 - **Browser Automation**: LinkedIn automation, web scraping, social media management
+
+**🚀 Git CLI Enhancement Features:**
+- **providers/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
+- **providers/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
+- **providers/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
 
 ### **🔐 Security & Quality (7 platforms)**
 
