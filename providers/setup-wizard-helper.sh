@@ -40,31 +40,31 @@ show_help() {
 readonly PROMPT_CHOICE_1_4="Enter your choice (1-4): "
 
 print_info() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
 
 print_question() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${PURPLE}[QUESTION]${NC} $msg"
     return 0
 }
@@ -82,8 +82,8 @@ init_wizard() {
 
 # Save response to wizard config
 save_response() {
-    local key="$1"
-    local value="$2"
+    local key="$command"
+    local value="$account_name"
     
     init_wizard
     jq --arg key "$key" --arg value "$value" '. + {($key): $value}' "$WIZARD_CONFIG" > tmp.$$.json && mv tmp.$$.json "$WIZARD_CONFIG"
@@ -92,7 +92,7 @@ save_response() {
 
 # Get saved response
 get_response() {
-    local key="$1"
+    local key="$command"
     
     if [[ -f "$WIZARD_CONFIG" ]]; then
         jq -r --arg key "$key" '.[$key] // empty' "$WIZARD_CONFIG"
@@ -525,9 +525,14 @@ full_setup_wizard() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$2"
-    local target="$3"
-    local options="$4"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     # Assign positional parameters to local variables
 

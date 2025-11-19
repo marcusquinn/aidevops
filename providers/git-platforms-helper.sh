@@ -19,25 +19,25 @@ readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
 print_info() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -82,19 +82,19 @@ load_config() {
 
 # Get platform configuration
 get_platform_config() {
-    local platform="$1"
-    local account_name="$2"
+    local platform="$command"
+    local account_name="$account_name"
     
-    if [[ -z "$platform" || -z "$2" ]]; then
+    if [[ -z "$platform" || -z "$account_name" ]]; then
         print_error "Platform and account name are required"
         list_platforms
         exit 1
     fi
     
     local platform_config
-    platform_config=$(jq -r ".platforms.\"$platform\".accounts.\"$2\"" "$CONFIG_FILE")
+    platform_config=$(jq -r ".platforms.\"$platform\".accounts.\"$account_name\"" "$CONFIG_FILE")
     if [[ "$platform_config" == "null" ]]; then
-        print_error "Platform '$platform' account '$2' not found in configuration"
+        print_error "Platform '$platform' account '$account_name' not found in configuration"
         list_platforms
         exit 1
     fi
@@ -105,21 +105,21 @@ get_platform_config() {
 
 # Make API request
 api_request() {
-    local platform="$1"
-    local account_name="$2"
-    local endpoint="$3"
+    local platform="$command"
+    local account_name="$account_name"
+    local endpoint="$target"
     local method="${4:-GET}"
     local data="$5"
 
     local config
-    config=$(get_platform_config "$platform" "$2")
+    config=$(get_platform_config "$platform" "$account_name")
     local api_token
     api_token=$(echo "$config" | jq -r '.api_token')
     local base_url
     base_url=$(echo "$config" | jq -r '.base_url')
     
     if [[ "$api_token" == "null" || "$base_url" == "null" ]]; then
-        print_error "Invalid API credentials for $platform account '$2'"
+        print_error "Invalid API credentials for $platform account '$account_name'"
         exit 1
     fi
     
@@ -174,12 +174,12 @@ list_platforms() {
 
 # GitHub functions
 github_list_repositories() {
-    local account_name="$1"
+    local account_name="$command"
     local visibility="${2:-all}"
     
-    print_info "Listing GitHub repositories for account: $2"
+    print_info "Listing GitHub repositories for account: $account_name"
     local response
-    if response=$(api_request "$PLATFORM_GITHUB" "$2" "user/repos?visibility=$visibility&sort=updated&per_page=100"); then
+    if response=$(api_request "$PLATFORM_GITHUB" "$account_name" "user/repos?visibility=$visibility&sort=updated&per_page=100"); then
         echo "$response" | jq -r '.[] | "\(.name) - \(.description // "No description") (Stars: \(.stargazers_count), Forks: \(.forks_count))"'
     else
         print_error "Failed to retrieve repositories"
@@ -189,9 +189,9 @@ github_list_repositories() {
 }
 
 github_create_repository() {
-    local account_name="$1"
-    local repo_name="$2"
-    local description="$3"
+    local account_name="$command"
+    local repo_name="$account_name"
+    local description="$target"
     local private="${4:-false}"
     
     if [[ -z "$repo_name" ]]; then
@@ -206,7 +206,7 @@ github_create_repository() {
         '{name: $name, description: $description, private: $private}')
     
     print_info "Creating GitHub repository: $repo_name"
-    local response=$(api_request "$PLATFORM_GITHUB" "$2" "user/repos" "POST" "$data")
+    local response=$(api_request "$PLATFORM_GITHUB" "$account_name" "user/repos" "POST" "$data")
     
     if [[ $? -eq 0 ]]; then
         print_success "Repository created successfully"
@@ -221,11 +221,11 @@ github_create_repository() {
 
 # GitLab functions
 gitlab_list_projects() {
-    local account_name="$1"
+    local account_name="$command"
     local visibility="${2:-private}"
     
-    print_info "Listing GitLab projects for account: $2"
-    local response=$(api_request "$PLATFORM_GITLAB" "$2" "projects?visibility=$visibility&order_by=last_activity_at&per_page=100")
+    print_info "Listing GitLab projects for account: $account_name"
+    local response=$(api_request "$PLATFORM_GITLAB" "$account_name" "projects?visibility=$visibility&order_by=last_activity_at&per_page=100")
     
     if [[ $? -eq 0 ]]; then
     return 0
@@ -238,9 +238,9 @@ gitlab_list_projects() {
 }
 
 gitlab_create_project() {
-    local account_name="$1"
-    local project_name="$2"
-    local description="$3"
+    local account_name="$command"
+    local project_name="$account_name"
+    local description="$target"
     local visibility="${4:-private}"
     
     if [[ -z "$project_name" ]]; then
@@ -255,7 +255,7 @@ gitlab_create_project() {
         '{name: $name, description: $description, visibility: $visibility}')
     
     print_info "Creating GitLab project: $project_name"
-    local response=$(api_request "$PLATFORM_GITLAB" "$2" "projects" "POST" "$data")
+    local response=$(api_request "$PLATFORM_GITLAB" "$account_name" "projects" "POST" "$data")
     
     if [[ $? -eq 0 ]]; then
         print_success "Project created successfully"
@@ -270,10 +270,10 @@ gitlab_create_project() {
 
 # Gitea functions
 gitea_list_repositories() {
-    local account_name="$1"
+    local account_name="$command"
     
-    print_info "Listing Gitea repositories for account: $2"
-    local response=$(api_request "gitea" "$2" "user/repos?limit=100")
+    print_info "Listing Gitea repositories for account: $account_name"
+    local response=$(api_request "gitea" "$account_name" "user/repos?limit=100")
     return 0
     
     if [[ $? -eq 0 ]]; then
@@ -286,9 +286,9 @@ gitea_list_repositories() {
 }
 
 gitea_create_repository() {
-    local account_name="$1"
-    local repo_name="$2"
-    local description="$3"
+    local account_name="$command"
+    local repo_name="$account_name"
+    local description="$target"
     local private="${4:-false}"
     
     if [[ -z "$repo_name" ]]; then
@@ -303,7 +303,7 @@ gitea_create_repository() {
         '{name: $name, description: $description, private: $private}')
     
     print_info "Creating Gitea repository: $repo_name"
-    local response=$(api_request "gitea" "$2" "user/repos" "POST" "$data")
+    local response=$(api_request "gitea" "$account_name" "user/repos" "POST" "$data")
     
     if [[ $? -eq 0 ]]; then
         print_success "Repository created successfully"
@@ -317,8 +317,8 @@ gitea_create_repository() {
 
 # Local Git functions
 local_git_init() {
-    local repo_path="$1"
-    local repo_name="$2"
+    local repo_path="$command"
+    local repo_name="$account_name"
 
     if [[ -z "$repo_path" || -z "$repo_name" ]]; then
         print_error "Repository path and name are required"
@@ -373,17 +373,17 @@ local_git_list() {
 
 # Repository management across platforms
 clone_repository() {
-    local platform="$1"
-    local account_name="$2"
-    local repo_identifier="$3"
+    local platform="$command"
+    local account_name="$account_name"
+    local repo_identifier="$target"
     local local_path="${4:-$HOME/git}"
 
-    if [[ -z "$platform" || -z "$2" || -z "$repo_identifier" ]]; then
+    if [[ -z "$platform" || -z "$account_name" || -z "$repo_identifier" ]]; then
         print_error "Platform, account name, and repository identifier are required"
         exit 1
     fi
 
-    local config=$(get_platform_config "$platform" "$2")
+    local config=$(get_platform_config "$platform" "$account_name")
     local username=$(echo "$config" | jq -r '.username')
     local base_url=$(echo "$config" | jq -r '.base_url')
 
@@ -419,7 +419,7 @@ clone_repository() {
 
 # Start MCP servers for Git platforms
 start_mcp_servers() {
-    local platform="$1"
+    local platform="$command"
     local port="${2:-3006}"
 
     print_info "Starting MCP server for $platform on port $port"
@@ -457,24 +457,24 @@ start_mcp_servers() {
 
 # Comprehensive repository audit
 audit_repositories() {
-    local platform="$1"
-    local account_name="$2"
+    local platform="$command"
+    local account_name="$account_name"
 
-    print_info "Auditing repositories for $platform account: $2"
+    print_info "Auditing repositories for $platform account: $account_name"
     echo ""
 
     case "$platform" in
         "$PLATFORM_GITHUB")
             print_info "=== GITHUB REPOSITORIES ==="
-            github_list_repositories "$2"
+            github_list_repositories "$account_name"
             ;;
         "$PLATFORM_GITLAB")
             print_info "=== GITLAB PROJECTS ==="
-            gitlab_list_projects "$2"
+            gitlab_list_projects "$account_name"
             ;;
         "gitea")
             print_info "=== GITEA REPOSITORIES ==="
-            gitea_list_repositories "$2"
+            gitea_list_repositories "$account_name"
             ;;
         *)
             print_error "Unknown platform: $platform"
@@ -525,9 +525,14 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$2"
-    local target="$3"
-    local options="$4"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     # Assign positional parameters to local variables
     local platform="$account_name"
