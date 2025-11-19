@@ -113,25 +113,29 @@ readonly COLOR_RESET='\033[0m'
 
 # Print error message with consistent formatting
 print_shared_error() {
-    echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $1" >&2
+    local msg="$1"
+    echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $msg" >&2
     return 0
 }
 
 # Print success message with consistent formatting
 print_shared_success() {
-    echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $1"
+    local msg="$1"
+    echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $msg"
     return 0
 }
 
 # Print warning message with consistent formatting
 print_shared_warning() {
-    echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $1"
+    local msg="$1"
+    echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg"
     return 0
 }
 
 # Print info message with consistent formatting
 print_shared_info() {
-    echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $1"
+    local msg="$1"
+    echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $msg"
     return 0
 }
 
@@ -169,8 +173,8 @@ validate_file_exists() {
 validate_command_exists() {
     local command_name="$1"
     
-    if ! command -v "$1_name" &> /dev/null; then
-        print_shared_error "Required command not found: $1_name"
+    if ! command -v "$command_name" &> /dev/null; then
+        print_shared_error "Required command not found: $command_name"
         return 1
     fi
     return 0

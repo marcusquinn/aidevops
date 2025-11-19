@@ -127,7 +127,7 @@ exec_on_site() {
     local command="$2"
     check_config
     
-    if [[ -z "$site" || -z "$1" ]]; then
+    if [[ -z "$site" || -z "$command" ]]; then
         print_error "Usage: exec [site] [command]"
         exit 1
     fi
@@ -150,9 +150,9 @@ exec_on_site() {
     fi
     
     password_file="${password_file/\~/$HOME}"
-    print_info "Executing '$1' on $site..."
+    print_info "Executing '$command' on $site..."
     
-    sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $1"
+    sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $command"
     return 0
 }
 
@@ -175,13 +175,15 @@ api_call() {
     return 0
 }
 
-# Assign positional parameters to local variables
-command="${1:-help}"
-param2="$2"
-param3="$3"
+# Main function
+main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local param2="$2"
+    local param3="$3"
 
-# Main command handler
-case "$1" in
+    # Main command handler
+    case "$command" in
     "list")
         list_sites
         ;;
@@ -212,10 +214,13 @@ case "$1" in
         echo "  $0 api domains"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $1"
+        print_error "$ERROR_UNKNOWN_COMMAND $command"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
-
 return 0
+}
+
+# Run main function
+main "$@"

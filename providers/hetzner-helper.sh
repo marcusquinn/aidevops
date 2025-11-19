@@ -129,7 +129,7 @@ exec_on_server() {
     local command="$2"
     check_config
     
-    if [[ -z "$server_name" || -z "$1" ]]; then
+    if [[ -z "$server_name" || -z "$command" ]]; then
         print_error "Usage: exec [server] [command]"
         exit 1
     fi
@@ -142,8 +142,8 @@ exec_on_server() {
     fi
     
     read -r ip name project <<< "$server_info"
-    print_info "Executing '$1' on $name..."
-    ssh "root@$ip" "$1"
+    print_info "Executing '$command' on $name..."
+    ssh "root@$ip" "$command"
     return 0
 }
 
@@ -400,16 +400,18 @@ list_images() {
     return 0
 }
 
-# Assign positional parameters to local variables
-command="${1:-help}"
-param2="$2"
-param3="$3"
-param4="$4"
-param5="$5"
-param6="$6"
+# Main function
+main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local param2="$2"
+    local param3="$3"
+    local param4="$4"
+    local param5="$5"
+    local param6="$6"
 
-# Main command handler
-case "$1" in
+    # Main command handler
+    case "$command" in
     "list")
         list_servers
         ;;
@@ -468,10 +470,13 @@ case "$1" in
         echo "  Image: ubuntu-24.04 (Ubuntu 24.04 LTS)"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $1"
+        print_error "$ERROR_UNKNOWN_COMMAND $command"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
-
 return 0
+}
+
+# Run main function
+main "$@"

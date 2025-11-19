@@ -116,7 +116,7 @@ exec_on_server() {
     local command="$2"
     check_config
     
-    if [[ -z "$server" || -z "$1" ]]; then
+    if [[ -z "$server" || -z "$command" ]]; then
         print_error "Usage: exec [server] [command]"
         exit 1
     fi
@@ -132,11 +132,10 @@ exec_on_server() {
     
     ssh_port="${ssh_port:-22}"
     
-    print_info "Executing '$1' on $server..."
-    ssh -p "$ssh_port" "root@$ip" "$1"
+    print_info "Executing '$command' on $server..."
+    ssh -p "$ssh_port" "root@$ip" "$command"
     return 0
 }
-    return 0
 
 # List apps on Cloudron server
 list_apps() {
@@ -179,15 +178,13 @@ exec_in_app() {
     local command="$3"
     check_config
     
-    if [[ -z "$server" || -z "$app_id" || -z "$1" ]]; then
+    if [[ -z "$server" || -z "$app_id" || -z "$command" ]]; then
         print_error "Usage: exec-app [server] [app-id] [command]"
         exit 1
-    return 0
     fi
     
-    print_info "Executing '$1' in app $app_id on $server..."
-    return 0
-    exec_on_server "$server" "docker exec $app_id $1"
+    print_info "Executing '$command' in app $app_id on $server..."
+    exec_on_server "$server" "docker exec $app_id $command"
     return 0
 }
 
@@ -246,18 +243,20 @@ generate_ssh_configs() {
 }
 
 # Assign positional parameters to local variables
-command="${1:-help}"
-param2="$2"
-param3="$3"
-param4="$4"
-param5="$5"
-param6="$6"
+# Main function
+main() {
+    local command="${1:-help}"
+    local param2="$2"
+    local param3="$3"
+    local param4="$4"
+    local param5="$5"
+    local param6="$6"
 
-server_name="$param2"
-command_to_run="$param3"
+    local server_name="$param2"
+    local command_to_run="$param3"
 
-# Main command handler
-case "$1" in
+    # Main command handler
+    case "$command" in
     "list")
         list_servers
         ;;
@@ -265,7 +264,7 @@ case "$1" in
         connect_server "$server_name"
         ;;
     "exec")
-        exec_on_server "$server_name" "$1_to_run"
+        exec_on_server "$server_name" "$command_to_run"
         ;;
     "apps")
         list_apps "$server_name"
@@ -304,10 +303,13 @@ case "$1" in
         echo "Install Cloudron CLI: npm install -g cloudron"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $1"
+        print_error "$ERROR_UNKNOWN_COMMAND $command"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
-
 return 0
+}
+
+# Run main function
+main "$@"
