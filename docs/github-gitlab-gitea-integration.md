@@ -52,6 +52,8 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 - Updated help documentation
 
 ## Documentation
+- **GitHub CLI Helper**: [docs/GITHUB-CLI.md](docs/GITHUB-CLI.md) - Detailed usage instructions.
+- **GitLab CLI Helper**: [docs/GITLAB-CLI.md](docs/GITLAB-CLI.md) - Detailed usage instructions.
 - **Gitea CLI Helper**: [docs/GITEA-CLI.md](docs/GITEA-CLI.md) - Detailed usage instructions.
 
 ## Usage Examples

@@ -33,6 +33,15 @@ readonly ERROR_ACCOUNT_MISSING="Account configuration not found"
 readonly ERROR_ARGS_MISSING="Missing required arguments"
 readonly ERROR_API_FAILED="GitHub API request failed"
 
+readonly ERROR_REPO_NAME_REQUIRED="Repository name is required"
+readonly ERROR_ISSUE_TITLE_REQUIRED="Issue title is required"
+readonly ERROR_ISSUE_NUMBER_REQUIRED="Issue number is required"
+readonly ERROR_PR_TITLE_REQUIRED="Pull request title is required"
+readonly ERROR_PR_NUMBER_REQUIRED="Pull request number is required"
+readonly ERROR_BRANCH_NAME_REQUIRED="Branch name is required"
+readonly ERROR_OWNER_NOT_CONFIGURED="Owner not configured for account"
+readonly ERROR_FAILED_TO_READ_CONFIG="Failed to read configuration"
+
 # Success Messages
 readonly SUCCESS_REPO_CREATED="Repository created successfully"
 readonly SUCCESS_ISSUE_CREATED="Issue created successfully"
@@ -41,8 +50,9 @@ readonly SUCCESS_BRANCH_CREATED="Branch created successfully"
 readonly SUCCESS_ISSUE_CLOSED="Issue closed successfully"
 readonly SUCCESS_PR_MERGED="Pull request merged successfully"
 
-# Help Messages
-readonly HELP_SHOW_MESSAGE="Show this help message"
+# Common constants
+readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly AUTH_HEADER_TOKEN="Authorization: token"
 
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
@@ -123,7 +133,7 @@ get_account_config() {
 
     local config
     if ! config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE" 2>/dev/null); then
-        print_error "Failed to read configuration"
+        print_error "$ERROR_FAILED_TO_READ_CONFIG"
         return 1
     fi
 
@@ -176,7 +186,7 @@ create_repo() {
     local auto_init="${5:-false}"
 
     if [[ -z "$repo_name" ]]; then
-        print_error "Repository name is required"
+        print_error "$ERROR_REPO_NAME_REQUIRED"
         print_info "Usage: github-cli-helper.sh create-repo <account> <repo-name> [description] [visibility]"
         return 1
     fi
@@ -187,7 +197,7 @@ create_repo() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -317,7 +327,7 @@ create_issue() {
     local body="${4:-}"
 
     if [[ -z "$title" ]]; then
-        print_error "Issue title is required"
+        print_error "$ERROR_ISSUE_TITLE_REQUIRED"
         return 1
     fi
 
@@ -327,7 +337,7 @@ create_issue() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -348,7 +358,7 @@ close_issue() {
     local issue_number="$3"
 
     if [[ -z "$issue_number" ]]; then
-        print_error "Issue number is required"
+        print_error "$ERROR_ISSUE_NUMBER_REQUIRED"
         return 1
     fi
 
@@ -358,7 +368,7 @@ close_issue() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -411,7 +421,7 @@ create_pr() {
     local body="${6:-}"
 
     if [[ -z "$title" ]]; then
-        print_error "Pull request title is required"
+        print_error "$ERROR_PR_TITLE_REQUIRED"
         return 1
     fi
 
@@ -421,7 +431,7 @@ create_pr() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -451,7 +461,7 @@ merge_pr() {
     local merge_method="${4:-merge}"
 
     if [[ -z "$pr_number" ]]; then
-        print_error "Pull request number is required"
+        print_error "$ERROR_PR_NUMBER_REQUIRED"
         return 1
     fi
 
@@ -461,7 +471,7 @@ merge_pr() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -512,7 +522,7 @@ create_branch() {
     local source_branch="${4:-main}"
 
     if [[ -z "$branch_name" ]]; then
-        print_error "Branch name is required"
+        print_error "$ERROR_BRANCH_NAME_REQUIRED"
         return 1
     fi
 
@@ -522,7 +532,7 @@ create_branch() {
     local owner
     owner=$(echo "$config" | jq -r '.owner // "EMPTY"')
     if [[ "$owner" == "EMPTY" || -z "$owner" ]]; then
-        print_error "Owner not configured for account: $account_name"
+        print_error "$ERROR_OWNER_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -624,7 +634,10 @@ main() {
             list_repos "$account_name" "$target"
             ;;
         "create-repo")
-            create_repo "$account_name" "$target" "$options" "$5" "$6"
+            local repo_desc="$options"
+            local repo_vis="$5"
+            local repo_init="$6"
+            create_repo "$account_name" "$target" "$repo_desc" "$repo_vis" "$repo_init"
             ;;
         "delete-repo")
             delete_repo "$account_name" "$target"
@@ -636,7 +649,8 @@ main() {
             list_issues "$account_name" "$target" "$options"
             ;;
         "create-issue")
-            create_issue "$account_name" "$target" "$options" "$5"
+            local issue_body="$5"
+            create_issue "$account_name" "$target" "$options" "$issue_body"
             ;;
         "close-issue")
             close_issue "$account_name" "$target" "$options"
@@ -645,16 +659,21 @@ main() {
             list_prs "$account_name" "$target" "$options"
             ;;
         "create-pr")
-            create_pr "$account_name" "$target" "$options" "$5" "$6" "$7"
+            local pr_base="$5"
+            local pr_head="$6"
+            local pr_body="$7"
+            create_pr "$account_name" "$target" "$options" "$pr_base" "$pr_head" "$pr_body"
             ;;
         "merge-pr")
-            merge_pr "$account_name" "$target" "$options" "$5"
+            local merge_method="$5"
+            merge_pr "$account_name" "$target" "$options" "$merge_method"
             ;;
         "list-branches")
             list_branches "$account_name" "$target"
             ;;
         "create-branch")
-            create_branch "$account_name" "$target" "$options" "$5"
+            local source_branch="$5"
+            create_branch "$account_name" "$target" "$options" "$source_branch"
             ;;
         "list-accounts")
             list_accounts

@@ -33,6 +33,16 @@ readonly ERROR_ACCOUNT_MISSING="Account configuration not found"
 readonly ERROR_ARGS_MISSING="Missing required arguments"
 readonly ERROR_API_FAILED="GitLab API request failed"
 
+readonly ERROR_PROJECT_NOT_FOUND="Project not found"
+readonly ERROR_INSTANCE_URL_NOT_CONFIGURED="Instance URL not configured for account"
+readonly ERROR_FAILED_TO_READ_CONFIG="Failed to read configuration"
+readonly ERROR_PROJECT_NAME_REQUIRED="Project name is required"
+readonly ERROR_ISSUE_TITLE_REQUIRED="Issue title is required"
+readonly ERROR_ISSUE_NUMBER_REQUIRED="Issue number is required"
+readonly ERROR_MR_TITLE_REQUIRED="Merge request title is required"
+readonly ERROR_MR_NUMBER_REQUIRED="Merge request number is required"
+readonly ERROR_BRANCH_NAME_REQUIRED="Branch name is required"
+
 # Success Messages
 readonly SUCCESS_PROJECT_CREATED="Project created successfully"
 readonly SUCCESS_ISSUE_CREATED="Issue created successfully"
@@ -41,8 +51,9 @@ readonly SUCCESS_BRANCH_CREATED="Branch created successfully"
 readonly SUCCESS_ISSUE_CLOSED="Issue closed successfully"
 readonly SUCCESS_MR_MERGED="Merge request merged successfully"
 
-# Help Messages
-readonly HELP_SHOW_MESSAGE="Show this help message"
+# Common constants
+readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly AUTH_HEADER_TOKEN="Authorization: token"
 
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
@@ -123,7 +134,7 @@ get_account_config() {
 
     local config
     if ! config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE" 2>/dev/null); then
-        print_error "Failed to read configuration"
+        print_error "$ERROR_FAILED_TO_READ_CONFIG"
         return 1
     fi
 
@@ -218,7 +229,7 @@ create_project() {
     local initialize_with_readme="${5:-false}"
 
     if [[ -z "$project_name" ]]; then
-        print_error "Project name is required"
+        print_error "$ERROR_PROJECT_NAME_REQUIRED"
         print_info "Usage: gitlab-cli-helper.sh create-project <account> <name> [description] [visibility] [init]"
         return 1
     fi
@@ -229,7 +240,7 @@ create_project() {
     local instance_url
     instance_url=$(echo "$config" | jq -r '.instance_url // "EMPTY"')
     if [[ "$instance_url" == "EMPTY" || -z "$instance_url" ]]; then
-        print_error "Instance URL not configured for account: $account_name"
+        print_error "$ERROR_INSTANCE_URL_NOT_CONFIGURED: $account_name"
         return 1
     fi
 
@@ -354,7 +365,7 @@ create_issue() {
     local description="${4:-}"
 
     if [[ -z "$title" ]]; then
-        print_error "Issue title is required"
+        print_error "$ERROR_ISSUE_TITLE_REQUIRED"
         return 1
     fi
 
@@ -378,7 +389,7 @@ close_issue() {
     local issue_number="$3"
 
     if [[ -z "$issue_number" ]]; then
-        print_error "Issue number is required"
+        print_error "$ERROR_ISSUE_NUMBER_REQUIRED"
         return 1
     fi
 
@@ -427,7 +438,7 @@ create_merge_request() {
     local description="${6:-}"
 
     if [[ -z "$title" || -z "$source_branch" ]]; then
-        print_error "Merge request title and source branch are required"
+        print_error "$ERROR_MR_TITLE_REQUIRED"
         return 1
     fi
 
@@ -452,7 +463,7 @@ merge_merge_request() {
     local merge_method="${4:-merge}"
 
     if [[ -z "$mr_number" ]]; then
-        print_error "Merge request number is required"
+        print_error "$ERROR_MR_NUMBER_REQUIRED"
         return 1
     fi
 
@@ -498,7 +509,7 @@ create_branch() {
     local source_branch="${4:-main}"
 
     if [[ -z "$branch_name" ]]; then
-        print_error "Branch name is required"
+        print_error "$ERROR_BRANCH_NAME_REQUIRED"
         return 1
     fi
 
@@ -605,7 +616,10 @@ main() {
             list_projects "$account_name" "$target" "$options"
             ;;
         "create-project")
-            create_project "$account_name" "$target" "$options" "$5" "$6"
+            local proj_desc="$options"
+            local proj_vis="$5"
+            local proj_init="$6"
+            create_project "$account_name" "$target" "$proj_desc" "$proj_vis" "$proj_init"
             ;;
         "delete-project")
             delete_project "$account_name" "$target"
@@ -617,7 +631,8 @@ main() {
             list_issues "$account_name" "$target" "$options"
             ;;
         "create-issue")
-            create_issue "$account_name" "$target" "$options" "$5"
+            local issue_desc="$5"
+            create_issue "$account_name" "$target" "$options" "$issue_desc"
             ;;
         "close-issue")
             close_issue "$account_name" "$target" "$options"
@@ -626,16 +641,21 @@ main() {
             list_merge_requests "$account_name" "$target" "$options"
             ;;
         "create-mr")
-            create_merge_request "$account_name" "$target" "$options" "$5" "$6" "$7"
+            local mr_src="$5"
+            local mr_tgt="$6"
+            local mr_desc="$7"
+            create_merge_request "$account_name" "$target" "$options" "$mr_src" "$mr_tgt" "$mr_desc"
             ;;
         "merge-mr")
-            merge_merge_request "$account_name" "$target" "$options" "$5"
+            local mr_method="$5"
+            merge_merge_request "$account_name" "$target" "$options" "$mr_method"
             ;;
         "list-branches")
             list_branches "$account_name" "$target"
             ;;
         "create-branch")
-            create_branch "$account_name" "$target" "$options" "$5"
+            local branch_src="$5"
+            create_branch "$account_name" "$target" "$options" "$branch_src"
             ;;
         "list-accounts")
             list_accounts
