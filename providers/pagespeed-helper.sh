@@ -14,12 +14,12 @@ readonly PURPLE='\033[0;35m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
-print_header() { echo -e "${PURPLE}🚀 $1${NC}"; }
-print_info() { echo -e "${BLUE}ℹ️  $1${NC}"; }
-print_success() { echo -e "${GREEN}✅ $1${NC}"; }
-print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
-print_error() { echo -e "${RED}❌ $1${NC}"; }
-print_metric() { echo -e "${CYAN}📊 $1${NC}"; }
+print_header() { echo -e "${PURPLE}🚀 $command${NC}"; }
+print_info() { echo -e "${BLUE}ℹ️  $command${NC}"; }
+print_success() { echo -e "${GREEN}✅ $command${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠️  $command${NC}"; }
+print_error() { echo -e "${RED}❌ $command${NC}"; }
+print_metric() { echo -e "${CYAN}📊 $command${NC}"; }
 
 # Configuration
 readonly PAGESPEED_API_URL="https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
@@ -73,7 +73,7 @@ check_prerequisites() {
 
 # Run PageSpeed Insights API test
 run_pagespeed_api() {
-    local url="$1"
+    local url="$command"
     local strategy="${2:-desktop}"  # desktop or mobile
     local api_key="${GOOGLE_API_KEY:-}"
     
@@ -114,7 +114,7 @@ run_pagespeed_api() {
 
 # Parse PageSpeed report and extract actionable insights
 parse_pagespeed_report() {
-    local report_file="$1"
+    local report_file="$command"
     
     print_header "PageSpeed Insights Results"
     
@@ -168,7 +168,7 @@ parse_pagespeed_report() {
 
 # Format score with color coding
 format_score() {
-    local score="$1"
+    local score="$command"
     
     if [[ "$score" == "N/A" ]]; then
         echo "N/A"
@@ -193,7 +193,7 @@ format_score() {
 
 # Run Lighthouse CLI audit
 run_lighthouse_audit() {
-    local url="$1"
+    local url="$command"
     local output_format="${2:-html}"  # html, json, csv
     
     print_header "Running Lighthouse CLI Audit"
@@ -231,7 +231,7 @@ run_lighthouse_audit() {
 
 # Parse Lighthouse JSON report
 parse_lighthouse_json() {
-    local report_file="$1"
+    local report_file="$command"
     
     print_header "Lighthouse Audit Results"
     
@@ -261,7 +261,7 @@ parse_lighthouse_json() {
 
 # WordPress-specific performance analysis
 analyze_wordpress_performance() {
-    local url="$1"
+    local url="$command"
 
     print_header "WordPress Performance Analysis"
     print_info "Analyzing WordPress-specific performance issues for: $url"
@@ -291,7 +291,7 @@ analyze_wordpress_performance() {
 
 # Bulk audit multiple URLs
 bulk_audit() {
-    local urls_file="$1"
+    local urls_file="$command"
 
     if [[ ! -f "$urls_file" ]]; then
         print_error "URLs file not found: $urls_file"
@@ -326,7 +326,7 @@ bulk_audit() {
 
 # Generate actionable report
 generate_actionable_report() {
-    local report_file="$1"
+    local report_file="$command"
 
     if [[ ! -f "$report_file" ]]; then
         print_error "Report file not found: $report_file"
@@ -365,9 +365,14 @@ generate_actionable_report() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$2"
-    local target="$3"
-    local options="$4"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     case "${1:-help}" in
         "check"|"audit")

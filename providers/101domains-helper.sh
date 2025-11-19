@@ -21,25 +21,25 @@ readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
 print_info() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -76,18 +76,18 @@ load_config() {
 
 # Get account configuration
 get_account_config() {
-    local account_name="$1"
+    local account_name="$command"
     
-    if [[ -z "$2" ]]; then
+    if [[ -z "$account_name" ]]; then
         print_error "$ERROR_ACCOUNT_REQUIRED"
         list_accounts
         exit 1
     fi
     
     local account_config
-    account_config=$(jq -r ".accounts.\"$2\"" "$CONFIG_FILE")
+    account_config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE")
     if [[ "$account_config" == "null" ]]; then
-        print_error "Account '$2' not found in configuration"
+        print_error "Account '$account_name' not found in configuration"
         list_accounts
         exit 1
     fi
@@ -98,20 +98,20 @@ get_account_config() {
 
 # Make API request
 api_request() {
-    local account_name="$1"
-    local method="$2"
-    local endpoint="$3"
-    local data="$4"
+    local account_name="$command"
+    local method="$account_name"
+    local endpoint="$target"
+    local data="$options"
     
     local config
-    config=$(get_account_config "$2")
+    config=$(get_account_config "$account_name")
     local api_key
     local username
     api_key=$(echo "$config" | jq -r '.api_key')
     username=$(echo "$config" | jq -r '.username')
     
     if [[ "$api_key" == "null" || "$username" == "null" ]]; then
-        print_error "Invalid API credentials for account '$2'"
+        print_error "Invalid API credentials for account '$account_name'"
         exit 1
     fi
     
@@ -148,11 +148,11 @@ list_accounts() {
 
 # List domains
 list_domains() {
-    local account_name="$1"
+    local account_name="$command"
     
-    print_info "Listing domains for account: $2"
+    print_info "Listing domains for account: $account_name"
     local response
-    if response=$(api_request "$2" "GET" "domain/list"); then
+    if response=$(api_request "$account_name" "GET" "domain/list"); then
         echo "$response" | jq -r '.result.domains[]? | "\(.domain) - Status: \(.status) - Expires: \(.expiry_date)"'
     else
         print_error "Failed to retrieve domains"
@@ -163,8 +163,8 @@ list_domains() {
 
 # Get domain details
 get_domain_details() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
     
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -173,7 +173,7 @@ get_domain_details() {
     
     print_info "Getting details for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "domain/info?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "domain/info?domain=$domain"); then
         echo "$response" | jq '.'
     else
         print_error "Failed to get domain details"
@@ -184,8 +184,8 @@ get_domain_details() {
 
 # List DNS records
 list_dns_records() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
     
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -194,7 +194,7 @@ list_dns_records() {
     
     print_info "Listing DNS records for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "dns/list?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "dns/list?domain=$domain"); then
         echo "$response" | jq -r '.result.records[]? | "\(.name) \(.type) \(.content) (TTL: \(.ttl))"'
     else
         print_error "Failed to retrieve DNS records"
@@ -205,10 +205,10 @@ list_dns_records() {
 
 # Add DNS record
 add_dns_record() {
-    local account_name="$1"
-    local domain="$2"
-    local name="$3"
-    local type="$4"
+    local account_name="$command"
+    local domain="$account_name"
+    local name="$target"
+    local type="$options"
     local content="$5"
     local ttl="${6:-3600}"
     
@@ -228,7 +228,7 @@ add_dns_record() {
     
     print_info "Adding DNS record: $name $type $content"
     local response
-    if response=$(api_request "$2" "POST" "dns/add" "$data"); then
+    if response=$(api_request "$account_name" "POST" "dns/add" "$data"); then
         print_success "DNS record added successfully"
         echo "$response" | jq '.'
     else
@@ -240,10 +240,10 @@ add_dns_record() {
 
 # Update DNS record
 update_dns_record() {
-    local account_name="$1"
-    local domain="$2"
-    local record_id="$3"
-    local name="$4"
+    local account_name="$command"
+    local domain="$account_name"
+    local record_id="$target"
+    local name="$options"
     local type="$5"
     local content="$6"
     local ttl="${7:-3600}"
@@ -264,7 +264,7 @@ update_dns_record() {
 
     print_info "Updating DNS record: $record_id"
     local response
-    if response=$(api_request "$2" "POST" "dns/update" "$data"); then
+    if response=$(api_request "$account_name" "POST" "dns/update" "$data"); then
         print_success "DNS record updated successfully"
         echo "$response" | jq '.'
     else
@@ -276,9 +276,9 @@ update_dns_record() {
 
 # Delete DNS record
 delete_dns_record() {
-    local account_name="$1"
-    local domain="$2"
-    local record_id="$3"
+    local account_name="$command"
+    local domain="$account_name"
+    local record_id="$target"
 
     if [[ -z "$domain" || -z "$record_id" ]]; then
         print_error "Domain and record ID are required"
@@ -292,7 +292,7 @@ delete_dns_record() {
 
     print_warning "Deleting DNS record: $record_id"
     local response
-    if response=$(api_request "$2" "POST" "dns/delete" "$data"); then
+    if response=$(api_request "$account_name" "POST" "dns/delete" "$data"); then
         print_success "DNS record deleted successfully"
         echo "$response" | jq '.'
     else
@@ -304,8 +304,8 @@ delete_dns_record() {
 
 # Get domain nameservers
 get_nameservers() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -314,7 +314,7 @@ get_nameservers() {
 
     print_info "Getting nameservers for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "domain/nameservers?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "domain/nameservers?domain=$domain"); then
         echo "$response" | jq -r '.result.nameservers[]?'
     else
         print_error "Failed to get nameservers"
@@ -325,8 +325,8 @@ get_nameservers() {
 
 # Update nameservers
 update_nameservers() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
     shift 2
     local nameservers=("$@")
 
@@ -340,7 +340,7 @@ update_nameservers() {
 
     print_info "Updating nameservers for domain: $domain"
     local response
-    if response=$(api_request "$2" "POST" "domain/nameservers" "$data"); then
+    if response=$(api_request "$account_name" "POST" "domain/nameservers" "$data"); then
         print_success "Nameservers updated successfully"
         echo "$response" | jq '.'
     else
@@ -352,8 +352,8 @@ update_nameservers() {
 
 # Check domain availability
 check_availability() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -362,7 +362,7 @@ check_availability() {
 
     print_info "Checking availability for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "domain/check?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "domain/check?domain=$domain"); then
         local available=$(echo "$response" | jq -r '.result.available')
         local price=$(echo "$response" | jq -r '.result.price // "N/A"')
 
@@ -381,8 +381,8 @@ check_availability() {
 
 # Get domain contacts
 get_domain_contacts() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -391,7 +391,7 @@ get_domain_contacts() {
 
     print_info "Getting contacts for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "domain/contacts?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "domain/contacts?domain=$domain"); then
         echo "$response" | jq '.'
     else
         print_error "Failed to get domain contacts"
@@ -402,9 +402,9 @@ get_domain_contacts() {
 
 # Enable/disable domain lock
 toggle_domain_lock() {
-    local account_name="$1"
-    local domain="$2"
-    local action="$3"  # "lock" or "unlock"
+    local account_name="$command"
+    local domain="$account_name"
+    local action="$target"  # "lock" or "unlock"
 
     if [[ -z "$domain" || -z "$action" ]]; then
         print_error "Domain and action (lock/unlock) are required"
@@ -420,7 +420,7 @@ toggle_domain_lock() {
 
     print_info "${action^}ing domain: $domain"
     local response
-    if response=$(api_request "$2" "POST" "domain/lock" "$data"); then
+    if response=$(api_request "$account_name" "POST" "domain/lock" "$data"); then
         print_success "Domain ${action}ed successfully"
         echo "$response" | jq '.'
     else
@@ -432,8 +432,8 @@ toggle_domain_lock() {
 
 # Get domain transfer status
 get_transfer_status() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -442,7 +442,7 @@ get_transfer_status() {
 
     print_info "Getting transfer status for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "domain/transfer/status?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "domain/transfer/status?domain=$domain"); then
         echo "$response" | jq '.'
     else
         print_error "Failed to get transfer status"
@@ -453,8 +453,8 @@ get_transfer_status() {
 
 # Get domain privacy status
 get_privacy_status() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -463,7 +463,7 @@ get_privacy_status() {
 
     print_info "Getting privacy status for domain: $domain"
     local response
-    if response=$(api_request "$2" "GET" "domain/privacy?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "domain/privacy?domain=$domain"); then
         echo "$response" | jq '.'
     else
         print_error "Failed to get privacy status"
@@ -474,9 +474,9 @@ get_privacy_status() {
 
 # Toggle domain privacy
 toggle_domain_privacy() {
-    local account_name="$1"
-    local domain="$2"
-    local action="$3"  # "enable" or "disable"
+    local account_name="$command"
+    local domain="$account_name"
+    local action="$target"  # "enable" or "disable"
 
     if [[ -z "$domain" || -z "$action" ]]; then
         print_error "Domain and action (enable/disable) are required"
@@ -492,7 +492,7 @@ toggle_domain_privacy() {
 
     print_info "${action^}ing privacy for domain: $domain"
     local response
-    if response=$(api_request "$2" "POST" "domain/privacy" "$data"); then
+    if response=$(api_request "$account_name" "POST" "domain/privacy" "$data"); then
         print_success "Domain privacy ${action}d successfully"
         echo "$response" | jq '.'
     else
@@ -504,8 +504,8 @@ toggle_domain_privacy() {
 
 # Audit domain configuration
 audit_domain() {
-    local account_name="$1"
-    local domain="$2"
+    local account_name="$command"
+    local domain="$account_name"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -516,34 +516,34 @@ audit_domain() {
     echo ""
 
     print_info "=== DOMAIN DETAILS ==="
-    get_domain_details "$2" "$domain"
+    get_domain_details "$account_name" "$domain"
     echo ""
 
     print_info "=== NAMESERVERS ==="
-    get_nameservers "$2" "$domain"
+    get_nameservers "$account_name" "$domain"
     echo ""
 
     print_info "=== DNS RECORDS ==="
-    list_dns_records "$2" "$domain"
+    list_dns_records "$account_name" "$domain"
     echo ""
 
     print_info "=== DOMAIN CONTACTS ==="
-    get_domain_contacts "$2" "$domain"
+    get_domain_contacts "$account_name" "$domain"
     echo ""
 
     print_info "=== PRIVACY STATUS ==="
-    get_privacy_status "$2" "$domain"
+    get_privacy_status "$account_name" "$domain"
     return 0
 }
 
 # Monitor domain expiration
 monitor_expiration() {
-    local account_name="$1"
+    local account_name="$command"
     local days_threshold="${2:-30}"
 
     print_info "Monitoring domain expiration (threshold: $days_threshold days)"
     local response
-    if response=$(api_request "$2" "GET" "domain/list"); then
+    if response=$(api_request "$account_name" "GET" "domain/list"); then
         echo "$response" | jq -r --arg threshold "$days_threshold" '
             .result.domains[]? |
             select(.expiry_date != null) |
@@ -599,9 +599,14 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$2"
-    local target="$3"
-    local options="$4"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     # Assign positional parameters to local variables for better maintainability
     local domain="$target"

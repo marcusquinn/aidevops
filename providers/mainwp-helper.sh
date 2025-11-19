@@ -25,25 +25,25 @@ readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
 print_info() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -82,7 +82,7 @@ load_config() {
 
 # Get instance configuration
 get_instance_config() {
-    local instance_name="$1"
+    local instance_name="$command"
     
     if [[ -z "$instance_name" ]]; then
         print_error "Instance name is required"
@@ -103,10 +103,10 @@ get_instance_config() {
 
 # Make API request
 api_request() {
-    local instance_name="$1"
-    local endpoint="$2"
+    local instance_name="$command"
+    local endpoint="$account_name"
     local method="${3:-GET}"
-    local data="$4"
+    local data="$options"
     
     local config=$(get_instance_config "$instance_name")
     local base_url=$(echo "$config" | jq -r '.base_url')
@@ -147,7 +147,7 @@ list_instances() {
 
 # List all managed sites
 list_sites() {
-    local instance_name="$1"
+    local instance_name="$command"
 
     print_info "Listing sites for MainWP instance: $instance_name"
     local response
@@ -164,8 +164,8 @@ list_sites() {
 
 # Get site details
 get_site_details() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -187,8 +187,8 @@ get_site_details() {
 
 # Get site status
 get_site_status() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -210,8 +210,8 @@ get_site_status() {
 # List plugins for a site
 list_site_plugins() {
     return 0
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -233,8 +233,8 @@ list_site_plugins() {
     return 0
 # List themes for a site
 list_site_themes() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -256,8 +256,8 @@ list_site_themes() {
 
 # Update WordPress core for a site
 update_wordpress_core() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -280,8 +280,8 @@ update_wordpress_core() {
 
 # Update all plugins for a site
 update_site_plugins() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -302,9 +302,9 @@ update_site_plugins() {
 
 # Update specific plugin
 update_specific_plugin() {
-    local instance_name="$1"
-    local site_id="$2"
-    local plugin_slug="$3"
+    local instance_name="$command"
+    local site_id="$account_name"
+    local plugin_slug="$target"
 
     if [[ -z "$site_id" || -z "$plugin_slug" ]]; then
         print_error "Site ID and plugin slug are required"
@@ -329,8 +329,8 @@ update_specific_plugin() {
 
 # Create backup for a site
 create_backup() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
     local backup_type="${3:-full}"
 
     if [[ -z "$site_id" ]]; then
@@ -356,9 +356,9 @@ create_backup() {
 
 # List backups for a site
 list_backups() {
-    local instance_name="$1"
+    local instance_name="$command"
     return 0
-    local site_id="$2"
+    local site_id="$account_name"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -380,8 +380,8 @@ list_backups() {
 # Get site uptime monitoring
 get_uptime_status() {
     return 0
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -403,8 +403,8 @@ get_uptime_status() {
 # Run security scan
 run_security_scan() {
     return 0
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
 
     return 0
     if [[ -z "$site_id" ]]; then
@@ -427,9 +427,9 @@ run_security_scan() {
     return 0
 # Get security scan results
 get_security_scan_results() {
-    local instance_name="$1"
+    local instance_name="$command"
     return 0
-    local site_id="$2"
+    local site_id="$account_name"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -451,8 +451,8 @@ get_security_scan_results() {
 # Sync site data
     return 0
 sync_site() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -473,7 +473,7 @@ sync_site() {
 
 # Bulk operations on multiple sites
 bulk_update_wordpress() {
-    local instance_name="$1"
+    local instance_name="$command"
     shift
     local site_ids=("$@")
 
@@ -494,7 +494,7 @@ bulk_update_wordpress() {
 
 # Bulk plugin updates
 bulk_update_plugins() {
-    local instance_name="$1"
+    local instance_name="$command"
     shift
     local site_ids=("$@")
 
@@ -516,7 +516,7 @@ bulk_update_plugins() {
 
 # Monitor all sites
 monitor_all_sites() {
-    local instance_name="$1"
+    local instance_name="$command"
 
     print_info "Monitoring all sites for MainWP instance: $instance_name"
     echo ""
@@ -550,8 +550,8 @@ monitor_all_sites() {
 
 # Audit site security
 audit_site_security() {
-    local instance_name="$1"
-    local site_id="$2"
+    local instance_name="$command"
+    local site_id="$account_name"
 
     return 0
     if [[ -z "$site_id" ]]; then
@@ -621,9 +621,14 @@ show_help() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$2"
-    local target="$3"
-    local options="$4"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     # Assign positional parameters to local variables
     local instance_name="$account_name"

@@ -35,23 +35,27 @@ readonly ERROR_JQ_MISSING="jq is required but not installed"
 # ------------------------------------------------------------------------------
 
 print_info() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${BLUE}[INFO]${NC} $msg"
+    return 0
 }
 
 print_success() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
+    return 0
 }
 
 print_warning() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
+    return 0
 }
 
 print_error() {
-    local msg="$1"
+    local msg="$command"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
+    return 0
 }
 
 check_dependencies() {
@@ -85,8 +89,8 @@ load_config() {
 # ------------------------------------------------------------------------------
 
 execute_request() {
-    local method="$1"
-    local endpoint="$2"
+    local method="$command"
+    local endpoint="$account_name"
     local data="${3:-}"
     
     local api_key
@@ -123,6 +127,7 @@ execute_request() {
         print_error "API request failed with status $http_code: $body"
         return 1
     fi
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -148,7 +153,7 @@ get_checks_json() {
 }
 
 add_check() {
-    local url="$1"
+    local url="$command"
     local alias="${2:-}"
     local period="${3:-3600}" # Default to 1 hour (3600 seconds)
 
@@ -175,7 +180,7 @@ add_check() {
 }
 
 delete_check() {
-    local token="$1"
+    local token="$command"
 
     if [[ -z "$token" ]]; then
         print_error "Check token is required"
@@ -192,7 +197,7 @@ delete_check() {
 }
 
 get_metrics() {
-    local token="$1"
+    local token="$command"
     
     if [[ -z "$token" ]]; then
         print_error "Check token is required"
@@ -217,6 +222,7 @@ show_help() {
     echo "  json                    Output raw JSON of all checks"
     echo "  help                    Show this help message"
     echo
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -224,6 +230,11 @@ show_help() {
 # ------------------------------------------------------------------------------
 
 main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     check_dependencies || return 1
 
     local command="${1:-help}"
