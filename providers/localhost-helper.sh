@@ -489,16 +489,18 @@ stop_localwp_mcp() {
     return 0
 }
 
-# Assign positional parameters to local variables
-command="${1:-help}"
-param2="$2"
-param3="$3"
-param4="$4"
-param5="$5"
-param6="$6"
+# Main function
+main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local param2="$2"
+    local param3="$3"
+    local param4="$4"
+    local param5="$5"
+    local param6="$6"
 
-# Main command handler
-case "$1" in
+    # Main command handler
+    case "$command" in
     "setup-dns")
         check_requirements && setup_local_dns
         ;;
@@ -563,10 +565,13 @@ case "$1" in
         echo "  - @verygoodplugins/mcp-local-wp (optional, for AI database access)"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $1"
+        print_error "$ERROR_UNKNOWN_COMMAND $command"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
-
 return 0
+}
+
+# Run main function
+main "$@"
