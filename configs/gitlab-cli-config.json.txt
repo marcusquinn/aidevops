@@ -1,0 +1,39 @@
+{
+  "accounts": {
+    "primary": {
+      "instance_url": "https://gitlab.com",
+      "owner": "YOUR_GITLAB_USERNAME",
+      "default_group": "",
+      "default_visibility": "public",
+      "auto_init": false,
+      "description": "Primary GitLab.com account"
+    },
+    "selfhosted": {
+      "instance_url": "https://your-gitlab-instance.com",
+      "owner": "YOUR_GITLAB_USERNAME",
+      "default_group": "your-group",
+      "default_visibility": "private",
+      "auto_init": false,
+      "description": "Self-hosted GitLab instance"
+    },
+    "work": {
+      "instance_url": "https://gitlab.company.com",
+      "owner": "YOUR_WORK_USERNAME",
+      "default_group": "company-group",
+      "default_visibility": "private",
+      "auto_init": true,
+      "description": "Company GitLab account"
+    }
+  },
+  "projects": {},
+  "default_account": "primary",
+  "settings": {
+    "auto_add_ssh_keys": true,
+    "protect_main_branch": true,
+    "enable_issues": true,
+    "enable_wiki": true,
+    "enable_merge_requests": true,
+    "default_merge_method": "merge"
+  },
+  "version": "1.0.0"
+}

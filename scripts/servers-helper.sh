@@ -55,10 +55,20 @@ get_server_config() {
         "aws")
             echo "aws-helper none aws"
             ;;
+        "github")
+            echo "github-cli-helper none github"
+            ;;
+        "gitlab")
+            echo "gitlab-cli-helper none gitlab"
+            ;;
+        "gitea")
+            echo "gitea-cli-helper none gitea"
+            ;;
         *)
             echo ""
             ;;
     esac
+    return 0
 }
 
 # List all available servers
@@ -75,6 +85,10 @@ list_servers() {
     echo "  - dns (multiple providers) - DNS management across providers"
     echo "  - localhost (local development) - Local Docker apps with .local domains"
     echo "  - aws (multiple instances) - AWS EC2 instances"
+    echo "  - github (multiple repositories) - GitHub CLI management"
+    echo "  - gitlab (multiple projects) - GitLab CLI management"
+    echo "  - gitea (multiple repositories) - Gitea CLI management"
+    return 0
 }
 
 # Main command handler
@@ -133,6 +147,15 @@ case "$server" in
                 elif [[ "$auth_type" == "aws" ]]; then
                     print_info "Use AWS helper for instance management..."
                     ./providers/aws-helper.sh list
+                elif [[ "$auth_type" == "github" ]]; then
+                    print_info "Use GitHub CLI helper for repository management..."
+                    ./providers/github-cli-helper.sh list-accounts
+                elif [[ "$auth_type" == "gitlab" ]]; then
+                    print_info "Use GitLab CLI helper for project management..."
+                    ./providers/gitlab-cli-helper.sh list-accounts
+                elif [[ "$auth_type" == "gitea" ]]; then
+                    print_info "Use Gitea CLI helper for repository management..."
+                    ./providers/gitea-cli-helper.sh list-accounts
                 fi
                 ;;
             *)
@@ -196,13 +219,16 @@ case "$server" in
                 echo "  $0 hetzner connect"
                 echo ""
                 echo "Provider-Specific Helpers:"
-                echo "  ./providers/hostinger-helper.sh  - Hostinger shared hosting"
-                echo "  ./providers/hetzner-helper.sh    - Hetzner Cloud VPS"
-                echo "  ./providers/closte-helper.sh     - Closte.com VPS servers"
-                echo "  ./providers/cloudron-helper.sh   - Cloudron server management"
-                echo "  ./providers/dns-helper.sh        - DNS management across providers"
-                echo "  ./providers/localhost-helper.sh  - Local development with .local domains"
-                echo "  ./providers/aws-helper.sh        - AWS EC2 instances"
+                echo "  ./providers/hostinger-helper.sh      - Hostinger shared hosting"
+                echo "  ./providers/hetzner-helper.sh        - Hetzner Cloud VPS"
+                echo "  ./providers/closte-helper.sh         - Closte.com VPS servers"
+                echo "  ./providers/cloudron-helper.sh       - Cloudron server management"
+                echo "  ./providers/dns-helper.sh            - DNS management across providers"
+                echo "  ./providers/localhost-helper.sh      - Local development with .local domains"
+                echo "  ./providers/aws-helper.sh            - AWS EC2 instances"
+                echo "  ./providers/github-cli-helper.sh     - GitHub CLI repository management"
+                echo "  ./providers/gitlab-cli-helper.sh     - GitLab CLI project management"
+                echo "  ./providers/gitea-cli-helper.sh      - Gitea CLI repository management"
                 ;;
             *)
                 print_error "Unknown command: $command"
