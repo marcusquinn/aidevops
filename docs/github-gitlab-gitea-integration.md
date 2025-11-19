@@ -51,6 +51,9 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 - Integrated CLI helper delegation
 - Updated help documentation
 
+## Documentation
+- **Gitea CLI Helper**: [docs/GITEA-CLI.md](docs/GITEA-CLI.md) - Detailed usage instructions.
+
 ## Usage Examples
 
 ### GitHub CLI Helper

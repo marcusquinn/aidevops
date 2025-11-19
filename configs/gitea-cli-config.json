@@ -1,0 +1,39 @@
+{
+  "accounts": {
+    "primary": {
+      "api_url": "https://gitea.com/api/v1",
+      "owner": "YOUR_GITEA_USERNAME",
+      "token": "YOUR_GITEA_TOKEN",
+      "default_visibility": "public",
+      "auto_init": false,
+      "description": "Primary Gitea.com account"
+    },
+    "selfhosted": {
+      "api_url": "https://your-gitea-instance.com/api/v1",
+      "owner": "YOUR_GITEA_USERNAME",
+      "token": "YOUR_GITEA_TOKEN",
+      "default_visibility": "private",
+      "auto_init": false,
+      "description": "Self-hosted Gitea instance"
+    },
+    "work": {
+      "api_url": "https://git.company.com/api/v1",
+      "owner": "YOUR_WORK_USERNAME",
+      "token": "YOUR_GITEA_TOKEN",
+      "default_visibility": "private",
+      "auto_init": true,
+      "description": "Company Gitea account"
+    }
+  },
+  "repos": {},
+  "default_account": "primary",
+  "settings": {
+    "auto_add_ssh_keys": true,
+    "protect_main_branch": true,
+    "enable_issues": true,
+    "enable_wiki": false,
+    "enable_pull_requests": true,
+    "default_merge_method": "merge"
+  },
+  "version": "1.0.0"
+}
