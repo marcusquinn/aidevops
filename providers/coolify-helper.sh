@@ -187,7 +187,7 @@ exec_command() {
     local server="$1"
     local command="$2"
     
-    if [[ -z "$server" || -z "$1" ]]; then
+    if [[ -z "$server" || -z "$command" ]]; then
         print_error "Usage: exec [server-name] [command]"
         return 1
     fi
@@ -204,12 +204,12 @@ exec_command() {
         return 1
     fi
     
-    print_info "Executing on $server: $1"
+    print_info "Executing on $server: $command"
     
     if [[ "$ssh_key" != "null" ]]; then
-        ssh -i "$ssh_key" -p "$port" "$username@$host" "$1"
+        ssh -i "$ssh_key" -p "$port" "$username@$host" "$command"
     else
-        ssh -p "$port" "$username@$host" "$1"
+        ssh -p "$port" "$username@$host" "$command"
     fi
     return 0
 }
@@ -289,13 +289,20 @@ generate_ssh_configs() {
     return 0
 }
 
-# Assign positional parameters to local variables
-command="${1:-help}"
-server_name="$param2"
-command_to_run="$param3"
+# Main function
+main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local param2="$2"
+    local param3="$3"
+    local param4="$4"
+    local param5="$5"
 
-# Main command handler
-case "$1" in
+    local server_name="$param2"
+    local command_to_run="$param3"
+
+    # Main command handler
+    case "$command" in
     "list")
         list_servers
         ;;
@@ -309,7 +316,7 @@ case "$1" in
         list_apps "$server_name"
         ;;
     "exec")
-        exec_command "$server_name" "$1_to_run"
+        exec_command "$server_name" "$command_to_run"
         ;;
     "status")
         check_status "$param2"
@@ -350,10 +357,13 @@ case "$1" in
         echo "  - Coolify installed and running on target servers"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $1"
+        print_error "$ERROR_UNKNOWN_COMMAND $command"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
-
 return 0
+}
+
+# Run main function
+main "$@"

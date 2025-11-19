@@ -306,22 +306,24 @@ dns_operation() {
     return 0
 }
 
-# Assign positional parameters to local variables
-command="${1:-help}"
-param2="$2"
-param3="$3"
-param4="$4"
-param5="$5"
-param6="$6"
+# Main function
+main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local param2="$2"
+    local param3="$3"
+    local param4="$4"
+    local param5="$5"
+    local param6="$6"
 
-provider="$param2"
-domain="$param3"
-record_type="$param4"
-record_name="$param5"
-record_value="$param6"
+    local provider="$param2"
+    local domain="$param3"
+    local record_type="$param4"
+    local record_name="$param5"
+    local record_value="$param6"
 
-# Main command handler
-case "$1" in
+    # Main command handler
+    case "$command" in
     "list")
         list_providers
         ;;
@@ -366,10 +368,13 @@ case "$1" in
         echo "  $0 delete cloudflare personal example.com www"
         ;;
     *)
-        print_error "$ERROR_UNKNOWN_COMMAND $1"
+        print_error "$ERROR_UNKNOWN_COMMAND $command"
         print_info "$HELP_USAGE_INFO"
         exit 1
         ;;
 esac
-
 return 0
+}
+
+# Run main function
+main "$@"
