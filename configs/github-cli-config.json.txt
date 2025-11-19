@@ -1,0 +1,32 @@
+{
+  "accounts": {
+    "primary": {
+      "owner": "YOUR_GITHUB_USERNAME",
+      "default_visibility": "public",
+      "auto_init": false,
+      "description": "Primary GitHub account for personal projects"
+    },
+    "work": {
+      "owner": "YOUR_WORK_GITHUB_USERNAME",
+      "default_visibility": "private",
+      "auto_init": false,
+      "description": "Work GitHub account"
+    },
+    "org": {
+      "owner": "YOUR_ORG_NAME",
+      "default_visibility": "public",
+      "auto_init": true,
+      "description": "Organization GitHub account"
+    }
+  },
+  "repos": {},
+  "default_account": "primary",
+  "settings": {
+    "auto_add_ssh_keys": true,
+    "protect_main_branch": false,
+    "enable_issues": true,
+    "enable_wiki": false,
+    "enable_projects": false
+  },
+  "version": "1.0.0"
+}

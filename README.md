@@ -144,7 +144,8 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Closte](https://closte.com/)**: Managed hosting, application deployment
 - **[Coolify](https://coolify.io/)**: Self-hosted PaaS, application management
 - **[Cloudron](https://www.cloudron.io/)**: Server and app management platform
-- **[AWS/DigitalOcean](https://aws.amazon.com/)**: Cloud infrastructure support via standard protocols
+- **[AWS](https://aws.amazon.com/)**: Cloud infrastructure support via standard protocols
+- **[DigitalOcean](https://www.digitalocean.com/)**: Cloud infrastructure support via standard protocols
 
 ### **🌐 Domain & DNS (5 providers)**
 
