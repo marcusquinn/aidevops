@@ -1,6 +1,6 @@
 {
   "name": "aidevops-dspy-integration",
-  "version": "1.0.0",
+  "version": "1.8.0",
   "description": "AI DevOps Framework with DSPy and DSPyGround integration",
   "main": "index.js",
   "scripts": {

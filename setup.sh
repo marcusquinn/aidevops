@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 1.7.2
+# Version: 1.8.0
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -51,6 +51,7 @@ check_optional_deps() {
     else
         print_success "sshpass found"
     fi
+    return 0
 }
 
 # Setup SSH key if needed
@@ -71,6 +72,7 @@ setup_ssh_key() {
     else
         print_success "Ed25519 SSH key found"
     fi
+    return 0
 }
 
 # Setup configuration files
@@ -102,6 +104,7 @@ setup_configs() {
     else
         print_info "Found existing ai-context.md - Skipping"
     fi
+    return 0
 }
 
 # Set proper permissions
@@ -117,6 +120,7 @@ set_permissions() {
     chmod 600 configs/*.json 2>/dev/null || true
     
     print_success "File permissions set"
+    return 0
 }
 
 # Setup shell aliases
@@ -174,6 +178,7 @@ deploy_ai_templates() {
     else
         print_warning "Template deployment script not found - skipping"
     fi
+    return 0
 }
 
 # Verify repository location
@@ -194,6 +199,7 @@ verify_location() {
     else
         print_success "Repository is in the recommended location: $expected_location"
     fi
+    return 0
 }
 
 # Configure AI CLI tools to read AGENTS.md automatically
@@ -211,6 +217,7 @@ configure_ai_clis() {
     else
         print_warning "AI CLI configuration script not found at $ai_config_script"
     fi
+    return 0
 }
 
 # Setup Python environment for DSPy
@@ -364,6 +371,7 @@ main() {
     echo "- Regularly rotate API tokens and SSH keys"
     echo ""
     echo "Happy server managing! 🚀"
+    return 0
 }
 
 # Run setup
