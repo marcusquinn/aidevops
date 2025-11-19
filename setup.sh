@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 1.8.0
+# Version: 1.8.1
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -333,6 +333,8 @@ main() {
     echo "3. Setup CodeRabbit CLI: bash .agent/scripts/coderabbit-cli.sh install && bash .agent/scripts/coderabbit-cli.sh setup"
     echo "4. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
     echo "5. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
+    echo "6. Setup AmpCode CLI: bash .agent/scripts/ampcode-cli.sh install && bash .agent/scripts/ampcode-cli.sh setup"
+    echo "7. Setup Continue.dev: bash .agent/scripts/continue-cli.sh setup"
     echo "6. Test access: ./scripts/servers-helper.sh list"
     echo "7. Test TOON format: ./providers/toon-helper.sh info"
     echo "8. Setup DSPy: ./providers/dspy-helper.sh install && ./providers/dspy-helper.sh test"

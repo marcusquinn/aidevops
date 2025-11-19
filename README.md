@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-1.8.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-1.8.1-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -53,11 +53,11 @@
 [![GitHub contributors](https://img.shields.io/github/contributors/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/graphs/contributors)
 
 <!-- Framework Specific -->
-[![Services Supported](https://img.shields.io/badge/Services%20Supported-28+-brightgreen.svg)](#️-comprehensive-service-coverage)
+[![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#️-comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
 [![MCP Servers](https://img.shields.io/badge/MCP%20Servers-10-orange.svg)](#-mcp-integrations)
-[![API Integrations](https://img.shields.io/badge/API%20Integrations-28+-blue.svg)](#️-comprehensive-service-coverage)
+[![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#️-comprehensive-service-coverage)
 
 ## 🏆 **Enterprise-Grade Quality & Security**
 
@@ -69,7 +69,7 @@
 - **🤖 CodeRabbit**: AI-powered code reviews and security analysis
 - **🛡️ Codacy**: 0 findings across 8 analysis tools (642 security rules)
 
-**Comprehensive DevOps framework with 28+ service integrations, 10 MCP servers, and enterprise-grade quality assurance.**
+**Comprehensive DevOps framework with 30+ service integrations, 10 MCP servers, and enterprise-grade quality assurance.**
 
 ## ⚠️ **Security Notice**
 
@@ -95,8 +95,10 @@ cd aidevops && ./setup.sh
 **Recommended CLI AI Assistants:**
 
 - **Factory AI Droid** (Enterprise-grade AI)
-- **Augment Code** (Professional coding assistant)
+- **Augment Code (Auggie)** (Professional coding assistant)
+- **AmpCode** (Professional AI coding assistant)
 - **Claude Desktop** (Advanced reasoning)
+- **Continue.dev** (AI pair programmer)
 - **Warp AI** (Terminal-integrated)
 - **OpenAI Codex** (Code-focused model)
 
@@ -162,13 +164,15 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **Pandoc**: Document conversion to markdown for AI processing
 - **Browser Automation**: LinkedIn automation, web scraping, social media management
 
-### **🔐 Security & Quality (5 platforms)**
+### **🔐 Security & Quality (7 platforms)**
 
 - **Vaultwarden**: Password and secrets management
 - **SonarCloud**: Security and quality analysis (A-grade ratings)
 - **CodeFactor**: Code quality metrics (A+ score)
 - **Codacy**: Multi-tool analysis (0 findings)
 - **CodeRabbit**: AI-powered code reviews
+- **AmpCode**: Professional AI coding assistant
+- **Continue.dev**: AI pair programmer and coding assistant
 
 ### **🧠 AI Prompt Optimization (2 tools)**
 
@@ -285,6 +289,14 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 bash .agent/scripts/qlty-cli.sh check 10
 bash .agent/scripts/qlty-cli.sh fix
 
+# Run chunked Codacy analysis for large repositories
+bash .agent/scripts/codacy-cli-chunked.sh quick    # Fast analysis
+bash .agent/scripts/codacy-cli-chunked.sh chunked # Full analysis
+
+# AI coding assistance
+bash .agent/scripts/ampcode-cli.sh scan ./src
+bash .agent/scripts/continue-cli.sh review
+
 # Audit website performance
 ./providers/pagespeed-helper.sh wordpress https://example.com
 ```
@@ -294,12 +306,13 @@ bash .agent/scripts/qlty-cli.sh fix
 **Complete Guides Available:**
 
 - **[MCP Integrations Guide](docs/MCP-INTEGRATIONS.md)** - 10 MCP servers setup
-- **[API Integrations Guide](docs/API-INTEGRATIONS.md)** - 28+ service APIs
+- **[API Integrations Guide](docs/API-INTEGRATIONS.md)** - 30+ service APIs
 - **[Pandoc Conversion Guide](docs/PANDOC-CONVERSION.md)** - Document format conversion
 - **[Agno Integration Guide](docs/AGNO-INTEGRATION.md)** - Local AI agent operating system
 - **[Browser Automation Guide](docs/BROWSER-AUTOMATION.md)** - LinkedIn automation and web scraping
 - **[PageSpeed & Lighthouse Guide](docs/PAGESPEED-LIGHTHOUSE.md)** - Performance auditing
 - **[AI CLI Tools Reference](docs/AI-CLI-TOOLS.md)** - AI assistant integration
+- **[Service Links Directory](docs/SERVICE-LINKS.md)** - Direct links to all services
 - **[Security Best Practices](docs/SECURITY.md)** - Enterprise security standards
 
 **Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, and more in `docs/`
