@@ -22,11 +22,9 @@ readonly BLUE='\033[0;34m'
 readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly PURPLE='\033[0;35m'
-readonly CYAN='\033[0;36m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly AMPCODE_VERSION="1.0.0"
 readonly AMPCODE_API_CONFIG="configs/ampcode-config.json"
 readonly AMPCODE_RESULTS_DIR=".agent/tmp/ampcode"
 
@@ -69,7 +67,8 @@ ensure_results_dir() {
 
 # Load API configuration
 load_api_config() {
-    local api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
+    local api_key_script
+    api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
     if [[ -f "$api_key_script" ]]; then
         local stored_key
         stored_key=$("$api_key_script" get ampcode 2>/dev/null)

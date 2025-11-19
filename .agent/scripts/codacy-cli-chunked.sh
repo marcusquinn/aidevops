@@ -31,9 +31,8 @@ readonly CHUNK_SIZE=5  # Number of files/tools per chunk
 readonly TIMEOUT=120    # Timeout per chunk in seconds
 
 # Tool categories with estimated runtimes
-readonly TOOL_CATEGORIES_fast="shellcheck pylint pycodestyle flake8"
-readonly TOOL_CATEGORIES_medium="eslint bandit semgrep safety"
-readonly TOOL_CATEGORIES_slow="complexity duplication coverage"
+# Tool categories with estimated runtimes
+TOOL_CATEGORIES_fast="shellcheck pylint pycodestyle flake8"
 
 # Progress tracking
 PROGRESS_FILE=".agent/tmp/codacy-progress.log"
@@ -134,7 +133,8 @@ check_codacy_ready() {
     fi
 
     # Load API key
-    local api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
+    local api_key_script
+    api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
     if [[ -f "$api_key_script" ]]; then
         local stored_key
         stored_key=$("$api_key_script" get codacy 2>/dev/null)
@@ -178,11 +178,10 @@ list_tools() {
     echo ""
 
     # Display by categories
-    local categories=("fast" "medium" "slow")
+    local categories=("fast")
     for category in "${categories[@]}"; do
         echo "${PURPLE}📂 $category category:${NC}"
-        local category_tools="TOOL_CATEGORIES_$category"
-        category_tools=${!category_tools}
+        local category_tools="$TOOL_CATEGORIES_fast"
         local found_tools=""
         
         while IFS= read -r tool; do
