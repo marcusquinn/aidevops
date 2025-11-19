@@ -12,10 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh"
 
 # Use shared print functions with fallback for compatibility
-print_info() { print_shared_info "$command"; }
-print_success() { print_shared_success "$command"; }
-print_warning() { print_shared_warning "$command"; }
-print_error() { print_shared_error "$command"; }
+print_info() { print_shared_info "$command"; return 0; }
+print_success() { print_shared_success "$command"; return 0; }
+print_warning() { print_shared_warning "$command"; return 0; }
+print_error() { print_shared_error "$command"; return 0; }
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -243,6 +243,11 @@ show_help() {
 
 # Main command handler
 main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     local command="${1:-help}"
     local account_name="$account_name"
