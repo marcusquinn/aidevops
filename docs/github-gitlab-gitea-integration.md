@@ -1,11 +1,13 @@
 # GitHub, GitLab, and Gitea CLI Integration
 
 ## Overview
+
 Added comprehensive CLI helper scripts for managing GitHub, GitLab, and Gitea repositories through their respective CLI tools.
 
 ## Scripts Created
 
 ### GitHub CLI Helper
+
 - **File**: `providers/github-cli-helper.sh`
 - **Dependencies**: GitHub CLI (gh), jq
 - **Features**:
@@ -16,6 +18,7 @@ Added comprehensive CLI helper scripts for managing GitHub, GitLab, and Gitea re
   - Multi-account support
 
 ### GitLab CLI Helper
+
 - **File**: `providers/gitlab-cli-helper.sh`
 - **Dependencies**: GitLab CLI (glab), jq
 - **Features**:
@@ -26,6 +29,7 @@ Added comprehensive CLI helper scripts for managing GitHub, GitLab, and Gitea re
   - Multi-instance support (GitLab.com, self-hosted)
 
 ### Gitea CLI Helper
+
 - **File**: `providers/gitea-cli-helper.sh`
 - **Dependencies**: Gitea CLI (tea), jq, curl
 - **Features**:
@@ -52,6 +56,7 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 - Updated help documentation
 
 ## Documentation
+
 - **GitHub CLI Helper**: [docs/GITHUB-CLI.md](docs/GITHUB-CLI.md) - Detailed usage instructions.
 - **GitLab CLI Helper**: [docs/GITLAB-CLI.md](docs/GITLAB-CLI.md) - Detailed usage instructions.
 - **Gitea CLI Helper**: [docs/GITEA-CLI.md](docs/GITEA-CLI.md) - Detailed usage instructions.
@@ -59,6 +64,7 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 ## Usage Examples
 
 ### GitHub CLI Helper
+
 ```bash
 # List configured accounts
 ./providers/github-cli-helper.sh list-accounts
@@ -77,6 +83,7 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 ```
 
 ### GitLab CLI Helper
+
 ```bash
 # List projects
 ./providers/gitlab-cli-helper.sh list-projects marcusquinn
@@ -92,6 +99,7 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 ```
 
 ### Gitea CLI Helper
+
 ```bash
 # List repositories
 ./providers/gitea-cli-helper.sh list-repos marcusquinn
@@ -119,6 +127,7 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
    - Gitea: `tea login add` or configure API token in config
 
 3. Copy and customize configuration templates:
+
    ```bash
    cp configs/github-cli-config.json.txt configs/github-cli-config.json
    cp configs/gitlab-cli-config.json.txt configs/gitlab-cli-config.json
@@ -130,6 +139,7 @@ Updated `scripts/servers-helper.sh` to include Git platforms:
 ## Quality Standards
 
 All scripts pass ShellCheck validation and follow framework coding patterns:
+
 - Comprehensive error handling
 - Consistent command patterns
 - Multi-account support
@@ -142,4 +152,3 @@ All scripts pass ShellCheck validation and follow framework coding patterns:
 - Follows established provider patterns
 - Uses consistent configuration structure
 - Maintains framework quality standards
-
