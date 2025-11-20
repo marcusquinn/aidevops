@@ -165,7 +165,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[GitLab](https://gitlab.com/)** ✅ **Enhanced with CLI**: Self-hosted and cloud Git platform with GitLab CLI (glab) integration  
 - **[Gitea](https://gitea.io/)** ✅ **Enhanced with CLI**: Lightweight Git service with Gitea CLI (tea) integration
 - **[LocalWP](https://localwp.com)**: WordPress development environment
-- **[Agno](https://agno.ai/)**: Local AI agent operating system for DevOps automation
+- **[Agno](https://agno.com/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
 - **Browser Automation**: LinkedIn automation, web scraping, social media management
 
