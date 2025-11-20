@@ -15,23 +15,28 @@ readonly NC='\033[0m'
 
 print_success() {
     echo -e "${GREEN}✅ $1${NC}"
+    return 0
 }
 
 print_error() {
     echo -e "${RED}❌ $1${NC}" >&2
+    return 0
 }
 
 print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
+    return 0
 }
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 print_header() {
     echo -e "${BLUE}🚀 $1${NC}"
     echo "=========================================="
+    return 0
 }
 
 # Load API configuration with intelligent credential selection
@@ -321,6 +326,7 @@ show_help() {
     else
         echo "  - Configuration storage not found"
     fi
+    return 0
 }
 
 # Main execution

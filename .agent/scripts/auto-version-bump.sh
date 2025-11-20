@@ -77,6 +77,7 @@ update_version_badge() {
             print_error "Failed to update version badge in README.md"
         fi
     fi
+    return 0
 }
 
 # Main function

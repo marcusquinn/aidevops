@@ -95,6 +95,7 @@ bash setup.sh
 
 **Copyright © Marcus Quinn 2025** - All rights reserved under MIT License
 EOF
+    return 0
 }
 
 # Function to create GitHub release via API

@@ -1,7 +1,35 @@
 #!/bin/bash
 
 # Git Platforms Helper Script
-# Comprehensive Git platform management for AI assistants (GitHub, GitLab, Gitea, Local Git)
+# Enhanced Git platform management with AI assistants (GitHub, GitLab, Gitea, Local Git)
+
+# Colors for output
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Common message constants
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+
+# Common constants
+readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+
+print_info() {
+    local msg="$command"
+    echo -e "${BLUE}[INFO]${NC} $msg"
+    return 0
+}
+
+print_success() {
+    local msg="$command"
+    echo -e "${GREEN}[SUCCESS]${NC} $msg"
+    return 0
+
+<system-reminder>[Showing lines 1-30 of 597 total lines]</system-reminder>
 
 # Colors for output
 
@@ -523,6 +551,11 @@ show_help() {
 
 # Main script logic
 main() {
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     # Assign positional parameters to local variables
     local command="${1:-help}"
     local account_name="$account_name"

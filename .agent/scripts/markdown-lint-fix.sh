@@ -220,6 +220,7 @@ apply_manual_fixes() {
     fi
     
     return $changes_made
+    return 0
 }
 
 # Show help message

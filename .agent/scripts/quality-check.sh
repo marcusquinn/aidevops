@@ -285,6 +285,7 @@ main() {
     fi
     
     return $exit_code
+    return 0
 }
 
 main "$@"

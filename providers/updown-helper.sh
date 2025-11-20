@@ -235,6 +235,11 @@ main() {
     local account_name="$account_name"
     local target="$target"
     local options="$options"
+    # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
     check_dependencies || return 1
 
     local command="${1:-help}"

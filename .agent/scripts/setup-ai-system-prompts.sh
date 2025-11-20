@@ -96,6 +96,7 @@ EOF
         print_info "Claude Desktop config exists. Please manually add the system prompt:"
         print_info "\"systemPrompt\": \"$SYSTEM_PROMPT\""
     fi
+    return 0
 }
 
 # Configure Warp AI
@@ -141,6 +142,7 @@ show_manual_instructions() {
     echo
     
     print_info "See docs/AI-CLI-TOOLS.md for detailed setup instructions"
+    return 0
 }
 
 # Main function
@@ -185,6 +187,7 @@ main() {
             echo "AI DevOps framework guidance automatically."
             ;;
     esac
+    return 0
 }
 
 main "$@"

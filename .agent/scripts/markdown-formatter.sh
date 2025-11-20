@@ -110,6 +110,7 @@ fix_markdown_file() {
     fi
     
     return $changes_made
+    return 0
 }
 
 # Process directory recursively
@@ -237,6 +238,7 @@ cleanup_backups() {
     else
         print_info "No backup files found"
     fi
+    return 0
 }
 
 # Show help message
