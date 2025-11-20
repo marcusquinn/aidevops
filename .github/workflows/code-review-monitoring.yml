@@ -51,10 +51,10 @@ jobs:
     - name: 🔍 Install Quality Tools
       run: |
         # Install Qlty CLI
-        curl -sSL https://github.com/qltysh/qlty/releases/latest/download/qlty-linux-x86_64.tar.gz -o qlty.tar.gz
-        tar xzf qlty.tar.gz
+        curl -sSL https://github.com/qltysh/qlty/releases/latest/download/qlty-x86_64-unknown-linux-gnu.tar.xz -o qlty.tar.xz
+        tar xf qlty.tar.xz
         sudo mv qlty /usr/local/bin/
-        rm qlty.tar.gz
+        rm qlty.tar.xz
         
         # Install Codacy CLI
         curl -L https://github.com/codacy/codacy-analysis-cli/releases/latest/download/codacy-analysis-cli-linux -o codacy-analysis-cli
