@@ -43,6 +43,7 @@ test_ssh_key() {
         "echo 'SSH_SUCCESS'" 2>/dev/null | grep -q "SSH_SUCCESS"
     
     return $?
+    return 0
 }
 
 # Get working SSH key for a server
@@ -83,6 +84,7 @@ check_target_key_installed() {
         "grep -q '$target_pub_key' ~/.ssh/authorized_keys" 2>/dev/null
     
     return $?
+    return 0
 }
 
 # Install target key on server
@@ -181,6 +183,7 @@ show_target_key_info() {
         print_warning "Target key not found. Generate with: ssh-keygen -t ed25519 -C 'your-email@domain.com'"
     fi
     echo ""
+    return 0
 }
 
 # Main function

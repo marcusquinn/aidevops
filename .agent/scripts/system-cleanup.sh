@@ -46,6 +46,7 @@ setup_logging() {
     if [[ ! -d "$LOG_DIR" ]]; then
         mkdir -p "$LOG_DIR"
     fi
+    return 0
 }
 
 log() {
@@ -155,6 +156,7 @@ cleanup_exit() {
         log "ERROR" "Cleanup finished with error (Code: $exit_code)"
     fi
     exit "$exit_code"
+    return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -273,6 +275,7 @@ show_help() {
     echo "  --dry-run    Simulate deletions (default)"
     echo "  --help       Show this help message"
     echo
+    return 0
 }
 
 main() {

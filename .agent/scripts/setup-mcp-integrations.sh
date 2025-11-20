@@ -197,6 +197,7 @@ EOF
 EOF
 
     print_success "Configuration templates created in $config_dir/"
+    return 0
 }
 
 # Main setup function

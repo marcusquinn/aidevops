@@ -18,27 +18,33 @@ readonly NC='\033[0m'
 
 print_success() {
     echo -e "${GREEN}✅ $1${NC}"
+    return 0
 }
 
 print_error() {
     echo -e "${RED}❌ $1${NC}" >&2
+    return 0
 }
 
 print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
+    return 0
 }
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 print_question() {
     echo -e "${CYAN}❓ $1${NC}"
+    return 0
 }
 
 print_header() {
     echo -e "${PURPLE}🔧 $1${NC}"
     echo "=========================================="
+    return 0
 }
 
 # Ask yes/no question
@@ -320,6 +326,7 @@ show_help() {
     echo ""
     echo "Based on CodeFactor's professional linter collection:"
     echo "https://docs.codefactor.io/bootcamp/analysis-tools/"
+    return 0
 }
 
 # Main execution

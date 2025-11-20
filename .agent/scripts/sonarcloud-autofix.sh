@@ -42,6 +42,7 @@ fix_missing_returns() {
         print $0
         in_function = 0
         next
+    return 0
     }
     { print }
     ' "$file" > "$temp_file"
@@ -68,6 +69,7 @@ fix_positional_parameters() {
     
     rm -f "$file.tmp"
     print_success "Fixed positional parameters in $file"
+    return 0
 }
 
 # Add default case to switch statements (S131)

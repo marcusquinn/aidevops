@@ -128,6 +128,31 @@ This framework works excellently with these CLI AI assistants:
 
 - **[Warp AI](https://www.warp.dev/)** - AI-powered terminal with built-in assistance
 
+#### **🔧 Git Platform CLI Tools**
+When working with Git repositories and platforms, the framework provides enhanced CLI tools:
+
+**Git Platform CLIs:**
+- **GitHub CLI (gh)**: GitHub's official command-line tool for repository management
+- **GitLab CLI (glab)**: GitLab's official command-line tool for project management  
+- **Gitea CLI (tea)**: Gitea's command-line tool for self-hosted Gitea instances
+
+**Framework Integration:**
+- **providers/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
+- **providers/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
+- **providers/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
+
+**Enhanced Capabilities:**
+- **Multi-account support**: Configure and switch between multiple Git accounts/instances
+- **Automation workflows**: Script repository operations across platforms
+- **Enterprise integration**: Seamless CI/CD pipeline integration
+- **Security management**: Secure credential handling through CLI authentication
+
+**Setup Requirements:**
+1. Install CLI tools: `brew install gh glab tea` (macOS) or platform-specific installers
+2. Authenticate: `gh auth login`, `glab auth login`, `tea login add`
+3. Configure: Copy JSON templates from configs/ and customize with account details
+4. Test: Use helper scripts to validate connectivity and permissions
+
 **See [docs/AI-CLI-TOOLS.md](docs/AI-CLI-TOOLS.md) for detailed setup instructions and tool-specific configurations.**
 
 - **Simplified path references** in all documentation
@@ -709,7 +734,10 @@ aidevops/
 
 ### **Version Control & Git Platforms (4 services)**
 
-- GitHub, GitLab, Gitea, Local Git
+- GitHub with GitHub CLI (gh) integration, GitLab with GitLab CLI (glab) integration, Gitea with Gitea CLI (tea) integration, Local Git
+- **Enhanced CLI Management**: Use providers/github-cli-helper.sh, providers/gitlab-cli-helper.sh, providers/gitea-cli-helper.sh for advanced repository management
+- **Multi-Account Support**: Configure multiple accounts/instances for each platform with dedicated CLI helpers
+- **Enterprise Workflow**: Full repository lifecycle management through CLI tools including issues, PRs/MRs, and branches
 
 ### **Email Services (1 service)**
 

@@ -258,7 +258,7 @@ generate_release_notes() {
 
 ## 🚀 **Quick Start**
 
-\`\`\`bash
+`bash`
 # Clone the repository
 git clone https://github.com/marcusquinn/aidevops.git
 cd aidevops

@@ -249,6 +249,11 @@ main() {
     local target="$target"
     local options="$options"
     # Assign positional parameters to local variables
+    local command="${1:-help}"
+    local account_name="$account_name"
+    local target="$target"
+    local options="$options"
+    # Assign positional parameters to local variables
     case "${1:-help}" in
         "install")
             install

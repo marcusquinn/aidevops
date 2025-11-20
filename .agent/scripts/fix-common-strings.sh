@@ -21,26 +21,31 @@ readonly NC='\033[0m' # No Color
 print_success() {
     local message="$1"
     echo -e "${GREEN}✅ $message${NC}"
+    return 0
 }
 
 print_info() {
     local message="$1"
     echo -e "${BLUE}ℹ️  $message${NC}"
+    return 0
 }
 
 print_warning() {
     local message="$1"
     echo -e "${YELLOW}⚠️  $message${NC}"
+    return 0
 }
 
 print_error() {
     local message="$1"
     echo -e "${RED}❌ $message${NC}" >&2
+    return 0
 }
 
 print_header() {
     local message="$1"
     echo -e "${PURPLE}🔧 $message${NC}"
+    return 0
 }
 
 # Fix common repeated strings in a file
@@ -190,6 +195,7 @@ process_directory_common_strings() {
     done
 
     print_info "Summary: $files_modified/$files_processed files modified"
+    return 0
 }
 
 # Show help message

@@ -34,26 +34,31 @@ readonly PROVIDERS_COUNT="25+"
 print_success() {
     local message="$1"
     echo -e "${GREEN}✅ $message${NC}"
+    return 0
 }
 
 print_info() {
     local message="$1"
     echo -e "${BLUE}ℹ️  $message${NC}"
+    return 0
 }
 
 print_warning() {
     local message="$1"
     echo -e "${YELLOW}⚠️  $message${NC}"
+    return 0
 }
 
 print_error() {
     local message="$1"
     echo -e "${RED}❌ $message${NC}" >&2
+    return 0
 }
 
 print_header() {
     local message="$1"
     echo -e "${PURPLE}🤖 $message${NC}"
+    return 0
 }
 
 # Show framework overview

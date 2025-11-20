@@ -78,6 +78,7 @@ validate_positional_parameters() {
     done
     
     return $violations
+    return 0
 }
 
 validate_string_literals() {
@@ -100,6 +101,7 @@ validate_string_literals() {
     done
     
     return $violations
+    return 0
 }
 
 run_shellcheck() {
@@ -115,6 +117,7 @@ run_shellcheck() {
     done
     
     return $violations
+    return 0
 }
 
 check_quality_standards() {

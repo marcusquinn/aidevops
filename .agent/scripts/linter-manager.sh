@@ -17,23 +17,28 @@ readonly NC='\033[0m'
 
 print_success() {
     echo -e "${GREEN}✅ $1${NC}"
+    return 0
 }
 
 print_error() {
     echo -e "${RED}❌ $1${NC}" >&2
+    return 0
 }
 
 print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
+    return 0
 }
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 print_header() {
     echo -e "${PURPLE}🔧 $1${NC}"
     echo "=========================================="
+    return 0
 }
 
 # Detect project languages and frameworks
@@ -139,6 +144,7 @@ detect_project_languages() {
     languages+=("security")
     
     printf '%s\n' "${languages[@]}"
+    return 0
 }
 
 # Install Python linters (CodeFactor: pycodestyle, Pylint, Bandit, Ruff)
@@ -190,6 +196,7 @@ install_python_linters() {
     
     print_info "Python linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install JavaScript/TypeScript linters (CodeFactor: Oxlint, ESLint)
@@ -221,6 +228,7 @@ install_javascript_linters() {
 
     print_info "JavaScript/TypeScript linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install CSS linters (CodeFactor: Stylelint)
@@ -242,6 +250,7 @@ install_css_linters() {
 
     print_info "CSS linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install Shell linters (CodeFactor: ShellCheck)
@@ -269,6 +278,7 @@ install_shell_linters() {
 
     print_info "Shell linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install Docker linters (CodeFactor: Hadolint)
@@ -293,6 +303,7 @@ install_docker_linters() {
 
     print_info "Docker linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install YAML linters (CodeFactor: Yamllint)
@@ -314,6 +325,7 @@ install_yaml_linters() {
 
     print_info "YAML linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install Security linters (CodeFactor: Trivy)
@@ -338,6 +350,7 @@ install_security_linters() {
 
     print_info "Security linters: $success/$total installed successfully"
     return $((total - success))
+    return 0
 }
 
 # Install linters for detected languages
@@ -445,6 +458,7 @@ install_all_linters() {
     fi
 
     return $total_failures
+    return 0
 }
 
 # Show help
@@ -478,6 +492,7 @@ show_help() {
     echo ""
     echo "Based on CodeFactor's comprehensive linter collection:"
     echo "https://docs.codefactor.io/bootcamp/analysis-tools/"
+    return 0
 }
 
 # Main execution
