@@ -13,10 +13,12 @@ readonly NC='\033[0m'
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 print_error() {
     echo -e "${RED}❌ $1${NC}"
+    return 0
 }
 
 # Find functions missing return statements in a file

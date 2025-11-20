@@ -180,6 +180,7 @@ main() {
             echo "Get your token from: https://sonarcloud.io/account/security/"
             ;;
     esac
+    return 0
 }
 
 main "$@"

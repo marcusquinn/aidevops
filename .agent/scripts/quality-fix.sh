@@ -102,6 +102,8 @@ fix_return_statements() {
                             sed -i '' '$ d' "$temp_file"
                             echo "    return 0" >> "$temp_file"
                             echo "}" >> "$temp_file"
+    return 0
+}
                             ((fixed_functions++))
                             print_info "Fixed function: $function_name"
                         fi

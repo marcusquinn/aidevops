@@ -14,14 +14,17 @@ readonly NC='\033[0m'
 
 print_success() {
     echo -e "${GREEN}✅ $1${NC}"
+    return 0
 }
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
+    return 0
 }
 
 # Fix SC2155 issues in a file
@@ -76,6 +79,7 @@ fix_sc2155_in_file() {
     fi
     
     return $changes_made
+    return 0
 }
 
 # Fix SC2181 issues in a file
@@ -105,6 +109,7 @@ fix_sc2181_in_file() {
     fi
     
     return $changes_made
+    return 0
 }
 
 # Fix critical ShellCheck issues in a file
@@ -175,6 +180,7 @@ main() {
     done
     
     print_success "Summary: $files_fixed/$files_processed files fixed"
+    return 0
 }
 
 main "$@"

@@ -14,14 +14,17 @@ readonly NC='\033[0m'
 
 print_success() {
     echo -e "${GREEN}✅ $1${NC}"
+    return 0
 }
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
+    return 0
 }
 
 # Secure API key directory

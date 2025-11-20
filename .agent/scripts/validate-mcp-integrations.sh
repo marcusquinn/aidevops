@@ -61,6 +61,7 @@ test_prerequisites() {
         npm_version=$(npm --version)
         print_info "npm version: $npm_version"
     fi
+    return 0
 }
 
 # Test Chrome DevTools MCP
@@ -90,6 +91,7 @@ test_chrome_devtools() {
     if [[ "$chrome_found" == false ]]; then
         print_warning "Chrome not found in standard locations"
     fi
+    return 0
 }
 
 # Test Playwright MCP
@@ -108,6 +110,7 @@ test_playwright() {
             print_warning "Playwright CLI not available"
         fi
     fi
+    return 0
 }
 
 # Test API connectivity
@@ -137,6 +140,7 @@ test_api_connectivity() {
     else
         print_warning "Cloudflare API credentials not configured (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID)"
     fi
+    return 0
 }
 
 # Test MCP configurations
@@ -159,6 +163,7 @@ test_mcp_configurations() {
     else
         print_error "MCP templates directory not found: $config_dir"
     fi
+    return 0
 }
 
 # Test network connectivity
@@ -168,6 +173,7 @@ test_network() {
     run_test "Internet connectivity" "curl -s --connect-timeout 5 https://www.google.com"
     run_test "npm registry" "curl -s --connect-timeout 5 https://registry.npmjs.org/"
     run_test "GitHub connectivity" "curl -s --connect-timeout 5 https://api.github.com"
+    return 0
 }
 
 # Generate validation report
@@ -209,6 +215,7 @@ generate_report() {
         print_success "All MCP integrations are ready to use!"
         print_info "Check docs/MCP-INTEGRATIONS.md for usage examples"
     fi
+    return 0
 }
 
 # Main validation function
@@ -235,6 +242,7 @@ main() {
     echo
     
     generate_report
+    return 0
 }
 
 main "$@"

@@ -19,18 +19,22 @@ readonly NC='\033[0m' # No Color
 
 log_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+    return 0
 }
 
 log_success() {
     echo -e "${GREEN}✅ $1${NC}"
+    return 0
 }
 
 log_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
+    return 0
 }
 
 log_error() {
     echo -e "${RED}❌ $1${NC}"
+    return 0
 }
 
 # Function to backup existing file
@@ -43,6 +47,7 @@ backup_file() {
         log_warning "Existing config found at $file. Backing up to $backup"
         cp "$file" "$backup"
     fi
+    return 0
 }
 
 # Function to create Aider configuration
@@ -94,6 +99,7 @@ dry-run: false
 EOF
 
     log_success "Aider configuration created at $aider_config"
+    return 0
 }
 
 # Function to create OpenAI CLI configuration
@@ -124,6 +130,7 @@ working_directory: "~/git/aidevops"
 EOF
 
     log_success "OpenAI CLI configuration created at $openai_config"
+    return 0
 }
 
 # Function to create Claude CLI configuration
@@ -150,6 +157,7 @@ configure_claude_cli() {
 EOF
 
     log_success "Claude CLI configuration created at $claude_config"
+    return 0
 }
 
 # Function to create Qwen CLI configuration
@@ -187,6 +195,7 @@ EOF
 EOF
 
     log_success "Qwen CLI configuration created at $qwen_config"
+    return 0
 }
 
 # Function to create Windsurf IDE configuration
@@ -301,6 +310,7 @@ configure_ai_shell() {
 EOF
 
     log_success "AI Shell configuration created at $ai_shell_config"
+    return 0
 }
 
 # Function to create LiteLLM configuration
@@ -338,6 +348,7 @@ working_directory: "~/git/aidevops"
 EOF
 
     log_success "LiteLLM configuration created at $litellm_config"
+    return 0
 }
 
 # Function to create shell aliases for AI tools
@@ -441,6 +452,7 @@ show_context() {
 
     echo -e "${BLUE}🚀 Launching $1 with context...${NC}"
     echo
+    return 0
 }
 
 main() {
@@ -586,6 +598,7 @@ EOF
     fi
 
     log_success "AI memory files created/verified for all detected tools"
+    return 0
 }
 
 # Function to create project-level AI memory files
@@ -735,6 +748,7 @@ EOF
     fi
 
     log_success "Project-level AI memory files created/verified"
+    return 0
 }
 
 # Main configuration function
