@@ -53,8 +53,8 @@ jobs:
         # Install Qlty CLI
         curl -sSL https://github.com/qltysh/qlty/releases/latest/download/qlty-x86_64-unknown-linux-gnu.tar.xz -o qlty.tar.xz
         tar xf qlty.tar.xz
-        sudo mv qlty /usr/local/bin/
-        rm qlty.tar.xz
+        sudo mv qlty-*/qlty /usr/local/bin/
+        rm -rf qlty*
         
         # Install Codacy CLI
         curl -L https://github.com/codacy/codacy-analysis-cli/releases/latest/download/codacy-analysis-cli-linux -o codacy-analysis-cli
