@@ -14,6 +14,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Version Consistency Validation
       run: |
@@ -73,6 +75,7 @@ jobs:
 
     - name: Release Readiness Check
       if: github.ref == 'refs/heads/main'
+      id: release-readiness
       run: |
         echo ""
         echo "🚀 Release Readiness Assessment"
@@ -98,3 +101,23 @@ jobs:
         echo "   ./.agent/scripts/version-manager.sh release [major|minor|patch]"
         echo ""
         echo "✅ Framework is ready for release when version validation passes."
+
+    - name: Automated Release Check
+      if: github.ref == 'refs/heads/main'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "🚧 Automated Release Check"
+        echo "=========================="
+        
+        if [ -f "VERSION" ]; then
+           CURRENT_VERSION="v$(cat VERSION)"
+           echo "Target Version: $CURRENT_VERSION"
+           
+           if git rev-parse "$CURRENT_VERSION" >/dev/null 2>&1; then
+             echo "✅ Tag $CURRENT_VERSION already exists"
+           else
+             echo "✨ Ready to release $CURRENT_VERSION"
+             echo "   (Use version-manager.sh to trigger release)"
+           fi
+        fi

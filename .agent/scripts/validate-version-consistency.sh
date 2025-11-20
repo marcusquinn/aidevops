@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Configuration
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
 VERSION_FILE="$REPO_ROOT/VERSION"
 
 # Color output functions
@@ -22,6 +22,7 @@ get_current_version() {
     else
         echo "1.0.0"
     fi
+    return 0
 }
 
 # Function to validate version consistency across files
@@ -122,22 +123,7 @@ main() {
     fi
     
     validate_version_consistency "$version_to_check"
+    return 0
 }
 
-# Show usage if no arguments provided
-if [[ $# -eq 0 ]]; then
-    echo "AI DevOps Framework - Version Consistency Validator"
-    echo ""
-    echo "Usage: $0 [version]"
-    echo ""
-    echo "Arguments:"
-    echo "  version    Version to validate (optional, defaults to VERSION file content)"
-    echo ""
-    echo "Examples:"
-    echo "  $0           # Validate current version from VERSION file"
-    echo "  $0 1.6.0     # Validate specific version"
-    echo ""
-    exit 0
-fi
-
-main "$@"
+main "${1:-}"
