@@ -160,3 +160,6 @@ test-*.txt
 test-*.json
 test-*.yaml
 .aider*
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
