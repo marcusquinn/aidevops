@@ -68,22 +68,26 @@ Run the helper script:
 ```
 
 ### Repository Management
+
 - **List Repositories**:
 
     ```bash
     ./providers/github-cli-helper.sh list-repos primary
     ```
+
 - **Create Repository**:
 
     ```bash
     # Usage: create-repo <account> <name> [desc] [visibility] [auto_init]
     ./providers/github-cli-helper.sh create-repo primary my-new-repo "Description" private true
     ```
+
 - **Get Repository Details**:
 
     ```bash
     ./providers/github-cli-helper.sh get-repo primary my-new-repo
     ```
+
 - **Delete Repository**:
 
     ```bash
@@ -91,16 +95,19 @@ Run the helper script:
     ```
 
 ### Issue Management
+
 - **List Issues**:
 
     ```bash
     ./providers/github-cli-helper.sh list-issues primary my-repo open
     ```
+
 - **Create Issue**:
 
     ```bash
     ./providers/github-cli-helper.sh create-issue primary my-repo "Bug Title" "Issue description body"
     ```
+
 - **Close Issue**:
 
     ```bash
@@ -108,17 +115,20 @@ Run the helper script:
     ```
 
 ### Pull Request Management
+
 - **List Pull Requests**:
 
     ```bash
     ./providers/github-cli-helper.sh list-prs primary my-repo open
     ```
+
 - **Create Pull Request**:
 
     ```bash
     # Usage: create-pr <account> <repo> <title> [base] [head] [body]
     ./providers/github-cli-helper.sh create-pr primary my-repo "Feature X" main feature-branch "Description"
     ```
+
 - **Merge Pull Request**:
 
     ```bash
@@ -127,11 +137,13 @@ Run the helper script:
     ```
 
 ### Branch Management
+
 - **List Branches**:
 
     ```bash
     ./providers/github-cli-helper.sh list-branches primary my-repo
     ```
+
 - **Create Branch**:
 
     ```bash
@@ -140,5 +152,6 @@ Run the helper script:
     ```
 
 ## Troubleshooting
+
 - **"GitHub CLI is not authenticated"**: Run `gh auth status` to check your login status.
 - **"Owner not configured"**: Check `configs/github-cli-config.json` and ensure the `owner` field is set correctly.

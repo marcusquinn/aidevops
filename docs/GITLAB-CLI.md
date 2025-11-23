@@ -69,22 +69,26 @@ Run the helper script:
 ```
 
 ### Project Management
+
 - **List Projects**:
 
     ```bash
     ./providers/gitlab-cli-helper.sh list-projects primary
     ```
+
 - **Create Project**:
 
     ```bash
     # Usage: create-project <account> <name> [desc] [visibility] [init]
     ./providers/gitlab-cli-helper.sh create-project primary my-new-project "Description" private true
     ```
+
 - **Get Project Details**:
 
     ```bash
     ./providers/gitlab-cli-helper.sh get-project primary my-new-project
     ```
+
 - **Delete Project**:
 
     ```bash
@@ -92,16 +96,19 @@ Run the helper script:
     ```
 
 ### Issue Management
+
 - **List Issues**:
 
     ```bash
     ./providers/gitlab-cli-helper.sh list-issues primary my-project opened
     ```
+
 - **Create Issue**:
 
     ```bash
     ./providers/gitlab-cli-helper.sh create-issue primary my-project "Bug Title" "Issue description"
     ```
+
 - **Close Issue**:
 
     ```bash
@@ -109,17 +116,20 @@ Run the helper script:
     ```
 
 ### Merge Request Management
+
 - **List Merge Requests**:
 
     ```bash
     ./providers/gitlab-cli-helper.sh list-mrs primary my-project opened
     ```
+
 - **Create Merge Request**:
 
     ```bash
     # Usage: create-mr <account> <project> <title> <source> [target] [desc]
     ./providers/gitlab-cli-helper.sh create-mr primary my-project "Feature X" feature-branch main "Description"
     ```
+
 - **Merge Merge Request**:
 
     ```bash
@@ -128,11 +138,13 @@ Run the helper script:
     ```
 
 ### Branch Management
+
 - **List Branches**:
 
     ```bash
     ./providers/gitlab-cli-helper.sh list-branches primary my-project
     ```
+
 - **Create Branch**:
 
     ```bash
@@ -141,5 +153,6 @@ Run the helper script:
     ```
 
 ## Troubleshooting
+
 - **"GitLab CLI is not authenticated"**: Run `glab auth status` to check your login status for the configured hostname.
 - **"Instance URL not configured"**: Check `configs/gitlab-cli-config.json` and ensure the `instance_url` is correct for the account you are using.

@@ -30,17 +30,15 @@ readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_VERCEL_NOT_INSTALLED="Vercel CLI is required but not installed"
 readonly ERROR_NOT_LOGGED_IN="Vercel CLI is not authenticated. Run 'vercel login'"
 readonly ERROR_ACCOUNT_MISSING="Account configuration not found"
-readonly ERROR_ARGS_MISSING="Missing required arguments"
-readonly ERROR_API_FAILED="Vercel API request failed"
-readonly ERROR_PROJECT_NOT_FOUND="Project not found"
+# Removed unused error constants to fix ShellCheck SC2034 warnings
 readonly ERROR_DEPLOYMENT_FAILED="Deployment failed"
 
 # Success Messages
-readonly SUCCESS_PROJECT_CREATED="Project created successfully"
+# Removed unused success constant to fix ShellCheck SC2034 warning
 readonly SUCCESS_DEPLOYMENT_COMPLETE="Deployment completed successfully"
 readonly SUCCESS_ENV_UPDATED="Environment variables updated successfully"
 readonly SUCCESS_DOMAIN_ADDED="Domain added successfully"
-readonly SUCCESS_OPERATION_COMPLETE="Operation completed successfully"
+# Removed unused success constant to fix ShellCheck SC2034 warning
 
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
