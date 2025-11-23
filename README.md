@@ -171,6 +171,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **Browser Automation**: LinkedIn automation, web scraping, social media management
 
 **🚀 Git CLI Enhancement Features:**
+
 - **providers/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
 - **providers/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
 - **providers/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
