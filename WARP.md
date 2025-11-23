@@ -159,6 +159,7 @@ All provider scripts follow a **unified command pattern**:
 ```
 
 **Common Commands Available:**
+
 - `help` - Show service-specific help
 - `accounts` or `instances` - List configured accounts/instances
 - `list` - List resources (servers, domains, repos, etc.)
@@ -391,6 +392,7 @@ bash .agent/scripts/validate-mcp-integrations.sh
 ```
 
 **Available MCPs:**
+
 - Chrome DevTools, Playwright, Cloudflare Browser Rendering (browser automation)
 - Ahrefs, Perplexity, Google Search Console (SEO & research)
 - PageSpeed Insights (performance auditing)

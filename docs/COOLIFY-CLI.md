@@ -5,6 +5,7 @@ Comprehensive self-hosted deployment and management using the Coolify CLI throug
 ## Overview
 
 The Coolify CLI helper provides complete automation for:
+
 - **Local Development**: Works without Coolify setup for immediate development
 - Self-hosted application deployment and management
 - Server provisioning and management
@@ -260,11 +261,13 @@ jobs:
 ### Common Issues
 
 1. **CLI Not Found**
+
    ```bash
    curl -fsSL https://raw.githubusercontent.com/coollabsio/coolify-cli/main/scripts/install.sh | bash
    ```
 
 2. **Context Issues**
+
    ```bash
    ./providers/coolify-cli-helper.sh list-contexts
    ./providers/coolify-cli-helper.sh add-context production https://coolify.example.com token
