@@ -1,0 +1,210 @@
+{
+  "contexts": {
+    "local": {
+      "url": "http://localhost:8000",
+      "description": "Local Coolify development instance",
+      "type": "development",
+      "auto_deploy": false,
+      "default_environment": "development"
+    },
+    "staging": {
+      "url": "https://staging.coolify.example.com",
+      "description": "Staging Coolify instance",
+      "type": "staging",
+      "auto_deploy": true,
+      "default_environment": "staging"
+    },
+    "production": {
+      "url": "https://coolify.example.com",
+      "description": "Production Coolify instance",
+      "type": "production",
+      "auto_deploy": false,
+      "default_environment": "production"
+    }
+  },
+  "projects": {
+    "web-app": {
+      "context": "production",
+      "name": "web-app",
+      "type": "nodejs",
+      "git_repository": "https://github.com/user/web-app.git",
+      "git_branch": "main",
+      "build_command": "npm run build",
+      "start_command": "npm start",
+      "install_command": "npm ci",
+      "base_directory": "./",
+      "publish_directory": "dist",
+      "node_version": "18",
+      "domains": [
+        "app.example.com",
+        "www.app.example.com"
+      ],
+      "environment_variables": {
+        "development": {
+          "NODE_ENV": "development",
+          "API_URL": "http://localhost:3001",
+          "DATABASE_URL": "postgresql://localhost:5432/myapp_dev"
+        },
+        "staging": {
+          "NODE_ENV": "staging",
+          "API_URL": "https://api-staging.example.com",
+          "DATABASE_URL": "postgresql://staging-db:5432/myapp_staging"
+        },
+        "production": {
+          "NODE_ENV": "production",
+          "API_URL": "https://api.example.com",
+          "DATABASE_URL": "postgresql://prod-db:5432/myapp_prod"
+        }
+      }
+    },
+    "api-service": {
+      "context": "production",
+      "name": "api-service",
+      "type": "docker",
+      "git_repository": "https://github.com/user/api-service.git",
+      "git_branch": "main",
+      "dockerfile": "Dockerfile",
+      "docker_image": "node:18-alpine",
+      "ports_exposes": "3000",
+      "ports_mappings": "3000:3000",
+      "health_check_enabled": true,
+      "health_check_path": "/health",
+      "domains": [
+        "api.example.com"
+      ]
+    },
+    "static-site": {
+      "context": "staging",
+      "name": "static-site",
+      "type": "static",
+      "git_repository": "https://github.com/user/static-site.git",
+      "git_branch": "main",
+      "build_command": "npm run build",
+      "publish_directory": "dist",
+      "domains": [
+        "docs.example.com"
+      ]
+    }
+  },
+  "servers": {
+    "main-server": {
+      "context": "production",
+      "name": "main-server",
+      "ip": "192.168.1.100",
+      "port": 22,
+      "user": "root",
+      "description": "Main production server",
+      "resources": {
+        "cpu": "4 cores",
+        "memory": "8GB",
+        "storage": "100GB SSD"
+      }
+    },
+    "staging-server": {
+      "context": "staging",
+      "name": "staging-server",
+      "ip": "192.168.1.101",
+      "port": 22,
+      "user": "root",
+      "description": "Staging environment server",
+      "resources": {
+        "cpu": "2 cores",
+        "memory": "4GB",
+        "storage": "50GB SSD"
+      }
+    }
+  },
+  "databases": {
+    "main-postgres": {
+      "context": "production",
+      "type": "postgresql",
+      "name": "main-postgres",
+      "description": "Main PostgreSQL database",
+      "version": "15",
+      "port": 5432,
+      "is_public": false,
+      "backup_enabled": true,
+      "backup_frequency": "0 2 * * *",
+      "backup_retention_days": 30
+    },
+    "redis-cache": {
+      "context": "production",
+      "type": "redis",
+      "name": "redis-cache",
+      "description": "Redis cache server",
+      "version": "7",
+      "port": 6379,
+      "is_public": false,
+      "limits_memory": "1g",
+      "limits_cpus": "0.5"
+    },
+    "staging-db": {
+      "context": "staging",
+      "type": "postgresql",
+      "name": "staging-db",
+      "description": "Staging PostgreSQL database",
+      "version": "15",
+      "port": 5432,
+      "is_public": false,
+      "backup_enabled": false
+    }
+  },
+  "default_context": "production",
+  "settings": {
+    "auto_deploy_on_push": false,
+    "enable_build_logs": true,
+    "enable_deployment_notifications": true,
+    "default_node_version": "18",
+    "default_php_version": "8.2",
+    "default_python_version": "3.11",
+    "docker_cleanup_enabled": true,
+    "backup_retention_local": 7,
+    "backup_retention_s3": 30
+  },
+  "integrations": {
+    "github": {
+      "enabled": true,
+      "webhook_enabled": true,
+      "auto_deploy_branches": ["main", "master"],
+      "ignore_branches": ["dev", "feature/*"]
+    },
+    "gitlab": {
+      "enabled": false,
+      "webhook_enabled": false,
+      "auto_deploy_branches": ["main"],
+      "ignore_branches": ["develop"]
+    },
+    "docker_registry": {
+      "enabled": true,
+      "registry_url": "registry.example.com",
+      "username": "deploy-user"
+    },
+    "s3_backup": {
+      "enabled": true,
+      "bucket": "coolify-backups",
+      "region": "us-east-1",
+      "retention_days": 90
+    }
+  },
+  "monitoring": {
+    "enable_uptime_monitoring": true,
+    "enable_resource_monitoring": true,
+    "enable_log_aggregation": true,
+    "alert_email": "admin@example.com",
+    "alert_webhook": "https://hooks.slack.com/services/...",
+    "metrics_retention_days": 30
+  },
+  "security": {
+    "enable_ssl": true,
+    "force_https": true,
+    "enable_basic_auth": false,
+    "enable_ip_whitelist": false,
+    "allowed_ips": [],
+    "security_headers": {
+      "hsts_enabled": true,
+      "csp_enabled": false,
+      "xss_protection": true
+    }
+  },
+  "version": "1.0.0"
+}

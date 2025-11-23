@@ -1,0 +1,146 @@
+{
+  "accounts": {
+    "personal": {
+      "team_name": "Personal",
+      "team_id": "",
+      "description": "Personal Vercel account for individual projects",
+      "default_environment": "preview",
+      "auto_deploy": true,
+      "build_command": "",
+      "output_directory": "",
+      "install_command": ""
+    },
+    "work": {
+      "team_name": "Work Team",
+      "team_id": "YOUR_WORK_TEAM_ID",
+      "description": "Work Vercel team account",
+      "default_environment": "preview",
+      "auto_deploy": false,
+      "build_command": "npm run build",
+      "output_directory": "dist",
+      "install_command": "npm ci"
+    },
+    "company": {
+      "team_name": "Company Name",
+      "team_id": "YOUR_COMPANY_TEAM_ID",
+      "description": "Company Vercel team account",
+      "default_environment": "preview",
+      "auto_deploy": false,
+      "build_command": "yarn build",
+      "output_directory": "build",
+      "install_command": "yarn install --frozen-lockfile"
+    }
+  },
+  "projects": {
+    "my-website": {
+      "account": "personal",
+      "name": "my-website",
+      "framework": "nextjs",
+      "root_directory": "./",
+      "build_command": "npm run build",
+      "output_directory": ".next",
+      "install_command": "npm ci",
+      "node_version": "18.x",
+      "domains": [
+        "example.com",
+        "www.example.com"
+      ],
+      "environment_variables": {
+        "development": {
+          "NODE_ENV": "development",
+          "API_URL": "http://localhost:3001"
+        },
+        "preview": {
+          "NODE_ENV": "production",
+          "API_URL": "https://api-staging.example.com"
+        },
+        "production": {
+          "NODE_ENV": "production",
+          "API_URL": "https://api.example.com"
+        }
+      }
+    },
+    "company-app": {
+      "account": "company",
+      "name": "company-app",
+      "framework": "react",
+      "root_directory": "./apps/web",
+      "build_command": "yarn build",
+      "output_directory": "dist",
+      "install_command": "yarn install",
+      "node_version": "20.x",
+      "domains": [
+        "app.company.com"
+      ],
+      "environment_variables": {
+        "development": {
+          "NODE_ENV": "development",
+          "REACT_APP_API_URL": "http://localhost:8000"
+        },
+        "preview": {
+          "NODE_ENV": "production",
+          "REACT_APP_API_URL": "https://api-staging.company.com"
+        },
+        "production": {
+          "NODE_ENV": "production",
+          "REACT_APP_API_URL": "https://api.company.com"
+        }
+      }
+    }
+  },
+  "default_account": "personal",
+  "settings": {
+    "auto_alias_production": true,
+    "auto_expose_system_envs": false,
+    "functions_region": "iad1",
+    "build_timeout": 900,
+    "serverless_function_timeout": 10,
+    "edge_function_timeout": 30,
+    "enable_preview_feedback": true,
+    "enable_web_analytics": true,
+    "enable_speed_insights": true,
+    "password_protection": false,
+    "trusted_ips": []
+  },
+  "deployment_hooks": {
+    "pre_deploy": [],
+    "post_deploy": [],
+    "on_success": [],
+    "on_failure": []
+  },
+  "integrations": {
+    "github": {
+      "enabled": true,
+      "auto_deploy_branches": ["main", "master"],
+      "production_branch": "main"
+    },
+    "gitlab": {
+      "enabled": false,
+      "auto_deploy_branches": ["main"],
+      "production_branch": "main"
+    },
+    "bitbucket": {
+      "enabled": false,
+      "auto_deploy_branches": ["main"],
+      "production_branch": "main"
+    }
+  },
+  "monitoring": {
+    "enable_real_user_monitoring": true,
+    "enable_web_vitals": true,
+    "enable_error_reporting": true,
+    "custom_metrics": []
+  },
+  "security": {
+    "enable_ddos_protection": true,
+    "enable_bot_protection": false,
+    "security_headers": {
+      "content_security_policy": "",
+      "strict_transport_security": "max-age=31536000; includeSubDomains",
+      "x_frame_options": "DENY",
+      "x_content_type_options": "nosniff",
+      "referrer_policy": "strict-origin-when-cross-origin"
+    }
+  },
+  "version": "1.0.0"
+}
