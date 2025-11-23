@@ -1,6 +1,6 @@
 # AI DevOps Framework
 
-**Unleash your AI assistant's true potential with seamless access to your entire DevOps ecosystem across 28+ services.**
+**Unleash your AI assistant's true potential with seamless access to your entire DevOps ecosystem across 29+ services.**
 
 *"Deploy my app to production, update the DNS, configure SSL, and set up monitoring"* - **One conversation, complete infrastructure management.**
 
@@ -10,7 +10,7 @@
 
 **DevOps Superpowers for AI:**
 
-- **Multi-Service Management**: 28+ APIs (hosting, Git, security, monitoring)
+- **Multi-Service Management**: 29+ APIs (hosting, Git, security, monitoring, deployment)
 - **Real-Time Operations**: SSH, domain management, database operations
 - **Cross-Service Intelligence**: Connect patterns across your entire ecosystem
 - **Unlimited Scope**: Full access to your development infrastructure
@@ -141,13 +141,14 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ## 🏗️ **Comprehensive Service Coverage**
 
-### **🏗️ Infrastructure & Hosting (6 providers)**
+### **🏗️ Infrastructure & Hosting (7 providers)**
 
 - **[Hostinger](https://www.hostinger.com/)**: Shared hosting, domains, email
 - **[Hetzner Cloud](https://www.hetzner.com/cloud)**: VPS servers, networking, load balancers
 - **[Closte](https://closte.com/)**: Managed hosting, application deployment
-- **[Coolify](https://coolify.io/)**: Self-hosted PaaS, application management
+- **[Coolify](https://coolify.io/)** ✅ **Enhanced with CLI**: Self-hosted PaaS with CLI integration
 - **[Cloudron](https://www.cloudron.io/)**: Server and app management platform
+- **[Vercel](https://vercel.com/)** ✅ **Enhanced with CLI**: Modern web deployment platform with CLI integration
 - **[AWS](https://aws.amazon.com/)**: Cloud infrastructure support via standard protocols
 - **[DigitalOcean](https://www.digitalocean.com/)**: Cloud infrastructure support via standard protocols
 
@@ -325,7 +326,7 @@ bash .agent/scripts/continue-cli.sh review
 - **[Service Links Directory](docs/SERVICE-LINKS.md)** - Direct links to all services
 - **[Security Best Practices](docs/SECURITY.md)** - Enterprise security standards
 
-**Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, and more in `docs/`
+**Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `docs/`
 
 ## 🏗️ **Architecture**
 
@@ -391,7 +392,7 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 **🎯 For You:**
 
-- Unified infrastructure management across 28+ services
+- Unified infrastructure management across 29+ services
 - AI-powered automation with standardized commands
 - Enterprise-grade security and quality assurance
 - Time savings through consistent interfaces

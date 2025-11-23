@@ -2,7 +2,7 @@
 
 **🔒 AUTHORITATIVE SOURCE: This is the single source of truth for all AI assistant instructions. All other AGENTS.md files are minimal templates that reference this file.**
 
-This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 26+ services.
+This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 27+ services.
 
 ## ⚠️ **CRITICAL: Consistency Requirements**
 
@@ -624,7 +624,7 @@ local used_variable="$1"
 ### **Framework Architecture**
 
 ```bash
-# Unified command pattern across all 26+ services:
+# Unified command pattern across all 27+ services:
 ./providers/[service]-helper.sh [command] [account/instance] [target] [options]
 
 # Standard commands available for all services:
@@ -644,7 +644,7 @@ aidevops/
 ├── 🔧 scripts/
 │   └── servers-helper.sh      # Main entry point script
 ├── ⚙️  sonar-project.properties # Quality analysis configuration
-├── 📁 providers/             # Core functionality scripts (26+ services)
+├── 📁 providers/             # Core functionality scripts (27+ services)
 ├── 📁 configs/               # Configuration templates for users
 ├── 📁 docs/                  # Comprehensive user documentation
 ├── 📁 templates/             # Reusable templates and examples
@@ -716,9 +716,22 @@ aidevops/
 
 - Hostinger, Hetzner Cloud, Closte, Cloudron
 
-### **Deployment & Orchestration (1 service)**
+### **Deployment & Orchestration (2 services)**
 
-- Coolify
+- **Coolify CLI** ✅ **Enhanced with CLI**: Self-hosted deployment platform with CLI integration
+  - **Local Development First**: Works immediately without Coolify setup
+  - **Docker Orchestration**: Full container lifecycle management
+  - **Database Management**: PostgreSQL, MySQL, MongoDB, Redis support
+  - **Server Management**: Multi-server deployment and monitoring
+  - **Git Integration**: Automatic deployments from Git repositories
+  - **SSL Automation**: Automatic certificate provisioning and renewal
+- **Vercel CLI**: Modern web deployment platform with CLI integration
+  - **Full Project Lifecycle**: Deploy, manage, and monitor web applications
+  - **Environment Management**: Development, preview, and production environments
+  - **Domain & SSL**: Automatic HTTPS and custom domain management
+  - **Team Collaboration**: Multi-account and team workspace support
+  - **Framework Support**: Next.js, React, Vue, Svelte, and static sites
+  - **Performance Monitoring**: Built-in analytics and speed insights
 
 ### **Content Management (1 service)**
 
