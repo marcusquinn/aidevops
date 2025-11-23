@@ -70,22 +70,26 @@ Run the helper script:
 ```
 
 ### Repository Management
+
 - **List Repositories**:
 
     ```bash
     ./providers/gitea-cli-helper.sh list-repos personal
     ```
+
 - **Create Repository**:
 
     ```bash
     # Usage: create-repo <account> <name> [desc] [visibility] [auto_init]
     ./providers/gitea-cli-helper.sh create-repo personal my-new-repo "Description" private true
     ```
+
 - **Get Repository Details**:
 
     ```bash
     ./providers/gitea-cli-helper.sh get-repo personal my-new-repo
     ```
+
 - **Delete Repository**:
 
     ```bash
@@ -93,16 +97,19 @@ Run the helper script:
     ```
 
 ### Issue Management
+
 - **List Issues**:
 
     ```bash
     ./providers/gitea-cli-helper.sh list-issues personal my-repo open
     ```
+
 - **Create Issue**:
 
     ```bash
     ./providers/gitea-cli-helper.sh create-issue personal my-repo "Bug Title" "Issue description body"
     ```
+
 - **Close Issue**:
 
     ```bash
@@ -110,17 +117,20 @@ Run the helper script:
     ```
 
 ### Pull Request Management
+
 - **List Pull Requests**:
 
     ```bash
     ./providers/gitea-cli-helper.sh list-prs personal my-repo open
     ```
+
 - **Create Pull Request**:
 
     ```bash
     # Usage: create-pr <account> <repo> <title> <head_branch> [base_branch] [body]
     ./providers/gitea-cli-helper.sh create-pr personal my-repo "Feature X" feature-branch main "Description"
     ```
+
 - **Merge Pull Request**:
 
     ```bash
@@ -129,11 +139,13 @@ Run the helper script:
     ```
 
 ### Branch Management
+
 - **List Branches**:
 
     ```bash
     ./providers/gitea-cli-helper.sh list-branches personal my-repo
     ```
+
 - **Create Branch**:
 
     ```bash
@@ -142,6 +154,7 @@ Run the helper script:
     ```
 
 ## Troubleshooting
+
 - **"Gitea CLI is not authenticated"**: Run `tea login list` to see configured logins. Ensure the `account` name you use in the script command matches one of these logins.
 - **"Owner not configured"**: Check `configs/gitea-cli-config.json` and ensure the `owner` field is set for the account you are using.
 - **API Errors**: Verify your `token` in the configuration file is correct and has sufficient scopes.

@@ -5,6 +5,7 @@ Comprehensive Vercel deployment and project management using the Vercel CLI thro
 ## Overview
 
 The Vercel CLI helper provides complete automation for:
+
 - **Local Development**: Works without authentication for immediate setup
 - Project deployment and management
 - Environment variable configuration
@@ -270,6 +271,7 @@ jobs:
 ### Common Issues
 
 1. **Authentication Failed**
+
    ```bash
    vercel login
    vercel whoami

@@ -30,17 +30,14 @@ readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_COOLIFY_NOT_INSTALLED="Coolify CLI is required but not installed"
 readonly ERROR_NOT_CONFIGURED="Coolify CLI is not configured. Run 'coolify context add'"
 readonly ERROR_CONTEXT_MISSING="Context configuration not found"
-readonly ERROR_ARGS_MISSING="Missing required arguments"
-readonly ERROR_API_FAILED="Coolify API request failed"
-readonly ERROR_DEPLOYMENT_FAILED="Deployment failed"
-readonly ERROR_SERVER_NOT_FOUND="Server not found"
+# Removed unused error constants to fix ShellCheck SC2034 warnings
 
 # Success Messages
 readonly SUCCESS_APP_DEPLOYED="Application deployed successfully"
 readonly SUCCESS_SERVER_ADDED="Server added successfully"
 readonly SUCCESS_DATABASE_CREATED="Database created successfully"
 readonly SUCCESS_CONTEXT_ADDED="Context added successfully"
-readonly SUCCESS_OPERATION_COMPLETE="Operation completed successfully"
+# Removed unused success constant to fix ShellCheck SC2034 warning
 
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
@@ -193,7 +190,8 @@ start_local_server() {
         docker-compose up --build
     elif [[ -f "Dockerfile" ]]; then
         print_info "Found Dockerfile - building and running container"
-        local image_name="local-dev-$(basename "$PWD")"
+        local image_name
+        image_name="local-dev-$(basename "$PWD")"
         docker build -t "$image_name" .
         docker run -p "$port:$port" "$image_name"
     elif [[ -f "index.html" ]]; then
@@ -482,7 +480,8 @@ build_project() {
         docker-compose build
     elif [[ -f "Dockerfile" ]]; then
         print_info "Found Dockerfile - building container"
-        local image_name="local-build-$(basename "$PWD")"
+        local image_name
+        image_name="local-build-$(basename "$PWD")"
         docker build -t "$image_name" .
         print_success "Docker image built: $image_name"
     else
