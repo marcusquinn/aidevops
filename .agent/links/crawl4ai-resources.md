@@ -16,6 +16,13 @@
 - **GitHub Discussions**: https://github.com/unclecode/crawl4ai/discussions
 - **Changelog**: https://github.com/unclecode/crawl4ai/blob/main/CHANGELOG.md
 
+### CapSolver Integration
+- **CapSolver Homepage**: https://www.capsolver.com/
+- **CapSolver Dashboard**: https://dashboard.capsolver.com/dashboard/overview
+- **CapSolver Documentation**: https://docs.capsolver.com/
+- **Crawl4AI Partnership**: https://www.capsolver.com/blog/Partners/crawl4ai-capsolver/
+- **Chrome Extension**: https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod
+
 ## 📚 Documentation Sections
 
 ### Core Documentation

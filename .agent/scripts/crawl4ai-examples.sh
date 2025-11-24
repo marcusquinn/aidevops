@@ -15,6 +15,7 @@
 #   structured      - Structured data extraction
 #   batch-process   - Batch processing multiple URLs
 #   content-analysis - Complete content analysis workflow
+#   captcha-demo    - CAPTCHA solving demonstration (requires CapSolver API key)
 #   all             - Run all examples
 #
 # Author: AI DevOps Framework
@@ -231,6 +232,78 @@ EOF
     return 0
 }
 
+# Example 5: CAPTCHA solving demonstration
+example_captcha_demo() {
+    print_header "Example 5: CAPTCHA Solving Demonstration"
+
+    # Check if CapSolver API key is set
+    if [[ -z "$CAPSOLVER_API_KEY" ]]; then
+        print_warning "CAPSOLVER_API_KEY not set - this is a demonstration only"
+        print_info "To run actual CAPTCHA solving:"
+        print_info "1. Get API key: https://dashboard.capsolver.com/dashboard/overview"
+        print_info "2. Set: export CAPSOLVER_API_KEY='CAP-xxxxxxxxxxxxxxxxxxxxx'"
+        print_info "3. Run: $CRAWL4AI_HELPER captcha-crawl <url> <type> <site_key>"
+        print_info ""
+        print_info "📋 Supported CAPTCHA Types:"
+        print_info "• recaptcha_v2 - reCAPTCHA v2 checkbox ($0.5/1000)"
+        print_info "• recaptcha_v3 - reCAPTCHA v3 invisible ($0.5/1000)"
+        print_info "• turnstile - Cloudflare Turnstile ($3/1000)"
+        print_info "• aws_waf - AWS WAF bypass (contact for pricing)"
+        print_info "• geetest - GeeTest v3/v4 ($0.5/1000)"
+        print_info ""
+        print_info "📚 Example Commands:"
+        print_info "$CRAWL4AI_HELPER captcha-crawl https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9"
+        print_info "$CRAWL4AI_HELPER captcha-crawl https://clifford.io/demo/cloudflare-turnstile turnstile 0x4AAAAAAAGlwMzq_9z6S9Mh"
+        return 0
+    fi
+
+    print_info "CapSolver API key detected - running live demonstration"
+
+    # Demo URLs and configurations
+    local demo_configs=(
+        "https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php|recaptcha_v2|6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9|reCAPTCHA v2 Demo"
+        "https://clifford.io/demo/cloudflare-turnstile|turnstile|0x4AAAAAAAGlwMzq_9z6S9Mh|Cloudflare Turnstile Demo"
+    )
+
+    local i=1
+    for config in "${demo_configs[@]}"; do
+        IFS='|' read -r url captcha_type site_key description <<< "$config"
+
+        print_info "[$i/${#demo_configs[@]}] Testing: $description"
+        print_info "URL: $url"
+        print_info "Type: $captcha_type"
+
+        local output_file="$OUTPUT_DIR/captcha-demo-$i.json"
+
+        if "$CRAWL4AI_HELPER" captcha-crawl "$url" "$captcha_type" "$site_key" "$output_file"; then
+            print_success "CAPTCHA demo $i completed successfully"
+            if [[ -f "$output_file" ]]; then
+                print_info "Results saved to: $output_file"
+            fi
+        else
+            print_warning "CAPTCHA demo $i failed - this may be due to site changes or API limits"
+        fi
+
+        ((i++))
+
+        # Add delay between requests to respect rate limits
+        if [[ $i -le ${#demo_configs[@]} ]]; then
+            print_info "Waiting 10 seconds before next demo..."
+            sleep 10
+        fi
+    done
+
+    print_success "CAPTCHA solving demonstration completed"
+    print_info ""
+    print_info "💡 Tips for Production Use:"
+    print_info "• Monitor your CapSolver balance regularly"
+    print_info "• Use package deals for high-volume operations (up to 60% savings)"
+    print_info "• Implement proper error handling for failed CAPTCHA attempts"
+    print_info "• Respect website rate limits even with CAPTCHA solving"
+
+    return 0
+}
+
 # Show help
 show_help() {
     echo "Crawl4AI Examples Script"
@@ -241,6 +314,7 @@ show_help() {
     echo "  structured       - Structured data extraction"
     echo "  batch-process    - Batch processing multiple URLs"
     echo "  content-analysis - Complete content analysis workflow"
+    echo "  captcha-demo     - CAPTCHA solving demonstration"
     echo "  all              - Run all examples"
     echo "  help             - Show this help message"
     echo ""
@@ -283,6 +357,11 @@ main() {
                 example_content_analysis
             fi
             ;;
+        "captcha-demo")
+            if check_crawl4ai; then
+                example_captcha_demo
+            fi
+            ;;
         "all")
             if check_crawl4ai; then
                 example_basic_crawl
@@ -292,6 +371,8 @@ main() {
                 example_batch_processing
                 echo ""
                 example_content_analysis
+                echo ""
+                example_captcha_demo
             fi
             ;;
         "help"|"-h"|"--help"|"")

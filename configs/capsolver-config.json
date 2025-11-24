@@ -1,0 +1,118 @@
+{
+  "provider": "capsolver",
+  "description": "CapSolver configuration for automated CAPTCHA solving with Crawl4AI",
+  "service_type": "captcha_solver",
+  "version": "latest",
+  "api": {
+    "base_url": "https://api.capsolver.com",
+    "endpoints": {
+      "create_task": "/createTask",
+      "get_task_result": "/getTaskResult",
+      "get_balance": "/getBalance"
+    },
+    "authentication": {
+      "type": "api_key",
+      "header": "clientKey"
+    }
+  },
+  "supported_captcha_types": {
+    "recaptcha_v2": {
+      "type": "ReCaptchaV2TaskProxyLess",
+      "description": "reCAPTCHA v2 checkbox solving",
+      "response_field": "gRecaptchaResponse",
+      "injection_target": "g-recaptcha-response",
+      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "avg_solve_time": "< 9 seconds"
+    },
+    "recaptcha_v3": {
+      "type": "ReCaptchaV3TaskProxyLess",
+      "description": "reCAPTCHA v3 invisible solving with score ≥0.7",
+      "response_field": "gRecaptchaResponse",
+      "injection_method": "fetch_hook",
+      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "avg_solve_time": "< 3 seconds"
+    },
+    "recaptcha_v2_enterprise": {
+      "type": "ReCaptchaV2EnterpriseTaskProxyLess",
+      "description": "reCAPTCHA v2 Enterprise solving",
+      "response_field": "gRecaptchaResponse",
+      "pricing": "/1000 requests",
+      "avg_solve_time": "< 9 seconds"
+    },
+    "recaptcha_v3_enterprise": {
+      "type": "ReCaptchaV3EnterpriseTaskProxyLess",
+      "description": "reCAPTCHA v3 Enterprise solving with score ≥0.9",
+      "response_field": "gRecaptchaResponse",
+      "pricing": "/1000 requests",
+      "avg_solve_time": "< 3 seconds"
+    },
+    "cloudflare_turnstile": {
+      "type": "AntiTurnstileTaskProxyLess",
+      "description": "Cloudflare Turnstile CAPTCHA solving",
+      "response_field": "token",
+      "injection_target": "cf-turnstile-response",
+      "pricing": "/1000 requests",
+      "avg_solve_time": "< 3 seconds"
+    },
+    "cloudflare_challenge": {
+      "type": "AntiCloudflareTask",
+      "description": "Cloudflare Challenge (5s shield) solving",
+      "response_field": "cookies",
+      "requires_proxy": true,
+      "pricing": "Contact for pricing",
+      "avg_solve_time": "< 10 seconds"
+    },
+    "aws_waf": {
+      "type": "AntiAwsWafTaskProxyLess",
+      "description": "AWS WAF CAPTCHA solving",
+      "response_field": "cookie",
+      "injection_method": "cookie_set",
+      "pricing": "Contact for pricing",
+      "avg_solve_time": "< 5 seconds"
+    },
+    "geetest_v3": {
+      "type": "GeeTestTaskProxyLess",
+      "description": "GeeTest v3 CAPTCHA solving",
+      "response_field": "challenge",
+      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "avg_solve_time": "< 5 seconds"
+    },
+    "geetest_v4": {
+      "type": "GeeTestV4TaskProxyLess",
+      "description": "GeeTest v4 CAPTCHA solving",
+      "response_field": "captcha_output",
+      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "avg_solve_time": "< 5 seconds"
+    },
+    "image_to_text": {
+      "type": "ImageToTextTask",
+      "description": "OCR image CAPTCHA solving",
+      "response_field": "text",
+      "pricing": "./providers/crawl4ai-helper.sh.4/1000 requests",
+      "avg_solve_time": "< 1 second"
+    }
+  },
+  "integration_methods": {
+    "api_integration": {
+      "description": "Direct API integration with Python capsolver SDK",
+      "advantages": ["More flexible", "Precise control", "Better error handling"],
+      "recommended": true
+    },
+    "browser_extension": {
+      "description": "CapSolver browser extension integration",
+      "advantages": ["Easy setup", "Automatic detection", "No coding required"],
+      "extension_url": "https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod"
+    }
+  },
+  "python_sdk": {
+    "installation": "pip install capsolver",
+    "import": "import capsolver",
+    "usage": "capsolver.api_key = 'CAP-xxxxxxxxxxxxxxxxxxxxx'"
+  },
+  "pricing": {
+    "pay_per_usage": "Standard pricing per request",
+    "package_discounts": "Up to 60% savings with packages",
+    "developer_plan": "Contact for better pricing",
+    "balance_check": "GET /getBalance endpoint"
+  }
+}
