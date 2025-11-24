@@ -34,6 +34,9 @@ readonly CODERABBIT_SCRIPT=".agent/scripts/coderabbit-cli.sh"
 readonly CODACY_SCRIPT=".agent/scripts/codacy-cli.sh"
 readonly SONAR_SCRIPT=".agent/scripts/sonarscanner-cli.sh"
 
+# CLI Names
+readonly CLI_CODERABBIT="coderabbit"
+
 # Print functions
 print_success() {
     local message="$1"
@@ -76,7 +79,7 @@ execute_cli_command() {
     local cli_name=""
     
     case "$cli" in
-        "coderabbit")
+        "$CLI_CODERABBIT")
             script="$CODERABBIT_SCRIPT"
             cli_name="CodeRabbit CLI"
             ;;
@@ -113,9 +116,9 @@ install_clis() {
     local success_count=0
     local total_count=0
     
-    if [[ "$target_cli" == "all" || "$target_cli" == "coderabbit" ]]; then
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "Installing CodeRabbit CLI..."
-        if execute_cli_command "coderabbit" "install"; then
+        if execute_cli_command "$CLI_CODERABBIT" "install"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -178,9 +181,9 @@ init_clis() {
     local success_count=0
     local total_count=0
     
-    if [[ "$target_cli" == "all" || "$target_cli" == "coderabbit" ]]; then
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "Initializing CodeRabbit CLI..."
-        if execute_cli_command "coderabbit" "setup"; then
+        if execute_cli_command "$CLI_CODERABBIT" "setup"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -236,9 +239,9 @@ analyze_with_clis() {
     local success_count=0
     local total_count=0
 
-    if [[ "$target_cli" == "all" || "$target_cli" == "coderabbit" ]]; then
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "Running CodeRabbit analysis..."
-        if execute_cli_command "coderabbit" "review" "$args"; then
+        if execute_cli_command "$CLI_CODERABBIT" "review" "$args"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -304,9 +307,9 @@ show_cli_status() {
 
     print_header "Quality CLI Status Report"
 
-    if [[ "$target_cli" == "all" || "$target_cli" == "coderabbit" ]]; then
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "CodeRabbit CLI Status:"
-        execute_cli_command "coderabbit" "status"
+        execute_cli_command "$CLI_CODERABBIT" "status"
         echo ""
     fi
 

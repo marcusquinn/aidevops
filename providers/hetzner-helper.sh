@@ -23,6 +23,7 @@ readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Common constants
 readonly AUTH_BEARER_PREFIX="Authorization: Bearer"
+readonly HETZNER_API_SERVERS="https://api.hetzner.cloud/v1/servers"
 
 print_info() {
     local msg="$1"
@@ -83,7 +84,7 @@ list_servers() {
         print_info "Account: $account"
         
         servers=$(curl -s -H "$AUTH_BEARER_PREFIX $api_token" \
-                      "https://api.hetzner.cloud/v1/servers" | \
+                      "$HETZNER_API_SERVERS" | \
                   jq -r '.servers[]? | "  - \(.name) (\(.public_net.ipv4.ip)) - \(.server_type.name) - \(.status)"')
         
         if [[ -n "$servers" ]]; then
@@ -158,7 +159,7 @@ get_server_details() {
         api_token=$(jq -r ".projects.$project.api_token" "$CONFIG_FILE")
         
         server_info=$(curl -s -H "$AUTH_BEARER_PREFIX $api_token" \
-                          "https://api.hetzner.cloud/v1/servers" | \
+                          "$HETZNER_API_SERVERS" | \
                       jq -r ".servers[]? | select(.name == \"$server_name\") | \"\(.public_net.ipv4.ip) \(.name) $project\"")
         
         if [[ -n "$server_info" ]]; then
@@ -187,7 +188,7 @@ generate_ssh_configs() {
         print_info "Processing project: $project ($description)"
         
         servers=$(curl -s -H "$AUTH_BEARER_PREFIX $api_token" \
-                      "https://api.hetzner.cloud/v1/servers" | \
+                      "$HETZNER_API_SERVERS" | \
                   jq -r '.servers[]? | "\(.name) \(.public_net.ipv4.ip)"')
         
         if [[ -n "$servers" ]]; then
@@ -260,7 +261,7 @@ create_server() {
             \"image\": \"$image\",
             \"start_after_create\": true
         }" \
-        "https://api.hetzner.cloud/v1/servers")
+        "$HETZNER_API_SERVERS")
 
     # Check if creation was successful
     if echo "$response" | jq -e '.server' > /dev/null; then
@@ -310,7 +311,7 @@ check_server_status() {
 
         local response
         response=$(curl -s -H "$AUTH_BEARER_PREFIX $api_token" \
-                       "https://api.hetzner.cloud/v1/servers")
+                       "$HETZNER_API_SERVERS")
 
         local server_info
         server_info=$(echo "$response" | jq -r ".servers[] | select(.name == \"$server_name\")")
