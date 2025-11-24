@@ -16,7 +16,7 @@ readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly CONTENT_TYPE_JSON=$CONTENT_TYPE_JSON
 
 print_info() {
     local msg="$command"
@@ -44,7 +44,7 @@ readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly CONTENT_TYPE_JSON=$CONTENT_TYPE_JSON
 
 print_info() {
     local msg="$command"
