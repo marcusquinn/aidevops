@@ -334,8 +334,10 @@ list_domains() {
 
         for conf_file in "$NGINX_CONF_DIR"/route.*.local.conf; do
             if [[ -f "$conf_file" ]]; then
-                local domain=$(basename "$conf_file" | sed 's/route\.\(.*\)\.conf/\1/')
-                local port=$(grep "proxy_pass" "$conf_file" | head -1 | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/')
+                local domain
+                domain=$(basename "$conf_file" | sed 's/route\.\(.*\)\.conf/\1/')
+                local port
+                port=$(grep "proxy_pass" "$conf_file" | head -1 | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/')
                 local status="❌ Not running"
 
                 # Check if port is in use
@@ -435,17 +437,26 @@ show_help() {
 }
 
 # Main script logic
-case "${1:-help}" in
-    "setup")
-        setup_domain "$2" "$3"
-        ;;
-    "list")
-        list_domains
-        ;;
-    "remove")
-        remove_domain "$2"
-        ;;
-    "help"|*)
-        show_help
-        ;;
-esac
+main() {
+    local command="${1:-help}"
+    local project_name="$2"
+    local port="$3"
+
+    case "$command" in
+        "setup")
+            setup_domain "$project_name" "$port"
+            ;;
+        "list")
+            list_domains
+            ;;
+        "remove")
+            remove_domain "$project_name"
+            ;;
+        "help"|*)
+            show_help
+            ;;
+    esac
+    return 0
+}
+
+main "$@"

@@ -94,7 +94,8 @@ verify_domain() {
         print_success "Nginx configuration exists"
         
         # Check port configuration
-        local port=$(grep "proxy_pass" "$nginx_conf" | head -1 | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/')
+        local port
+        port=$(grep "proxy_pass" "$nginx_conf" | head -1 | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/')
         if [[ -n "$port" ]]; then
             print_info "Configured port: $port"
         else
@@ -151,7 +152,8 @@ verify_domain() {
         
         # Check 8: HTTP redirect
         echo -e "${BLUE}8. Testing HTTP redirect...${NC}"
-        local http_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$domain" 2>/dev/null || echo "000")
+        local http_response
+        http_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$domain" 2>/dev/null || echo "000")
         if [[ "$http_response" == "301" ]]; then
             print_success "HTTP redirects to HTTPS (301)"
         else
@@ -163,7 +165,8 @@ verify_domain() {
         
         # Check 9: HTTPS connection
         echo -e "${BLUE}9. Testing HTTPS connection...${NC}"
-        local https_response=$(curl -k -s -o /dev/null -w "%{http_code}" "https://$domain" 2>/dev/null || echo "000")
+        local https_response
+        https_response=$(curl -k -s -o /dev/null -w "%{http_code}" "https://$domain" 2>/dev/null || echo "000")
         if [[ "$https_response" == "200" ]]; then
             print_success "HTTPS connection successful (200)"
         else
@@ -192,6 +195,7 @@ verify_domain() {
         echo "• Setup domain: ./webhosting-helper.sh setup $project_name"
         echo "• Start LocalWP application"
     fi
+    return 0
 }
 
 # Show help
@@ -212,11 +216,19 @@ show_help() {
 }
 
 # Main script logic
-case "${1:-help}" in
-    "verify")
-        verify_domain "$2"
-        ;;
-    "help"|*)
-        show_help
-        ;;
-esac
+main() {
+    local command="${1:-help}"
+    local project_name="$2"
+
+    case "$command" in
+        "verify")
+            verify_domain "$project_name"
+            ;;
+        "help"|*)
+            show_help
+            ;;
+    esac
+    return 0
+}
+
+main "$@"
