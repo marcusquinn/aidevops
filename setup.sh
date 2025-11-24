@@ -138,10 +138,10 @@ setup_ssh_key() {
     
     if [[ ! -f ~/.ssh/id_ed25519 ]]; then
         print_warning "Ed25519 SSH key not found"
-        read -p "Generate new Ed25519 SSH key? (y/n): " generate_key
+        read -r -p "Generate new Ed25519 SSH key? (y/n): " generate_key
         
         if [[ "$generate_key" == "y" ]]; then
-            read -p "Enter your email address: " email
+            read -r -p "Enter your email address: " email
             ssh-keygen -t ed25519 -C "$email"
             print_success "SSH key generated"
         else
@@ -190,7 +190,7 @@ set_permissions() {
     print_info "Setting proper file permissions..."
     
     # Make scripts executable
-    chmod +x *.sh
+    chmod +x ./*.sh
     chmod +x providers/*.sh
     chmod +x ssh/*.sh
     
@@ -221,7 +221,7 @@ setup_aliases() {
         return
     fi
     
-    read -p "Add shell aliases to $shell_rc? (y/n): " add_aliases
+    read -r -p "Add shell aliases to $shell_rc? (y/n): " add_aliases
     
     if [[ "$add_aliases" == "y" ]]; then
         cat >> "$shell_rc" << 'EOF'

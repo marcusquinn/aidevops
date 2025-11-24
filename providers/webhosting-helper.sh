@@ -20,7 +20,7 @@ NC='\033[0m' # No Color
 CERT_DIR="$HOME/.localhost-setup/certs"
 NGINX_CONF_DIR="/Users/$(whoami)/Library/Application Support/Local/run/router/nginx/conf"
 GIT_DIR="$HOME/Git"
-CONFIG_FILE="../configs/webhosting-config.json"
+# CONFIG_FILE="../configs/webhosting-config.json"  # Reserved for future use
 
 print_header() {
     echo -e "${PURPLE}================================${NC}"
@@ -226,7 +226,8 @@ add_to_hosts() {
 reload_nginx() {
     print_info "Reloading nginx configuration..."
 
-    local nginx_pid=$(pgrep -f "nginx.*router" | head -1)
+    local nginx_pid
+    nginx_pid=$(pgrep -f "nginx.*router" | head -1)
     if [[ -n "$nginx_pid" ]]; then
         kill -HUP "$nginx_pid"
         print_success "Nginx configuration reloaded"
@@ -256,7 +257,8 @@ setup_domain() {
     print_header "Setting up $domain"
 
     # Detect webapp type and default port if not specified
-    local webapp_info=$(detect_webapp_type "$project_dir")
+    local webapp_info
+    webapp_info=$(detect_webapp_type "$project_dir")
     local webapp_type="${webapp_info%:*}"
     local default_port="${webapp_info#*:}"
 

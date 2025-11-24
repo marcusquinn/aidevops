@@ -101,8 +101,8 @@ verify_domain() {
         print_success "SSL certificates exist"
         
         # Check certificate validity
-        local cert_info=$(openssl x509 -in "$CERT_DIR/$domain.crt" -noout -dates 2>/dev/null)
-        if [[ $? -eq 0 ]]; then
+        local cert_info
+        if cert_info=$(openssl x509 -in "$CERT_DIR/$domain.crt" -noout -dates 2>/dev/null); then
             print_info "Certificate info: $cert_info"
         fi
     else
