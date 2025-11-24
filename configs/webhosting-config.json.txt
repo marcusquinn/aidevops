@@ -1,0 +1,136 @@
+{
+  "webhosting": {
+    "description": "Web Hosting Helper Configuration",
+    "version": "1.0.0",
+    "settings": {
+      "git_directory": "~/Git",
+      "cert_directory": "~/.localhost-setup/certs",
+      "nginx_conf_directory": "/Users/$(whoami)/Library/Application Support/Local/run/router/nginx/conf",
+      "default_ssl_config": {
+        "protocols": ["TLSv1.2", "TLSv1.3"],
+        "ciphers": "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384",
+        "certificate_validity_days": 365
+      },
+      "framework_defaults": {
+        "nextjs": {
+          "port": 3000,
+          "websocket_paths": ["/_next/webpack-hmr"]
+        },
+        "react": {
+          "port": 3000,
+          "websocket_paths": ["/_next/webpack-hmr"]
+        },
+        "vue": {
+          "port": 3000,
+          "websocket_paths": ["/_next/webpack-hmr"]
+        },
+        "nuxt": {
+          "port": 3000,
+          "websocket_paths": ["/_next/webpack-hmr"]
+        },
+        "vite": {
+          "port": 5173,
+          "websocket_paths": ["/vite-dev-server"]
+        },
+        "svelte": {
+          "port": 5173,
+          "websocket_paths": ["/vite-dev-server"]
+        },
+        "rails": {
+          "port": 3000,
+          "websocket_paths": []
+        },
+        "python": {
+          "port": 8000,
+          "websocket_paths": []
+        },
+        "django": {
+          "port": 8000,
+          "websocket_paths": []
+        },
+        "go": {
+          "port": 8080,
+          "websocket_paths": []
+        },
+        "php": {
+          "port": 8000,
+          "websocket_paths": []
+        },
+        "node": {
+          "port": 3000,
+          "websocket_paths": []
+        }
+      }
+    },
+    "compatibility": {
+      "localwp": {
+        "enabled": true,
+        "description": "Integrates with LocalWP nginx router",
+        "nginx_router_path": "/Users/$(whoami)/Library/Application Support/Local/run/router/nginx/conf"
+      },
+      "standalone": {
+        "enabled": true,
+        "description": "Standalone nginx configuration support",
+        "nginx_conf_path": "/usr/local/etc/nginx/nginx.conf"
+      }
+    },
+    "security": {
+      "ssl_certificate_generation": {
+        "method": "openssl",
+        "key_size": 2048,
+        "subject": "/C=US/ST=Local/L=Local/O=Local Development/CN="
+      },
+      "hosts_file_management": {
+        "requires_sudo": true,
+        "backup_before_changes": false
+      }
+    },
+    "monitoring": {
+      "port_checking": {
+        "enabled": true,
+        "method": "lsof"
+      },
+      "domain_status": {
+        "enabled": true,
+        "check_ssl": true,
+        "check_response": true
+      }
+    }
+  },
+  "examples": {
+    "setup_commands": [
+      "./webhosting-helper.sh setup myapp 3000",
+      "./webhosting-helper.sh setup webapp-source 3001",
+      "./webhosting-helper.sh setup api-server 8000"
+    ],
+    "management_commands": [
+      "./webhosting-helper.sh list",
+      "./webhosting-helper.sh remove myapp",
+      "./webhosting-helper.sh help"
+    ]
+  },
+  "troubleshooting": {
+    "common_issues": {
+      "localwp_not_found": {
+        "description": "LocalWP application not detected",
+        "solution": "Install LocalWP from https://localwp.com/ or use standalone mode"
+      },
+      "nginx_router_not_running": {
+        "description": "LocalWP nginx router process not found",
+        "solution": "Start LocalWP application or check if nginx is running manually"
+      },
+      "port_already_in_use": {
+        "description": "Specified port is already in use",
+        "solution": "Choose a different port or stop the service using the port"
+      },
+      "ssl_certificate_error": {
+        "description": "Browser shows SSL certificate warning",
+        "solution": "Accept the self-signed certificate or install it in system keychain"
+      },
+      "hosts_file_permission": {
+        "description": "Cannot modify /etc/hosts file",
+        "solution": "Run with sudo privileges or manually add domain to hosts file"
+      }
+    }
+  }
+}
