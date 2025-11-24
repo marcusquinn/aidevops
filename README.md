@@ -56,7 +56,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#️-comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-10-orange.svg)](#-mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-12-orange.svg)](#-mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#️-comprehensive-service-coverage)
 
 ## 🏆 **Enterprise-Grade Quality & Security**
@@ -204,10 +204,12 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ## 🤖 **MCP Integrations**
 
-**10 Model Context Protocol servers for real-time AI assistant integration:**
+**12 Model Context Protocol servers for real-time AI assistant integration:**
 
 ### **🌐 Web & Browser Automation**
 
+- **[Stagehand AI (JavaScript)](https://github.com/browserbase/stagehand)**: AI-powered browser automation with natural language ⭐ **NEW**
+- **[Stagehand AI (Python)](https://github.com/browserbase/stagehand-python)**: Python version with Pydantic validation 🐍 **NEW**
 - **[Chrome DevTools MCP](https://developer.chrome.com/docs/devtools/)**: Browser automation, performance analysis, debugging
 - **[Playwright MCP](https://playwright.dev/)**: Cross-browser testing and automation
 - **[Cloudflare Browser Rendering](https://workers.cloudflare.com/)**: Server-side web scraping
@@ -235,6 +237,9 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 bash .agent/scripts/setup-mcp-integrations.sh all
 
 # Install specific integration
+bash .agent/scripts/setup-mcp-integrations.sh stagehand          # JavaScript version
+bash .agent/scripts/setup-mcp-integrations.sh stagehand-python   # Python version
+bash .agent/scripts/setup-mcp-integrations.sh stagehand-both     # Both versions
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ```
 

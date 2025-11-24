@@ -376,6 +376,63 @@ watch -n 5 'ps aux | grep -E "(chrome|firefox)" | head -10'
 
 ## 🔗 **Integration with AI DevOps Framework**
 
+### **🤘 Stagehand AI Browser Automation** ⭐ **NEW**
+
+**Revolutionary AI-powered browser automation with natural language control - Available in JavaScript and Python**
+
+#### **JavaScript Version**
+
+```bash
+# Quick setup
+bash providers/stagehand-helper.sh setup
+
+# MCP integration
+bash .agent/scripts/setup-mcp-integrations.sh stagehand
+
+# Run examples
+cd ~/.aidevops/stagehand
+npm run search-products "wireless headphones"
+npm run analyze-linkedin
+```
+
+#### **Python Version** 🐍 **NEW**
+
+```bash
+# Quick setup
+bash providers/stagehand-python-helper.sh setup
+
+# MCP integration
+bash .agent/scripts/setup-mcp-integrations.sh stagehand-python
+
+# Run examples
+source ~/.aidevops/stagehand-python/.venv/bin/activate
+python examples/basic_example.py
+python examples/ecommerce_automation.py "wireless headphones"
+```
+
+#### **Both Versions**
+
+```bash
+# Setup both JavaScript and Python
+bash .agent/scripts/setup-mcp-integrations.sh stagehand-both
+```
+
+**Key Features**:
+- **Natural Language Actions**: `await stagehand.act("click the login button")`
+- **Structured Data Extraction**: Extract data with Zod (JS) or Pydantic (Python) schemas
+- **Self-Healing Automation**: Adapts when websites change
+- **Autonomous Agents**: Complete workflows with AI decision-making
+- **Local-First Privacy**: Complete control over browser and data
+- **Multi-Language Support**: Choose JavaScript or Python based on your needs
+
+**Perfect for**:
+- E-commerce automation and price monitoring
+- Social media analytics and engagement
+- User journey testing and QA
+- Data collection and research with type safety
+- Autonomous business process automation
+- Data science workflows (Python) or web development (JavaScript)
+
 ### **Workflow Integration**
 
 ```bash

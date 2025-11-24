@@ -1,0 +1,136 @@
+{
+  "provider": "crawl4ai",
+  "description": "Crawl4AI configuration for AI-powered web crawling and data extraction",
+  "service_type": "web_crawler",
+  "version": "0.7.7",
+  "deployment": {
+    "method": "docker",
+    "image": "unclecode/crawl4ai:latest",
+    "container_name": "crawl4ai",
+    "ports": {
+      "api": 11235,
+      "mcp": 3009
+    },
+    "volumes": [
+      "/dev/shm:/dev/shm"
+    ],
+    "environment": {
+      "OPENAI_API_KEY": "your-openai-api-key",
+      "ANTHROPIC_API_KEY": "your-anthropic-api-key",
+      "DEEPSEEK_API_KEY": "your-deepseek-api-key",
+      "GROQ_API_KEY": "your-groq-api-key",
+      "TOGETHER_API_KEY": "your-together-api-key",
+      "MISTRAL_API_KEY": "your-mistral-api-key",
+      "GEMINI_API_TOKEN": "your-gemini-token",
+      "LLM_PROVIDER": "openai/gpt-4o-mini",
+      "LLM_TEMPERATURE": "0.7"
+    }
+  },
+  "api": {
+    "base_url": "http://localhost:11235",
+    "endpoints": {
+      "crawl": "/crawl",
+      "crawl_job": "/crawl/job",
+      "llm_job": "/llm/job",
+      "job_status": "/job/{task_id}",
+      "health": "/health",
+      "metrics": "/metrics",
+      "schema": "/schema",
+      "dashboard": "/dashboard",
+      "playground": "/playground",
+      "screenshot": "/screenshot",
+      "pdf": "/pdf",
+      "html": "/html",
+      "javascript": "/js"
+    },
+    "authentication": {
+      "type": "jwt",
+      "enabled": false
+    }
+  },
+  "features": {
+    "markdown_generation": true,
+    "structured_extraction": true,
+    "llm_extraction": true,
+    "screenshot_capture": true,
+    "pdf_generation": true,
+    "javascript_execution": true,
+    "adaptive_crawling": true,
+    "virtual_scroll": true,
+    "hooks_system": true,
+    "webhook_notifications": true,
+    "job_queue": true,
+    "monitoring_dashboard": true
+  },
+  "extraction_strategies": {
+    "css_selector": {
+      "type": "JsonCssExtractionStrategy",
+      "description": "Extract data using CSS selectors"
+    },
+    "llm_extraction": {
+      "type": "LLMExtractionStrategy", 
+      "description": "Extract data using LLM models"
+    },
+    "cosine_similarity": {
+      "type": "CosineStrategy",
+      "description": "Extract relevant content using cosine similarity"
+    }
+  },
+  "browser_config": {
+    "headless": true,
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "user_agent": "Mozilla/5.0 (compatible; Crawl4AI/0.7.7)",
+    "timeout": 30000,
+    "wait_for": "networkidle"
+  },
+  "crawler_config": {
+    "cache_mode": "enabled",
+    "max_depth": 3,
+    "max_pages": 50,
+    "delay_between_requests": 1.0,
+    "respect_robots_txt": true,
+    "follow_redirects": true
+  },
+  "mcp_integration": {
+    "enabled": true,
+    "server_command": "npx crawl4ai-mcp-server@latest",
+    "transport": "stdio",
+    "capabilities": [
+      "web_crawling",
+      "markdown_generation",
+      "structured_extraction",
+      "llm_extraction",
+      "screenshot_capture",
+      "pdf_generation"
+    ]
+  },
+  "monitoring": {
+    "dashboard_enabled": true,
+    "metrics_enabled": true,
+    "health_checks": true,
+    "prometheus_integration": true
+  },
+  "security": {
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 1000
+    },
+    "cors": {
+      "enabled": true,
+      "allowed_origins": ["*"]
+    },
+    "headers": {
+      "x_content_type_options": "nosniff",
+      "x_frame_options": "DENY"
+    }
+  },
+  "performance": {
+    "browser_pool_size": 3,
+    "concurrent_requests": 10,
+    "memory_threshold": 95.0,
+    "cleanup_interval": 300
+  }
+}

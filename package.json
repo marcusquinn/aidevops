@@ -1,7 +1,7 @@
 {
   "name": "aidevops-dspy-integration",
-  "version": "1.8.1",
-  "description": "AI DevOps Framework with DSPy and DSPyGround integration",
+  "version": "1.9.0",
+  "description": "AI DevOps Framework with DSPy, DSPyGround, and Crawl4AI integration",
   "main": "index.js",
   "scripts": {
     "dspy:init": "dspyground init",
@@ -14,6 +14,8 @@
   "keywords": [
     "dspy",
     "dspyground",
+    "crawl4ai",
+    "web-scraping",
     "ai",
     "devops",
     "prompt-optimization",

@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Colors for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -30,13 +33,16 @@ get_mcp_command() {
         "nextjs-devtools") echo "npx next-devtools-mcp@latest" ;;
         "google-search-console") echo "npx mcp-server-gsc@latest" ;;
         "pagespeed-insights") echo "npx mcp-pagespeed-server@latest" ;;
+        "stagehand") echo "node ${HOME}/.aidevops/stagehand/examples/basic-example.js" ;;
+        "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
+        "stagehand-both") echo "both" ;;
         *) echo "" ;;
     esac
     return 0
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights stagehand stagehand-python stagehand-both"
 
 # Check prerequisites
 check_prerequisites() {
@@ -148,6 +154,62 @@ install_mcp() {
             print_success "PageSpeed Insights MCP setup complete!"
             print_info "Use: ./providers/pagespeed-helper.sh for CLI access"
             ;;
+        "stagehand")
+            print_info "Setting up Stagehand AI Browser Automation MCP integration..."
+
+            # First ensure Stagehand JavaScript is installed
+            if ! bash "${SCRIPT_DIR}/../../providers/stagehand-helper.sh" status &> /dev/null; then
+                print_info "Installing Stagehand JavaScript first..."
+                bash "${SCRIPT_DIR}/../../providers/stagehand-helper.sh" install
+            fi
+
+            # Setup advanced configuration
+            bash "${SCRIPT_DIR}/stagehand-setup.sh" setup
+
+            # Add to Claude MCP if available
+            if command -v claude &> /dev/null; then
+                claude mcp add stagehand "node" --args "${HOME}/.aidevops/stagehand/examples/basic-example.js"
+            fi
+
+            print_success "Stagehand JavaScript MCP integration completed"
+            print_info "Try: 'Ask Claude to help with browser automation using Stagehand'"
+            print_info "Use: ./providers/stagehand-helper.sh for CLI access"
+            ;;
+        "stagehand-python")
+            print_info "Setting up Stagehand Python AI Browser Automation MCP integration..."
+
+            # First ensure Stagehand Python is installed
+            if ! bash "${SCRIPT_DIR}/../../providers/stagehand-python-helper.sh" status &> /dev/null; then
+                print_info "Installing Stagehand Python first..."
+                bash "${SCRIPT_DIR}/../../providers/stagehand-python-helper.sh" install
+            fi
+
+            # Setup advanced configuration
+            bash "${SCRIPT_DIR}/stagehand-python-setup.sh" setup
+
+            # Add to Claude MCP if available
+            if command -v claude &> /dev/null; then
+                local python_path="${HOME}/.aidevops/stagehand-python/.venv/bin/python"
+                claude mcp add stagehand-python "$python_path" --args "${HOME}/.aidevops/stagehand-python/examples/basic_example.py"
+            fi
+
+            print_success "Stagehand Python MCP integration completed"
+            print_info "Try: 'Ask Claude to help with Python browser automation using Stagehand'"
+            print_info "Use: ./providers/stagehand-python-helper.sh for CLI access"
+            ;;
+        "stagehand-both")
+            print_info "Setting up both Stagehand JavaScript and Python MCP integrations..."
+
+            # Setup JavaScript version
+            bash "$0" stagehand
+
+            # Setup Python version
+            bash "$0" stagehand-python
+
+            print_success "Both Stagehand integrations completed"
+            print_info "JavaScript: ./providers/stagehand-helper.sh"
+            print_info "Python: ./providers/stagehand-python-helper.sh"
+            ;;
         *)
             print_error "Unknown MCP integration: $mcp_name"
             print_info "Available integrations: $MCP_LIST"
@@ -191,6 +253,79 @@ EOF
     "playwright": {
       "command": "npx",
       "args": ["playwright-mcp@latest"]
+    }
+  }
+}
+EOF
+
+    # Stagehand JavaScript template
+    cat > "$config_dir/stagehand.json" << 'EOF'
+{
+  "mcpServers": {
+    "stagehand": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const { Stagehand } = require('@browserbasehq/stagehand'); console.log('Stagehand JavaScript AI Browser Automation Ready');"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false"
+      }
+    }
+  }
+}
+EOF
+
+    # Stagehand Python template
+    cat > "$config_dir/stagehand-python.json" << 'EOF'
+{
+  "mcpServers": {
+    "stagehand-python": {
+      "command": "python",
+      "args": [
+        "-c",
+        "from stagehand import Stagehand; print('Stagehand Python AI Browser Automation Ready')"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false",
+        "PYTHONPATH": "/Users/marcusquinn/.aidevops/stagehand-python/.venv/lib/python3.11/site-packages"
+      }
+    }
+  }
+}
+EOF
+
+    # Combined Stagehand template
+    cat > "$config_dir/stagehand-both.json" << 'EOF'
+{
+  "mcpServers": {
+    "stagehand-js": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const { Stagehand } = require('@browserbasehq/stagehand'); console.log('Stagehand JavaScript Ready');"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false"
+      }
+    },
+    "stagehand-python": {
+      "command": "python",
+      "args": [
+        "-c",
+        "from stagehand import Stagehand; print('Stagehand Python Ready')"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false"
+      }
     }
   }
 }

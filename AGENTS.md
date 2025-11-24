@@ -2,7 +2,7 @@
 
 **🔒 AUTHORITATIVE SOURCE: This is the single source of truth for all AI assistant instructions. All other AGENTS.md files are minimal templates that reference this file.**
 
-This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 27+ services.
+This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 28+ services.
 
 ## ⚠️ **CRITICAL: Consistency Requirements**
 
@@ -76,7 +76,7 @@ When using this framework, AI assistants have access to:
 Before performing any DevOps operations, always read ~/git/aidevops/AGENTS.md
 for authoritative guidance on this comprehensive infrastructure management framework.
 
-This framework provides secure access to 25+ service integrations with enterprise-grade
+This framework provides secure access to 28+ service integrations with enterprise-grade
 security practices. Always follow the operational patterns and security guidelines
 defined in the AGENTS.md file.
 ```
@@ -629,7 +629,7 @@ local used_variable="$1"
 ### **Framework Architecture**
 
 ```bash
-# Unified command pattern across all 27+ services:
+# Unified command pattern across all 28+ services:
 ./providers/[service]-helper.sh [command] [account/instance] [target] [options]
 
 # Standard commands available for all services:
@@ -649,7 +649,7 @@ aidevops/
 ├── 🔧 scripts/
 │   └── servers-helper.sh      # Main entry point script
 ├── ⚙️  sonar-project.properties # Quality analysis configuration
-├── 📁 providers/             # Core functionality scripts (27+ services)
+├── 📁 providers/             # Core functionality scripts (28+ services)
 ├── 📁 configs/               # Configuration templates for users
 ├── 📁 docs/                  # Comprehensive user documentation
 ├── 📁 templates/             # Reusable templates and examples
@@ -706,7 +706,7 @@ aidevops/
 ### **~/git/aidevops/.agent/wiki/** - Knowledge Base
 
 - `architecture.md` - Complete framework architecture
-- `services.md` - All 25+ service integrations
+- `services.md` - All 28+ service integrations
 - `providers.md` - Provider-specific implementation details
 - `configs.md` - Configuration management patterns
 - `docs.md` - Documentation standards and guidelines
@@ -764,6 +764,16 @@ aidevops/
 ### **Domain & DNS (5 services)**
 
 - Spaceship (with purchasing), 101domains, Cloudflare DNS, Namecheap DNS, Route 53
+
+### **Web Crawling & Data Extraction (1 service)**
+
+- **Crawl4AI** ✅ **AI-Powered Web Crawler**: LLM-friendly web scraping and data extraction
+  - **LLM-Ready Output**: Clean markdown generation perfect for RAG pipelines
+  - **Structured Extraction**: CSS selectors, XPath, and LLM-based data extraction
+  - **Advanced Browser Control**: Hooks, proxies, stealth modes, session management
+  - **High Performance**: Parallel crawling, async operations, real-time processing
+  - **MCP Integration**: Native support for AI assistants like Claude
+  - **Enterprise Features**: Monitoring dashboard, job queues, webhook notifications
 
 ### **Development & Local (9 MCP integrations)**
 
