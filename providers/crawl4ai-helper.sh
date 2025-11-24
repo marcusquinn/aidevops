@@ -34,7 +34,8 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
 # Constants
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly CONFIG_DIR="$SCRIPT_DIR/../configs"
 readonly DOCKER_IMAGE="unclecode/crawl4ai:latest"
 readonly DOCKER_CONTAINER="crawl4ai"
@@ -44,27 +45,32 @@ readonly HELP_SHOW_MESSAGE="Show this help message"
 
 # Print functions
 print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    local message="$1"
+    echo -e "${GREEN}✅ $message${NC}"
     return 0
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
+    local message="$1"
+    echo -e "${BLUE}ℹ️  $message${NC}"
     return 0
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    local message="$1"
+    echo -e "${YELLOW}⚠️  $message${NC}"
     return 0
 }
 
 print_error() {
-    echo -e "${RED}❌ $1${NC}"
+    local message="$1"
+    echo -e "${RED}❌ $message${NC}"
     return 0
 }
 
 print_header() {
-    echo -e "${PURPLE}🚀 $1${NC}"
+    local message="$1"
+    echo -e "${PURPLE}🚀 $message${NC}"
     return 0
 }
 
@@ -296,7 +302,6 @@ EOF
 # Perform web crawling operation
 crawl_url() {
     local url="$1"
-    local format="${2:-markdown}"
     local output_file="$3"
 
     if [[ -z "$url" ]]; then

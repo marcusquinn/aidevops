@@ -73,8 +73,6 @@ add_returns_to_file() {
                     else
                         # Line has content before brace
                         echo "${line%\}}" >> "$temp_file"
-    return 0
-}
                         echo "    return 0" >> "$temp_file"
                         echo "}" >> "$temp_file"
                     fi

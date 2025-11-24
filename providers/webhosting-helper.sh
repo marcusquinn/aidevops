@@ -23,25 +23,35 @@ GIT_DIR="$HOME/Git"
 # CONFIG_FILE="../configs/webhosting-config.json"  # Reserved for future use
 
 print_header() {
+    local message="$1"
     echo -e "${PURPLE}================================${NC}"
-    echo -e "${PURPLE}$1${NC}"
+    echo -e "${PURPLE}$message${NC}"
     echo -e "${PURPLE}================================${NC}"
+    return 0
 }
 
 print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    local message="$1"
+    echo -e "${BLUE}[INFO]${NC} $message"
+    return 0
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    local message="$1"
+    echo -e "${GREEN}[SUCCESS]${NC} $message"
+    return 0
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    local message="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $message"
+    return 0
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+    local message="$1"
+    echo -e "${RED}[ERROR]${NC} $message" >&2
+    return 0
 }
 
 # Check if LocalWP is available
@@ -93,6 +103,7 @@ detect_webapp_type() {
     else
         echo "unknown:3000"
     fi
+    return 0
 }
 
 # Generate SSL certificate
@@ -115,6 +126,7 @@ generate_ssl_cert() {
         2>/dev/null
     
     print_success "SSL certificate generated for $domain"
+    return 0
 }
 
 # Create nginx configuration for LocalWP router
@@ -206,6 +218,7 @@ EOF
     echo "}" >> "$nginx_conf"
     
     print_success "LocalWP nginx configuration created for $domain"
+    return 0
 }
 
 # Add domain to hosts file
@@ -234,6 +247,7 @@ reload_nginx() {
     else
         print_warning "Nginx router not running - configuration will be loaded when it starts"
     fi
+    return 0
 }
 
 # Setup a new local domain
@@ -340,6 +354,7 @@ list_domains() {
     else
         print_warning "LocalWP not available - cannot list domains"
     fi
+    return 0
 }
 
 # Remove a domain
@@ -416,6 +431,7 @@ show_help() {
     echo "  - OpenSSL for certificate generation"
     echo "  - sudo access for hosts file modification"
     echo ""
+    return 0
 }
 
 # Main script logic
