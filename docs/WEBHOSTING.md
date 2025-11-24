@@ -13,21 +13,25 @@ The Web Hosting Helper provides seamless local domain management for web applica
 ## 📋 Prerequisites
 
 ### Required
+
 - **LocalWP** (recommended) or standalone nginx
 - **OpenSSL** for certificate generation
 - **sudo access** for hosts file modification
 
 ### Optional
+
 - **LocalWP** for WordPress development integration
 
 ## 🛠️ Setup
 
 1. **Copy configuration file**:
+
    ```bash
    cp configs/webhosting-config.json.txt configs/webhosting-config.json
    ```
 
 2. **Make script executable**:
+
    ```bash
    chmod +x providers/webhosting-helper.sh
    ```
@@ -57,6 +61,7 @@ The Web Hosting Helper provides seamless local domain management for web applica
 ```
 
 Output example:
+
 ```
 🌐 https://myapp.local → Port 3000 ✅ Running
 🌐 https://api-server.local → Port 8000 ❌ Not running
@@ -135,6 +140,7 @@ The helper integrates seamlessly with LocalWP's nginx router:
 When setting up a local domain for an AI agent, follow these exact steps:
 
 1. **Run the setup command**:
+
    ```bash
    ./providers/webhosting-helper.sh setup PROJECT_NAME PORT
    ```
@@ -143,6 +149,7 @@ When setting up a local domain for an AI agent, follow these exact steps:
    The setup will create nginx config and SSL certificates, but **CANNOT** automatically add the domain to `/etc/hosts` due to sudo requirements.
 
    **You MUST run this command in a separate terminal session:**
+
    ```bash
    echo "127.0.0.1 PROJECT_NAME.local" | sudo tee -a /etc/hosts
    ```
@@ -150,6 +157,7 @@ When setting up a local domain for an AI agent, follow these exact steps:
    **Replace `PROJECT_NAME` with the actual project name.**
 
 3. **Start the development server**:
+
    ```bash
    cd ~/Git/PROJECT_NAME
    # Use the appropriate command for the framework:
@@ -161,6 +169,7 @@ When setting up a local domain for an AI agent, follow these exact steps:
 
 5. **Handle SSL Certificate Warning**:
    The browser will show this security warning:
+
    ```
    Your connection is not private
    Attackers might be trying to steal your information from PROJECT_NAME.local
@@ -196,13 +205,16 @@ PORT=3000 npm run dev
 ## 🔍 Troubleshooting
 
 ### Domain Not Resolving ("This site can't be reached")
+
 **Cause**: Domain not in hosts file
 **Solution**:
+
 ```bash
 echo "127.0.0.1 PROJECT_NAME.local" | sudo tee -a /etc/hosts
 ```
 
 ### LocalWP Not Found
+
 ```bash
 # Install LocalWP
 open https://localwp.com/
@@ -211,6 +223,7 @@ open https://localwp.com/
 ```
 
 ### Port Already in Use
+
 ```bash
 # Check what's using the port
 lsof -i :3000
@@ -220,6 +233,7 @@ lsof -i :3000
 ```
 
 ### SSL Certificate Issues
+
 ```bash
 # Regenerate certificates
 rm ~/.localhost-setup/certs/myapp.local.*
@@ -227,7 +241,9 @@ rm ~/.localhost-setup/certs/myapp.local.*
 ```
 
 ### Build Errors (Framework-Specific)
+
 For frameworks that require build steps:
+
 ```bash
 # Generate required files first
 cd ~/Git/PROJECT_NAME
@@ -240,6 +256,7 @@ PORT=PORT_NUMBER pnpm dev
 ## 🔄 Workflow Example
 
 1. **Create a new project**:
+
    ```bash
    cd ~/Git
    npx create-next-app@latest myapp
@@ -247,18 +264,21 @@ PORT=PORT_NUMBER pnpm dev
    ```
 
 2. **Setup local domain**:
+
    ```bash
    cd ~/Git/aidevops
    ./providers/webhosting-helper.sh setup myapp
    ```
 
 3. **Start development server**:
+
    ```bash
    cd ~/Git/myapp
    npm run dev
    ```
 
 4. **Access via HTTPS**:
+
    ```
    https://myapp.local
    ```
