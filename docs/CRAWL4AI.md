@@ -12,6 +12,8 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 - **⚡ High Performance**: Parallel crawling, async operations, real-time processing
 - **🔌 AI Integration**: Native MCP support for AI assistants like Claude
 - **📈 Enterprise Features**: Monitoring dashboard, job queues, webhook notifications
+- **🤖 CAPTCHA Solving**: Integrated CapSolver support for automated CAPTCHA bypass
+- **🛡️ Anti-Bot Measures**: Handle Cloudflare, AWS WAF, and other protection systems
 
 ## 🛠️ Quick Start
 
@@ -30,6 +32,9 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 # Setup MCP integration for AI assistants
 ./providers/crawl4ai-helper.sh mcp-setup
 
+# Setup CapSolver for CAPTCHA solving
+./providers/crawl4ai-helper.sh capsolver-setup
+
 # Check status
 ./providers/crawl4ai-helper.sh status
 ```
@@ -42,6 +47,10 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 
 # Extract structured data
 ./providers/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
+
+# Crawl with CAPTCHA solving (requires CapSolver API key)
+export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
+./providers/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
 ```
 
 ## 🐳 Docker Deployment
@@ -94,6 +103,47 @@ Add to your Claude Desktop configuration:
 - **take_screenshot**: Capture webpage screenshots
 - **generate_pdf**: Convert webpages to PDF
 - **execute_javascript**: Run custom JavaScript on pages
+- **solve_captcha**: Solve CAPTCHA challenges using CapSolver
+- **crawl_with_captcha**: Crawl URLs with automatic CAPTCHA solving
+- **check_captcha_balance**: Monitor CapSolver account balance
+
+## 🤖 CapSolver Integration for CAPTCHA Solving
+
+Crawl4AI integrates with CapSolver, the world's leading automated CAPTCHA solving service, to handle anti-bot measures seamlessly.
+
+### Supported CAPTCHA Types
+
+- **reCAPTCHA v2/v3**: Including Enterprise versions with high success rates
+- **Cloudflare Turnstile**: Modern CAPTCHA alternative bypass
+- **Cloudflare Challenge**: 5-second shield and anti-bot protection
+- **AWS WAF**: Web Application Firewall bypass
+- **GeeTest v3/v4**: Popular CAPTCHA system in Asia
+- **Image-to-Text**: Traditional OCR-based CAPTCHAs
+
+### Quick Setup
+
+```bash
+# Setup CapSolver integration
+./providers/crawl4ai-helper.sh capsolver-setup
+
+# Get API key from https://dashboard.capsolver.com/
+export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
+
+# Crawl with CAPTCHA solving
+./providers/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 site_key_here
+```
+
+### Pricing & Performance
+
+- **Cost**: Starting from $0.4/1000 requests
+- **Speed**: Most CAPTCHAs solved in < 10 seconds
+- **Success Rate**: 99.9% accuracy
+- **Package Discounts**: Up to 60% savings available
+
+### Integration Methods
+
+1. **API Integration** (Recommended): Direct Python SDK integration
+2. **Browser Extension**: Automatic detection and solving
 
 ## 📊 Core Capabilities
 

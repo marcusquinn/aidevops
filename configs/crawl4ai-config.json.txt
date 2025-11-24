@@ -23,7 +23,8 @@
       "MISTRAL_API_KEY": "your-mistral-api-key",
       "GEMINI_API_TOKEN": "your-gemini-token",
       "LLM_PROVIDER": "openai/gpt-4o-mini",
-      "LLM_TEMPERATURE": "0.7"
+      "LLM_TEMPERATURE": "0.7",
+      "CAPSOLVER_API_KEY": "CAP-xxxxxxxxxxxxxxxxxxxxx"
     }
   },
   "api": {
@@ -60,7 +61,9 @@
     "hooks_system": true,
     "webhook_notifications": true,
     "job_queue": true,
-    "monitoring_dashboard": true
+    "monitoring_dashboard": true,
+    "captcha_solving": true,
+    "anti_bot_bypass": true
   },
   "extraction_strategies": {
     "css_selector": {
@@ -132,5 +135,49 @@
     "concurrent_requests": 10,
     "memory_threshold": 95.0,
     "cleanup_interval": 300
+  },
+  "captcha_solving": {
+    "provider": "capsolver",
+    "api_key": "CAP-xxxxxxxxxxxxxxxxxxxxx",
+    "base_url": "https://api.capsolver.com",
+    "supported_types": [
+      "ReCaptchaV2TaskProxyLess",
+      "ReCaptchaV3TaskProxyLess",
+      "ReCaptchaV2EnterpriseTaskProxyLess",
+      "ReCaptchaV3EnterpriseTaskProxyLess",
+      "AntiTurnstileTaskProxyLess",
+      "AntiCloudflareTask",
+      "AntiAwsWafTaskProxyLess",
+      "GeeTestTaskProxyLess",
+      "GeeTestV4TaskProxyLess",
+      "ImageToTextTask"
+    ],
+    "pricing": {
+      "recaptcha_v2": "$0.5/1000",
+      "recaptcha_v3": "$0.5/1000",
+      "recaptcha_v2_enterprise": "$1/1000",
+      "recaptcha_v3_enterprise": "$3/1000",
+      "cloudflare_turnstile": "$3/1000",
+      "geetest": "$0.5/1000",
+      "image_to_text": "$0.4/1000"
+    },
+    "integration_methods": {
+      "api": {
+        "enabled": true,
+        "sdk": "pip install capsolver",
+        "recommended": true
+      },
+      "browser_extension": {
+        "enabled": true,
+        "url": "https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod",
+        "automatic_solving": true
+      }
+    },
+    "features": {
+      "automatic_detection": true,
+      "retry_on_failure": true,
+      "balance_monitoring": true,
+      "success_rate_tracking": true
+    }
   }
 }

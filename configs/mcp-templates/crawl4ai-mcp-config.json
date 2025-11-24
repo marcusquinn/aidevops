@@ -22,7 +22,9 @@
         "javascript_execution",
         "adaptive_crawling",
         "virtual_scroll",
-        "batch_processing"
+        "batch_processing",
+        "captcha_solving",
+        "anti_bot_bypass"
       ],
       "tools": [
         {
@@ -205,6 +207,71 @@
               "default": "load"
             }
           }
+        },
+        {
+          "name": "solve_captcha",
+          "description": "Solve CAPTCHA challenges using CapSolver integration",
+          "parameters": {
+            "url": {
+              "type": "string",
+              "description": "The URL containing the CAPTCHA",
+              "required": true
+            },
+            "captcha_type": {
+              "type": "string",
+              "description": "Type of CAPTCHA to solve",
+              "enum": ["recaptcha_v2", "recaptcha_v3", "turnstile", "aws_waf", "geetest", "image_to_text"],
+              "required": true
+            },
+            "site_key": {
+              "type": "string",
+              "description": "Site key for the CAPTCHA (required for reCAPTCHA and Turnstile)"
+            },
+            "page_action": {
+              "type": "string",
+              "description": "Page action for reCAPTCHA v3",
+              "default": "submit"
+            },
+            "auto_submit": {
+              "type": "boolean",
+              "description": "Automatically submit form after solving CAPTCHA",
+              "default": false
+            }
+          }
+        },
+        {
+          "name": "crawl_with_captcha",
+          "description": "Crawl a URL with automatic CAPTCHA solving",
+          "parameters": {
+            "url": {
+              "type": "string",
+              "description": "The URL to crawl",
+              "required": true
+            },
+            "captcha_config": {
+              "type": "object",
+              "description": "CAPTCHA solving configuration",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["recaptcha_v2", "recaptcha_v3", "turnstile", "aws_waf"]
+                },
+                "site_key": {"type": "string"},
+                "page_action": {"type": "string", "default": "submit"}
+              }
+            },
+            "format": {
+              "type": "string",
+              "description": "Output format",
+              "enum": ["markdown", "html", "text", "json"],
+              "default": "markdown"
+            }
+          }
+        },
+        {
+          "name": "check_captcha_balance",
+          "description": "Check CapSolver account balance and usage statistics",
+          "parameters": {}
         }
       ]
     }
