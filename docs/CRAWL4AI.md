@@ -432,17 +432,20 @@ async with AsyncWebCrawler(config=browser_config) as crawler:
 ### Common Issues
 
 1. **Container won't start**: Check Docker memory allocation
+
    ```bash
    docker run --shm-size=1g unclecode/crawl4ai:latest
    ```
 
 2. **API not responding**: Verify container status and port mapping
+
    ```bash
    docker ps | grep crawl4ai
    curl http://localhost:11235/health
    ```
 
 3. **Extraction failing**: Validate CSS selectors or LLM configuration
+
    ```bash
    # Test in playground
    open http://localhost:11235/playground

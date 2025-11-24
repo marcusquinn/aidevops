@@ -34,6 +34,7 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 ### Docker Deployment
 
 The Docker deployment includes:
+
 - **Real-time Monitoring Dashboard**: http://localhost:11235/dashboard
 - **Interactive Playground**: http://localhost:11235/playground
 - **REST API**: http://localhost:11235

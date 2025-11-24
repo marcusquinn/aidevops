@@ -68,6 +68,7 @@ This guide provides AI assistants with comprehensive instructions for using Craw
 ### For Claude Desktop
 
 1. **Setup MCP Configuration**:
+
    ```json
    {
      "mcpServers": {
