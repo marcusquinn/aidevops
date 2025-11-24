@@ -15,16 +15,19 @@ CapSolver is the world's leading automated CAPTCHA solving service that integrat
 ## 🎯 Supported CAPTCHA Types
 
 ### **reCAPTCHA Family**
+
 - **reCAPTCHA v2**: Checkbox "I'm not a robot" - $0.5/1000 requests, < 9s
 - **reCAPTCHA v3**: Invisible scoring system - $0.5/1000 requests, < 3s  
 - **reCAPTCHA v2 Enterprise**: Enterprise version - $1/1000 requests, < 9s
 - **reCAPTCHA v3 Enterprise**: Enterprise with ≥0.9 score - $3/1000 requests, < 3s
 
 ### **Cloudflare Protection**
+
 - **Cloudflare Turnstile**: Modern CAPTCHA alternative - $3/1000 requests, < 3s
 - **Cloudflare Challenge**: 5-second shield bypass - Contact for pricing, < 10s
 
 ### **Other Popular Types**
+
 - **AWS WAF**: Web Application Firewall - Contact for pricing, < 5s
 - **GeeTest v3/v4**: Popular in Asia - $0.5/1000 requests, < 5s
 - **Image-to-Text OCR**: Traditional image CAPTCHAs - $0.4/1000 requests, < 1s
@@ -243,17 +246,20 @@ docker logs crawl4ai --tail 20
 ## 📚 Resources
 
 ### **Official Documentation**
+
 - **CapSolver Docs**: https://docs.capsolver.com/
 - **Crawl4AI Partnership**: https://www.capsolver.com/blog/Partners/crawl4ai-capsolver/
 - **API Reference**: https://docs.capsolver.com/guide/api-how-to-use/
 
 ### **Framework Integration**
+
 - **Helper Script**: `providers/crawl4ai-helper.sh`
 - **Configuration**: `configs/capsolver-config.json`
 - **Examples**: `configs/capsolver-example.py`
 - **MCP Tools**: `configs/mcp-templates/crawl4ai-mcp-config.json`
 
 ### **Support Channels**
+
 - **CapSolver Support**: https://dashboard.capsolver.com/
 - **Discord Community**: Available through CapSolver dashboard
 - **Framework Issues**: GitHub repository issues
@@ -261,21 +267,25 @@ docker logs crawl4ai --tail 20
 ## 🎯 Use Cases
 
 ### **E-commerce Data Collection**
+
 - Product information scraping with anti-bot bypass
 - Price monitoring across protected sites
 - Inventory tracking with CAPTCHA handling
 
 ### **Market Research**
+
 - News aggregation from protected sources
 - Social media data collection
 - Competitor analysis with stealth crawling
 
 ### **Academic Research**
+
 - Large-scale data collection for research
 - Academic paper aggregation
 - Citation network analysis
 
 ### **SEO & Marketing**
+
 - Content analysis across protected sites
 - Backlink research with CAPTCHA bypass
 - SERP data collection

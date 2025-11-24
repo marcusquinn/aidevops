@@ -17,6 +17,7 @@
 - **Changelog**: https://github.com/unclecode/crawl4ai/blob/main/CHANGELOG.md
 
 ### CapSolver Integration
+
 - **CapSolver Homepage**: https://www.capsolver.com/
 - **CapSolver Dashboard**: https://dashboard.capsolver.com/dashboard/overview
 - **CapSolver Documentation**: https://docs.capsolver.com/
