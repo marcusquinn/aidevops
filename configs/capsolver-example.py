@@ -8,7 +8,7 @@ import asyncio
 import capsolver
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
-# TODO: Set your CapSolver API key
+# IMPORTANT: Replace with your actual CapSolver API key
 # Get your API key from: https://dashboard.capsolver.com/dashboard/overview
 CAPSOLVER_API_KEY = "CAP-xxxxxxxxxxxxxxxxxxxxx"
 capsolver.api_key = CAPSOLVER_API_KEY
@@ -129,10 +129,14 @@ async def main():
         # Example 1: reCAPTCHA v2
         print("\n📋 Example 1: reCAPTCHA v2")
         result1 = await solve_recaptcha_v2_example()
+        if result1:
+            print(f"✅ reCAPTCHA v2 result: {len(result1)} characters extracted")
 
         # Example 2: Cloudflare Turnstile
         print("\n📋 Example 2: Cloudflare Turnstile")
         result2 = await solve_cloudflare_turnstile_example()
+        if result2:
+            print(f"✅ Turnstile result: {len(result2)} characters extracted")
 
         print("\n✅ All examples completed successfully!")
 
