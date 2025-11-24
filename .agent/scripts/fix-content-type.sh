@@ -26,8 +26,9 @@ fix_content_type_in_file() {
     local file="$1"
     local count
     count=$(grep -c "Content-Type: application/json" "$file" 2>/dev/null || echo "0")
+    count=${count//[^0-9]/}
     
-    if [[ $count -ge 3 ]]; then
+    if [[ $count -ge 2 ]]; then
         print_info "Fixing $count occurrences in: $file"
         
         # Add constant if not present
@@ -54,8 +55,10 @@ readonly CONTENT_TYPE_JSON="Content-Type: application/json"
         # Verify
         local new_count
         new_count=$(grep -c "Content-Type: application/json" "$file" 2>/dev/null || echo "0")
+        new_count=${new_count//[^0-9]/}
         local const_count
         const_count=$(grep -c "CONTENT_TYPE_JSON" "$file" 2>/dev/null || echo "0")
+        const_count=${const_count//[^0-9]/}
         
         if [[ $new_count -eq 0 && $const_count -gt 0 ]]; then
             print_success "Fixed $file: $count → 0 literals, $const_count constant usages"
@@ -65,7 +68,7 @@ readonly CONTENT_TYPE_JSON="Content-Type: application/json"
             return 1
         fi
     else
-        print_info "Skipping $file: only $count occurrences (need 3+)"
+        print_info "Skipping $file: only $count occurrences (need 2+)"
         return 1
     fi
 }

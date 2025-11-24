@@ -38,27 +38,32 @@ readonly OUTPUT_DIR="$HOME/.agent/tmp/crawl4ai-examples"
 
 # Print functions
 print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    local message="$1"
+    echo -e "${GREEN}✅ $message${NC}"
     return 0
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
+    local message="$1"
+    echo -e "${BLUE}ℹ️  $message${NC}"
     return 0
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    local message="$1"
+    echo -e "${YELLOW}⚠️  $message${NC}"
     return 0
 }
 
 print_error() {
-    echo -e "${RED}❌ $1${NC}"
+    local message="$1"
+    echo -e "${RED}❌ $message${NC}"
     return 0
 }
 
 print_header() {
-    echo -e "${PURPLE}🚀 $1${NC}"
+    local message="$1"
+    echo -e "${PURPLE}🚀 $message${NC}"
     return 0
 }
 
@@ -306,8 +311,9 @@ example_captcha_demo() {
 
 # Show help
 show_help() {
+    local script_name="$0"
     echo "Crawl4AI Examples Script"
-    echo "Usage: $0 [example]"
+    echo "Usage: $script_name [example]"
     echo ""
     echo "Examples:"
     echo "  basic-crawl      - Basic web crawling example"
