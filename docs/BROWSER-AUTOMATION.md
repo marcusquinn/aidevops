@@ -418,6 +418,7 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand-both
 ```
 
 **Key Features**:
+
 - **Natural Language Actions**: `await stagehand.act("click the login button")`
 - **Structured Data Extraction**: Extract data with Zod (JS) or Pydantic (Python) schemas
 - **Self-Healing Automation**: Adapts when websites change
@@ -426,6 +427,7 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand-both
 - **Multi-Language Support**: Choose JavaScript or Python based on your needs
 
 **Perfect for**:
+
 - E-commerce automation and price monitoring
 - Social media analytics and engagement
 - User journey testing and QA
