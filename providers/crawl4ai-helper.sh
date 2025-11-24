@@ -36,6 +36,9 @@ readonly RED='\033[0;31m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
+# Common constants
+readonly CONTENT_TYPE_JSON=$CONTENT_TYPE_JSON
+
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
@@ -644,7 +647,7 @@ EOF
     print_info "Sending crawl request..."
     local response
     if response=$(curl -s -X POST "$api_url" \
-        -H "Content-Type: application/json" \
+        -H $CONTENT_TYPE_JSON \
         -d "$payload"); then
 
         if [[ -n "$output_file" ]]; then
@@ -712,7 +715,7 @@ EOF
     print_info "Sending extraction request..."
     local response
     if response=$(curl -s -X POST "$api_url" \
-        -H "Content-Type: application/json" \
+        -H $CONTENT_TYPE_JSON \
         -d "$payload"); then
 
         if [[ -n "$output_file" ]]; then
