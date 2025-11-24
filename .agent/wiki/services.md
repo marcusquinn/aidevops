@@ -275,6 +275,17 @@
 - **Config**: `mcp-servers-config.json`
 - **Docs**: `docs/MCP-SERVERS.md`
 
+### **Crawl4AI**
+
+- **Type**: AI-powered web crawler and scraper for LLM-friendly data extraction
+- **Strengths**: LLM-ready output, structured extraction, advanced browser control, high performance
+- **API**: Comprehensive REST API with job queue and webhook support
+- **MCP**: Native MCP server integration for AI assistants
+- **Use Cases**: Web scraping, content research, data extraction, RAG pipelines
+- **Helper**: `crawl4ai-helper.sh`
+- **Config**: `crawl4ai-config.json`
+- **Docs**: `docs/CRAWL4AI.md`
+
 ## 🧙‍♂️ **Setup & Configuration (1 Service)**
 
 ### **Intelligent Setup Wizard**

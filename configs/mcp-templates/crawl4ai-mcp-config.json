@@ -1,0 +1,212 @@
+{
+  "mcpServers": {
+    "crawl4ai": {
+      "command": "npx",
+      "args": [
+        "crawl4ai-mcp-server@latest"
+      ],
+      "env": {
+        "CRAWL4AI_API_URL": "http://localhost:11235",
+        "CRAWL4AI_TIMEOUT": "60",
+        "CRAWL4AI_MAX_PAGES": "50",
+        "CRAWL4AI_DEFAULT_FORMAT": "markdown"
+      },
+      "description": "Crawl4AI MCP server for AI-powered web crawling and data extraction",
+      "capabilities": [
+        "web_crawling",
+        "markdown_generation",
+        "structured_extraction", 
+        "llm_extraction",
+        "screenshot_capture",
+        "pdf_generation",
+        "javascript_execution",
+        "adaptive_crawling",
+        "virtual_scroll",
+        "batch_processing"
+      ],
+      "tools": [
+        {
+          "name": "crawl_url",
+          "description": "Crawl a single URL and extract content as markdown, HTML, or structured data",
+          "parameters": {
+            "url": {
+              "type": "string",
+              "description": "The URL to crawl",
+              "required": true
+            },
+            "format": {
+              "type": "string", 
+              "description": "Output format: markdown, html, text, or json",
+              "enum": ["markdown", "html", "text", "json"],
+              "default": "markdown"
+            },
+            "extraction_strategy": {
+              "type": "object",
+              "description": "Optional extraction strategy configuration",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["css", "llm", "cosine"]
+                },
+                "schema": {
+                  "type": "object",
+                  "description": "Extraction schema for structured data"
+                }
+              }
+            },
+            "browser_config": {
+              "type": "object",
+              "description": "Browser configuration options",
+              "properties": {
+                "headless": {"type": "boolean", "default": true},
+                "viewport": {
+                  "type": "object",
+                  "properties": {
+                    "width": {"type": "number", "default": 1920},
+                    "height": {"type": "number", "default": 1080}
+                  }
+                },
+                "timeout": {"type": "number", "default": 30000}
+              }
+            }
+          }
+        },
+        {
+          "name": "crawl_multiple",
+          "description": "Crawl multiple URLs in batch and return results",
+          "parameters": {
+            "urls": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Array of URLs to crawl",
+              "required": true
+            },
+            "format": {
+              "type": "string",
+              "description": "Output format for all URLs",
+              "enum": ["markdown", "html", "text", "json"],
+              "default": "markdown"
+            },
+            "concurrent": {
+              "type": "number",
+              "description": "Number of concurrent crawls",
+              "default": 3,
+              "minimum": 1,
+              "maximum": 10
+            }
+          }
+        },
+        {
+          "name": "extract_structured",
+          "description": "Extract structured data from a webpage using CSS selectors or LLM",
+          "parameters": {
+            "url": {
+              "type": "string", 
+              "description": "The URL to extract data from",
+              "required": true
+            },
+            "schema": {
+              "type": "object",
+              "description": "Extraction schema defining what data to extract",
+              "required": true
+            },
+            "strategy": {
+              "type": "string",
+              "description": "Extraction strategy to use",
+              "enum": ["css", "llm", "cosine"],
+              "default": "css"
+            },
+            "llm_config": {
+              "type": "object",
+              "description": "LLM configuration for LLM-based extraction",
+              "properties": {
+                "provider": {"type": "string", "default": "openai/gpt-4o-mini"},
+                "temperature": {"type": "number", "default": 0.7}
+              }
+            }
+          }
+        },
+        {
+          "name": "take_screenshot",
+          "description": "Take a screenshot of a webpage",
+          "parameters": {
+            "url": {
+              "type": "string",
+              "description": "The URL to screenshot",
+              "required": true
+            },
+            "viewport": {
+              "type": "object",
+              "description": "Viewport settings for screenshot",
+              "properties": {
+                "width": {"type": "number", "default": 1920},
+                "height": {"type": "number", "default": 1080}
+              }
+            },
+            "full_page": {
+              "type": "boolean",
+              "description": "Capture full page or just viewport",
+              "default": false
+            },
+            "format": {
+              "type": "string",
+              "description": "Image format",
+              "enum": ["png", "jpeg", "webp"],
+              "default": "png"
+            }
+          }
+        },
+        {
+          "name": "generate_pdf",
+          "description": "Generate a PDF from a webpage",
+          "parameters": {
+            "url": {
+              "type": "string",
+              "description": "The URL to convert to PDF",
+              "required": true
+            },
+            "options": {
+              "type": "object",
+              "description": "PDF generation options",
+              "properties": {
+                "format": {"type": "string", "enum": ["A4", "Letter"], "default": "A4"},
+                "margin": {
+                  "type": "object",
+                  "properties": {
+                    "top": {"type": "string", "default": "1cm"},
+                    "bottom": {"type": "string", "default": "1cm"},
+                    "left": {"type": "string", "default": "1cm"},
+                    "right": {"type": "string", "default": "1cm"}
+                  }
+                },
+                "print_background": {"type": "boolean", "default": true}
+              }
+            }
+          }
+        },
+        {
+          "name": "execute_javascript",
+          "description": "Execute JavaScript on a webpage and return results",
+          "parameters": {
+            "url": {
+              "type": "string",
+              "description": "The URL to execute JavaScript on",
+              "required": true
+            },
+            "script": {
+              "type": "string",
+              "description": "JavaScript code to execute",
+              "required": true
+            },
+            "wait_for": {
+              "type": "string",
+              "description": "Wait condition before executing script",
+              "enum": ["load", "domcontentloaded", "networkidle"],
+              "default": "load"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

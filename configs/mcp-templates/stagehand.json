@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "stagehand": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const { Stagehand } = require('@browserbasehq/stagehand'); console.log('Stagehand AI Browser Automation Ready');"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false"
+      }
+    }
+  }
+}

@@ -55,6 +55,10 @@ This guide outlines proven best practices for infrastructure management and help
 - **[Context7 MCP](CONTEXT7-MCP-SETUP.md)** - Real-time documentation access for AI assistants
 - **[MCP Servers](MCP-SERVERS.md)** - Model Context Protocol server configuration
 
+### **🕷️ Web Crawling & Data Extraction**
+
+- **[Crawl4AI](CRAWL4AI.md)** - AI-powered web crawler and scraper with LLM-friendly output
+
 ## 🎯 **Provider Selection Guide**
 
 ### **For Web Hosting:**
