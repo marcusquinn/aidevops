@@ -40,6 +40,9 @@ readonly SUCCESS_ENV_UPDATED="Environment variables updated successfully"
 readonly SUCCESS_DOMAIN_ADDED="Domain added successfully"
 # Removed unused success constant to fix ShellCheck SC2034 warning
 
+# JQ Expressions
+readonly JQ_TEAM_ID_EXPR='.team_id // empty'
+
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
 # ------------------------------------------------------------------------------
@@ -148,7 +151,7 @@ list_projects() {
         fi
         
         local team_id
-        team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+        team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
         
         if [[ -n "$team_id" ]]; then
             vercel list --scope "$team_id"
@@ -178,7 +181,7 @@ list_env_vars() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     local env_args=()
     if [[ -n "$team_id" ]]; then
@@ -204,7 +207,7 @@ add_env_var() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     local env_args=()
     if [[ -n "$team_id" ]]; then
@@ -234,7 +237,7 @@ remove_env_var() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     local env_args=()
     if [[ -n "$team_id" ]]; then
@@ -265,7 +268,7 @@ list_domains() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     if [[ -n "$team_id" ]]; then
         vercel domains ls --scope "$team_id"
@@ -288,7 +291,7 @@ add_domain() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     local domain_args=()
     if [[ -n "$team_id" ]]; then
@@ -531,7 +534,7 @@ get_project_info() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     local inspect_args=()
     if [[ -n "$team_id" ]]; then
@@ -555,7 +558,7 @@ list_deployments() {
     fi
 
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
 
     local list_args=()
     if [[ -n "$team_id" ]]; then
@@ -783,8 +786,8 @@ deploy_project() {
     fi
     
     local team_id
-    team_id=$(echo "$account_config" | jq -r '.team_id // empty')
-    
+    team_id=$(echo "$account_config" | jq -r "$JQ_TEAM_ID_EXPR")
+
     local deploy_args=()
     
     if [[ -n "$team_id" ]]; then

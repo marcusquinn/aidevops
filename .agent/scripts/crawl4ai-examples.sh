@@ -35,6 +35,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly FRAMEWORK_ROOT="$SCRIPT_DIR/../.."
 readonly CRAWL4AI_HELPER="$FRAMEWORK_ROOT/providers/crawl4ai-helper.sh"
 readonly OUTPUT_DIR="$HOME/.agent/tmp/crawl4ai-examples"
+readonly TEST_URL_HTML="https://httpbin.org/html"
 
 # Print functions
 print_success() {
@@ -101,9 +102,9 @@ check_crawl4ai() {
 example_basic_crawl() {
     print_header "Example 1: Basic Web Crawling"
     
-    local url="https://httpbin.org/html"
+    local url="$TEST_URL_HTML"
     local output_file="$OUTPUT_DIR/basic-crawl.json"
-    
+
     print_info "Crawling: $url"
     if "$CRAWL4AI_HELPER" crawl "$url" markdown "$output_file"; then
         print_success "Basic crawl completed"
@@ -130,10 +131,10 @@ example_basic_crawl() {
 example_structured_extraction() {
     print_header "Example 2: Structured Data Extraction"
     
-    local url="https://httpbin.org/html"
+    local url="$TEST_URL_HTML"
     local schema='{"title": "h1", "content": "p", "links": {"selector": "a", "type": "attribute", "attribute": "href"}}'
     local output_file="$OUTPUT_DIR/structured-extraction.json"
-    
+
     print_info "Extracting structured data from: $url"
     print_info "Schema: $schema"
     
@@ -163,7 +164,7 @@ example_batch_processing() {
     print_header "Example 3: Batch Processing Multiple URLs"
     
     local urls=(
-        "https://httpbin.org/html"
+        "$TEST_URL_HTML"
         "https://httpbin.org/json"
         "https://httpbin.org/xml"
     )
@@ -193,7 +194,7 @@ example_batch_processing() {
 example_content_analysis() {
     print_header "Example 4: Complete Content Analysis Workflow"
     
-    local url="https://httpbin.org/html"
+    local url="$TEST_URL_HTML"
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
     
