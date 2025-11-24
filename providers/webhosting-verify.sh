@@ -21,25 +21,35 @@ NGINX_CONF_DIR="/Users/$(whoami)/Library/Application Support/Local/run/router/ng
 GIT_DIR="$HOME/Git"
 
 print_header() {
+    local message="$1"
     echo -e "${PURPLE}================================${NC}"
-    echo -e "${PURPLE}$1${NC}"
+    echo -e "${PURPLE}$message${NC}"
     echo -e "${PURPLE}================================${NC}"
+    return 0
 }
 
 print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    local message="$1"
+    echo -e "${BLUE}[INFO]${NC} $message"
+    return 0
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    local message="$1"
+    echo -e "${GREEN}[SUCCESS]${NC} $message"
+    return 0
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    local message="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $message"
+    return 0
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+    local message="$1"
+    echo -e "${RED}[ERROR]${NC} $message" >&2
+    return 0
 }
 
 # Verify domain setup
@@ -198,6 +208,7 @@ show_help() {
     echo "  $0 verify myapp"
     echo "  $0 verify turbostarter-source"
     echo ""
+    return 0
 }
 
 # Main script logic
