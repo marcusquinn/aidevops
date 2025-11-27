@@ -1,0 +1,172 @@
+{
+  "mcpServers": {
+    "snyk": {
+      "command": "snyk",
+      "args": ["mcp"],
+      "env": {
+        "SNYK_TOKEN": "${SNYK_TOKEN}",
+        "SNYK_ORG": "${SNYK_ORG}"
+      },
+      "description": "Snyk Security Scanner MCP - Provides vulnerability scanning for dependencies, code, containers, and IaC",
+      "tools": {
+        "snyk_sca_scan": {
+          "description": "Scan open source dependencies for vulnerabilities",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to project directory"
+              },
+              "severity_threshold": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+                "description": "Minimum severity to report"
+              }
+            }
+          }
+        },
+        "snyk_code_scan": {
+          "description": "Scan source code for security vulnerabilities (SAST)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to source code directory"
+              }
+            }
+          }
+        },
+        "snyk_iac_scan": {
+          "description": "Scan Infrastructure as Code for misconfigurations",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to IaC files (Terraform, CloudFormation, Kubernetes)"
+              }
+            }
+          }
+        },
+        "snyk_container_scan": {
+          "description": "Scan container images for vulnerabilities",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "image": {
+                "type": "string",
+                "description": "Container image to scan (e.g., nginx:latest)"
+              },
+              "dockerfile": {
+                "type": "string",
+                "description": "Path to Dockerfile for better recommendations"
+              }
+            },
+            "required": ["image"]
+          }
+        },
+        "snyk_sbom_scan": {
+          "description": "Scan SBOM file for vulnerabilities",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to SBOM file"
+              }
+            },
+            "required": ["path"]
+          }
+        },
+        "snyk_aibom": {
+          "description": "Create AI Bill of Materials",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to project"
+              }
+            }
+          }
+        },
+        "snyk_trust": {
+          "description": "Trust a folder for scanning operations",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to folder to trust"
+              }
+            },
+            "required": ["path"]
+          }
+        },
+        "snyk_auth": {
+          "description": "Authenticate with Snyk",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "snyk_logout": {
+          "description": "Logout from Snyk",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "snyk_version": {
+          "description": "Get Snyk CLI version",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    }
+  },
+  "setup_instructions": {
+    "prerequisites": [
+      "Snyk CLI installed (brew tap snyk/tap && brew install snyk-cli)",
+      "Snyk account (https://app.snyk.io)",
+      "API token from https://app.snyk.io/account"
+    ],
+    "environment_variables": {
+      "SNYK_TOKEN": "Your Snyk API token",
+      "SNYK_ORG": "Your Snyk organization ID (optional)"
+    },
+    "authentication": [
+      "Option 1: Set SNYK_TOKEN environment variable",
+      "Option 2: Run 'snyk auth' for OAuth authentication",
+      "Option 3: Run 'snyk config set api=<token>'"
+    ],
+    "verification": [
+      "snyk auth check",
+      "snyk test --help"
+    ]
+  },
+  "regional_configurations": {
+    "us": {
+      "api_url": "https://api.snyk.io",
+      "app_url": "https://app.snyk.io"
+    },
+    "eu": {
+      "api_url": "https://api.eu.snyk.io",
+      "app_url": "https://app.eu.snyk.io",
+      "env_override": {
+        "SNYK_API": "https://api.eu.snyk.io"
+      }
+    },
+    "au": {
+      "api_url": "https://api.au.snyk.io",
+      "app_url": "https://app.au.snyk.io",
+      "env_override": {
+        "SNYK_API": "https://api.au.snyk.io"
+      }
+    }
+  }
+}
