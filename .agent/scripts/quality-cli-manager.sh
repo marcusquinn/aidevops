@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Quality CLI Manager Script
-# Unified management for CodeRabbit, Codacy, and SonarScanner CLIs
+# Unified management for CodeRabbit, Codacy, SonarScanner, and Snyk CLIs
 #
 # Usage: ./quality-cli-manager.sh [command] [cli] [options]
 # Commands:
@@ -15,10 +15,11 @@
 #   coderabbit  - CodeRabbit CLI for AI-powered code review
 #   codacy      - Codacy CLI v2 for comprehensive code analysis
 #   sonar       - SonarScanner CLI for SonarQube Cloud analysis
+#   snyk        - Snyk CLI for security vulnerability scanning
 #   all         - All quality CLIs (default)
 #
 # Author: AI DevOps Framework
-# Version: 1.1.1
+# Version: 1.2.0
 # License: MIT
 
 # Colors for output
@@ -33,9 +34,11 @@ readonly NC='\033[0m' # No Color
 readonly CODERABBIT_SCRIPT=".agent/scripts/coderabbit-cli.sh"
 readonly CODACY_SCRIPT=".agent/scripts/codacy-cli.sh"
 readonly SONAR_SCRIPT=".agent/scripts/sonarscanner-cli.sh"
+readonly SNYK_SCRIPT="providers/snyk-helper.sh"
 
 # CLI Names
 readonly CLI_CODERABBIT="coderabbit"
+readonly CLI_SNYK="snyk"
 
 # Print functions
 print_success() {
@@ -90,6 +93,10 @@ execute_cli_command() {
         "sonar")
             script="$SONAR_SCRIPT"
             cli_name="SonarScanner CLI"
+            ;;
+        "$CLI_SNYK")
+            script="$SNYK_SCRIPT"
+            cli_name="Snyk CLI"
             ;;
         *)
             print_error "Unknown CLI: $cli"
@@ -146,6 +153,15 @@ install_clis() {
     if [[ "$target_cli" == "all" || "$target_cli" == "qlty" ]]; then
         print_info "Installing Qlty CLI..."
         if execute_cli_command "qlty" "install"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
+        print_info "Installing Snyk CLI..."
+        if execute_cli_command "$CLI_SNYK" "install"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -211,6 +227,15 @@ init_clis() {
     if [[ "$target_cli" == "all" || "$target_cli" == "qlty" ]]; then
         print_info "Initializing Qlty CLI..."
         if execute_cli_command "qlty" "init"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
+        print_info "Initializing Snyk CLI..."
+        if execute_cli_command "$CLI_SNYK" "auth"; then
             ((success_count++))
         fi
         ((total_count++))
@@ -290,6 +315,43 @@ analyze_with_clis() {
         echo ""
     fi
 
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
+        print_info "Running Snyk security analysis..."
+        if execute_cli_command "$CLI_SNYK" "full" "$args"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
+    # Add Snyk-specific scan options
+    if [[ "$target_cli" == "snyk-sca" ]]; then
+        print_info "Running Snyk SCA (dependency) scan..."
+        if execute_cli_command "$CLI_SNYK" "test" "$args"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
+    if [[ "$target_cli" == "snyk-code" ]]; then
+        print_info "Running Snyk Code (SAST) scan..."
+        if execute_cli_command "$CLI_SNYK" "code" "$args"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
+    if [[ "$target_cli" == "snyk-iac" ]]; then
+        print_info "Running Snyk IaC scan..."
+        if execute_cli_command "$CLI_SNYK" "iac" "$args"; then
+            ((success_count++))
+        fi
+        ((total_count++))
+        echo ""
+    fi
+
     print_info "Analysis Summary: $success_count/$total_count analyses completed successfully"
 
     if [[ $success_count -eq $total_count ]]; then
@@ -340,6 +402,21 @@ show_cli_status() {
         echo ""
     fi
 
+    if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
+        print_info "Snyk CLI Status:"
+        if command -v snyk &> /dev/null; then
+            echo "✅ Snyk CLI installed: $(snyk --version 2>/dev/null || echo 'version unknown')"
+            if [[ -n "${SNYK_TOKEN:-}" ]] || snyk config get api &>/dev/null 2>&1; then
+                echo "✅ Snyk authenticated"
+            else
+                echo "⚠️  Snyk not authenticated (run 'snyk auth' or set SNYK_TOKEN)"
+            fi
+        else
+            echo "❌ Snyk CLI not installed"
+        fi
+        echo ""
+    fi
+
     return 0
 }
 
@@ -361,6 +438,10 @@ show_help() {
     echo "  codacy               - Codacy CLI v2 for comprehensive code analysis"
     echo "  codacy-fix           - Codacy CLI with auto-fix (applies fixes when available)"
     echo "  sonar                - SonarScanner CLI for SonarQube Cloud analysis"
+    echo "  snyk                 - Snyk CLI for security vulnerability scanning"
+    echo "  snyk-sca             - Snyk dependency vulnerability scan only"
+    echo "  snyk-code            - Snyk source code scan (SAST) only"
+    echo "  snyk-iac             - Snyk Infrastructure as Code scan only"
     echo "  qlty                 - Qlty CLI for universal linting and auto-formatting"
     echo "  linters              - Linter Manager for CodeFactor-inspired multi-language linters"
     echo "  all                  - All quality CLIs (default)"
@@ -371,9 +452,12 @@ show_help() {
     echo "  $0 analyze coderabbit"
     echo "  $0 analyze codacy-fix      # Auto-fix issues when possible"
     echo "  $0 analyze qlty            # Universal linting and formatting"
+    echo "  $0 analyze snyk            # Full Snyk security scan (SCA + SAST + IaC)"
+    echo "  $0 analyze snyk-code       # Snyk source code scan only"
     echo "  $0 install linters         # Install CodeFactor-inspired linters"
     echo "  $0 analyze all"
     echo "  $0 status sonar"
+    echo "  $0 status snyk"
     echo ""
     echo "Environment Variables:"
     echo "  CodeRabbit:"
@@ -390,6 +474,10 @@ show_help() {
     echo "    SONAR_TOKEN          - SonarCloud authentication token"
     echo "    SONAR_ORGANIZATION   - SonarCloud organization key"
     echo "    SONAR_PROJECT_KEY    - Project key"
+    echo ""
+    echo "  Snyk:"
+    echo "    SNYK_TOKEN           - Snyk API token"
+    echo "    SNYK_ORG             - Snyk organization ID"
     echo ""
     echo "This script provides unified management for all quality analysis CLIs"
     echo "in the AI DevOps Framework."

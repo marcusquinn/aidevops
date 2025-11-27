@@ -1,0 +1,77 @@
+{
+  "organizations": {
+    "default": {
+      "org_id": "YOUR_SNYK_ORG_ID_HERE",
+      "api_token": "YOUR_SNYK_API_TOKEN_HERE",
+      "description": "Default Snyk organization"
+    },
+    "enterprise": {
+      "org_id": "YOUR_ENTERPRISE_ORG_ID_HERE",
+      "api_token": "YOUR_ENTERPRISE_API_TOKEN_HERE",
+      "service_account_token": "YOUR_SERVICE_ACCOUNT_TOKEN_HERE",
+      "description": "Enterprise organization with service account"
+    }
+  },
+  "defaults": {
+    "severity_threshold": "high",
+    "fail_on": "all",
+    "monitor_on_success": true,
+    "json_output": false
+  },
+  "scan_types": {
+    "sca": {
+      "enabled": true,
+      "all_projects": true,
+      "detection_depth": 4,
+      "exclude": [
+        "node_modules",
+        "vendor",
+        ".git"
+      ]
+    },
+    "code": {
+      "enabled": true,
+      "sarif": false
+    },
+    "container": {
+      "enabled": true,
+      "exclude_base_image_vulns": false,
+      "platform": "linux/amd64"
+    },
+    "iac": {
+      "enabled": true,
+      "scan_types": [
+        "terraform",
+        "cloudformation",
+        "kubernetes",
+        "arm"
+      ],
+      "custom_rules_path": ""
+    }
+  },
+  "api": {
+    "base_url": "https://api.snyk.io",
+    "version": "2024-06-10",
+    "regional_urls": {
+      "us": "https://api.snyk.io",
+      "eu": "https://api.eu.snyk.io",
+      "au": "https://api.au.snyk.io"
+    }
+  },
+  "ci_cd": {
+    "fail_on_issues": true,
+    "severity_threshold": "high",
+    "project_tags": {
+      "environment": "production",
+      "team": "devops"
+    }
+  },
+  "notifications": {
+    "slack_webhook": "",
+    "email": ""
+  },
+  "mcp": {
+    "enabled": true,
+    "auto_trust_folders": false
+  }
+}

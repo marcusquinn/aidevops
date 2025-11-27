@@ -1,13 +1,19 @@
 {
   "mcpServers": {
     "ahrefs": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "ahrefs-mcp@latest"
+        "/Users/marcusquinn/Git/aidevops/providers/ahrefs-mcp-wrapper.js"
       ],
       "env": {
-        "AHREFS_API_KEY": "your_ahrefs_api_key_here"
+        "API_KEY": "your_ahrefs_api_key_here"
       }
     }
+  },
+  "_comments": {
+    "note": "Uses wrapper to fix JSON Schema issues for OpenAI compatibility",
+    "official_config": "For direct use without wrapper: npx --prefix=~/.global-node-modules @ahrefs/mcp",
+    "api_key": "Get from https://ahrefs.com/api",
+    "version": "Tested with @ahrefs/mcp@0.0.11"
   }
 }

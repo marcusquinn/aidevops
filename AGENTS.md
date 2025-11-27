@@ -2,7 +2,7 @@
 
 **🔒 AUTHORITATIVE SOURCE: This is the single source of truth for all AI assistant instructions. All other AGENTS.md files are minimal templates that reference this file.**
 
-This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 28+ services.
+This repository provides a comprehensive DevOps infrastructure management framework designed specifically for AI agent automation across 29+ services.
 
 ## ⚠️ **CRITICAL: Consistency Requirements**
 
@@ -65,6 +65,7 @@ When using this framework, AI assistants have access to:
 - **CodeRabbit**: [https://status.coderabbit.ai/](https://status.coderabbit.ai/)
 - **MainWP**: [https://status.mainwp.com/](https://status.mainwp.com/)
 - **Namecheap**: [https://www.namecheap.com/status-updates/](https://www.namecheap.com/status-updates/)
+- **Snyk**: [https://status.snyk.io/](https://status.snyk.io/)
 
 ## 🤖 **Agent Behavior & Standards**
 
@@ -76,7 +77,7 @@ When using this framework, AI assistants have access to:
 Before performing any DevOps operations, always read ~/git/aidevops/AGENTS.md
 for authoritative guidance on this comprehensive infrastructure management framework.
 
-This framework provides secure access to 28+ service integrations with enterprise-grade
+This framework provides secure access to 29+ service integrations with enterprise-grade
 security practices. Always follow the operational patterns and security guidelines
 defined in the AGENTS.md file.
 ```
@@ -746,9 +747,19 @@ aidevops/
 
 - Vaultwarden
 
-### **Code Quality & Auditing (4 services)**
+### **Code Quality & Auditing (5 services)**
 
-- CodeRabbit, CodeFactor, Codacy, SonarCloud
+- CodeRabbit, CodeFactor, Codacy, SonarCloud, Snyk
+
+### **Security Scanning (1 service)**
+
+- **Snyk** ✅ **Developer Security Platform**: Comprehensive vulnerability scanning
+  - **Open Source (SCA)**: Dependency vulnerability scanning for 40+ languages
+  - **Code (SAST)**: Static Application Security Testing for source code
+  - **Container**: Container image vulnerability scanning with base image recommendations
+  - **IaC**: Infrastructure as Code misconfiguration detection (Terraform, K8s, CloudFormation)
+  - **MCP Integration**: Official Snyk MCP server for AI assistant integration
+  - **CI/CD Ready**: Native GitHub Actions, GitLab CI, and pipeline integrations
 
 ### **Version Control & Git Platforms (4 services)**
 

@@ -28,7 +28,7 @@ get_mcp_command() {
         "chrome-devtools") echo "npx chrome-devtools-mcp@latest" ;;
         "playwright") echo "npx playwright-mcp@latest" ;;
         "cloudflare-browser") echo "npx cloudflare-browser-rendering-mcp@latest" ;;
-        "ahrefs") echo "npx ahrefs-mcp@latest" ;;
+        "ahrefs") echo "node ${SCRIPT_DIR}/../../providers/ahrefs-mcp-wrapper.js" ;;
         "perplexity") echo "npx perplexity-mcp@latest" ;;
         "nextjs-devtools") echo "npx next-devtools-mcp@latest" ;;
         "google-search-console") echo "npx mcp-server-gsc@latest" ;;
