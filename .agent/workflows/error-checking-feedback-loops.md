@@ -175,6 +175,122 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews
 gh pr checks {pr_number}
 ```
 
+### Efficient Quality Tool Feedback via GitHub API
+
+**Why use the API directly?** The GitHub Checks API provides structured access to all code quality tool feedback (Codacy, CodeFactor, SonarCloud, CodeRabbit, etc.) without needing to visit each tool's dashboard. This enables rapid iteration.
+
+#### Get All Check Runs for a PR/Commit
+
+```bash
+# Get check runs for latest commit on current branch
+gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs \
+  --jq '.check_runs[] | {name: .name, status: .status, conclusion: .conclusion}'
+
+# Get check runs for a specific PR
+gh api repos/{owner}/{repo}/commits/$(gh pr view {pr_number} --json headRefOid -q .headRefOid)/check-runs \
+  --jq '.check_runs[] | {name: .name, conclusion: .conclusion, url: .html_url}'
+
+# Filter for failed checks only
+gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs \
+  --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "action_required") | {name: .name, conclusion: .conclusion}'
+```
+
+#### Get Detailed Annotations (Line-Level Issues)
+
+```bash
+# Get annotations from a specific check run (e.g., Codacy)
+gh api repos/{owner}/{repo}/check-runs/{check_run_id}/annotations \
+  --jq '.[] | {path: .path, line: .start_line, level: .annotation_level, message: .message}'
+
+# Get all annotations from all check runs for a commit
+for id in $(gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs --jq '.check_runs[].id'); do
+  echo "=== Check Run $id ==="
+  gh api repos/{owner}/{repo}/check-runs/$id/annotations --jq '.[] | "\(.path):\(.start_line) [\(.annotation_level)] \(.message)"' 2>/dev/null
+done
+```
+
+#### Quick Status Check Script
+
+```bash
+#!/bin/bash
+# Quick quality check status for current branch
+
+REPO="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
+COMMIT=$(git rev-parse HEAD)
+
+echo "=== Quality Check Status for $COMMIT ==="
+gh api "repos/$REPO/commits/$COMMIT/check-runs" \
+  --jq '.check_runs[] | "\(.conclusion // .status | ascii_upcase)\t\(.name)"' | sort
+
+echo ""
+echo "=== Failed Checks Details ==="
+gh api "repos/$REPO/commits/$COMMIT/check-runs" \
+  --jq '.check_runs[] | select(.conclusion == "failure") | "❌ \(.name): \(.output.summary // "See details")"'
+```
+
+#### Tool-Specific API Access
+
+**Codacy:**
+
+```bash
+# Get Codacy check run details
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq '.check_runs[] | select(.app.slug == "codacy-production") | {conclusion: .conclusion, summary: .output.summary}'
+```
+
+**CodeRabbit:**
+
+```bash
+# Get CodeRabbit review comments
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
+  --jq '.[] | select(.user.login | contains("coderabbit")) | {path: .path, line: .line, body: .body}'
+```
+
+**SonarCloud:**
+
+```bash
+# Get SonarCloud check run
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq '.check_runs[] | select(.name | contains("SonarCloud")) | {conclusion: .conclusion, url: .details_url}'
+```
+
+#### Automated Feedback Loop Pattern
+
+```bash
+#!/bin/bash
+# Automated quality feedback loop
+
+check_and_report() {
+    local repo="$1"
+    local sha="$2"
+    
+    echo "Checking quality status..."
+    
+    # Get all check conclusions
+    local checks
+    checks=$(gh api "repos/$repo/commits/$sha/check-runs" \
+      --jq '.check_runs[] | {name: .name, conclusion: .conclusion, id: .id}')
+    
+    # Report failures with details
+    echo "$checks" | jq -r 'select(.conclusion == "failure") | .id' | while read -r id; do
+        echo "=== Failure in check $id ==="
+        gh api "repos/$repo/check-runs/$id/annotations" \
+          --jq '.[] | "  \(.path):\(.start_line) - \(.message)"'
+    done
+    
+    # Summary
+    local passed failed
+    passed=$(echo "$checks" | jq -r 'select(.conclusion == "success") | .name' | wc -l)
+    failed=$(echo "$checks" | jq -r 'select(.conclusion == "failure") | .name' | wc -l)
+    
+    echo ""
+    echo "Summary: $passed passed, $failed failed"
+}
+
+# Usage
+check_and_report "owner/repo" "$(git rev-parse HEAD)"
+```
+
 ### Processing Code Quality Feedback
 
 1. **Collect all feedback:**
