@@ -1,8 +1,22 @@
 # 101domains Registrar Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Domain registrar + DNS hosting (extensive TLD coverage)
+- **Auth**: API key + secret + username
+- **Config**: `configs/101domains-config.json`
+- **Commands**: `101domains-helper.sh [accounts|domains|domain-details|dns-records|add-dns|update-dns|delete-dns|nameservers|update-ns|check-availability|contacts|lock|unlock|transfer-status|privacy-status|enable-privacy|disable-privacy|monitor-expiration|audit] [account] [domain] [args]`
+- **Features**: WHOIS privacy, volume discounts, international TLDs
+- **Privacy**: `privacy-status`, `enable-privacy`, `disable-privacy`
+- **Monitoring**: `monitor-expiration [account] [days]`
+- **Bulk ops**: Iterate domains with `domains [account] | awk`
+<!-- AI-CONTEXT-END -->
+
 101domains is a comprehensive domain registrar offering extensive TLD coverage, competitive pricing, and robust API access for domain and DNS management.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **101domains Characteristics:**
 

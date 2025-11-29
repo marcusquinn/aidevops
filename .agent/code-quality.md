@@ -1,5 +1,33 @@
 # Code Quality Standards - Multi-Platform Excellence
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Platforms**: SonarCloud, CodeFactor, Codacy
+- **Target**: A-grade across all platforms, <50 SonarCloud issues
+
+**Critical Rules (Zero Tolerance)**:
+- **S7682**: Every function MUST have explicit `return 0` or `return 1`
+- **S7679**: NEVER use `$1` `$2` directly - assign to local vars: `local param="$1"`
+- **S1192**: Define constants for strings used 3+ times
+- **S1481**: Remove unused variable declarations
+- **ShellCheck**: Zero violations required
+
+**Validation Commands**:
+
+```bash
+# SonarCloud issues
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&ps=1" | jq '.total'
+# Return statement check
+grep -L "return [01]" .agent/scripts/*.sh
+# Positional params check
+grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
+```
+
+**Quality Scripts**: `quality-check.sh`, `quality-fix.sh`, `pre-commit-hook.sh`
+<!-- AI-CONTEXT-END -->
+
 > **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the Master Guide takes precedence as the single source of truth.
 

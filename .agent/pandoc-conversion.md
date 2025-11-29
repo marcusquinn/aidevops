@@ -1,12 +1,25 @@
-# 🔄 Pandoc Document Conversion for AI DevOps
+# Pandoc Document Conversion for AI DevOps
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Convert documents to markdown for AI processing
+- **Install**: `brew install pandoc poppler` (macOS) or `apt install pandoc poppler-utils`
+- **Helper**: `.agent/scripts/pandoc-helper.sh`
+- **Commands**: `convert [file]` | `batch [dir] [output] [pattern]` | `formats` | `detect [file]`
+- **Supported**: DOCX, PDF, HTML, EPUB, ODT, RTF, LaTeX, JSON, CSV, RST, Org-mode
+- **Output**: Markdown with ATX headers, no line wrapping, preserved structure
+- **Config**: `configs/pandoc-config.json`
+<!-- AI-CONTEXT-END -->
 
 **Convert any document format to markdown for optimal AI assistant processing**
 
-## 🎯 **Overview**
+## Overview
 
 The Pandoc integration in AI DevOps Framework enables seamless conversion of various document formats to markdown, making them easily accessible and processable by AI assistants. This dramatically improves the ability to work with legacy documents, presentations, PDFs, and other formats.
 
-## 📦 **Installation**
+## Installation
 
 ### **Install Pandoc**
 
@@ -35,7 +48,7 @@ pandoc --version
 pdftotext -v  # For PDF support
 ```
 
-## 🚀 **Quick Start**
+## Quick Start
 
 ### **Single File Conversion**
 
@@ -63,9 +76,9 @@ bash .agent/scripts/pandoc-helper.sh batch ./input ./output "*"
 bash .agent/scripts/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,html}"
 ```
 
-## 📄 **Supported Formats**
+## Supported Formats
 
-### **📋 Document Formats**
+### Document Formats
 
 - **Microsoft Word**: `.docx`, `.doc`
 - **PDF**: `.pdf` (requires pdftotext)
@@ -73,33 +86,33 @@ bash .agent/scripts/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,htm
 - **Rich Text**: `.rtf`
 - **LaTeX**: `.tex`, `.latex`
 
-### **🌐 Web & eBook Formats**
+### Web & eBook Formats
 
 - **HTML**: `.html`, `.htm`
 - **EPUB**: `.epub`
 - **MediaWiki**: `.mediawiki`
 - **TWiki**: `.twiki`
 
-### **📊 Data Formats**
+### Data Formats
 
 - **JSON**: `.json`
 - **CSV**: `.csv`
 - **TSV**: `.tsv`
 - **XML**: `.xml`
 
-### **📝 Markup Formats**
+### Markup Formats
 
 - **reStructuredText**: `.rst`
 - **Org-mode**: `.org`
 - **Textile**: `.textile`
 - **OPML**: `.opml`
 
-### **📊 Presentation Formats**
+### Presentation Formats
 
 - **PowerPoint**: `.pptx`, `.ppt` (limited support)
 - **Excel**: `.xlsx`, `.xls` (limited support)
 
-## 🔧 **Advanced Usage**
+## Advanced Usage
 
 ### **Format Detection**
 
@@ -127,7 +140,7 @@ bash .agent/scripts/pandoc-helper.sh convert document.rst output.md rst "--stand
 bash .agent/scripts/pandoc-helper.sh convert document.tex output.md latex "--metadata title='My Document'"
 ```
 
-## 🤖 **AI Assistant Integration**
+## AI Assistant Integration
 
 ### **Why Convert to Markdown?**
 
@@ -151,7 +164,7 @@ bash .agent/scripts/pandoc-helper.sh batch ./project-docs ./markdown "*.{docx,pd
 # Based on the converted markdown files
 ```
 
-## 📊 **Configuration**
+## Configuration
 
 ### **Default Settings**
 
@@ -179,7 +192,7 @@ Edit `configs/pandoc-config.json` to customize:
 }
 ```
 
-## 🔍 **Quality Assurance**
+## Quality Assurance
 
 ### **Conversion Validation**
 
@@ -198,7 +211,7 @@ The helper script automatically:
 4. **Validate structure**: Verify headings and formatting
 5. **Extract media**: Save images and attachments separately
 
-## 🚨 **Troubleshooting**
+## Troubleshooting
 
 ### **Common Issues**
 
@@ -232,7 +245,7 @@ pandoc --verbose input.pdf -o output.md
 - **HTML**: May need cleanup for complex layouts
 - **Word**: Generally excellent conversion quality
 
-## 📈 **Performance Tips**
+## Performance Tips
 
 1. **Batch Processing**: Convert multiple files at once
 2. **Format Selection**: Use specific input formats when known
@@ -240,7 +253,7 @@ pandoc --verbose input.pdf -o output.md
 4. **Parallel Processing**: Use multiple terminal sessions for large batches
 5. **Cleanup**: Remove temporary files after conversion
 
-## 🔗 **Integration Examples**
+## Integration Examples
 
 ### **With AI Assistants**
 
@@ -263,15 +276,15 @@ git add markdown/
 git commit -m "📄 Add converted documentation for AI processing"
 ```
 
-## 🌟 **Benefits for AI DevOps**
+## Benefits for AI DevOps
 
-- **📚 Legacy Document Access**: Convert old formats for modern AI processing
-- **🔄 Format Standardization**: Unified markdown format across all documents
-- **🤖 AI Optimization**: Perfect format for AI analysis and manipulation
-- **📊 Batch Processing**: Handle large document collections efficiently
-- **🔍 Content Discovery**: Make all documents searchable and analyzable
-- **📝 Documentation Modernization**: Update legacy docs to current standards
+- **Legacy Document Access**: Convert old formats for modern AI processing
+- **Format Standardization**: Unified markdown format across all documents
+- **AI Optimization**: Perfect format for AI analysis and manipulation
+- **Batch Processing**: Handle large document collections efficiently
+- **Content Discovery**: Make all documents searchable and analyzable
+- **Documentation Modernization**: Update legacy docs to current standards
 
 ---
 
-**Transform any document into AI-ready markdown with the AI DevOps Pandoc integration!** 🚀📄✨
+**Transform any document into AI-ready markdown with the AI DevOps Pandoc integration!**

@@ -1,10 +1,26 @@
 # Crawl4AI Usage Guide for AI Assistants
 
-## 🎯 Purpose
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Helper**: `.agent/scripts/crawl4ai-helper.sh`
+- **API Port**: `localhost:11235`
+- **Commands**: `install | docker-setup | docker-start | status | crawl | extract | mcp-setup`
+- **Crawl**: `./crawl4ai-helper.sh crawl URL markdown output.json`
+- **Extract**: `./crawl4ai-helper.sh extract URL '{"title":"h1"}' data.json`
+- **MCP Tools**: `crawl_url | crawl_multiple | extract_structured | take_screenshot | generate_pdf`
+- **Dashboard**: `http://localhost:11235/dashboard`
+- **Playground**: `http://localhost:11235/playground`
+- **Output**: JSON with markdown, html, extracted_content, links, media, metadata
+- **Process results**: `jq -r '.results[0].markdown' output.json`
+<!-- AI-CONTEXT-END -->
+
+## Purpose
 
 This guide provides AI assistants with comprehensive instructions for using Crawl4AI within the AI DevOps Framework for web crawling, data extraction, and content processing tasks.
 
-## 🚀 Quick Start Commands
+## Quick Start Commands
 
 ### Basic Setup
 
@@ -29,7 +45,7 @@ This guide provides AI assistants with comprehensive instructions for using Craw
 ./.agent/scripts/crawl4ai-helper.sh mcp-setup
 ```
 
-## 🔧 Core Operations
+## Core Operations
 
 ### 1. Web Crawling
 
@@ -63,7 +79,7 @@ This guide provides AI assistants with comprehensive instructions for using Craw
 }' products.json
 ```
 
-## 🤖 AI Assistant Integration Patterns
+## AI Assistant Integration Patterns
 
 ### For Claude Desktop
 
@@ -123,7 +139,7 @@ response = requests.post("http://localhost:11235/crawl", json={
 })
 ```
 
-## 📊 Common Use Cases
+## Common Use Cases
 
 ### 1. Content Research
 
@@ -184,7 +200,7 @@ done
 }' api-docs.json
 ```
 
-## 🔄 Advanced Workflows
+## Advanced Workflows
 
 ### Batch Processing
 
@@ -228,7 +244,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 echo "Analysis complete: raw-$TIMESTAMP.json and structured-$TIMESTAMP.json"
 ```
 
-## 🛠️ Configuration Best Practices
+## Configuration Best Practices
 
 ### Environment Setup
 
@@ -252,7 +268,7 @@ export CRAWL4AI_BROWSER_POOL_SIZE=3
 export CRAWL4AI_MEMORY_THRESHOLD=90
 ```
 
-## 🔍 Monitoring & Debugging
+## Monitoring & Debugging
 
 ### Status Checks
 
@@ -292,7 +308,7 @@ curl -X POST http://localhost:11235/crawl \
   -d '{"urls": ["https://httpbin.org/html"]}'
 ```
 
-## 📝 Output Processing
+## Output Processing
 
 ### JSON Response Structure
 
@@ -327,7 +343,7 @@ jq '.results[0].extracted_content' output.json > data.json
 jq -r '.results[0].links.internal[]' output.json
 ```
 
-## 🔐 Security Considerations
+## Security Considerations
 
 ### Safe Crawling Practices
 
@@ -346,7 +362,7 @@ jq -r '.results[0].links.internal[]' output.json
 docker exec crawl4ai redis-cli FLUSHALL
 ```
 
-## 🎯 Integration Tips
+## Integration Tips
 
 ### With Other Framework Tools
 
@@ -365,7 +381,7 @@ CONTENT=$(jq -r '.results[0].markdown' article.json)
 echo "$CONTENT" | # Process with your AI pipeline
 ```
 
-## 📚 Resources
+## Resources
 
 - **Helper Script**: `.agent/scripts/crawl4ai-helper.sh`
 - **Configuration**: `configs/crawl4ai-config.json.txt`
@@ -373,7 +389,7 @@ echo "$CONTENT" | # Process with your AI pipeline
 - **Integration Guide**: `.agent/wiki/crawl4ai-integration.md`
 - **Official Docs**: https://docs.crawl4ai.com/
 
-## ✅ Success Checklist
+## Success Checklist
 
 - [ ] Crawl4AI installed and running
 - [ ] Docker container started successfully

@@ -1,8 +1,25 @@
 # Windsurf IDE Integration - Complete AI DevOps Support
 
-## 🌊 **WINDSURF IDE COMPREHENSIVE INTEGRATION**
+<!-- AI-CONTEXT-START -->
 
-### **✅ WINDSURF SUPPORT FULLY IMPLEMENTED**
+## Quick Reference
+
+- Windsurf: Codeium's AI-powered IDE with Cascade AI
+- Version: 1.99.3 (auto-detected)
+- Global config: `~/.codeium/windsurf/memories/global_rules.md`
+- Memory file: `~/WINDSURF.md`
+- Project rules: `~/git/aidevops/.windsurfrules`
+- CLI path: `~/.codeium/windsurf/bin/windsurf`
+- Aliases: `windsurf-guided` (shows AGENTS.md then launches)
+- Universal wrapper: `ai-with-context windsurf [path]`
+- Features: Cascade AI, memory continuity, integrated terminal
+- Setup: Automatic via setup.sh (detects installation, creates configs)
+- Total AI tools: 8 (Aider, Claude, Qwen, Windsurf, OpenAI, AI Shell, LiteLLM, HuggingFace)
+<!-- AI-CONTEXT-END -->
+
+## Windsurf IDE Comprehensive Integration
+
+### Windsurf Support Fully Implemented
 
 Windsurf IDE (by Codeium) is now fully integrated into our AI-assisted DevOps framework with comprehensive AGENTS.md context loading and project-specific configuration.
 

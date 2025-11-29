@@ -1,5 +1,30 @@
 # Git Platforms Management Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Platforms**: GitHub, GitLab, Gitea, Local Git
+- **Config**: `configs/git-platforms-config.json`
+- **Script**: `.agent/scripts/git-platforms-helper.sh`
+
+**Commands**:
+- `platforms` - List configured platforms
+- `github-repos|gitlab-projects|gitea-repos <account> [visibility]` - List repos
+- `github-create|gitlab-create|gitea-create <account> <name> <desc> <private>` - Create repo
+- `clone <platform> <account> <repo> <path>` - Clone repo
+- `local-init <path> <name>` - Initialize local repo
+- `audit <platform> <account>` - Audit repos
+- `start-mcp <platform> <port>` - Start MCP server
+
+**API Token Setup**:
+- GitHub: Settings → Developer settings → Personal access tokens
+- GitLab: User Settings → Access Tokens
+- Gitea: Settings → Applications
+
+**MCP Ports**: GitHub (3006), GitLab (3007), Gitea (3008)
+<!-- AI-CONTEXT-END -->
+
 Comprehensive Git platform management across GitHub, GitLab, Gitea, and local Git repositories with AI assistant integration and MCP support.
 
 ## 🏢 **Platforms Overview**

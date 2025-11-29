@@ -1,6 +1,24 @@
-# 🤘 Stagehand MCP Usage Examples
+# Stagehand MCP Usage Examples
 
-## 🚀 **AI-Powered Browser Automation**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Stagehand examples for AI-powered browser automation (JavaScript)
+- Core methods: `act()`, `extract()`, `observe()`, `agent.execute()`
+- Data extraction: Use Zod schemas for structured output
+- Agent mode: `stagehand.agent({ cua: true, model: "..." })`
+- Example categories:
+  - E-commerce: Product search, price monitoring, comparison
+  - Data collection: News scraping, social media analytics
+  - Testing: User journey, accessibility, QA automation
+  - Autonomous agents: Job applications, research, reports
+- Error handling: Use try/catch with `stagehand.close()` in finally
+- Rate limiting: Add delays, respect robots.txt
+- Integration: Works with Chrome DevTools, Playwright, Context7 MCPs
+<!-- AI-CONTEXT-END -->
+
+## AI-Powered Browser Automation
 
 ### **Basic Natural Language Automation**
 

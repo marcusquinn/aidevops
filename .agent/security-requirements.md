@@ -1,10 +1,24 @@
 # Security Requirements - CRITICAL COMPLIANCE
 
-## 🚨 **ZERO TOLERANCE SECURITY POLICIES**
+<!-- AI-CONTEXT-START -->
 
-### **API Key Management (MANDATORY)**
+## Quick Reference
 
-#### **❌ NEVER ALLOWED:**
+- **NEVER**: Hardcode API keys, commit credentials, include keys in commit messages
+- **ALWAYS**: Environment variables, GitHub Secrets for CI/CD, template placeholders
+- **Protected Files**: `configs/*-config.json`, `.env`, `*.key`, `*.pem`, `secrets/`
+- **Templates OK**: `configs/service-config.json.txt` with `YOUR_API_TOKEN_HERE` placeholders
+- **If Exposed**: Revoke immediately → Generate new → Update local + GitHub → Clean Git history
+- **Git Cleanup**: `git filter-branch` to remove from history, force push
+- **Rotation**: Every 90 days for Codacy, SonarCloud, GitHub tokens
+- **Audits**: Monthly key review, quarterly access review, annual policy review
+<!-- AI-CONTEXT-END -->
+
+## Zero Tolerance Security Policies
+
+### API Key Management (MANDATORY)
+
+#### ❌ Never Allowed:
 
 - Hardcoding API keys in source code
 - Committing credentials to repository

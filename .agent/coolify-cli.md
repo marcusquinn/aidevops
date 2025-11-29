@@ -1,5 +1,25 @@
 # Coolify CLI Integration
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Self-hosted PaaS for Docker deployment
+- **Install**: `curl -fsSL https://raw.githubusercontent.com/coollabsio/coolify-cli/main/scripts/install.sh | bash`
+- **Config**: `configs/coolify-cli-config.json`
+- **Script**: `.agent/scripts/coolify-cli-helper.sh`
+- **Local Dev First**: Works without Coolify setup
+
+**Commands**: `add-context|list-contexts|list-apps|deploy|get-app|list-servers|add-server|list-databases|create-db|dev|build`
+
+**Usage**: `./.agent/scripts/coolify-cli-helper.sh [command] [context] [args]`
+
+**Databases**: PostgreSQL, MySQL, MongoDB, Redis, ClickHouse, KeyDB
+**Frameworks**: Node.js, PHP, Python, Docker, static sites
+
+**Local Dev** (no Coolify): `./.agent/scripts/coolify-cli-helper.sh dev local ./app 3000`
+<!-- AI-CONTEXT-END -->
+
 Comprehensive self-hosted deployment and management using the Coolify CLI through the AI DevOps Framework.
 
 ## Overview

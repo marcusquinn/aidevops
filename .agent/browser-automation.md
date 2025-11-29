@@ -1,5 +1,26 @@
 # 🔒 Local Browser Automation with Agno Integration
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Philosophy**: LOCAL-ONLY browser automation for complete privacy
+- **Frameworks**: Playwright, Selenium, BeautifulSoup
+- **AI Integration**: Agno agents for intelligent automation
+- **Stagehand**: AI-powered natural language browser control (JS + Python)
+
+**Setup**: `bash .agent/scripts/agno-setup.sh setup`
+**Stagehand JS**: `bash .agent/scripts/stagehand-helper.sh setup`
+**Stagehand Python**: `bash .agent/scripts/stagehand-python-helper.sh setup`
+
+**Key Env Vars**:
+- `BROWSER_HEADLESS=false` (show browser)
+- `BROWSER_DELAY_MIN=2` / `BROWSER_DELAY_MAX=5` (rate limiting)
+- `LINKEDIN_MAX_LIKES=10` (daily limits)
+
+**Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only
+<!-- AI-CONTEXT-END -->
+
 **Automate web interactions including LinkedIn, social media, and web scraping with AI-powered agents using LOCAL browsers only**
 
 ## 🎯 **Overview**

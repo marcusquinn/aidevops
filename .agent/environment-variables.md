@@ -1,6 +1,20 @@
 # Environment Variables Integration
 
-## ✅ **Automatic API Key Detection**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Priority**: Environment variables > .env files > config files > defaults
+- **OpenAI**: `OPENAI_API_KEY` (sk-...), `OPENAI_BASE_URL`
+- **Anthropic**: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
+- **Others**: `AI_GATEWAY_API_KEY`, `GOOGLE_API_KEY`, `AZURE_OPENAI_API_KEY`
+- **DSPy test**: `./.agent/scripts/dspy-helper.sh test`
+- **Check keys**: `env | grep -E "(OPENAI|ANTHROPIC|CLAUDE)_API_KEY"`
+- **Test OpenAI**: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models | head -20`
+- **Benefits**: Secure (no keys in files), convenient (works immediately), flexible (override per-project)
+<!-- AI-CONTEXT-END -->
+
+## Automatic API Key Detection
 
 Both DSPy and DSPyGround are configured to **automatically use your terminal session's API keys**. No additional configuration needed!
 

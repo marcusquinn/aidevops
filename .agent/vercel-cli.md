@@ -1,5 +1,25 @@
 # Vercel CLI Integration
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **CLI**: `vercel` (install: `npm i -g vercel`)
+- **Auth**: `vercel login` → `vercel whoami`
+- **Config**: `configs/vercel-cli-config.json`
+- **Script**: `.agent/scripts/vercel-cli-helper.sh`
+- **Local Dev First**: Works without auth for immediate development
+
+**Commands**: `list-projects|deploy|get-project|list-deployments|list-env|add-env|remove-env|list-domains|add-domain|list-accounts|whoami|dev|build`
+
+**Usage**: `./.agent/scripts/vercel-cli-helper.sh [command] [account] [args]`
+
+**Environments**: development, preview, production
+**Frameworks**: Next.js, React, Vue, Nuxt, Svelte, Angular, static sites
+
+**Local Dev** (no auth): `./.agent/scripts/vercel-cli-helper.sh dev personal ./app 3000`
+<!-- AI-CONTEXT-END -->
+
 Comprehensive Vercel deployment and project management using the Vercel CLI through the AI DevOps Framework.
 
 ## Overview

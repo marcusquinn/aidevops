@@ -1,5 +1,22 @@
 # Qlty CLI Configuration Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Qlty: Universal code quality for 40+ languages, 70+ tools
+- Credential types:
+  - Account API Key (`qltp_...`) - PREFERRED, account-wide access
+  - Coverage Token (`qltcw_...`) - Organization-specific fallback
+  - Workspace ID (UUID) - Context identifier
+- Store credentials: `bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key KEY`
+- Organization-specific: `set qlty-ORGNAME TOKEN`, `set qlty-ORGNAME-workspace-id UUID`
+- Commands: `bash .agent/scripts/qlty-cli.sh install|init|check|fmt --all|smells --all [ORG]`
+- Current config: Account API key active, marcusquinn org fully configured
+- Storage: `~/.config/aidevops/api-keys` (600 permissions)
+- Path: Ensure `~/.qlty/bin` in PATH
+<!-- AI-CONTEXT-END -->
+
 ## Overview
 
 Qlty CLI provides universal code quality analysis and auto-formatting for 40+ languages with 70+ static analysis tools. This guide covers complete configuration for multi-organization support.

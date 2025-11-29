@@ -1,5 +1,28 @@
 # Domain Purchasing & Management Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+**Supported Registrars with API Purchasing**:
+- **Spaceship**: 500+ TLDs, bulk ops, auto-renewal
+- **101domains**: 1000+ TLDs, premium domains, reseller support
+
+**Commands** (spaceship-helper.sh):
+- `check-availability <account> <domain>` - Check single domain
+- `bulk-check <account> <domains...>` - Check multiple domains
+- `purchase <account> <domain> <years> <auto_renew>` - Buy domain (requires confirmation)
+- `domains <account>` - List registered domains
+- `monitor-expiration <account> <days>` - Check expiring domains
+
+**Security**: Confirmation required, spending limits configurable, audit trails
+
+**TLD Recommendations**:
+- Web apps: .com, .app, .io
+- Tech: .dev, .tech, .ai
+- E-commerce: .shop, .store
+<!-- AI-CONTEXT-END -->
+
 Comprehensive domain purchasing, availability checking, and management across multiple registrars with AI assistant automation.
 
 ## 🏢 **Domain Registrars with API Purchasing**

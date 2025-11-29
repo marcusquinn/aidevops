@@ -1,14 +1,28 @@
 # Comprehensive AI Memory Files System
 
-## 🎯 **COMPLETE AI TOOL MEMORY FILE COVERAGE**
+<!-- AI-CONTEXT-START -->
 
-### **✅ RESEARCH FINDINGS & IMPLEMENTATION**
+## Quick Reference
+
+- **Purpose**: Persistent memory files for AI CLI tools referencing AGENTS.md
+- **Home Directory Files**: `~/CLAUDE.md`, `~/GEMINI.md`, `~/.qwen/QWEN.md`, `~/.cursorrules`, `~/.github/copilot-instructions.md`, `~/.factory/DROID.md`
+- **Project Files**: `CLAUDE.md`, `GEMINI.md`, `.cursorrules` in project root
+- **Key Instruction**: "At the beginning of each session, read ~/AGENTS.md"
+- **Setup Script**: `setup.sh` includes automatic creation
+- **Config Script**: `.agent/scripts/ai-cli-config.sh`
+- **Supported Tools**: Qwen CLI, Claude CLI, Gemini CLI, Cursor AI, GitHub Copilot, Factory.ai Droid
+- **Note**: Warp AI and Amp Code use project context (no specific memory files)
+<!-- AI-CONTEXT-END -->
+
+## Complete AI Tool Memory File Coverage
+
+### Research Findings & Implementation
 
 Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, we've implemented a complete AI memory file system that covers all major AI tools.
 
-## **🤖 AI TOOL MEMORY FILE PATTERNS DISCOVERED:**
+## AI Tool Memory File Patterns Discovered
 
-### **✅ CONFIRMED MEMORY FILE LOCATIONS:**
+### Confirmed Memory File Locations
 
 ### **1. Qwen CLI** - **VERIFIED** ✅
 
@@ -50,7 +64,7 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 - **Behavior**: Persistent memory for Factory.ai Droid sessions
 - **Status**: **CREATED** - Detected Factory.ai installation and created file
 
-## **🔧 IMPLEMENTATION DETAILS:**
+## Implementation Details
 
 ### **✅ HOME DIRECTORY MEMORY FILES:**
 
@@ -80,7 +94,7 @@ All memory files contain the key instruction:
 At the beginning of each session, read ~/AGENTS.md to get additional context and instructions.
 ```
 
-## **🚀 SETUP SCRIPT INTEGRATION:**
+## Setup Script Integration
 
 ### **✅ AUTOMATIC CREATION:**
 
@@ -98,7 +112,7 @@ create_ai_memory_files()       # Creates all home directory memory files
 create_project_memory_files()  # Creates all project-level memory files
 ```
 
-## **🎯 VERIFICATION RESULTS:**
+## Verification Results
 
 ### **✅ ALL MEMORY FILES CREATED:**
 
@@ -115,7 +129,7 @@ create_project_memory_files()  # Creates all project-level memory files
 - ✅ **Documentation**: Lists all memory file locations
 - ✅ **Integration**: Automatic creation on new installations
 
-## **🌟 COMPREHENSIVE ACHIEVEMENT:**
+## Comprehensive Achievement
 
 ### **✅ QUESTION FULLY ANSWERED:**
 
@@ -142,4 +156,4 @@ create_project_memory_files()  # Creates all project-level memory files
 - ✅ **Setup script integration complete**
 - ✅ **Automatic detection and creation for all tools**
 
-**RESULT: Complete AI memory file ecosystem ensuring every AI tool automatically reads ~/AGENTS.md for consistent DevOps framework context!** 🎉
+**RESULT: Complete AI memory file ecosystem ensuring every AI tool automatically reads ~/AGENTS.md for consistent DevOps framework context!**

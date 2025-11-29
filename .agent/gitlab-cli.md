@@ -1,5 +1,23 @@
 # GitLab CLI Helper Documentation
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **CLI Tool**: `glab` (GitLab CLI)
+- **Install**: `brew install glab` (macOS) | `apt install glab` (Ubuntu)
+- **Auth**: `glab auth login` (GitLab.com) | `glab auth login --hostname gitlab.company.com` (self-hosted)
+- **Config**: `configs/gitlab-cli-config.json`
+- **Script**: `.agent/scripts/gitlab-cli-helper.sh`
+- **Requires**: `jq` for JSON parsing
+
+**Commands**: `list-projects|create-project|delete-project|list-issues|create-issue|close-issue|list-mrs|create-mr|merge-mr|list-branches|create-branch`
+
+**Usage**: `./providers/gitlab-cli-helper.sh [command] [account] [args]`
+
+**Multi-Instance**: Supports GitLab.com + self-hosted via instance_url in config
+<!-- AI-CONTEXT-END -->
+
 ## Overview
 
 The GitLab CLI Helper provides a comprehensive interface for managing GitLab projects, issues, merge requests, and branches directly from the command line. It leverages the `glab` CLI tool to offer a seamless experience for developers working with GitLab.com and self-hosted instances.

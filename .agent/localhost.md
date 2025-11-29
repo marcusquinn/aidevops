@@ -1,8 +1,22 @@
 # Localhost Development Environment Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Local development environment management
+- **Config**: `configs/localhost-config.json`
+- **Commands**: `localhost-helper.sh [environments|start|stop|status|localwp-sites|start-site|stop-site|generate-ssl|list-ports|check-port|kill-port|start-mcp] [env] [args]`
+- **LocalWP**: Sites in `/Users/username/Local Sites`, MCP on port 3001
+- **SSL**: `generate-ssl`, `install-ssl`, `trust-cert` for local HTTPS
+- **Ports**: `list-ports`, `check-port`, `kill-port`, `forward-port`
+- **Docker**: `docker-up`, `docker-down`, `docker-logs`, `docker-exec`
+- **MCP query**: `mcp-query "SELECT * FROM wp_posts LIMIT 5"`
+<!-- AI-CONTEXT-END -->
+
 Localhost development provides local development capabilities with .local domain support, perfect for development workflows and testing environments.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Localhost Characteristics:**
 

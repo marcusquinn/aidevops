@@ -1,8 +1,23 @@
 # DNS Providers Configuration Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Providers**: Cloudflare, Namecheap, Route 53
+- **Unified command**: `dns-helper.sh [records|add|update|delete] [provider] [account] [domain] [args]`
+- **Configs**: `cloudflare-dns-config.json`, `namecheap-dns-config.json`, `route53-dns-config.json`
+- **Cloudflare**: API token auth, proxy support, analytics
+- **Namecheap**: API user + key + whitelisted IP
+- **Route 53**: AWS IAM credentials, health checks, geo/weighted routing
+- **Record types**: A, AAAA, CNAME, MX, TXT, CAA, NS
+- **Operations**: `propagation-check`, `export`, `import`, `backup`, `compare`
+- **Security**: DNSSEC, CAA records, audit logging
+<!-- AI-CONTEXT-END -->
+
 This guide covers DNS management across multiple providers including Cloudflare, Namecheap, Route 53, and other DNS services through a unified interface.
 
-## 🏢 **DNS Providers Overview**
+## DNS Providers Overview
 
 ### **Supported DNS Providers:**
 

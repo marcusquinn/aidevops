@@ -1,8 +1,23 @@
 # Quality Management Specification
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Methodology: Zero technical debt through systematic resolution
+- Core principle: Enhance functionality, never delete to fix issues
+- Priority order: S7679 (critical) -> S1481 -> S1192 -> S7682 -> ShellCheck
+- S7679 fix: Use `printf '%s50/month\n' '$'` instead of `echo "$50/month"`
+- S1481 fix: Enhance usage of variable or remove if truly unused
+- S1192 fix: Create `readonly CONSTANT="repeated string"` at file top
+- Key scripts: quality-check.sh, quality-fix.sh, quality-cli-manager.sh
+- Achievement: 349 -> 42 issues (88% reduction), 100% critical resolved
+- Success: Zero S7679/S1481, <10 S1192, 100% feature retention
+<!-- AI-CONTEXT-END -->
+
 ## Zero Technical Debt Methodology
 
-> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
+> **Note**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the main AGENTS.md takes precedence as the single source of truth.
 
 ### Overview

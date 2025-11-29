@@ -1,6 +1,25 @@
-# 🎭 Playwright MCP Usage Examples
+# Playwright MCP Usage Examples
 
-## 🚀 **Cross-Browser Testing**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Playwright examples for cross-browser testing automation
+- Browsers: chromium, firefox, webkit
+- Test types:
+  - Cross-browser: `runTest()`, `testBrowserFeatures()`
+  - User flows: `automateFlow()`, `testFormValidation()`
+  - Mobile: `testOnDevice()`, `testOrientations()`
+  - Performance: `measurePerformance()`, `testWithNetwork()`
+  - Visual: `visualRegressionSuite()`, `screenshotComponents()`
+  - Security: `testXSS()`, `testAuthentication()`
+  - API: `testAPIIntegration()`, `testRealTimeFeatures()`
+- Device emulation: iPhone, Samsung, iPad
+- Network throttling: Fast 3G, Slow 3G, Offline
+- Integration: Works with Chrome DevTools MCP
+<!-- AI-CONTEXT-END -->
+
+## Cross-Browser Testing
 
 ### **Multi-Browser Test Suite**
 

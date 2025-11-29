@@ -1,6 +1,20 @@
-# 📊 Google Search Console MCP Usage Examples
+# Google Search Console MCP Usage Examples
 
-## 🎯 **Search Performance Analysis**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **MCP Integration**: Google Search Console API for AI assistants
+- **Setup**: Create Google Cloud Project → Enable Search Console API → Service Account → JSON key
+- **Env Vars**: `GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"`, `GSC_SITE_URL="https://site.com"`
+- **Capabilities**: Search analytics, keyword tracking, device/geographic performance, index coverage
+- **Key Methods**: `getSearchAnalytics()`, `getTopPages()`, `getTopQueries()`, `getCoreWebVitals()`
+- **Metrics**: clicks, impressions, ctr, position
+- **Dimensions**: query, page, country, device, searchAppearance
+- **Use Cases**: CTR optimization, position tracking, security/manual action monitoring
+<!-- AI-CONTEXT-END -->
+
+## Search Performance Analysis
 
 ### **Query Performance Metrics**
 
@@ -28,7 +42,7 @@ await googleSearchConsole.getTopPages({
 });
 ```
 
-## 🔍 **Keyword Research & Analysis**
+## Keyword Research & Analysis
 
 ### **Top Search Queries**
 
@@ -56,7 +70,7 @@ await googleSearchConsole.trackKeywordPositions({
 });
 ```
 
-## 📱 **Device & Geographic Analysis**
+## Device & Geographic Analysis
 
 ### **Device Performance Breakdown**
 
@@ -84,7 +98,7 @@ await googleSearchConsole.getGeographicPerformance({
 });
 ```
 
-## 🛠️ **Technical SEO Monitoring**
+## Technical SEO Monitoring
 
 ### **Index Coverage Analysis**
 
@@ -108,7 +122,7 @@ await googleSearchConsole.getCoreWebVitals({
 });
 ```
 
-## 📈 **Competitive Analysis**
+## Competitive Analysis
 
 ### **Search Appearance Features**
 
@@ -136,7 +150,7 @@ await googleSearchConsole.getCTROpportunities({
 });
 ```
 
-## 🚨 **Issue Detection & Monitoring**
+## Issue Detection & Monitoring
 
 ### **Manual Actions Check**
 
@@ -156,7 +170,7 @@ await googleSearchConsole.getSecurityIssues({
 });
 ```
 
-## 📊 **Reporting & Analytics**
+## Reporting & Analytics
 
 ### **Monthly Performance Report**
 
@@ -184,7 +198,7 @@ await googleSearchConsole.compareWithCompetitors({
 });
 ```
 
-## 🔧 **Setup Requirements**
+## Setup Requirements
 
 ### **Google Cloud Console Setup**
 

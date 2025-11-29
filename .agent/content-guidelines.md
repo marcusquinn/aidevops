@@ -1,8 +1,23 @@
 # Content Guidelines for AI Copywriting
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Tone**: Authentic, local, professional but approachable, British English
+- **Spelling**: British (specialise, colour, moulding, draughty, centre)
+- **Paragraphs**: One sentence per paragraph, no walls of text
+- **Sentences**: Short & punchy, use spaced em-dashes ( — ) for emphasis
+- **SEO**: Bold **keywords** naturally, avoid stuffing, use long-tail variations
+- **Avoid**: "We pride ourselves...", "Our commitment to excellence...", repetitive brand names
+- **HTML fields**: Use `<strong>`, `<em>`, `<p>` instead of Markdown
+- **WP fetch**: Use `wp post get ID --field=content` (singular, not --fields)
+- **Workflow**: Fetch -> Refine -> Structure -> Update -> Verify
+<!-- AI-CONTEXT-END -->
+
 These guidelines define the standard for creating high-quality, human-sounding, SEO-optimized content for our websites (specifically tailored for local businesses like Trinity Joinery).
 
-## 🎯 **Tone of Voice**
+## Tone of Voice
 
 - **Authentic & Local:** Sound like a local expert, not a generic corporation. Use "We make..." instead of "Trinity Joinery crafts...".
 - **Professional but Approachable:** Confident in expertise, but friendly to the homeowner.

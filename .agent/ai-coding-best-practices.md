@@ -1,8 +1,23 @@
 # AI-Assisted Coding Best Practices
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Mandatory Patterns**: Local variables for params (`local param="$1"`), explicit returns, constants for 3+ strings
+- **SC2155**: Separate `local var` and `var=$(command)`
+- **S7679**: Never use `$1` directly - assign to local variables
+- **S1192**: Create `readonly CONSTANT="value"` for repeated strings
+- **S1481**: Remove unused variables or enhance functionality
+- **Pre-Dev**: Run `quality-check.sh`, note current issues, plan improvements
+- **Post-Dev**: Re-run quality check, test functionality, commit with metrics
+- **Quality Scripts**: `quality-check.sh`, `fix-content-type.sh`, `fix-auth-headers.sh`, `fix-error-messages.sh`
+- **Targets**: SonarCloud <50 issues, 0 critical violations, 100% feature preservation
+<!-- AI-CONTEXT-END -->
+
 ## Framework-Specific Guidelines for AI Agents
 
-> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
+> **IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the main AGENTS.md takes precedence as the single source of truth.
 
 ### Overview

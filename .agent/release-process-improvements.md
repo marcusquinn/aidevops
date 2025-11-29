@@ -1,8 +1,22 @@
-# 🚀 Release Process Improvements
+# Release Process Improvements
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Problem Solved**: VERSION file, GitHub Release, and README badge out of sync
+- **Version Manager**: `.agent/scripts/version-manager.sh release [major|minor|patch]`
+- **Validator**: `.agent/scripts/validate-version-consistency.sh [version]`
+- **Files Synced**: VERSION, README.md badge, sonar-project.properties, setup.sh
+- **GitHub Actions**: `.github/workflows/version-validation.yml` (validates on push/PR)
+- **Process**: Bump → Update all refs → Validate → Create tag → Create release
+- **Never Manual**: Always use version-manager.sh for version updates
+- **Fail-Safe**: Won't create releases if version inconsistencies found
+<!-- AI-CONTEXT-END -->
 
 **Enhanced version management to ensure README badge matches actual version and release**
 
-## 🎯 **Problem Solved**
+## Problem Solved
 
 The release process had a synchronization issue where:
 

@@ -1,10 +1,23 @@
 # Prompt Optimization with DSPy & DSPyGround
 
-## 🎯 **Overview**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **DSPy**: Programmatic prompt optimization framework
+- **DSPyGround**: Visual playground for interactive prompt refinement
+- **Workflow**: Bootstrap → Refine → Collect Samples → Optimize → Deploy
+- **Optimizers**: BootstrapFewShot, MIPRO, ChainOfThought
+- **Metrics**: Technical accuracy, security awareness, actionability, completeness
+- **Process**: Week 1 Foundation → Week 2 Refinement → Week 3 Specialization → Ongoing Maintenance
+- **Integration**: Export optimized prompts to provider scripts, quality workflows
+<!-- AI-CONTEXT-END -->
+
+## Overview
 
 This guide covers comprehensive prompt optimization strategies using both DSPy (programmatic optimization) and DSPyGround (visual playground) within the AI DevOps Framework.
 
-## 🔄 **Optimization Workflow**
+## Optimization Workflow
 
 ### **Phase 1: Initial Development (DSPyGround)**
 
@@ -40,7 +53,7 @@ This guide covers comprehensive prompt optimization strategies using both DSPy (
    - Monitor performance metrics
    - Iterate based on real-world feedback
 
-## 🛠️ **Practical Examples**
+## Practical Examples
 
 ### **DevOps Assistant Optimization**
 
@@ -172,7 +185,7 @@ teleprompter = MIPRO(
 optimized_reviewer = teleprompter.compile(CodeReviewModule(), trainset=code_samples)
 ```
 
-## 📊 **Metrics and Evaluation**
+## Metrics and Evaluation
 
 ### **Custom Metrics for DevOps**
 
@@ -241,7 +254,7 @@ metricsPrompt: {
 }
 ```
 
-## 🔄 **Iterative Improvement Process**
+## Iterative Improvement Process
 
 ### **Week 1: Foundation**
 
@@ -271,7 +284,7 @@ metricsPrompt: {
 3. Adaptation to new requirements
 4. Integration of user feedback
 
-## 🎯 **Best Practices**
+## Best Practices
 
 ### **Sample Quality**
 
@@ -294,7 +307,7 @@ metricsPrompt: {
 - **Rollback Ready**: Maintain previous versions for quick rollback
 - **Continuous Learning**: Collect feedback for next iteration
 
-## 🔗 **Integration Points**
+## Integration Points
 
 ### **With AI DevOps Framework**
 

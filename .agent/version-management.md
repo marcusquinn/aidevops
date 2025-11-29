@@ -1,32 +1,48 @@
-# 🏷️ Version Management for AI DevOps Framework
+# Version Management for AI DevOps Framework
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Get version**: `./.agent/scripts/version-manager.sh get`
+- **Bump**: `./.agent/scripts/version-manager.sh bump [major|minor|patch]`
+- **Full release**: `./.agent/scripts/version-manager.sh release [major|minor|patch]`
+- **Validate**: `./.agent/scripts/version-manager.sh validate`
+- **Create tag**: `./.agent/scripts/version-manager.sh tag`
+- **GitHub release**: `./.agent/scripts/version-manager.sh github-release`
+- **Auto-bump**: `./.agent/scripts/auto-version-bump.sh "commit message"`
+- **Files updated**: VERSION, README.md badge, sonar-project.properties, setup.sh
+- **Commit patterns**: BREAKING/MAJOR (major), FEATURE/NEW (minor), FIX/PATCH (patch)
+- **Skip patterns**: docs, style, test, chore, ci, WIP, SKIP VERSION
+<!-- AI-CONTEXT-END -->
 
 **Professional semantic versioning with automated GitHub release creation**
 
-## 🎯 **Overview**
+## Overview
 
 The AI DevOps Framework uses professional semantic versioning with automated tools for version bumping, git tagging, and GitHub release creation. This ensures consistent versioning across all framework components and provides clear release tracking.
 
-## 📦 **Version Management Tools**
+## Version Management Tools
 
-### **🔧 Primary Tool: version-manager.sh**
+### Primary Tool: version-manager.sh
 
 - **Location**: `.agent/scripts/version-manager.sh`
 - **Purpose**: Manual version control with comprehensive features
 - **Capabilities**: Version bumping, file updates, git tagging, GitHub releases
 
-### **🤖 Automation Tool: auto-version-bump.sh**
+### Automation Tool: auto-version-bump.sh
 
 - **Location**: `.agent/scripts/auto-version-bump.sh`
 - **Purpose**: Intelligent version detection from commit messages
 - **Capabilities**: Automatic version bumping based on commit patterns
 
-### **🌐 GitHub Integration: github-release-helper.sh**
+### GitHub Integration: github-release-helper.sh
 
 - **Location**: `.agent/scripts/github-release-helper.sh`
 - **Purpose**: GitHub release creation via API
 - **Capabilities**: API-based release creation, release checking
 
-## 🚀 **Usage Guide**
+## Usage Guide
 
 ### **Manual Version Control**
 
@@ -111,9 +127,9 @@ The AI DevOps Framework uses professional semantic versioning with automated too
 ./.agent/scripts/auto-version-bump.sh "🚀 FEATURE: Add new integration"
 ```
 
-## 🔄 **Automated File Updates**
+## Automated File Updates
 
-### **Files Updated Automatically**
+### Files Updated Automatically
 
 1. **VERSION**: Central version file
 2. **README.md**: Version badge
@@ -158,9 +174,9 @@ The framework now includes comprehensive version validation to ensure all versio
 - Cross-file synchronization ensures consistency
 - Git staging includes all updated files
 
-## 🌐 **GitHub Release Creation**
+## GitHub Release Creation
 
-### **Multiple Methods Supported**
+### Multiple Methods Supported
 
 #### **1. GitHub CLI (Preferred)**
 
@@ -195,9 +211,9 @@ If neither method is available, the system will skip GitHub release creation wit
 - Includes changelog links, documentation references, and quick start guides
 - Professional formatting with emojis and clear structure
 
-## 📊 **Version History Tracking**
+## Version History Tracking
 
-### **Current Version Progression**
+### Current Version Progression
 
 - **v1.0.0**: Initial comprehensive framework release
 - **v1.1.0**: Version management system and branding consistency
@@ -210,9 +226,9 @@ If neither method is available, the system will skip GitHub release creation wit
 - **MINOR**: New features, service integrations, significant enhancements
 - **PATCH**: Bug fixes, documentation updates, minor improvements
 
-## 🔧 **Configuration**
+## Configuration
 
-### **Environment Variables**
+### Environment Variables
 
 ```bash
 # GitHub API access (optional)
@@ -232,9 +248,9 @@ export REPO_NAME=aidevops
 - Modify release note templates in generate_release_notes function
 - Adjust commit message patterns in auto-version-bump.sh
 
-## 🚨 **Troubleshooting**
+## Troubleshooting
 
-### **Common Issues**
+### Common Issues
 
 #### **GitHub CLI Not Authenticated**
 
@@ -279,9 +295,9 @@ curl -s https://api.github.com/repos/marcusquinn/aidevops/releases | jq '.[].tag
 ./.agent/scripts/auto-version-bump.sh "🔧 TEST: Version bump test"
 ```
 
-## 🌟 **Best Practices**
+## Best Practices
 
-### **Version Bumping**
+### Version Bumping
 
 1. **Use semantic versioning**: Follow MAJOR.MINOR.PATCH format
 2. **Clear commit messages**: Use conventional commit patterns
@@ -304,4 +320,4 @@ curl -s https://api.github.com/repos/marcusquinn/aidevops/releases | jq '.[].tag
 
 ---
 
-**Professional version management for enterprise-grade AI DevOps automation!** 🏷️🚀✨
+**Professional version management for enterprise-grade AI DevOps automation.**

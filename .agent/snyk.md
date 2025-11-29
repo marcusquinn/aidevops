@@ -1,5 +1,20 @@
 # Snyk Security Platform Integration
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Developer security platform (SCA, SAST, Container, IaC)
+- **Install**: `brew tap snyk/tap && brew install snyk-cli` or `npm install -g snyk`
+- **Auth**: `snyk auth` (OAuth) or `SNYK_TOKEN` env var
+- **Config**: `configs/snyk-config.json`
+- **Commands**: `snyk-helper.sh [install|auth|status|test|code|container|iac|full|sbom|mcp] [target] [org]`
+- **Scan types**: `snyk test` (deps), `snyk code test` (SAST), `snyk container test` (images), `snyk iac test` (IaC)
+- **Severity levels**: critical > high > medium > low
+- **MCP**: `snyk mcp` - tools: snyk_sca_scan, snyk_code_scan, snyk_iac_scan, snyk_container_scan
+- **API**: `https://api.snyk.io/rest/` (EU: api.eu.snyk.io, AU: api.au.snyk.io)
+<!-- AI-CONTEXT-END -->
+
 Comprehensive developer security platform for finding and fixing vulnerabilities in code, dependencies, containers, and infrastructure as code.
 
 ## Overview

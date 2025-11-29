@@ -1,6 +1,22 @@
 # DSPyGround Integration Guide
 
-## 🎯 **Overview**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- DSPyGround: Visual prompt optimization playground with GEPA optimizer
+- Requires: Node.js 18+, AI Gateway API key
+- Helper: `./.agent/scripts/dspyground-helper.sh install|init|dev [project]`
+- Config: `configs/dspyground-config.json`, project: `dspyground.config.ts`
+- Projects: `data/dspyground/[project-name]/`
+- Web UI: `http://localhost:3000` (run with `dspyground dev`)
+- Features: Real-time optimization, voice feedback, structured output with Zod
+- Metrics: accuracy, tone, efficiency, tool_accuracy, guardrails (customizable)
+- Workflow: Chat + Sample -> Organize -> Optimize -> Export prompt
+- API keys: `AI_GATEWAY_API_KEY` required, `OPENAI_API_KEY` optional for voice
+<!-- AI-CONTEXT-END -->
+
+## Overview
 
 DSPyGround is a visual prompt optimization playground powered by the GEPA (Genetic-Pareto Evolutionary Algorithm) optimizer. It provides an intuitive web interface for iterative prompt optimization with real-time feedback and multi-dimensional metrics.
 

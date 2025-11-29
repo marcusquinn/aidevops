@@ -1,8 +1,22 @@
 # AI CLI Configuration - AGENTS.md Auto-Reading
 
-**🎯 OBJECTIVE**: Ensure all AI CLI tools automatically read `~/AGENTS.md` and `~/git/aidevops/AGENTS.md` at the start of every session for consistent AI agent guidance.
+<!-- AI-CONTEXT-START -->
 
-## 🤖 **CONFIGURED AI TOOLS**
+## Quick Reference
+
+- Objective: Auto-read AGENTS.md at every AI CLI session start
+- Configured tools: Aider, OpenAI CLI, Claude CLI, AI Shell, LiteLLM
+- Config files: ~/.aider.conf.yml, ~/.openai/config.yaml, ~/.claude/config.json, ~/.ai-shell/config.json, ~/.litellm/config.yaml
+- Aliases: `aider-guided`, `openai-guided`, `claude-guided`, `ai-guided`, `agents`, `agents-home`, `cdai`
+- Universal wrapper: `~/.local/bin/ai-with-context <tool> [args]`
+- Setup script: `bash .agent/scripts/ai-cli-config.sh`
+- Auto-setup: Included in main setup.sh via `configure_ai_clis`
+- Benefits: Consistent guidance, security protocols, unified DevOps approach
+<!-- AI-CONTEXT-END -->
+
+**Objective**: Ensure all AI CLI tools automatically read `~/AGENTS.md` and `~/git/aidevops/AGENTS.md` at the start of every session for consistent AI agent guidance.
+
+## Configured AI Tools
 
 ### **✅ FULLY CONFIGURED:**
 

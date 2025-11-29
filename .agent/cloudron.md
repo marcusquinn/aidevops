@@ -1,8 +1,22 @@
 # Cloudron App Platform Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Self-hosted app platform (100+ apps), auto-updates/backups/SSL
+- **Auth**: API token from Dashboard > Settings > API Access
+- **Config**: `configs/cloudron-config.json`
+- **Commands**: `cloudron-helper.sh [servers|connect|status|apps|install-app|update-app|restart-app|logs|backup-app|domains|add-domain|users|add-user] [server] [args]`
+- **API test**: `curl -H "Authorization: Bearer TOKEN" https://cloudron.domain.com/api/v1/cloudron/status`
+- **App ops**: `install-app [server] [app] [subdomain]`, `update-app`, `restart-app`, `logs`
+- **Backup**: `backup-system`, `backup-app`, `list-backups`, `restore-backup`
+- **User mgmt**: `users`, `add-user`, `update-user`, `reset-password`
+<!-- AI-CONTEXT-END -->
+
 Cloudron is a complete solution for running apps on your server, providing easy app installation, automatic updates, backups, and domain management.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Cloudron Characteristics:**
 

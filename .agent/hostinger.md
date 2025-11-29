@@ -1,8 +1,22 @@
 # Hostinger Provider Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Shared/VPS/Cloud hosting, budget-friendly
+- **SSH**: Port 65002, password auth (no SSH keys on shared)
+- **Panel**: Custom hPanel
+- **Config**: `configs/hostinger-config.json`
+- **Commands**: `hostinger-helper.sh [list|connect|upload|download|exec] [site] [args]`
+- **Username format**: `u[0-9]+`
+- **Password file**: `~/.ssh/hostinger_password` (chmod 600)
+- **Requires**: `sshpass` for password authentication
+<!-- AI-CONTEXT-END -->
+
 Hostinger is a popular web hosting provider offering shared hosting, VPS, and cloud hosting solutions with competitive pricing and good performance.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Hostinger Characteristics:**
 

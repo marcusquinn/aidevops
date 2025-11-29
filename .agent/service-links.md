@@ -1,8 +1,22 @@
 # Service Links Directory
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Hosting**: Hostinger (hpanel.hostinger.com), Hetzner (console.hetzner.cloud), Closte (app.closte.com)
+- **Deployment**: Coolify (coolify.io/docs), Cloudron (docs.cloudron.io)
+- **DNS**: Cloudflare (dash.cloudflare.com), Route 53 (console.aws.amazon.com/route53)
+- **Git**: GitHub (github.com), GitLab (gitlab.com), Gitea (gitea.io)
+- **Quality**: SonarCloud (sonarcloud.io), CodeFactor (codefactor.io), Codacy (app.codacy.com), CodeRabbit (coderabbit.ai)
+- **Security**: Vaultwarden (github.com/dani-garcia/vaultwarden)
+- **AI Tools**: Factory AI (factory.ai), Augment (augmentcode.com), Warp (warp.dev)
+- **MCP**: Chrome DevTools, Playwright, Ahrefs, Perplexity, Google Search Console, Context7, LocalWP
+<!-- AI-CONTEXT-END -->
+
 This document provides direct links to all services and platforms mentioned in the AI DevOps Framework README.md.
 
-## 🏗️ Infrastructure & Hosting
+## Infrastructure & Hosting
 
 ### **[Hostinger](https://www.hostinger.com/)**
 

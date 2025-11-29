@@ -1,5 +1,28 @@
 # Context7 MCP Setup Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Real-time access to latest library/framework documentation
+- **Command**: `npx -y @context7/mcp-server@latest`
+- **Built into Augment**: No setup needed, tools available directly
+
+**MCP Tools**:
+- `resolve-library-id("next.js")` → Returns "/vercel/next.js"
+- `get-library-docs("/vercel/next.js")` → Returns documentation
+- `get-library-docs("/vercel/next.js", topic="routing")` → Topic-specific
+- `get-library-docs("/vercel/next.js", tokens=15000)` → More detail
+
+**Common Library IDs**:
+- Frontend: `/vercel/next.js`, `/facebook/react`, `/vuejs/vue`
+- Backend: `/expressjs/express`, `/nestjs/nest`
+- DB/ORM: `/prisma/prisma`, `/supabase/supabase`, `/drizzle-team/drizzle-orm`
+- Tools: `/vitejs/vite`, `/typescript-eslint/typescript-eslint`
+
+**Config Location**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+<!-- AI-CONTEXT-END -->
+
 Context7 MCP provides AI assistants with real-time access to the latest documentation for thousands of development tools, frameworks, and libraries.
 
 ## 🎯 **What is Context7 MCP?**

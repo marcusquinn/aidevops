@@ -1,6 +1,25 @@
 # CapSolver + Crawl4AI Integration Guide
 
-## 🚀 Overview
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- CapSolver: Automated CAPTCHA solving service (99.9% accuracy, <10s)
+- Setup: `./.agent/scripts/crawl4ai-helper.sh capsolver-setup`
+- API key: `export CAPSOLVER_API_KEY="CAP-xxxxx"` from dashboard.capsolver.com
+- Crawl command: `./.agent/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
+- CAPTCHA types:
+  - reCAPTCHA v2/v3: $0.5/1000 req, <9s/<3s
+  - reCAPTCHA Enterprise: $1-3/1000 req
+  - Cloudflare Turnstile: $3/1000 req, <3s
+  - AWS WAF, GeeTest: Contact/0.5 per 1000
+  - Image OCR: $0.4/1000 req, <1s
+- Python: `import capsolver; capsolver.api_key = "KEY"; solution = capsolver.solve({...})`
+- Best practices: Respect rate limits, use delays, monitor balance
+- Config: `configs/capsolver-config.json`, `configs/capsolver-example.py`
+<!-- AI-CONTEXT-END -->
+
+## Overview
 
 CapSolver is the world's leading automated CAPTCHA solving service that integrates seamlessly with Crawl4AI to provide uninterrupted web crawling and data extraction. This partnership enables developers to bypass CAPTCHAs and anti-bot measures automatically.
 

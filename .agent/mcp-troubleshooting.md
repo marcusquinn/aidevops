@@ -1,6 +1,20 @@
-# 🔧 MCP Integrations Troubleshooting Guide
+# MCP Integrations Troubleshooting Guide
 
-## 🚨 **Common Issues & Solutions**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Chrome DevTools Issues**: Install Chrome Canary, fix permissions (`sudo chown -R $(whoami) ~/.cache/puppeteer`)
+- **Playwright Issues**: Install browsers (`npx playwright install`), increase timeout
+- **API Authentication**: Verify keys with curl, check env vars (`echo $AHREFS_API_KEY`)
+- **Debug Logging**: `DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest`
+- **Log Locations**: `/tmp/chrome-mcp.log`, `/tmp/playwright-mcp.log`, `~/.mcp/logs/`
+- **Reset Config**: Backup then `rm ~/.config/mcp/config.json`, rerun setup
+- **Clear Cache**: `rm -rf ~/.cache/puppeteer ~/.cache/playwright`, reinstall browsers
+- **Diagnostics**: `bash .agent/scripts/collect-mcp-diagnostics.sh`
+<!-- AI-CONTEXT-END -->
+
+## Common Issues & Solutions
 
 ### **Chrome DevTools MCP Issues**
 
@@ -82,7 +96,7 @@ curl -X GET "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_I
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 ```
 
-## 🔍 **Debugging Steps**
+## Debugging Steps
 
 ### **1. Check MCP Server Status**
 
@@ -123,7 +137,7 @@ echo $CLOUDFLARE_ACCOUNT_ID
 echo $CLOUDFLARE_API_TOKEN
 ```
 
-## 🛠️ **Performance Optimization**
+## Performance Optimization
 
 ### **Chrome DevTools Optimization**
 
@@ -156,7 +170,7 @@ echo $CLOUDFLARE_API_TOKEN
 }
 ```
 
-## 📊 **Monitoring & Logging**
+## Monitoring & Logging
 
 ### **Enable Debug Logging**
 
@@ -205,7 +219,7 @@ else
 fi
 ```
 
-## 🔄 **Recovery Procedures**
+## Recovery Procedures
 
 ### **Reset MCP Configuration**
 
@@ -237,7 +251,7 @@ npx chrome-devtools-mcp@latest --safe-mode
 npx playwright-mcp@latest --basic-mode
 ```
 
-## 📞 **Getting Help**
+## Getting Help
 
 ### **Log Collection for Support**
 

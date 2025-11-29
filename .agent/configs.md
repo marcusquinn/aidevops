@@ -1,17 +1,32 @@
 # Configuration Files AI Context
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Templates**: `configs/[service]-config.json.txt` (safe to commit)
+- **Working files**: `configs/[service]-config.json` (gitignored, contains credentials)
+- **Setup wizard**: `.agent/scripts/setup-wizard-helper.sh full-setup`
+- **Generate configs**: `.agent/scripts/setup-wizard-helper.sh generate-configs`
+- **Test connections**: `.agent/scripts/setup-wizard-helper.sh test-connections`
+- **Validate JSON**: `jq '.' [service]-config.json`
+- **Secure permissions**: `chmod 600 configs/*-config.json`
+- **Structure**: `{"accounts": {...}, "default_settings": {...}, "mcp_servers": {...}}`
+- **Multi-account**: Support for personal/work/client accounts per service
+<!-- AI-CONTEXT-END -->
+
 This folder contains configuration templates and working configuration files for all services in the AI DevOps Framework.
 
-## 📁 **File Structure**
+## File Structure
 
-### **Template Files (Committed)**
+### Template Files (Committed)
 
 ```bash
 # Template files (.txt extension) - safe to commit
 [service]-config.json.txt           # Configuration template
 ```
 
-### **Working Files (Gitignored)**
+### Working Files (Gitignored)
 
 ```bash
 # Working configuration files - contain actual credentials
@@ -19,40 +34,40 @@ This folder contains configuration templates and working configuration files for
 setup-wizard-responses.json         # Setup wizard responses (NEVER COMMIT)
 ```
 
-## 🔧 **Configuration Categories**
+## Configuration Categories
 
-### **Infrastructure & Hosting**
+### Infrastructure & Hosting
 
 - `hostinger-config.json.txt` - Shared hosting credentials
 - `hetzner-config.json.txt` - Cloud VPS API tokens
 - `closte-config.json.txt` - VPS hosting credentials
 - `cloudron-config.json.txt` - App platform tokens
 
-### **Deployment & Orchestration**
+### Deployment & Orchestration
 
 - `coolify-config.json.txt` - Self-hosted PaaS tokens
 
-### **Content Management**
+### Content Management
 
 - `mainwp-config.json.txt` - WordPress management API tokens
 
-### **Security & Secrets**
+### Security & Secrets
 
 - `vaultwarden-config.json.txt` - Password manager instance configs
 
-### **Code Quality & Auditing**
+### Code Quality & Auditing
 
 - `code-audit-config.json.txt` - Multi-platform auditing service tokens
 
-### **Version Control & Git Platforms**
+### Version Control & Git Platforms
 
 - `git-platforms-config.json.txt` - GitHub, GitLab, Gitea tokens
 
-### **Email Services**
+### Email Services
 
 - `ses-config.json.txt` - Amazon SES credentials
 
-### **Domain & DNS**
+### Domain & DNS
 
 - `spaceship-config.json.txt` - Domain registrar API tokens
 - `101domains-config.json.txt` - Domain registrar credentials
@@ -61,29 +76,29 @@ setup-wizard-responses.json         # Setup wizard responses (NEVER COMMIT)
 - `route53-dns-config.json.txt` - AWS Route 53 credentials
 - `other-dns-providers-config.json.txt` - Other DNS providers
 
-### **Development & Local**
+### Development & Local
 
 - `localhost-config.json.txt` - Local development settings
 - `mcp-servers-config.json.txt` - MCP server configurations
 - `context7-mcp-config.json.txt` - Context7 MCP settings
 
-## 🔒 **Security Standards**
+## Security Standards
 
-### **Template Files (.txt)**
+### Template Files (.txt)
 
 - **Safe to commit** - contain no actual credentials
 - **Use placeholder values** like `YOUR_API_TOKEN_HERE`
 - **Include example configurations** for reference
 - **Document all required fields** with comments
 
-### **Working Files (.json)**
+### Working Files (.json)
 
 - **NEVER COMMIT** - contain actual credentials
 - **Protected by .gitignore** automatically
 - **Should have restricted permissions** (600 or 640)
 - **Regular backup** to secure location recommended
 
-### **Credential Management**
+### Credential Management
 
 ```bash
 # Secure file permissions
@@ -96,9 +111,9 @@ git status --porcelain configs/
 git check-ignore configs/*-config.json
 ```
 
-## 🛠️ **Configuration Structure**
+## Configuration Structure
 
-### **Standard JSON Structure**
+### Standard JSON Structure
 
 ```json
 {
@@ -125,7 +140,7 @@ git check-ignore configs/*-config.json
 }
 ```
 
-### **Multi-Account Support**
+### Multi-Account Support
 
 Most services support multiple accounts:
 
@@ -139,9 +154,9 @@ Most services support multiple accounts:
 }
 ```
 
-## 🚀 **Setup Process**
+## Setup Process
 
-### **Initial Configuration**
+### Initial Configuration
 
 ```bash
 # 1. Copy templates to working files
@@ -157,7 +172,7 @@ nano [service]-config.json
 chmod 600 [service]-config.json
 ```
 
-### **Using Setup Wizard**
+### Using Setup Wizard
 
 ```bash
 # Automated setup with guidance
@@ -170,9 +185,9 @@ chmod 600 [service]-config.json
 ../.agent/scripts/setup-wizard-helper.sh test-connections
 ```
 
-## 🔍 **Validation & Testing**
+## Validation & Testing
 
-### **Configuration Validation**
+### Configuration Validation
 
 ```bash
 # Validate JSON syntax
@@ -185,7 +200,7 @@ jq '.' [service]-config.json
 ../.agent/scripts/[service]-helper.sh help
 ```
 
-### **Security Validation**
+### Security Validation
 
 ```bash
 # Check file permissions
@@ -198,9 +213,9 @@ git status --porcelain
 grep -r "token\|password\|secret" . --exclude="*.txt"
 ```
 
-## 📚 **Best Practices**
+## Best Practices
 
-### **Configuration Management**
+### Configuration Management
 
 1. **Always use templates** as starting point
 2. **Never commit working configs** with credentials
@@ -208,7 +223,7 @@ grep -r "token\|password\|secret" . --exclude="*.txt"
 4. **Document custom settings** with comments
 5. **Regular credential rotation** for security
 
-### **Security Practices**
+### Security Practices
 
 1. **Restrict file permissions** (600 for config files)
 2. **Use separate accounts** for different environments
@@ -216,7 +231,7 @@ grep -r "token\|password\|secret" . --exclude="*.txt"
 4. **Monitor API usage** for unusual activity
 5. **Backup configurations** securely
 
-### **Maintenance**
+### Maintenance
 
 1. **Regular updates** of API endpoints and settings
 2. **Credential rotation** every 6-12 months
@@ -224,9 +239,9 @@ grep -r "token\|password\|secret" . --exclude="*.txt"
 4. **Update templates** when services change APIs
 5. **Document changes** in service-specific docs
 
-## 🎯 **AI Assistant Guidelines**
+## AI Assistant Guidelines
 
-### **Configuration Handling**
+### Configuration Handling
 
 - **Never expose credentials** in logs or output
 - **Use configuration validation** before operations
@@ -234,7 +249,7 @@ grep -r "token\|password\|secret" . --exclude="*.txt"
 - **Respect account separation** (don't mix personal/work)
 - **Validate permissions** before destructive operations
 
-### **Error Handling**
+### Error Handling
 
 - **Clear error messages** for configuration issues
 - **Guidance for fixing** common configuration problems
@@ -243,4 +258,4 @@ grep -r "token\|password\|secret" . --exclude="*.txt"
 
 ---
 
-**All configuration files are designed for security-first credential management while maintaining ease of use and AI assistant automation capabilities.** 🔒🤖
+**All configuration files are designed for security-first credential management while maintaining ease of use and AI assistant automation capabilities.**

@@ -1,5 +1,30 @@
 # Security Best Practices
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+**Credential Rules**:
+- NEVER commit API tokens to git
+- Store in `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- Rotate tokens quarterly
+- Use least-privilege principle
+
+**SSH Security**:
+- Use Ed25519 keys: `ssh-keygen -t ed25519`
+- Permissions: 600 (private), 644 (public), 700 (~/.ssh/)
+- Protect with passphrases
+
+**File Permissions**:
+- Config files: 600
+- Scripts: 755
+- SSH keys: 600 (private), 644 (public)
+
+**Incident Response**: Disable creds → Block IPs → Isolate systems → Investigate → Rotate all creds → Patch
+
+**Security Checklist**: MFA on cloud accounts, regular token rotation, audit SSH keys, monitor logs
+<!-- AI-CONTEXT-END -->
+
 This document outlines security best practices for the AI Assistant Server Access Framework.
 
 ## 🔐 **Credential Management**

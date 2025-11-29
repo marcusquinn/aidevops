@@ -1,8 +1,23 @@
 # Amazon SES Provider Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: AWS cloud email service
+- **Auth**: AWS IAM credentials (access key + secret key)
+- **Config**: `configs/ses-config.json`
+- **Commands**: `ses-helper.sh [accounts|quota|stats|monitor|verified-emails|verified-domains|verify-email|verify-domain|dkim|reputation|suppressed|send-test|audit] [account] [args]`
+- **Key metrics**: Bounce rate < 5%, Complaint rate < 0.1%
+- **Regions**: us-east-1, eu-west-1, etc.
+- **Test addresses**: success@simulator.amazonses.com, bounce@simulator.amazonses.com
+- **DKIM**: Enable for all domains
+- **IAM policy**: ses:GetSendQuota, ses:SendEmail, sesv2:ListSuppressedDestinations
+<!-- AI-CONTEXT-END -->
+
 Amazon Simple Email Service (SES) is a cloud-based email sending service designed to help digital marketers and application developers send marketing, notification, and transactional emails.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Amazon SES Characteristics:**
 

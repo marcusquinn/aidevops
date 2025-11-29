@@ -1,5 +1,23 @@
 # GitHub CLI Helper Documentation
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **CLI Tool**: `gh` (GitHub CLI)
+- **Install**: `brew install gh` (macOS) | `apt install gh` (Ubuntu)
+- **Auth**: `gh auth login`
+- **Config**: `configs/github-cli-config.json`
+- **Script**: `.agent/scripts/github-cli-helper.sh`
+- **Requires**: `jq` for JSON parsing
+
+**Commands**: `list-repos|create-repo|delete-repo|list-issues|create-issue|close-issue|list-prs|create-pr|merge-pr|list-branches|create-branch`
+
+**Usage**: `./providers/github-cli-helper.sh [command] [account] [args]`
+
+**Multi-Account**: Use GH_TOKEN env var or config file accounts (primary, work, org)
+<!-- AI-CONTEXT-END -->
+
 ## Overview
 
 The GitHub CLI Helper provides a comprehensive interface for managing GitHub repositories, issues, pull requests, and branches directly from the command line. It leverages the `gh` CLI tool to offer a seamless experience for developers working with one or multiple GitHub accounts.

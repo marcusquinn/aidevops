@@ -1,8 +1,22 @@
 # PageSpeed Insights & Lighthouse Integration Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Helper**: `.agent/scripts/pagespeed-helper.sh`
+- **Commands**: `audit [url]` | `lighthouse [url] [format]` | `wordpress [url]` | `bulk [file]` | `report [json]`
+- **Install**: `brew install lighthouse jq bc` or `.agent/scripts/pagespeed-helper.sh install-deps`
+- **API Key**: Optional but recommended - https://console.cloud.google.com/ → Enable PageSpeed Insights API
+- **Core Web Vitals**: FCP (<1.8s), LCP (<2.5s), CLS (<0.1), FID (<100ms)
+- **Reports**: `~/.ai-devops/reports/pagespeed/`
+- **Rate Limits**: 25 req/100s (no key), 25,000/day (with key)
+- **WordPress**: Plugin audits, image optimization, caching recommendations
+<!-- AI-CONTEXT-END -->
+
 Comprehensive website performance auditing and optimization guidance for AI-assisted DevOps.
 
-## 🚀 **Overview**
+## Overview
 
 This integration provides your AI assistant with powerful website performance auditing capabilities using:
 
@@ -12,7 +26,7 @@ This integration provides your AI assistant with powerful website performance au
 - **Bulk auditing**: Analyze multiple websites efficiently
 - **MCP Integration**: Real-time performance data access for AI assistants
 
-## 🛠️ **Setup & Installation**
+## Setup & Installation
 
 ### **Prerequisites**
 
@@ -52,7 +66,7 @@ npm install -g mcp-pagespeed-server
 npm install -g lighthouse-mcp-server
 ```
 
-## 📊 **Usage Examples**
+## Usage Examples
 
 ### **Basic Website Audit**
 
@@ -92,7 +106,7 @@ EOF
 ./.agent/scripts/pagespeed-helper.sh report ~/.ai-devops/reports/pagespeed/lighthouse_20241110_143022.json
 ```
 
-## 🎯 **AI Assistant Integration**
+## AI Assistant Integration
 
 ### **System Prompt Addition**
 
@@ -124,7 +138,7 @@ actionable recommendations focusing on Core Web Vitals and user experience.
    "Audit all websites in my portfolio and identify the top performance issues"
    ```
 
-## 📈 **Key Metrics Explained**
+## Key Metrics Explained
 
 ### **Core Web Vitals**
 
@@ -146,7 +160,7 @@ actionable recommendations focusing on Core Web Vitals and user experience.
 - **Speed Index**: How quickly content is visually displayed
 - **Total Blocking Time**: Time when main thread is blocked
 
-## 🔧 **WordPress-Specific Optimizations**
+## WordPress-Specific Optimizations
 
 ### **Common Issues & Solutions**
 
@@ -175,7 +189,7 @@ actionable recommendations focusing on Core Web Vitals and user experience.
    - Minimize CSS/JS files
    - Remove unused code
 
-## 📁 **Report Storage**
+## Report Storage
 
 All reports are saved to: `~/.ai-devops/reports/pagespeed/`
 
@@ -185,7 +199,7 @@ All reports are saved to: `~/.ai-devops/reports/pagespeed/`
 - **Lighthouse HTML**: `lighthouse_YYYYMMDD_HHMMSS.html`
 - **Lighthouse JSON**: `lighthouse_YYYYMMDD_HHMMSS.json`
 
-## 🚀 **Advanced Usage**
+## Advanced Usage
 
 ### **Custom Lighthouse Configuration**
 
@@ -209,14 +223,14 @@ lighthouse https://example.com \
 0 9 * * 1 /path/to/pagespeed-helper.sh bulk /path/to/websites.txt
 ```
 
-## 🔗 **Related Resources**
+## Related Resources
 
 - **[Google PageSpeed Insights](https://pagespeed.web.dev/)**
 - **[Lighthouse Documentation](https://developers.google.com/web/tools/lighthouse)**
 - **[Core Web Vitals](https://web.dev/vitals/)**
 - **[WordPress Performance Guide](https://wordpress.org/support/article/optimization/)**
 
-## 🤖 **MCP Integration**
+## MCP Integration
 
 The PageSpeed MCP server provides real-time access to performance data for AI assistants:
 

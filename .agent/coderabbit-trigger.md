@@ -1,4 +1,17 @@
-# 🤖 CodeRabbit Analysis Trigger
+# CodeRabbit Analysis Trigger
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Purpose: Trigger CodeRabbit AI analysis on pull requests
+- Analysis scope: Shell scripts (.agent/scripts/), MCP configs, docs/
+- Goals: Code quality improvements, framework enhancements, documentation quality
+- Expected fixes: Variable quoting, error handling, return checks, path handling
+- Config validation: JSON schema, env vars, API keys, security
+- Docs fixes: Markdown linting, code blocks, links, formatting
+- Post-analysis: Review suggestions, apply auto-fixes, test, commit, close PR
+<!-- AI-CONTEXT-END -->
 
 This file is created to trigger CodeRabbit analysis and gather auto-fix recommendations.
 

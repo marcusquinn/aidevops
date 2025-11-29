@@ -1,8 +1,27 @@
-# 🐍 Stagehand Python AI Browser Automation Integration
+# Stagehand Python AI Browser Automation Integration
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Stagehand Python: AI-powered browser automation with Pydantic validation
+- Helper: `bash .agent/scripts/stagehand-python-helper.sh setup|install|status|activate|clean`
+- Virtual env: `~/.aidevops/stagehand-python/.venv/`
+- Config: `~/.aidevops/stagehand-python/.env`
+- Core primitives:
+  - `page.act("natural language action")` - Click, fill, scroll
+  - `page.extract("instruction", schema=PydanticModel)` - Structured data
+  - `page.observe()` - Discover available actions
+  - `stagehand.agent()` - Autonomous workflows
+- Models: `google/gemini-2.5-flash-preview-05-20`, OpenAI, Anthropic
+- API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`
+- Env vars: `STAGEHAND_ENV=LOCAL`, `STAGEHAND_HEADLESS=false`
+- Use cases: E-commerce, data collection, testing, business automation
+<!-- AI-CONTEXT-END -->
 
 **AI-powered browser automation with natural language control - Now available in Python with Pydantic schema validation**
 
-## 🎯 **Overview**
+## Overview
 
 Stagehand Python brings the power of AI-driven browser automation to Python developers with native async/await support, Pydantic schema validation, and seamless integration with the Python ecosystem.
 

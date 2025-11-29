@@ -1,8 +1,22 @@
 # TOON Format Integration - AI DevOps Framework
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: 20-60% token reduction vs JSON for LLM prompts
+- **CLI**: `npx @toon-format/cli` (no install needed)
+- **Commands**: `toon-helper.sh [encode|decode|compare|validate|batch|stdin-encode|stdin-decode] [input] [output]`
+- **Format**: `users[2]{id,name,role}:` followed by `1,Alice,admin` rows
+- **Delimiters**: comma (default), tab (`\t`), pipe (`|`)
+- **Best for**: Tabular data (60%+ savings), config data, API responses
+- **Config**: `configs/toon-config.json`
+- **Resources**: https://toonformat.dev, https://github.com/toon-format/toon
+<!-- AI-CONTEXT-END -->
+
 **Token-Oriented Object Notation (TOON)** - Compact, human-readable, schema-aware JSON for LLM prompts.
 
-## 🎯 **Overview**
+## Overview
 
 TOON is a revolutionary data format designed specifically for Large Language Models (LLMs), offering:
 
@@ -218,9 +232,12 @@ users[3]{id,name,role,lastLogin}:
 
 Task: Return only users with role "user" as TOON.
 
+```text
+
 ```
 
 ### **Generating TOON from LLMs**
+
 - Show expected header format: `users[N]{id,name,role}:`
 - Specify rules: 2-space indent, no trailing spaces, [N] matches row count
 - Request code block output only

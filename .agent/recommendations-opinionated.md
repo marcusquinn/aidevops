@@ -1,46 +1,60 @@
 # Best Practices & Provider Selection Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Hosting**: Hostinger ($, small sites), Hetzner ($$, production), Closte ($$, VPS)
+- **Deployment**: Coolify (self-hosted PaaS), Cloudron (easy app management)
+- **DNS**: Cloudflare (CDN/security), Spaceship (modern), 101domains (large portfolios), Route 53 (AWS)
+- **Security**: API tokens in `~/.config/aidevops/`, never in repo, rotate quarterly
+- **SSH**: Ed25519 keys, standardize across servers, passphrase protection
+- **Local Dev**: `.local` suffix, SSL by default, port ranges (WordPress 10000+, APIs 8000+, MCP 8080+)
+- **MCP Ports**: Sequential allocation starting from base 8081
+- **Monitoring**: Weekly status checks, monthly token rotation, quarterly audits
+<!-- AI-CONTEXT-END -->
+
 This guide outlines proven best practices for infrastructure management and helps you select the right providers for your needs, based on real-world production setups.
 
-## 📚 **Available Providers**
+## Available Providers
 
-### **🌐 Hosting & Cloud Providers**
+### Hosting & Cloud Providers
 
 - **[Hostinger](HOSTINGER.md)** - Budget-friendly web hosting with good performance
 - **[Hetzner Cloud](HETZNER.md)** - German cloud provider with excellent price-to-performance
 - **[Closte](CLOSTE.md)** - VPS hosting with competitive pricing
 - **[Cloudron](CLOUDRON.md)** - Self-hosted app platform for easy application management
 
-### **🚀 Deployment Platforms**
+### Deployment Platforms
 
 - **[Coolify](COOLIFY.md)** - Self-hosted alternative to Vercel/Netlify/Heroku
 - **[Cloudron](CLOUDRON.md)** - Self-hosted app platform with easy management
 
-### **📧 Email Services**
+### Email Services
 
 - **[Amazon SES](SES.md)** - Scalable email delivery with comprehensive monitoring
 
-### **🎯 WordPress Management**
+### WordPress Management
 
 - **[MainWP](MAINWP.md)** - Self-hosted WordPress management platform
 
-### **🔐 Security & Secrets Management**
+### Security & Secrets Management
 
 - **[Vaultwarden](VAULTWARDEN.md)** - Self-hosted password and secrets management
 
-### **🔍 Code Quality & Security**
+### Code Quality & Security
 
 - **[Code Auditing](CODE-AUDITING.md)** - Multi-platform code quality and security analysis
 
-### **📚 Version Control & Git Platforms**
+### Version Control & Git Platforms
 
 - **[Git Platforms](GIT-PLATFORMS.md)** - GitHub, GitLab, Gitea, and local Git management
 
-### **🌐 Domain Management & Purchasing**
+### Domain Management & Purchasing
 
 - **[Domain Purchasing](DOMAIN-PURCHASING.md)** - Automated domain purchasing and management
 
-### **🌍 DNS & Domain Providers**
+### DNS & Domain Providers
 
 - **[Cloudflare DNS](CLOUDFLARE-SETUP.md)** - Global CDN and DNS with comprehensive API
 - **[Spaceship](SPACESHIP.md)** - Modern domain registrar with developer-friendly API
@@ -48,18 +62,18 @@ This guide outlines proven best practices for infrastructure management and help
 - **[Namecheap DNS](../configs/namecheap-dns-config.json.txt)** - Domain registrar with DNS management
 - **[Route 53](../configs/route53-dns-config.json.txt)** - AWS DNS service with advanced features
 
-### **🏠 Local Development**
+### Local Development
 
 - **[LocalWP](LOCALWP-MCP.md)** - Local WordPress development with MCP integration
 - **[Localhost](LOCALHOST.md)** - Local development environment with .local domains
 - **[Context7 MCP](CONTEXT7-MCP-SETUP.md)** - Real-time documentation access for AI assistants
 - **[MCP Servers](MCP-SERVERS.md)** - Model Context Protocol server configuration
 
-### **🕷️ Web Crawling & Data Extraction**
+### Web Crawling & Data Extraction
 
 - **[Crawl4AI](CRAWL4AI.md)** - AI-powered web crawler and scraper with LLM-friendly output
 
-## 🎯 **Provider Selection Guide**
+## Provider Selection Guide
 
 ### **For Web Hosting:**
 
@@ -92,7 +106,7 @@ This guide outlines proven best practices for infrastructure management and help
 | **Route 53** | AWS integration | Excellent | Advanced routing, health checks |
 | **Namecheap** | Domain registration | Limited | Affordable, basic DNS |
 
-## 🏗️ **Infrastructure Organization**
+## Infrastructure Organization
 
 ### **Multi-Project Architecture**
 
@@ -129,7 +143,7 @@ This guide outlines proven best practices for infrastructure management and help
 - **Password management**: Separate password files for different server groups
 - **Site categorization**: Group by client, project type, or environment
 
-## 🔐 **Security Best Practices**
+## Security Best Practices
 
 ### **API Token Management**
 
@@ -154,7 +168,7 @@ This guide outlines proven best practices for infrastructure management and help
 - **sshpass usage**: Use sshpass for automated password authentication
 - **Git exclusion**: Add password files to `.gitignore`
 
-## 🌐 **Domain & SSL Management**
+## Domain & SSL Management
 
 ### **Local Development Domains**
 

@@ -1,6 +1,20 @@
 # API Key Management Guide
 
-## 🔐 **SECURE API KEY STORAGE LOCATIONS**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Primary Method**: Environment variables (`export CODACY_API_TOKEN="..."`)
+- **Local Storage**: `configs/*-config.json` (gitignored), `~/.config/coderabbit/api_key`
+- **CI/CD**: GitHub Secrets (`SONAR_TOKEN`, `CODACY_API_TOKEN`, `GITHUB_TOKEN`)
+- **Helper Script**: `.agent/scripts/setup-local-api-keys.sh` (set, load, list)
+- **Token Sources**: Codacy (app.codacy.com/account/api-tokens), SonarCloud (sonarcloud.io/account/security)
+- **Security**: 600 permissions, never commit, regular rotation (90 days)
+- **If Compromised**: Revoke immediately → Generate new → Update local + GitHub secrets → Verify
+- **Test**: `echo "${CODACY_API_TOKEN:0:10}..."` to verify without exposing
+<!-- AI-CONTEXT-END -->
+
+## Secure API Key Storage Locations
 
 ### **1. Environment Variables (Primary Method)**
 
@@ -14,7 +28,7 @@ echo 'export CODACY_API_TOKEN="YOUR_CODACY_API_TOKEN_HERE"' >> ~/.bashrc
 echo 'export SONAR_TOKEN="YOUR_SONAR_TOKEN_HERE"' >> ~/.bashrc
 ```
 
-### **2. Local Configuration Files (Gitignored)**
+### 2. Local Configuration Files (Gitignored)
 
 ```text
 # Repository configs (gitignored)
@@ -26,7 +40,7 @@ configs/sonar-config.json           # SonarCloud configuration (if needed)
 ~/.codacy/config                     # Codacy CLI configuration (if used)
 ```
 
-### **3. GitHub Repository Secrets**
+### 3. GitHub Repository Secrets
 
 ```text
 # Required for GitHub Actions
@@ -35,7 +49,7 @@ CODACY_API_TOKEN                     # Codacy analysis
 GITHUB_TOKEN                         # Automatic (provided by GitHub)
 ```
 
-## 🔑 **CURRENT API KEY STATUS**
+## Current API Key Status
 
 ### **✅ CONFIGURED:**
 
@@ -47,7 +61,7 @@ GITHUB_TOKEN                         # Automatic (provided by GitHub)
 - **SONAR_TOKEN**: Not set in GitHub Secrets
 - **CODACY_API_TOKEN**: Not set in GitHub Secrets
 
-## 🛠️ **SETUP INSTRUCTIONS**
+## Setup Instructions
 
 ### **1. Get SonarCloud Token**
 
@@ -89,7 +103,7 @@ echo "Codacy token: ${CODACY_API_TOKEN:0:10}..."
 echo "Sonar token: ${SONAR_TOKEN:0:10}..."
 ```
 
-## 🔍 **SECURITY AUDIT CHECKLIST**
+## Security Audit Checklist
 
 ### **✅ SECURE STORAGE:**
 
@@ -112,7 +126,7 @@ echo "Sonar token: ${SONAR_TOKEN:0:10}..."
 - [ ] Emergency token revocation procedures
 - [ ] Team access management for shared tokens
 
-## 🚨 **EMERGENCY PROCEDURES**
+## Emergency Procedures
 
 ### **If API Key is Compromised:**
 

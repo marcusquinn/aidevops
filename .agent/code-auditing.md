@@ -1,8 +1,22 @@
 # Code Auditing Services Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Helper**: `.agent/scripts/code-audit-helper.sh`
+- **Services**: CodeRabbit (AI reviews), CodeFactor (quality), Codacy (enterprise), SonarCloud (security)
+- **Config**: `configs/code-audit-config.json`
+- **Commands**: `services` | `audit [repo]` | `report [repo] [file]` | `start-mcp [service] [port]`
+- **MCP Ports**: CodeRabbit (3003), Codacy (3004), SonarCloud (3005)
+- **Quality Gates**: 80% coverage, 0 major bugs, 0 high vulnerabilities, <3% duplication
+- **Service Commands**: `coderabbit-repos`, `codacy-repos`, `sonarcloud-projects`, `codefactor-repos`
+- **CI/CD**: GitHub Actions integration with quality gate enforcement
+<!-- AI-CONTEXT-END -->
+
 Comprehensive code quality and security auditing across multiple platforms including CodeRabbit, CodeFactor, Codacy, and SonarCloud with AI assistant integration.
 
-## 🏢 **Services Overview**
+## Services Overview
 
 ### **Supported Code Auditing Services:**
 
@@ -34,7 +48,7 @@ Comprehensive code quality and security auditing across multiple platforms inclu
 - **API**: Extensive web API with MCP integration
 - **Use Case**: Professional code quality and security analysis
 
-## 🔧 **Configuration**
+## Configuration
 
 ### **Setup Configuration:**
 
@@ -72,7 +86,7 @@ cp configs/code-audit-config.json.txt configs/code-audit-config.json
 }
 ```
 
-## 🚀 **Usage Examples**
+## Usage Examples
 
 ### **Basic Commands:**
 
@@ -139,7 +153,7 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 ./.agent/scripts/code-audit-helper.sh start-mcp sonarcloud 3005
 ```
 
-## 🛡️ **Security Best Practices**
+## Security Best Practices
 
 ### **API Security:**
 
@@ -163,7 +177,7 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 ./.agent/scripts/code-audit-helper.sh codacy-quality organization my-repo
 ```
 
-## 🔍 **Quality Gates & Metrics**
+## Quality Gates & Metrics
 
 ### **Key Quality Metrics:**
 
@@ -193,7 +207,7 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 }
 ```
 
-## 📊 **MCP Integration**
+## MCP Integration
 
 ### **Available MCP Servers:**
 
@@ -246,7 +260,7 @@ With MCP integration, AI assistants can:
 - **Quality trend analysis** over time
 - **Automated issue prioritization** based on severity
 
-## 🔄 **CI/CD Integration**
+## CI/CD Integration
 
 ### **GitHub Actions Integration:**
 
@@ -306,7 +320,7 @@ fi
 echo "✅ All quality gates passed"
 ```
 
-## 📚 **Best Practices**
+## Best Practices
 
 ### **Code Quality Management:**
 
@@ -332,7 +346,7 @@ echo "✅ All quality gates passed"
 - **Notification systems**: Set up notifications for quality gate failures
 - **Trend analysis**: Analyze quality trends over time
 
-## 🎯 **AI Assistant Integration**
+## AI Assistant Integration
 
 ### **Automated Code Quality:**
 
@@ -352,4 +366,4 @@ echo "✅ All quality gates passed"
 
 ---
 
-**The code auditing framework provides comprehensive code quality and security analysis across multiple platforms with AI assistant integration for automated DevOps workflows.** 🚀
+**The code auditing framework provides comprehensive code quality and security analysis across multiple platforms with AI assistant integration for automated DevOps workflows.**

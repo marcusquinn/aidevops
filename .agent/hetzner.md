@@ -1,8 +1,23 @@
 # Hetzner Cloud Provider Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Cloud VPS, dedicated servers, storage
+- **Locations**: Germany, Finland, USA (Ashburn, Hillsboro)
+- **API**: REST API at `api.hetzner.cloud/v1`
+- **Auth**: Bearer token via API
+- **Config**: `configs/hetzner-config.json`
+- **Commands**: `hetzner-helper.sh [list|create|connect|start|stop|reboot|api] [account] [server]`
+- **Server types**: CX (shared), CPX (dedicated vCPU), CCX (dedicated CPU)
+- **SSH**: Full root access with SSH key authentication
+- **MCP**: Port 8081+ (configurable per account)
+<!-- AI-CONTEXT-END -->
+
 Hetzner Cloud is a German cloud infrastructure provider known for excellent price-to-performance ratio, reliable service, and developer-friendly features.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Hetzner Cloud Characteristics:**
 

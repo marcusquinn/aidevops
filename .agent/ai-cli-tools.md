@@ -1,8 +1,23 @@
 # AI CLI Tools & Assistants - Comprehensive Reference
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Recommended: OpenCode (`curl -fsSL https://opencode.ai/install | bash`) - native MCP support
+- Professional: Claude Desktop, Augment Code (`npm install -g @augmentcode/cli`), AmpCode, Continue.dev
+- Enterprise: OpenAI Codex, Factory AI Droid, Qwen
+- Terminal: Warp AI (warp.dev)
+- System prompt: "Read ~/git/aidevops/AGENTS.md before DevOps operations"
+- Setup: Clone repo -> Run setup.sh -> Configure AI tool with system prompt
+- Config locations: ~/.config/opencode/, claude_desktop_config.json
+- Test: Ask AI to "Read AGENTS.md and summarize DevOps integrations"
+- Related docs: MCP-INTEGRATIONS.md, API-INTEGRATIONS.md, SECURITY.md
+<!-- AI-CONTEXT-END -->
+
 This document provides a comprehensive list of CLI AI assistants and tools that work excellently with the AI DevOps Framework.
 
-## 🤖 **Recommended CLI AI Assistants**
+## Recommended CLI AI Assistants
 
 ### **Preferred Tool**
 

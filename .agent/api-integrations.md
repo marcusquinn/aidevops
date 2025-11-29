@@ -1,5 +1,27 @@
 # 🔌 Comprehensive API Integration Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+**Total APIs**: 28+ integrated services
+
+**By Category**:
+- **Hosting**: Hostinger, Hetzner, Closte, Coolify
+- **DNS/Domains**: Cloudflare, Spaceship, 101domains, Route53, Namecheap
+- **Git**: GitHub, GitLab, Gitea
+- **Code Quality**: CodeRabbit, Codacy, SonarCloud, CodeFactor
+- **SEO**: Ahrefs, Google Search Console, Perplexity
+- **Security**: Vaultwarden
+- **Email**: Amazon SES
+- **Dev Tools**: Context7, LocalWP, Pandoc, Agno, Playwright/Selenium
+
+**Pattern**: `configs/[service]-config.json` + `.agent/scripts/[service]-helper.sh`
+
+**API Key Setup**: `bash .agent/scripts/setup-local-api-keys.sh set [service]-api-key YOUR_KEY`
+**Test All APIs**: `bash .agent/scripts/test-all-apis.sh`
+<!-- AI-CONTEXT-END -->
+
 This document provides detailed information about all 28+ API integrations supported by the AI DevOps framework.
 
 ## 📊 **API Integration Overview**

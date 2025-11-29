@@ -1,6 +1,20 @@
 # Framework Requirements & Capabilities
 
-## 🎯 **Core Requirements**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Services**: 25+ providers with unified command patterns
+- **Quality**: SonarCloud A-grade, CodeFactor A-grade, ShellCheck zero violations
+- **Security**: Zero credential exposure, encrypted storage, confirmation prompts
+- **Performance**: <1s local ops, <5s API calls, 10+ concurrent operations
+- **MCP**: Real-time data access via MCP servers
+- **Categories**: Infrastructure, Deployment, Content, Security, Quality, Git, Email, DNS, Local
+- **Quality check**: `curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aidevops&metricKeys=bugs,vulnerabilities,code_smells"`
+- **ShellCheck**: `find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;`
+<!-- AI-CONTEXT-END -->
+
+## Core Requirements
 
 ### **Functional Requirements**
 

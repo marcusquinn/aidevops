@@ -1,5 +1,24 @@
 # Gitea CLI Helper Documentation
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **CLI Tool**: `tea` (Gitea CLI)
+- **Install**: `brew install tea` (macOS) | `go install code.gitea.io/tea/cmd/tea@latest`
+- **Auth**: `tea login add --name <name> --url <url> --token <token>`
+- **Config**: `configs/gitea-cli-config.json`
+- **Script**: `.agent/scripts/gitea-cli-helper.sh`
+- **Requires**: `jq` for JSON parsing
+
+**Commands**: `list-repos|create-repo|delete-repo|list-issues|create-issue|close-issue|list-prs|create-pr|merge-pr|list-branches|create-branch`
+
+**Usage**: `./providers/gitea-cli-helper.sh [command] [account] [args]`
+
+**Multi-Instance**: Account name in config MUST match `tea` login name
+**Note**: Token in JSON used for API calls tea doesn't support (e.g., branch creation)
+<!-- AI-CONTEXT-END -->
+
 ## Overview
 
 The Gitea CLI Helper provides a comprehensive interface for managing Gitea repositories, issues, pull requests, and branches directly from the command line. It leverages the `tea` CLI tool and the Gitea API to offer a seamless experience for developers working with one or multiple Gitea instances.

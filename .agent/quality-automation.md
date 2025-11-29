@@ -1,8 +1,25 @@
 # Quality Automation Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Master script: `bash .agent/scripts/quality-check.sh` (multi-platform validation)
+- Fix script: `bash .agent/scripts/quality-fix.sh [file|dir]`
+- SonarCloud rules: S7679 (positional params), S1481 (unused vars), S1192 (strings), S7682 (returns)
+- Specialized fixes:
+  - `fix-content-type.sh` - Content-Type header constants
+  - `fix-auth-headers.sh` - Authorization header patterns
+  - `fix-error-messages.sh` - Error message consolidation
+  - `markdown-formatter.sh` - Markdown linting/formatting
+- CLI manager: `bash .agent/scripts/quality-cli-manager.sh install|analyze|status all`
+- Platform CLIs: CodeRabbit, Codacy, SonarScanner
+- Achievement: 349 -> 42 issues (88% reduction), A-grade platforms
+<!-- AI-CONTEXT-END -->
+
 ## Comprehensive Quality Management Tools
 
-> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
+> **Note**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the Master Guide takes precedence as the single source of truth.
 
 ### Overview

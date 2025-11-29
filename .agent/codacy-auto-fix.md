@@ -1,8 +1,22 @@
 # Codacy Auto-Fix Integration Guide
 
-## 🚀 **AUTOMATED CODE QUALITY FIXES**
+<!-- AI-CONTEXT-START -->
 
-### **Overview**
+## Quick Reference
+
+- Auto-fix command: `bash .agent/scripts/codacy-cli.sh analyze --fix`
+- Via manager: `bash .agent/scripts/quality-cli-manager.sh analyze codacy-fix`
+- Fix types: Code style, best practices, security, performance, maintainability
+- Safety: Non-breaking, reversible, conservative (skips ambiguous)
+- Metrics: 70-90% time savings, 99%+ accuracy, 60-80% violation coverage
+- Cannot fix: Complex logic, architecture, context-dependent, breaking changes
+- Best practices: Always review, test after, incremental batches, clean git state
+- Workflow: quality-check -> analyze --fix -> quality-check -> commit with metrics
+<!-- AI-CONTEXT-END -->
+
+## Automated Code Quality Fixes
+
+### Overview
 
 Codacy CLI v2 provides automated fix capabilities that mirror the "Fix Issues" functionality available in the Codacy web dashboard. This feature can automatically resolve many common code quality violations without manual intervention.
 

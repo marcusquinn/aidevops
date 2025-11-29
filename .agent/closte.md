@@ -1,8 +1,24 @@
 # Closte Provider Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Managed WordPress cloud (GCP/Litespeed), pay-as-you-go
+- **SSH**: Password auth only (no SSH keys), use `sshpass`
+- **Config**: `configs/closte-config.json`
+- **DB host**: `mysql.cluster`
+- **Caching**: Litespeed Page Cache + Object Cache (Redis) + CDN
+- **CRITICAL**: Enable Dev Mode before CLI edits: `wp closte devmode enable`
+- **Cache flush**: `wp cache flush --url=https://site.com`
+- **Multisite**: Always use `--url=` flag with WP-CLI
+- **File perms**: 755 dirs, 644 files, owner u12345678
+- **Disable Dev Mode when done**: `wp closte devmode disable`
+<!-- AI-CONTEXT-END -->
+
 Closte is a managed cloud hosting provider optimized for WordPress, offering automatic scaling and a pay-as-you-go model.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Closte Characteristics:**
 

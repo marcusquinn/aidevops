@@ -1,5 +1,31 @@
 # LocalWP MCP Integration Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: AI read-only access to Local by Flywheel WordPress databases
+- **Install**: `npm install -g @verygoodplugins/mcp-local-wp`
+- **Start**: `./.agent/scripts/localhost-helper.sh start-mcp`
+- **Port**: 8085 (default)
+
+**MCP Tools**:
+- `mysql_query` - Execute SELECT/SHOW/DESCRIBE/EXPLAIN queries
+- `mysql_schema` - List tables or inspect specific table structure
+
+**Example Queries**:
+
+```sql
+SELECT ID, post_title FROM wp_posts WHERE post_status='publish' LIMIT 5;
+DESCRIBE wp_postmeta;
+```
+
+**Benefits**: AI sees actual table structure, no more schema guessing, accurate JOINs
+
+**Requires**: Local by Flywheel running with active site
+**Security**: Read-only only, local development environments only
+<!-- AI-CONTEXT-END -->
+
 This guide explains how to set up and use the LocalWP MCP server for AI-powered WordPress database access.
 
 ## 🎯 **What is LocalWP MCP?**

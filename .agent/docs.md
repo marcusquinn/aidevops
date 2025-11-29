@@ -1,8 +1,23 @@
 # Documentation AI Context
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Location**: All docs in `.agent/*.md` (lowercase filenames)
+- **Service guides**: hostinger.md, hetzner.md, coolify.md, mainwp.md, etc.
+- **Standard structure**: Overview, Configuration, Usage, Security, Troubleshooting, MCP Integration
+- **AI Context blocks**: `<!-- AI-CONTEXT-START -->` sections for quick reference
+- **Cross-service workflows**: Domain -> DNS -> Hosting, Dev -> Quality -> Deploy
+- **Navigation**: Start with service guide, check examples, use troubleshooting
+- **Best practices**: recommendations-opinionated.md for provider selection
+- **Setup guides**: *-setup.md files for complex integrations
+- **Config templates**: `configs/[service]-config.json.txt`
+<!-- AI-CONTEXT-END -->
+
 This folder contains comprehensive documentation for all services and components in the AI DevOps Framework.
 
-## 📚 **Documentation Categories**
+## Documentation Categories
 
 ### **Service-Specific Guides**
 
@@ -50,7 +65,7 @@ Each service has a comprehensive guide following the standard structure:
 - `CLOUDFLARE-SETUP.md` - Cloudflare API setup guide
 - `COOLIFY-SETUP.md` - Coolify deployment setup
 
-## 📖 **Standard Documentation Structure**
+## Standard Documentation Structure
 
 Each service guide follows this consistent format:
 
@@ -83,9 +98,9 @@ Each service guide follows this consistent format:
 - AI automation capabilities and patterns
 ```
 
-## 🎯 **Documentation Standards**
+## Documentation Standards
 
-### **Content Requirements**
+### Content Requirements
 
 1. **Complete coverage** of all service features
 2. **Real working examples** with actual commands
@@ -109,9 +124,9 @@ Each service guide follows this consistent format:
 4. **Proper security guidance** and warnings
 5. **Version-aware information** where applicable
 
-## 🔄 **Documentation Maintenance**
+## Documentation Maintenance
 
-### **Regular Updates**
+### Regular Updates
 
 - **Service API changes** - Update when services change APIs
 - **New features** - Document new service features and capabilities
@@ -127,9 +142,9 @@ Each service guide follows this consistent format:
 - **Clarity** - Ensure documentation is clear and understandable
 - **Currency** - Keep information current and relevant
 
-## 🤖 **AI Assistant Usage Guidelines**
+## AI Assistant Usage Guidelines
 
-### **Documentation Navigation**
+### Documentation Navigation
 
 - **Use service-specific guides** for detailed service information
 - **Reference RECOMMENDATIONS-OPINIONATED.md** for provider selection guidance
@@ -152,9 +167,9 @@ Each service guide follows this consistent format:
 - **Reference security section** for security considerations
 - **Use AI integration section** for automation patterns
 
-## 📊 **Cross-Service Integration**
+## Cross-Service Integration
 
-### **Related Services**
+### Related Services
 
 Many services work together in common workflows:
 
@@ -185,9 +200,9 @@ Each service guide includes:
 - **Cross-service dependencies** and requirements
 - **Combined operations** examples
 
-## 🔍 **Finding Information**
+## Finding Information
 
-### **Quick Reference**
+### Quick Reference
 
 ```bash
 # Service-specific information
@@ -213,4 +228,4 @@ Each service guide includes:
 
 ---
 
-**All documentation is designed to provide comprehensive, accurate, and actionable information for both human users and AI assistants managing the DevOps framework.** 📚🤖
+**All documentation is designed to provide comprehensive, accurate, and actionable information for both human users and AI assistants managing the DevOps framework.**

@@ -1,5 +1,19 @@
 # GitHub, GitLab, and Gitea CLI Integration
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **GitHub CLI Helper**: `.agent/scripts/github-cli-helper.sh` (requires `gh`, `jq`)
+- **GitLab CLI Helper**: `.agent/scripts/gitlab-cli-helper.sh` (requires `glab`, `jq`)
+- **Gitea CLI Helper**: `.agent/scripts/gitea-cli-helper.sh` (requires `tea`, `jq`, `curl`)
+- **Config Templates**: `configs/github-cli-config.json.txt`, `configs/gitlab-cli-config.json.txt`, `configs/gitea-cli-config.json.txt`
+- **Common Commands**: `list-accounts` | `list-repos` | `create-repo` | `list-issues` | `create-pr/mr`
+- **Install CLIs**: `brew install gh glab` or platform-specific installers
+- **Auth**: `gh auth login`, `glab auth login`, `tea login add`
+- **Features**: Multi-account support, repo/issue/PR/branch management
+<!-- AI-CONTEXT-END -->
+
 ## Overview
 
 Added comprehensive CLI helper scripts for managing GitHub, GitLab, and Gitea repositories through their respective CLI tools.

@@ -1,8 +1,23 @@
 # AI CLI Integration Status - Complete Coverage
 
-## 🎯 **COMPREHENSIVE AI CLI INTEGRATION ACHIEVED**
+<!-- AI-CONTEXT-START -->
 
-### **✅ FULLY INTEGRATED AI CLI TOOLS:**
+## Quick Reference
+
+- 7 AI CLI tools integrated with automatic AGENTS.md reading
+- Primary: Aider (v0.86.1), Claude CLI (v2.0.36), Qwen CLI (v0.2.0), OpenAI CLI (v2.7.2)
+- Supporting: AI Shell (v1.0.12), LiteLLM (v1.79.3), Hugging Face CLI
+- Universal wrapper: `~/.local/bin/ai-with-context <tool> [args]`
+- Config files: ~/.aider.conf.yml, ~/.claude/config.json, ~/.qwen/config.json, ~/.openai/config.yaml
+- Aliases: aider-guided, claude-guided, qwen-guided, openai-guided, ai-guided
+- Quick access: `agents` (view AGENTS.md), `cdai` (cd to framework)
+- Setup: Automated via setup.sh -> configure_ai_clis -> .agent/scripts/ai-cli-config.sh
+- Status: All tools verified working with AGENTS.md context
+<!-- AI-CONTEXT-END -->
+
+## Comprehensive AI CLI Integration Achieved
+
+### Fully Integrated AI CLI Tools:
 
 ## **🤖 PRIMARY AI ASSISTANTS:**
 

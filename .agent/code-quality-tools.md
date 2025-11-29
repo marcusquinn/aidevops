@@ -1,5 +1,22 @@
 # AI DevOps Resources
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Linter manager: `bash .agent/scripts/linter-manager.sh detect|install-detected|install-all|install [lang]`
+- Languages: Python (pycodestyle, Pylint, Bandit, Ruff), JS/TS (Oxlint, ESLint), CSS (Stylelint), Shell (ShellCheck), Docker (Hadolint), YAML (Yamllint)
+- Platforms comparison:
+  - CodeRabbit: AI code review, no auto-fix
+  - Codacy: 40+ langs, auto-fix safe violations
+  - SonarCloud: Enterprise analysis, no auto-fix
+  - Qlty: 70+ tools, 40+ langs, auto-format
+  - CodeFactor: Reference collection, web-only
+- Auto-fix tools: Codacy CLI (70-90%), Qlty CLI (80-95%), ESLint (60-80%)
+- Config files: .eslintrc.*, .pylintrc, .shellcheckrc, .hadolint.yaml, .stylelintrc.*
+- Best practices: Start conservative, customize gradually, version control configs
+<!-- AI-CONTEXT-END -->
+
 ## Code Quality & Linting Tools
 
 ### CodeFactor Linters Collection

@@ -1,5 +1,27 @@
 # 🤘 Stagehand AI Browser Automation Integration
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: AI-powered browser automation with natural language control
+- **Languages**: JavaScript (npm) + Python (pip)
+- **Setup JS**: `bash .agent/scripts/stagehand-helper.sh setup`
+- **Setup Python**: `bash .agent/scripts/stagehand-python-helper.sh setup`
+- **Setup Both**: `bash .agent/scripts/setup-mcp-integrations.sh stagehand-both`
+
+**Core Primitives**:
+- `act("click login button")` - Natural language actions
+- `extract("get price", z.number())` - Structured data with Zod/Pydantic schemas
+- `observe()` - Discover available actions on page
+- `agent.execute("complete checkout")` - Autonomous workflows
+
+**Config**: `~/.aidevops/stagehand/.env`
+**Env Vars**: `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, `STAGEHAND_ENV=LOCAL`, `STAGEHAND_HEADLESS=false`
+
+**Key Advantage**: Self-healing automation that adapts when websites change
+<!-- AI-CONTEXT-END -->
+
 **AI-powered browser automation with natural language control - Available in both JavaScript and Python**
 
 > **🆕 NEW**: Stagehand is now available in both JavaScript and Python! Choose the language that best fits your workflow.

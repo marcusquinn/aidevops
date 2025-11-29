@@ -1,5 +1,24 @@
 # API Key Setup Guide - Secure Local Storage
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Secrets Location**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- **Working Dirs**: `~/.aidevops/` (agno, stagehand, reports)
+- **Setup**: `bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup`
+
+**Commands**:
+- `set <service-name> <VALUE>` - Store API key (converts to UPPER_CASE export)
+- `add 'export VAR="value"'` - Parse and store export command
+- `get <service-name>` - Retrieve key value
+- `list` - Show configured services (keys redacted)
+
+**Common Services**: codacy-project-token, sonar-token, coderabbit-api-key, hcloud-token-*, openai-api-key
+
+**Security**: Shell startup auto-sources mcp-env.sh, never commit keys to repo
+<!-- AI-CONTEXT-END -->
+
 ## Directory Structure
 
 AI DevOps uses two directories for different purposes:

@@ -1,8 +1,23 @@
 # Coolify Setup Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Self-hosted alternative to Vercel/Netlify/Heroku
+- **Install**: `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`
+- **Requirements**: 2GB+ RAM, Ubuntu 20.04+/Debian 11+, ports 22/80/443/8000
+- **Dashboard**: `https://your-server-ip:8000`
+- **Helper**: `.agent/scripts/coolify-helper.sh`
+- **Commands**: `list` | `connect [server]` | `open [server]` | `status [server]` | `apps [server]` | `exec [server] [cmd]`
+- **Config**: `configs/coolify-config.json`
+- **Features**: Git deployments, databases (PostgreSQL/MySQL/MongoDB/Redis), SSL automation, Docker containers
+- **Docs**: https://coolify.io/docs
+<!-- AI-CONTEXT-END -->
+
 Coolify is a self-hosted alternative to Vercel, Netlify, and Heroku that allows you to deploy applications with ease using Docker containers.
 
-## 🚀 **What is Coolify?**
+## What is Coolify?
 
 Coolify is an open-source, self-hostable cloud platform that:
 

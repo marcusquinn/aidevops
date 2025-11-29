@@ -1,5 +1,30 @@
 # 🚀 Advanced MCP Integrations for AI DevOps
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+**Setup All**: `bash .agent/scripts/setup-mcp-integrations.sh all`
+**Validate**: `bash .agent/scripts/validate-mcp-integrations.sh`
+
+**Browser & Web**:
+- Chrome DevTools MCP: `claude mcp add chrome-devtools npx chrome-devtools-mcp@latest`
+- Playwright MCP: `npm install -g playwright-mcp`
+- Cloudflare Browser Rendering: Server-side scraping
+
+**SEO & Research**:
+- Ahrefs MCP: `AHREFS_API_KEY` required
+- Perplexity MCP: `PERPLEXITY_API_KEY` required
+- Google Search Console: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON)
+
+**Development**:
+- Next.js DevTools MCP
+- Context7 MCP: Real-time library docs
+- LocalWP MCP: WordPress database access
+
+**Config Location**: `configs/mcp-templates/`
+<!-- AI-CONTEXT-END -->
+
 This document provides comprehensive setup and usage instructions for advanced Model Context Protocol (MCP) integrations that dramatically expand our AI development capabilities.
 
 ## 📋 **Available MCP Integrations**

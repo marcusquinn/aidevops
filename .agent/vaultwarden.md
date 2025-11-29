@@ -1,8 +1,23 @@
 # Vaultwarden (Self-hosted Bitwarden) Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Self-hosted password manager (Bitwarden API compatible)
+- **CLI**: `npm install -g @bitwarden/cli` then `bw`
+- **Auth**: `bw login email` then `export BW_SESSION=$(bw unlock --raw)`
+- **Config**: `configs/vaultwarden-config.json`
+- **Commands**: `vaultwarden-helper.sh [instances|status|login|unlock|list|search|get|get-password|create|audit|start-mcp] [instance] [args]`
+- **Session**: `BW_SESSION` env var required after unlock
+- **Lock**: `bw lock` and `unset BW_SESSION` when done
+- **MCP**: Port 3002 for AI assistant credential access
+- **Backup**: `bw export --format json` (encrypt with GPG)
+<!-- AI-CONTEXT-END -->
+
 Vaultwarden is a self-hosted, lightweight implementation of the Bitwarden server API, providing secure password and secrets management with full API access and MCP integration.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Vaultwarden Characteristics:**
 

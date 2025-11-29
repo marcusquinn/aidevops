@@ -1,6 +1,22 @@
-# 🔧 Chrome DevTools MCP Usage Examples
+# Chrome DevTools MCP Usage Examples
 
-## 🎯 **Performance Analysis**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Chrome DevTools examples for browser debugging and analysis
+- Performance: `lighthouse()`, `measureWebVitals()` (LCP, FID, CLS, TTFB)
+- Scraping: `extractData()`, `screenshot()` (fullPage, element)
+- Debug: `captureConsole()`, `monitorNetwork()` (xhr, fetch, document)
+- Mobile: `emulateDevice()`, `simulateTouch()` (tap, swipe)
+- SEO: `extractSEO()`, `validateStructuredData()`
+- Visual: `visualRegression()`, `analyzeCSSCoverage()`
+- Automation: `comprehensiveAnalysis()`, `comparePages()` (A/B testing)
+- Devices: iPhone 12 Pro, custom viewports
+- Metrics: domContentLoaded, load, FCP, LCP
+<!-- AI-CONTEXT-END -->
+
+## Performance Analysis
 
 ### **Lighthouse Performance Audit**
 

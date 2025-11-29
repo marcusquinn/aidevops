@@ -1,20 +1,35 @@
 # GitHub Actions Setup Guide
 
-## 🚀 **AUTOMATED CODE QUALITY ANALYSIS**
+<!-- AI-CONTEXT-START -->
 
-### **📋 CURRENT GITHUB ACTIONS STATUS:**
+## Quick Reference
 
-#### **✅ CONFIGURED AND WORKING:**
+- **Workflow File**: `.github/workflows/code-quality.yml`
+- **Triggers**: Push to main/develop, PRs to main
+- **Jobs**: Framework validation, SonarCloud analysis, Codacy analysis
+- **Required Secrets**: `SONAR_TOKEN` (configured), `CODACY_API_TOKEN` (needs setup)
+- **Auto-Provided**: `GITHUB_TOKEN` by GitHub
+- **SonarCloud Dashboard**: https://sonarcloud.io/project/overview?id=marcusquinn_aidevops
+- **Codacy Dashboard**: https://app.codacy.com/gh/marcusquinn/aidevops
+- **Actions URL**: https://github.com/marcusquinn/aidevops/actions
+- **Add Secrets**: Repository Settings → Secrets and variables → Actions
+<!-- AI-CONTEXT-END -->
+
+## Automated Code Quality Analysis
+
+### Current GitHub Actions Status
+
+#### ✅ Configured and Working:
 
 - **SonarCloud Analysis**: ✅ Runs on every push and PR
 - **Framework Validation**: ✅ Validates repository structure
 - **Security Scanning**: ✅ Checks for hardcoded API keys
 
-#### **⚠️ REQUIRES SETUP:**
+#### Requires Setup:
 
 - **Codacy Analysis**: Requires `CODACY_API_TOKEN` secret
 
-## 🔑 **REQUIRED GITHUB REPOSITORY SECRETS**
+## Required GitHub Repository Secrets
 
 ### **1. SONAR_TOKEN (Already Configured)**
 
@@ -30,7 +45,7 @@
 - **Value**: Your Codacy API token
 - **Source**: https://app.codacy.com/account/api-tokens
 
-## 🛠️ **SETUP INSTRUCTIONS**
+## Setup Instructions
 
 ### **Add Missing GitHub Secret:**
 
@@ -46,7 +61,7 @@
    - **Name**: `CODACY_API_TOKEN`
    - **Value**: Your Codacy API token (get from secure local storage)
 
-## 🔄 **WORKFLOW TRIGGERS**
+## Workflow Triggers
 
 ### **Automatic Execution:**
 
@@ -60,7 +75,7 @@
 2. **SonarCloud Analysis**: Code quality, security, and maintainability
 3. **Codacy Analysis**: Code quality and complexity analysis
 
-## 📊 **VIEWING RESULTS**
+## Viewing Results
 
 ### **SonarCloud Dashboard:**
 
@@ -80,7 +95,7 @@ https://app.codacy.com/gh/marcusquinn/aidevops
 https://github.com/marcusquinn/aidevops/actions
 ```
 
-## 🔧 **WORKFLOW CONFIGURATION**
+## Workflow Configuration
 
 ### **File**: `.github/workflows/code-quality.yml`
 
@@ -98,7 +113,7 @@ https://github.com/marcusquinn/aidevops/actions
 - `SONAR_TOKEN`: From repository secrets
 - `CODACY_API_TOKEN`: From repository secrets (optional)
 
-## 🛡️ **SECURITY FEATURES**
+## Security Features
 
 ### **Automated Security Checks:**
 
@@ -112,14 +127,14 @@ https://github.com/marcusquinn/aidevops/actions
 - **Conditional execution**: Graceful handling of missing secrets
 - **Fail-fast security**: Stops workflow if security issues detected
 
-## 🎯 **NEXT STEPS**
+## Next Steps
 
 1. **Add CODACY_API_TOKEN** to GitHub repository secrets
 2. **Push a commit** to trigger the workflow
 3. **Verify analysis results** in SonarCloud and Codacy dashboards
 4. **Monitor workflow runs** in GitHub Actions
 
-## 📈 **BENEFITS**
+## Benefits
 
 - **Automated Quality Gates**: Every commit analyzed for quality
 - **Security Monitoring**: Prevents credential exposure

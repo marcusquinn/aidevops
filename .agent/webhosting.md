@@ -1,5 +1,32 @@
 # Web Hosting Helper
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Local domain management for ~/Git projects with SSL
+- **Script**: `.agent/scripts/webhosting-helper.sh`
+- **Config**: `configs/webhosting-config.json`
+- **Requires**: LocalWP or nginx, OpenSSL, sudo access
+
+**Commands**: `setup|list|remove`
+**Usage**: `./.agent/scripts/webhosting-helper.sh setup PROJECT_NAME [PORT]`
+
+**Frameworks** (auto-detected):
+- Next.js/React/Vue/Nuxt: port 3000
+- Vite/Svelte: port 5173
+- Python/PHP: port 8000
+- Go: port 8080
+
+**SSL Certs**: `~/.localhost-setup/certs/` (self-signed, 365 days)
+
+**CRITICAL**: After setup, manually add to hosts:
+
+```bash
+echo "127.0.0.1 PROJECT.local" | sudo tee -a /etc/hosts
+```
+<!-- AI-CONTEXT-END -->
+
 The Web Hosting Helper provides seamless local domain management for web applications in your `~/Git` directory, with automatic framework detection and SSL certificate generation.
 
 ## 🚀 Features
@@ -113,9 +140,9 @@ The helper integrates seamlessly with LocalWP's nginx router:
 - **No Conflicts**: Works alongside WordPress sites
 - **Hot Reload**: Preserves development server features
 
-## 📁 Directory Structure
+## Directory Structure
 
-```
+```text
 ~/.localhost-setup/
 ├── certs/
 │   ├── myapp.local.crt
@@ -170,7 +197,7 @@ When setting up a local domain for an AI agent, follow these exact steps:
 5. **Handle SSL Certificate Warning**:
    The browser will show this security warning:
 
-   ```
+   ```text
    Your connection is not private
    Attackers might be trying to steal your information from PROJECT_NAME.local
    (for example, passwords, messages or credit cards).
@@ -279,7 +306,7 @@ PORT=PORT_NUMBER pnpm dev
 
 4. **Access via HTTPS**:
 
-   ```
+   ```text
    https://myapp.local
    ```
 

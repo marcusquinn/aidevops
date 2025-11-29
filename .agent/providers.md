@@ -1,59 +1,73 @@
 # Provider Scripts AI Context
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Location**: `.agent/scripts/[service]-helper.sh`
+- **Pattern**: `./[service]-helper.sh [command] [account] [target] [options]`
+- **Standard commands**: `help | accounts | monitor | audit | status`
+- **Config**: `configs/[service]-config.json`
+- **Debug mode**: `DEBUG=1 ./[service]-helper.sh [command]`
+- **Permissions**: `chmod +x [service]-helper.sh`
+- **Services**: hostinger, hetzner, closte, cloudron, coolify, mainwp, vaultwarden, ses, spaceship, 101domains, dns, git-platforms, localhost, code-audit, setup-wizard, toon, crawl4ai
+- **Security**: Credentials from config files, confirmation for destructive ops
+<!-- AI-CONTEXT-END -->
+
 This folder contains helper scripts for all 25+ service integrations in the AI DevOps Framework.
 
-## 🛠️ **Script Categories**
+## Script Categories
 
-### **Infrastructure & Hosting**
+### Infrastructure & Hosting
 
 - `hostinger-helper.sh` - Shared hosting management
 - `hetzner-helper.sh` - Cloud VPS management
 - `closte-helper.sh` - VPS hosting management
 - `cloudron-helper.sh` - App platform management
 
-### **Deployment & Orchestration**
+### Deployment & Orchestration
 
 - `coolify-helper.sh` - Self-hosted PaaS deployment
 
-### **Content Management**
+### Content Management
 
 - `mainwp-helper.sh` - WordPress management platform
 
-### **Security & Secrets**
+### Security & Secrets
 
 - `vaultwarden-helper.sh` - Password and secrets management
 
-### **Code Quality & Auditing**
+### Code Quality & Auditing
 
 - `code-audit-helper.sh` - Multi-platform code auditing
 
-### **Data Format & Conversion**
+### Data Format & Conversion
 
 - `toon-helper.sh` - TOON format conversion for efficient LLM data exchange
 
-### **Version Control & Git Platforms**
+### Version Control & Git Platforms
 
 - `git-platforms-helper.sh` - GitHub, GitLab, Gitea, Local Git
 
-### **Email Services**
+### Email Services
 
 - `ses-helper.sh` - Amazon SES email delivery
 
-### **Domain & DNS**
+### Domain & DNS
 
 - `spaceship-helper.sh` - Domain registrar with purchasing
 - `101domains-helper.sh` - Domain registrar management
 - `dns-helper.sh` - Multi-provider DNS management
 
-### **Development & Local**
+### Development & Local
 
 - `localhost-helper.sh` - Local development with .local domains
 
-### **Setup & Configuration**
+### Setup & Configuration
 
 - `setup-wizard-helper.sh` - Intelligent setup wizard
 
-## 🔧 **Standard Script Structure**
+## Standard Script Structure
 
 All helper scripts follow this consistent pattern:
 
@@ -94,9 +108,9 @@ CONFIG_FILE="../configs/[service]-config.json"
 main "$@"
 ```
 
-## 🚀 **Usage Patterns**
+## Usage Patterns
 
-### **Standard Commands**
+### Standard Commands
 
 ```bash
 # Help and information
@@ -110,36 +124,36 @@ main "$@"
 ./[service]-helper.sh monitor|audit|status [account]
 ```
 
-### **Common Parameters**
+### Common Parameters
 
 - `account/instance` - Configuration account or instance name
 - `target` - Specific resource (server, domain, repository, etc.)
 - `options` - Additional parameters specific to the operation
 
-## 🛡️ **Security Considerations**
+## Security Considerations
 
-### **Credential Handling**
+### Credential Handling
 
 - All scripts load credentials from `../configs/[service]-config.json`
 - No credentials are hardcoded in scripts
 - API tokens are validated before use
 - Secure credential storage patterns are followed
 
-### **Confirmation Prompts**
+### Confirmation Prompts
 
 - Destructive operations require confirmation
 - Purchase operations require explicit confirmation
 - Production environment changes require verification
 
-### **Error Handling**
+### Error Handling
 
 - All scripts implement proper error handling
 - Exit codes are consistent (0 = success, 1 = error)
 - Error messages are informative but don't expose sensitive data
 
-## 🔍 **Troubleshooting Scripts**
+## Troubleshooting Scripts
 
-### **Common Issues**
+### Common Issues
 
 ```bash
 # Check script permissions
@@ -153,7 +167,7 @@ chmod +x [service]-helper.sh
 ./[service]-helper.sh help
 ```
 
-### **Debug Mode**
+### Debug Mode
 
 Most scripts support verbose output for debugging:
 
@@ -162,7 +176,7 @@ Most scripts support verbose output for debugging:
 DEBUG=1 ./[service]-helper.sh [command]
 ```
 
-## 📚 **Adding New Provider Scripts**
+## Adding New Provider Scripts
 
 When adding new provider scripts, follow these guidelines:
 
@@ -174,7 +188,7 @@ When adding new provider scripts, follow these guidelines:
 6. **Test thoroughly** before integration
 7. **Update this context file** with the new script
 
-## 🎯 **AI Assistant Usage**
+## AI Assistant Usage
 
 AI assistants should:
 
@@ -187,4 +201,4 @@ AI assistants should:
 
 ---
 
-**All provider scripts are designed for AI assistant automation while maintaining security, consistency, and user control.** 🤖🛡️
+**All provider scripts are designed for AI assistant automation while maintaining security, consistency, and user control.**

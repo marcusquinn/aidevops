@@ -1,6 +1,24 @@
 # Crawl4AI Integration Guide
 
-## 🚀 Overview
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Crawl4AI: #1 trending open-source web crawler for AI/LLM applications
+- Install: `./.agent/scripts/crawl4ai-helper.sh install`
+- Docker setup: `./.agent/scripts/crawl4ai-helper.sh docker-setup`
+- Start: `./.agent/scripts/crawl4ai-helper.sh docker-start`
+- MCP setup: `./.agent/scripts/crawl4ai-helper.sh mcp-setup`
+- URLs: Dashboard http://localhost:11235/dashboard, Playground /playground, API :11235
+- Crawl: `./.agent/scripts/crawl4ai-helper.sh crawl URL markdown output.json`
+- Extract: `./.agent/scripts/crawl4ai-helper.sh extract URL '{"schema"}' data.json`
+- Features: LLM-ready markdown, CSS/XPath/LLM extraction, async parallel crawling
+- MCP tools: crawl_url, crawl_multiple, extract_structured, take_screenshot, generate_pdf
+- Config: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
+- Debug: `./.agent/scripts/crawl4ai-helper.sh status`, `docker logs crawl4ai`
+<!-- AI-CONTEXT-END -->
+
+## Overview
 
 Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically designed for AI and LLM applications. This integration provides comprehensive web crawling and data extraction capabilities for the AI DevOps Framework.
 

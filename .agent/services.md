@@ -1,8 +1,26 @@
 # Complete Service Integration Guide
 
-## 🏗️ **Infrastructure & Hosting (4 Services)**
+<!-- AI-CONTEXT-START -->
 
-### **Hostinger**
+## Quick Reference
+
+- **Infrastructure**: Hostinger (shared), Hetzner (VPS), Closte (VPS), Cloudron (apps)
+- **Deployment**: Coolify (self-hosted PaaS)
+- **Content**: MainWP (WordPress management)
+- **Security**: Vaultwarden (passwords/secrets)
+- **Quality**: CodeRabbit, CodeFactor, Codacy, SonarCloud
+- **Git**: GitHub, GitLab, Gitea, Local Git
+- **Email**: Amazon SES
+- **Domains**: Spaceship (with purchasing), 101domains
+- **DNS**: Cloudflare, Namecheap, Route 53
+- **Local**: Localhost, LocalWP, Context7 MCP, MCP Servers, Crawl4AI
+- **Setup**: Intelligent Setup Wizard
+- **Pattern**: Helper script + config file + docs for each service
+<!-- AI-CONTEXT-END -->
+
+## Infrastructure & Hosting (4 Services)
+
+### Hostinger
 
 - **Type**: Shared hosting provider
 - **Strengths**: Budget-friendly, WordPress optimized, easy management
@@ -12,7 +30,7 @@
 - **Config**: `hostinger-config.json`
 - **Docs**: `.agent/hostinger.md`
 
-### **Hetzner Cloud**
+### Hetzner Cloud
 
 - **Type**: German cloud VPS provider
 - **Strengths**: Excellent price/performance, reliable, EU-based
@@ -22,7 +40,7 @@
 - **Config**: `hetzner-config.json`
 - **Docs**: `.agent/hetzner.md`
 
-### **Closte**
+### Closte
 
 - **Type**: VPS hosting provider
 - **Strengths**: Competitive pricing, good performance, multiple locations
@@ -32,7 +50,7 @@
 - **Config**: `closte-config.json`
 - **Docs**: `.agent/closte.md`
 
-### **Cloudron**
+### Cloudron
 
 - **Type**: Self-hosted app platform
 - **Strengths**: Easy app deployment, automatic updates, backup management
@@ -42,9 +60,9 @@
 - **Config**: `cloudron-config.json`
 - **Docs**: `.agent/cloudron.md`
 
-## 🚀 **Deployment & Orchestration (1 Service)**
+## Deployment & Orchestration (1 Service)
 
-### **Coolify**
+### Coolify
 
 - **Type**: Self-hosted deployment platform
 - **Strengths**: Docker-based, Git integration, multiple deployment options
@@ -54,9 +72,9 @@
 - **Config**: `coolify-config.json`
 - **Docs**: `.agent/coolify.md`
 
-## 🎯 **Content Management (1 Service)**
+## Content Management (1 Service)
 
-### **MainWP**
+### MainWP
 
 - **Type**: WordPress management platform
 - **Strengths**: Centralized management, bulk operations, security monitoring
@@ -66,9 +84,9 @@
 - **Config**: `mainwp-config.json`
 - **Docs**: `.agent/mainwp.md`
 
-## 🔐 **Security & Secrets (1 Service)**
+## Security & Secrets (1 Service)
 
-### **Vaultwarden**
+### Vaultwarden
 
 - **Type**: Self-hosted password manager (Bitwarden compatible)
 - **Strengths**: Self-hosted, secure, API access, team sharing
@@ -79,9 +97,9 @@
 - **Config**: `vaultwarden-config.json`
 - **Docs**: `.agent/vaultwarden.md`
 
-## 🔍 **Code Quality & Auditing (4 Services)**
+## Code Quality & Auditing (4 Services)
 
-### **CodeRabbit**
+### CodeRabbit
 
 - **Type**: AI-powered code review platform
 - **Strengths**: AI analysis, context-aware reviews, security scanning
@@ -92,7 +110,7 @@
 - **Config**: `code-audit-config.json`
 - **Docs**: `.agent/code-auditing.md`
 
-### **CodeFactor**
+### CodeFactor
 
 - **Type**: Automated code quality analysis
 - **Strengths**: Simple setup, clear metrics, GitHub integration
@@ -102,7 +120,7 @@
 - **Config**: `code-audit-config.json`
 - **Docs**: `.agent/code-auditing.md`
 
-### **Codacy**
+### Codacy
 
 - **Type**: Automated code quality and security analysis
 - **Strengths**: Comprehensive metrics, team collaboration, custom rules
@@ -113,7 +131,7 @@
 - **Config**: `code-audit-config.json`
 - **Docs**: `.agent/code-auditing.md`
 
-### **SonarCloud**
+### SonarCloud
 
 - **Type**: Professional code quality and security analysis
 - **Strengths**: Industry standard, comprehensive rules, quality gates
@@ -124,9 +142,9 @@
 - **Config**: `code-audit-config.json`
 - **Docs**: `.agent/code-auditing.md`
 
-## 📚 **Version Control & Git Platforms (4 Services)**
+## Version Control & Git Platforms (4 Services)
 
-### **GitHub**
+### GitHub
 
 - **Type**: World's largest code hosting platform
 - **Strengths**: Massive community, excellent CI/CD, comprehensive API
@@ -137,7 +155,7 @@
 - **Config**: `git-platforms-config.json`
 - **Docs**: `.agent/git-platforms.md`
 
-### **GitLab**
+### GitLab
 
 - **Type**: Complete DevOps platform with integrated CI/CD
 - **Strengths**: Built-in CI/CD, security scanning, project management
@@ -148,7 +166,7 @@
 - **Config**: `git-platforms-config.json`
 - **Docs**: `.agent/git-platforms.md`
 
-### **Gitea**
+### Gitea
 
 - **Type**: Lightweight self-hosted Git service
 - **Strengths**: Minimal resource usage, easy deployment, Git-focused
@@ -159,7 +177,7 @@
 - **Config**: `git-platforms-config.json`
 - **Docs**: `.agent/git-platforms.md`
 
-### **Local Git**
+### Local Git
 
 - **Type**: Local repository management and initialization
 - **Strengths**: Offline development, full control, no external dependencies
@@ -169,9 +187,9 @@
 - **Config**: `git-platforms-config.json`
 - **Docs**: `.agent/git-platforms.md`
 
-## 📧 **Email Services (1 Service)**
+## Email Services (1 Service)
 
-### **Amazon SES**
+### Amazon SES
 
 - **Type**: Scalable email delivery service
 - **Strengths**: High deliverability, comprehensive analytics, AWS integration
@@ -181,9 +199,9 @@
 - **Config**: `ses-config.json`
 - **Docs**: `.agent/ses.md`
 
-## 🌐 **Domain & DNS (5 Services)**
+## Domain & DNS (5 Services)
 
-### **Spaceship**
+### Spaceship
 
 - **Type**: Modern domain registrar with API purchasing
 - **Strengths**: API purchasing, transparent pricing, modern interface
@@ -193,7 +211,7 @@
 - **Config**: `spaceship-config.json`
 - **Docs**: `.agent/spaceship.md`, `.agent/domain-purchasing.md`
 
-### **101domains**
+### 101domains
 
 - **Type**: Comprehensive domain registrar with extensive TLD selection
 - **Strengths**: 1000+ TLDs, competitive pricing, bulk operations
@@ -203,7 +221,7 @@
 - **Config**: `101domains-config.json`
 - **Docs**: `.agent/101DOMAINS.md`
 
-### **Cloudflare DNS**
+### Cloudflare DNS
 
 - **Type**: Global CDN and DNS provider
 - **Strengths**: Global network, DDoS protection, performance optimization
@@ -213,7 +231,7 @@
 - **Config**: `cloudflare-dns-config.json`
 - **Docs**: `.agent/dns-providers.md`
 
-### **Namecheap DNS**
+### Namecheap DNS
 
 - **Type**: Domain registrar DNS hosting
 - **Strengths**: Integrated with domain registration, reliable, affordable
@@ -223,7 +241,7 @@
 - **Config**: `namecheap-dns-config.json`
 - **Docs**: `.agent/dns-providers.md`
 
-### **Route 53**
+### Route 53
 
 - **Type**: AWS DNS service with advanced routing
 - **Strengths**: Advanced routing, health checks, AWS integration
@@ -233,9 +251,9 @@
 - **Config**: `route53-dns-config.json`
 - **Docs**: `.agent/dns-providers.md`
 
-## 🏠 **Development & Local (4 Services)**
+## Development & Local (4 Services)
 
-### **Localhost**
+### Localhost
 
 - **Type**: Local development environment with .local domains
 - **Strengths**: Local development, .local domain support, offline work
@@ -245,7 +263,7 @@
 - **Config**: `localhost-config.json`
 - **Docs**: `.agent/localhost.md`
 
-### **LocalWP**
+### LocalWP
 
 - **Type**: Local WordPress development environment
 - **Strengths**: Easy WordPress setup, database access, development tools
@@ -255,7 +273,7 @@
 - **Config**: `localhost-config.json`
 - **Docs**: `.agent/localwp-mcp.md`
 
-### **Context7 MCP**
+### Context7 MCP
 
 - **Type**: Real-time documentation access for AI assistants
 - **Strengths**: Latest documentation, contextual information, AI integration
@@ -265,7 +283,7 @@
 - **Config**: `context7-mcp-config.json`
 - **Docs**: `.agent/context7-mcp-setup.md`
 
-### **MCP Servers**
+### MCP Servers
 
 - **Type**: Model Context Protocol server management
 - **Strengths**: Real-time data access, AI integration, standardized protocol
@@ -275,7 +293,7 @@
 - **Config**: `mcp-servers-config.json`
 - **Docs**: `.agent/mcp-servers.md`
 
-### **Crawl4AI**
+### Crawl4AI
 
 - **Type**: AI-powered web crawler and scraper for LLM-friendly data extraction
 - **Strengths**: LLM-ready output, structured extraction, advanced browser control, high performance
@@ -286,9 +304,9 @@
 - **Config**: `crawl4ai-config.json`
 - **Docs**: `.agent/crawl4ai.md`
 
-## 🧙‍♂️ **Setup & Configuration (1 Service)**
+## Setup & Configuration (1 Service)
 
-### **Intelligent Setup Wizard**
+### Intelligent Setup Wizard
 
 - **Type**: AI-guided infrastructure setup and configuration
 - **Strengths**: Intelligent recommendations, guided setup, best practices
@@ -300,4 +318,4 @@
 
 ---
 
-**This comprehensive service integration provides complete DevOps infrastructure management capabilities across all major service categories.** 🌟🛠️🚀
+**This comprehensive service integration provides complete DevOps infrastructure management capabilities across all major service categories.**

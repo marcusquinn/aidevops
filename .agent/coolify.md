@@ -1,8 +1,22 @@
 # Coolify Provider Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Self-hosted PaaS (Docker-based)
+- **Install**: `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`
+- **Access**: `https://server-ip:8000`
+- **Config**: `configs/coolify-config.json`
+- **Commands**: `coolify-helper.sh [list|connect|open|status|apps|exec] [server] [args]`
+- **Features**: Auto SSL, GitHub/GitLab/Bitbucket integration, PostgreSQL/MySQL/MongoDB/Redis
+- **SSH**: Ed25519 keys recommended
+- **Ports**: 22 (SSH), 80 (HTTP), 443 (HTTPS), 8000 (Coolify UI)
+<!-- AI-CONTEXT-END -->
+
 Coolify is a self-hosted, open-source alternative to Vercel, Netlify, and Heroku that simplifies application deployment using Docker containers.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Coolify Characteristics:**
 

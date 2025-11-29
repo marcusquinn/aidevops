@@ -1,6 +1,22 @@
 # Crawl4AI Resources & Links
 
-## 🔗 Official Resources
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Docs**: https://docs.crawl4ai.com/
+- **GitHub**: https://github.com/unclecode/crawl4ai
+- **Docker**: `unclecode/crawl4ai:latest`
+- **PyPI**: https://pypi.org/project/crawl4ai/
+- **MCP NPM**: `npx crawl4ai-mcp-server@latest`
+- **Discord**: https://discord.gg/jP8KfhDhyN
+- **CapSolver**: https://www.capsolver.com/ (CAPTCHA integration)
+- **API Endpoints**: `/crawl`, `/crawl/job`, `/health`, `/metrics`, `/screenshot`, `/pdf`
+- **Framework Files**: `.agent/scripts/crawl4ai-helper.sh`, `configs/crawl4ai-config.json.txt`
+- **Current Version**: v0.7.7 (November 2024)
+<!-- AI-CONTEXT-END -->
+
+## Official Resources
 
 ### Primary Documentation
 
@@ -24,7 +40,7 @@
 - **Crawl4AI Partnership**: https://www.capsolver.com/blog/Partners/crawl4ai-capsolver/
 - **Chrome Extension**: https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod
 
-## 📚 Documentation Sections
+## Documentation Sections
 
 ### Core Documentation
 
@@ -47,7 +63,7 @@
 - **Clustering Strategies**: https://docs.crawl4ai.com/extraction/clustering-strategies/
 - **Chunking**: https://docs.crawl4ai.com/extraction/chunking/
 
-## 🛠️ Framework Integration
+## Framework Integration
 
 ### Helper Scripts
 
@@ -63,7 +79,7 @@
 - **Usage Guide**: `.agent/spec/crawl4ai-usage.md`
 - **Resources**: `.agent/links/crawl4ai-resources.md` (this file)
 
-## 🔌 MCP Integration
+## MCP Integration
 
 ### MCP Server
 
@@ -84,7 +100,7 @@
 }
 ```
 
-## 🐳 Docker Resources
+## Docker Resources
 
 ### Docker Images
 
@@ -97,7 +113,7 @@
 - **Example Compose**: https://github.com/unclecode/crawl4ai/blob/main/docker-compose.yml
 - **Environment Variables**: https://docs.crawl4ai.com/core/docker-deployment/#environment-setup-api-keys
 
-## 🎯 Use Case Examples
+## Use Case Examples
 
 ### Content Research
 
@@ -117,7 +133,7 @@
 - **Link Analysis**: Discover internal and external link patterns
 - **Performance Monitoring**: Track page changes and updates
 
-## 🔧 API Endpoints
+## API Endpoints
 
 ### Core Endpoints
 
@@ -141,7 +157,7 @@
 - **HTML**: `POST /html` - Extract raw HTML
 - **JavaScript**: `POST /js` - Execute JavaScript on page
 
-## 🔒 Security Resources
+## Security Resources
 
 ### Best Practices
 
@@ -156,7 +172,7 @@
 - **API Keys**: Secure API key management for LLM providers
 - **Webhook Security**: Custom headers for webhook authentication
 
-## 📊 Monitoring & Analytics
+## Monitoring & Analytics
 
 ### Dashboard Features
 
@@ -171,7 +187,7 @@
 - **Health Checks**: Comprehensive health monitoring
 - **Performance Tracking**: Request timing and resource usage
 
-## 🚀 Performance Optimization
+## Performance Optimization
 
 ### Configuration Tips
 
@@ -186,7 +202,7 @@
 - **CPU Throttling**: Configure CPU limits for container
 - **Network Optimization**: Use appropriate timeouts and retry policies
 
-## 🔄 Version Information
+## Version Information
 
 ### Current Version
 
@@ -201,7 +217,7 @@
 - **v0.7.5**: Docker hooks system with function-based API
 - **v0.7.4**: Intelligent table extraction & performance updates
 
-## 🎓 Learning Resources
+## Learning Resources
 
 ### Tutorials & Guides
 
@@ -215,7 +231,7 @@
 - **Discord Discussions**: Community-shared patterns and solutions
 - **Stack Overflow**: Tagged questions and answers
 
-## 🤝 Contributing
+## Contributing
 
 ### Development
 
@@ -229,7 +245,7 @@
 - **Enterprise Support**: Commercial support options available
 - **Community Recognition**: Contributors acknowledged in project
 
-## 📞 Support Channels
+## Support Channels
 
 ### Technical Support
 

@@ -1,8 +1,22 @@
 # Framework Extension Guidelines
 
-## 🎯 **Extension Principles**
+<!-- AI-CONTEXT-START -->
 
-### **Core Principles**
+## Quick Reference
+
+- **New service steps**: Research -> Helper script -> Config template -> Documentation -> Update framework files
+- **Helper location**: `.agent/scripts/[service-name]-helper.sh`
+- **Config template**: `configs/[service-name]-config.json.txt`
+- **Documentation**: `.agent/[service-name].md`
+- **Required functions**: check_dependencies, load_config, get_account_config, api_request, list_accounts, show_help, main
+- **Security checklist**: Token validation, input sanitization, no credential exposure, rate limiting, confirmation prompts
+- **Testing**: Functional, integration, and security testing required
+- **Update files**: .gitignore, README.md, AGENTS.md, recommendations-opinionated.md, setup-wizard-helper.sh
+<!-- AI-CONTEXT-END -->
+
+## Extension Principles
+
+### Core Principles
 
 - **Consistency**: Follow established patterns and conventions
 - **Security**: Implement security measures from the start
@@ -10,7 +24,7 @@
 - **Testing**: Thorough testing before integration
 - **Maintainability**: Code that is easy to understand and maintain
 
-### **Quality Standards**
+### Quality Standards
 
 - **Code review**: All additions must pass code review
 - **Security review**: Security implications must be assessed
@@ -18,9 +32,9 @@
 - **Integration testing**: Must integrate properly with existing services
 - **User experience**: Must maintain or improve user experience
 
-## 🛠️ **Adding New Service Providers**
+## Adding New Service Providers
 
-### **Step 1: Research & Planning**
+### Step 1: Research & Planning
 
 ```bash
 # Research checklist:
@@ -32,7 +46,7 @@
 □ Service fits into existing framework categories
 ```
 
-### **Step 2: Create Helper Script**
+### Step 2: Create Helper Script
 
 ```bash
 # File: .agent/scripts/[service-name]-helper.sh
@@ -70,7 +84,7 @@ main() { ... }
 main "$@"
 ```
 
-### **Step 3: Create Configuration Template**
+### Step 3: Create Configuration Template
 
 ```bash
 # File: configs/[service-name]-config.json.txt
@@ -111,7 +125,7 @@ main "$@"
 }
 ```
 
-### **Step 4: Create Comprehensive Documentation**
+### Step 4: Create Comprehensive Documentation
 
 ```bash
 # File: .agent/[SERVICE-NAME].md
@@ -147,7 +161,7 @@ main "$@"
 [AI automation capabilities and patterns]
 ```
 
-### **Step 5: Update Framework Files**
+### Step 5: Update Framework Files
 
 ```bash
 # Update .gitignore
@@ -172,9 +186,9 @@ echo "configs/[service-name]-config.json" >> .gitignore
 # - Add to configuration generation
 ```
 
-## 🔐 **Security Implementation**
+## Security Implementation
 
-### **Required Security Features**
+### Required Security Features
 
 ```bash
 # All new services must implement:
@@ -188,7 +202,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 8. Secure temporary file handling
 ```
 
-### **Security Testing Checklist**
+### Security Testing Checklist
 
 ```bash
 □ No credentials exposed in logs or output
@@ -201,9 +215,9 @@ echo "configs/[service-name]-config.json" >> .gitignore
 □ Configuration files are gitignored
 ```
 
-## 📊 **Testing Requirements**
+## Testing Requirements
 
-### **Functional Testing**
+### Functional Testing
 
 ```bash
 # Test all major functions:
@@ -217,7 +231,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 □ Help and documentation
 ```
 
-### **Integration Testing**
+### Integration Testing
 
 ```bash
 # Test framework integration:
@@ -229,7 +243,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 □ Cross-service workflows (if applicable)
 ```
 
-### **Security Testing**
+### Security Testing
 
 ```bash
 # Security validation:
@@ -241,9 +255,9 @@ echo "configs/[service-name]-config.json" >> .gitignore
 □ API security best practices
 ```
 
-## 🔄 **Maintenance Guidelines**
+## Maintenance Guidelines
 
-### **Ongoing Maintenance**
+### Ongoing Maintenance
 
 - **API updates**: Monitor service API changes and update accordingly
 - **Security updates**: Regular security reviews and updates
@@ -251,7 +265,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 - **Performance optimization**: Monitor and optimize performance
 - **User feedback**: Incorporate user feedback and feature requests
 
-### **Version Management**
+### Version Management
 
 - **Semantic versioning**: Use semantic versioning for major changes
 - **Backward compatibility**: Maintain backward compatibility when possible
@@ -259,9 +273,9 @@ echo "configs/[service-name]-config.json" >> .gitignore
 - **Deprecation notices**: Provide adequate notice for deprecated features
 - **Change logs**: Maintain detailed change logs
 
-## 🎯 **Quality Assurance**
+## Quality Assurance
 
-### **Code Quality Standards**
+### Code Quality Standards
 
 - **Consistent formatting**: Follow established code formatting
 - **Clear naming**: Use descriptive function and variable names
@@ -269,7 +283,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 - **Error handling**: Implement robust error handling
 - **Performance**: Optimize for performance and resource usage
 
-### **Documentation Quality**
+### Documentation Quality
 
 - **Completeness**: Cover all features and capabilities
 - **Accuracy**: Ensure all examples and instructions work
@@ -279,4 +293,4 @@ echo "configs/[service-name]-config.json" >> .gitignore
 
 ---
 
-**Following these guidelines ensures new services integrate seamlessly with the framework while maintaining security, quality, and consistency standards.** 🛠️🔒✨
+**Following these guidelines ensures new services integrate seamlessly with the framework while maintaining security, quality, and consistency standards.**

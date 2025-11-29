@@ -1,8 +1,23 @@
 # Cloudflare API Setup for AI-Assisted Development
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Auth**: Use API Tokens (NOT Global API Keys)
+- **Token creation**: Dashboard > My Profile > API Tokens > Create Token
+- **Permissions needed**: Zone:Read, DNS:Read, DNS:Edit (scope to specific zones)
+- **Config**: `configs/cloudflare-dns-config.json`
+- **Account ID**: Dashboard > Right sidebar > 32-char hex
+- **Zone ID**: Domain overview > Right sidebar > 32-char hex
+- **API test**: `curl -X GET "https://api.cloudflare.com/client/v4/zones" -H "Authorization: Bearer TOKEN"`
+- **Security**: IP filtering, expiration dates, minimal permissions
+- **Rotation**: Every 6-12 months or after team changes
+<!-- AI-CONTEXT-END -->
+
 This guide shows you how to securely set up Cloudflare API access for local AI-assisted development, DevOps, and system administration.
 
-## 🚨 **SECURITY FIRST: Never Use Global API Keys!**
+## SECURITY FIRST: Never Use Global API Keys!
 
 ### **❌ DON'T Use Global API Keys Because:**
 

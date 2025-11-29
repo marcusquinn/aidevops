@@ -1,8 +1,23 @@
 # Code Quality Services Setup Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- 4 platforms: CodeRabbit (AI reviews), CodeFactor (grading), Codacy (security), SonarCloud (enterprise)
+- Setup time: ~5 min each, all use GitHub OAuth
+- CodeRabbit: coderabbit.ai -> Add repo -> Enable PR reviews
+- CodeFactor: codefactor.io -> Add repo -> Enable GitHub Checks
+- Codacy: app.codacy.com -> Import repo -> Uses .codacy.yml
+- SonarCloud: sonarcloud.io -> Create org -> Import project -> Get token -> Add `SONAR_TOKEN` secret
+- Config files: .codacy.yml, sonar-project.properties (already in repo)
+- Expected grades: CodeFactor A+, Codacy A, SonarCloud passed gate
+- Troubleshooting: Check secrets, webhook configs, repo permissions
+<!-- AI-CONTEXT-END -->
+
 This guide walks you through setting up all 4 integrated code quality and security analysis platforms for your AI DevOps Framework.
 
-## 🎯 **Overview**
+## Overview
 
 The framework integrates with 4 major code analysis platforms:
 

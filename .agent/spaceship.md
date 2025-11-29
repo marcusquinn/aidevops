@@ -1,8 +1,22 @@
 # Spaceship Domain Registrar Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Domain registrar + DNS hosting
+- **Auth**: API key + secret
+- **Config**: `configs/spaceship-config.json`
+- **Commands**: `spaceship-helper.sh [accounts|domains|domain-details|dns-records|add-dns|update-dns|delete-dns|nameservers|update-ns|check-availability|contacts|lock|unlock|transfer-status|monitor-expiration|audit] [account] [domain] [args]`
+- **DNS records**: A, AAAA, CNAME, MX, TXT, NS
+- **Security**: Domain locking, privacy protection, DNSSEC
+- **API key storage**: `setup-local-api-keys.sh set spaceship YOUR_API_KEY`
+- **Monitoring**: `monitor-expiration [account] [days]` for renewal alerts
+<!-- AI-CONTEXT-END -->
+
 Spaceship is a modern domain registrar offering competitive pricing, comprehensive domain management, and developer-friendly APIs for domain and DNS management.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **Spaceship Characteristics:**
 

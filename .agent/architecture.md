@@ -1,5 +1,27 @@
 # AI DevOps Framework Context
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Services**: 25+ integrated (hosting, DNS, Git, code quality, email, etc.)
+- **Pattern**: `./.agent/scripts/[service]-helper.sh [command] [account] [target] [options]`
+- **Config**: `configs/[service]-config.json.txt` (template) → `configs/[service]-config.json` (gitignored)
+
+**Categories**:
+- Infrastructure (4): Hostinger, Hetzner, Closte, Cloudron
+- Deployment (1): Coolify
+- Git (4): GitHub, GitLab, Gitea, Local
+- DNS (5): Spaceship, 101domains, Cloudflare, Namecheap, Route53
+- Code Quality (4): CodeRabbit, CodeFactor, Codacy, SonarCloud
+- Security (1): Vaultwarden
+- Email (1): Amazon SES
+
+**MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
+
+**Extension**: Follow standard patterns in `.agent/spec/extension.md`
+<!-- AI-CONTEXT-END -->
+
 This file provides comprehensive context for AI assistants to understand, manage, and extend the AI DevOps Framework.
 
 ## 🎯 **Framework Overview**

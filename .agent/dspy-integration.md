@@ -1,6 +1,21 @@
 # DSPy Integration Guide
 
-## 🎯 **Overview**
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- DSPy: Framework for algorithmically optimizing LLM prompts and weights
+- Requires: Python 3.8+, OpenAI/Anthropic API key
+- Helper: `./.agent/scripts/dspy-helper.sh install|test|init [project]`
+- Config: `configs/dspy-config.json` (copy from .txt template)
+- Projects: `data/dspy/[project-name]/`
+- Virtual env: `python-env/dspy-env/`
+- Key classes: Signature (define I/O), Module (logic), ChainOfThought (reasoning)
+- Optimizers: BootstrapFewShot (few-shot), COPRO (iterative), MIPRO (multi-stage)
+- API keys: Uses env vars `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+<!-- AI-CONTEXT-END -->
+
+## Overview
 
 DSPy (Declarative Self-improving Python) is a framework for algorithmically optimizing LM prompts and weights. This integration provides seamless access to DSPy's powerful prompt optimization capabilities within the AI DevOps Framework.
 

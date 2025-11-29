@@ -1,8 +1,25 @@
-# 🤖 Agno Integration for AI DevOps Framework
+# Agno Integration for AI DevOps Framework
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- Agno: Enterprise AI agent operating system (AgentOS) running locally
+- Setup: `bash .agent/scripts/agno-setup.sh setup`
+- Start: `~/.aidevops/scripts/start-agno-stack.sh`
+- Stop: `~/.aidevops/scripts/stop-agno-stack.sh`
+- Status: `~/.aidevops/scripts/agno-status.sh`
+- URLs: Agent-UI http://localhost:3000, AgentOS API http://localhost:8000, Docs /docs
+- Config: `~/.aidevops/agno/.env` (OPENAI_API_KEY required)
+- Agents: DevOps Assistant, Code Review Assistant, Documentation Assistant
+- Requirements: Python 3.8+, Node.js 18+
+- Install: `pip install "agno[all]"` in venv at `~/.aidevops/agno/venv/`
+- Privacy: Complete local processing, zero external data transmission
+<!-- AI-CONTEXT-END -->
 
 **Run powerful AI agents locally with complete privacy and control**
 
-## 🎯 **Overview**
+## Overview
 
 The Agno integration brings enterprise-grade AI agent capabilities to the AI DevOps framework. Agno provides a production-ready agent operating system (AgentOS) that runs entirely within your infrastructure, ensuring complete data privacy and control.
 

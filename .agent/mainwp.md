@@ -1,8 +1,22 @@
 # MainWP WordPress Management Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Type**: Self-hosted WordPress site management platform
+- **Auth**: consumer_key + consumer_secret via REST API
+- **Config**: `configs/mainwp-config.json`
+- **Commands**: `mainwp-helper.sh [instances|sites|site-details|monitor|update-core|update-plugins|plugins|themes|backup|backups|security-scan|security-results|audit-security|sync] [instance] [site-id] [args]`
+- **Requires**: MainWP Dashboard + REST API Extension + MainWP Child plugin on sites
+- **API test**: `curl -I https://mainwp.yourdomain.com/wp-json/mainwp/v1/`
+- **Bulk ops**: `bulk-update-wp`, `bulk-update-plugins` for multiple site IDs
+- **Backup types**: full, db, files
+<!-- AI-CONTEXT-END -->
+
 MainWP is a powerful self-hosted WordPress management platform that allows you to manage multiple WordPress sites from a single dashboard with comprehensive API access.
 
-## 🏢 **Provider Overview**
+## Provider Overview
 
 ### **MainWP Characteristics:**
 

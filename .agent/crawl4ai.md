@@ -1,5 +1,31 @@
 # Crawl4AI Integration Guide
 
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: #1 AI/LLM web crawler - markdown output for RAG pipelines
+- **Install**: `./.agent/scripts/crawl4ai-helper.sh install`
+- **Docker**: `./.agent/scripts/crawl4ai-helper.sh docker-start`
+- **MCP Setup**: `./.agent/scripts/crawl4ai-helper.sh mcp-setup`
+
+**Endpoints** (Docker):
+- API: http://localhost:11235
+- Dashboard: http://localhost:11235/dashboard
+- Playground: http://localhost:11235/playground
+
+**Commands**: `install|docker-setup|docker-start|mcp-setup|capsolver-setup|status|crawl|extract|captcha-crawl`
+
+**Key Features**:
+- LLM-ready markdown output
+- CSS/XPath/LLM extraction strategies
+- CAPTCHA solving via CapSolver
+- Parallel async crawling
+- Session management & browser pool
+
+**Env Vars**: `OPENAI_API_KEY`, `CAPSOLVER_API_KEY`, `CRAWL4AI_MAX_PAGES=50`
+<!-- AI-CONTEXT-END -->
+
 ## 🚀 Overview
 
 Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically designed for AI and LLM applications. This integration provides comprehensive web crawling and data extraction capabilities for the AI DevOps Framework.
