@@ -247,6 +247,115 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand-both     # Both versions
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ```
 
+## **AI Agents & Subagents**
+
+**Agents are specialized AI personas with focused knowledge and tool access.** Instead of giving your AI assistant access to everything at once (which wastes context tokens), agents provide targeted capabilities for specific tasks.
+
+### **How Agents Work**
+
+| Concept | Description |
+|---------|-------------|
+| **Primary Agent** | Main assistant you interact with (full framework access) |
+| **Subagent** | Specialized assistant for specific services (invoked with @mention) |
+| **MCP Tools** | Only loaded when relevant subagent is invoked (saves tokens) |
+
+### **Available Subagents**
+
+| Agent | Purpose | MCPs Enabled |
+|-------|---------|--------------|
+| `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
+| `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
+| `@wordpress` | Local dev, MainWP management | localwp, context7 |
+| `@seo` | Search Console, keyword research | gsc, ahrefs |
+| `@code-quality` | Quality scanning, security, learning loop | context7 |
+| `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
+| `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
+| `@agent-review` | Session analysis, agent improvement | (read/write only) |
+
+### **Setup for OpenCode**
+
+```bash
+# Install aidevops agents for OpenCode
+.agent/scripts/setup-opencode-agents.sh install
+
+# Check status
+.agent/scripts/setup-opencode-agents.sh status
+```
+
+### **Setup for Other AI Assistants**
+
+Add to your AI assistant's system prompt:
+
+```text
+Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative guidance.
+
+When working with specific services, read the corresponding .agent/[service].md file
+for focused guidance. Available services: hostinger, hetzner, wordpress, seo,
+code-quality, browser-automation, git-platforms.
+```
+
+### **Continuous Improvement with @agent-review**
+
+**End every session by calling `@agent-review`** to analyze what worked and what didn't:
+
+```text
+@agent-review analyze this session and suggest improvements to the agents used
+```
+
+The review agent will:
+1. Identify which agents were used
+2. Evaluate missing, incorrect, or excessive information
+3. Suggest specific improvements to agent files
+4. Generate ready-to-apply edits
+5. **Optionally compose a PR** to contribute improvements back to aidevops
+
+**This creates a feedback loop:**
+
+```
+Session → @agent-review → Improvements → Better Agents → Better Sessions
+                ↓
+         PR to aidevops repo (optional)
+```
+
+**Contributing improvements:**
+
+```text
+@agent-review create a PR for improvement #2
+```
+
+The agent will create a branch, apply changes, and submit a PR to `marcusquinn/aidevops` with a structured description. Your real-world usage helps improve the framework for everyone.
+
+**Code quality learning loop:**
+
+The `@code-quality` agent also learns from issues. After fixing violations from SonarCloud, Codacy, ShellCheck, etc., it analyzes patterns and updates framework guidance to prevent recurrence:
+
+```
+Quality Issue → Fix Applied → Pattern Identified → Framework Updated → Issue Prevented
+```
+
+### **Creating Custom Agents**
+
+Create a markdown file in `~/.config/opencode/agent/` (OpenCode) or reference in your AI's system prompt:
+
+```markdown
+---
+description: Short description of what this agent does
+mode: subagent
+temperature: 0.2
+tools:
+  bash: true
+  specific-mcp_*: true
+---
+
+# Agent Name
+
+Detailed instructions for the agent...
+```
+
+See `.agent/opencode-integration.md` for complete documentation.
+
+---
+
 ## **Usage Examples**
 
 ### **Server Management**
