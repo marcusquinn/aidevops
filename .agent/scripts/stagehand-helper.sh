@@ -93,10 +93,12 @@ install_stagehand() {
     # Install Stagehand
     print_info "Installing @browserbasehq/stagehand..."
     cd "$STAGEHAND_CONFIG_DIR" || return 1
+    # NOSONAR - npm scripts required for Playwright browser automation binaries
     npm install @browserbasehq/stagehand
     
     # Install additional dependencies for better functionality
     print_info "Installing additional dependencies..."
+    # NOSONAR - npm scripts required for dependency compilation
     npm install zod dotenv
     
     print_success "Stagehand installation completed"

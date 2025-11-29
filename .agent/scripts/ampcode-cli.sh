@@ -131,6 +131,7 @@ install_ampcode_cli() {
                 print_info "Installing via Homebrew..."
                 # Install via npm as common method
                 if command -v npm &> /dev/null; then
+                    # NOSONAR - npm scripts required for CLI binary installation
                     npm install -g @ampcode/cli
                 else
                     print_error "npm not found. Please install Node.js first"
@@ -145,6 +146,7 @@ install_ampcode_cli() {
             platform="Linux"
             if command -v npm &> /dev/null; then
                 print_info "Installing via npm..."
+                # NOSONAR - npm scripts required for CLI binary installation
                 npm install -g @ampcode/cli
             else
                 print_error "npm not found. Please install Node.js first"

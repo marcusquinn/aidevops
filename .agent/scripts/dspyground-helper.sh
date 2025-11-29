@@ -78,6 +78,7 @@ install() {
     print_info "Installing DSPyGround..."
     check_nodejs
     
+    # NOSONAR - npm scripts required for CLI binary installation
     if npm install -g dspyground; then
         print_success "DSPyGround installed successfully"
         dspyground --version

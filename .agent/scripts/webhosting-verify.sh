@@ -154,6 +154,7 @@ verify_domain() {
         # Check 8: HTTP redirect
         echo -e "${BLUE}8. Testing HTTP redirect...${NC}"
         local http_response
+        # NOSONAR - Testing HTTP to HTTPS redirect behavior requires HTTP request
         http_response=$(curl -s -o /dev/null -w "%{http_code}" "http://$domain" 2>/dev/null || echo "000")
         if [[ "$http_response" == "301" ]]; then
             print_success "HTTP redirects to HTTPS (301)"

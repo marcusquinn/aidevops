@@ -433,9 +433,11 @@ setup_agent_ui() {
     # Check if already initialized
     if [[ ! -f "package.json" ]]; then
         print_info "Creating Agent-UI project..."
+        # NOSONAR - npm scripts required for project scaffolding
         npx create-agent-ui@latest . --yes
     else
         print_info "Agent-UI already initialized, updating dependencies..."
+        # NOSONAR - npm scripts required for native dependencies
         npm install
     fi
     

@@ -147,6 +147,7 @@ create_localwp_nginx_config() {
     fi
     
     # Create nginx configuration based on webapp type
+    # NOSONAR - HTTP used for localhost proxy_pass is safe (internal traffic only)
     cat > "$nginx_conf" << EOF
 # Local Development Site: $domain ($webapp_type)
 server {

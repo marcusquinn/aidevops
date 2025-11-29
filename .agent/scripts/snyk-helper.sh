@@ -219,6 +219,7 @@ install_snyk() {
             fi
             print_warning "Homebrew installation failed, trying npm..."
             if command -v npm &> /dev/null; then
+                # NOSONAR - npm scripts required for CLI binary installation
                 if npm install -g snyk; then
                     print_success "$SUCCESS_INSTALL_COMPLETE"
                     return 0
@@ -231,6 +232,7 @@ install_snyk() {
         "linux")
             print_info "Detected Linux - installing via npm or binary..."
             if command -v npm &> /dev/null; then
+                # NOSONAR - npm scripts required for CLI binary installation
                 if npm install -g snyk; then
                     print_success "$SUCCESS_INSTALL_COMPLETE"
                     return 0
