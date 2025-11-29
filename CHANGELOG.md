@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - OpenCode as preferred CLI AI assistant in documentation
-- Greptile MCP server integration for GitHub code search
+- Grep by Vercel MCP server integration for GitHub code search
 - Cross-tool AI assistant symlinks (.cursorrules, .windsurfrules, CLAUDE.md, GEMINI.md)
 - OpenCode custom tool definitions in `.opencode/tool/`
 - Consolidated `.agent/` directory structure

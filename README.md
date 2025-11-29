@@ -219,7 +219,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Ahrefs MCP](https://ahrefs.com/)**: SEO analysis, backlink research, keyword data
 - **[Perplexity MCP](https://www.perplexity.ai/)**: AI-powered web search and research
 - **[Google Search Console MCP](https://search.google.com/search-console)**: Search performance insights
-- **[Greptile MCP](https://grep.app/)**: Search code snippets across GitHub repositories
+- **[Grep by Vercel MCP](https://grep.app/)**: Search code snippets across GitHub repositories
 
 ### **📊 Performance & Analytics**
 
