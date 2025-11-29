@@ -2,7 +2,7 @@
 
 ## Comprehensive Quality Management Tools
 
-> **⚠️ IMPORTANT**: This document is supplementary to the [MASTER-GUIDE.md](../MASTER-GUIDE.md).
+> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the Master Guide takes precedence as the single source of truth.
 
 ### Overview

@@ -2,7 +2,7 @@
 
 ## Zero Technical Debt Methodology
 
-> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../../AGENTS.md).
+> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the main AGENTS.md takes precedence as the single source of truth.
 
 ### Overview

@@ -54,7 +54,6 @@ log() {
     local message="$2"
     local timestamp
     timestamp=$(date "+%Y-%m-%dT%H:%M:%S%z")
-    timestamp=$(date "+%Y-%m-%dT%H:%M:%S%z")
     
     # Console output
     local color="$NC"
