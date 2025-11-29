@@ -41,7 +41,7 @@ The `.agent/workflows/` directory contains process guides for common development
 
 ### Starting New Work
 
-```
+```text
 1. Check git-workflow.md for branching strategy
 2. Use feature-development.md OR bug-fixing.md
 3. Follow code-review.md before PR
@@ -49,7 +49,7 @@ The `.agent/workflows/` directory contains process guides for common development
 
 ### Releasing a Version
 
-```
+```text
 1. Follow release-process.md step-by-step
 2. Use error-checking-feedback-loops.md for CI monitoring
 3. Create GitHub release with changelog
@@ -57,7 +57,7 @@ The `.agent/workflows/` directory contains process guides for common development
 
 ### Working in Multiple Repos
 
-```
+```text
 1. Read multi-repo-workspace.md FIRST
 2. Always verify which repo you're in
 3. Don't assume features from one repo exist in another

@@ -29,7 +29,7 @@ cd aidevops
 
 Add this to your AI assistant's system prompt or instructions:
 
-```
+```text
 Before performing DevOps operations, read ~/git/aidevops/AGENTS.md 
 for authoritative guidance on this infrastructure management framework.
 ```
@@ -62,7 +62,7 @@ bash .agent/scripts/setup-local-api-keys.sh list
 
 ## Directory Structure
 
-```
+```text
 ~/git/aidevops/
 ├── AGENTS.md              # 📖 AI assistant instructions
 ├── CHANGELOG.md           # Version history
@@ -105,7 +105,7 @@ bash .agent/scripts/setup-local-api-keys.sh list
 
 The framework creates organized working directories:
 
-```
+```text
 ~/.agent/
 ├── tmp/        # Temporary session files (auto-cleanup)
 ├── work/       # Project working directories

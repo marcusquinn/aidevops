@@ -52,7 +52,7 @@ DSPy (Declarative Self-improving Python) is a framework for algorithmically opti
 
 ## 📁 **Project Structure**
 
-```
+```text
 aidevops/
 ├── .agent/scripts/dspy-helper.sh          # DSPy management script
 ├── configs/dspy-config.json          # DSPy configuration

@@ -53,11 +53,11 @@
 [![GitHub contributors](https://img.shields.io/github/contributors/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/graphs/contributors)
 
 <!-- Framework Specific -->
-[![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#️-comprehensive-service-coverage)
+[![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-12-orange.svg)](#-mcp-integrations)
-[![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#️-comprehensive-service-coverage)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-12-orange.svg)](#mcp-integrations)
+[![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 ## **Enterprise-Grade Quality & Security**
 

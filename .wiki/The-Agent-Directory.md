@@ -4,7 +4,7 @@ Everything AI assistants need lives in `.agent/`. This page explains the structu
 
 ## Overview
 
-```
+```text
 .agent/
 ├── scripts/       # 90+ automation & helper scripts
 ├── workflows/     # Development process guides

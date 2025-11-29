@@ -475,5 +475,3 @@ VERSION=$(bash .agent/scripts/version-manager.sh get)
 **Automate your web presence responsibly with AI-powered browser automation!** 🌐🤖✨
 
 **Remember**: Always use automation ethically and in compliance with platform terms of service. Focus on adding genuine value and maintaining authentic professional relationships.
-
-```

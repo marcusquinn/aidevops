@@ -40,7 +40,7 @@ dspyground --version
 
 ## 📁 **Project Structure**
 
-```
+```text
 aidevops/
 ├── .agent/scripts/dspyground-helper.sh    # DSPyGround management script
 ├── configs/dspyground-config.json    # DSPyGround configuration

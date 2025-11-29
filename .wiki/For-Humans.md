@@ -18,7 +18,7 @@ A non-technical guide to understanding and using the AI DevOps Framework.
 
 ## How It Works (Simple Version)
 
-```
+```text
 You: "Help me deploy my site to Hostinger"
 
 AI: *reads AGENTS.md*

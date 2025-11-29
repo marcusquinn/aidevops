@@ -37,7 +37,7 @@ echo "$(date): Successfully fixed 50 quality issues with bulk script" >> ~/.agen
 
 ## Recommended Structure
 
-```
+```text
 ~/.agent/memory/
 ├── patterns/           # Successful operation patterns
 │   ├── quality-fixes.txt

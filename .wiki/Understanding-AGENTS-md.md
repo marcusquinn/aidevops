@@ -31,7 +31,7 @@ Without centralized guidance, AI assistants might receive conflicting instructio
 
 ## File Structure
 
-```
+```text
 AGENTS.md
 ├── Security Warning          # Critical security guidelines
 ├── Service Reliability       # Status pages and troubleshooting
@@ -48,7 +48,7 @@ AGENTS.md
 
 ### 🔒 Security Contract
 
-```
+```text
 All credentials stored in configs/[service]-config.json (gitignored)
 Templates in configs/[service]-config.json.txt (committed)
 Never expose credentials in logs, output, or error messages
@@ -58,7 +58,7 @@ Never expose credentials in logs, output, or error messages
 
 ### 📁 Working Directories
 
-```
+```text
 ~/.agent/
 ├── tmp/      # Temporary files
 ├── work/     # Project files  
@@ -69,7 +69,7 @@ Never expose credentials in logs, output, or error messages
 
 ### 🏆 Quality Standards
 
-```
+```text
 SonarCloud: A-grades required
 CodeFactor: 85%+ A-grade files
 ShellCheck: Zero violations

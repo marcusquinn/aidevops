@@ -73,7 +73,7 @@ When using this framework, AI assistants have access to:
 
 All AI-relevant content is consolidated in `.agent/`:
 
-```
+```text
 .agent/
 ├── scripts/           # 90+ automation & helper scripts
 ├── toon-test-documents/ # TOON format test files
@@ -227,7 +227,7 @@ This includes but is not limited to:
 
 #### **📁 Mandatory Directory Structure**
 
-```
+```text
 ~/.agent/
 ├── tmp/                    # Session-specific temporary files (auto-cleanup)
 │   └── session-YYYYMMDD/   # Date-based session directories
@@ -349,7 +349,7 @@ echo "sonarcloud_project=marcusquinn_aidevops" > ~/.agent/memory/configurations/
 
 #### **Decision Guide: Where Should This File Go?**
 
-```
+```text
 Is this a credential or secret?
   YES → ~/.config/aidevops/mcp-env.sh (ONLY location)
   NO  ↓

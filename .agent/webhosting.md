@@ -62,7 +62,7 @@ The Web Hosting Helper provides seamless local domain management for web applica
 
 Output example:
 
-```
+```text
 🌐 https://myapp.local → Port 3000 ✅ Running
 🌐 https://api-server.local → Port 8000 ❌ Not running
 ```
