@@ -95,3 +95,6 @@ path_filters:
     - ".agent/memory/*"
     - "*.log"
     - "*.tmp"
+
+# Full review trigger - updated 2024-11-29
+# This comment triggers a comprehensive codebase review
