@@ -5,7 +5,7 @@
 # Comprehensive setup and configuration for Stagehand AI browser automation
 
 # Source shared constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
 
 # Colors for output
@@ -403,7 +403,7 @@ main() {
             print_info "Next steps:"
             print_info "1. Run: bash .agent/scripts/stagehand-helper.sh install"
             print_info "2. Configure API keys in ~/.aidevops/stagehand/.env"
-            print_info "3. Try examples: cd ~/.aidevops/stagehand && npm run search-products"
+            print_info "3. Try examples: cd ~/.aidevops/stagehand && npm run search-products" || exit
             ;;
         "examples")
             create_advanced_examples

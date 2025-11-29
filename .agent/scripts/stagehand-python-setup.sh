@@ -5,7 +5,7 @@
 # Comprehensive setup and configuration for Stagehand Python AI browser automation
 
 # Source shared constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
 
 # Colors for output
@@ -405,7 +405,7 @@ main() {
             print_info "1. Run: bash .agent/scripts/stagehand-python-helper.sh install"
             print_info "2. Configure API keys in ~/.aidevops/stagehand-python/.env"
             print_info "3. Activate venv: source ~/.aidevops/stagehand-python/.venv/bin/activate"
-            print_info "4. Try examples: cd ~/.aidevops/stagehand-python && python examples/basic_example.py"
+            print_info "4. Try examples: cd ~/.aidevops/stagehand-python && python examples/basic_example.py" || exit
             ;;
         "examples")
             create_python_examples

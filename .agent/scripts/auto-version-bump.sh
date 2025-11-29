@@ -20,7 +20,7 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # Repository root directory
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
 VERSION_MANAGER="$REPO_ROOT/.agent/scripts/version-manager.sh"
 
 # Function to determine version bump type from commit message

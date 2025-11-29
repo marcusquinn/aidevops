@@ -5,7 +5,7 @@
 # Verifies local domain setup and provides detailed troubleshooting
 
 # Source shared constants if available
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
 # Colors for output
@@ -139,7 +139,7 @@ verify_domain() {
             print_success "Development server running on port $port"
         else
             print_warning "No service running on port $port"
-            print_info "Start with: cd $project_dir && PORT=$port npm run dev"
+            print_info "Start with: cd $project_dir && PORT=$port npm run dev" || exit
         fi
         
         # Check 7: DNS resolution
@@ -187,7 +187,7 @@ verify_domain() {
         echo -e "${GREEN}✅ Domain is ready: https://$domain${NC}"
         echo ""
         echo -e "${BLUE}Next steps:${NC}"
-        echo "1. Start development server: cd $project_dir && PORT=$port npm run dev"
+        echo "1. Start development server: cd $project_dir && PORT=$port npm run dev" || exit
         echo "2. Visit: https://$domain"
         echo "3. Accept SSL certificate warning in browser"
     else

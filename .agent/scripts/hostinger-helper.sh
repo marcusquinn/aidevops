@@ -5,7 +5,7 @@
 # Manages Hostinger shared hosting sites and API operations
 
 # Source shared constants if available
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
 # Colors for output
@@ -120,7 +120,7 @@ connect_site() {
     fi
     
     # Connect with sshpass
-    sshpass -f "$password_file" ssh -p "$port" "$username@$server" -t "cd $domain_path && bash"
+    sshpass -f "$password_file" ssh -p "$port" "$username@$server" -t "cd $domain_path && bash" || exit
     return 0
 }
 
@@ -155,7 +155,7 @@ exec_on_site() {
     password_file="${password_file/\~/$HOME}"
     print_info "Executing '$command' on $site..."
     
-    sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $command"
+    sshpass -f "$password_file" ssh -p "$port" "$username@$server" "cd $domain_path && $command" || exit
     return 0
 }
 

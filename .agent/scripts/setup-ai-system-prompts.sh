@@ -30,7 +30,7 @@ readonly SYSTEM_PROMPT="Before performing any DevOps operations, always read ~/g
 check_framework() {
     if [[ ! -d "$FRAMEWORK_PATH" ]]; then
         print_error "AI DevOps framework not found at $FRAMEWORK_PATH"
-        print_info "Please run: mkdir -p ~/git && cd ~/git && git clone https://github.com/marcusquinn/aidevops.git"
+        print_info "Please run: mkdir -p ~/git && cd ~/git && git clone https://github.com/marcusquinn/aidevops.git" || exit
         exit 1
     fi
     
@@ -115,7 +115,7 @@ configure_warp() {
     print_info "Creating Warp workflow for DevOps setup..."
     
     if warp-cli workflow create devops-setup \
-        --command "cd $FRAMEWORK_PATH && cat AGENTS.md" \
+        --command "cd $FRAMEWORK_PATH && cat AGENTS.md" \ || exit
         --description "Read AI DevOps framework guidance" 2>/dev/null; then
         print_success "Created Warp workflow 'devops-setup'"
         print_info "Use: warp-cli workflow run devops-setup"

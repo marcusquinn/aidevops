@@ -13,7 +13,7 @@ set -euo pipefail
 # CONFIGURATION & CONSTANTS
 # ------------------------------------------------------------------------------
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 readonly CONFIG_FILE="$REPO_ROOT/configs/updown-config.json"
 readonly API_BASE_URL="https://updown.io/api"

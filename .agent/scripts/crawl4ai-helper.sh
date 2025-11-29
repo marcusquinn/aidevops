@@ -43,7 +43,7 @@ readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 readonly CONTENT_TYPE_JSON=$CONTENT_TYPE_JSON
 
 # Constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly CONFIG_DIR="$SCRIPT_DIR/../configs"
 readonly DOCKER_IMAGE="unclecode/crawl4ai:latest"

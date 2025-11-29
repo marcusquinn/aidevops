@@ -5,7 +5,7 @@
 # Comprehensive testing script for both Stagehand versions
 
 # Source shared constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
 
 # Colors for output

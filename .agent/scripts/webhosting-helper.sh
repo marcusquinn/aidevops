@@ -6,7 +6,7 @@
 # Compatible with LocalWP and standalone nginx setups
 
 # Source shared constants if available
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
 # Colors for output
@@ -313,7 +313,7 @@ setup_domain() {
     echo "   echo \"127.0.0.1 $domain\" | sudo tee -a /etc/hosts"
     echo ""
     echo -e "${YELLOW}2. Start your development server on port $port:${NC}"
-    echo "   cd ~/Git/$project_name"
+    echo "   cd ~/Git/$project_name" || exit
     echo "   PORT=$port npm run dev  # or pnpm dev, yarn dev"
     echo ""
     echo -e "${YELLOW}3. Visit https://$domain in your browser${NC}"

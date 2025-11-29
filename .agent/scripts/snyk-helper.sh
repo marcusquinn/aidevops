@@ -30,7 +30,7 @@ set -euo pipefail
 # CONFIGURATION & CONSTANTS
 # ------------------------------------------------------------------------------
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR="$script_dir"
 
 repo_root="$(dirname "$SCRIPT_DIR")"

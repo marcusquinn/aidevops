@@ -5,7 +5,7 @@
 # Comprehensive testing script for Stagehand setup and functionality
 
 # Source shared constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
 
 # Colors for output
@@ -239,7 +239,7 @@ $(cat "$TEST_LOG")
 
 1. Run full installation: \`bash .agent/scripts/stagehand-helper.sh setup\`
 2. Test MCP integration: \`bash .agent/scripts/setup-mcp-integrations.sh stagehand\`
-3. Try examples: \`cd ~/.aidevops/stagehand && npm run search-products\`
+3. Try examples: \`cd ~/.aidevops/stagehand && npm run search-products\` || exit
 
 ## Files Created
 

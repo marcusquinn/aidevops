@@ -71,7 +71,7 @@ generate_release_notes() {
 \`\`\`bash
 # Clone the repository
 git clone https://github.com/$REPO_OWNER/$REPO_NAME.git
-cd $REPO_NAME
+cd $REPO_NAME || exit
 
 # Run setup wizard
 bash setup.sh

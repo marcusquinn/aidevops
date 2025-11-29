@@ -32,7 +32,7 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
 # Constants
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly FRAMEWORK_ROOT="$SCRIPT_DIR/../.."
 readonly CRAWL4AI_HELPER="$FRAMEWORK_ROOT/.agent/scripts/crawl4ai-helper.sh"
 readonly OUTPUT_DIR="$HOME/.agent/tmp/crawl4ai-examples"

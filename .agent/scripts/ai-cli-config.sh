@@ -6,9 +6,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)" || exit
 readonly REPO_ROOT
 readonly AGENTS_FILE="$HOME/AGENTS.md"
 readonly REPO_AGENTS_FILE="$REPO_ROOT/AGENTS.md"
@@ -412,7 +412,7 @@ alias agents='cat ~/git/aidevops/AGENTS.md'
 alias agents-home='cat ~/AGENTS.md'
 
 # Navigate to AI framework
-alias cdai='cd ~/git/aidevops'
+alias cdai='cd ~/git/aidevops' || exit
 
 # Droid CLI with context
 alias droid-guided='droid "$(cat ~/AGENTS.md)"'
