@@ -1056,6 +1056,7 @@ The following files contain version information that MUST be updated together:
 ### **NEVER Update Versions Manually**
 
 **DO NOT** edit version numbers directly in individual files. Always use:
+
 ```bash
 ./.agent/scripts/version-manager.sh release [major|minor|patch]
 ```
