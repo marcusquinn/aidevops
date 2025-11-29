@@ -211,13 +211,84 @@ When working with Git repositories and platforms, the framework provides enhance
 
 ### **🗂️ AI Working Directories (MANDATORY USAGE)**
 
-#### **`~/.agent/tmp/` - Temporary Working Directory**
+#### **🚨 ABSOLUTE PROHIBITION: Home Directory Littering**
 
-**ALWAYS use this directory for temporary files during operations:**
+**AI assistants MUST NEVER create files directly in `~/` (home directory root).**
+
+This includes but is not limited to:
+- Temporary scripts (`temp_*.sh`, `fix_*.sh`, `test_*.py`)
+- Content files (`post_*.md`, `article_*.txt`, `draft_*.md`)
+- Data exports (`export_*.json`, `backup_*.sql`, `data_*.csv`)
+- Helper files (`helper_*.sh`, `util_*.py`, `tool_*.js`)
+- Any working files whatsoever
+
+**Violation of this rule creates unmanageable clutter that degrades user experience.**
+
+#### **📁 Mandatory Directory Structure**
+
+```
+~/.agent/
+├── tmp/                    # Session-specific temporary files (auto-cleanup)
+│   └── session-YYYYMMDD/   # Date-based session directories
+├── work/                   # Project-specific working directories
+│   ├── wordpress/          # WordPress content, themes, plugins work
+│   ├── hosting/            # Server configs, migrations, deployments
+│   ├── seo/                # Keyword research, content optimization
+│   ├── development/        # Code projects, scripts, tools
+│   └── [project-name]/     # Custom project directories as needed
+└── memory/                 # Persistent cross-session storage
+    ├── patterns/           # Learned successful approaches
+    ├── preferences/        # User preferences and settings
+    └── configurations/     # Discovered configurations
+```
+
+#### **`~/.agent/work/` - Project Working Directory (PRIMARY)**
+
+**ALWAYS use project-specific subdirectories for working files:**
+
+```bash
+# WordPress content work
+mkdir -p ~/.agent/work/wordpress
+cd ~/.agent/work/wordpress
+# Create: post_draft.md, theme_customization.css, plugin_config.json
+
+# Hosting/server work
+mkdir -p ~/.agent/work/hosting
+cd ~/.agent/work/hosting
+# Create: migration_script.sh, server_config.yaml, backup_plan.md
+
+# SEO/research work
+mkdir -p ~/.agent/work/seo
+cd ~/.agent/work/seo
+# Create: keyword_analysis.csv, content_brief.md, competitor_report.json
+
+# Development work
+mkdir -p ~/.agent/work/development
+cd ~/.agent/work/development
+# Create: test_script.py, helper_function.js, data_processor.sh
+
+# Custom project (create as needed)
+mkdir -p ~/.agent/work/my-project-name
+cd ~/.agent/work/my-project-name
+# Create project-specific files here
+```
+
+**Use `~/.agent/work/[project]/` for:**
+
+- Content drafts and revisions
+- Data exports and imports
+- Helper scripts and utilities
+- Configuration files being developed
+- Any files that may persist beyond a single session
+- Files that might be referenced or reused later
+
+#### **`~/.agent/tmp/` - Temporary Session Directory**
+
+**Use for truly ephemeral files that should be cleaned up:**
 
 ```bash
 # Create session-specific working directory
-SESSION_DIR="~/.agent/tmp/session-$(date +%Y%m%d_%H%M%S)"
+SESSION_DIR="$HOME/.agent/tmp/session-$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$SESSION_DIR"
 
 # Use for temporary scripts
@@ -229,17 +300,17 @@ EOF
 # Use for backups before modifications
 cp important-file.sh "$SESSION_DIR/backup-important-file.sh"
 
-# Clean up when done
+# Clean up when done (or let periodic cleanup handle it)
 rm -rf "$SESSION_DIR"
 ```
 
 **Use `~/.agent/tmp/` for:**
 
-- Temporary scripts and working files
+- Truly temporary scripts (run once, discard)
 - Backups before making changes
-- Log outputs and analysis results
-- Intermediate data during operations
-- Any files that don't need to persist
+- Intermediate processing data
+- Files needed only for current operation
+- Test outputs that won't be referenced again
 
 #### **`~/.agent/memory/` - Persistent Memory Directory**
 
@@ -264,12 +335,32 @@ echo "sonarcloud_project=marcusquinn_aidevops" > ~/.agent/memory/configurations/
 - Configuration details and setups
 - Operation history and outcomes
 
-#### **🚨 CRITICAL RULES:**
+#### **🚨 CRITICAL RULES (MANDATORY COMPLIANCE):**
 
-- **NEVER store credentials** in memory or tmp directories
-- **Always use `~/.agent/tmp/`** for temporary files (not root directory)
-- **Clean up** temporary files when operations complete
-- **Respect privacy** - be mindful of what you store in memory
+| Rule | Requirement |
+|------|-------------|
+| **Home Directory** | NEVER create files in `~/` root |
+| **Project Files** | ALWAYS use `~/.agent/work/[project]/` |
+| **Temp Files** | Use `~/.agent/tmp/session-*/` with cleanup |
+| **Credentials** | NEVER store in any `~/.agent/` directory |
+| **Cleanup** | Remove tmp files when operations complete |
+| **Organization** | Use descriptive project directory names |
+
+#### **Decision Guide: Where Should This File Go?**
+
+```
+Is this a credential or secret?
+  YES → ~/.config/aidevops/mcp-env.sh (ONLY location)
+  NO  ↓
+
+Will this file be needed after the current session?
+  NO  → ~/.agent/tmp/session-YYYYMMDD/
+  YES ↓
+
+Is this related to an existing project category?
+  YES → ~/.agent/work/[wordpress|hosting|seo|development]/
+  NO  → ~/.agent/work/[new-project-name]/
+```
 
 ### **🔒 Secure Template System (MANDATORY COMPLIANCE)**
 
