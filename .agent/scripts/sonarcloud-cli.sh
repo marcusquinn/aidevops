@@ -14,12 +14,11 @@ readonly YELLOW='\033[1;33m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
-print_header() { echo -e "${PURPLE}🔍 $1${NC}"; }
-    local _arg1="$1"
-print_info() { echo -e "${BLUE}ℹ️  $_arg1${NC}"; }
-print_success() { echo -e "${GREEN}✅ $_arg1${NC}"; }
-print_warning() { echo -e "${YELLOW}⚠️  $_arg1${NC}"; }
-print_error() { echo -e "${RED}❌ $_arg1${NC}"; }
+print_header() { echo -e "${PURPLE}$1${NC}"; }
+print_info() { echo -e "${BLUE}$1${NC}"; }
+print_success() { echo -e "${GREEN}✅ $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
+print_error() { echo -e "${RED}❌ $1${NC}"; }
 
 # SonarCloud project configuration
 readonly SONAR_PROJECT_KEY="marcusquinn_aidevops"

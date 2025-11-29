@@ -169,7 +169,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Agno](https://agno.com/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
 
-### **📝 WordPress Development (2 tools)**
+### **WordPress Development (2 tools)**
 
 - **[LocalWP](https://localwp.com)**: WordPress development environment with MCP database access
 - **[MainWP](https://mainwp.com/)**: WordPress site management dashboard
@@ -303,7 +303,7 @@ bash .agent/scripts/continue-cli.sh review
 ./.agent/scripts/pagespeed-helper.sh wordpress https://example.com
 ```
 
-## 📚 **Documentation & Resources**
+## **Documentation & Resources**
 
 **Complete Guides Available:**
 

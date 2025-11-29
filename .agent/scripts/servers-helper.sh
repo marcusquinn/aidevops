@@ -13,11 +13,9 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-    local _arg1="$1"
-    local _arg2="$2"
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $_arg1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $_arg1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $_arg1" >&2; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # Get server configuration (hostname, port, auth method)
 get_server_config() {
@@ -70,8 +68,8 @@ get_server_config() {
         *)
             echo ""
             ;;
-    esac
-    return 0
+esac
+
 }
 
 # List all available servers
@@ -99,16 +97,16 @@ if [[ $# -eq 0 ]]; then
     server=""
     command="help"
 elif [[ $# -eq 1 ]]; then
-    if [[ "$_arg1" == "list" ]]; then
+    if [[ "$1" == "list" ]]; then
         list_servers
         exit 0
     else
-        server="$_arg1"
+        server="$1"
         command="connect"
     fi
 else
-    server="$_arg1"
-    command="$_arg2"
+    server="$1"
+    command="$2"
     shift 2
     args="$*"
 fi
