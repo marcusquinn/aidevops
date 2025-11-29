@@ -7,25 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-11-29
+
 ### Added
 
+- **Comprehensive AI Workflow Documentation** - 9 new workflow guides in `.agent/workflows/`:
+  - `git-workflow.md` - Git practices and branch strategies
+  - `bug-fixing.md` - Bug fix and hotfix workflows
+  - `feature-development.md` - Feature development lifecycle
+  - `code-review.md` - Universal code review checklist
+  - `error-checking-feedback-loops.md` - CI/CD feedback automation with GitHub API
+  - `multi-repo-workspace.md` - Multi-repository safety guidelines
+  - `release-process.md` - Semantic versioning and release management
+  - `wordpress-local-testing.md` - WordPress testing environments
+  - `README.md` - Workflow index and guide
+- **Quality Feedback Helper Script** - `quality-feedback-helper.sh` for GitHub API-based quality tool feedback retrieval (Codacy, CodeRabbit, SonarCloud, CodeFactor)
 - OpenCode as preferred CLI AI assistant in documentation
 - Grep by Vercel MCP server integration for GitHub code search
 - Cross-tool AI assistant symlinks (.cursorrules, .windsurfrules, CLAUDE.md, GEMINI.md)
 - OpenCode custom tool definitions in `.opencode/tool/`
 - Consolidated `.agent/` directory structure
+- Developer preferences guidance in `.agent/memory/README.md`
 
 ### Changed
 
+- **Major milestone**: Comprehensive AI assistant workflow documentation
 - Reorganized CLI AI assistants list with OpenCode at top
 - Moved AmpCode and Continue.dev from Security section to CLI Assistants
 - Updated MCP server count to 13
 - Standardized service counts across documentation (30+)
+- Enhanced `.markdownlint.json` configuration
 
 ### Fixed
 
+- All CodeRabbit, Codacy, and ShellCheck review issues resolved
 - Duplicate timestamp line in system-cleanup.sh
 - Hardcoded path in setup-mcp-integrations.sh
+- SC2155 ShellCheck violations in workflow scripts
+- MD040 markdown code block language identifiers
+- MD031 blank lines around code blocks
 
 ## [1.9.1] - 2024-11-28
 
@@ -131,7 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/marcusquinn/aidevops/compare/v1.9.1...v2.0.0
 [1.9.1]: https://github.com/marcusquinn/aidevops/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/marcusquinn/aidevops/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/marcusquinn/aidevops/compare/v1.7.2...v1.8.0

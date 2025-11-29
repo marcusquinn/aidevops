@@ -1,6 +1,6 @@
 {
   "name": "aidevops-dspy-integration",
-  "version": "1.10.0",
+  "version": "2.0.0",
   "description": "AI DevOps Framework with DSPy, DSPyGround, Crawl4AI, and CapSolver integration",
   "main": "index.js",
   "scripts": {
