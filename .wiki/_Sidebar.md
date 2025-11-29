@@ -1,23 +1,22 @@
-### Navigation
+### Getting Started
 
 - [Home](Home)
 - [Getting Started](Getting-Started)
+- [For Humans](For-Humans)
 
-### Workflows
+### Core Concepts
 
-- [Git Workflow](Git-Workflow)
-- [Bug Fixing](Bug-Fixing)
-- [Feature Development](Feature-Development)
-- [Code Review](Code-Review)
-- [Release Process](Release-Process)
+- [Understanding AGENTS.md](Understanding-AGENTS-md)
+- [The .agent Directory](The-Agent-Directory)
+- [Workflows Guide](Workflows-Guide)
 
 ### Reference
 
-- [Script Reference](Script-Reference)
 - [MCP Integrations](MCP-Integrations)
-- [Quality Tools](Quality-Tools)
+- [Providers](Providers)
 
 ### Resources
 
-- [CHANGELOG](https://github.com/marcusquinn/aidevops/blob/main/CHANGELOG.md)
+- [Changelog](https://github.com/marcusquinn/aidevops/blob/main/CHANGELOG.md)
 - [AGENTS.md](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
+- [GitHub Repo](https://github.com/marcusquinn/aidevops)

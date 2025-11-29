@@ -1,34 +1,61 @@
-# AI DevOps Framework Wiki
+# AI DevOps Framework
 
-Welcome to the AI DevOps Framework wiki! This documentation helps AI assistants and developers work effectively with the framework.
+Welcome to the **AI DevOps Framework** - a comprehensive infrastructure management toolkit designed for AI-assisted development across 30+ services.
 
-## Quick Links
+## What is This?
 
-- [Getting Started](Getting-Started)
-- [Workflow Guides](Workflow-Guides)
-- [Script Reference](Script-Reference)
-- [MCP Integrations](MCP-Integrations)
+This framework enables AI assistants (like Claude, GPT, Augment, etc.) to help you manage:
 
-## Overview
+- **Hosting & Infrastructure** - Hostinger, Hetzner, Cloudflare, Vercel, Coolify
+- **Domains & DNS** - Spaceship, 101domains, Route 53, Namecheap
+- **Code Quality** - Codacy, CodeRabbit, SonarCloud, CodeFactor, Snyk
+- **Version Control** - GitHub, GitLab, Gitea with full CLI integration
+- **WordPress** - MainWP, LocalWP, plugin/theme development
+- **Monitoring** - Updown.io, performance tracking
+- **Security** - Vaultwarden, credential management
 
-The AI DevOps Framework provides:
+## Quick Start
 
-- **30+ Service Integrations** - Hosting, DNS, monitoring, and more
-- **13 MCP Servers** - Model Context Protocol integrations for AI assistants
-- **Comprehensive Workflows** - Git, code review, releases, and CI/CD
-- **Quality Tooling** - Codacy, CodeRabbit, SonarCloud, CodeFactor integration
+### 1. Clone the Repository
 
-## Documentation Structure
+```bash
+mkdir -p ~/git
+cd ~/git
+git clone https://github.com/marcusquinn/aidevops.git
+```
 
-| Section | Description |
+### 2. Tell Your AI Assistant
+
+Point your AI assistant to this framework:
+
+> "Read ~/git/aidevops/AGENTS.md for guidance on DevOps operations"
+
+### 3. Start Working
+
+Your AI assistant now has access to:
+- 90+ automation scripts
+- 13 MCP server integrations  
+- Comprehensive workflow guides
+- Service-specific documentation
+
+## Key Concepts
+
+| Concept | Description |
 |---------|-------------|
-| `.agent/workflows/` | AI assistant workflow guides |
-| `.agent/scripts/` | Helper scripts and CLI tools |
-| `.agent/memory/` | Persistent context for AI assistants |
-| `docs/` | Additional documentation |
+| **AGENTS.md** | The authoritative instruction file for AI assistants |
+| **`.agent/`** | All AI-relevant content lives here |
+| **Workflows** | Step-by-step guides in `.agent/workflows/` |
+| **Scripts** | Automation helpers in `.agent/scripts/` |
+| **MCP Servers** | Real-time integrations for AI assistants |
+
+## Navigation
+
+- **[Getting Started](Getting-Started)** - Installation and setup
+- **[Understanding AGENTS.md](Understanding-AGENTS-md)** - How AI guidance works
+- **[The .agent Directory](The-Agent-Directory)** - Framework structure
+- **[Workflows Guide](Workflows-Guide)** - Development processes
+- **[For Humans](For-Humans)** - Non-technical overview
 
 ## Version
 
-Current version: **v2.0.0**
-
-See [CHANGELOG](https://github.com/marcusquinn/aidevops/blob/main/CHANGELOG.md) for release history.
+**Current: v2.0.0** | [View Changelog](https://github.com/marcusquinn/aidevops/blob/main/CHANGELOG.md)
