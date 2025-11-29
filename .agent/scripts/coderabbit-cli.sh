@@ -252,17 +252,10 @@ setup_api_key() {
 
 # Load API key from configuration
 load_api_key() {
-    # Try to load API key from unified secure storage first
-    local api_key_script
-    api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
-    if [[ -f "$api_key_script" ]]; then
-        local stored_key
-        stored_key=$("$api_key_script" get coderabbit 2>/dev/null)
-        if [[ -n "$stored_key" ]]; then
-            export CODERABBIT_API_KEY="$stored_key"
-            print_info "Loaded CodeRabbit API key from secure local storage"
-            return 0
-        fi
+    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    if [[ -n "${CODERABBIT_API_KEY:-}" ]]; then
+        print_info "Using CodeRabbit API key from environment"
+        return 0
     fi
 
     # Fallback to legacy storage location
@@ -271,11 +264,12 @@ load_api_key() {
         legacy_key=$(cat "$API_KEY_FILE")
         export CODERABBIT_API_KEY="$legacy_key"
         print_info "Loaded CodeRabbit API key from legacy storage"
+        print_warning "Consider migrating to ~/.config/aidevops/mcp-env.sh"
         return 0
     else
-        print_error "API key not configured"
-        print_info "Set up with: bash .agent/scripts/setup-local-api-keys.sh set coderabbit YOUR_API_KEY"
-        print_info "Or run: $0 setup"
+        print_error "CODERABBIT_API_KEY not found in environment"
+        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "  export CODERABBIT_API_KEY=\"your-api-key\""
         return 1
     fi
 }

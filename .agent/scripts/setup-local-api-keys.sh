@@ -1,35 +1,48 @@
 #!/bin/bash
 
 # Setup Local API Keys - Secure User-Private Storage
-# Store API keys securely in user's private config directory
+# Manage API keys in ~/.config/aidevops/mcp-env.sh (sourced by shell configs)
 #
 # Author: AI DevOps Framework
-# Version: 1.1.1
+# Version: 2.1.0
 
 # Colors for output
 readonly GREEN='\033[0;32m'
 readonly BLUE='\033[0;34m'
 readonly YELLOW='\033[1;33m'
+readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
 print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    echo -e "${GREEN}[OK] $1${NC}"
     return 0
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
+    echo -e "${BLUE}[INFO] $1${NC}"
     return 0
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    echo -e "${YELLOW}[WARN] $1${NC}"
     return 0
 }
 
-# Secure API key directory
+print_error() {
+    echo -e "${RED}[ERROR] $1${NC}"
+    return 0
+}
+
+# Secure API key directory and file
 readonly API_KEY_DIR="$HOME/.config/aidevops"
-readonly API_KEY_FILE="$API_KEY_DIR/api-keys.txt"
+readonly MCP_ENV_FILE="$API_KEY_DIR/mcp-env.sh"
+
+# Shell config files to check/update
+SHELL_CONFIGS=(
+    "$HOME/.zshrc"
+    "$HOME/.bashrc"
+    "$HOME/.bash_profile"
+)
 
 # Create secure API key directory
 setup_secure_directory() {
@@ -37,13 +50,82 @@ setup_secure_directory() {
         mkdir -p "$API_KEY_DIR"
         chmod 700 "$API_KEY_DIR"
         print_success "Created secure API key directory: $API_KEY_DIR"
-    else
-        print_info "API key directory already exists: $API_KEY_DIR"
     fi
     
     # Ensure proper permissions
     chmod 700 "$API_KEY_DIR"
+    
+    # Create mcp-env.sh if it doesn't exist
+    if [[ ! -f "$MCP_ENV_FILE" ]]; then
+        cat > "$MCP_ENV_FILE" << 'EOF'
+#!/bin/bash
+# ------------------------------------------------------------------------------
+# API Keys & Tokens - Single Source of Truth
+# This file is sourced by shell configs (zsh, bash) for all processes
+# File permissions should be 600 (owner read/write only)
+# Location: ~/.config/aidevops/mcp-env.sh
+#
+# Usage: Add keys with setup-local-api-keys.sh or manually:
+#   export SERVICE_NAME_API_KEY="your-key-here"
+# ------------------------------------------------------------------------------
+
+EOF
+        chmod 600 "$MCP_ENV_FILE"
+        print_success "Created mcp-env.sh"
+    fi
+    
     return 0
+}
+
+# Ensure shell configs source mcp-env.sh
+setup_shell_integration() {
+    local source_line='[[ -f ~/.config/aidevops/mcp-env.sh ]] && source ~/.config/aidevops/mcp-env.sh'
+    local updated=0
+    
+    for config in "${SHELL_CONFIGS[@]}"; do
+        if [[ -f "$config" ]]; then
+            if ! grep -q "mcp-env.sh" "$config" 2>/dev/null; then
+                echo "" >> "$config"
+                echo "# AI DevOps API Keys (single source of truth)" >> "$config"
+                echo "$source_line" >> "$config"
+                print_success "Added mcp-env.sh sourcing to $config"
+                ((updated++))
+            fi
+        fi
+    done
+    
+    if [[ $updated -eq 0 ]]; then
+        print_info "Shell configs already configured"
+    fi
+    
+    return 0
+}
+
+# Convert service name to env var name (e.g., "updown-api-key" -> "UPDOWN_API_KEY")
+service_to_env_var() {
+    local service="$1"
+    echo "$service" | tr '[:lower:]-' '[:upper:]_'
+}
+
+# Parse export command (e.g., 'export VERCEL_TOKEN="xxx"' -> extracts var name and value)
+parse_export_command() {
+    local input="$1"
+    
+    # Remove 'export ' prefix if present
+    input="${input#export }"
+    
+    # Extract var name and value
+    local var_name="${input%%=*}"
+    local value="${input#*=}"
+    
+    # Remove quotes from value
+    value="${value#\"}"
+    value="${value%\"}"
+    value="${value#\'}"
+    value="${value%\'}"
+    
+    echo "$var_name"
+    echo "$value"
 }
 
 # Set API key securely
@@ -51,29 +133,61 @@ set_api_key() {
     local service="$1"
     local key="$2"
     
-    if [[ -z "$service" || -z "$key" ]]; then
-        print_warning "Usage: set_api_key <service> <api_key>"
+    if [[ -z "$service" ]]; then
+        print_warning "Usage: $0 set <service> <api_key>"
+        print_info "Or paste an export command: $0 add 'export TOKEN=\"xxx\"'"
+        return 1
+    fi
+    
+    # If only one argument and it looks like an export command
+    if [[ -z "$key" && "$service" == export* ]]; then
+        local parsed
+        parsed=$(parse_export_command "$service")
+        service=$(echo "$parsed" | head -1)
+        key=$(echo "$parsed" | tail -1)
+        print_info "Parsed export command: $service"
+    fi
+    
+    if [[ -z "$key" ]]; then
+        print_warning "Usage: $0 set <service> <api_key>"
         return 1
     fi
     
     setup_secure_directory
     
-    # Create or update API key file
-    if [[ ! -f "$API_KEY_FILE" ]]; then
-        touch "$API_KEY_FILE"
-        chmod 600 "$API_KEY_FILE"
+    local env_var
+    # If service is already UPPER_CASE, use it directly
+    if [[ "$service" =~ ^[A-Z_]+$ ]]; then
+        env_var="$service"
+    else
+        env_var=$(service_to_env_var "$service")
     fi
     
-    # Remove existing entry for this service
-    grep -v "^${service}=" "$API_KEY_FILE" > "${API_KEY_FILE}.tmp" 2>/dev/null || true
+    # Check if the env var already exists in the file
+    if grep -q "^export ${env_var}=" "$MCP_ENV_FILE" 2>/dev/null; then
+        # Update existing entry
+        local tmp_file="${MCP_ENV_FILE}.tmp"
+        sed "s|^export ${env_var}=.*|export ${env_var}=\"${key}\"|" "$MCP_ENV_FILE" > "$tmp_file"
+        mv "$tmp_file" "$MCP_ENV_FILE"
+        chmod 600 "$MCP_ENV_FILE"
+        print_success "Updated $env_var in mcp-env.sh"
+    else
+        # Append new entry
+        echo "export ${env_var}=\"${key}\"" >> "$MCP_ENV_FILE"
+        chmod 600 "$MCP_ENV_FILE"
+        print_success "Added $env_var to mcp-env.sh"
+    fi
     
-    # Add new entry
-    echo "${service}=${key}" >> "${API_KEY_FILE}.tmp"
-    mv "${API_KEY_FILE}.tmp" "$API_KEY_FILE"
-    chmod 600 "$API_KEY_FILE"
+    # Also export to current shell
+    export "${env_var}=${key}"
+    print_info "Exported to current shell. Run 'source ~/.zshrc' (or ~/.bashrc) for other terminals."
     
-    print_success "Stored API key for $service securely"
     return 0
+}
+
+# Add command - alias for set, better for pasting export commands
+add_api_key() {
+    set_api_key "$@"
 }
 
 # Get API key
@@ -81,109 +195,122 @@ get_api_key() {
     local service="$1"
     
     if [[ -z "$service" ]]; then
-        print_warning "Usage: get_api_key <service>"
+        print_warning "Usage: $0 get <service>"
         return 1
     fi
     
-    if [[ ! -f "$API_KEY_FILE" ]]; then
-        print_warning "No API keys configured. Run setup first."
+    if [[ ! -f "$MCP_ENV_FILE" ]]; then
+        print_warning "No API keys configured. Run '$0 setup' first."
         return 1
     fi
     
-    local key
-    key=$(grep "^${service}=" "$API_KEY_FILE" 2>/dev/null | cut -d'=' -f2-)
+    local env_var
+    # If service is already UPPER_CASE, use it directly
+    if [[ "$service" =~ ^[A-Z_]+$ ]]; then
+        env_var="$service"
+    else
+        env_var=$(service_to_env_var "$service")
+    fi
+    
+    # First check environment (already loaded)
+    local key="${!env_var}"
+    
+    # If not in env, try to extract from file
+    if [[ -z "$key" ]]; then
+        key=$(grep "^export ${env_var}=" "$MCP_ENV_FILE" 2>/dev/null | sed 's/^export [^=]*="//' | sed 's/"$//')
+    fi
     
     if [[ -n "$key" ]]; then
         echo "$key"
         return 0
     else
-        print_warning "API key for $service not found"
+        print_warning "API key for $service ($env_var) not found"
         return 1
     fi
-}
-
-# Load API keys into environment
-load_api_keys() {
-    if [[ ! -f "$API_KEY_FILE" ]]; then
-        print_warning "No API keys configured"
-        return 1
-    fi
-    
-    print_info "Loading API keys into environment..."
-    
-    while IFS='=' read -r service key; do
-        if [[ -n "$service" && -n "$key" ]]; then
-            local service_upper
-            service_upper=$(echo "$service" | tr '[:lower:]' '[:upper:]')
-            export "${service_upper}_API_TOKEN=$key"
-            print_success "Loaded $service API key"
-        fi
-    done < "$API_KEY_FILE"
-    
-    return 0
 }
 
 # List configured services (without showing keys)
 list_services() {
-    if [[ ! -f "$API_KEY_FILE" ]]; then
+    if [[ ! -f "$MCP_ENV_FILE" ]]; then
         print_info "No API keys configured"
         return 0
     fi
     
-    print_info "Configured API key services:"
-    while IFS='=' read -r service key; do
-        if [[ -n "$service" ]]; then
-            echo "  - $service"
-        fi
-    done < "$API_KEY_FILE"
+    print_info "Configured API keys in mcp-env.sh:"
+    echo ""
+    grep "^export " "$MCP_ENV_FILE" | sed 's/=.*//' | sed 's/export /  /' | sort
+    echo ""
+    print_info "File: $MCP_ENV_FILE"
     
     return 0
+}
+
+# Show help
+show_help() {
+    print_info "AI DevOps - Secure Local API Key Management"
+    echo ""
+    print_info "Manages API keys in: $MCP_ENV_FILE"
+    print_info "This file is sourced by shell configs (zsh & bash) for all processes."
+    echo ""
+    print_info "Usage: $0 <command> [args]"
+    echo ""
+    print_info "Commands:"
+    echo "  setup                  - Initialize storage and shell integration"
+    echo "  set <service> <key>    - Store API key for service"
+    echo "  add 'export X=\"y\"'   - Parse and store from export command"
+    echo "  get <service>          - Retrieve API key for service"
+    echo "  list                   - List configured services"
+    echo ""
+    print_info "Examples:"
+    echo "  $0 setup"
+    echo "  $0 set vercel-token YOUR_TOKEN"
+    echo "  $0 add 'export VERCEL_TOKEN=\"abc123\"'    # Paste from service"
+    echo "  $0 set SUPABASE_KEY abc123                # Direct env var name"
+    echo "  $0 get vercel-token"
+    echo "  $0 list"
+    echo ""
+    print_info "When a service gives you 'export TOKEN=xxx', use:"
+    echo "  $0 add 'export TOKEN=\"xxx\"'"
+    echo ""
+    print_info "Service names are converted to env vars:"
+    echo "  vercel-token    ->  VERCEL_TOKEN"
+    echo "  supabase-key    ->  SUPABASE_KEY"
+    echo "  DIRECT_NAME     ->  DIRECT_NAME (kept as-is)"
 }
 
 # Main execution
 main() {
     local command="$1"
-    shift
+    shift 2>/dev/null || true
     
     case "$command" in
         "set")
             set_api_key "$@"
             ;;
+        "add")
+            add_api_key "$@"
+            ;;
         "get")
             get_api_key "$@"
-            ;;
-        "load")
-            load_api_keys
             ;;
         "list")
             list_services
             ;;
         "setup")
             setup_secure_directory
-            print_info "Secure API key storage ready"
-            print_info "Usage:"
-            print_info "  $0 set codacy YOUR_CODACY_API_KEY"
-            print_info "  $0 set sonar YOUR_SONAR_TOKEN"
-            print_info "  $0 load  # Load all keys into environment"
-            print_info "  $0 list  # List configured services"
+            setup_shell_integration
+            print_success "Secure API key storage ready"
+            echo ""
+            show_help
+            ;;
+        "help"|"--help"|"-h"|"")
+            show_help
             ;;
         *)
-            print_info "AI DevOps - Secure Local API Key Management"
-            print_info ""
-            print_info "Usage: $0 <command> [args]"
-            print_info ""
-            print_info "Commands:"
-            print_info "  setup              - Initialize secure API key storage"
-            print_info "  set <service> <key> - Store API key for service"
-            print_info "  get <service>      - Retrieve API key for service"
-            print_info "  load               - Load all API keys into environment"
-            print_info "  list               - List configured services"
-            print_info ""
-            print_info "Examples:"
-            print_info "  $0 setup"
-            print_info "  $0 set codacy YOUR_CODACY_API_KEY"
-            print_info "  $0 set sonar YOUR_SONAR_TOKEN"
-            print_info "  $0 load"
+            print_error "Unknown command: $command"
+            echo ""
+            show_help
+            return 1
             ;;
     esac
     

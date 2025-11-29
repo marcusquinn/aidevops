@@ -24,35 +24,41 @@ AI assistants operating in this environment should:
 ## 🔐 **CRITICAL: Credential & Secret Storage**
 **⚠️ MANDATORY SECURITY REQUIREMENTS:**
 
+### **Directory Structure:**
+
+| Location | Purpose |
+|----------|---------|
+| `~/.config/aidevops/` | **Secrets only** - `mcp-env.sh` (600 perms) |
+| `~/.aidevops/` | **Working directories** - agno, stagehand, reports |
+
 ### **✅ APPROVED Storage Location:**
 
-- **API Keys & Tokens**: `~/.config/aidevops/api-keys.txt`
-- **Service Configurations**: `~/git/aidevops/configs/[service]-config.json`
+- **API Keys & Tokens**: `~/.config/aidevops/mcp-env.sh`
 - **File Permissions**: 600 (owner read/write only)
+- **Sourced by**: `~/.zshrc` and `~/.bashrc` automatically
 
 ### **❌ FORBIDDEN Storage Locations:**
 
 - **NEVER in `~/.agent/tmp/`** - Temporary files are not secure
-
 - **NEVER in `~/.agent/memory/`** - Memory files may be logged
-
 - **NEVER in any Git repository** - Risk of accidental commit
-
 - **NEVER in home directory root** - Security exposure risk
-
 - **NEVER in code or scripts** - Hardcoded credentials forbidden
+- **NEVER paste directly into `.zshrc`** - Use the helper script
 
 ### **🛡️ Security Commands:**
 ```bash
 # Store API keys securely
 bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
 
+# Or paste export commands from services
+bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh add 'export TOKEN="xxx"'
+
 # List configured services (keys are never displayed)
 bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh list
 
-# Verify secure storage location and preview API keys
+# Verify secure storage location
 ls -la ~/.config/aidevops/
-cat ~/.config/aidevops/api-keys.txt
 ```
 
 ### **🚨 ABSOLUTE PROHIBITIONS:**
