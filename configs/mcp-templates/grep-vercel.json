@@ -6,7 +6,7 @@
       "enabled": true
     }
   },
-  "description": "Greptile (Grep by Vercel) MCP - Search code snippets across GitHub repositories",
+  "description": "Grep by Vercel MCP - Search code snippets across GitHub repositories",
   "documentation": "https://grep.app",
   "usage": {
     "prompt_examples": [
