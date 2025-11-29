@@ -1,6 +1,6 @@
 # AI DevOps Framework
 
-**Unleash your AI assistant's true potential with seamless access to your entire DevOps ecosystem across 29+ services.**
+**Unleash your AI assistant's true potential with specialist DevOps agents — designed to manage your all your infrastructure and services with security and reliability guidance on every decision.**
 
 *"Deploy my app to production, update the DNS, configure SSL, and set up monitoring"* - **One conversation, complete infrastructure management.**
 
@@ -10,10 +10,10 @@
 
 **DevOps Superpowers for AI:**
 
-- **Multi-Service Management**: 29+ APIs (hosting, Git, security, monitoring, deployment)
+- **Multi-Service Management**: 30+ APIs (hosting, Git, security, monitoring, deployment)
 - **Real-Time Operations**: SSH, domain management, database operations
 - **Cross-Service Intelligence**: Connect patterns across your entire ecosystem
-- **Unlimited Scope**: Full access to your development infrastructure
+- **Unlimited Scope**: Full access to your development infrastructure for bug fixes and feature development
 
 ---
 
@@ -69,11 +69,11 @@
 - **CodeRabbit**: AI-powered code reviews and security analysis
 - **Codacy**: 0 findings across 8 analysis tools (642 security rules)
 
-**Comprehensive DevOps framework with 30+ service integrations, 10 MCP servers, and enterprise-grade quality assurance.**
+**Comprehensive DevOps framework with tried & tested services integrations, popular and trusted MCP servers, and enterprise-grade infrastructure quality assurance.**
 
 ## **Security Notice**
 
-**This framework provides AI assistants with powerful infrastructure access. Use responsibly.**
+**This framework provides agentic AI assistants with powerful infrastructure access. Use responsibly.**
 
 **Capabilities:** Execute commands, access credentials, modify infrastructure, interact with APIs
 **Your responsibility:** Use trusted AI providers, rotate credentials regularly, monitor activity
@@ -96,16 +96,16 @@ cd aidevops && ./setup.sh
 
 **That's it! Your AI assistant now has access to 30+ service integrations.**
 
-**Recommended CLI AI Assistants:**
+**Recommended CLI AI Assistants:** (In order of our testing experience and preference from real-world project use.)
 
-- **[OpenCode](https://opencode.ai/)** (Preferred - Powerful TUI/CLI with MCP support)
-- **[Claude Desktop](https://claude.ai/)** (Advanced reasoning with MCP)
-- **[Factory AI Droid](https://www.factory.ai/)** (Enterprise-grade AI)
-- **[Augment Code (Auggie)](https://www.augmentcode.com/)** (Professional coding assistant)
-- **[AmpCode](https://ampcode.com/)** (Professional AI coding assistant)
+- **[OpenCode](https://opencode.ai/)** (Preferred - Powerful and clear agentic TUI/CLI with MCP support)
+- **[Factory AI Droid](https://www.factory.ai/)** (Enterprise-grade agentic AI & Collaboration)
+- **[Augment Code (Auggie)](https://www.augmentcode.com/)** (Professional coding assistant, with deep codebase indexing for context continuity on large codebases)
+- **[AmpCode](https://ampcode.com/)** (Professional AI coding assistant, including a free ad-supported use option)
+- **[Warp AI](https://www.warp.dev/)** (Terminal-integrated dedicated app and interface for coding)
 - **[Continue.dev](https://continue.dev/)** (AI pair programmer)
-- **[Warp AI](https://www.warp.dev/)** (Terminal-integrated)
-- **[OpenAI Codex](https://openai.com/)** (Code-focused model)
+- **[Claude Desktop](https://claude.ai/)** (Advanced reasoning with MCPs and agents)
+- **[OpenAI Codex](https://openai.com/)** (Code-focused model with MCPs and agents)
 
 ## **Core Capabilities**
 
@@ -113,21 +113,20 @@ cd aidevops && ./setup.sh
 
 - SSH server access, remote command execution, API integrations
 - DNS management, application deployment, email monitoring
-- [WordPress](https://wordpress.org/) management, credential security, code auditing
 - Git platform management, domain purchasing, setup automation
+- [WordPress](https://wordpress.org/) management, credential security, code auditing
 
 **Unified Interface:**
 
-- Standardized commands across 28+ providers
-- Automated SSH configuration and multi-account support
-- Security-first design with comprehensive logging
+- Standardized commands across all providers
+- Automated SSH configuration and multi-account support for all services
+- Security-first design with comprehensive logging, code quality reviews, and continual feedback-based improvement
 
 **Quality Control & Monitoring:**
 
-- **Qlty Integration**: Automated quality control with actionable quick-fixes
-- **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit
-- **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
+- **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Gemini Code Assist, Snyk
 - **Performance Auditing**: PageSpeed Insights and Lighthouse integration
+- **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
 
 ## **Requirements**
 
@@ -142,7 +141,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ## **Comprehensive Service Coverage**
 
-### **Infrastructure & Hosting (7 providers)**
+### **Infrastructure & Hosting**
 
 - **[Hostinger](https://www.hostinger.com/)**: Shared hosting, domains, email
 - **[Hetzner Cloud](https://www.hetzner.com/cloud)**: VPS servers, networking, load balancers
@@ -153,7 +152,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[AWS](https://aws.amazon.com/)**: Cloud infrastructure support via standard protocols
 - **[DigitalOcean](https://www.digitalocean.com/)**: Cloud infrastructure support via standard protocols
 
-### **Domain & DNS (5 providers)**
+### **Domain & DNS**
 
 - **[Cloudflare](https://www.cloudflare.com/)**: DNS, CDN, security services
 - **[Spaceship](https://www.spaceship.com/)**: Domain registration and management
@@ -161,7 +160,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[AWS Route 53](https://aws.amazon.com/route53/)**: AWS DNS management
 - **[Namecheap](https://www.namecheap.com/)**: Domain and DNS services
 
-### **Development & Git Platforms with CLI Integration (5 platforms)**
+### **Development & Git Platforms with CLI Integration**
 
 - **[GitHub](https://github.com/)** *Enhanced with CLI*: Repository management, actions, API, GitHub CLI (gh) integration
 - **[GitLab](https://gitlab.com/)** *Enhanced with CLI*: Self-hosted and cloud Git platform with GitLab CLI (glab) integration  
@@ -169,7 +168,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Agno](https://agno.com/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
 
-### **WordPress Development (2 tools)**
+### **WordPress Development**
 
 - **[LocalWP](https://localwp.com)**: WordPress development environment with MCP database access
 - **[MainWP](https://mainwp.com/)**: WordPress site management dashboard
@@ -180,7 +179,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **.agent/scripts/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
 - **.agent/scripts/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
 
-### **Security & Quality (6 platforms)**
+### **Security & Code Quality**
 
 - **[Vaultwarden](https://github.com/dani-garcia/vaultwarden)**: Password and secrets management
 - **[SonarCloud](https://sonarcloud.io/)**: Security and quality analysis (A-grade ratings)
@@ -188,26 +187,28 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Codacy](https://www.codacy.com/)**: Multi-tool analysis (0 findings)
 - **[CodeRabbit](https://coderabbit.ai/)**: AI-powered code reviews
 - **[Snyk](https://snyk.io/)**: Security vulnerability scanning
+- **[Qlty](https://qlty.sh/)**: Universal code quality platform (70+ linters, auto-fixes)
+- **[Gemini Code Assist](https://cloud.google.com/gemini/docs/codeassist/overview)**: Google's AI-powered code completion and review
 
-### **AI Prompt Optimization (3 tools)**
+### **AI Prompt Optimization**
 
 - **[DSPy](https://dspy.ai/)**: Framework for programming with language models
 - **[DSPyGround](https://dspyground.com/)**: Interactive playground for prompt optimization
 - **[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)**: Token-Oriented Object Notation - 20-60% token reduction for LLM prompts
 
-### **Performance & Monitoring (3 integrations)**
+### **Performance & Monitoring**
 
-- **[Updown.io](https://updown.io/)**: Website uptime and SSL monitoring
 - **[PageSpeed Insights](https://pagespeed.web.dev/)**: Website performance auditing
 - **[Lighthouse](https://developer.chrome.com/docs/lighthouse/)**: Comprehensive web app analysis
+- **[Updown.io](https://updown.io/)**: Website uptime and SSL monitoring
 
-### **AI & Documentation (1 MCP)**
+### **AI & Documentation**
 
 - **[Context7](https://context7.io/)**: Real-time documentation access for libraries and frameworks
 
 ## **MCP Integrations**
 
-**13 Model Context Protocol servers for real-time AI assistant integration:**
+**Model Context Protocol servers for real-time AI assistant integration:**
 
 ### **Web & Browser Automation**
 
@@ -250,6 +251,8 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ## **AI Agents & Subagents**
 
 **Agents are specialized AI personas with focused knowledge and tool access.** Instead of giving your AI assistant access to everything at once (which wastes context tokens), agents provide targeted capabilities for specific tasks.
+
+Call them in your AI assistant conversation with a simple @mention
 
 ### **How Agents Work**
 
@@ -416,8 +419,8 @@ bash .agent/scripts/continue-cli.sh review
 
 **Complete Guides Available:**
 
-- **[MCP Integrations Guide](.agent/mcp-integrations.md)** - 10 MCP servers setup
-- **[API Integrations Guide](.agent/api-integrations.md)** - 30+ service APIs
+- **[MCP Integrations Guide](.agent/mcp-integrations.md)** - MCP servers setup
+- **[API Integrations Guide](.agent/api-integrations.md)** - Service APIs
 - **[Pandoc Conversion Guide](.agent/pandoc-conversion.md)** - Document format conversion
 - **[Agno Integration Guide](.agent/agno-integration.md)** - Local AI agent operating system
 - **[Browser Automation Guide](.agent/browser-automation.md)** - LinkedIn automation and web scraping
@@ -435,7 +438,7 @@ aidevops/
 ├── setup.sh                       # Main setup script
 ├── AGENTS.md                      # AI agent guidance
 ├── .agent/scripts/                # Automation & setup scripts
-├── .agent/scripts/                     # 28+ service helper scripts
+├── .agent/scripts/                     # Service helper scripts
 ├── configs/                       # Configuration templates
 ├── .agent/                          # Comprehensive documentation
 ├── .agent/                        # AI agent development tools
@@ -469,9 +472,8 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 **Quality Assurance:**
 
-- Multi-platform analysis (SonarCloud, CodeFactor, Codacy, CodeRabbit)
+- Multi-platform analysis (SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Snyk, Gemini Code Assist)
 - Automated security monitoring and vulnerability detection
-- Qlty integration for continuous quality improvement
 
 ## **Contributing & License**
 
@@ -492,7 +494,7 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 **For You:**
 
-- Unified infrastructure management across 29+ services
+- Unified infrastructure management across all services
 - AI-powered automation with standardized commands
 - Enterprise-grade security and quality assurance
 - Time savings through consistent interfaces
@@ -501,8 +503,8 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 - Structured access to entire DevOps ecosystem
 - Real-time documentation via Context7 MCP
-- Quality control with Qlty automated fixes
-- Performance monitoring with PageSpeed and Updown.io
+- Quality control with automated fixes
+- Performance monitoring with and continual improvement of agents' token efficiency, tool use, and file location consistency
 
 **Get Started:**
 
