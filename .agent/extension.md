@@ -35,7 +35,7 @@
 ### **Step 2: Create Helper Script**
 
 ```bash
-# File: providers/[service-name]-helper.sh
+# File: .agent/scripts/[service-name]-helper.sh
 #!/bin/bash
 
 # [Service Name] Helper Script
@@ -114,7 +114,7 @@ main "$@"
 ### **Step 4: Create Comprehensive Documentation**
 
 ```bash
-# File: docs/[SERVICE-NAME].md
+# File: .agent/[SERVICE-NAME].md
 # [Service Name] Guide
 
 ## 🏢 **Provider Overview**
@@ -163,10 +163,10 @@ echo "configs/[service-name]-config.json" >> .gitignore
 # - Add to appropriate service category
 # - Update service count
 
-# Update docs/RECOMMENDATIONS-OPINIONATED.md
+# Update .agent/recommendations-opinionated.md
 # - Add to appropriate category with description
 
-# Update providers/setup-wizard-helper.sh
+# Update .agent/scripts/setup-wizard-helper.sh
 # - Add to service recommendations logic
 # - Add to API keys guide
 # - Add to configuration generation

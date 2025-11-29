@@ -151,7 +151,7 @@ cp [service]-config.json.txt [service]-config.json
 nano [service]-config.json
 
 # 3. Test configuration
-../providers/[service]-helper.sh accounts
+../.agent/scripts/[service]-helper.sh accounts
 
 # 4. Verify security
 chmod 600 [service]-config.json
@@ -161,13 +161,13 @@ chmod 600 [service]-config.json
 
 ```bash
 # Automated setup with guidance
-../providers/setup-wizard-helper.sh full-setup
+../.agent/scripts/setup-wizard-helper.sh full-setup
 
 # Generate all config files from templates
-../providers/setup-wizard-helper.sh generate-configs
+../.agent/scripts/setup-wizard-helper.sh generate-configs
 
 # Test all connections
-../providers/setup-wizard-helper.sh test-connections
+../.agent/scripts/setup-wizard-helper.sh test-connections
 ```
 
 ## 🔍 **Validation & Testing**
@@ -179,10 +179,10 @@ chmod 600 [service]-config.json
 jq '.' [service]-config.json
 
 # Test service connectivity
-../providers/[service]-helper.sh accounts
+../.agent/scripts/[service]-helper.sh accounts
 
 # Verify API permissions
-../providers/[service]-helper.sh help
+../.agent/scripts/[service]-helper.sh help
 ```
 
 ### **Security Validation**

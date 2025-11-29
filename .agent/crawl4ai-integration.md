@@ -19,16 +19,16 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 
 ```bash
 # Install Python package
-./providers/crawl4ai-helper.sh install
+./.agent/scripts/crawl4ai-helper.sh install
 
 # Setup Docker deployment
-./providers/crawl4ai-helper.sh docker-setup
+./.agent/scripts/crawl4ai-helper.sh docker-setup
 
 # Start Docker container with monitoring dashboard
-./providers/crawl4ai-helper.sh docker-start
+./.agent/scripts/crawl4ai-helper.sh docker-start
 
 # Setup MCP integration for AI assistants
-./providers/crawl4ai-helper.sh mcp-setup
+./.agent/scripts/crawl4ai-helper.sh mcp-setup
 ```
 
 ### Docker Deployment
@@ -63,10 +63,10 @@ Crawl4AI provides native MCP (Model Context Protocol) support for AI assistants:
 
 ```bash
 # Basic crawling
-./providers/crawl4ai-helper.sh crawl https://example.com markdown output.json
+./.agent/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
 
 # With structured extraction
-./providers/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
+./.agent/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
 ```
 
 ### 2. LLM-Powered Extraction
@@ -362,7 +362,7 @@ browser_config = BrowserConfig(
 
 ```bash
 # Check service status
-./providers/crawl4ai-helper.sh status
+./.agent/scripts/crawl4ai-helper.sh status
 
 # View container logs
 docker logs crawl4ai
@@ -375,7 +375,7 @@ curl http://localhost:11235/health
 
 - **Official Documentation**: https://docs.crawl4ai.com/
 - **GitHub Repository**: https://github.com/unclecode/crawl4ai
-- **Framework Integration**: `providers/crawl4ai-helper.sh`
+- **Framework Integration**: `.agent/scripts/crawl4ai-helper.sh`
 - **Configuration Templates**: `configs/crawl4ai-config.json.txt`
 - **MCP Configuration**: `configs/mcp-templates/crawl4ai-mcp-config.json`
 

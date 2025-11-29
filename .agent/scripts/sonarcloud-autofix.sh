@@ -139,7 +139,7 @@ main() {
                 ".agent/scripts/setup-mcp-integrations.sh"
                 ".agent/scripts/validate-mcp-integrations.sh"
                 ".agent/scripts/setup-linters-wizard.sh"
-                "providers/setup-wizard-helper.sh"
+                ".agent/scripts/setup-wizard-helper.sh"
             )
             
             for file in "${files[@]}"; do

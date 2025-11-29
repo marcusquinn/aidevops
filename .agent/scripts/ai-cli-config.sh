@@ -626,7 +626,7 @@ This is the authoritative AI DevOps Framework project.
 - **Service Providers**: AWS, Hetzner, Cloudflare, Hostinger, and 20+ others
 - **AI Integration**: Complete AI CLI ecosystem with automatic context loading
 - **Quality Control**: Comprehensive code quality and security scanning
-- **Documentation**: Extensive documentation in docs/ directory
+- **Documentation**: Extensive documentation in .agent/ directory
 
 ## Development Guidelines
 - Follow security best practices outlined in AGENTS.md
@@ -661,10 +661,10 @@ This is the authoritative AI DevOps Framework project.
 5. **Consistency**: Follow established code patterns and architecture
 
 ## File Structure
-- `providers/`: Service integration helpers
+- `.agent/scripts/`: Service integration helpers
 - `scripts/`: Automation and utility scripts
 - `configs/`: Configuration templates (never commit with real credentials)
-- `docs/`: Comprehensive documentation
+- `.agent/`: Comprehensive documentation
 - `.agent/`: AI assistant configurations and tools
 
 Refer to AGENTS.md for complete instructions and context.
@@ -730,10 +730,10 @@ This is the authoritative AI DevOps Framework project.
 5. **Consistency**: Follow established code patterns and architecture
 
 ## File Structure
-- `providers/`: Service integration helpers
+- `.agent/scripts/`: Service integration helpers
 - `scripts/`: Automation and utility scripts
 - `configs/`: Configuration templates (never commit with real credentials)
-- `docs/`: Comprehensive documentation
+- `.agent/`: Comprehensive documentation
 - `.agent/`: AI assistant configurations and tools
 
 ## AI Integration Features

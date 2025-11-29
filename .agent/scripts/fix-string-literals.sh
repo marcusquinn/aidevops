@@ -204,7 +204,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 analyze ."
-    echo "  $0 fix providers/"
+    echo "  $0 fix .agent/scripts/"
     echo "  $0 fix setup.sh"
     echo ""
     echo "This script addresses SonarCloud S1192 violations by:"

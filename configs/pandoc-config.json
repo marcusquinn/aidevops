@@ -84,11 +84,11 @@
     }
   },
   "usage_examples": {
-    "single_file": "bash providers/pandoc-helper.sh convert document.docx",
-    "with_options": "bash providers/pandoc-helper.sh convert document.pdf output.md pdf '--extract-media=./images'",
-    "batch_conversion": "bash providers/pandoc-helper.sh batch ./documents ./markdown '*.docx'",
-    "detect_format": "bash providers/pandoc-helper.sh detect unknown_file.ext",
-    "show_formats": "bash providers/pandoc-helper.sh formats"
+    "single_file": "bash .agent/scripts/pandoc-helper.sh convert document.docx",
+    "with_options": "bash .agent/scripts/pandoc-helper.sh convert document.pdf output.md pdf '--extract-media=./images'",
+    "batch_conversion": "bash .agent/scripts/pandoc-helper.sh batch ./documents ./markdown '*.docx'",
+    "detect_format": "bash .agent/scripts/pandoc-helper.sh detect unknown_file.ext",
+    "show_formats": "bash .agent/scripts/pandoc-helper.sh formats"
   },
   "installation": {
     "pandoc_required": true,

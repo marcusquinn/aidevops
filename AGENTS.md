@@ -67,6 +67,51 @@ When using this framework, AI assistants have access to:
 - **Namecheap**: [https://www.namecheap.com/status-updates/](https://www.namecheap.com/status-updates/)
 - **Snyk**: [https://status.snyk.io/](https://status.snyk.io/)
 
+## 📁 **AI Context Location & Documentation Convention**
+
+### **Single Location for All AI Context**
+
+All AI-relevant content is consolidated in `.agent/`:
+
+```
+.agent/
+├── scripts/           # 90+ automation & helper scripts
+├── toon-test-documents/ # TOON format test files
+└── *.md               # 80+ documentation files (all lowercase)
+```
+
+**When referencing this repo, use `@.agent` to include context.**
+
+**File naming**: All `.md` files use lowercase with hyphens (e.g., `hostinger.md`, `api-integrations.md`)
+
+### **AI-CONTEXT Block Convention**
+
+Documentation files use marker blocks to separate condensed AI context from verbose human documentation:
+
+```markdown
+# Service Guide
+
+<!-- AI-CONTEXT-START -->
+## Quick Reference
+- Key fact 1
+- Key fact 2
+- Commands: list|connect|deploy
+<!-- AI-CONTEXT-END -->
+
+## Detailed Documentation
+[... verbose human-readable content ...]
+```
+
+### **Reading Documentation Efficiently**
+
+- **Prioritize `<!-- AI-CONTEXT -->` sections** for condensed facts
+- **Read full content only** when specific details are needed
+- **Single source of truth** - no duplicate information across files
+
+### **Updating Documentation**
+
+When changing facts in detailed sections, **always update the AI-CONTEXT block to match**. This prevents drift between condensed and verbose content.
+
 ## 🤖 **Agent Behavior & Standards**
 
 ### **System Prompt Integration**
@@ -141,9 +186,9 @@ When working with Git repositories and platforms, the framework provides enhance
 
 **Framework Integration:**
 
-- **providers/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
-- **providers/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
-- **providers/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
+- **.agent/scripts/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
+- **.agent/scripts/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
+- **.agent/scripts/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
 
 **Enhanced Capabilities:**
 
@@ -159,7 +204,7 @@ When working with Git repositories and platforms, the framework provides enhance
 3. Configure: Copy JSON templates from configs/ and customize with account details
 4. Test: Use helper scripts to validate connectivity and permissions
 
-**See [docs/AI-CLI-TOOLS.md](docs/AI-CLI-TOOLS.md) for detailed setup instructions and tool-specific configurations.**
+**See [.agent/ai-cli-tools.md](.agent/ai-cli-tools.md) for detailed setup instructions and tool-specific configurations.**
 
 - **Simplified path references** in all documentation
 - **Optimal integration** with deployed templates
@@ -267,7 +312,7 @@ The framework deploys minimal, secure templates to prevent prompt injection atta
 
 ### **Coding Standards**
 
-- **Bash scripting**: Follow framework patterns in `providers/` directory
+- **Bash scripting**: Follow framework patterns in `.agent/scripts/` directory
 - **JSON configuration**: Use consistent structure across all service configs
 - **Security-first**: Never expose credentials, always validate inputs
 - **Error handling**: Implement comprehensive error handling with clear messages
@@ -297,7 +342,7 @@ The framework deploys minimal, secure templates to prevent prompt injection atta
 ```bash
 # Install and run ShellCheck on all scripts
 brew install shellcheck  # macOS
-find providers/ -name "*.sh" -exec shellcheck {} \;
+find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 ```
 
 **Critical Rules (Zero Tolerance):**
@@ -472,13 +517,13 @@ bash ~/git/aidevops/.agent/scripts/setup-linters-wizard.sh install
 bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh set updown-api-key YOUR_API_KEY
 
 # List all checks
-bash ~/git/aidevops/providers/updown-helper.sh list
+bash ~/git/aidevops/.agent/scripts/updown-helper.sh list
 
 # Add new check (default 1h interval)
-bash ~/git/aidevops/providers/updown-helper.sh add https://example.com "My Website"
+bash ~/git/aidevops/.agent/scripts/updown-helper.sh add https://example.com "My Website"
 
 # Get raw JSON data
-bash ~/git/aidevops/providers/updown-helper.sh json
+bash ~/git/aidevops/.agent/scripts/updown-helper.sh json
 ```
 
 **🔬 SonarScanner CLI - SonarQube Cloud Analysis:**
@@ -631,7 +676,7 @@ local used_variable="$1"
 
 ```bash
 # Unified command pattern across all 28+ services:
-./providers/[service]-helper.sh [command] [account/instance] [target] [options]
+./.agent/scripts/[service]-helper.sh [command] [account/instance] [target] [options]
 
 # Standard commands available for all services:
 help                    # Show service-specific help
@@ -645,53 +690,43 @@ monitor|audit|status    # Service monitoring and auditing
 aidevops/
 ├── 📄 README.md              # Main project documentation
 ├── 📄 AGENTS.md              # AI agent integration guide (this file)
+├── 📄 CHANGELOG.md           # Version history
 ├── 📄 LICENSE                # MIT license
-├── 🔧 setup.sh               # Main setup script for users
-├── 🔧 scripts/
-│   └── servers-helper.sh      # Main entry point script
-├── ⚙️  sonar-project.properties # Quality analysis configuration
-├── 📁 providers/             # Core functionality scripts (28+ services)
-├── 📁 configs/               # Configuration templates for users
-├── 📁 docs/                  # Comprehensive user documentation
-├── 📁 templates/             # Reusable templates and examples
-├── 📁 ssh/                   # SSH utilities and key management
-└── 📁 .agent/                # AI agent development tools and templates
-    ├── 📁 scripts/           # Quality automation and development tools
-    │   ├── quality-check.sh  # Multi-platform quality validation
-    │   ├── quality-fix.sh    # Universal automated issue resolution
-    │   ├── pre-commit-hook.sh # Continuous quality assurance
-    │   └── development/      # Historical development scripts
-    ├── 📁 spec/              # Technical specifications and standards
-    ├── 📁 wiki/              # Internal knowledge base and documentation
-    ├── 📁 links/             # External resources and API documentation
-    ├── 📁 tmp/               # Template for AI temporary working directory
-    └── 📁 memory/            # Template for AI persistent memory directory
+├── 🔧 setup.sh               # Main setup script
+├── ⚙️  sonar-project.properties # Quality analysis config
+├── 📁 configs/               # Configuration templates
+├── 📁 templates/             # Reusable templates
+├── 📁 ssh/                   # SSH utilities
+├── 📁 reports/               # Generated reports (gitignored)
+└── 📁 .agent/                # ALL AI context & automation
+    ├── 📁 scripts/           # 90+ automation scripts
+    │   ├── *-helper.sh       # Service helper scripts
+    │   ├── quality-*.sh      # Quality automation
+    │   └── setup-*.sh        # Setup wizards
+    ├── 📁 toon-test-documents/ # TOON format test files
+    ├── *.md                  # 80+ documentation files (lowercase)
+    └── 📁 tmp/, memory/      # AI working directory templates
+```
+
+**Key principle: Everything AI-relevant is in `.agent/`**
 
 ## 📁 **User Working Directories (Outside Git Control)**
 
 ### **`~/.agent/tmp/` - Personal Temporary Working Directory**
 - Session-specific working directories
 - Temporary scripts and analysis files
-- Backups before making changes
 - Log outputs and intermediate data
-- Any files that don't need to persist
 
 ### **`~/.agent/memory/` - Personal Persistent Memory Directory**
-- Successful operation patterns and approaches
+- Learned patterns and successful approaches
 - User preferences and customizations
-- Configuration discoveries and setups
-- Operation history and learned solutions
-- Analytics and usage insights
-```
+- Configuration discoveries
 
 ## 📁 **Framework Agent Directory Structure**
 
-### **~/git/aidevops/.agent/** - Framework Templates and Tools
+### **~/git/aidevops/.agent/scripts/** - All Automation Scripts (90+)
 
-**This directory contains templates and development tools (DO NOT use for personal data):**
-
-### **~/git/aidevops/.agent/scripts/** - Quality Automation Tools
-
+- `*-helper.sh` - Service-specific helpers (hostinger, hetzner, etc.)
 - `quality-check.sh` - Multi-platform quality validation
 - `quality-fix.sh` - Universal automated issue resolution
 - `pre-commit-hook.sh` - Continuous quality assurance
@@ -764,7 +799,7 @@ aidevops/
 ### **Version Control & Git Platforms (4 services)**
 
 - GitHub with GitHub CLI (gh) integration, GitLab with GitLab CLI (glab) integration, Gitea with Gitea CLI (tea) integration, Local Git
-- **Enhanced CLI Management**: Use providers/github-cli-helper.sh, providers/gitlab-cli-helper.sh, providers/gitea-cli-helper.sh for advanced repository management
+- **Enhanced CLI Management**: Use .agent/scripts/github-cli-helper.sh, .agent/scripts/gitlab-cli-helper.sh, .agent/scripts/gitea-cli-helper.sh for advanced repository management
 - **Multi-Account Support**: Configure multiple accounts/instances for each platform with dedicated CLI helpers
 - **Enterprise Workflow**: Full repository lifecycle management through CLI tools including issues, PRs/MRs, and branches
 
@@ -884,7 +919,7 @@ Port 3008: Gitea repository management
 
 - Start with `~/git/aidevops/.agent/wiki/architecture.md` for complete overview
 - Review `~/git/aidevops/.agent/spec/requirements.md` for capabilities
-- Check service-specific docs in `docs/[SERVICE].md`
+- Check service-specific docs in `.agent/[SERVICE].md`
 - Use Context7 MCP for latest external documentation
 
 ### **Extension Guidelines**
@@ -908,10 +943,10 @@ curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidev
 curl -s "https://www.codefactor.io/repository/github/marcusquinn/aidevops"
 
 # 3. Run ShellCheck on modified files
-find providers/ -name "*.sh" -newer .git/COMMIT_EDITMSG -exec shellcheck {} \;
+find .agent/scripts/ -name "*.sh" -newer .git/COMMIT_EDITMSG -exec shellcheck {} \;
 
 # 4. Validate Function Patterns
-grep -n "^[a-zA-Z_][a-zA-Z0-9_]*() {" providers/*.sh | while read -r line; do
+grep -n "^[a-zA-Z_][a-zA-Z0-9_]*() {" .agent/scripts/*.sh | while read -r line; do
     echo "Checking function: $line"
     # Verify return statement exists
     # Verify local variable assignments
@@ -945,25 +980,25 @@ done
 
 - Impact: 79 issues across multiple files
 - Fix: Replace `$1` `$2` with `local var="$1"`
-- Validation: `grep -n '\$[0-9]' providers/*.sh`
+- Validation: `grep -n '\$[0-9]' .agent/scripts/*.sh`
 
 **Priority 3 - String Literals (S1192):**
 
 - Impact: 3 remaining issues
 - Fix: Create constants for repeated strings
-- Validation: `grep -o '"[^"]*"' providers/*.sh | sort | uniq -c | sort -nr`
+- Validation: `grep -o '"[^"]*"' .agent/scripts/*.sh | sort | uniq -c | sort -nr`
 
 ### **🔧 AUTOMATED QUALITY FIXES**
 
 ```bash
 # Mass Return Statement Fix
-find providers/ -name "*.sh" -exec sed -i '/^}$/i\    return 0' {} \;
+find .agent/scripts/ -name "*.sh" -exec sed -i '/^}$/i\    return 0' {} \;
 
 # Mass Positional Parameter Detection
-grep -n '\$[1-9]' providers/*.sh > positional_params.txt
+grep -n '\$[1-9]' .agent/scripts/*.sh > positional_params.txt
 
 # String Literal Analysis
-for file in providers/*.sh; do
+for file in .agent/scripts/*.sh; do
     echo "=== $file ==="
     grep -o '"[^"]*"' "$file" | sort | uniq -c | sort -nr | head -10
 done

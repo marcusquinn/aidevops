@@ -21,7 +21,7 @@
       "description": "reCAPTCHA v2 checkbox solving",
       "response_field": "gRecaptchaResponse",
       "injection_target": "g-recaptcha-response",
-      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "pricing": "./.agent/scripts/crawl4ai-helper.sh.5/1000 requests",
       "avg_solve_time": "< 9 seconds"
     },
     "recaptcha_v3": {
@@ -29,7 +29,7 @@
       "description": "reCAPTCHA v3 invisible solving with score ≥0.7",
       "response_field": "gRecaptchaResponse",
       "injection_method": "fetch_hook",
-      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "pricing": "./.agent/scripts/crawl4ai-helper.sh.5/1000 requests",
       "avg_solve_time": "< 3 seconds"
     },
     "recaptcha_v2_enterprise": {
@@ -74,21 +74,21 @@
       "type": "GeeTestTaskProxyLess",
       "description": "GeeTest v3 CAPTCHA solving",
       "response_field": "challenge",
-      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "pricing": "./.agent/scripts/crawl4ai-helper.sh.5/1000 requests",
       "avg_solve_time": "< 5 seconds"
     },
     "geetest_v4": {
       "type": "GeeTestV4TaskProxyLess",
       "description": "GeeTest v4 CAPTCHA solving",
       "response_field": "captcha_output",
-      "pricing": "./providers/crawl4ai-helper.sh.5/1000 requests",
+      "pricing": "./.agent/scripts/crawl4ai-helper.sh.5/1000 requests",
       "avg_solve_time": "< 5 seconds"
     },
     "image_to_text": {
       "type": "ImageToTextTask",
       "description": "OCR image CAPTCHA solving",
       "response_field": "text",
-      "pricing": "./providers/crawl4ai-helper.sh.4/1000 requests",
+      "pricing": "./.agent/scripts/crawl4ai-helper.sh.4/1000 requests",
       "avg_solve_time": "< 1 second"
     }
   },

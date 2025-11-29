@@ -40,13 +40,13 @@ CapSolver is the world's leading automated CAPTCHA solving service that integrat
 
 ```bash
 # Setup CapSolver integration
-./providers/crawl4ai-helper.sh capsolver-setup
+./.agent/scripts/crawl4ai-helper.sh capsolver-setup
 
 # Set API key
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 # Crawl with CAPTCHA solving
-./providers/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
+./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
 ```
 
 ### **2. Browser Extension Integration**
@@ -71,9 +71,9 @@ export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 ```bash
 # Install Crawl4AI with CapSolver support
-./providers/crawl4ai-helper.sh install
-./providers/crawl4ai-helper.sh docker-setup
-./providers/crawl4ai-helper.sh capsolver-setup
+./.agent/scripts/crawl4ai-helper.sh install
+./.agent/scripts/crawl4ai-helper.sh docker-setup
+./.agent/scripts/crawl4ai-helper.sh capsolver-setup
 
 # Set your API key
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
@@ -83,13 +83,13 @@ export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 ```bash
 # Basic CAPTCHA crawling
-./providers/crawl4ai-helper.sh captcha-crawl https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
+./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
 
 # Cloudflare Turnstile
-./providers/crawl4ai-helper.sh captcha-crawl https://clifford.io/demo/cloudflare-turnstile turnstile 0x4AAAAAAAGlwMzq_9z6S9Mh
+./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://clifford.io/demo/cloudflare-turnstile turnstile 0x4AAAAAAAGlwMzq_9z6S9Mh
 
 # AWS WAF bypass
-./providers/crawl4ai-helper.sh captcha-crawl https://nft.porsche.com/onboarding@6 aws_waf
+./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://nft.porsche.com/onboarding@6 aws_waf
 ```
 
 ## 📊 Usage Examples
@@ -232,7 +232,7 @@ except Exception as e:
 
 ```bash
 # Check CapSolver integration status
-./providers/crawl4ai-helper.sh status
+./.agent/scripts/crawl4ai-helper.sh status
 
 # Test API key
 curl -X POST https://api.capsolver.com/getBalance \
@@ -253,7 +253,7 @@ docker logs crawl4ai --tail 20
 
 ### **Framework Integration**
 
-- **Helper Script**: `providers/crawl4ai-helper.sh`
+- **Helper Script**: `.agent/scripts/crawl4ai-helper.sh`
 - **Configuration**: `configs/capsolver-config.json`
 - **Examples**: `configs/capsolver-example.py`
 - **MCP Tools**: `configs/mcp-templates/crawl4ai-mcp-config.json`

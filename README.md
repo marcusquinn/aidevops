@@ -173,9 +173,9 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 **🚀 Git CLI Enhancement Features:**
 
-- **providers/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
-- **providers/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
-- **providers/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
+- **.agent/scripts/github-cli-helper.sh**: Advanced GitHub repository, issue, PR, and branch management
+- **.agent/scripts/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
+- **.agent/scripts/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
 
 ### **🔐 Security & Quality (6 platforms)**
 
@@ -246,7 +246,7 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 
 ### **🎒 TOON Format Integration**
 
-**[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/docs/TOON.md)** - Token-Oriented Object Notation (TOON) - Compact, human-readable, schema-aware JSON for LLM prompts.
+**[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)** - Token-Oriented Object Notation (TOON) - Compact, human-readable, schema-aware JSON for LLM prompts.
 
 - **20-60% token reduction** compared to JSON
 - **Human-readable tabular format** for structured data
@@ -257,10 +257,10 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 
 ```bash
 # Convert JSON to TOON format
-./providers/toon-helper.sh encode data.json output.toon
+./.agent/scripts/toon-helper.sh encode data.json output.toon
 
 # Show token efficiency comparison
-./providers/toon-helper.sh compare large-dataset.json
+./.agent/scripts/toon-helper.sh compare large-dataset.json
 ```
 
 ## 🚀 **Usage Examples**
@@ -272,32 +272,32 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ./.agent/scripts/servers-helper.sh list
 
 # Connect to specific servers
-./providers/hostinger-helper.sh connect example.com
-./providers/hetzner-helper.sh connect main web-server
+./.agent/scripts/hostinger-helper.sh connect example.com
+./.agent/scripts/hetzner-helper.sh connect main web-server
 
 # Execute commands remotely
-./providers/hostinger-helper.sh exec example.com "uptime"
+./.agent/scripts/hostinger-helper.sh exec example.com "uptime"
 ```
 
 ### **Monitoring & Uptime (Updown.io)**
 
 ```bash
 # List all monitors
-./providers/updown-helper.sh list
+./.agent/scripts/updown-helper.sh list
 
 # Add a new website check
-./providers/updown-helper.sh add https://example.com "My Website"
+./.agent/scripts/updown-helper.sh add https://example.com "My Website"
 ```
 
 ### **Domain & DNS Management**
 
 ```bash
 # Purchase and configure domain
-./providers/spaceship-helper.sh purchase example.com
-./providers/dns-helper.sh cloudflare add-record example.com A 192.168.1.1
+./.agent/scripts/spaceship-helper.sh purchase example.com
+./.agent/scripts/dns-helper.sh cloudflare add-record example.com A 192.168.1.1
 
 # Check domain availability
-./providers/101domains-helper.sh check-availability example.com
+./.agent/scripts/101domains-helper.sh check-availability example.com
 ```
 
 ### **Quality Control & Performance**
@@ -316,24 +316,24 @@ bash .agent/scripts/ampcode-cli.sh scan ./src
 bash .agent/scripts/continue-cli.sh review
 
 # Audit website performance
-./providers/pagespeed-helper.sh wordpress https://example.com
+./.agent/scripts/pagespeed-helper.sh wordpress https://example.com
 ```
 
 ## 📚 **Documentation & Resources**
 
 **Complete Guides Available:**
 
-- **[MCP Integrations Guide](docs/MCP-INTEGRATIONS.md)** - 10 MCP servers setup
-- **[API Integrations Guide](docs/API-INTEGRATIONS.md)** - 30+ service APIs
-- **[Pandoc Conversion Guide](docs/PANDOC-CONVERSION.md)** - Document format conversion
-- **[Agno Integration Guide](docs/AGNO-INTEGRATION.md)** - Local AI agent operating system
-- **[Browser Automation Guide](docs/BROWSER-AUTOMATION.md)** - LinkedIn automation and web scraping
-- **[PageSpeed & Lighthouse Guide](docs/PAGESPEED-LIGHTHOUSE.md)** - Performance auditing
-- **[AI CLI Tools Reference](docs/AI-CLI-TOOLS.md)** - AI assistant integration
-- **[Service Links Directory](docs/SERVICE-LINKS.md)** - Direct links to all services
-- **[Security Best Practices](docs/SECURITY.md)** - Enterprise security standards
+- **[MCP Integrations Guide](.agent/mcp-integrations.md)** - 10 MCP servers setup
+- **[API Integrations Guide](.agent/api-integrations.md)** - 30+ service APIs
+- **[Pandoc Conversion Guide](.agent/pandoc-conversion.md)** - Document format conversion
+- **[Agno Integration Guide](.agent/agno-integration.md)** - Local AI agent operating system
+- **[Browser Automation Guide](.agent/browser-automation.md)** - LinkedIn automation and web scraping
+- **[PageSpeed & Lighthouse Guide](.agent/pagespeed-lighthouse.md)** - Performance auditing
+- **[AI CLI Tools Reference](.agent/ai-cli-tools.md)** - AI assistant integration
+- **[Service Links Directory](.agent/service-links.md)** - Direct links to all services
+- **[Security Best Practices](.agent/security.md)** - Enterprise security standards
 
-**Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `docs/`
+**Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `.agent/`
 
 ## 🏗️ **Architecture**
 
@@ -342,9 +342,9 @@ aidevops/
 ├── 🔧 setup.sh                       # Main setup script
 ├── 📄 AGENTS.md                      # AI agent guidance
 ├── 📁 .agent/scripts/                # Automation & setup scripts
-├── 📁 providers/                     # 28+ service helper scripts
+├── 📁 .agent/scripts/                     # 28+ service helper scripts
 ├── 📁 configs/                       # Configuration templates
-├── 📁 docs/                          # Comprehensive documentation
+├── 📁 .agent/                          # Comprehensive documentation
 ├── 📁 .agent/                        # AI agent development tools
 ├── 📁 ssh/                           # SSH key management
 └── 📁 templates/                     # Reusable templates and examples

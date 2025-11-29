@@ -141,7 +141,7 @@ show_manual_instructions() {
     echo "• Warp AI: https://www.warp.dev/"
     echo
     
-    print_info "See docs/AI-CLI-TOOLS.md for detailed setup instructions"
+    print_info "See .agent/AI-CLI-TOOLS.md for detailed setup instructions"
     return 0
 }
 

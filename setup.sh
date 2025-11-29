@@ -116,15 +116,15 @@ setup_git_clis() {
         echo "  GitLab: cp configs/gitlab-cli-config.json.txt configs/gitlab-cli-config.json"
         echo "  Gitea: cp configs/gitea-cli-config.json.txt configs/gitea-cli-config.json"
         echo ""
-        print_info "Git CLI helpers available in providers/:"
-        echo "  • providers/github-cli-helper.sh - GitHub repository management"
-        echo "  • providers/gitlab-cli-helper.sh - GitLab project management"
-        echo "  • providers/gitea-cli-helper.sh - Gitea repository management"
+        print_info "Git CLI helpers available in .agent/scripts/:"
+        echo "  • .agent/scripts/github-cli-helper.sh - GitHub repository management"
+        echo "  • .agent/scripts/gitlab-cli-helper.sh - GitLab project management"
+        echo "  • .agent/scripts/gitea-cli-helper.sh - Gitea repository management"
         echo ""
         echo "📖 USAGE EXAMPLES:"
-        echo "  • ./providers/github-cli-helper.sh list-repos <account>"
-        echo "  • ./providers/gitlab-cli-helper.sh create-project <account> <name>"
-        echo "  • ./providers/gitea-cli-helper.sh create-repo <account> <repo>"
+        echo "  • ./.agent/scripts/github-cli-helper.sh list-repos <account>"
+        echo "  • ./.agent/scripts/gitlab-cli-helper.sh create-project <account> <name>"
+        echo "  • ./.agent/scripts/gitea-cli-helper.sh create-repo <account> <repo>"
     else
         print_success "✅ All Git CLI tools installed and ready for use!"
     fi
@@ -191,7 +191,7 @@ set_permissions() {
     
     # Make scripts executable
     chmod +x ./*.sh
-    chmod +x providers/*.sh
+    chmod +x .agent/scripts/*.sh
     chmod +x ssh/*.sh
     
     # Secure configuration files
@@ -229,9 +229,9 @@ setup_aliases() {
 # AI Assistant Server Access Framework
 alias servers='./.agent/scripts/servers-helper.sh'
 alias servers-list='./.agent/scripts/servers-helper.sh list'
-alias hostinger='./providers/hostinger-helper.sh'
-alias hetzner='./providers/hetzner-helper.sh'
-alias aws-helper='./providers/aws-helper.sh'
+alias hostinger='./.agent/scripts/hostinger-helper.sh'
+alias hetzner='./.agent/scripts/hetzner-helper.sh'
+alias aws-helper='./.agent/scripts/aws-helper.sh'
 EOF
         print_success "Aliases added to $shell_rc"
         print_info "Run 'source $shell_rc' or restart your terminal to use aliases"
@@ -417,10 +417,10 @@ main() {
     echo "8. Setup AmpCode CLI: bash .agent/scripts/ampcode-cli.sh install && bash .agent/scripts/ampcode-cli.sh setup"
     echo "9. Setup Continue.dev: bash .agent/scripts/continue-cli.sh setup"
     echo "6. Test access: ./.agent/scripts/servers-helper.sh list"
-    echo "7. Test TOON format: ./providers/toon-helper.sh info"
-    echo "8. Setup DSPy: ./providers/dspy-helper.sh install && ./providers/dspy-helper.sh test"
-    echo "9. Setup DSPyGround: ./providers/dspyground-helper.sh install"
-    echo "10. Read documentation in docs/ for provider-specific setup"
+    echo "7. Test TOON format: ./.agent/scripts/toon-helper.sh info"
+    echo "8. Setup DSPy: ./.agent/scripts/dspy-helper.sh install && ./.agent/scripts/dspy-helper.sh test"
+    echo "9. Setup DSPyGround: ./.agent/scripts/dspyground-helper.sh install"
+    echo "10. Read documentation in .agent/ for provider-specific setup"
     echo ""
     echo "AI CLI Tools (configured to read AGENTS.md automatically):"
     echo "• aider-guided    - Aider with AGENTS.md context"
@@ -442,8 +442,8 @@ main() {
     echo "• ~/.codeium/windsurf/memories/global_rules.md - Windsurf global rules"
     echo ""
     echo "DSPy & DSPyGround Integration:"
-    echo "• ./providers/dspy-helper.sh        - DSPy prompt optimization toolkit"
-    echo "• ./providers/dspyground-helper.sh  - DSPyGround playground interface"
+    echo "• ./.agent/scripts/dspy-helper.sh        - DSPy prompt optimization toolkit"
+    echo "• ./.agent/scripts/dspyground-helper.sh  - DSPyGround playground interface"
     echo "• python-env/dspy-env/              - Python virtual environment for DSPy"
     echo "• data/dspy/                        - DSPy projects and datasets"
     echo "• data/dspyground/                  - DSPyGround projects and configurations"

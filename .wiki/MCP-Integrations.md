@@ -400,7 +400,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 # AI: "Test login flow across Chrome, Firefox, and Safari"
 
 # 3. Audit with PageSpeed
-./providers/pagespeed-helper.sh lighthouse https://example.com
+./.agent/scripts/pagespeed-helper.sh lighthouse https://example.com
 
 # 4. Look up Next.js best practices
 # AI: "Show me Next.js SSR optimization techniques"
@@ -426,7 +426,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```bash
 # 1. Create local site
-./providers/localhost-helper.sh create-site mysite.local
+./.agent/scripts/localhost-helper.sh create-site mysite.local
 
 # 2. Query database via MCP
 # AI: "Show all published posts from last week"
@@ -435,7 +435,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 # AI: "Find Context7 documentation for wp_enqueue_scripts"
 
 # 4. Test performance
-./providers/pagespeed-helper.sh wordpress https://mysite.local
+./.agent/scripts/pagespeed-helper.sh wordpress https://mysite.local
 ```
 
 ## Real-World Use Cases
@@ -680,8 +680,8 @@ export PLAYWRIGHT_BROWSERS_PATH=/custom/path
 
 - [MCP Integration Setup Script](../.agent/scripts/setup-mcp-integrations.sh)
 - [MCP Validation Script](../.agent/scripts/validate-mcp-integrations.sh)
-- [API Integrations Guide](../docs/API-INTEGRATIONS.md)
-- [Browser Automation Guide](../docs/BROWSER-AUTOMATION.md)
+- [API Integrations Guide](../.agent/api-integrations.md)
+- [Browser Automation Guide](../.agent/browser-automation.md)
 
 ---
 

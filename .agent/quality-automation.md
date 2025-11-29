@@ -97,7 +97,7 @@ bash .agent/scripts/quality-cli-manager.sh status all
 
 ```bash
 bash .agent/scripts/coderabbit-cli.sh review
-bash .agent/scripts/coderabbit-cli.sh analyze providers/
+bash .agent/scripts/coderabbit-cli.sh analyze .agent/scripts/
 ```
 
 **Codacy CLI v2**: Comprehensive static analysis

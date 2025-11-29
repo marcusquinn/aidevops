@@ -119,7 +119,7 @@ readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
 # Main execution
 main() {
-    local target="${1:-providers/}"
+    local target="${1:-.agent/scripts/}"
     
     print_info "Fixing remaining string literals..."
     
