@@ -129,7 +129,7 @@ cd aidevops && ./setup.sh
 - **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
 - **Performance Auditing**: PageSpeed Insights and Lighthouse integration
 
-## 📋 **Requirements**
+## **Requirements**
 
 ```bash
 # Install dependencies (auto-detected by setup.sh)
@@ -324,14 +324,14 @@ bash .agent/scripts/continue-cli.sh review
 ```text
 aidevops/
 ├── setup.sh                       # Main setup script
-├── 📄 AGENTS.md                      # AI agent guidance
-├── 📁 .agent/scripts/                # Automation & setup scripts
-├── 📁 .agent/scripts/                     # 28+ service helper scripts
-├── 📁 configs/                       # Configuration templates
-├── 📁 .agent/                          # Comprehensive documentation
-├── 📁 .agent/                        # AI agent development tools
-├── 📁 ssh/                           # SSH key management
-└── 📁 templates/                     # Reusable templates and examples
+├── AGENTS.md                      # AI agent guidance
+├── .agent/scripts/                # Automation & setup scripts
+├── .agent/scripts/                     # 28+ service helper scripts
+├── configs/                       # Configuration templates
+├── .agent/                          # Comprehensive documentation
+├── .agent/                        # AI agent development tools
+├── ssh/                           # SSH key management
+└── templates/                     # Reusable templates and examples
 ```
 
 ## **Configuration & Setup**
