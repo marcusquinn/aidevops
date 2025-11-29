@@ -76,13 +76,14 @@ jobs:
     - name: Release Readiness Check
       if: github.ref == 'refs/heads/main'
       id: release-readiness
+      env:
+        COMMIT_MSG: ${{ github.event.head_commit.message }}
       run: |
         echo ""
         echo "🚀 Release Readiness Assessment"
         echo "==============================="
         
         # Check if this is a potential release commit
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
         echo "📝 Commit Message: $COMMIT_MSG"
         
         # Check for version bump indicators

@@ -32,7 +32,7 @@ cp configs/gitlab-cli-config.json.txt configs/gitlab-cli-config.json
 # Gitea CLI
 tea login add
 cp configs/gitea-cli-config.json.txt configs/gitea-cli-config.json
-```
+```text
 
 ### Quality Assurance (MANDATORY)
 
@@ -55,7 +55,7 @@ bash .agent/scripts/sonarscanner-cli.sh analyze   # SonarCloud analysis
 
 # ShellCheck validation (MANDATORY for shell scripts)
 find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
-```
+```text
 
 ### Development & Testing
 
@@ -77,7 +77,7 @@ find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 # Run linter detection and setup
 bash .agent/scripts/linter-manager.sh detect
 bash .agent/scripts/linter-manager.sh install-detected
-```
+```text
 
 ### Provider Management
 
@@ -102,7 +102,7 @@ bash .agent/scripts/linter-manager.sh install-detected
 # Monitoring
 ./.agent/scripts/updown-helper.sh list                  # Uptime monitoring
 ./.agent/scripts/pagespeed-helper.sh [command] [url]    # Performance auditing
-```
+```text
 
 ### AI Assistant Configuration
 
@@ -115,13 +115,13 @@ bash .agent/scripts/setup-local-api-keys.sh setup
 
 # View available AI memory files
 ls -la ~/ | grep -E "CLAUDE|GEMINI|WINDSURF|DROID"
-```
+```text
 
 ## Architecture
 
 ### Directory Structure
 
-```
+```text
 aidevops/
 ├── AGENTS.md                 # ⚠️ AUTHORITATIVE guidance (read first!)
 ├── README.md                 # User-facing documentation
@@ -148,7 +148,7 @@ aidevops/
 │   └── wiki/                 # Internal knowledge base
 ├── ssh/                      # SSH key management utilities
 └── templates/                # Deployment templates for AI assistants
-```
+```text
 
 ### Provider Script Architecture
 
@@ -156,7 +156,7 @@ All provider scripts follow a **unified command pattern**:
 
 ```bash
 ./.agent/scripts/[service]-helper.sh [command] [account/instance] [target] [options]
-```
+```text
 
 **Common Commands Available:**
 
@@ -213,7 +213,7 @@ function_name() {
     # ALWAYS add explicit return statement
     return 0
 }
-```
+```text
 
 #### 2. Main Function Pattern
 
@@ -237,7 +237,7 @@ main() {
     esac
     return 0
 }
-```
+```text
 
 #### 3. String Literal Management
 
@@ -249,7 +249,7 @@ readonly SUCCESS_OPERATION_COMPLETE="Operation completed successfully"
 
 # Use constants instead of repeated string literals
 print_error "$ERROR_ACCOUNT_REQUIRED"
-```
+```text
 
 #### 4. Variable Usage
 
@@ -261,7 +261,7 @@ function_name() {
     echo "$used_variable"
     return 0
 }
-```
+```text
 
 ### Quality Rule Compliance (Zero Tolerance)
 
@@ -280,7 +280,7 @@ When creating new provider scripts, source shared constants:
 # Source shared constants for consistency
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh"
-```
+```text
 
 ## Quality Standards
 
@@ -331,7 +331,7 @@ bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key YOUR_KEY
 
 # List configured keys (shows masked values)
 bash .agent/scripts/setup-local-api-keys.sh list
-```
+```text
 
 ### Provider Configuration
 
@@ -352,7 +352,7 @@ This framework provides **enhanced CLI helpers** for Git platforms:
 ./.agent/scripts/github-cli-helper.sh create-repo <account> <repo-name>
 ./.agent/scripts/github-cli-helper.sh list-issues <account> <repo>
 ./.agent/scripts/github-cli-helper.sh create-pr <account> <repo> <title>
-```
+```text
 
 ### GitLab CLI (glab)
 
@@ -362,7 +362,7 @@ This framework provides **enhanced CLI helpers** for Git platforms:
 ./.agent/scripts/gitlab-cli-helper.sh create-project <account> <name>
 ./.agent/scripts/gitlab-cli-helper.sh list-issues <account> <project>
 ./.agent/scripts/gitlab-cli-helper.sh create-mr <account> <project> <title>
-```
+```text
 
 ### Gitea CLI (tea)
 
@@ -372,7 +372,7 @@ This framework provides **enhanced CLI helpers** for Git platforms:
 ./.agent/scripts/gitea-cli-helper.sh create-repo <account> <repo-name>
 ./.agent/scripts/gitea-cli-helper.sh list-issues <account> <repo>
 ./.agent/scripts/gitea-cli-helper.sh create-pr <account> <repo> <title>
-```
+```text
 
 ## MCP (Model Context Protocol) Integrations
 
@@ -389,7 +389,7 @@ bash .agent/scripts/setup-mcp-integrations.sh ahrefs
 
 # Validate integrations
 bash .agent/scripts/validate-mcp-integrations.sh
-```
+```text
 
 **Available MCPs:**
 
@@ -420,7 +420,7 @@ bash .agent/scripts/validate-mcp-integrations.sh
 
 # Decode back to JSON
 ./.agent/scripts/toon-helper.sh decode output.toon restored.json
-```
+```text
 
 ## Working Directories for AI Agents
 
@@ -439,7 +439,7 @@ bash .agent/scripts/validate-version-consistency.sh
 
 # Bump version (auto-updates all files)
 bash .agent/scripts/auto-version-bump.sh
-```
+```text
 
 Current version: **1.9.0** (tracked in README.md, package.json, sonar-project.properties, setup.sh)
 

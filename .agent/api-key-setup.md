@@ -24,6 +24,7 @@ bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
 ```
 
 This will:
+
 - Create `~/.config/aidevops/` with secure permissions
 - Create `mcp-env.sh` for storing API keys
 - Add sourcing to your shell configs (`.zshrc`, `.bashrc`, `.bash_profile`)
@@ -44,11 +45,13 @@ bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN
 #### Method B: Paste export commands from services
 
 Many services give you an export command like:
+
 ```bash
 export VERCEL_TOKEN="abc123"
 ```
 
 Use the `add` command to parse and store it:
+
 ```bash
 bash .agent/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
 ```
@@ -95,12 +98,14 @@ cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
 ## How It Works
 
 1. **mcp-env.sh** contains all API keys as shell exports:
+
    ```bash
    export SONAR_TOKEN="xxx"
    export OPENAI_API_KEY="xxx"
    ```
 
 2. **Shell startup** sources this file automatically:
+
    ```bash
    # In ~/.zshrc and ~/.bashrc:
    [[ -f ~/.config/aidevops/mcp-env.sh ]] && source ~/.config/aidevops/mcp-env.sh

@@ -69,7 +69,6 @@ jobs:
       run: |
         # Make scripts executable
         chmod +x .agent/scripts/*.sh
-        chmod +x providers/*.sh
         
         # Run monitoring with full analysis
         ./.agent/scripts/monitor-code-review.sh monitor

@@ -216,6 +216,7 @@ When working with Git repositories and platforms, the framework provides enhance
 **AI assistants MUST NEVER create files directly in `~/` (home directory root).**
 
 This includes but is not limited to:
+
 - Temporary scripts (`temp_*.sh`, `fix_*.sh`, `test_*.py`)
 - Content files (`post_*.md`, `article_*.txt`, `draft_*.md`)
 - Data exports (`export_*.json`, `backup_*.sql`, `data_*.csv`)
@@ -804,11 +805,13 @@ aidevops/
 ## 📁 **User Working Directories (Outside Git Control)**
 
 ### **`~/.agent/tmp/` - Personal Temporary Working Directory**
+
 - Session-specific working directories
 - Temporary scripts and analysis files
 - Log outputs and intermediate data
 
 ### **`~/.agent/memory/` - Personal Persistent Memory Directory**
+
 - Learned patterns and successful approaches
 - User preferences and customizations
 - Configuration discoveries
