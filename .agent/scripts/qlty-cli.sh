@@ -42,61 +42,49 @@ print_header() {
 # Load API configuration with intelligent credential selection
 load_api_config() {
     local org="${1:-marcusquinn}"  # Default to marcusquinn organization
-    local api_key_service="qlty-${org}"
-    local workspace_id_service="qlty-${org}-workspace-id"
-    local account_api_key_service="qlty-account-api-key"
+    
+    # First check environment variables (set via mcp-env.sh, sourced by .zshrc)
+    local account_api_key="${QLTY_ACCOUNT_API_KEY:-}"
+    local api_key="${QLTY_API_KEY:-}"
+    local workspace_id="${QLTY_WORKSPACE_ID:-}"
 
-    # Load credentials from secure storage
-    if [[ -f "$HOME/.config/aidevops/api-keys" ]]; then
-        local org_coverage_token workspace_id account_api_key
-        org_coverage_token=$(bash "$(dirname "$0")/setup-local-api-keys.sh" get "$api_key_service" 2>/dev/null)
-        workspace_id=$(bash "$(dirname "$0")/setup-local-api-keys.sh" get "$workspace_id_service" 2>/dev/null)
-        account_api_key=$(bash "$(dirname "$0")/setup-local-api-keys.sh" get "$account_api_key_service" 2>/dev/null)
+    # Intelligent credential selection
+    if [[ -n "$account_api_key" ]]; then
+        # Prefer account-level API key (broader access)
+        export QLTY_API_TOKEN="$account_api_key"
+        print_info "Using Qlty Account API Key (account-wide access)"
 
-        # Intelligent credential selection
-        if [[ -n "$account_api_key" ]]; then
-            # Prefer account-level API key (broader access)
-            export QLTY_API_TOKEN="$account_api_key"
-            print_info "Using Qlty Account API Key (account-wide access)"
-
-            if [[ -n "$workspace_id" ]]; then
-                export QLTY_WORKSPACE_ID="$workspace_id"
-                print_info "Loaded Qlty Workspace ID for organization: $org"
-            fi
-
-            if [[ -n "$org_coverage_token" ]]; then
-                print_info "Note: Organization Coverage Token available but using Account API Key for broader access"
-            fi
-
-            return 0
-
-        elif [[ -n "$org_coverage_token" ]]; then
-            # Fall back to organization-specific coverage token
-            export QLTY_COVERAGE_TOKEN="$org_coverage_token"
-            print_info "Using Qlty Coverage Token for organization: $org"
-
-            if [[ -n "$workspace_id" ]]; then
-                export QLTY_WORKSPACE_ID="$workspace_id"
-                print_info "Loaded Qlty Workspace ID for organization: $org"
-            else
-                print_warning "No Qlty Workspace ID found for organization: $org (optional)"
-            fi
-
-            return 0
-
-        else
-            # No credentials found
-            print_warning "No Qlty credentials found for organization: $org"
-            print_info "Options:"
-            print_info "  Account API Key: bash .agent/scripts/setup-local-api-keys.sh set $account_api_key_service YOUR_API_KEY"
-            print_info "  Coverage Token:  bash .agent/scripts/setup-local-api-keys.sh set $api_key_service YOUR_COVERAGE_TOKEN"
-            if [[ -z "$workspace_id" ]]; then
-                print_info "  Workspace ID:    bash .agent/scripts/setup-local-api-keys.sh set $workspace_id_service YOUR_WORKSPACE_ID"
-            fi
-            return 1
+        if [[ -n "$workspace_id" ]]; then
+            export QLTY_WORKSPACE_ID="$workspace_id"
+            print_info "Loaded Qlty Workspace ID for organization: $org"
         fi
+
+        if [[ -n "$api_key" ]]; then
+            print_info "Note: Organization Coverage Token available but using Account API Key for broader access"
+        fi
+
+        return 0
+
+    elif [[ -n "$api_key" ]]; then
+        # Fall back to organization-specific coverage token
+        export QLTY_COVERAGE_TOKEN="$api_key"
+        print_info "Using Qlty Coverage Token for organization: $org"
+
+        if [[ -n "$workspace_id" ]]; then
+            export QLTY_WORKSPACE_ID="$workspace_id"
+            print_info "Loaded Qlty Workspace ID for organization: $org"
+        else
+            print_warning "No Qlty Workspace ID found for organization: $org (optional)"
+        fi
+
+        return 0
+
     else
-        print_error "API key storage not found. Run setup-local-api-keys.sh first."
+        # No credentials found
+        print_warning "No Qlty credentials found"
+        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "  export QLTY_ACCOUNT_API_KEY=\"your-key\""
+        print_info "  export QLTY_WORKSPACE_ID=\"your-workspace-id\""
         return 1
     fi
 }
@@ -287,44 +275,31 @@ show_help() {
     echo "  ⚡ Performance: Fast, concurrent execution"
     echo ""
     echo "Qlty Credential Management:"
-    echo "  Account API Key:       bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key API_KEY"
-    echo "  Coverage Token:        bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME COVERAGE_TOKEN"
-    echo "  Workspace ID:          bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME-workspace-id ID"
-    echo "  List configurations:   bash .agent/scripts/setup-local-api-keys.sh list"
-    echo "  Default org:           marcusquinn"
+    echo "  Add to ~/.config/aidevops/mcp-env.sh:"
+    echo "    export QLTY_ACCOUNT_API_KEY=\"qltp_...\""
+    echo "    export QLTY_API_KEY=\"qltcw_...\""
+    echo "    export QLTY_WORKSPACE_ID=\"...\""
+    echo "  Then run: source ~/.zshrc"
     echo ""
     echo "Credential Priority:"
     echo "  1. Account API Key (qltp_...) - Preferred for account-wide access"
     echo "  2. Coverage Token (qltcw_...) - Organization-specific access"
     echo ""
     echo "Current Qlty Configuration:"
-    if [[ -f "$HOME/.config/aidevops/api-keys" ]]; then
-        # Check for account-level API key
-        if grep -q "qlty-account-api-key=" "$HOME/.config/aidevops/api-keys" 2>/dev/null; then
-            echo "  🌟 Account API Key: ✅ Configured (account-wide access)"
-        else
-            echo "  🌟 Account API Key: ❌ Not configured"
-        fi
-
-        echo ""
-        echo "  Organization-Specific Configurations:"
-
-        # Show organizations with coverage tokens
-        local orgs
-        orgs=$(grep "qlty-.*=" "$HOME/.config/aidevops/api-keys" 2>/dev/null | grep -v "workspace-id" | grep -v "account-api-key" | cut -d'=' -f1 | sed 's/qlty-//')
-        if [[ -n "$orgs" ]]; then
-            while IFS= read -r org; do
-                local has_workspace=""
-                if grep -q "qlty-${org}-workspace-id=" "$HOME/.config/aidevops/api-keys" 2>/dev/null; then
-                    has_workspace=" + workspace ID"
-                fi
-                echo "    - ${org}: Coverage Token${has_workspace}"
-            done <<< "$orgs"
-        else
-            echo "    - None configured"
-        fi
+    if [[ -n "${QLTY_ACCOUNT_API_KEY:-}" ]]; then
+        echo "  Account API Key: Configured (account-wide access)"
     else
-        echo "  - Configuration storage not found"
+        echo "  Account API Key: Not configured"
+    fi
+    if [[ -n "${QLTY_API_KEY:-}" ]]; then
+        echo "  Coverage Token: Configured"
+    else
+        echo "  Coverage Token: Not configured"
+    fi
+    if [[ -n "${QLTY_WORKSPACE_ID:-}" ]]; then
+        echo "  Workspace ID: Configured"
+    else
+        echo "  Workspace ID: Not configured"
     fi
     return 0
 }

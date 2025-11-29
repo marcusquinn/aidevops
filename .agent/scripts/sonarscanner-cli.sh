@@ -208,25 +208,15 @@ install_sonar_scanner() {
 init_sonar_config() {
     print_header "Initializing SonarQube Configuration"
 
-    # Try to load API key from secure local storage first
-    local api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
-    if [[ -f "$api_key_script" ]]; then
-        local stored_key
-        stored_key=$("$api_key_script" get sonar 2>/dev/null)
-        if [[ -n "$stored_key" ]]; then
-            export SONAR_TOKEN="$stored_key"
-            print_info "Loaded SonarCloud token from secure local storage"
-        fi
-    fi
-
-    # Check for required environment variables
+    # Check for required environment variables (set via mcp-env.sh, sourced by .zshrc)
     local sonar_token="${SONAR_TOKEN:-}"
     local sonar_organization="${SONAR_ORGANIZATION:-}"
     local sonar_project_key="${SONAR_PROJECT_KEY:-}"
 
     if [[ -z "$sonar_token" ]]; then
-        print_error "SONAR_TOKEN not found in environment or secure storage"
-        print_info "Set up token with: bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN"
+        print_error "SONAR_TOKEN not found in environment"
+        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "  export SONAR_TOKEN=\"your-token\""
         print_info "Get your token from: https://sonarcloud.io/account/security/"
         return 1
     fi
@@ -294,22 +284,12 @@ run_sonar_analysis() {
         print_info "Attempting to run with environment variables..."
     fi
 
-    # Try to load API key from secure local storage first
-    local api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
-    if [[ -f "$api_key_script" ]]; then
-        local stored_key
-        stored_key=$("$api_key_script" get sonar 2>/dev/null)
-        if [[ -n "$stored_key" ]]; then
-            export SONAR_TOKEN="$stored_key"
-            print_info "Loaded SonarCloud token from secure local storage"
-        fi
-    fi
-
-    # Check for required token
+    # Check for required token (set via mcp-env.sh, sourced by .zshrc)
     local sonar_token="${SONAR_TOKEN:-}"
     if [[ -z "$sonar_token" ]]; then
-        print_error "SONAR_TOKEN not found in environment or secure storage"
-        print_info "Set up token with: bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN"
+        print_error "SONAR_TOKEN not found in environment"
+        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "  export SONAR_TOKEN=\"your-token\""
         return 1
     fi
 

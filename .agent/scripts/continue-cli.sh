@@ -72,17 +72,13 @@ ensure_results_dir() {
 
 # Load API configuration
 load_api_config() {
-    local api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
-    if [[ -f "$api_key_script" ]]; then
-        local stored_key
-        stored_key=$("$api_key_script" get continue 2>/dev/null)
-        if [[ -n "$stored_key" ]]; then
-            export CONTINUE_API_KEY="$stored_key"
-            print_info "Loaded Continue.dev API key from secure local storage"
-            return 0
-        fi
+    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    if [[ -n "${CONTINUE_API_KEY:-}" ]]; then
+        print_info "Using Continue.dev API key from environment"
+        return 0
     fi
 
+    # Fallback to config file
     if [[ -f "$CONTINUE_API_CONFIG" ]]; then
         if command -v jq >/dev/null 2>&1; then
             local api_key
@@ -95,7 +91,9 @@ load_api_config() {
         fi
     fi
 
-    print_warning "Continue.dev API key not found in local storage"
+    print_warning "CONTINUE_API_KEY not found in environment"
+    print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+    print_info "  export CONTINUE_API_KEY=\"your-api-key\""
     return 1
 }
 
@@ -173,7 +171,7 @@ EOF
     print_info "To complete setup:"
     print_info "1. Install Continue.dev extension in your VS Code"
     print_info "2. Visit https://continue.dev to get your API key"
-    print_info "3. Run: bash .agent/scripts/setup-local-api-keys.sh set continue YOUR_API_KEY"
+    print_info "3. Run: Add CONTINUE_API_KEY to ~/.config/aidevops/mcp-env.sh"
     
     return 0
 }
@@ -589,7 +587,7 @@ show_help() {
     echo "Setup:"
     echo "  1. Install Continue.dev extension in VS Code"
     echo "  2. Visit https://continue.dev to get API key"
-    echo "  3. Run: bash .agent/scripts/setup-local-api-keys.sh set continue YOUR_API_KEY"
+    echo "  3. Run: Add CONTINUE_API_KEY to ~/.config/aidevops/mcp-env.sh"
     echo "  4. Run: $0 setup"
     echo ""
     echo "VS Code Commands (in Continue extension):"

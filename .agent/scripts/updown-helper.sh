@@ -67,16 +67,19 @@ check_dependencies() {
 }
 
 load_config() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "$ERROR_CONFIG_MISSING"
-        return 1
-    fi
-
     local api_key
-    api_key=$(jq -r '.api_key // empty' "$CONFIG_FILE")
+    
+    # First try environment variable (preferred - set via mcp-env.sh)
+    api_key="${UPDOWN_API_KEY:-}"
+    
+    # Fallback to config file if env var not set
+    if [[ -z "$api_key" && -f "$CONFIG_FILE" ]]; then
+        api_key=$(jq -r '.api_key // empty' "$CONFIG_FILE" 2>/dev/null)
+    fi
 
     if [[ -z "$api_key" ]]; then
         print_error "$ERROR_API_KEY_MISSING"
+        print_error "Set UPDOWN_API_KEY in ~/.config/aidevops/mcp-env.sh"
         return 1
     fi
 

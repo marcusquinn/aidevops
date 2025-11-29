@@ -52,24 +52,20 @@ print_warning() {
 
 # Load API configuration
 load_api_config() {
-    # Try to load API key from secure local storage first
-    local api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
-    if [[ -f "$api_key_script" ]]; then
-        local stored_key
-        stored_key=$("$api_key_script" get codacy 2>/dev/null)
-        if [[ -n "$stored_key" ]]; then
-            export CODACY_API_TOKEN="$stored_key"
-            print_info "Loaded Codacy API key from secure local storage"
-        fi
+    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    # CODACY_PROJECT_TOKEN is the standard env var name
+    if [[ -z "${CODACY_API_TOKEN:-}" && -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
+        export CODACY_API_TOKEN="$CODACY_PROJECT_TOKEN"
     fi
 
     if [[ -f "$CODACY_API_CONFIG" ]]; then
         print_info "Loading Codacy API configuration from $CODACY_API_CONFIG"
 
-        # API token should be set in environment variable CODACY_API_TOKEN
-        if [[ -z "$CODACY_API_TOKEN" ]]; then
-            print_error "CODACY_API_TOKEN not found in environment or secure storage"
-            print_info "Set up API key with: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_API_KEY"
+        # API token should be set in environment variable
+        if [[ -z "${CODACY_API_TOKEN:-}" ]]; then
+            print_error "CODACY_API_TOKEN/CODACY_PROJECT_TOKEN not found in environment"
+            print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+            print_info "  export CODACY_PROJECT_TOKEN=\"your-token\""
             return 1
         fi
 

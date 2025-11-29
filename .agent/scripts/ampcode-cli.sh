@@ -67,18 +67,13 @@ ensure_results_dir() {
 
 # Load API configuration
 load_api_config() {
-    local api_key_script
-    api_key_script="$(dirname "$0")/setup-local-api-keys.sh"
-    if [[ -f "$api_key_script" ]]; then
-        local stored_key
-        stored_key=$("$api_key_script" get ampcode 2>/dev/null)
-        if [[ -n "$stored_key" ]]; then
-            export AMPCODE_API_KEY="$stored_key"
-            print_info "Loaded AmpCode API key from secure local storage"
-            return 0
-        fi
+    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    if [[ -n "${AMPCODE_API_KEY:-}" ]]; then
+        print_info "Using AmpCode API key from environment"
+        return 0
     fi
 
+    # Fallback to config file
     if [[ -f "$AMPCODE_API_CONFIG" ]]; then
         if command -v jq >/dev/null 2>&1; then
             local api_key
@@ -91,7 +86,9 @@ load_api_config() {
         fi
     fi
 
-    print_warning "AmpCode API key not found in local storage"
+    print_warning "AMPCODE_API_KEY not found in environment"
+    print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+    print_info "  export AMPCODE_API_KEY=\"your-api-key\""
     return 1
 }
 
@@ -174,7 +171,7 @@ setup_ampcode_config() {
     # Load existing config
     if ! load_api_config; then
         print_info "Please visit https://ampcode.com to get your API key"
-        print_info "Then run: bash .agent/scripts/setup-local-api-keys.sh set ampcode YOUR_API_KEY"
+        print_info "Then run: Add AMPCODE_API_KEY to ~/.config/aidevops/mcp-env.sh"
         return 1
     fi
 
@@ -448,7 +445,7 @@ show_help() {
     echo "Setup:"
     echo "  1. Visit https://ampcode.com to create account"
     echo "  2. Get your API key"
-    echo "  3. Run: bash .agent/scripts/setup-local-api-keys.sh set ampcode YOUR_API_KEY"
+    echo "  3. Run: Add AMPCODE_API_KEY to ~/.config/aidevops/mcp-env.sh"
     echo "  4. Run: $0 setup"
     echo ""
     echo "This script integrates AmpCode's professional AI coding assistant"

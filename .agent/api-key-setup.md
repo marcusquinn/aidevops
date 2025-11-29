@@ -1,155 +1,186 @@
 # API Key Setup Guide - Secure Local Storage
 
-## 🔐 **SECURE API KEY MANAGEMENT**
+## Directory Structure
 
-### **🎯 SECURITY PRINCIPLE:**
+AI DevOps uses two directories for different purposes:
 
-**API keys are stored ONLY in your private user directory (`~/.config/aidevops/`), NEVER in repository files.**
+| Location | Purpose | Permissions |
+|----------|---------|-------------|
+| `~/.config/aidevops/` | **Secrets & credentials** | 700 (dir), 600 (files) |
+| `~/.aidevops/` | **Working directories** (agno, stagehand, reports) | Standard |
 
-## 🛠️ **SETUP INSTRUCTIONS**
+## Security Principle
 
-### **1. Initialize Secure Storage**
+**API keys are stored ONLY in `~/.config/aidevops/mcp-env.sh`, NEVER in repository files.**
+
+This file is automatically sourced by your shell (zsh and bash) on startup.
+
+## Setup Instructions
+
+### 1. Initialize Secure Storage
 
 ```bash
-cd git/aidevops
+bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
+```
+
+This will:
+- Create `~/.config/aidevops/` with secure permissions
+- Create `mcp-env.sh` for storing API keys
+- Add sourcing to your shell configs (`.zshrc`, `.bashrc`, `.bash_profile`)
+
+### 2. Store API Keys
+
+#### Method A: Using the helper script
+
+```bash
+# Service name format (converted to UPPER_CASE)
+bash .agent/scripts/setup-local-api-keys.sh set vercel-token YOUR_TOKEN
+# Result: export VERCEL_TOKEN="YOUR_TOKEN"
+
+bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN
+# Result: export SONAR="YOUR_TOKEN"
+```
+
+#### Method B: Paste export commands from services
+
+Many services give you an export command like:
+```bash
+export VERCEL_TOKEN="abc123"
+```
+
+Use the `add` command to parse and store it:
+```bash
+bash .agent/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
+```
+
+#### Method C: Direct env var name
+
+```bash
+bash .agent/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
+# Result: export SUPABASE_KEY="abc123"
+```
+
+### 3. Common Services
+
+```bash
+# Codacy - https://app.codacy.com/account/api-tokens
+bash .agent/scripts/setup-local-api-keys.sh set codacy-project-token YOUR_TOKEN
+
+# SonarCloud - https://sonarcloud.io/account/security
+bash .agent/scripts/setup-local-api-keys.sh set sonar-token YOUR_TOKEN
+
+# CodeRabbit - https://app.coderabbit.ai/settings
+bash .agent/scripts/setup-local-api-keys.sh set coderabbit-api-key YOUR_KEY
+
+# Hetzner Cloud - https://console.hetzner.cloud/projects/*/security/tokens
+bash .agent/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_TOKEN
+
+# OpenAI - https://platform.openai.com/api-keys
+bash .agent/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
+```
+
+### 4. Verify Storage
+
+```bash
+# List configured services (keys are not shown)
+bash .agent/scripts/setup-local-api-keys.sh list
+
+# Get a specific key
+bash .agent/scripts/setup-local-api-keys.sh get sonar-token
+
+# View the file directly (redacted)
+cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
+```
+
+## How It Works
+
+1. **mcp-env.sh** contains all API keys as shell exports:
+   ```bash
+   export SONAR_TOKEN="xxx"
+   export OPENAI_API_KEY="xxx"
+   ```
+
+2. **Shell startup** sources this file automatically:
+   ```bash
+   # In ~/.zshrc and ~/.bashrc:
+   [[ -f ~/.config/aidevops/mcp-env.sh ]] && source ~/.config/aidevops/mcp-env.sh
+   ```
+
+3. **All processes** (terminals, scripts, MCPs) get access to the env vars
+
+## Storage Locations
+
+### Secrets (Secure - 600 permissions)
+
+- `~/.config/aidevops/mcp-env.sh` - All API keys and tokens
+
+### Working Directories (Standard permissions)
+
+- `~/.aidevops/agno/` - Agno AI framework
+- `~/.aidevops/agent-ui/` - Agent UI frontend
+- `~/.aidevops/stagehand/` - Browser automation
+- `~/.aidevops/reports/` - Generated reports
+- `~/.aidevops/mcp/` - MCP configurations
+
+### NEVER Store In
+
+- Repository files (any file in `~/git/aidevops/`)
+- Documentation or code examples
+- Git-tracked configuration files
+
+## Security Features
+
+### File Permissions
+
+```bash
+# Verify permissions
+ls -la ~/.config/aidevops/
+# drwx------ (700) for directory
+# -rw------- (600) for mcp-env.sh
+```
+
+### Fix Permissions
+
+```bash
+chmod 700 ~/.config/aidevops
+chmod 600 ~/.config/aidevops/mcp-env.sh
+```
+
+## Troubleshooting
+
+### Key Not Found
+
+```bash
+# Check if stored
+bash .agent/scripts/setup-local-api-keys.sh get service-name
+
+# Check environment
+echo $SERVICE_NAME
+
+# Re-add if missing
+bash .agent/scripts/setup-local-api-keys.sh set service-name YOUR_KEY
+```
+
+### Changes Not Taking Effect
+
+```bash
+# Reload shell config
+source ~/.zshrc  # or ~/.bashrc
+
+# Or restart terminal
+```
+
+### Shell Integration Missing
+
+```bash
+# Re-run setup to add sourcing to shell configs
 bash .agent/scripts/setup-local-api-keys.sh setup
 ```
 
-### **2. Store API Keys Securely**
+## Best Practices
 
-#### **Codacy (Code Quality Analysis):**
-
-```bash
-# Get API key from: https://app.codacy.com/account/api-tokens
-bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_CODACY_API_TOKEN
-```
-
-#### **SonarCloud (Code Quality Analysis):**
-
-```bash
-# Get token from: https://sonarcloud.io/account/security
-bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_SONAR_TOKEN
-```
-
-#### **GitHub (Git Platform Integration):**
-
-```bash
-# Get token from: Settings → Developer settings → Personal access tokens
-bash .agent/scripts/setup-local-api-keys.sh set github YOUR_GITHUB_TOKEN
-```
-
-#### **GitLab (Git Platform Integration):**
-
-```bash
-# Get token from: User Settings → Access Tokens
-bash .agent/scripts/setup-local-api-keys.sh set gitlab YOUR_GITLAB_TOKEN
-```
-
-#### **Spaceship (Domain Management):**
-
-```bash
-# Get API key from: Spaceship Dashboard → API Settings
-bash .agent/scripts/setup-local-api-keys.sh set spaceship YOUR_SPACESHIP_API_KEY
-```
-
-### **3. Verify Storage**
-
-```bash
-# List configured services (without showing keys)
-bash .agent/scripts/setup-local-api-keys.sh list
-
-# Load all keys into environment (when needed)
-bash .agent/scripts/setup-local-api-keys.sh load
-```
-
-## 🔍 **STORAGE LOCATIONS**
-
-### **✅ SECURE (USER-PRIVATE ONLY):**
-
-- **Unified Storage**: `~/.config/aidevops/api-keys` (permissions: 600)
-- **Directory**: `~/.config/aidevops/` (permissions: 700)
-- **Legacy CodeRabbit**: `~/.config/coderabbit/api_key` (fallback support)
-
-### **❌ NEVER STORE IN:**
-
-- Repository files (any `.json`, `.sh`, `.md` files in the repo)
-- Environment variables visible to other processes
-- Configuration files tracked by Git
-- Documentation or code examples
-
-## 🚀 **CLI INTEGRATION**
-
-### **Automatic Loading:**
-
-All CLI scripts automatically load API keys from unified secure storage:
-
-- **Codacy CLI**: Loads from unified storage automatically
-- **CodeRabbit CLI**: Loads from unified storage (with legacy fallback)
-- **SonarScanner CLI**: Loads from unified storage automatically
-- **Git Platform helpers**: Load tokens as needed
-
-### **Manual Loading:**
-
-```bash
-# Load all API keys into current shell environment
-bash .agent/scripts/setup-local-api-keys.sh load
-
-# Verify environment variables are set
-echo "Codacy: ${CODACY_API_TOKEN:0:10}..."
-echo "Sonar: ${SONAR_API_TOKEN:0:10}..."
-```
-
-## 🛡️ **SECURITY FEATURES**
-
-### **File Permissions:**
-
-- **Directory**: `700` (owner read/write/execute only)
-- **API key file**: `600` (owner read/write only)
-- **No group or world access**
-
-### **Automatic Security:**
-
-- CLI scripts check secure storage first
-- Fallback to environment variables if needed
-- Never expose keys in process lists
-- Secure file creation and updates
-
-## 🔧 **TROUBLESHOOTING**
-
-### **API Key Not Found:**
-
-```bash
-# Check if key is stored
-bash .agent/scripts/setup-local-api-keys.sh get codacy
-
-# Re-store if missing
-bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_NEW_TOKEN
-```
-
-### **Permission Issues:**
-
-```bash
-# Fix directory permissions
-chmod 700 ~/.config/aidevops
-chmod 600 ~/.config/aidevops/api-keys
-```
-
-### **CLI Not Loading Keys:**
-
-```bash
-# Manually load into environment
-bash .agent/scripts/setup-local-api-keys.sh load
-
-# Test CLI with loaded environment
-bash .agent/scripts/codacy-cli.sh analyze
-```
-
-## 🎯 **BEST PRACTICES**
-
-1. **Regular Rotation**: Rotate API keys every 90 days
-2. **Minimal Permissions**: Use tokens with minimal required scopes
-3. **Monitor Usage**: Check API usage in provider dashboards
-4. **Secure Backup**: Document token sources for regeneration
-5. **Never Share**: API keys are personal and should never be shared
-
-**Remember: Security is not optional - it's mandatory for professional development.**
+1. **Single source** - Always add keys via `setup-local-api-keys.sh`, never paste directly into `.zshrc`
+2. **Regular rotation** - Rotate API keys every 90 days
+3. **Minimal permissions** - Use tokens with minimal required scopes
+4. **Monitor usage** - Check API usage in provider dashboards
+5. **Never commit** - API keys should never appear in git history

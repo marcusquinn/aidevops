@@ -320,35 +320,45 @@ bash .agent/scripts/setup-mcp-integrations.sh context7
 
 ## Configuration
 
+### Directory Structure
+
+| Location | Purpose |
+|----------|---------|
+| `~/.config/aidevops/` | **Secrets only** - `mcp-env.sh` (600 perms) |
+| `~/.aidevops/` | **Working directories** - agno, stagehand, reports |
+
 ### API Keys Setup
 
-Store API keys securely:
+Store API keys securely using the helper script:
 
 ```bash
-# Create API keys file
-mkdir -p ~/.config/aidevops
-touch ~/.config/aidevops/api-keys.txt
-chmod 600 ~/.config/aidevops/api-keys.txt
+# Initialize (creates mcp-env.sh, adds shell integration)
+bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
 
-# Add keys
-echo "AHREFS_API_KEY=your_key" >> ~/.config/aidevops/api-keys.txt
-echo "PERPLEXITY_API_KEY=your_key" >> ~/.config/aidevops/api-keys.txt
-echo "CLOUDFLARE_ACCOUNT_ID=your_id" >> ~/.config/aidevops/api-keys.txt
-echo "CLOUDFLARE_API_TOKEN=your_token" >> ~/.config/aidevops/api-keys.txt
+# Add keys using service names (converted to UPPER_CASE)
+bash .agent/scripts/setup-local-api-keys.sh set ahrefs-api-key your_key
+bash .agent/scripts/setup-local-api-keys.sh set perplexity-api-key your_key
+bash .agent/scripts/setup-local-api-keys.sh set cloudflare-account-id your_id
+bash .agent/scripts/setup-local-api-keys.sh set cloudflare-api-token your_token
+
+# Or paste export commands from services directly
+bash .agent/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="xxx"'
+
+# List configured keys
+bash .agent/scripts/setup-local-api-keys.sh list
 ```
 
 ### Environment Variables
 
-```bash
-# Load from file
-source ~/.config/aidevops/api-keys.txt
+Keys are automatically available in all shells via `~/.config/aidevops/mcp-env.sh`:
 
-# Or set directly
-export AHREFS_API_KEY="your_ahrefs_key"
-export PERPLEXITY_API_KEY="your_perplexity_key"
-export CLOUDFLARE_ACCOUNT_ID="your_account_id"
-export CLOUDFLARE_API_TOKEN="your_api_token"
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+```bash
+# File is sourced automatically by ~/.zshrc and ~/.bashrc
+# To reload after adding keys:
+source ~/.zshrc  # or ~/.bashrc
+
+# Verify keys are loaded
+echo $AHREFS_API_KEY
 ```
 
 ### Claude Desktop Configuration
@@ -588,8 +598,8 @@ tail -f /tmp/chrome-mcp.log
 # Verify environment variable is set
 echo $AHREFS_API_KEY
 
-# Reload environment
-source ~/.config/aidevops/api-keys.txt
+# Reload environment (keys are in mcp-env.sh, sourced by shell config)
+source ~/.zshrc  # or ~/.bashrc
 
 # Test API connection
 curl -H "Authorization: Bearer $AHREFS_API_KEY" https://api.ahrefs.com/v3/ping
