@@ -1,0 +1,5 @@
+{
+  "description": "Updown.io configuration for uptime monitoring",
+  "api_key": "YOUR_UPDOWN_API_KEY",
+  "notes": "Get your API key from https://updown.io/settings/api"
+}

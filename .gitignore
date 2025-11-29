@@ -1,32 +1,13 @@
 # Security - Never commit sensitive information
-# Protect actual config files with real credentials
-configs/hostinger-config.json
-configs/hetzner-config.json
-configs/closte-config.json
-configs/cloudron-config.json
-configs/coolify-config.json
-configs/ses-config.json
-configs/spaceship-config.json
-configs/101domains-config.json
-configs/mainwp-config.json
-configs/vaultwarden-config.json
-configs/code-audit-config.json
-configs/codacy-config.json
-configs/git-platforms-config.json
-configs/dns-config.json
-configs/localhost-config.json
-configs/mcp-servers-config.json
-configs/cloudflare-dns-config.json
-configs/namecheap-dns-config.json
-configs/route53-dns-config.json
-configs/other-dns-providers-config.json
-configs/context7-mcp-config.json
-configs/setup-wizard-responses.json
-configs/dspy-config.json
-configs/dspyground-config.json
+# Ignore ALL .json config files (may contain credentials)
+# Templates use .json.txt extension and are safe to commit
+configs/*.json
 
-# Allow template files and agent directory to be committed
-!configs/*.txt
+# Allow template files (.json.txt) to be committed for spacebar preview
+!configs/*.json.txt
+!configs/mcp-templates/
+
+# Allow agent directory to be committed
 !.agent/
 
 # Password files and credentials
