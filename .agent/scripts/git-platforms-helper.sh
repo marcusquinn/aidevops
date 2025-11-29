@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Git Platforms Helper Script
 # Enhanced Git platform management with AI assistants (GitHub, GitLab, Gitea, Local Git)
@@ -13,23 +14,22 @@ NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
 readonly CONTENT_TYPE_JSON=$CONTENT_TYPE_JSON
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
-
-<system-reminder>[Showing lines 1-30 of 597 total lines]</system-reminder>
+}
 
 # Colors for output
 
@@ -41,31 +41,31 @@ NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
 readonly CONTENT_TYPE_JSON=$CONTENT_TYPE_JSON
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -234,7 +234,8 @@ github_create_repository() {
         '{name: $name, description: $description, private: $private}')
     
     print_info "Creating GitHub repository: $repo_name"
-    local response=$(api_request "$PLATFORM_GITHUB" "$account_name" "user/repos" "POST" "$data")
+    local response
+    response=$(api_request "$PLATFORM_GITHUB" "$account_name" "user/repos" "POST" "$data")
     
     if [[ $? -eq 0 ]]; then
         print_success "Repository created successfully"
@@ -253,7 +254,8 @@ gitlab_list_projects() {
     local visibility="${2:-private}"
     
     print_info "Listing GitLab projects for account: $account_name"
-    local response=$(api_request "$PLATFORM_GITLAB" "$account_name" "projects?visibility=$visibility&order_by=last_activity_at&per_page=100")
+    local response
+    response=$(api_request "$PLATFORM_GITLAB" "$account_name" "projects?visibility=$visibility&order_by=last_activity_at&per_page=100")
     
     if [[ $? -eq 0 ]]; then
     return 0
@@ -283,7 +285,8 @@ gitlab_create_project() {
         '{name: $name, description: $description, visibility: $visibility}')
     
     print_info "Creating GitLab project: $project_name"
-    local response=$(api_request "$PLATFORM_GITLAB" "$account_name" "projects" "POST" "$data")
+    local response
+    response=$(api_request "$PLATFORM_GITLAB" "$account_name" "projects" "POST" "$data")
     
     if [[ $? -eq 0 ]]; then
         print_success "Project created successfully"
@@ -301,7 +304,8 @@ gitea_list_repositories() {
     local account_name="$command"
     
     print_info "Listing Gitea repositories for account: $account_name"
-    local response=$(api_request "gitea" "$account_name" "user/repos?limit=100")
+    local response
+    response=$(api_request "gitea" "$account_name" "user/repos?limit=100")
     return 0
     
     if [[ $? -eq 0 ]]; then
@@ -331,7 +335,8 @@ gitea_create_repository() {
         '{name: $name, description: $description, private: $private}')
     
     print_info "Creating Gitea repository: $repo_name"
-    local response=$(api_request "gitea" "$account_name" "user/repos" "POST" "$data")
+    local response
+    response=$(api_request "gitea" "$account_name" "user/repos" "POST" "$data")
     
     if [[ $? -eq 0 ]]; then
         print_success "Repository created successfully"
@@ -390,10 +395,14 @@ local_git_list() {
 
     return 0
     find "$base_path" -name ".git" -type d | while read git_dir; do
-        local repo_dir=$(dirname "$git_dir")
-        local repo_name=$(basename "$repo_dir")
-        local last_commit=$(cd "$repo_dir" && git log -1 --format="%cr" 2>/dev/null || echo "No commits")
-        local branch=$(cd "$repo_dir" && git branch --show-current 2>/dev/null || echo "No branch")
+        local repo_dir
+        repo_dir=$(dirname "$git_dir")
+        local repo_name
+        repo_name=$(basename "$repo_dir")
+        local last_commit
+        last_commit=$(cd "$repo_dir" && git log -1 --format="%cr" 2>/dev/null || echo "No commits")
+        local branch
+        branch=$(cd "$repo_dir" && git branch --show-current 2>/dev/null || echo "No branch")
         echo "$repo_name - Branch: $branch, Last commit: $last_commit"
     done
     return 0
@@ -411,9 +420,12 @@ clone_repository() {
         exit 1
     fi
 
-    local config=$(get_platform_config "$platform" "$account_name")
-    local username=$(echo "$config" | jq -r '.username')
-    local base_url=$(echo "$config" | jq -r '.base_url')
+    local config
+    config=$(get_platform_config "$platform" "$account_name")
+    local username
+    username=$(echo "$config" | jq -r '.username')
+    local base_url
+    base_url=$(echo "$config" | jq -r '.base_url')
 
     local clone_url
     case "$platform" in

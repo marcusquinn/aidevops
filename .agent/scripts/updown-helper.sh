@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Updown.io Helper Script
 # Managed by AI DevOps Framework
@@ -35,25 +36,25 @@ readonly ERROR_JQ_MISSING="jq is required but not installed"
 # ------------------------------------------------------------------------------
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }

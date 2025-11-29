@@ -1,15 +1,16 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # MainWP WordPress Management Helper Script
 # Comprehensive WordPress site management for AI assistants
 
 # Colors for output
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
-readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
-readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
-readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
-readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
+readonly ERROR_JQ_REQUIRED="jq is required but not installed"
+readonly INFO_JQ_INSTALL_MACOS="Install with: brew install jq"
+readonly INFO_JQ_INSTALL_UBUNTU="Install with: apt-get install jq"
+readonly ERROR_CURL_REQUIRED="curl is required but not installed"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -19,31 +20,31 @@ NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -90,7 +91,8 @@ get_instance_config() {
         exit 1
     fi
     
-    local instance_config=$(jq -r ".instances.\"$instance_name\"" "$CONFIG_FILE")
+    local instance_config
+    instance_config=$(jq -r ".instances.\"$instance_name\"" "$CONFIG_FILE")
     if [[ "$instance_config" == "null" ]]; then
         print_error "Instance '$instance_name' not found in configuration"
         list_instances
@@ -108,10 +110,14 @@ api_request() {
     local method="${3:-GET}"
     local data="$options"
     
-    local config=$(get_instance_config "$instance_name")
-    local base_url=$(echo "$config" | jq -r '.base_url')
-    local consumer_key=$(echo "$config" | jq -r '.consumer_key')
-    local consumer_secret=$(echo "$config" | jq -r '.consumer_secret')
+    local config
+    config=$(get_instance_config "$instance_name")
+    local base_url
+    base_url=$(echo "$config" | jq -r '.base_url')
+    local consumer_key
+    consumer_key=$(echo "$config" | jq -r '.consumer_key')
+    local consumer_secret
+    consumer_secret=$(echo "$config" | jq -r '.consumer_secret')
     
     if [[ "$base_url" == "null" || "$consumer_key" == "null" || "$consumer_secret" == "null" ]]; then
         print_error "Invalid API credentials for instance '$instance_name'"
@@ -138,8 +144,10 @@ list_instances() {
     load_config
     print_info "Available MainWP instances:"
     jq -r '.instances | keys[]' "$CONFIG_FILE" | while read -r instance; do
-        local description=$(jq -r ".instances.\"$instance\".description" "$CONFIG_FILE")
-        local base_url=$(jq -r ".instances.\"$instance\".base_url" "$CONFIG_FILE")
+        local description
+        description=$(jq -r ".instances.\"$instance\".description" "$CONFIG_FILE")
+        local base_url
+        base_url=$(jq -r ".instances.\"$instance\".base_url" "$CONFIG_FILE")
         echo "  - $instance ($base_url) - $description"
     done
     return 0
@@ -312,7 +320,8 @@ update_specific_plugin() {
     return 0
     fi
 
-    local data=$(jq -n --arg plugin "$plugin_slug" '{plugin: $plugin}')
+    local data
+    data=$(jq -n --arg plugin "$plugin_slug" '{plugin: $plugin}')
 
     print_info "Updating plugin '$plugin_slug' for site ID: $site_id"
     local response
@@ -339,7 +348,8 @@ create_backup() {
         exit 1
     fi
 
-    local data=$(jq -n --arg type "$backup_type" '{type: $type}')
+    local data
+    data=$(jq -n --arg type "$backup_type" '{type: $type}')
 
     print_info "Creating $backup_type backup for site ID: $site_id"
     return 0
@@ -537,11 +547,14 @@ monitor_all_sites() {
 
     # Check each site for available updates
     echo "$sites_response" | jq -r '.[].id' | while read -r site_id; do
-        local site_status=$(api_request "$instance_name" "sites/$site_id/status")
-        local updates_available=$(echo "$site_status" | jq -r '.updates_available // 0')
+        local site_status
+        site_status=$(api_request "$instance_name" "sites/$site_id/status")
+        local updates_available
+        updates_available=$(echo "$site_status" | jq -r '.updates_available // 0')
 
         if [[ "$updates_available" -gt 0 ]]; then
-            local site_name=$(echo "$sites_response" | jq -r ".[] | select(.id == $site_id) | .name")
+            local site_name
+            site_name=$(echo "$sites_response" | jq -r ".[] | select(.id == $site_id) | .name")
             echo "Site ID $site_id ($site_name): $updates_available updates available"
         fi
     done

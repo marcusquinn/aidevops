@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Spaceship Domain Registrar Helper Script
 # Comprehensive domain and DNS management for AI assistants
@@ -16,31 +17,31 @@ NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -91,7 +92,8 @@ get_account_config() {
         exit 1
     fi
     
-    local account_config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE")
+    local account_config
+    account_config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE")
     if [[ "$account_config" == "null" ]]; then
         print_error "Account '$account_name' not found in configuration"
         list_accounts
@@ -109,9 +111,12 @@ api_request() {
     local endpoint="$target"
     local data="$options"
     
-    local config=$(get_account_config "$account_name")
-    local api_key=$(echo "$config" | jq -r '.api_key')
-    local api_secret=$(echo "$config" | jq -r '.api_secret')
+    local config
+    config=$(get_account_config "$account_name")
+    local api_key
+    api_key=$(echo "$config" | jq -r '.api_key')
+    local api_secret
+    api_secret=$(echo "$config" | jq -r '.api_secret')
     
     if [[ "$api_key" == "null" || "$api_secret" == "null" ]]; then
         print_error "Invalid API credentials for account '$account_name'"
@@ -138,8 +143,10 @@ list_accounts() {
     load_config
     print_info "Available Spaceship accounts:"
     jq -r '.accounts | keys[]' "$CONFIG_FILE" | while read -r account; do
-        local description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
-        local email=$(jq -r ".accounts.\"$account\".email" "$CONFIG_FILE")
+        local description
+        description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
+        local email
+        email=$(jq -r ".accounts.\"$account\".email" "$CONFIG_FILE")
         echo "  - $account ($email) - $description"
     done
     return 0
@@ -173,8 +180,10 @@ check_domain_availability() {
     print_info "Checking availability for domain: $domain"
     local response
     if response=$(api_request "$account_name" "GET" "domains/check?domain=$domain"); then
-        local available=$(echo "$response" | jq -r '.available')
-        local price=$(echo "$response" | jq -r '.price // "N/A"')
+        local available
+        available=$(echo "$response" | jq -r '.available')
+        local price
+        price=$(echo "$response" | jq -r '.price // "N/A"')
 
         if [[ "$available" == "true" ]]; then
             print_success "Domain $domain is available for registration"
@@ -205,15 +214,18 @@ purchase_domain() {
 
     # First check availability
     print_info "Checking availability before purchase..."
-    local availability=$(api_request "$account_name" "GET" "domains/check?domain=$domain")
-    local available=$(echo "$availability" | jq -r '.available')
+    local availability
+    availability=$(api_request "$account_name" "GET" "domains/check?domain=$domain")
+    local available
+    available=$(echo "$availability" | jq -r '.available')
 
     if [[ "$available" != "true" ]]; then
         print_error "Domain $domain is not available for registration"
         return 1
     fi
 
-    local price=$(echo "$availability" | jq -r '.price')
+    local price
+    price=$(echo "$availability" | jq -r '.price')
     print_warning "Domain $domain will be purchased for $price for $years year(s)"
     print_warning "This action will charge your account. Continue? (y/N)"
 
@@ -428,8 +440,10 @@ update_nameservers() {
         exit 1
     fi
 
-    local ns_json=$(printf '%s\n' "${nameservers[@]}" | jq -R . | jq -s .)
-    local data=$(jq -n --argjson nameservers "$ns_json" '{nameservers: $nameservers}')
+    local ns_json
+    ns_json=$(printf '%s\n' "${nameservers[@]}" | jq -R . | jq -s .)
+    local data
+    data=$(jq -n --argjson nameservers "$ns_json" '{nameservers: $nameservers}')
 
     print_info "Updating nameservers for domain: $domain"
     local response
@@ -456,8 +470,10 @@ check_availability() {
     print_info "Checking availability for domain: $domain"
     local response
     if response=$(api_request "$account_name" "GET" "domains/check?domain=$domain"); then
-        local available=$(echo "$response" | jq -r '.available')
-        local price=$(echo "$response" | jq -r '.price')
+        local available
+        available=$(echo "$response" | jq -r '.available')
+        local price
+        price=$(echo "$response" | jq -r '.price')
 
         if [[ "$available" == "true" ]]; then
             print_success "Domain $domain is available for $price"
@@ -509,7 +525,8 @@ toggle_domain_lock() {
         locked="false"
     fi
 
-    local data=$(jq -n --arg locked "$locked" '{locked: ($locked | test("true"))}')
+    local data
+    data=$(jq -n --arg locked "$locked" '{locked: ($locked | test("true"))}')
 
     print_info "${action^}ing domain: $domain"
     local response

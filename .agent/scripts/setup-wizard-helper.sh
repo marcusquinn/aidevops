@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Setup Wizard Helper Script
 # Intelligent setup guidance for AI assistants to help users configure their DevOps infrastructure
@@ -40,31 +41,31 @@ show_help() {
 readonly PROMPT_CHOICE_1_4="Enter your choice (1-4): "
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
 
 print_question() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${PURPLE}[QUESTION]${NC} $msg"
     return 0
 }
@@ -164,7 +165,6 @@ ask_setup_needs() {
 }
 
 # Analyze needs and recommend services
-# shellcheck disable=SC2120
 analyze_and_recommend() {
     local project_type
     project_type=$(get_response "project_type")

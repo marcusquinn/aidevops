@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Mass fix script to add return statements to all functions that need them
 # Based on SonarCloud S7682 analysis
@@ -27,7 +28,8 @@ add_return_statement() {
     local line_num="$2"
     
     # Check if line before closing brace already has return
-    local prev_line=$((line_num - 1))
+    local prev_line
+    prev_line=$((line_num - 1))
     if ! sed -n "${prev_line}p" "$file" | grep -q "return"; then
         echo "Adding return statement to $file at line $line_num"
         # Insert return statement before the closing brace

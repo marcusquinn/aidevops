@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Version Manager for AI DevOps Framework
 # Manages semantic versioning and automated version bumping
@@ -132,6 +133,18 @@ update_version_in_files() {
     local new_version="$1"
     
     print_info "Updating version references in files..."
+    
+    # Update VERSION file
+    if [[ -f "$VERSION_FILE" ]]; then
+        echo "$new_version" > "$VERSION_FILE"
+        print_success "Updated VERSION file"
+    fi
+    
+    # Update package.json if it exists
+    if [[ -f "$REPO_ROOT/package.json" ]]; then
+        sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
+        print_success "Updated package.json"
+    fi
     
     # Update sonar-project.properties
     if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then

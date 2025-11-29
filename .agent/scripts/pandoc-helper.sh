@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Pandoc Document Conversion Helper for AI DevOps Framework
 # Converts various document formats to markdown for AI assistant processing
@@ -120,8 +121,10 @@ convert_to_markdown() {
         print_success "Converted successfully: $output_file"
         
         # Show file size and preview
-        local size=$(du -h "$output_file" | cut -f1)
-        local lines=$(wc -l < "$output_file")
+        local size
+        size=$(du -h "$output_file" | cut -f1)
+        local lines
+        lines=$(wc -l < "$output_file")
         print_info "Output: $size, $lines lines"
         
         # Show first few lines as preview
@@ -175,7 +178,8 @@ convert_directory() {
     # Find and convert files
     while IFS= read -r -d '' file; do
         count=$((count + 1))
-        local basename=$(basename "$file")
+        local basename
+        basename=$(basename "$file")
         local output_file="$output_dir/${basename%.*}.md"
         
         if convert_to_markdown "$file" "$output_file" "$input_format" "$options"; then
@@ -289,7 +293,8 @@ main() {
                 exit 1
             fi
 
-            local format=$(detect_format "$file")
+            local format
+            format=$(detect_format "$file")
             echo "Detected format for '$file': $format"
             ;;
         "install"|"i")

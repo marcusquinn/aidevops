@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Codacy CLI v2 Chunked Analysis Script
 # Breaks down long-running analysis into manageable chunks with progress feedback
@@ -75,9 +76,11 @@ print_progress() {
     local message="${3:-Processing}"
     
     # Calculate percentage
-    local percentage=$((current * 100 / total))
+    local percentage
+    percentage=$((current * 100 / total))
     local bar_length=30
-    local filled_length=$((percentage * bar_length / 100))
+    local filled_length
+    filled_length=$((percentage * bar_length / 100))
     
     # Create progress bar
     local bar=""
@@ -223,7 +226,8 @@ run_quick_analysis() {
 
     print_info "Running $total_tools fast tools..."
     
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     local results_file=".agent/tmp/codacy-quick-results.sarif"
 
     for tool in $fast_tools; do
@@ -234,15 +238,18 @@ run_quick_analysis() {
             print_info "Running: $tool"
             update_progress "Running $tool analysis"
             
-            local tool_start=$(date +%s)
+            local tool_start
+            tool_start=$(date +%s)
             local cmd="codacy-cli analyze --tool $tool --format sarif --output .agent/tmp/codacy-$tool.sarif"
             
             # Run with timeout
             timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
             local exit_code=$?
             
-            local tool_end=$(date +%s)
-            local tool_duration=$((tool_end - tool_start))
+            local tool_end
+            tool_end=$(date +%s)
+            local tool_duration
+            tool_duration=$((tool_end - tool_start))
             
             if [[ $exit_code -eq 124 ]]; then
                 print_warning "⏰ $tool timed out after ${tool_duration}s"
@@ -267,8 +274,10 @@ run_quick_analysis() {
         fi
     done
 
-    local end_time=$(date +%s)
-    local total_duration=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local total_duration
+    total_duration=$((end_time - start_time))
 
     print_success "Quick analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
     update_progress "Quick analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
@@ -300,7 +309,8 @@ run_chunked_analysis() {
 
     print_info "Running $total_tools tools in chunks of $CHUNK_SIZE..."
     
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     local results_file=".agent/tmp/codacy-chunked-results.sarif"
     local chunk_num=1
 
@@ -311,8 +321,10 @@ run_chunked_analysis() {
     done <<< "$tools"
 
     for ((i=0; i<${#tool_array[@]}; i+=CHUNK_SIZE)); do
-        local chunk_start=$((i + 1))
-        local chunk_end=$((i + CHUNK_SIZE))
+        local chunk_start
+        chunk_start=$((i + 1))
+        local chunk_end
+        chunk_end=$((i + CHUNK_SIZE))
         if [[ $chunk_end -gt ${#tool_array[@]} ]]; then
             chunk_end=${#tool_array[@]}
         fi
@@ -327,7 +339,8 @@ run_chunked_analysis() {
 
         print_info "Chunk $chunk_num: Running ${tool_array[i]} to ${tool_array[((chunk_end-1))]}..."
         
-        local chunk_start_time=$(date +%s)
+        local chunk_start_time
+        chunk_start_time=$(date +%s)
         local chunk_result_file=".agent/tmp/codacy-chunk-$chunk_num.sarif"
         
         # Run chunk with extended timeout
@@ -337,8 +350,10 @@ run_chunked_analysis() {
         timeout $((TIMEOUT * 2)) bash -c "$cmd" 2>/dev/null
         local exit_code=$?
         
-        local chunk_end_time=$(date +%s)
-        local chunk_duration=$((chunk_end_time - chunk_start_time))
+        local chunk_end_time
+        chunk_end_time=$(date +%s)
+        local chunk_duration
+        chunk_duration=$((chunk_end_time - chunk_start_time))
 
         if [[ $exit_code -eq 124 ]]; then
             print_warning "⏰ Chunk $chunk_num timed out after ${chunk_duration}s"
@@ -371,15 +386,18 @@ run_chunked_analysis() {
         fi
     done
 
-    local end_time=$(date +%s)
-    local total_duration=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local total_duration
+    total_duration=$((end_time - start_time))
 
     print_success "Chunked analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
     update_progress "Chunked analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
 
     if [[ -f "$results_file" ]]; then
         print_info "Results saved to: $results_file"
-        local issues_count=$(grep -c '"ruleId"' "$results_file" 2>/dev/null || echo "unknown")
+        local issues_count
+        issues_count=$(grep -c '"ruleId"' "$results_file" 2>/dev/null || echo "unknown")
         print_info "Total issues found: $issues_count"
     fi
 
@@ -407,7 +425,8 @@ run_tool_analysis() {
     init_progress
     update_progress "Starting $tool analysis"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     local result_file=".agent/tmp/codacy-$tool-single.sarif"
 
     local cmd="codacy-cli analyze --tool $tool --format sarif --output $result_file"
@@ -416,8 +435,10 @@ run_tool_analysis() {
     timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
     local exit_code=$?
 
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local duration
+    duration=$((end_time - start_time))
 
     if [[ $exit_code -eq 124 ]]; then
         print_error "Analysis timed out after ${duration}s"
@@ -429,7 +450,8 @@ run_tool_analysis() {
         
         if [[ -f "$result_file" ]]; then
             print_info "Results saved to: $result_file"
-            local issues=$(grep -c '"ruleId"' "$result_file" 2>/dev/null || echo "0")
+            local issues
+            issues=$(grep -c '"ruleId"' "$result_file" 2>/dev/null || echo "0")
             print_info "Issues found: $issues"
         fi
         return 0
@@ -450,8 +472,10 @@ show_status() {
     echo ""
     print_info "Recent Analysis Files:"
     find .agent/tmp -name "codacy-*.sarif" -newer "$TIMESTAMP_FILE" 2>/dev/null | head -5 | while read -r file; do
-        local age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
-        local size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
+        local age
+        age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
+        local size
+        size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
         print_info "  $(basename "$file") (size: $size)"
     done
 

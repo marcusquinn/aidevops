@@ -1023,6 +1023,49 @@ Port 3008: Gitea repository management
 - Implement security standards from `~/git/aidevops/.agent/spec/security.md`
 - Update all framework files for complete integration
 
+## 🔢 **Version Management (MANDATORY)**
+
+### **Version Bump Requirements**
+
+When releasing a new version, AI assistants MUST use the version-manager script to ensure all version references stay synchronized:
+
+```bash
+# For releases - this updates ALL version files automatically:
+./.agent/scripts/version-manager.sh release [major|minor|patch]
+
+# Manual bump (updates VERSION file only):
+./.agent/scripts/version-manager.sh bump [major|minor|patch]
+
+# Validate version consistency across all files:
+./.agent/scripts/version-manager.sh validate
+```
+
+### **Files That Must Stay In Sync**
+
+The following files contain version information that MUST be updated together:
+
+| File | Version Location |
+|------|------------------|
+| `VERSION` | Entire file content |
+| `package.json` | `"version": "X.Y.Z"` |
+| `README.md` | Badge: `Version-X.Y.Z-blue` |
+| `sonar-project.properties` | `sonar.projectVersion=X.Y.Z` |
+| `setup.sh` | Comment: `# Version: X.Y.Z` |
+| `CHANGELOG.md` | Release heading |
+
+### **NEVER Update Versions Manually**
+
+**DO NOT** edit version numbers directly in individual files. Always use:
+```bash
+./.agent/scripts/version-manager.sh release [major|minor|patch]
+```
+
+This ensures:
+- All files are updated atomically
+- Git tag is created
+- GitHub release can be triggered
+- Version validation passes in CI
+
 ## 🔄 **Quality Improvement Workflow**
 
 ### **🚨 MANDATORY PRE-COMMIT CHECKLIST**

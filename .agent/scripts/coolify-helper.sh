@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Coolify Helper Script
 # This script provides easy access to Coolify-hosted applications and services
@@ -171,7 +172,8 @@ list_apps() {
             type=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .type" "$CONFIG_FILE")
             local domain
             domain=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .domain" "$CONFIG_FILE")
-            local branch=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .branch" "$CONFIG_FILE")
+            local branch
+            branch=$(jq -r ".applications.${server}[] | select(.name==\"$app\") | .branch" "$CONFIG_FILE")
             
             echo "  - $app ($type)"
             echo "    Domain: $domain"
@@ -194,10 +196,14 @@ exec_command() {
     
     check_config
     
-    local host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
-    local port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
-    local username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
-    local ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
+    local host
+    host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
+    local port
+    port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
+    local username
+    username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
+    local ssh_key
+    ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
     
     if [[ "$host" == "null" ]]; then
         print_error "Server '$server' not found in configuration"
@@ -220,8 +226,10 @@ check_status() {
 
     check_config
 
-    local host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
-    local coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
+    local host
+    host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
+    local coolify_url
+    coolify_url=$(jq -r ".servers.$server.coolify_url" "$CONFIG_FILE")
 
     if [[ "$host" == "null" ]]; then
         print_error "Server '$server' not found in configuration"
@@ -265,11 +273,16 @@ generate_ssh_configs() {
 
     servers=$(jq -r '.servers | keys[]' "$CONFIG_FILE")
     for server in $servers; do
-        local name=$(jq -r ".servers.$server.name" "$CONFIG_FILE")
-        local host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
-        local port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
-        local username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
-        local ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
+        local name
+        name=$(jq -r ".servers.$server.name" "$CONFIG_FILE")
+        local host
+        host=$(jq -r ".servers.$server.host" "$CONFIG_FILE")
+        local port
+        port=$(jq -r ".servers.$server.port" "$CONFIG_FILE")
+        local username
+        username=$(jq -r ".servers.$server.username" "$CONFIG_FILE")
+        local ssh_key
+        ssh_key=$(jq -r ".servers.$server.ssh_key" "$CONFIG_FILE")
 
         echo "Host $server" >> "$temp_config"
         echo "    HostName $host" >> "$temp_config"

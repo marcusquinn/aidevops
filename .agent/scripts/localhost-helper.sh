@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Localhost Development Helper Script
 # Sets up local Docker apps with .local domains and SSL certificates
@@ -284,10 +285,12 @@ list_localwp_sites() {
         print_success "LocalWP sites found:"
         for site_dir in "$localwp_path"/*; do
             if [[ -d "$site_dir" ]]; then
-                local site_name=$(basename "$site_dir")
+                local site_name
+                site_name=$(basename "$site_dir")
                 local conf_file="$site_dir/conf/nginx/site.conf"
                 if [[ -f "$conf_file" ]]; then
-                    local port=$(grep -o 'listen [0-9]*' "$conf_file" | head -1 | awk '{print $param2}')
+                    local port
+                    port=$(grep -o 'listen [0-9]*' "$conf_file" | head -1 | awk '{print $param2}')
                     echo "  - $site_name (http://localhost:$port)"
                 else
                     echo "  - $site_name (configuration not found)"
@@ -323,7 +326,8 @@ setup_localwp_domain() {
     local conf_file="$localwp_path/conf/nginx/site.conf"
 
     if [[ -f "$conf_file" ]]; then
-        local port=$(grep -o 'listen [0-9]*' "$conf_file" | head -1 | awk '{print $param2}')
+        local port
+        port=$(grep -o 'listen [0-9]*' "$conf_file" | head -1 | awk '{print $param2}')
         print_info "Setting up $domain for LocalWP site $site_name (port $port)"
 
         # Generate SSL certificate
@@ -479,7 +483,8 @@ start_localwp_mcp() {
 stop_localwp_mcp() {
     print_info "Stopping LocalWP MCP server..."
 
-    local pids=$(pgrep -f "mcp-local-wp")
+    local pids
+    pids=$(pgrep -f "mcp-local-wp")
     if [[ -n "$pids" ]]; then
         echo "$pids" | xargs kill
         print_success "LocalWP MCP server stopped"

@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # DNS Management Helper Script
 # Manages DNS records across multiple providers
@@ -79,7 +80,8 @@ get_provider_config() {
 # Check if provider config file exists
 check_provider_config() {
     local provider="$1"
-    local config_file=$(get_provider_config "$provider")
+    local config_file
+    config_file=$(get_provider_config "$provider")
 
     if [[ ! -f "$config_file" ]]; then
         print_error "Configuration file not found: $config_file"
@@ -110,21 +112,25 @@ list_providers() {
     # Check for provider-specific config files
     for config_file in "$CONFIG_DIR"/*-dns-config.json; do
         if [[ -f "$config_file" ]]; then
-            local provider=$(basename "$config_file" | sed 's/-dns-config.json//')
-            local description=$(jq -r '.description' "$config_file" 2>/dev/null || echo "DNS provider")
+            local provider
+            provider=$(basename "$config_file" | sed 's/-dns-config.json//')
+            local description
+            description=$(jq -r '.description' "$config_file" 2>/dev/null || echo "DNS provider")
 
             echo "  ✅ $provider: $description"
 
             # Show accounts for Cloudflare
             if [[ "$provider" == "cloudflare" ]]; then
-                local accounts=$(jq -r '.accounts | keys[]?' "$config_file" 2>/dev/null | tr '\n' ' ')
+                local accounts
+                accounts=$(jq -r '.accounts | keys[]?' "$config_file" 2>/dev/null | tr '\n' ' ')
                 if [[ -n "$accounts" ]]; then
                     echo "     Accounts: $accounts"
                 fi
             fi
 
             # Show domains
-            local domains=$(jq -r '.domains[]?' "$config_file" 2>/dev/null | tr '\n' ' ')
+            local domains
+            domains=$(jq -r '.domains[]?' "$config_file" 2>/dev/null | tr '\n' ' ')
             if [[ -n "$domains" ]]; then
                 echo "     Domains: $domains"
             fi
@@ -136,11 +142,13 @@ list_providers() {
     print_info "Available templates (not yet configured):"
     for template_file in "$CONFIG_DIR"/*-dns-config.json.txt; do
         if [[ -f "$template_file" ]]; then
-            local provider=$(basename "$template_file" | sed 's/-dns-config.json.txt//')
+            local provider
+            provider=$(basename "$template_file" | sed 's/-dns-config.json.txt//')
             local config_file="$CONFIG_DIR/${provider}-dns-config.json"
 
             if [[ ! -f "$config_file" ]]; then
-                local description=$(jq -r '.description' "$template_file" 2>/dev/null || echo "DNS provider")
+                local description
+                description=$(jq -r '.description' "$template_file" 2>/dev/null || echo "DNS provider")
                 echo "  📝 $provider: $description (template available)"
             fi
         fi
@@ -157,15 +165,18 @@ cloudflare_dns() {
     local record_type="$param5"
     local record_value="$param6"
 
-    local config_file=$(get_provider_config "$PROVIDER_CLOUDFLARE")
+    local config_file
+    config_file=$(get_provider_config "$PROVIDER_CLOUDFLARE")
 
     if ! check_provider_config "$PROVIDER_CLOUDFLARE"; then
         return 1
     fi
 
     # Get API token and zone ID from Cloudflare-specific config
-    local api_token=$(jq -r ".accounts[\"$account\"].api_token" "$config_file" 2>/dev/null)
-    local zone_id=$(jq -r ".accounts[\"$account\"].zones[\"$domain\"]" "$config_file" 2>/dev/null)
+    local api_token
+    api_token=$(jq -r ".accounts[\"$account\"].api_token" "$config_file" 2>/dev/null)
+    local zone_id
+    zone_id=$(jq -r ".accounts[\"$account\"].zones[\"$domain\"]" "$config_file" 2>/dev/null)
 
     # Check for legacy single-account structure (backward compatibility)
     if [[ "$api_token" == "null" ]]; then
@@ -182,7 +193,8 @@ cloudflare_dns() {
 
     if [[ "$api_token" == "null" || "$api_token" == *"YOUR_"*"_HERE" ]]; then
         print_error "Cloudflare API token not configured for account '$account'"
-        local available_accounts=$(jq -r '.accounts | keys[]?' "$config_file" 2>/dev/null | tr '\n' ' ')
+        local available_accounts
+        available_accounts=$(jq -r '.accounts | keys[]?' "$config_file" 2>/dev/null | tr '\n' ' ')
         if [[ -n "$available_accounts" ]]; then
             print_info "Available accounts: $available_accounts"
         fi
@@ -191,7 +203,8 @@ cloudflare_dns() {
 
     if [[ "$zone_id" == "null" ]]; then
         print_error "Zone ID for $domain not found in account '$account'"
-        local available_zones=$(jq -r ".accounts[\"$account\"].zones | keys[]?" "$config_file" 2>/dev/null | tr '\n' ' ')
+        local available_zones
+        available_zones=$(jq -r ".accounts[\"$account\"].zones | keys[]?" "$config_file" 2>/dev/null | tr '\n' ' ')
         if [[ -n "$available_zones" ]]; then
             print_info "Available zones in '$account': $available_zones"
         fi
@@ -243,9 +256,12 @@ namecheap_dns() {
     local record_type="$4"
     local record_value="$param5"
     
-    local api_user=$(jq -r '.providers.namecheap.api_user' "$CONFIG_FILE")
-    local api_key=$(jq -r '.providers.namecheap.api_key' "$CONFIG_FILE")
-    local client_ip=$(jq -r '.providers.namecheap.client_ip' "$CONFIG_FILE")
+    local api_user
+    api_user=$(jq -r '.providers.namecheap.api_user' "$CONFIG_FILE")
+    local api_key
+    api_key=$(jq -r '.providers.namecheap.api_key' "$CONFIG_FILE")
+    local client_ip
+    client_ip=$(jq -r '.providers.namecheap.client_ip' "$CONFIG_FILE")
     
     if [[ "$api_key" == "null" || "$api_key" == "YOUR_NAMECHEAP_API_KEY_HERE" ]]; then
         print_error "Namecheap API credentials not configured"

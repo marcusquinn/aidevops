@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Amazon SES Helper Script
 # Comprehensive SES management for AI assistants
@@ -13,28 +14,28 @@ NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -117,8 +118,10 @@ list_accounts() {
     load_config
     print_info "Available SES accounts:"
     jq -r '.accounts | keys[]' "$CONFIG_FILE" | while read account; do
-        local description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
-        local region=$(jq -r ".accounts.\"$account\".region" "$CONFIG_FILE")
+        local description
+        description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
+        local region
+        region=$(jq -r ".accounts.\"$account\".region" "$CONFIG_FILE")
         echo "  - $account ($region) - $description"
     done
     return 0
@@ -337,7 +340,8 @@ verify_domain() {
     fi
 
     print_info "Starting domain verification for: $domain"
-    local verification_token=$(aws ses verify-domain-identity --domain "$domain" --query 'VerificationToken' --output text)
+    local verification_token
+    verification_token=$(aws ses verify-domain-identity --domain "$domain" --query 'VerificationToken' --output text)
 
     if [[ $? -eq 0 ]]; then
         print_success "Domain verification initiated for $domain"

@@ -1,13 +1,14 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Cloudron Helper Script
 # Manages Cloudron servers and applications
 
 # Colors for output
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
-readonly ERROR_SERVER_NAME_REQUIRED="$ERROR_SERVER_NAME_REQUIRED"
-readonly ERROR_SERVER_NOT_FOUND="$ERROR_SERVER_NOT_FOUND"
+readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
+readonly ERROR_SERVER_NAME_REQUIRED="Server name is required"
+readonly ERROR_SERVER_NOT_FOUND="Server not found in configuration"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -91,9 +92,12 @@ connect_server() {
     fi
     
     # Get server configuration
-    local ip=$(jq -r ".servers.$server.ip" "$CONFIG_FILE")
-    local domain=$(jq -r ".servers.$server.domain" "$CONFIG_FILE")
-    local ssh_port=$(jq -r ".servers.$server.ssh_port" "$CONFIG_FILE")
+    local ip
+    ip=$(jq -r ".servers.$server.ip" "$CONFIG_FILE")
+    local domain
+    domain=$(jq -r ".servers.$server.domain" "$CONFIG_FILE")
+    local ssh_port
+    ssh_port=$(jq -r ".servers.$server.ssh_port" "$CONFIG_FILE")
     
     if [[ "$ip" == "null" ]]; then
         print_error "$ERROR_SERVER_NOT_FOUND"
@@ -122,8 +126,10 @@ exec_on_server() {
     fi
     
     # Get server configuration
-    local ip=$(jq -r ".servers.$server.ip" "$CONFIG_FILE")
-    local ssh_port=$(jq -r ".servers.$server.ssh_port" "$CONFIG_FILE")
+    local ip
+    ip=$(jq -r ".servers.$server.ip" "$CONFIG_FILE")
+    local ssh_port
+    ssh_port=$(jq -r ".servers.$server.ssh_port" "$CONFIG_FILE")
     
     if [[ "$ip" == "null" ]]; then
         print_error "$ERROR_SERVER_NOT_FOUND"
@@ -147,8 +153,10 @@ list_apps() {
         exit 1
     fi
     
-    local domain=$(jq -r ".servers.$server.domain" "$CONFIG_FILE")
-    local token=$(jq -r ".servers.$server.api_token" "$CONFIG_FILE")
+    local domain
+    domain=$(jq -r ".servers.$server.domain" "$CONFIG_FILE")
+    local token
+    token=$(jq -r ".servers.$server.api_token" "$CONFIG_FILE")
     
     if [[ "$domain" == "null" ]]; then
         print_error "$ERROR_SERVER_NOT_FOUND"

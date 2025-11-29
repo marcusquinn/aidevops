@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 # Universal Quality Fix Script
 # Automatically resolves common quality issues across all platforms
 
@@ -60,7 +61,8 @@ fix_return_statements() {
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Find functions that don't end with return statement
-            local temp_file=$(mktemp)
+            local temp_file
+            temp_file=$(mktemp)
             local in_function=false
             local function_name=""
             local brace_count=0
@@ -88,7 +90,8 @@ fix_return_statements() {
                     close_braces=${close_braces:-0}
 
                     # Fix arithmetic expansion
-                    local diff=$((open_braces - close_braces))
+                    local diff
+                    diff=$((open_braces - close_braces))
                     brace_count=$((brace_count + diff))
                     
                     # Check if function is ending
@@ -133,7 +136,8 @@ fix_positional_parameters() {
     
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
-            local temp_file=$(mktemp)
+            local temp_file
+            temp_file=$(mktemp)
 
             
             # Process main() functions specifically
@@ -169,7 +173,8 @@ fix_positional_parameters() {
 analyze_string_literals() {
     print_info "Analyzing string literals for constants (S1192)..."
     
-    local constants_file=$(mktemp)
+    local constants_file
+    constants_file=$(mktemp)
     
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then

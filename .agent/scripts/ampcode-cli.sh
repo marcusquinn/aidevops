@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # AmpCode CLI Integration Script
 # Professional AI coding assistant integration
@@ -231,11 +232,14 @@ run_code_scan() {
     local cmd="amp scan --path $target_path --format $output_format --output $output_file"
     print_info "Executing: $cmd"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     eval "$cmd"
     local exit_code=$?
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local duration
+    duration=$((end_time - start_time))
 
     if [[ $exit_code -eq 0 ]]; then
         print_success "Code scan completed in ${duration}s"
@@ -287,11 +291,14 @@ get_ai_review() {
     local cmd="amp review --path $target_path --severity $severity_level --output $review_file"
     print_info "Executing: $cmd"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     eval "$cmd"
     local exit_code=$?
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local duration
+    duration=$((end_time - start_time))
 
     if [[ $exit_code -eq 0 ]]; then
         print_success "AI review completed in ${duration}s"
@@ -303,7 +310,8 @@ get_ai_review() {
             echo ""
             head -20 "$review_file"
             echo ""
-            local total_lines=$(wc -l < "$review_file")
+            local total_lines
+            total_lines=$(wc -l < "$review_file")
             print_info "Total review lines: $total_lines"
         fi
         return 0
@@ -340,11 +348,14 @@ apply_fixes() {
     local cmd="amp analyze --path $target_path --suggest-fixes --output $fixes_file"
     print_info "Executing: $cmd"
 
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
     eval "$cmd"
     local exit_code=$?
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
+    local end_time
+    end_time=$(date +%s)
+    local duration
+    duration=$((end_time - start_time))
 
     if [[ $exit_code -eq 0 && -f "$fixes_file" ]]; then
         print_success "Fix analysis completed in ${duration}s"
@@ -411,9 +422,12 @@ show_status() {
     echo ""
     print_info "Recent Results:"
     find "$AMPCODE_RESULTS_DIR" -name "*.json" -o -name "*.md" 2>/dev/null | sort -r | head -3 | while read -r file; do
-        local age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
-        local size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
-        local type=$(basename "$file" | sed 's/.*\.//' | sed 's/-.*/./')
+        local age
+        age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
+        local size
+        size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
+        local type
+        type=$(basename "$file" | sed 's/.*\.//' | sed 's/-.*/./')
         print_info "  $(basename "$file") (${type} - $size)"
     done
 

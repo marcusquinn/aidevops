@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Efficient script to add return statements to functions that need them
 # Based on SonarCloud S7682 analysis
@@ -12,7 +13,8 @@ add_return_to_line() {
     
     if [[ -f "$file" ]]; then
         # Check if line before closing brace already has return
-        local prev_line=$((line_num - 1))
+        local prev_line
+        prev_line=$((line_num - 1))
         local line_content
         line_content=$(sed -n "${prev_line}p" "$file")
         

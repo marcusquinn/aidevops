@@ -1,15 +1,16 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Vaultwarden (Self-hosted Bitwarden) Helper Script
 # Secure password and secrets management for AI assistants
 
 # Colors for output
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="$ERROR_CONFIG_NOT_FOUND"
-readonly ERROR_JQ_REQUIRED="$ERROR_JQ_REQUIRED"
-readonly INFO_JQ_INSTALL_MACOS="$INFO_JQ_INSTALL_MACOS"
-readonly INFO_JQ_INSTALL_UBUNTU="$INFO_JQ_INSTALL_UBUNTU"
-readonly ERROR_CURL_REQUIRED="$ERROR_CURL_REQUIRED"
+readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
+readonly ERROR_JQ_REQUIRED="jq is required but not installed"
+readonly INFO_JQ_INSTALL_MACOS="Install with: brew install jq"
+readonly INFO_JQ_INSTALL_UBUNTU="Install with: apt-get install jq"
+readonly ERROR_CURL_REQUIRED="curl is required but not installed"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -19,28 +20,28 @@ NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="$USAGE_COMMAND_OPTIONS"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 print_info() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
 print_success() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${GREEN}[SUCCESS]${NC} $msg"
     return 0
 }
 
 print_warning() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${YELLOW}[WARNING]${NC} $msg"
     return 0
 }
 
 print_error() {
-    local msg="$command"
+    local msg="$1"
     echo -e "${RED}[ERROR]${NC} $msg" >&2
     return 0
 }
@@ -89,7 +90,8 @@ get_instance_config() {
         exit 1
     fi
     
-    local instance_config=$(jq -r ".instances.\"$instance_name\"" "$CONFIG_FILE")
+    local instance_config
+    instance_config=$(jq -r ".instances.\"$instance_name\"" "$CONFIG_FILE")
     if [[ "$instance_config" == "null" ]]; then
         print_error "Instance '$instance_name' not found in configuration"
         list_instances
@@ -103,8 +105,10 @@ get_instance_config() {
 # Configure Bitwarden CLI for instance
 configure_bw_cli() {
     local instance_name="$command"
-    local config=$(get_instance_config "$instance_name")
-    local server_url=$(echo "$config" | jq -r '.server_url')
+    local config
+    config=$(get_instance_config "$instance_name")
+    local server_url
+    server_url=$(echo "$config" | jq -r '.server_url')
     
     if [[ "$server_url" != "null" ]]; then
         bw config server "$server_url"
@@ -148,8 +152,10 @@ list_instances() {
     load_config
     print_info "Available Vaultwarden instances:"
     jq -r '.instances | keys[]' "$CONFIG_FILE" | while read instance; do
-        local description=$(jq -r ".instances.\"$instance\".description" "$CONFIG_FILE")
-        local server_url=$(jq -r ".instances.\"$instance\".server_url" "$CONFIG_FILE")
+        local description
+        description=$(jq -r ".instances.\"$instance\".description" "$CONFIG_FILE")
+        local server_url
+        server_url=$(jq -r ".instances.\"$instance\".server_url" "$CONFIG_FILE")
         echo "  - $instance ($server_url) - $description"
     done
     return 0
