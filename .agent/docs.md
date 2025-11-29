@@ -46,7 +46,7 @@ Each service has a comprehensive guide following the standard structure:
 
 ### **Framework Guides**
 
-- `BEST-PRACTICES.md` - Provider selection and best practices
+- `RECOMMENDATIONS-OPINIONATED.md` - Provider selection and recommendations
 - `CLOUDFLARE-SETUP.md` - Cloudflare API setup guide
 - `COOLIFY-SETUP.md` - Coolify deployment setup
 
@@ -132,7 +132,7 @@ Each service guide follows this consistent format:
 ### **Documentation Navigation**
 
 - **Use service-specific guides** for detailed service information
-- **Reference BEST-PRACTICES.md** for provider selection guidance
+- **Reference RECOMMENDATIONS-OPINIONATED.md** for provider selection guidance
 - **Check setup guides** for complex integrations
 - **Use Context7 MCP** for latest service documentation when available
 
@@ -197,7 +197,7 @@ docs/[SERVICE-NAME].md
 ../ai-context.md
 
 # Provider selection guidance
-docs/BEST-PRACTICES.md
+docs/RECOMMENDATIONS-OPINIONATED.md
 
 # Setup procedures
 docs/[SERVICE]-SETUP.md

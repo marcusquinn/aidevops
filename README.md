@@ -269,7 +269,7 @@ bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 
 ```bash
 # List all servers across providers
-./scripts/servers-helper.sh list
+./.agent/scripts/servers-helper.sh list
 
 # Connect to specific servers
 ./providers/hostinger-helper.sh connect example.com
@@ -341,7 +341,7 @@ bash .agent/scripts/continue-cli.sh review
 aidevops/
 ├── 🔧 setup.sh                       # Main setup script
 ├── 📄 AGENTS.md                      # AI agent guidance
-├── 🔧 scripts/servers-helper.sh      # Global server access
+├── 📁 .agent/scripts/                # Automation & setup scripts
 ├── 📁 providers/                     # 28+ service helper scripts
 ├── 📁 configs/                       # Configuration templates
 ├── 📁 docs/                          # Comprehensive documentation
@@ -359,7 +359,7 @@ cp configs/hetzner-config.json.txt configs/hetzner-config.json
 # Edit with your actual credentials
 
 # 2. Test connections
-./scripts/servers-helper.sh list
+./.agent/scripts/servers-helper.sh list
 
 # 3. Install MCP integrations (optional)
 bash .agent/scripts/setup-mcp-integrations.sh all

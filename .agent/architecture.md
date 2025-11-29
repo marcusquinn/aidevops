@@ -95,7 +95,7 @@ configs/[service]-config.json      # Working config (gitignored)
 
 ```bash
 docs/[SERVICE].md                   # Complete service guide
-docs/BEST-PRACTICES.md              # Provider selection guide
+docs/RECOMMENDATIONS-OPINIONATED.md  # Provider selection guide
 ai-context.md                       # AI assistant framework context (this file)
 ```
 
@@ -284,7 +284,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 # Update README.md
 # Add service to provider list and file structure
 
-# Update BEST-PRACTICES.md
+# Update RECOMMENDATIONS-OPINIONATED.md
 # Add service to appropriate category
 
 # Update setup-wizard-helper.sh

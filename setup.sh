@@ -227,8 +227,8 @@ setup_aliases() {
         cat >> "$shell_rc" << 'EOF'
 
 # AI Assistant Server Access Framework
-alias servers='./scripts/servers-helper.sh'
-alias servers-list='./scripts/servers-helper.sh list'
+alias servers='./.agent/scripts/servers-helper.sh'
+alias servers-list='./.agent/scripts/servers-helper.sh list'
 alias hostinger='./providers/hostinger-helper.sh'
 alias hetzner='./providers/hetzner-helper.sh'
 alias aws-helper='./providers/aws-helper.sh'
@@ -416,7 +416,7 @@ main() {
     echo "7. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
     echo "8. Setup AmpCode CLI: bash .agent/scripts/ampcode-cli.sh install && bash .agent/scripts/ampcode-cli.sh setup"
     echo "9. Setup Continue.dev: bash .agent/scripts/continue-cli.sh setup"
-    echo "6. Test access: ./scripts/servers-helper.sh list"
+    echo "6. Test access: ./.agent/scripts/servers-helper.sh list"
     echo "7. Test TOON format: ./providers/toon-helper.sh info"
     echo "8. Setup DSPy: ./providers/dspy-helper.sh install && ./providers/dspy-helper.sh test"
     echo "9. Setup DSPyGround: ./providers/dspyground-helper.sh install"

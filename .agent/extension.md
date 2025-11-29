@@ -163,7 +163,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 # - Add to appropriate service category
 # - Update service count
 
-# Update docs/BEST-PRACTICES.md
+# Update docs/RECOMMENDATIONS-OPINIONATED.md
 # - Add to appropriate category with description
 
 # Update providers/setup-wizard-helper.sh

@@ -19,7 +19,7 @@ For all infrastructure, hosting, and DevOps tasks:
 ```bash
 # Use the DevOps framework
 cd ~/git/aidevops
-./scripts/servers-helper.sh help
+./.agent/scripts/servers-helper.sh help
 
 # View complete provider documentation
 ls ~/git/aidevops/docs/

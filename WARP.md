@@ -61,7 +61,7 @@ find providers/ -name "*.sh" -exec shellcheck {} \;
 
 ```bash
 # List all available servers and services
-./scripts/servers-helper.sh list
+./.agent/scripts/servers-helper.sh list
 
 # Test specific provider connections
 ./providers/hostinger-helper.sh list

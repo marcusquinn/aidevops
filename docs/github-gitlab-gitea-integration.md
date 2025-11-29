@@ -49,7 +49,7 @@ Created configuration templates:
 
 ## Main Script Integration
 
-Updated `scripts/servers-helper.sh` to include Git platforms:
+Updated `.agent/scripts/servers-helper.sh` to include Git platforms:
 
 - Added github, gitlab, gitea as server options
 - Integrated CLI helper delegation
