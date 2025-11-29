@@ -120,18 +120,18 @@ ls -la configs/
 ./scripts/servers-helper.sh list
 
 # Test specific provider
-./providers/hostinger-helper.sh list
-./providers/hetzner-helper.sh list
+./.agent/scripts/hostinger-helper.sh list
+./.agent/scripts/hetzner-helper.sh list
 ```
 
 ### Test API Connections
 
 ```bash
 # Test Cloudflare API
-./providers/dns-helper.sh cloudflare list-zones
+./.agent/scripts/dns-helper.sh cloudflare list-zones
 
 # Test Spaceship API
-./providers/spaceship-helper.sh check-availability example.com
+./.agent/scripts/spaceship-helper.sh check-availability example.com
 ```
 
 ### Run Quality Checks
@@ -187,34 +187,34 @@ Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative gu
 
 ```bash
 # Hostinger
-./providers/hostinger-helper.sh connect example.com
+./.agent/scripts/hostinger-helper.sh connect example.com
 
 # Hetzner
-./providers/hetzner-helper.sh connect main web-server
+./.agent/scripts/hetzner-helper.sh connect main web-server
 ```
 
 ### 3. Execute Remote Command
 
 ```bash
-./providers/hostinger-helper.sh exec example.com "uptime"
-./providers/hetzner-helper.sh exec main web-server "df -h"
+./.agent/scripts/hostinger-helper.sh exec example.com "uptime"
+./.agent/scripts/hetzner-helper.sh exec main web-server "df -h"
 ```
 
 ### 4. Manage DNS Records
 
 ```bash
 # List DNS zones
-./providers/dns-helper.sh cloudflare list-zones
+./.agent/scripts/dns-helper.sh cloudflare list-zones
 
 # Add A record
-./providers/dns-helper.sh cloudflare add-record example.com A 192.168.1.1
+./.agent/scripts/dns-helper.sh cloudflare add-record example.com A 192.168.1.1
 ```
 
 ### 5. Run Performance Audit
 
 ```bash
-./providers/pagespeed-helper.sh wordpress https://example.com
-./providers/pagespeed-helper.sh lighthouse https://example.com json
+./.agent/scripts/pagespeed-helper.sh wordpress https://example.com
+./.agent/scripts/pagespeed-helper.sh lighthouse https://example.com json
 ```
 
 ## Common Use Cases
@@ -236,27 +236,27 @@ Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative gu
 
 ```bash
 # Check domain availability
-./providers/spaceship-helper.sh check-availability newdomain.com
+./.agent/scripts/spaceship-helper.sh check-availability newdomain.com
 
 # Purchase domain
-./providers/spaceship-helper.sh purchase newdomain.com
+./.agent/scripts/spaceship-helper.sh purchase newdomain.com
 
 # Configure DNS
-./providers/dns-helper.sh cloudflare add-record newdomain.com A 192.168.1.1
-./providers/dns-helper.sh cloudflare add-record newdomain.com CNAME www newdomain.com
+./.agent/scripts/dns-helper.sh cloudflare add-record newdomain.com A 192.168.1.1
+./.agent/scripts/dns-helper.sh cloudflare add-record newdomain.com CNAME www newdomain.com
 ```
 
 ### WordPress Management
 
 ```bash
 # List WordPress sites
-./providers/mainwp-helper.sh list-sites
+./.agent/scripts/mainwp-helper.sh list-sites
 
 # Backup site
-./providers/mainwp-helper.sh backup example.com
+./.agent/scripts/mainwp-helper.sh backup example.com
 
 # Update plugins
-./providers/mainwp-helper.sh update-plugins example.com
+./.agent/scripts/mainwp-helper.sh update-plugins example.com
 ```
 
 ### Quality Control

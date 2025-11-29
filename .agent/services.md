@@ -10,7 +10,7 @@
 - **Use Cases**: Small websites, WordPress sites, budget hosting
 - **Helper**: `hostinger-helper.sh`
 - **Config**: `hostinger-config.json`
-- **Docs**: `docs/HOSTINGER.md`
+- **Docs**: `.agent/hostinger.md`
 
 ### **Hetzner Cloud**
 
@@ -20,7 +20,7 @@
 - **Use Cases**: VPS hosting, cloud infrastructure, European hosting
 - **Helper**: `hetzner-helper.sh`
 - **Config**: `hetzner-config.json`
-- **Docs**: `docs/HETZNER.md`
+- **Docs**: `.agent/hetzner.md`
 
 ### **Closte**
 
@@ -30,7 +30,7 @@
 - **Use Cases**: VPS hosting, application hosting, development servers
 - **Helper**: `closte-helper.sh`
 - **Config**: `closte-config.json`
-- **Docs**: `docs/CLOSTE.md`
+- **Docs**: `.agent/closte.md`
 
 ### **Cloudron**
 
@@ -40,7 +40,7 @@
 - **Use Cases**: Self-hosted applications, team productivity, app management
 - **Helper**: `cloudron-helper.sh`
 - **Config**: `cloudron-config.json`
-- **Docs**: `docs/CLOUDRON.md`
+- **Docs**: `.agent/cloudron.md`
 
 ## 🚀 **Deployment & Orchestration (1 Service)**
 
@@ -52,7 +52,7 @@
 - **Use Cases**: Application deployment, CI/CD, container orchestration
 - **Helper**: `coolify-helper.sh`
 - **Config**: `coolify-config.json`
-- **Docs**: `docs/COOLIFY.md`
+- **Docs**: `.agent/coolify.md`
 
 ## 🎯 **Content Management (1 Service)**
 
@@ -64,7 +64,7 @@
 - **Use Cases**: Multiple WordPress sites, client management, bulk updates
 - **Helper**: `mainwp-helper.sh`
 - **Config**: `mainwp-config.json`
-- **Docs**: `docs/MAINWP.md`
+- **Docs**: `.agent/mainwp.md`
 
 ## 🔐 **Security & Secrets (1 Service)**
 
@@ -77,7 +77,7 @@
 - **Use Cases**: Password management, secure credential storage, team secrets
 - **Helper**: `vaultwarden-helper.sh`
 - **Config**: `vaultwarden-config.json`
-- **Docs**: `docs/VAULTWARDEN.md`
+- **Docs**: `.agent/vaultwarden.md`
 
 ## 🔍 **Code Quality & Auditing (4 Services)**
 
@@ -90,7 +90,7 @@
 - **Use Cases**: Automated code reviews, quality analysis, security scanning
 - **Helper**: `code-audit-helper.sh` (multi-service)
 - **Config**: `code-audit-config.json`
-- **Docs**: `docs/CODE-AUDITING.md`
+- **Docs**: `.agent/code-auditing.md`
 
 ### **CodeFactor**
 
@@ -100,7 +100,7 @@
 - **Use Cases**: Continuous code quality monitoring, technical debt tracking
 - **Helper**: `code-audit-helper.sh` (multi-service)
 - **Config**: `code-audit-config.json`
-- **Docs**: `docs/CODE-AUDITING.md`
+- **Docs**: `.agent/code-auditing.md`
 
 ### **Codacy**
 
@@ -111,7 +111,7 @@
 - **Use Cases**: Enterprise code quality, team collaboration, compliance
 - **Helper**: `code-audit-helper.sh` (multi-service)
 - **Config**: `code-audit-config.json`
-- **Docs**: `docs/CODE-AUDITING.md`
+- **Docs**: `.agent/code-auditing.md`
 
 ### **SonarCloud**
 
@@ -122,7 +122,7 @@
 - **Use Cases**: Professional development, security compliance, quality gates
 - **Helper**: `code-audit-helper.sh` (multi-service)
 - **Config**: `code-audit-config.json`
-- **Docs**: `docs/CODE-AUDITING.md`
+- **Docs**: `.agent/code-auditing.md`
 
 ## 📚 **Version Control & Git Platforms (4 Services)**
 
@@ -135,7 +135,7 @@
 - **Use Cases**: Open source projects, team collaboration, enterprise development
 - **Helper**: `git-platforms-helper.sh` (multi-platform)
 - **Config**: `git-platforms-config.json`
-- **Docs**: `docs/GIT-PLATFORMS.md`
+- **Docs**: `.agent/git-platforms.md`
 
 ### **GitLab**
 
@@ -146,7 +146,7 @@
 - **Use Cases**: Enterprise DevOps, self-hosted solutions, integrated workflows
 - **Helper**: `git-platforms-helper.sh` (multi-platform)
 - **Config**: `git-platforms-config.json`
-- **Docs**: `docs/GIT-PLATFORMS.md`
+- **Docs**: `.agent/git-platforms.md`
 
 ### **Gitea**
 
@@ -157,7 +157,7 @@
 - **Use Cases**: Self-hosted Git, private repositories, lightweight deployments
 - **Helper**: `git-platforms-helper.sh` (multi-platform)
 - **Config**: `git-platforms-config.json`
-- **Docs**: `docs/GIT-PLATFORMS.md`
+- **Docs**: `.agent/git-platforms.md`
 
 ### **Local Git**
 
@@ -167,7 +167,7 @@
 - **Use Cases**: Local development, repository initialization, offline work
 - **Helper**: `git-platforms-helper.sh` (multi-platform)
 - **Config**: `git-platforms-config.json`
-- **Docs**: `docs/GIT-PLATFORMS.md`
+- **Docs**: `.agent/git-platforms.md`
 
 ## 📧 **Email Services (1 Service)**
 
@@ -179,7 +179,7 @@
 - **Use Cases**: Transactional emails, marketing emails, email monitoring
 - **Helper**: `ses-helper.sh`
 - **Config**: `ses-config.json`
-- **Docs**: `docs/SES.md`
+- **Docs**: `.agent/ses.md`
 
 ## 🌐 **Domain & DNS (5 Services)**
 
@@ -191,7 +191,7 @@
 - **Use Cases**: Domain purchasing, portfolio management, API automation
 - **Helper**: `spaceship-helper.sh`
 - **Config**: `spaceship-config.json`
-- **Docs**: `docs/SPACESHIP.md`, `docs/DOMAIN-PURCHASING.md`
+- **Docs**: `.agent/spaceship.md`, `.agent/domain-purchasing.md`
 
 ### **101domains**
 
@@ -201,7 +201,7 @@
 - **Use Cases**: Extensive TLD needs, bulk domain operations, reseller services
 - **Helper**: `101domains-helper.sh`
 - **Config**: `101domains-config.json`
-- **Docs**: `docs/101DOMAINS.md`
+- **Docs**: `.agent/101DOMAINS.md`
 
 ### **Cloudflare DNS**
 
@@ -211,7 +211,7 @@
 - **Use Cases**: DNS management, CDN, security, performance optimization
 - **Helper**: `dns-helper.sh` (multi-provider)
 - **Config**: `cloudflare-dns-config.json`
-- **Docs**: `docs/DNS-PROVIDERS.md`
+- **Docs**: `.agent/dns-providers.md`
 
 ### **Namecheap DNS**
 
@@ -221,7 +221,7 @@
 - **Use Cases**: DNS hosting for Namecheap domains, basic DNS needs
 - **Helper**: `dns-helper.sh` (multi-provider)
 - **Config**: `namecheap-dns-config.json`
-- **Docs**: `docs/DNS-PROVIDERS.md`
+- **Docs**: `.agent/dns-providers.md`
 
 ### **Route 53**
 
@@ -231,7 +231,7 @@
 - **Use Cases**: Advanced DNS routing, health checks, AWS integration
 - **Helper**: `dns-helper.sh` (multi-provider)
 - **Config**: `route53-dns-config.json`
-- **Docs**: `docs/DNS-PROVIDERS.md`
+- **Docs**: `.agent/dns-providers.md`
 
 ## 🏠 **Development & Local (4 Services)**
 
@@ -243,7 +243,7 @@
 - **Use Cases**: Local development, testing, offline development
 - **Helper**: `localhost-helper.sh`
 - **Config**: `localhost-config.json`
-- **Docs**: `docs/LOCALHOST.md`
+- **Docs**: `.agent/localhost.md`
 
 ### **LocalWP**
 
@@ -253,7 +253,7 @@
 - **Use Cases**: WordPress development, local testing, database access
 - **Helper**: `localhost-helper.sh` (includes LocalWP)
 - **Config**: `localhost-config.json`
-- **Docs**: `docs/LOCALWP-MCP.md`
+- **Docs**: `.agent/localwp-mcp.md`
 
 ### **Context7 MCP**
 
@@ -263,7 +263,7 @@
 - **Use Cases**: AI assistant documentation, real-time context, development help
 - **Helper**: Context7 integration in all helpers
 - **Config**: `context7-mcp-config.json`
-- **Docs**: `docs/CONTEXT7-MCP-SETUP.md`
+- **Docs**: `.agent/context7-mcp-setup.md`
 
 ### **MCP Servers**
 
@@ -273,7 +273,7 @@
 - **Use Cases**: AI assistant data access, real-time integration, automation
 - **Helper**: MCP integration in all helpers
 - **Config**: `mcp-servers-config.json`
-- **Docs**: `docs/MCP-SERVERS.md`
+- **Docs**: `.agent/mcp-servers.md`
 
 ### **Crawl4AI**
 
@@ -284,7 +284,7 @@
 - **Use Cases**: Web scraping, content research, data extraction, RAG pipelines
 - **Helper**: `crawl4ai-helper.sh`
 - **Config**: `crawl4ai-config.json`
-- **Docs**: `docs/CRAWL4AI.md`
+- **Docs**: `.agent/crawl4ai.md`
 
 ## 🧙‍♂️ **Setup & Configuration (1 Service)**
 

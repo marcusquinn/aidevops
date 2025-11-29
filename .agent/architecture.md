@@ -55,19 +55,19 @@ The AI DevOps Framework provides unified management across:
 All services follow consistent patterns for AI assistant efficiency:
 
 ```bash
-# Standard pattern: ./providers/[service]-helper.sh [command] [account/instance] [target] [options]
+# Standard pattern: ./.agent/scripts/[service]-helper.sh [command] [account/instance] [target] [options]
 
 # List/Status Commands
-./providers/[service]-helper.sh [accounts|instances|servers|sites]
+./.agent/scripts/[service]-helper.sh [accounts|instances|servers|sites]
 
 # Management Commands
-./providers/[service]-helper.sh [action] [account/instance] [target] [options]
+./.agent/scripts/[service]-helper.sh [action] [account/instance] [target] [options]
 
 # Monitoring Commands
-./providers/[service]-helper.sh [monitor|audit|status] [account/instance]
+./.agent/scripts/[service]-helper.sh [monitor|audit|status] [account/instance]
 
 # Help Commands
-./providers/[service]-helper.sh help
+./.agent/scripts/[service]-helper.sh help
 ```
 
 ### **Configuration Structure**
@@ -94,8 +94,8 @@ configs/[service]-config.json      # Working config (gitignored)
 ### **Documentation Structure**
 
 ```bash
-docs/[SERVICE].md                   # Complete service guide
-docs/RECOMMENDATIONS-OPINIONATED.md  # Provider selection guide
+.agent/[SERVICE].md                   # Complete service guide
+.agent/recommendations-opinionated.md  # Provider selection guide
 ai-context.md                       # AI assistant framework context (this file)
 ```
 
@@ -105,33 +105,33 @@ ai-context.md                       # AI assistant framework context (this file)
 
 ```bash
 # 1. Setup wizard for intelligent guidance
-./providers/setup-wizard-helper.sh full-setup
+./.agent/scripts/setup-wizard-helper.sh full-setup
 
 # 2. Domain research and purchase
-./providers/spaceship-helper.sh bulk-check personal myproject.com myproject.dev
-./providers/spaceship-helper.sh purchase personal myproject.com 1 true
+./.agent/scripts/spaceship-helper.sh bulk-check personal myproject.com myproject.dev
+./.agent/scripts/spaceship-helper.sh purchase personal myproject.com 1 true
 
 # 3. Git repository creation
-./providers/git-platforms-helper.sh github-create personal myproject "Description" false
-./providers/git-platforms-helper.sh local-init ~/projects myproject
+./.agent/scripts/git-platforms-helper.sh github-create personal myproject "Description" false
+./.agent/scripts/git-platforms-helper.sh local-init ~/projects myproject
 
 # 4. Infrastructure provisioning
-./providers/hetzner-helper.sh create-server production myproject
+./.agent/scripts/hetzner-helper.sh create-server production myproject
 
 # 5. DNS configuration
-./providers/dns-helper.sh add cloudflare personal myproject.com @ A 192.168.1.100
+./.agent/scripts/dns-helper.sh add cloudflare personal myproject.com @ A 192.168.1.100
 
 # 6. Application deployment
-./providers/coolify-helper.sh deploy production myproject
+./.agent/scripts/coolify-helper.sh deploy production myproject
 
 # 7. Security setup
-./providers/vaultwarden-helper.sh create production "MyProject Creds" user pass
+./.agent/scripts/vaultwarden-helper.sh create production "MyProject Creds" user pass
 
 # 8. Code quality setup
-./providers/code-audit-helper.sh audit myproject
+./.agent/scripts/code-audit-helper.sh audit myproject
 
 # 9. Monitoring setup
-./providers/ses-helper.sh monitor production
+./.agent/scripts/ses-helper.sh monitor production
 ```
 
 ### **Multi-Service Operations**
@@ -139,16 +139,16 @@ ai-context.md                       # AI assistant framework context (this file)
 ```bash
 # Comprehensive infrastructure audit
 for service in hostinger hetzner coolify mainwp; do
-    ./providers/${service}-helper.sh monitor production
+    ./.agent/scripts/${service}-helper.sh monitor production
 done
 
 # Bulk domain management
-./providers/spaceship-helper.sh bulk-check personal \
+./.agent/scripts/spaceship-helper.sh bulk-check personal \
   project1.com project2.com project3.com
 
 # Cross-platform Git management
-./providers/git-platforms-helper.sh audit github personal
-./providers/git-platforms-helper.sh audit gitlab personal
+./.agent/scripts/git-platforms-helper.sh audit github personal
+./.agent/scripts/git-platforms-helper.sh audit gitlab personal
 ```
 
 ## 🔧 **MCP Server Ecosystem**
@@ -157,14 +157,14 @@ done
 
 ```bash
 # Complete MCP server stack for AI assistants:
-./providers/localhost-helper.sh start-mcp          # Port 3001 - LocalWP access
-./providers/vaultwarden-helper.sh start-mcp production 3002  # Secure credentials
-./providers/code-audit-helper.sh start-mcp coderabbit 3003   # Code analysis
-./providers/code-audit-helper.sh start-mcp codacy 3004       # Quality metrics
-./providers/code-audit-helper.sh start-mcp sonarcloud 3005   # Security analysis
-./providers/git-platforms-helper.sh start-mcp github 3006    # Git management
-./providers/git-platforms-helper.sh start-mcp gitlab 3007    # GitLab access
-./providers/git-platforms-helper.sh start-mcp gitea 3008     # Gitea access
+./.agent/scripts/localhost-helper.sh start-mcp          # Port 3001 - LocalWP access
+./.agent/scripts/vaultwarden-helper.sh start-mcp production 3002  # Secure credentials
+./.agent/scripts/code-audit-helper.sh start-mcp coderabbit 3003   # Code analysis
+./.agent/scripts/code-audit-helper.sh start-mcp codacy 3004       # Quality metrics
+./.agent/scripts/code-audit-helper.sh start-mcp sonarcloud 3005   # Security analysis
+./.agent/scripts/git-platforms-helper.sh start-mcp github 3006    # Git management
+./.agent/scripts/git-platforms-helper.sh start-mcp gitlab 3007    # GitLab access
+./.agent/scripts/git-platforms-helper.sh start-mcp gitea 3008     # Gitea access
 ```
 
 ### **MCP Integration Benefits**
@@ -182,7 +182,7 @@ done
 #### **1. Create Helper Script**
 
 ```bash
-# File: providers/[service-name]-helper.sh
+# File: .agent/scripts/[service-name]-helper.sh
 #!/bin/bash
 
 # [Service Name] Helper Script
@@ -242,7 +242,7 @@ CONFIG_FILE="../configs/[service-name]-config.json"
 #### **3. Create Comprehensive Documentation**
 
 ```bash
-# File: docs/[SERVICE-NAME].md
+# File: .agent/[SERVICE-NAME].md
 # [Service Name] Guide
 
 ## 🏢 **Provider Overview**

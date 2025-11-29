@@ -1,302 +1,276 @@
-# Security Requirements & Standards
+# Security Best Practices
 
-## 🔐 **Security Principles**
+This document outlines security best practices for the AI Assistant Server Access Framework.
 
-### **Zero Trust Architecture**
+## 🔐 **Credential Management**
 
-- **Never trust, always verify**: All operations require validation
-- **Least privilege access**: Minimal permissions for all operations
-- **Defense in depth**: Multiple layers of security controls
-- **Continuous monitoring**: Ongoing security monitoring and alerting
-- **Assume breach**: Design for compromise scenarios
+### API Tokens
 
-### **Security by Design**
+- **Never commit API tokens to version control**
+- Store tokens in separate configuration files
+- Add config files to `.gitignore`
+- Use environment variables for CI/CD
+- Rotate tokens regularly (quarterly recommended)
+- Use least-privilege principle for API permissions
 
-- **Secure defaults**: All configurations secure by default
-- **Fail securely**: System fails to secure state
-- **Complete mediation**: All access requests are validated
-- **Economy of mechanism**: Simple, understandable security controls
-- **Open design**: Security through transparency, not obscurity
+### SSH Keys
 
-## 🛡️ **Credential Security**
+- **Use Ed25519 keys** (modern, secure, fast)
+- Generate unique keys per environment if needed
+- Protect private keys with passphrases
+- Set proper file permissions (600 for private keys, 644 for public keys)
+- Regular key rotation and audit
 
-### **Storage Requirements**
+### Password Files
+
+- Store SSH passwords in separate files (never in scripts)
+- Set restrictive permissions (600)
+- Consider using SSH keys instead of passwords when possible
+
+## 🔑 **SSH Security**
+
+### Key Management Best Practices
 
 ```bash
-# Credential storage standards:
-- All credentials in configs/[service]-config.json (gitignored)
-- File permissions: 600 (owner read/write only)
-- No credentials in code, logs, or output
-- Encrypted storage for sensitive data
-- Regular credential rotation (6-12 months)
+# Generate secure Ed25519 key
+ssh-keygen -t ed25519 -C "your-email@domain.com"
+
+# Set proper permissions
+chmod 600 ~/.ssh/id_ed25519
+chmod 644 ~/.ssh/id_ed25519.pub
+
+# Add passphrase protection
+ssh-keygen -p -f ~/.ssh/id_ed25519
 ```
 
-### **Transmission Security**
+### SSH Configuration Security
 
 ```bash
-# All API communications must use:
-- HTTPS/TLS 1.2 or higher
-- Certificate validation enabled
-- No credential transmission in URLs
-- Proper authentication headers
-- Request/response validation
+# ~/.ssh/config security settings
+Host *
+    # Disable password authentication when keys are available
+    PasswordAuthentication no
+
+    # Use only secure key exchange algorithms
+    KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
+
+    # Use only secure ciphers
+    Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+
+    # Use only secure MAC algorithms
+    MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com
+
+    # Disable X11 forwarding by default
+    ForwardX11 no
+
+    # Connection timeout
+    ConnectTimeout 10
 ```
 
-### **Access Control**
+### Server Hardening
+
+- Disable root login where possible
+- Use non-standard SSH ports
+- Implement fail2ban or similar
+- Regular security updates
+- Monitor SSH logs
+
+## 🛡️ **Access Control**
+
+### Principle of Least Privilege
+
+- Grant minimum necessary permissions
+- Use separate API tokens per project/environment
+- Implement role-based access control
+- Regular access reviews and cleanup
+
+### Network Security
+
+- Use VPNs or bastion hosts for sensitive environments
+- Implement IP whitelisting where possible
+- Use private networks for internal communication
+- Monitor network traffic
+
+### Multi-Factor Authentication
+
+- Enable MFA on all cloud provider accounts
+- Use hardware security keys when available
+- Implement time-based OTP for API access
+
+## 📊 **Monitoring and Auditing**
+
+### Access Logging
 
 ```bash
-# Credential access controls:
-- Role-based access to credentials
-- Audit logging for all credential access
-- Time-limited access tokens where possible
-- Multi-factor authentication for sensitive operations
-- Secure credential sharing through Vaultwarden
+# Enable SSH logging
+# Add to /etc/ssh/sshd_config
+LogLevel VERBOSE
+
+# Monitor SSH access
+tail -f /var/log/auth.log | grep ssh
 ```
 
-## 🔒 **Operational Security**
+### API Usage Monitoring
 
-### **Input Validation**
+- Monitor API rate limits and usage
+- Set up alerts for unusual activity
+- Regular audit of API token usage
+- Log all API calls in production
 
-```bash
-# All inputs must be validated:
-- Sanitize all user inputs
-- Validate API responses
-- Check file paths for traversal attacks
-- Validate configuration data
-- Sanitize command line arguments
-```
-
-### **Output Security**
+### Security Scanning
 
 ```bash
-# Secure output handling:
-- No credentials in logs or output
-- Sanitize error messages
-- Redact sensitive data in debug output
-- Secure temporary file handling
-- Clean up sensitive data from memory
-```
+# Regular security scans
+nmap -sS -O target-server
 
-### **Confirmation Requirements**
+# SSH security audit
+ssh-audit target-server
 
-```bash
-# Operations requiring confirmation:
-- Destructive operations (delete, destroy)
-- Financial operations (domain purchases)
-- Production environment changes
-- Bulk operations affecting multiple resources
-- Security configuration changes
-```
-
-## 🚨 **Error Handling Security**
-
-### **Secure Error Messages**
-
-```bash
-# Error message guidelines:
-- No sensitive data in error messages
-- Generic error messages for authentication failures
-- Detailed errors only in debug mode (not production)
-- Log detailed errors securely
-- Provide helpful guidance without exposing internals
-```
-
-### **Exception Handling**
-
-```bash
-# Exception handling requirements:
-- Catch and handle all exceptions
-- Log exceptions securely
-- Fail to secure state
-- Clean up resources on failure
-- Provide user-friendly error messages
-```
-
-## 🔍 **Audit & Logging**
-
-### **Audit Requirements**
-
-```bash
-# All operations must log:
-- User/agent performing operation
-- Timestamp of operation
-- Operation type and parameters (sanitized)
-- Success/failure status
-- Resource affected
-- Source IP/system (where applicable)
-```
-
-### **Log Security**
-
-```bash
-# Secure logging practices:
-- No credentials or sensitive data in logs
-- Secure log storage with restricted access
-- Log rotation and retention policies
-- Tamper-evident logging where possible
-- Centralized log collection and analysis
-```
-
-### **Monitoring & Alerting**
-
-```bash
-# Security monitoring requirements:
-- Failed authentication attempts
-- Unusual access patterns
-- Privilege escalation attempts
-- Configuration changes
-- Error rate spikes
-- Performance anomalies
-```
-
-## 🔐 **API Security**
-
-### **Authentication Security**
-
-```bash
-# API authentication requirements:
-- Strong authentication tokens
-- Token expiration and renewal
-- Secure token storage
-- Token scope limitation
-- Regular token rotation
-```
-
-### **Rate Limiting**
-
-```bash
-# Rate limiting implementation:
-- Respect service rate limits
-- Implement exponential backoff
-- Queue operations when necessary
-- Monitor rate limit usage
-- Alert on rate limit violations
-```
-
-### **Request Security**
-
-```bash
-# Secure API requests:
-- Validate all request parameters
-- Use POST for sensitive operations
-- Include request validation
-- Implement request signing where supported
-- Use secure HTTP methods only
-```
-
-## 🛡️ **Infrastructure Security**
-
-### **File System Security**
-
-```bash
-# File system security requirements:
-- Restricted permissions on all files (600 for configs)
-- Secure temporary file creation
-- Clean up temporary files
-- Validate file paths
-- Prevent directory traversal attacks
-```
-
-### **Process Security**
-
-```bash
-# Process security requirements:
-- Run with minimal privileges
-- Isolate processes where possible
-- Secure inter-process communication
-- Monitor process resource usage
-- Clean up child processes
-```
-
-### **Network Security**
-
-```bash
-# Network security requirements:
-- Use encrypted connections only (HTTPS/TLS)
-- Validate SSL certificates
-- Implement connection timeouts
-- Use secure DNS resolution
-- Monitor network connections
-```
-
-## 🔒 **Development Security**
-
-### **Code Security**
-
-```bash
-# Secure coding requirements:
-- No hardcoded credentials
-- Input validation on all inputs
-- Output encoding/sanitization
-- Secure random number generation
-- Proper error handling
-```
-
-### **Dependency Security**
-
-```bash
-# Dependency management:
-- Regular dependency updates
-- Vulnerability scanning
-- Minimal dependency usage
-- Trusted sources only
-- License compliance
-```
-
-### **Testing Security**
-
-```bash
-# Security testing requirements:
-- No real credentials in tests
-- Test error handling paths
-- Validate input sanitization
-- Test authentication failures
-- Verify secure defaults
+# SSL/TLS testing
+testssl.sh target-server
 ```
 
 ## 🚨 **Incident Response**
 
-### **Security Incident Procedures**
+### Compromise Detection
+
+- Monitor for unauthorized SSH connections
+- Watch for unusual API activity
+- Set up alerts for failed authentication attempts
+- Regular review of server logs
+
+### Response Procedures
+
+1. **Immediate Actions**
+   - Disable compromised credentials
+   - Block suspicious IP addresses
+   - Isolate affected systems
+
+2. **Investigation**
+   - Analyze logs for attack vectors
+   - Identify scope of compromise
+   - Document findings
+
+3. **Recovery**
+   - Rotate all potentially compromised credentials
+   - Update and patch systems
+   - Restore from clean backups if necessary
+
+4. **Prevention**
+   - Implement additional security measures
+   - Update security procedures
+   - Conduct security training
+
+## 🔒 **File Permissions**
+
+### Recommended Permissions
 
 ```bash
-# Incident response steps:
-1. Immediate containment
-2. Assess scope and impact
-3. Preserve evidence
-4. Notify stakeholders
-5. Implement remediation
-6. Document lessons learned
-7. Update security measures
+# Configuration files
+chmod 600 configs/.*.json
+
+# SSH keys
+chmod 600 ~/.ssh/id_*
+chmod 644 ~/.ssh/id_*.pub
+chmod 600 ~/.ssh/config
+chmod 700 ~/.ssh/
+
+# Password files
+chmod 600 ~/.ssh/*_password
+
+# Scripts
+chmod 755 *.sh
+chmod 755 .agent/scripts/*.sh
+chmod 755 ssh/*.sh
 ```
 
-### **Breach Response**
+### Git Security
 
 ```bash
-# Data breach response:
-1. Stop the breach immediately
-2. Assess what data was compromised
-3. Notify affected users/systems
-4. Implement additional security measures
-5. Monitor for further compromise
-6. Document and report as required
+# .gitignore for security
+echo "configs/.*.json" >> .gitignore
+echo "*.password" >> .gitignore
+echo ".env" >> .gitignore
+echo "*.key" >> .gitignore
+echo "*.pem" >> .gitignore
 ```
 
-## 🔐 **Compliance & Standards**
+## 🌐 **Network Security**
 
-### **Security Standards**
+### VPN and Bastion Hosts
 
-- **OWASP Top 10**: Address all OWASP security risks
-- **NIST Cybersecurity Framework**: Follow NIST guidelines
-- **ISO 27001**: Align with information security standards
-- **SOC 2**: Implement SOC 2 security controls where applicable
+- Use VPN for accessing production systems
+- Implement bastion hosts for multi-hop access
+- Restrict direct internet access to servers
 
-### **Regulatory Compliance**
+### Firewall Rules
 
-- **GDPR**: Data protection and privacy requirements
-- **CCPA**: California privacy requirements
-- **HIPAA**: Healthcare data protection (if applicable)
-- **PCI DSS**: Payment card data security (if applicable)
+```bash
+# Basic iptables rules
+iptables -A INPUT -p tcp --dport 22 -s trusted-ip -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j DROP
+```
+
+### SSL/TLS
+
+- Use TLS 1.2 or higher for all API communications
+- Implement certificate pinning where possible
+- Regular certificate rotation
+
+## 📋 **Security Checklist**
+
+### Initial Setup
+
+- [ ] Generate secure SSH keys with passphrases
+- [ ] Set proper file permissions on all sensitive files
+- [ ] Configure secure SSH client settings
+- [ ] Add sensitive files to .gitignore
+- [ ] Enable MFA on all cloud accounts
+
+### Regular Maintenance
+
+- [ ] Rotate API tokens quarterly
+- [ ] Audit SSH keys and remove unused ones
+- [ ] Review and update access permissions
+- [ ] Monitor logs for suspicious activity
+- [ ] Update and patch all systems
+
+### Emergency Procedures
+
+- [ ] Document incident response procedures
+- [ ] Test backup and recovery processes
+- [ ] Maintain emergency contact information
+- [ ] Regular security drills and training
+
+## 🔍 **Security Tools**
+
+### Recommended Tools
+
+```bash
+# SSH security audit
+ssh-audit server-ip
+
+# Network scanning
+nmap -sS -sV target
+
+# SSL/TLS testing
+testssl.sh target
+
+# File integrity monitoring
+aide --init
+aide --check
+
+# Log analysis
+fail2ban-client status
+```
+
+### Automation
+
+- Implement automated security scanning
+- Set up log monitoring and alerting
+- Use configuration management for consistent security settings
+- Regular automated backups with encryption
 
 ---
 
-**These security requirements ensure the framework maintains enterprise-grade security across all operations while protecting sensitive data and credentials.** 🔐🛡️🚨
+**Remember: Security is an ongoing process, not a one-time setup. Regular reviews and updates are essential for maintaining a secure infrastructure.**

@@ -11,12 +11,12 @@
 
 ### **Deployment & Orchestration**
 
-- **Coolify API**: https://coolify.io/docs/api
+- **Coolify API**: https://coolify.io/.agent/api
 - **Coolify GitHub**: https://github.com/coollabsio/coolify
 
 ### **Content Management**
 
-- **MainWP API**: https://mainwp.com/help/docs/mainwp-rest-api/
+- **MainWP API**: https://mainwp.com/help/.agent/mainwp-rest-api/
 - **MainWP Extensions**: https://mainwp.com/extensions/
 
 ### **Security & Secrets**
@@ -76,19 +76,19 @@
 ### **CLI Tools**
 
 - **jq (JSON processor)**: https://jqlang.github.io/jq/
-- **curl (HTTP client)**: https://curl.se/docs/
+- **curl (HTTP client)**: https://curl.se/.agent/
 - **git (Version control)**: https://git-scm.com/docs
 - **Bitwarden CLI**: https://bitwarden.com/help/cli/
 
 ### **Package Managers**
 
 - **Homebrew (macOS)**: https://brew.sh/
-- **APT (Ubuntu/Debian)**: https://ubuntu.com/server/docs/package-management
+- **APT (Ubuntu/Debian)**: https://ubuntu.com/server/.agent/package-management
 - **npm (Node.js)**: https://docs.npmjs.com/
 
 ### **Security Tools**
 
-- **OpenSSL**: https://www.openssl.org/docs/
+- **OpenSSL**: https://www.openssl.org/.agent/
 - **GPG**: https://gnupg.org/documentation/
 - **SSH**: https://www.openssh.com/manual.html
 
@@ -116,8 +116,8 @@
 
 ### **Monitoring Tools**
 
-- **Prometheus**: https://prometheus.io/docs/
-- **Grafana**: https://grafana.com/docs/
+- **Prometheus**: https://prometheus.io/.agent/
+- **Grafana**: https://grafana.com/.agent/
 - **Uptime Robot**: https://uptimerobot.com/api/
 
 ### **Log Management**
@@ -142,7 +142,7 @@
 
 ### **Container Orchestration**
 
-- **Kubernetes**: https://kubernetes.io/docs/
+- **Kubernetes**: https://kubernetes.io/.agent/
 - **Docker Compose**: https://docs.docker.com/compose/
 - **Portainer**: https://docs.portainer.io/
 

@@ -59,7 +59,7 @@ curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aide
 curl -s "https://www.codefactor.io/repository/github/marcusquinn/aidevops"
 
 # ShellCheck validation
-find providers/ -name "*.sh" -exec shellcheck {} \;
+find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 ```
 
 ## 🏗️ **Service Categories & Capabilities**

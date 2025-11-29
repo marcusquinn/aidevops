@@ -51,14 +51,14 @@
 
 ### Helper Scripts
 
-- **Main Helper**: `providers/crawl4ai-helper.sh`
+- **Main Helper**: `.agent/scripts/crawl4ai-helper.sh`
 - **Examples Script**: `.agent/scripts/crawl4ai-examples.sh`
 - **Configuration Template**: `configs/crawl4ai-config.json.txt`
 - **MCP Configuration**: `configs/mcp-templates/crawl4ai-mcp-config.json`
 
 ### Documentation Files
 
-- **Main Guide**: `docs/CRAWL4AI.md`
+- **Main Guide**: `.agent/crawl4ai.md`
 - **Integration Guide**: `.agent/wiki/crawl4ai-integration.md`
 - **Usage Guide**: `.agent/spec/crawl4ai-usage.md`
 - **Resources**: `.agent/links/crawl4ai-resources.md` (this file)
@@ -206,7 +206,7 @@
 ### Tutorials & Guides
 
 - **Video Tutorial**: Available on documentation homepage
-- **Code Examples**: https://github.com/unclecode/crawl4ai/tree/main/docs/examples
+- **Code Examples**: https://github.com/unclecode/crawl4ai/tree/main/.agent/examples
 - **Blog Posts**: Check GitHub discussions for community tutorials
 
 ### Community Examples

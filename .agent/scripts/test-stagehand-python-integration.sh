@@ -5,7 +5,7 @@
 
 # Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../../providers/shared-constants.sh"
+source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
 
 # Colors for output
 readonly BLUE='\033[0;34m'
@@ -55,7 +55,7 @@ setup_test_environment() {
 test_python_helper_script() {
     print_info "Testing Stagehand Python helper script..."
     
-    local helper_script="${SCRIPT_DIR}/../../providers/stagehand-python-helper.sh"
+    local helper_script="${SCRIPT_DIR}/../../.agent/scripts/stagehand-python-helper.sh"
     
     if [[ -f "$helper_script" ]]; then
         print_success "✅ Stagehand Python helper script exists"
@@ -83,7 +83,7 @@ test_python_documentation() {
     print_info "Testing Stagehand Python documentation..."
     
     local docs=(
-        "${SCRIPT_DIR}/../../docs/STAGEHAND-PYTHON.md"
+        "${SCRIPT_DIR}/../../.agent/STAGEHAND-PYTHON.md"
     )
     
     for doc in "${docs[@]}"; do
@@ -191,7 +191,7 @@ test_python_mcp_integration() {
 test_python_helper_commands() {
     print_info "Testing Stagehand Python helper commands..."
     
-    local helper_script="${SCRIPT_DIR}/../../providers/stagehand-python-helper.sh"
+    local helper_script="${SCRIPT_DIR}/../../.agent/scripts/stagehand-python-helper.sh"
     
     # Test help command
     if bash "$helper_script" help > /dev/null 2>&1; then
@@ -268,7 +268,7 @@ $(cat "$TEST_LOG")
 
 ## Next Steps
 
-1. Run full installation: \`bash providers/stagehand-python-helper.sh setup\`
+1. Run full installation: \`bash .agent/scripts/stagehand-python-helper.sh setup\`
 2. Test MCP integration: \`bash .agent/scripts/setup-mcp-integrations.sh stagehand-python\`
 3. Try examples: \`source ~/.aidevops/stagehand-python/.venv/bin/activate && python examples/basic_example.py\`
 

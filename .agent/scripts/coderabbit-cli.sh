@@ -366,7 +366,7 @@ show_help() {
     echo "  $0 install"
     echo "  $0 setup"
     echo "  $0 review"
-    echo "  $0 analyze providers/"
+    echo "  $0 analyze .agent/scripts/"
     echo "  $0 status"
     echo ""
     echo "For more information, visit: https://www.coderabbit.ai/cli"

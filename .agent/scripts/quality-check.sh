@@ -83,7 +83,7 @@ check_return_statements() {
     local violations=0
     local files_checked=0
     
-    for file in providers/*.sh; do
+    for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             ((files_checked++))
             
@@ -125,7 +125,7 @@ check_positional_parameters() {
     local violations=0
     
     # Find direct usage of positional parameters (not in local assignments)
-    if grep -n '\$[1-9]' providers/*.sh | grep -v 'local.*=.*\$[1-9]' > /tmp/positional_violations.txt; then
+    if grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]' > /tmp/positional_violations.txt; then
         violations=$(wc -l < /tmp/positional_violations.txt)
         
         if [[ $violations -gt 0 ]]; then
@@ -154,7 +154,7 @@ check_string_literals() {
     
     local violations=0
     
-    for file in providers/*.sh; do
+    for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Find strings that appear 3 or more times
             local repeated_strings
@@ -182,7 +182,7 @@ run_shellcheck() {
     
     local violations=0
     
-    for file in providers/*.sh; do
+    for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]] && ! shellcheck "$file" > /dev/null 2>&1; then
             ((violations++))
             print_warning "ShellCheck violations in $file"

@@ -34,7 +34,7 @@ readonly NC='\033[0m' # No Color
 readonly CODERABBIT_SCRIPT=".agent/scripts/coderabbit-cli.sh"
 readonly CODACY_SCRIPT=".agent/scripts/codacy-cli.sh"
 readonly SONAR_SCRIPT=".agent/scripts/sonarscanner-cli.sh"
-readonly SNYK_SCRIPT="providers/snyk-helper.sh"
+readonly SNYK_SCRIPT=".agent/scripts/snyk-helper.sh"
 
 # CLI Names
 readonly CLI_CODERABBIT="coderabbit"

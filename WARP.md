@@ -54,7 +54,7 @@ bash .agent/scripts/qlty-cli.sh fmt --all         # Universal auto-formatting
 bash .agent/scripts/sonarscanner-cli.sh analyze   # SonarCloud analysis
 
 # ShellCheck validation (MANDATORY for shell scripts)
-find providers/ -name "*.sh" -exec shellcheck {} \;
+find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 ```
 
 ### Development & Testing
@@ -64,15 +64,15 @@ find providers/ -name "*.sh" -exec shellcheck {} \;
 ./.agent/scripts/servers-helper.sh list
 
 # Test specific provider connections
-./providers/hostinger-helper.sh list
-./providers/hetzner-helper.sh list
-./providers/github-cli-helper.sh list-accounts
+./.agent/scripts/hostinger-helper.sh list
+./.agent/scripts/hetzner-helper.sh list
+./.agent/scripts/github-cli-helper.sh list-accounts
 
 # Test TOON format (AI-optimized data format)
-./providers/toon-helper.sh info
+./.agent/scripts/toon-helper.sh info
 
 # Test DSPy integration (prompt optimization)
-./providers/dspy-helper.sh test
+./.agent/scripts/dspy-helper.sh test
 
 # Run linter detection and setup
 bash .agent/scripts/linter-manager.sh detect
@@ -83,25 +83,25 @@ bash .agent/scripts/linter-manager.sh install-detected
 
 ```bash
 # Server operations (examples)
-./providers/hostinger-helper.sh [command] [site] [options]
-./providers/hetzner-helper.sh [command] [account] [server] [options]
-./providers/coolify-helper.sh [command] [account] [project] [options]
+./.agent/scripts/hostinger-helper.sh [command] [site] [options]
+./.agent/scripts/hetzner-helper.sh [command] [account] [server] [options]
+./.agent/scripts/coolify-helper.sh [command] [account] [project] [options]
 
 # DNS management
-./providers/dns-helper.sh [provider] [command] [domain] [options]
+./.agent/scripts/dns-helper.sh [provider] [command] [domain] [options]
 
 # Git platform operations
-./providers/github-cli-helper.sh [command] [account] [options]
-./providers/gitlab-cli-helper.sh [command] [account] [options]
-./providers/gitea-cli-helper.sh [command] [account] [options]
+./.agent/scripts/github-cli-helper.sh [command] [account] [options]
+./.agent/scripts/gitlab-cli-helper.sh [command] [account] [options]
+./.agent/scripts/gitea-cli-helper.sh [command] [account] [options]
 
 # Domain purchasing and management
-./providers/spaceship-helper.sh [command] [domain] [options]
-./providers/101domains-helper.sh [command] [domain] [options]
+./.agent/scripts/spaceship-helper.sh [command] [domain] [options]
+./.agent/scripts/101domains-helper.sh [command] [domain] [options]
 
 # Monitoring
-./providers/updown-helper.sh list                  # Uptime monitoring
-./providers/pagespeed-helper.sh [command] [url]    # Performance auditing
+./.agent/scripts/updown-helper.sh list                  # Uptime monitoring
+./.agent/scripts/pagespeed-helper.sh [command] [url]    # Performance auditing
 ```
 
 ### AI Assistant Configuration
@@ -126,14 +126,14 @@ aidevops/
 ├── AGENTS.md                 # ⚠️ AUTHORITATIVE guidance (read first!)
 ├── README.md                 # User-facing documentation
 ├── setup.sh                  # Main setup script
-├── providers/                # 30+ service helper scripts (core functionality)
+├── .agent/scripts/                # 30+ service helper scripts (core functionality)
 │   ├── shared-constants.sh   # Common constants and error messages
 │   ├── *-helper.sh           # Individual provider scripts
 │   └── standard-functions.sh # Reusable script patterns
 ├── scripts/
 │   └── servers-helper.sh     # Unified server access across providers
 ├── configs/                  # Configuration templates (*.json.txt)
-├── docs/                     # Service-specific documentation
+├── .agent/                     # Service-specific documentation
 ├── .agent/                   # AI agent development tools
 │   ├── scripts/              # Quality automation and development tools
 │   │   ├── quality-check.sh      # Multi-platform validation
@@ -155,7 +155,7 @@ aidevops/
 All provider scripts follow a **unified command pattern**:
 
 ```bash
-./providers/[service]-helper.sh [command] [account/instance] [target] [options]
+./.agent/scripts/[service]-helper.sh [command] [account/instance] [target] [options]
 ```
 
 **Common Commands Available:**
@@ -171,7 +171,7 @@ All provider scripts follow a **unified command pattern**:
 
 ### Key Architectural Patterns
 
-1. **Shared Constants** (`providers/shared-constants.sh`):
+1. **Shared Constants** (`.agent/scripts/shared-constants.sh`):
    - HTTP headers, status codes
    - Common error/success messages
    - Validation patterns and timeouts
@@ -348,30 +348,30 @@ This framework provides **enhanced CLI helpers** for Git platforms:
 
 ```bash
 # Enhanced operations via framework helper
-./providers/github-cli-helper.sh list-repos <account>
-./providers/github-cli-helper.sh create-repo <account> <repo-name>
-./providers/github-cli-helper.sh list-issues <account> <repo>
-./providers/github-cli-helper.sh create-pr <account> <repo> <title>
+./.agent/scripts/github-cli-helper.sh list-repos <account>
+./.agent/scripts/github-cli-helper.sh create-repo <account> <repo-name>
+./.agent/scripts/github-cli-helper.sh list-issues <account> <repo>
+./.agent/scripts/github-cli-helper.sh create-pr <account> <repo> <title>
 ```
 
 ### GitLab CLI (glab)
 
 ```bash
 # Enhanced operations via framework helper
-./providers/gitlab-cli-helper.sh list-projects <account>
-./providers/gitlab-cli-helper.sh create-project <account> <name>
-./providers/gitlab-cli-helper.sh list-issues <account> <project>
-./providers/gitlab-cli-helper.sh create-mr <account> <project> <title>
+./.agent/scripts/gitlab-cli-helper.sh list-projects <account>
+./.agent/scripts/gitlab-cli-helper.sh create-project <account> <name>
+./.agent/scripts/gitlab-cli-helper.sh list-issues <account> <project>
+./.agent/scripts/gitlab-cli-helper.sh create-mr <account> <project> <title>
 ```
 
 ### Gitea CLI (tea)
 
 ```bash
 # Enhanced operations via framework helper
-./providers/gitea-cli-helper.sh list-repos <account>
-./providers/gitea-cli-helper.sh create-repo <account> <repo-name>
-./providers/gitea-cli-helper.sh list-issues <account> <repo>
-./providers/gitea-cli-helper.sh create-pr <account> <repo> <title>
+./.agent/scripts/gitea-cli-helper.sh list-repos <account>
+./.agent/scripts/gitea-cli-helper.sh create-repo <account> <repo-name>
+./.agent/scripts/gitea-cli-helper.sh list-issues <account> <repo>
+./.agent/scripts/gitea-cli-helper.sh create-pr <account> <repo> <title>
 ```
 
 ## MCP (Model Context Protocol) Integrations
@@ -413,13 +413,13 @@ bash .agent/scripts/validate-mcp-integrations.sh
 
 ```bash
 # Convert JSON to TOON (20-60% token reduction)
-./providers/toon-helper.sh encode data.json output.toon
+./.agent/scripts/toon-helper.sh encode data.json output.toon
 
 # Compare efficiency
-./providers/toon-helper.sh compare large-dataset.json
+./.agent/scripts/toon-helper.sh compare large-dataset.json
 
 # Decode back to JSON
-./providers/toon-helper.sh decode output.toon restored.json
+./.agent/scripts/toon-helper.sh decode output.toon restored.json
 ```
 
 ## Working Directories for AI Agents
@@ -457,8 +457,8 @@ Current version: **1.9.0** (tracked in README.md, package.json, sonar-project.pr
 
 - **Authoritative Guide**: `AGENTS.md` (single source of truth)
 - **Quality Standards**: `.agent/spec/code-quality.md`
-- **Provider Patterns**: `providers/shared-constants.sh`
-- **Service Documentation**: `docs/` directory
-- **AI Tools Reference**: `docs/AI-CLI-TOOLS.md`
-- **MCP Integrations**: `docs/MCP-INTEGRATIONS.md`
-- **API Integrations**: `docs/API-INTEGRATIONS.md`
+- **Provider Patterns**: `.agent/scripts/shared-constants.sh`
+- **Service Documentation**: `.agent/` directory
+- **AI Tools Reference**: `.agent/ai-cli-tools.md`
+- **MCP Integrations**: `.agent/mcp-integrations.md`
+- **API Integrations**: `.agent/api-integrations.md`

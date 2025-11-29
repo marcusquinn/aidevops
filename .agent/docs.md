@@ -191,16 +191,16 @@ Each service guide includes:
 
 ```bash
 # Service-specific information
-docs/[SERVICE-NAME].md
+.agent/[SERVICE-NAME].md
 
 # Framework overview
 ../ai-context.md
 
 # Provider selection guidance
-docs/RECOMMENDATIONS-OPINIONATED.md
+.agent/recommendations-opinionated.md
 
 # Setup procedures
-docs/[SERVICE]-SETUP.md
+.agent/[SERVICE]-SETUP.md
 ```
 
 ### **Search Patterns**

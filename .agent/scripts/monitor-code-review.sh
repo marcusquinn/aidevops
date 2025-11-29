@@ -152,7 +152,7 @@ apply_automatic_fixes() {
     local fixes_applied=0
     
     # Fix shellcheck issues in new files
-    for file in providers/*.sh .agent/scripts/*.sh; do
+    for file in .agent/scripts/*.sh .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Check if file has been modified recently (within last hour)
             if [[ $(find "$file" -mmin -60 2>/dev/null) ]]; then

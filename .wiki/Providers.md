@@ -11,7 +11,7 @@ Provider scripts provide standardized interfaces to interact with different serv
 All provider scripts follow this pattern:
 
 ```bash
-./providers/[provider]-helper.sh [command] [arguments...]
+./.agent/scripts/[provider]-helper.sh [command] [arguments...]
 ```
 
 Common commands across providers:
@@ -26,7 +26,7 @@ Common commands across providers:
 
 ### Hostinger
 
-**File**: `providers/hostinger-helper.sh`
+**File**: `.agent/scripts/hostinger-helper.sh`
 
 Manage Hostinger shared hosting, domains, and email services.
 
@@ -34,16 +34,16 @@ Manage Hostinger shared hosting, domains, and email services.
 
 ```bash
 # List all configured servers
-./providers/hostinger-helper.sh list
+./.agent/scripts/hostinger-helper.sh list
 
 # Connect to server via SSH
-./providers/hostinger-helper.sh connect example.com
+./.agent/scripts/hostinger-helper.sh connect example.com
 
 # Execute remote command
-./providers/hostinger-helper.sh exec example.com "uptime"
+./.agent/scripts/hostinger-helper.sh exec example.com "uptime"
 
 # Show configuration
-./providers/hostinger-helper.sh info
+./.agent/scripts/hostinger-helper.sh info
 ```
 
 **Configuration**: `configs/hostinger-config.json`
@@ -59,7 +59,7 @@ Manage Hostinger shared hosting, domains, and email services.
 
 ### Hetzner Cloud
 
-**File**: `providers/hetzner-helper.sh`
+**File**: `.agent/scripts/hetzner-helper.sh`
 
 Manage Hetzner VPS servers, networking, and load balancers.
 
@@ -67,22 +67,22 @@ Manage Hetzner VPS servers, networking, and load balancers.
 
 ```bash
 # List servers in project
-./providers/hetzner-helper.sh list [project-name]
+./.agent/scripts/hetzner-helper.sh list [project-name]
 
 # Connect to server
-./providers/hetzner-helper.sh connect [project-name] [server-name]
+./.agent/scripts/hetzner-helper.sh connect [project-name] [server-name]
 
 # Execute command
-./providers/hetzner-helper.sh exec [project-name] [server-name] "command"
+./.agent/scripts/hetzner-helper.sh exec [project-name] [server-name] "command"
 
 # Get server info
-./providers/hetzner-helper.sh info [project-name] [server-name]
+./.agent/scripts/hetzner-helper.sh info [project-name] [server-name]
 
 # Manage servers
-./providers/hetzner-helper.sh create [project-name] [server-name] [type]
-./providers/hetzner-helper.sh delete [project-name] [server-name]
-./providers/hetzner-helper.sh start [project-name] [server-name]
-./providers/hetzner-helper.sh stop [project-name] [server-name]
+./.agent/scripts/hetzner-helper.sh create [project-name] [server-name] [type]
+./.agent/scripts/hetzner-helper.sh delete [project-name] [server-name]
+./.agent/scripts/hetzner-helper.sh start [project-name] [server-name]
+./.agent/scripts/hetzner-helper.sh stop [project-name] [server-name]
 ```
 
 **Configuration**: `configs/hetzner-config.json`
@@ -98,7 +98,7 @@ Manage Hetzner VPS servers, networking, and load balancers.
 
 ### Coolify
 
-**File**: `providers/coolify-helper.sh`
+**File**: `.agent/scripts/coolify-helper.sh`
 
 Manage Coolify self-hosted PaaS and application deployments.
 
@@ -106,16 +106,16 @@ Manage Coolify self-hosted PaaS and application deployments.
 
 ```bash
 # List applications
-./providers/coolify-helper.sh list
+./.agent/scripts/coolify-helper.sh list
 
 # Deploy application
-./providers/coolify-helper.sh deploy [app-name]
+./.agent/scripts/coolify-helper.sh deploy [app-name]
 
 # Get application status
-./providers/coolify-helper.sh status [app-name]
+./.agent/scripts/coolify-helper.sh status [app-name]
 
 # View logs
-./providers/coolify-helper.sh logs [app-name]
+./.agent/scripts/coolify-helper.sh logs [app-name]
 ```
 
 **Configuration**: `configs/coolify-config.json`
@@ -131,7 +131,7 @@ Manage Coolify self-hosted PaaS and application deployments.
 
 ### Cloudron
 
-**File**: `providers/cloudron-helper.sh`
+**File**: `.agent/scripts/cloudron-helper.sh`
 
 Manage Cloudron server and application platform.
 
@@ -139,18 +139,18 @@ Manage Cloudron server and application platform.
 
 ```bash
 # List installed apps
-./providers/cloudron-helper.sh list
+./.agent/scripts/cloudron-helper.sh list
 
 # Install application
-./providers/cloudron-helper.sh install [app-name]
+./.agent/scripts/cloudron-helper.sh install [app-name]
 
 # Manage apps
-./providers/cloudron-helper.sh start [app-name]
-./providers/cloudron-helper.sh stop [app-name]
-./providers/cloudron-helper.sh restart [app-name]
+./.agent/scripts/cloudron-helper.sh start [app-name]
+./.agent/scripts/cloudron-helper.sh stop [app-name]
+./.agent/scripts/cloudron-helper.sh restart [app-name]
 
 # Backup management
-./providers/cloudron-helper.sh backup [app-name]
+./.agent/scripts/cloudron-helper.sh backup [app-name]
 ```
 
 **Configuration**: `configs/cloudron-config.json`
@@ -166,7 +166,7 @@ Manage Cloudron server and application platform.
 
 ### Closte
 
-**File**: `providers/closte-helper.sh`
+**File**: `.agent/scripts/closte-helper.sh`
 
 Manage Closte managed hosting and application deployment.
 
@@ -174,10 +174,10 @@ Manage Closte managed hosting and application deployment.
 
 ```bash
 # List sites
-./providers/closte-helper.sh list
+./.agent/scripts/closte-helper.sh list
 
 # Site management
-./providers/closte-helper.sh info [site-name]
+./.agent/scripts/closte-helper.sh info [site-name]
 ```
 
 **Configuration**: `configs/closte-config.json`
@@ -188,7 +188,7 @@ Manage Closte managed hosting and application deployment.
 
 ### Cloudflare (DNS Helper)
 
-**File**: `providers/dns-helper.sh`
+**File**: `.agent/scripts/dns-helper.sh`
 
 Unified DNS management across multiple providers with focus on Cloudflare.
 
@@ -196,26 +196,26 @@ Unified DNS management across multiple providers with focus on Cloudflare.
 
 ```bash
 # List DNS zones
-./providers/dns-helper.sh cloudflare list-zones
+./.agent/scripts/dns-helper.sh cloudflare list-zones
 
 # Add DNS records
-./providers/dns-helper.sh cloudflare add-record [domain] A [ip-address]
-./providers/dns-helper.sh cloudflare add-record [domain] CNAME [name] [target]
-./providers/dns-helper.sh cloudflare add-record [domain] MX [priority] [server]
-./providers/dns-helper.sh cloudflare add-record [domain] TXT [name] [value]
+./.agent/scripts/dns-helper.sh cloudflare add-record [domain] A [ip-address]
+./.agent/scripts/dns-helper.sh cloudflare add-record [domain] CNAME [name] [target]
+./.agent/scripts/dns-helper.sh cloudflare add-record [domain] MX [priority] [server]
+./.agent/scripts/dns-helper.sh cloudflare add-record [domain] TXT [name] [value]
 
 # Update record
-./providers/dns-helper.sh cloudflare update-record [domain] [record-id] [type] [value]
+./.agent/scripts/dns-helper.sh cloudflare update-record [domain] [record-id] [type] [value]
 
 # Delete record
-./providers/dns-helper.sh cloudflare delete-record [domain] [record-id]
+./.agent/scripts/dns-helper.sh cloudflare delete-record [domain] [record-id]
 
 # List records
-./providers/dns-helper.sh cloudflare list-records [domain]
+./.agent/scripts/dns-helper.sh cloudflare list-records [domain]
 
 # Manage SSL
-./providers/dns-helper.sh cloudflare enable-ssl [domain]
-./providers/dns-helper.sh cloudflare set-ssl-mode [domain] [mode]
+./.agent/scripts/dns-helper.sh cloudflare enable-ssl [domain]
+./.agent/scripts/dns-helper.sh cloudflare set-ssl-mode [domain] [mode]
 ```
 
 **Configuration**: `configs/cloudflare-config.json`
@@ -231,7 +231,7 @@ Unified DNS management across multiple providers with focus on Cloudflare.
 
 ### Spaceship
 
-**File**: `providers/spaceship-helper.sh`
+**File**: `.agent/scripts/spaceship-helper.sh`
 
 Domain registration and management via Spaceship.
 
@@ -239,22 +239,22 @@ Domain registration and management via Spaceship.
 
 ```bash
 # Check domain availability
-./providers/spaceship-helper.sh check-availability [domain]
+./.agent/scripts/spaceship-helper.sh check-availability [domain]
 
 # Purchase domain
-./providers/spaceship-helper.sh purchase [domain]
+./.agent/scripts/spaceship-helper.sh purchase [domain]
 
 # List owned domains
-./providers/spaceship-helper.sh list
+./.agent/scripts/spaceship-helper.sh list
 
 # Manage nameservers
-./providers/spaceship-helper.sh set-nameservers [domain] [ns1] [ns2]
+./.agent/scripts/spaceship-helper.sh set-nameservers [domain] [ns1] [ns2]
 
 # Domain info
-./providers/spaceship-helper.sh info [domain]
+./.agent/scripts/spaceship-helper.sh info [domain]
 
 # Renew domain
-./providers/spaceship-helper.sh renew [domain]
+./.agent/scripts/spaceship-helper.sh renew [domain]
 ```
 
 **Configuration**: `configs/spaceship-config.json`
@@ -270,7 +270,7 @@ Domain registration and management via Spaceship.
 
 ### 101domains
 
-**File**: `providers/101domains-helper.sh`
+**File**: `.agent/scripts/101domains-helper.sh`
 
 Domain purchasing and DNS management via 101domains.
 
@@ -278,20 +278,20 @@ Domain purchasing and DNS management via 101domains.
 
 ```bash
 # Check availability
-./providers/101domains-helper.sh check-availability [domain]
+./.agent/scripts/101domains-helper.sh check-availability [domain]
 
 # Search domains
-./providers/101domains-helper.sh search [keyword]
+./.agent/scripts/101domains-helper.sh search [keyword]
 
 # Purchase domain
-./providers/101domains-helper.sh purchase [domain]
+./.agent/scripts/101domains-helper.sh purchase [domain]
 
 # List domains
-./providers/101domains-helper.sh list
+./.agent/scripts/101domains-helper.sh list
 
 # Manage DNS
-./providers/101domains-helper.sh add-dns [domain] [type] [value]
-./providers/101domains-helper.sh list-dns [domain]
+./.agent/scripts/101domains-helper.sh add-dns [domain] [type] [value]
+./.agent/scripts/101domains-helper.sh list-dns [domain]
 ```
 
 **Configuration**: `configs/101domains-config.json`
@@ -309,7 +309,7 @@ Domain purchasing and DNS management via 101domains.
 
 ### Git Platforms Helper
 
-**File**: `providers/git-platforms-helper.sh`
+**File**: `.agent/scripts/git-platforms-helper.sh`
 
 Unified interface for GitHub, GitLab, and Gitea.
 
@@ -317,20 +317,20 @@ Unified interface for GitHub, GitLab, and Gitea.
 
 ```bash
 # GitHub operations
-./providers/git-platforms-helper.sh github list-repos
-./providers/git-platforms-helper.sh github create-repo [name]
-./providers/git-platforms-helper.sh github delete-repo [name]
-./providers/git-platforms-helper.sh github clone-repo [name]
+./.agent/scripts/git-platforms-helper.sh github list-repos
+./.agent/scripts/git-platforms-helper.sh github create-repo [name]
+./.agent/scripts/git-platforms-helper.sh github delete-repo [name]
+./.agent/scripts/git-platforms-helper.sh github clone-repo [name]
 
 # GitLab operations
-./providers/git-platforms-helper.sh gitlab list-projects
-./providers/git-platforms-helper.sh gitlab create-project [name]
-./providers/git-platforms-helper.sh gitlab delete-project [id]
+./.agent/scripts/git-platforms-helper.sh gitlab list-projects
+./.agent/scripts/git-platforms-helper.sh gitlab create-project [name]
+./.agent/scripts/git-platforms-helper.sh gitlab delete-project [id]
 
 # Gitea operations
-./providers/git-platforms-helper.sh gitea list-repos
-./providers/git-platforms-helper.sh gitea create-repo [name]
-./providers/git-platforms-helper.sh gitea delete-repo [name]
+./.agent/scripts/git-platforms-helper.sh gitea list-repos
+./.agent/scripts/git-platforms-helper.sh gitea create-repo [name]
+./.agent/scripts/git-platforms-helper.sh gitea delete-repo [name]
 ```
 
 **Configuration**: `configs/git-platforms-config.json`
@@ -346,7 +346,7 @@ Unified interface for GitHub, GitLab, and Gitea.
 
 ### Pandoc Helper
 
-**File**: `providers/pandoc-helper.sh`
+**File**: `.agent/scripts/pandoc-helper.sh`
 
 Document format conversion for AI processing.
 
@@ -354,16 +354,16 @@ Document format conversion for AI processing.
 
 ```bash
 # Convert to markdown
-./providers/pandoc-helper.sh to-markdown [input-file] [output-file]
+./.agent/scripts/pandoc-helper.sh to-markdown [input-file] [output-file]
 
 # Convert from markdown
-./providers/pandoc-helper.sh from-markdown [input-file] [format] [output-file]
+./.agent/scripts/pandoc-helper.sh from-markdown [input-file] [format] [output-file]
 
 # Batch conversion
-./providers/pandoc-helper.sh batch [input-dir] [output-dir] [format]
+./.agent/scripts/pandoc-helper.sh batch [input-dir] [output-dir] [format]
 
 # Get info
-./providers/pandoc-helper.sh formats
+./.agent/scripts/pandoc-helper.sh formats
 ```
 
 **Supported Formats**:
@@ -386,7 +386,7 @@ Document format conversion for AI processing.
 
 ### Agno Setup
 
-**File**: `providers/agno-setup.sh`
+**File**: `.agent/scripts/agno-setup.sh`
 
 Local AI agent operating system for DevOps automation.
 
@@ -394,19 +394,19 @@ Local AI agent operating system for DevOps automation.
 
 ```bash
 # Install Agno
-./providers/agno-setup.sh install
+./.agent/scripts/agno-setup.sh install
 
 # Start Agno server
-./providers/agno-setup.sh start
+./.agent/scripts/agno-setup.sh start
 
 # Stop Agno server
-./providers/agno-setup.sh stop
+./.agent/scripts/agno-setup.sh stop
 
 # Status check
-./providers/agno-setup.sh status
+./.agent/scripts/agno-setup.sh status
 
 # Configure
-./providers/agno-setup.sh configure
+./.agent/scripts/agno-setup.sh configure
 ```
 
 **Configuration**: `configs/agno-config.json`
@@ -422,7 +422,7 @@ Local AI agent operating system for DevOps automation.
 
 ### LocalWP Helper
 
-**File**: `providers/localhost-helper.sh`
+**File**: `.agent/scripts/localhost-helper.sh`
 
 WordPress local development environment management.
 
@@ -430,21 +430,21 @@ WordPress local development environment management.
 
 ```bash
 # Create new site
-./providers/localhost-helper.sh create-site [site-name]
+./.agent/scripts/localhost-helper.sh create-site [site-name]
 
 # List sites
-./providers/localhost-helper.sh list
+./.agent/scripts/localhost-helper.sh list
 
 # Start/stop site
-./providers/localhost-helper.sh start [site-name]
-./providers/localhost-helper.sh stop [site-name]
+./.agent/scripts/localhost-helper.sh start [site-name]
+./.agent/scripts/localhost-helper.sh stop [site-name]
 
 # Delete site
-./providers/localhost-helper.sh delete [site-name]
+./.agent/scripts/localhost-helper.sh delete [site-name]
 
 # Database operations
-./providers/localhost-helper.sh export-db [site-name] [output-file]
-./providers/localhost-helper.sh import-db [site-name] [input-file]
+./.agent/scripts/localhost-helper.sh export-db [site-name] [output-file]
+./.agent/scripts/localhost-helper.sh import-db [site-name] [input-file]
 ```
 
 **Features**:
@@ -460,7 +460,7 @@ WordPress local development environment management.
 
 ### MainWP Helper
 
-**File**: `providers/mainwp-helper.sh`
+**File**: `.agent/scripts/mainwp-helper.sh`
 
 Centralized WordPress management via MainWP.
 
@@ -468,24 +468,24 @@ Centralized WordPress management via MainWP.
 
 ```bash
 # List all sites
-./providers/mainwp-helper.sh list-sites
+./.agent/scripts/mainwp-helper.sh list-sites
 
 # Site management
-./providers/mainwp-helper.sh info [site-url]
-./providers/mainwp-helper.sh sync [site-url]
+./.agent/scripts/mainwp-helper.sh info [site-url]
+./.agent/scripts/mainwp-helper.sh sync [site-url]
 
 # Backup operations
-./providers/mainwp-helper.sh backup [site-url]
-./providers/mainwp-helper.sh restore [site-url] [backup-id]
+./.agent/scripts/mainwp-helper.sh backup [site-url]
+./.agent/scripts/mainwp-helper.sh restore [site-url] [backup-id]
 
 # Update management
-./providers/mainwp-helper.sh update-core [site-url]
-./providers/mainwp-helper.sh update-plugins [site-url]
-./providers/mainwp-helper.sh update-themes [site-url]
-./providers/mainwp-helper.sh update-all [site-url]
+./.agent/scripts/mainwp-helper.sh update-core [site-url]
+./.agent/scripts/mainwp-helper.sh update-plugins [site-url]
+./.agent/scripts/mainwp-helper.sh update-themes [site-url]
+./.agent/scripts/mainwp-helper.sh update-all [site-url]
 
 # Security scans
-./providers/mainwp-helper.sh security-scan [site-url]
+./.agent/scripts/mainwp-helper.sh security-scan [site-url]
 ```
 
 **Configuration**: `configs/mainwp-config.json`
@@ -504,7 +504,7 @@ Centralized WordPress management via MainWP.
 
 ### AWS SES Helper
 
-**File**: `providers/ses-helper.sh`
+**File**: `.agent/scripts/ses-helper.sh`
 
 Amazon Simple Email Service management.
 
@@ -512,20 +512,20 @@ Amazon Simple Email Service management.
 
 ```bash
 # Send email
-./providers/ses-helper.sh send [to] [subject] [body]
+./.agent/scripts/ses-helper.sh send [to] [subject] [body]
 
 # Verify email address
-./providers/ses-helper.sh verify [email]
+./.agent/scripts/ses-helper.sh verify [email]
 
 # List verified emails
-./providers/ses-helper.sh list-verified
+./.agent/scripts/ses-helper.sh list-verified
 
 # Get send statistics
-./providers/ses-helper.sh stats
+./.agent/scripts/ses-helper.sh stats
 
 # Manage suppression list
-./providers/ses-helper.sh list-suppressed
-./providers/ses-helper.sh remove-suppressed [email]
+./.agent/scripts/ses-helper.sh list-suppressed
+./.agent/scripts/ses-helper.sh remove-suppressed [email]
 ```
 
 **Configuration**: `configs/ses-config.json`
@@ -543,7 +543,7 @@ Amazon Simple Email Service management.
 
 ### Vaultwarden Helper
 
-**File**: `providers/vaultwarden-helper.sh`
+**File**: `.agent/scripts/vaultwarden-helper.sh`
 
 Password and secrets management via Vaultwarden.
 
@@ -551,22 +551,22 @@ Password and secrets management via Vaultwarden.
 
 ```bash
 # List items
-./providers/vaultwarden-helper.sh list
+./.agent/scripts/vaultwarden-helper.sh list
 
 # Get item
-./providers/vaultwarden-helper.sh get [item-name]
+./.agent/scripts/vaultwarden-helper.sh get [item-name]
 
 # Add item
-./providers/vaultwarden-helper.sh add [item-name] [username] [password]
+./.agent/scripts/vaultwarden-helper.sh add [item-name] [username] [password]
 
 # Update item
-./providers/vaultwarden-helper.sh update [item-id] [field] [value]
+./.agent/scripts/vaultwarden-helper.sh update [item-id] [field] [value]
 
 # Delete item
-./providers/vaultwarden-helper.sh delete [item-id]
+./.agent/scripts/vaultwarden-helper.sh delete [item-id]
 
 # Generate password
-./providers/vaultwarden-helper.sh generate [length]
+./.agent/scripts/vaultwarden-helper.sh generate [length]
 ```
 
 **Configuration**: `configs/vaultwarden-config.json`
@@ -584,7 +584,7 @@ Password and secrets management via Vaultwarden.
 
 ### PageSpeed Helper
 
-**File**: `providers/pagespeed-helper.sh`
+**File**: `.agent/scripts/pagespeed-helper.sh`
 
 Website performance auditing and optimization.
 
@@ -592,19 +592,19 @@ Website performance auditing and optimization.
 
 ```bash
 # Run PageSpeed audit
-./providers/pagespeed-helper.sh audit [url]
+./.agent/scripts/pagespeed-helper.sh audit [url]
 
 # WordPress-specific audit
-./providers/pagespeed-helper.sh wordpress [url]
+./.agent/scripts/pagespeed-helper.sh wordpress [url]
 
 # Lighthouse audit
-./providers/pagespeed-helper.sh lighthouse [url] [format]
+./.agent/scripts/pagespeed-helper.sh lighthouse [url] [format]
 
 # Compare performance
-./providers/pagespeed-helper.sh compare [url1] [url2]
+./.agent/scripts/pagespeed-helper.sh compare [url1] [url2]
 
 # Export report
-./providers/pagespeed-helper.sh export [url] [output-file]
+./.agent/scripts/pagespeed-helper.sh export [url] [output-file]
 ```
 
 **Configuration**: `configs/pagespeed-config.json`
@@ -621,7 +621,7 @@ Website performance auditing and optimization.
 
 ### Code Audit Helper
 
-**File**: `providers/code-audit-helper.sh`
+**File**: `.agent/scripts/code-audit-helper.sh`
 
 Code quality and security auditing.
 
@@ -629,13 +629,13 @@ Code quality and security auditing.
 
 ```bash
 # Run audit
-./providers/code-audit-helper.sh audit [directory]
+./.agent/scripts/code-audit-helper.sh audit [directory]
 
 # Security scan
-./providers/code-audit-helper.sh security [directory]
+./.agent/scripts/code-audit-helper.sh security [directory]
 
 # Generate report
-./providers/code-audit-helper.sh report [directory] [output-file]
+./.agent/scripts/code-audit-helper.sh report [directory] [output-file]
 ```
 
 **Features**:
@@ -651,7 +651,7 @@ Code quality and security auditing.
 
 ### DSPy Helper
 
-**File**: `providers/dspy-helper.sh`
+**File**: `.agent/scripts/dspy-helper.sh`
 
 DSPy framework integration for prompt optimization.
 
@@ -659,16 +659,16 @@ DSPy framework integration for prompt optimization.
 
 ```bash
 # Install DSPy
-./providers/dspy-helper.sh install
+./.agent/scripts/dspy-helper.sh install
 
 # Run optimization
-./providers/dspy-helper.sh optimize [prompt-file]
+./.agent/scripts/dspy-helper.sh optimize [prompt-file]
 
 # Test prompts
-./providers/dspy-helper.sh test [prompt-file]
+./.agent/scripts/dspy-helper.sh test [prompt-file]
 
 # Export optimized prompts
-./providers/dspy-helper.sh export [output-file]
+./.agent/scripts/dspy-helper.sh export [output-file]
 ```
 
 **Configuration**: `configs/dspy-config.json`
@@ -684,7 +684,7 @@ DSPy framework integration for prompt optimization.
 
 ### DSPyGround Helper
 
-**File**: `providers/dspyground-helper.sh`
+**File**: `.agent/scripts/dspyground-helper.sh`
 
 DSPyGround playground for prompt experimentation.
 
@@ -692,13 +692,13 @@ DSPyGround playground for prompt experimentation.
 
 ```bash
 # Start playground
-./providers/dspyground-helper.sh start
+./.agent/scripts/dspyground-helper.sh start
 
 # Stop playground
-./providers/dspyground-helper.sh stop
+./.agent/scripts/dspyground-helper.sh stop
 
 # Open in browser
-./providers/dspyground-helper.sh open
+./.agent/scripts/dspyground-helper.sh open
 ```
 
 **Configuration**: `configs/dspyground-config.json`
@@ -707,7 +707,7 @@ DSPyGround playground for prompt experimentation.
 
 ### TOON Helper
 
-**File**: `providers/toon-helper.sh`
+**File**: `.agent/scripts/toon-helper.sh`
 
 Token-Oriented Object Notation for efficient LLM data exchange.
 
@@ -715,19 +715,19 @@ Token-Oriented Object Notation for efficient LLM data exchange.
 
 ```bash
 # Encode JSON to TOON
-./providers/toon-helper.sh encode [input.json] [output.toon]
+./.agent/scripts/toon-helper.sh encode [input.json] [output.toon]
 
 # Decode TOON to JSON
-./providers/toon-helper.sh decode [input.toon] [output.json]
+./.agent/scripts/toon-helper.sh decode [input.toon] [output.json]
 
 # Compare token efficiency
-./providers/toon-helper.sh compare [file.json]
+./.agent/scripts/toon-helper.sh compare [file.json]
 
 # Batch conversion
-./providers/toon-helper.sh batch [input-dir] [output-dir] [mode]
+./.agent/scripts/toon-helper.sh batch [input-dir] [output-dir] [mode]
 
 # Get format info
-./providers/toon-helper.sh info
+./.agent/scripts/toon-helper.sh info
 ```
 
 **Features**:
@@ -743,7 +743,7 @@ Token-Oriented Object Notation for efficient LLM data exchange.
 
 ### Setup Wizard Helper
 
-**File**: `providers/setup-wizard-helper.sh`
+**File**: `.agent/scripts/setup-wizard-helper.sh`
 
 Interactive setup wizard for initial configuration.
 
@@ -751,16 +751,16 @@ Interactive setup wizard for initial configuration.
 
 ```bash
 # Run full setup
-./providers/setup-wizard-helper.sh
+./.agent/scripts/setup-wizard-helper.sh
 
 # Configure specific provider
-./providers/setup-wizard-helper.sh provider [provider-name]
+./.agent/scripts/setup-wizard-helper.sh provider [provider-name]
 
 # Test configuration
-./providers/setup-wizard-helper.sh test
+./.agent/scripts/setup-wizard-helper.sh test
 
 # Reset configuration
-./providers/setup-wizard-helper.sh reset
+./.agent/scripts/setup-wizard-helper.sh reset
 ```
 
 **Features**:
@@ -774,7 +774,7 @@ Interactive setup wizard for initial configuration.
 
 ### Shared Constants
 
-**File**: `providers/shared-constants.sh`
+**File**: `.agent/scripts/shared-constants.sh`
 
 Common variables and functions used across all providers.
 
@@ -806,36 +806,36 @@ echo "$LOG_DIR"
 
 ```bash
 # 1. Purchase domain
-./providers/spaceship-helper.sh purchase example.com
+./.agent/scripts/spaceship-helper.sh purchase example.com
 
 # 2. Configure DNS
-./providers/dns-helper.sh cloudflare add-record example.com A 192.168.1.1
-./providers/dns-helper.sh cloudflare enable-ssl example.com
+./.agent/scripts/dns-helper.sh cloudflare add-record example.com A 192.168.1.1
+./.agent/scripts/dns-helper.sh cloudflare enable-ssl example.com
 
 # 3. Deploy application
-./providers/coolify-helper.sh deploy myapp
+./.agent/scripts/coolify-helper.sh deploy myapp
 
 # 4. Audit performance
-./providers/pagespeed-helper.sh wordpress https://example.com
+./.agent/scripts/pagespeed-helper.sh wordpress https://example.com
 
 # 5. Backup WordPress
-./providers/mainwp-helper.sh backup example.com
+./.agent/scripts/mainwp-helper.sh backup example.com
 ```
 
 ### Server Management Workflow
 
 ```bash
 # 1. Create Hetzner server
-./providers/hetzner-helper.sh create main web-server cx11
+./.agent/scripts/hetzner-helper.sh create main web-server cx11
 
 # 2. Connect and configure
-./providers/hetzner-helper.sh connect main web-server
+./.agent/scripts/hetzner-helper.sh connect main web-server
 
 # 3. Install Cloudron
-./providers/cloudron-helper.sh install
+./.agent/scripts/cloudron-helper.sh install
 
 # 4. Configure SSL
-./providers/dns-helper.sh cloudflare enable-ssl example.com
+./.agent/scripts/dns-helper.sh cloudflare enable-ssl example.com
 ```
 
 ## Best Practices
@@ -846,7 +846,7 @@ All scripts implement consistent error handling:
 
 ```bash
 # Scripts exit with non-zero on error
-if ! ./providers/hostinger-helper.sh connect example.com; then
+if ! ./.agent/scripts/hostinger-helper.sh connect example.com; then
     echo "Connection failed"
     exit 1
 fi
@@ -868,7 +868,7 @@ Always use configuration files, never hardcode credentials:
 
 ```bash
 # Good
-./providers/hostinger-helper.sh list
+./.agent/scripts/hostinger-helper.sh list
 
 # Bad - don't pass credentials as arguments
 ```
@@ -880,7 +880,7 @@ Always use configuration files, never hardcode credentials:
 1. Copy template:
 
 ```bash
-cp providers/template-helper.sh providers/newprovider-helper.sh
+cp .agent/scripts/template-helper.sh .agent/scripts/newprovider-helper.sh
 ```
 
 2. Implement standard functions:

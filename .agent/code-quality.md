@@ -116,7 +116,7 @@ curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidev
 
 # 2. Return Statement Validation
 echo "Validating return statements..."
-for file in providers/*.sh; do
+for file in .agent/scripts/*.sh; do
     if ! grep -q "return [01]" "$file"; then
         echo "ERROR: Missing return statements in $file"
         exit 1
@@ -125,14 +125,14 @@ done
 
 # 3. Positional Parameter Detection
 echo "Checking for positional parameter violations..."
-if grep -n '\$[1-9]' providers/*.sh | grep -v 'local.*=.*\$[1-9]'; then
+if grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'; then
     echo "ERROR: Direct positional parameter usage found"
     exit 1
 fi
 
 # 4. ShellCheck Validation
 echo "Running ShellCheck..."
-find providers/ -name "*.sh" -exec shellcheck {} \; || exit 1
+find .agent/scripts/ -name "*.sh" -exec shellcheck {} \; || exit 1
 
 echo "✅ All quality checks passed!"
 ```
@@ -144,13 +144,13 @@ echo "✅ All quality checks passed!"
 curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1" | jq '.total'
 
 # Return statement violations
-grep -L "return [01]" providers/*.sh
+grep -L "return [01]" .agent/scripts/*.sh
 
 # Positional parameter violations
-grep -n '\$[1-9]' providers/*.sh | grep -v 'local.*=.*\$[1-9]'
+grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
 
 # String literal analysis
-for file in providers/*.sh; do
+for file in .agent/scripts/*.sh; do
     echo "=== $file ==="
     grep -o '"[^"]*"' "$file" | sort | uniq -c | sort -nr | head -5
 done

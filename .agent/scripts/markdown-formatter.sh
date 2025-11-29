@@ -255,7 +255,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 README.md"
-    echo "  $0 format docs/"
+    echo "  $0 format .agent/"
     echo "  $0 advanced ."
     echo "  $0 cleanup"
     echo ""

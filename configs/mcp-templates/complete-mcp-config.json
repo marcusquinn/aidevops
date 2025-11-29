@@ -31,7 +31,7 @@
     "ahrefs": {
       "command": "node",
       "args": [
-        "/Users/marcusquinn/Git/aidevops/providers/ahrefs-mcp-wrapper.js"
+        "/Users/marcusquinn/Git/aidevops/.agent/scripts/ahrefs-mcp-wrapper.js"
       ],
       "env": {
         "API_KEY": "your_ahrefs_api_key_here"

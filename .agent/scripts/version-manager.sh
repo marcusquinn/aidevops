@@ -267,14 +267,14 @@ cd aidevops
 bash setup.sh
 
 # Configure your services
-# Follow the comprehensive documentation in docs/
+# Follow the comprehensive documentation in .agent/
 \`\`\`
 
 ## 📚 **Documentation**
 - **[Setup Guide](README.md)**: Complete framework setup
-- **[API Integrations](docs/API-INTEGRATIONS.md)**: 27+ service APIs
-- **[Security Guide](docs/SECURITY.md)**: Enterprise security practices
-- **[MCP Integration](docs/MCP-INTEGRATIONS.md)**: Real-time AI data access
+- **[API Integrations](.agent/API-INTEGRATIONS.md)**: 27+ service APIs
+- **[Security Guide](.agent/SECURITY.md)**: Enterprise security practices
+- **[MCP Integration](.agent/MCP-INTEGRATIONS.md)**: Real-time AI data access
 
 ## 🔗 **Links**
 - **Repository**: https://github.com/marcusquinn/aidevops
