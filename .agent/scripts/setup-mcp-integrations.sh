@@ -33,6 +33,7 @@ get_mcp_command() {
         "nextjs-devtools") echo "npx next-devtools-mcp@latest" ;;
         "google-search-console") echo "npx mcp-server-gsc@latest" ;;
         "pagespeed-insights") echo "npx mcp-pagespeed-server@latest" ;;
+        "greptile") echo "remote:https://mcp.grep.app" ;;
         "stagehand") echo "node ${HOME}/.aidevops/stagehand/examples/basic-example.js" ;;
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
         "stagehand-both") echo "both" ;;
@@ -42,7 +43,7 @@ get_mcp_command() {
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights stagehand stagehand-python stagehand-both"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights greptile stagehand stagehand-python stagehand-both"
 
 # Check prerequisites
 check_prerequisites() {
@@ -153,6 +154,20 @@ install_mcp() {
 
             print_success "PageSpeed Insights MCP setup complete!"
             print_info "Use: ./providers/pagespeed-helper.sh for CLI access"
+            ;;
+        "greptile")
+            print_info "Setting up Greptile (Grep by Vercel) MCP for GitHub code search..."
+            print_info "This is a remote MCP server - no local installation required"
+            print_info "URL: https://mcp.grep.app"
+            
+            # Add to Claude MCP if available
+            if command -v claude &> /dev/null; then
+                claude mcp add gh_grep --url "https://mcp.grep.app"
+            fi
+            
+            print_success "Greptile MCP setup complete!"
+            print_info "Use 'gh_grep' tool in prompts to search GitHub code"
+            print_info "Example: 'use gh_grep to find examples of SST Astro components'"
             ;;
         "stagehand")
             print_info "Setting up Stagehand AI Browser Automation MCP integration..."

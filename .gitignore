@@ -81,6 +81,7 @@ vault-export-*.csv
 *-backup-*.json
 setup-wizard-responses.json
 tmp.*.json
+quality-report.md
 
 # Logs
 *.log

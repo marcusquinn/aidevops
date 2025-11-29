@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true
+    }
+  },
+  "description": "Greptile (Grep by Vercel) MCP - Search code snippets across GitHub repositories",
+  "documentation": "https://grep.app",
+  "usage": {
+    "prompt_examples": [
+      "use gh_grep to find examples of SST Astro components",
+      "search github code for 'useEffect cleanup pattern' using gh_grep",
+      "use gh_grep to find implementations of rate limiting in Go"
+    ],
+    "agents_md_suggestion": "If you are unsure how to do something, use `gh_grep` to search code examples from GitHub."
+  },
+  "notes": [
+    "Remote MCP server - no local installation required",
+    "No API key needed for basic usage",
+    "Searches public GitHub repositories",
+    "Great for finding real-world code examples and patterns"
+  ]
+}

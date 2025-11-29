@@ -4,7 +4,30 @@ This document provides a comprehensive list of CLI AI assistants and tools that 
 
 ## 🤖 **Recommended CLI AI Assistants**
 
+### **Preferred Tool**
+
+#### **[OpenCode](https://opencode.ai/)** - Recommended
+
+- **Description**: Powerful TUI/CLI AI coding assistant with excellent MCP support
+- **Installation**: `curl -fsSL https://opencode.ai/install | bash`
+- **Best For**: Terminal-based development, MCP integrations, DevOps workflows
+- **Framework Integration**: **Excellent** - Native MCP support, custom tools, AGENTS.md compatible
+- **Key Features**:
+  - Beautiful terminal UI with keyboard-driven workflow
+  - Built-in MCP server support (local and remote)
+  - Custom tool definitions via TypeScript
+  - Multi-provider support (OpenAI, Anthropic, etc.)
+  - GitHub/GitLab integration
+- **Configuration**: See `~/.config/opencode/opencode.json` or project `.opencode/`
+
 ### **Professional Development Assistants**
+
+#### **[Claude Desktop](https://claude.ai/)**
+
+- **Description**: Anthropic's Claude with advanced code capabilities and MCP support
+- **Installation**: Desktop app + CLI tools available
+- **Best For**: Complex reasoning, documentation, security analysis
+- **Framework Integration**: Excellent - strong understanding of infrastructure patterns
 
 #### **[Augment Code (Auggie)](https://www.augmentcode.com/)**
 
@@ -13,19 +36,19 @@ This document provides a comprehensive list of CLI AI assistants and tools that 
 - **Best For**: Complex codebase analysis, refactoring, architecture decisions
 - **Framework Integration**: Excellent - understands repository structure and context
 
-#### **[AMP Code](https://amp.dev/)**
+#### **[AmpCode](https://ampcode.com/)**
 
-- **Description**: Google's AI-powered development assistant
-- **Installation**: Visit [amp.dev](https://amp.dev/) for setup instructions
-- **Best For**: Web development, performance optimization, modern web standards
-- **Framework Integration**: Good - works well with web-based DevOps tasks
+- **Description**: Professional AI coding assistant
+- **Installation**: Visit [ampcode.com](https://ampcode.com/) for setup instructions
+- **Best For**: Code generation, refactoring, development workflows
+- **Framework Integration**: Good - works well with DevOps tasks
 
-#### **[Claude Code](https://claude.ai/)**
+#### **[Continue.dev](https://continue.dev/)**
 
-- **Description**: Anthropic's Claude with advanced code capabilities
-- **Installation**: Desktop app + CLI tools available
-- **Best For**: Complex reasoning, documentation, security analysis
-- **Framework Integration**: Excellent - strong understanding of infrastructure patterns
+- **Description**: Open-source AI pair programmer for VS Code and JetBrains
+- **Installation**: Install via IDE extension marketplace
+- **Best For**: IDE-integrated AI assistance, pair programming
+- **Framework Integration**: Good - integrates with project context
 
 ### **Enterprise & Specialized Tools**
 
@@ -142,9 +165,11 @@ warp-cli workflow create devops-setup \
 
 ## 🔗 **Official Links**
 
-- **Augment Code**: https://www.augmentcode.com/
-- **AMP Code**: https://amp.dev/
+- **OpenCode**: https://opencode.ai/ (Recommended)
 - **Claude**: https://claude.ai/
+- **Augment Code**: https://www.augmentcode.com/
+- **AmpCode**: https://ampcode.com/
+- **Continue.dev**: https://continue.dev/
 - **OpenAI Codex**: https://openai.com/codex/
 - **Factory AI (Droid)**: https://www.factory.ai/
 - **Qwen**: https://qwenlm.github.io/
@@ -152,4 +177,4 @@ warp-cli workflow create devops-setup \
 
 ---
 
-**💡 Pro Tip**: Start with Augment Code (Auggie) or Claude for the best framework integration experience. Both have excellent understanding of complex DevOps workflows and infrastructure patterns.
+**💡 Pro Tip**: Start with **OpenCode** for the best framework integration experience. It has native MCP support, custom tool definitions, and excellent terminal-based workflow for DevOps operations. For GUI-based work, Claude Desktop is also excellent.
