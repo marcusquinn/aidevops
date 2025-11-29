@@ -16,6 +16,8 @@ readonly BLUE='\033[0;34m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 print_success() {
     local _arg1="$1"
     echo -e "${GREEN}✅ $_arg1${NC}"
@@ -565,7 +567,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             echo ""
             show_help
             return 1

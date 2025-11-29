@@ -234,7 +234,7 @@ case "$server" in
                 echo "  ./.agent/scripts/gitea-cli-helper.sh      - Gitea CLI repository management"
                 ;;
             *)
-                print_error "Unknown command: $command"
+                print_error "$ERROR_UNKNOWN_COMMAND $command"
                 print_info "Use '$0 help' for usage information"
                 exit 1
                 ;;

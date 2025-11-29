@@ -308,7 +308,7 @@ main() {
             print_success "Cleanup completed"
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             show_help
             return 1
             ;;

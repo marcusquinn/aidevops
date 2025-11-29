@@ -30,6 +30,8 @@ readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Get repository info
 get_repo() {
     local repo
@@ -449,7 +451,7 @@ main() {
             show_help
             ;;
         *)
-            echo "Unknown command: $command" >&2
+            echo "$ERROR_UNKNOWN_COMMAND $command" >&2
             show_help
             exit 1
             ;;

@@ -45,6 +45,8 @@ readonly RED='\033[0;31m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Error Messages
 readonly ERROR_SNYK_NOT_INSTALLED="Snyk CLI is required but not installed"
 readonly ERROR_NOT_AUTHENTICATED="Snyk CLI is not authenticated. Run 'snyk auth' or set SNYK_TOKEN"
@@ -924,7 +926,7 @@ main() {
             start_mcp_server
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             print_info "Use './snyk-helper.sh help' for usage information"
             return 1
             ;;

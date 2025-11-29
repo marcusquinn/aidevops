@@ -164,17 +164,19 @@ verify_domain() {
             fi
         fi
         
-        # Check 9: HTTPS connection
+        # Check 9: HTTPS connection (with SSL verification)
         echo -e "${BLUE}9. Testing HTTPS connection...${NC}"
         local https_response
-        https_response=$(curl -k -s -o /dev/null -w "%{http_code}" "https://$domain" 2>/dev/null || echo "000")
+        # First try with SSL verification enabled (secure)
+        https_response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "https://$domain" 2>/dev/null || echo "000")
         if [[ "$https_response" == "200" ]]; then
-            print_success "HTTPS connection successful (200)"
+            print_success "HTTPS connection successful with valid SSL (200)"
+        elif [[ "$https_response" == "000" ]]; then
+            # SSL verification may have failed - this could indicate self-signed cert
+            print_warning "HTTPS connection failed - SSL certificate may be invalid or self-signed"
+            print_info "This may be normal for local development environments"
         else
             print_warning "HTTPS connection test failed (got $https_response)"
-            if [[ "$https_response" == "000" ]]; then
-                print_info "This may be normal if development server is not running"
-            fi
         fi
     fi
     

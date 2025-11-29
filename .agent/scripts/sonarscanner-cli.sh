@@ -24,6 +24,8 @@ readonly RED='\033[0;31m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration
 readonly SONAR_SCANNER_VERSION="7.3"
 readonly SONAR_CONFIG_FILE="sonar-project.properties"
@@ -441,7 +443,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             show_help
             return 1
             ;;

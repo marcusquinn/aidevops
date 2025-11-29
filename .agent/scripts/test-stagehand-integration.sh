@@ -297,7 +297,7 @@ COMMANDS:
 EOF
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             return 1
             ;;
     esac

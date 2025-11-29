@@ -26,6 +26,8 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Error Messages
 readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_GLAB_NOT_INSTALLED="GitLab CLI (glab) is required but not installed"
@@ -665,7 +667,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             print_info "Use '$0 help' for usage information"
             exit 1
             ;;

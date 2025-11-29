@@ -25,6 +25,8 @@ readonly PURPLE='\033[0;35m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m' # No Color
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration
 readonly CODACY_CONFIG_DIR=".codacy"
 readonly CODACY_CONFIG_FILE="$CODACY_CONFIG_DIR/codacy.yaml"
@@ -567,7 +569,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             show_help
             return 1
             ;;

@@ -28,6 +28,8 @@ readonly RED='\033[0;31m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration constants
 readonly CODERABBIT_CLI_INSTALL_URL="https://cli.coderabbit.ai/install.sh"
 readonly CONFIG_DIR="$HOME/.config/coderabbit"
@@ -405,7 +407,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "Unknown command: $command"
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
             show_help
             return 1
             ;;
