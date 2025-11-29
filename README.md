@@ -161,15 +161,18 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[AWS Route 53](https://aws.amazon.com/route53/)**: AWS DNS management
 - **[Namecheap](https://www.namecheap.com/)**: Domain and DNS services
 
-### **🔧 Development & Git Platforms with CLI Integration (7 platforms)**
+### **🔧 Development & Git Platforms with CLI Integration (5 platforms)**
 
 - **[GitHub](https://github.com/)** ✅ **Enhanced with CLI**: Repository management, actions, API, GitHub CLI (gh) integration
 - **[GitLab](https://gitlab.com/)** ✅ **Enhanced with CLI**: Self-hosted and cloud Git platform with GitLab CLI (glab) integration  
 - **[Gitea](https://gitea.io/)** ✅ **Enhanced with CLI**: Lightweight Git service with Gitea CLI (tea) integration
-- **[LocalWP](https://localwp.com)**: WordPress development environment
 - **[Agno](https://agno.com/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
-- **Browser Automation**: LinkedIn automation, web scraping, social media management
+
+### **📝 WordPress Development (2 tools)**
+
+- **[LocalWP](https://localwp.com)**: WordPress development environment with MCP database access
+- **[MainWP](https://mainwp.com/)**: WordPress site management dashboard
 
 **🚀 Git CLI Enhancement Features:**
 
@@ -186,10 +189,11 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[CodeRabbit](https://coderabbit.ai/)**: AI-powered code reviews
 - **[Snyk](https://snyk.io/)**: Security vulnerability scanning
 
-### **🧠 AI Prompt Optimization (2 tools)**
+### **🧠 AI Prompt Optimization (3 tools)**
 
 - **[DSPy](https://dspy.ai/)**: Framework for programming with language models
 - **[DSPyGround](https://dspyground.com/)**: Interactive playground for prompt optimization
+- **[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)**: Token-Oriented Object Notation - 20-60% token reduction for LLM prompts
 
 ### **📊 Performance & Monitoring (3 integrations)**
 
@@ -197,10 +201,9 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[PageSpeed Insights](https://pagespeed.web.dev/)**: Website performance auditing
 - **[Lighthouse](https://developer.chrome.com/docs/lighthouse/)**: Comprehensive web app analysis
 
-### **🤖 AI & Documentation (2 MCPs)**
+### **🤖 AI & Documentation (1 MCP)**
 
-- **[Context7](https://context7.io/)**: Real-time documentation access
-- **[LocalWP](https://localwp.com/)**: WordPress database queries
+- **[Context7](https://context7.io/)**: Real-time documentation access for libraries and frameworks
 
 ## 🤖 **MCP Integrations**
 
@@ -242,25 +245,6 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand          # JavaScript ve
 bash .agent/scripts/setup-mcp-integrations.sh stagehand-python   # Python version
 bash .agent/scripts/setup-mcp-integrations.sh stagehand-both     # Both versions
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
-```
-
-### **🎒 TOON Format Integration**
-
-**[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)** - Token-Oriented Object Notation (TOON) - Compact, human-readable, schema-aware JSON for LLM prompts.
-
-- **20-60% token reduction** compared to JSON
-- **Human-readable tabular format** for structured data
-- **Better LLM comprehension** and generation accuracy
-- **Perfect for AI DevOps** configuration and data exchange
-
-**Quick Start:**
-
-```bash
-# Convert JSON to TOON format
-./.agent/scripts/toon-helper.sh encode data.json output.toon
-
-# Show token efficiency comparison
-./.agent/scripts/toon-helper.sh compare large-dataset.json
 ```
 
 ## 🚀 **Usage Examples**

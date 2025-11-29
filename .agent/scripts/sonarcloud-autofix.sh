@@ -15,10 +15,11 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
 print_header() { echo -e "${PURPLE}🔧 $1${NC}"; }
-print_info() { echo -e "${BLUE}ℹ️  $1${NC}"; }
-print_success() { echo -e "${GREEN}✅ $1${NC}"; }
-print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
-print_error() { echo -e "${RED}❌ $1${NC}"; }
+    local _arg1="$1"
+print_info() { echo -e "${BLUE}ℹ️  $_arg1${NC}"; }
+print_success() { echo -e "${GREEN}✅ $_arg1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠️  $_arg1${NC}"; }
+print_error() { echo -e "${RED}❌ $_arg1${NC}"; }
 
 # Fix missing return statements (S7682)
 fix_missing_returns() {
@@ -55,6 +56,7 @@ fix_missing_returns() {
 
 # Fix positional parameter assignments (S7679)
 fix_positional_parameters() {
+    local _arg1="$1"
     local _arg2="$2"
     local file="$1"
     print_info "Fixing positional parameter assignments in: $file"
@@ -62,12 +64,12 @@ fix_positional_parameters() {
     # Backup original file
     cp "$file" "$file.backup"
     
-    # Replace direct $1, $_arg2, etc. usage with local variable assignments
+    # Replace direct $_arg1, $_arg2, etc. usage with local variable assignments
     sed -i.tmp '
-        s/echo "\$1"/local param1="$1"; echo "$param1"/g
+        s/echo "\$_arg1"/local param1="$_arg1"; echo "$param1"/g
         s/echo "\$_arg2"/local param2="$_arg2"; echo "$param2"/g
-        s/case "\$1"/local command="$1"; case "$command"/g
-        s/\[\[ "\$1"/local arg1="$1"; [[ "$arg1"/g
+        s/case "\$_arg1"/local command="$_arg1"; case "$command"/g
+        s/\[\[ "\$_arg1"/local arg1="$_arg1"; [[ "$arg1"/g
     ' "$file"
     
     rm -f "$file.tmp"
@@ -77,6 +79,7 @@ fix_positional_parameters() {
 
 # Add default case to switch statements (S131)
 fix_missing_default_case() {
+    local _arg1="$1"
     local file="$1"
     print_info "Adding default cases to switch statements in: $file"
     
@@ -88,7 +91,7 @@ fix_missing_default_case() {
         /esac/ {
             i\
         *)\
-            print_error "Unknown option: $1"\
+            print_error "Unknown option: $_arg1"\
             exit 1\
             ;;
         }
@@ -125,6 +128,7 @@ apply_sonarcloud_fixes() {
 
 # Main function
 main() {
+    local _arg2="$2"
     print_header "SonarCloud Auto-Fix Tool"
     
     case "${1:-help}" in
@@ -134,7 +138,7 @@ main() {
                 print_info "Usage: $0 fix <file>"
                 exit 1
             fi
-            apply_sonarcloud_fixes "$2"
+            apply_sonarcloud_fixes "$_arg2"
             ;;
         "fix-all")
             print_info "Applying fixes to all shell scripts with SonarCloud issues..."

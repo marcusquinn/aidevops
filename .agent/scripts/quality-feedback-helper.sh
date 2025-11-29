@@ -454,6 +454,7 @@ main() {
             exit 1
             ;;
     esac
+    return 0
 }
 
 main "$@"

@@ -15,9 +15,10 @@ readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+    local _arg1="$1"
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $_arg1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $_arg1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $_arg1" >&2; }
 
 # Repository root directory
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -408,3 +409,4 @@ main() {
 }
 
 main "$@"
+    return 0

@@ -316,6 +316,7 @@ show_help() {
 
 # Main execution
 main() {
+    local _arg1="$1"
     local _arg2="$2"
     local command="$1"
     shift
@@ -328,13 +329,13 @@ main() {
             init_qlty
             ;;
         "check")
-            check_qlty "$1" "$_arg2"
+            check_qlty "$_arg1" "$_arg2"
             ;;
         "fmt")
-            format_qlty "$1" "$_arg2"
+            format_qlty "$_arg1" "$_arg2"
             ;;
         "smells")
-            smells_qlty "$1" "$_arg2"
+            smells_qlty "$_arg1" "$_arg2"
             ;;
         "help"|"--help"|"-h"|"")
             show_help

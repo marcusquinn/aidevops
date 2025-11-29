@@ -15,10 +15,11 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
 print_header() { echo -e "${PURPLE}🔍 $1${NC}"; }
-print_info() { echo -e "${BLUE}ℹ️  $1${NC}"; }
-print_success() { echo -e "${GREEN}✅ $1${NC}"; }
-print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
-print_error() { echo -e "${RED}❌ $1${NC}"; }
+    local _arg1="$1"
+print_info() { echo -e "${BLUE}ℹ️  $_arg1${NC}"; }
+print_success() { echo -e "${GREEN}✅ $_arg1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠️  $_arg1${NC}"; }
+print_error() { echo -e "${RED}❌ $_arg1${NC}"; }
 
 # Test results tracking
 declare -i total_tests=0
@@ -248,3 +249,4 @@ main() {
 }
 
 main "$@"
+    return 0

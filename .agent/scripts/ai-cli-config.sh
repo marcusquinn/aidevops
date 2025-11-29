@@ -520,6 +520,7 @@ EOF
 
     chmod +x "$wrapper_script"
     log_success "Universal AI wrapper created at $wrapper_script"
+    return 0
 }
 
 # Function to create AI memory files for various tools
