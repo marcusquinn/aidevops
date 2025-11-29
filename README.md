@@ -94,14 +94,15 @@ cd aidevops && ./setup.sh
 # These provide enhanced repository management capabilities beyond basic git operations
 ```
 
-**That's it! Your AI assistant now has access to 28+ service integrations.**
+**That's it! Your AI assistant now has access to 30+ service integrations.**
 
 **Recommended CLI AI Assistants:**
 
+- **[OpenCode](https://opencode.ai/)** (Preferred - Powerful TUI/CLI with MCP support)
+- **[Claude Desktop](https://claude.ai/)** (Advanced reasoning with MCP)
 - **[Factory AI Droid](https://www.factory.ai/)** (Enterprise-grade AI)
 - **[Augment Code (Auggie)](https://www.augmentcode.com/)** (Professional coding assistant)
 - **[AmpCode](https://ampcode.com/)** (Professional AI coding assistant)
-- **[Claude Desktop](https://claude.ai/)** (Advanced reasoning)
 - **[Continue.dev](https://continue.dev/)** (AI pair programmer)
 - **[Warp AI](https://www.warp.dev/)** (Terminal-integrated)
 - **[OpenAI Codex](https://openai.com/)** (Code-focused model)
@@ -176,15 +177,14 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **providers/gitlab-cli-helper.sh**: Complete GitLab project, issue, MR, and branch management
 - **providers/gitea-cli-helper.sh**: Full Gitea repository, issue, PR, and branch management
 
-### **🔐 Security & Quality (7 platforms)**
+### **🔐 Security & Quality (6 platforms)**
 
 - **[Vaultwarden](https://github.com/dani-garcia/vaultwarden)**: Password and secrets management
 - **[SonarCloud](https://sonarcloud.io/)**: Security and quality analysis (A-grade ratings)
 - **[CodeFactor](https://www.codefactor.io/)**: Code quality metrics (A+ score)
 - **[Codacy](https://www.codacy.com/)**: Multi-tool analysis (0 findings)
 - **[CodeRabbit](https://coderabbit.ai/)**: AI-powered code reviews
-- **[AmpCode](https://ampcode.com/)**: Professional AI coding assistant
-- **[Continue.dev](https://continue.dev/)**: AI pair programmer and coding assistant
+- **[Snyk](https://snyk.io/)**: Security vulnerability scanning
 
 ### **🧠 AI Prompt Optimization (2 tools)**
 
@@ -204,12 +204,12 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ## 🤖 **MCP Integrations**
 
-**12 Model Context Protocol servers for real-time AI assistant integration:**
+**13 Model Context Protocol servers for real-time AI assistant integration:**
 
 ### **🌐 Web & Browser Automation**
 
-- **[Stagehand AI (JavaScript)](https://github.com/browserbase/stagehand)**: AI-powered browser automation with natural language ⭐ **NEW**
-- **[Stagehand AI (Python)](https://github.com/browserbase/stagehand-python)**: Python version with Pydantic validation 🐍 **NEW**
+- **[Stagehand AI (JavaScript)](https://github.com/browserbase/stagehand)**: AI-powered browser automation with natural language
+- **[Stagehand AI (Python)](https://github.com/browserbase/stagehand-python)**: Python version with Pydantic validation
 - **[Chrome DevTools MCP](https://developer.chrome.com/docs/devtools/)**: Browser automation, performance analysis, debugging
 - **[Playwright MCP](https://playwright.dev/)**: Cross-browser testing and automation
 - **[Cloudflare Browser Rendering](https://workers.cloudflare.com/)**: Server-side web scraping
@@ -219,6 +219,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Ahrefs MCP](https://ahrefs.com/)**: SEO analysis, backlink research, keyword data
 - **[Perplexity MCP](https://www.perplexity.ai/)**: AI-powered web search and research
 - **[Google Search Console MCP](https://search.google.com/search-console)**: Search performance insights
+- **[Greptile MCP](https://grep.app/)**: Search code snippets across GitHub repositories
 
 ### **📊 Performance & Analytics**
 
