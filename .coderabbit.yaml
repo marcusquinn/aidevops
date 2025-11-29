@@ -96,5 +96,4 @@ path_filters:
     - "*.log"
     - "*.tmp"
 
-# Full review trigger - updated 2024-11-29
-# This comment triggers a comprehensive codebase review
+# Trigger for comprehensive codebase review

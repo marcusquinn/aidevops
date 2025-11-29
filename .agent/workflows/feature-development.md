@@ -93,6 +93,7 @@ git commit -m "Version {VERSION} - Add user authentication"
 Update all relevant documentation:
 
 **CHANGELOG.md:**
+
 ```markdown
 ## [Unreleased]
 ### Added
@@ -100,11 +101,13 @@ Update all relevant documentation:
 ```
 
 **README.md / readme.txt:**
+
 - Update feature list
 - Add usage instructions
 - Update screenshots if UI changed
 
 **Code Comments:**
+
 - Add docblocks to new functions/methods
 - Document complex logic
 - Add usage examples

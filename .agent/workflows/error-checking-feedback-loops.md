@@ -61,6 +61,7 @@ gh api repos/{owner}/{repo}/actions/runs/{run_id}/jobs
 #### Example Fixes
 
 **Outdated Action:**
+
 ```yaml
 # Before
 uses: actions/upload-artifact@v3
@@ -70,6 +71,7 @@ uses: actions/upload-artifact@v4
 ```
 
 **Concurrency Control:**
+
 ```yaml
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -176,6 +178,7 @@ gh pr checks {pr_number}
 ### Processing Code Quality Feedback
 
 1. **Collect all feedback:**
+
    ```bash
    gh pr view {number} --comments --json comments
    gh api repos/{owner}/{repo}/pulls/{number}/reviews
@@ -196,7 +199,7 @@ gh pr checks {pr_number}
 
 ### Error Resolution Workflow
 
-```
+```text
 1. Identify Error
    ↓
 2. Categorize Error (type, severity)
@@ -232,6 +235,7 @@ gh run watch
 ### Common Fix Patterns
 
 **Dependency Issues:**
+
 ```bash
 # Update lockfile
 npm ci  # or: npm install
@@ -243,6 +247,7 @@ composer clear-cache
 ```
 
 **Test Failures:**
+
 ```bash
 # Run specific failing test
 npm test -- --grep "failing test name"
@@ -255,6 +260,7 @@ npm test -- --updateSnapshot
 ```
 
 **Linting Errors:**
+
 ```bash
 # Auto-fix what's possible
 npm run lint:fix
@@ -267,7 +273,7 @@ npm run lint -- --format stylish
 
 ### Complete Feedback Loop System
 
-```
+```text
 Code Changes ──► Local Testing ──► GitHub Actions
      │                │                  │
      ▼                ▼                  ▼
@@ -294,15 +300,20 @@ Fix Generation ──► Verification ──► Human Review (if needed)
 ### Implementing the Loop
 
 ```bash
+#!/bin/bash
 # Continuous monitoring script pattern
+
 check_and_fix() {
-    # Check for failures
-    local failures=$(gh run list --status failure --limit 1 --json conclusion -q '.[].conclusion')
+    # Check for failures - declare and assign separately per SC2155
+    local failures
+    failures=$(gh run list --status failure --limit 1 --json conclusion -q '.[].conclusion')
     
     if [[ "$failures" == "failure" ]]; then
-        # Get failure details
-        local run_id=$(gh run list --status failure --limit 1 --json databaseId -q '.[].databaseId')
-        local logs=$(gh run view "$run_id" --log-failed)
+        # Get failure details - declare and assign separately per SC2155
+        local run_id
+        local logs
+        run_id=$(gh run list --status failure --limit 1 --json databaseId -q '.[].databaseId')
+        logs=$(gh run view "$run_id" --log-failed)
         
         # Analyze and report
         echo "Failure detected in run $run_id"
@@ -344,34 +355,26 @@ analyze_error() {
 
 When consulting humans, provide:
 
-```markdown
-## Issue Summary
-Brief description of the problem.
+**Issue Summary:** Brief description of the problem.
 
-## Context
+**Context:**
+
 - What were you trying to accomplish?
 - What happened instead?
 
-## Error Details
-```
-Specific error messages or logs
-```
+**Error Details:** Include specific error messages or logs.
 
-## Attempted Solutions
+**Attempted Solutions:**
+
 1. Tried X - Result: Y
 2. Tried Z - Result: W
 
-## Questions
+**Questions:**
+
 1. Specific question requiring human input
 2. Another specific question
 
-## Recommendations
-Based on my analysis, I suggest:
-- Option A: [description] - Pros/Cons
-- Option B: [description] - Pros/Cons
-
-Which approach would you prefer?
-```
+**Recommendations:** Based on analysis, suggest options with pros/cons and ask which approach they prefer.
 
 ### Contributing Fixes Upstream
 

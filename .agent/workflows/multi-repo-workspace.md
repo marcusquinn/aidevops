@@ -175,7 +175,7 @@ When the developer switches between repositories in the workspace:
 
 ### Monorepo with Packages
 
-```
+```text
 workspace/
 ├── packages/
 │   ├── core/           # Core library
@@ -188,13 +188,14 @@ workspace/
 ```
 
 **Key considerations**:
+
 - Shared dependencies are managed at root level
 - Package-specific dependencies in each package
 - Cross-package imports use workspace protocols
 
 ### Multiple Separate Repos
 
-```
+```text
 workspace/
 ├── api-service/        # Backend API
 ├── web-client/         # Frontend application
@@ -203,6 +204,7 @@ workspace/
 ```
 
 **Key considerations**:
+
 - Each repo has its own dependencies
 - No implicit sharing between repos
 - Must explicitly publish/consume shared code

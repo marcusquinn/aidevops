@@ -72,6 +72,7 @@ Fixes #123"
 ### Testing Approach
 
 **Local Testing (Default):**
+
 ```bash
 # Test without updating version numbers
 # Run tests, linters, quality checks
@@ -81,6 +82,7 @@ bash ~/git/aidevops/.agent/scripts/quality-check.sh
 ```
 
 **Remote Testing (When Requested):**
+
 ```bash
 git add .
 git commit -m "WIP: Description for remote testing"
@@ -164,7 +166,7 @@ git merge main
 
 ### Format
 
-```
+```text
 Type: Brief description (under 50 chars)
 
 Detailed explanation if needed.

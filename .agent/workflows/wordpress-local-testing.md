@@ -397,6 +397,7 @@ define('SAVEQUERIES', true);
 ```
 
 View logs:
+
 ```bash
 # wp-env
 wp-env run cli tail -f /var/www/html/wp-content/debug.log

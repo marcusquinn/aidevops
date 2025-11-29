@@ -112,27 +112,15 @@ When providing feedback:
 
 #### Be Specific and Clear
 
-```markdown
-# Good feedback example
-In function `processUserData()` at line 45:
+**Good feedback example:**
 
-1. The input validation is missing for the `email` parameter.
-   Consider adding:
-   ```javascript
-   if (!isValidEmail(email)) {
-     throw new ValidationError('Invalid email format');
-   }
-   ```
-
-2. The error message should be more descriptive:
-   ```javascript
-   // Instead of:
-   throw new Error('Failed');
-   
-   // Use:
-   throw new Error(`Failed to process data for user ${userId}: ${reason}`);
-   ```
-```
+> In function `processUserData()` at line 45:
+>
+> 1. The input validation is missing for the `email` parameter.
+>    Consider adding validation like `if (!isValidEmail(email)) { throw new ValidationError('Invalid email format'); }`
+>
+> 2. The error message should be more descriptive. Instead of `throw new Error('Failed')`,
+>    use `throw new Error(\`Failed to process data for user ${userId}: ${reason}\`)`
 
 #### Categorize Feedback
 

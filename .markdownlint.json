@@ -16,6 +16,7 @@
   "MD029": {
     "style": "ordered"
   },
+  "MD032": false,
   "MD033": {
     "allowed_elements": [
       "br",
@@ -33,5 +34,6 @@
   "MD041": false,
   "MD046": {
     "style": "fenced"
-  }
+  },
+  "MD060": false
 }

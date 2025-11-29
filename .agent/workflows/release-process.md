@@ -62,6 +62,7 @@ git checkout -b hotfix/v{MAJOR}.{MINOR}.{PATCH}
 Update version in all relevant files:
 
 **JavaScript/Node.js Projects:**
+
 ```bash
 # package.json
 npm version {MAJOR}.{MINOR}.{PATCH} --no-git-tag-version
@@ -72,6 +73,7 @@ npm version {MAJOR}.{MINOR}.{PATCH} --no-git-tag-version
 ```
 
 **Python Projects:**
+
 ```python
 # setup.py or pyproject.toml
 version = "X.Y.Z"
@@ -81,12 +83,14 @@ __version__ = "X.Y.Z"
 ```
 
 **Go Projects:**
+
 ```go
 // version.go
 const Version = "X.Y.Z"
 ```
 
 **PHP Projects:**
+
 ```php
 // Main plugin/application file
 define('VERSION', 'X.Y.Z');
@@ -239,6 +243,7 @@ git push gitlab release/v{MAJOR}.{MINOR}.{PATCH} --tags
 ### 9. Create GitHub/GitLab Release
 
 **Using GitHub CLI:**
+
 ```bash
 gh release create v{MAJOR}.{MINOR}.{PATCH} \
   --title "v{MAJOR}.{MINOR}.{PATCH}" \
@@ -247,6 +252,7 @@ gh release create v{MAJOR}.{MINOR}.{PATCH} \
 ```
 
 **Using GitLab CLI:**
+
 ```bash
 glab release create v{MAJOR}.{MINOR}.{PATCH} \
   --name "v{MAJOR}.{MINOR}.{PATCH}" \
@@ -316,7 +322,7 @@ Follow [semver.org](https://semver.org/) specification:
 
 ### Pre-release Versions
 
-```
+```text
 1.0.0-alpha.1    # Alpha release
 1.0.0-beta.1     # Beta release
 1.0.0-rc.1       # Release candidate
@@ -381,6 +387,7 @@ git diff v{PREVIOUS} v{CURRENT}
 ### 2. Create Hotfix or Revert
 
 **Option A: Hotfix**
+
 ```bash
 git checkout -b hotfix/v{NEW_PATCH}
 # Fix the issue
@@ -388,6 +395,7 @@ git commit -m "fix: resolve critical issue from v{CURRENT}"
 ```
 
 **Option B: Revert**
+
 ```bash
 git revert <commit-hash>
 git commit -m "revert: rollback problematic changes from v{CURRENT}"
@@ -452,6 +460,7 @@ git push origin v{VERSION} --force
 1. Check build logs for errors
 2. Fix issues in release branch
 3. Re-tag after fixing:
+
    ```bash
    git tag -d v{VERSION}
    git tag -a v{VERSION} -m "Release v{VERSION}"
@@ -462,6 +471,7 @@ git push origin v{VERSION} --force
 ### Version Mismatch
 
 If version numbers are inconsistent:
+
 ```bash
 # Find all version references
 grep -r "version" --include="*.json" --include="*.py" --include="*.go"
