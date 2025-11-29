@@ -2,7 +2,7 @@
 
 **Unleash your AI assistant's true potential with specialist DevOps agents — designed to manage your all your infrastructure and services with security and reliability guidance on every decision.**
 
-*"Deploy my app to production, update the DNS, configure SSL, and set up monitoring"* - **One conversation, complete infrastructure management.**
+*"List all my servers and websites, and check each for theme and plugin update needs, SEO and page loading performance scores, and give me a list of recommended priorities"* - **One conversation, complete infrastructure management.**
 
 ## **Why This Framework?**
 
@@ -61,15 +61,7 @@
 
 ## **Enterprise-Grade Quality & Security**
 
-**Multi-Platform Quality Excellence:**
-
-- **SonarCloud**: A-grade ratings (0 bugs, 0 vulnerabilities)
-- **CodeFactor**: A+ maintainability score
-- **Qlty**: Automated quality control with actionable quick-fixes
-- **CodeRabbit**: AI-powered code reviews and security analysis
-- **Codacy**: 0 findings across 8 analysis tools (642 security rules)
-
-**Comprehensive DevOps framework with tried & tested services integrations, popular and trusted MCP servers, and enterprise-grade infrastructure quality assurance.**
+**Comprehensive DevOps framework with tried & tested services integrations, popular and trusted MCP servers, and enterprise-grade infrastructure quality assurance code monitoring and recommendations.**
 
 ## **Security Notice**
 
@@ -94,7 +86,7 @@ cd aidevops && ./setup.sh
 # These provide enhanced repository management capabilities beyond basic git operations
 ```
 
-**That's it! Your AI assistant now has access to 30+ service integrations.**
+**That's it! Your AI assistant now has agentic access to 30+ service integrations.**
 
 **Recommended CLI AI Assistants:** (In order of our testing experience and preference from real-world project use.)
 
