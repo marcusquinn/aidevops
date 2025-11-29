@@ -292,7 +292,7 @@ EOF
         "STAGEHAND_ENV": "LOCAL",
         "STAGEHAND_VERBOSE": "1",
         "STAGEHAND_HEADLESS": "false",
-        "PYTHONPATH": "/Users/marcusquinn/.aidevops/stagehand-python/.venv/lib/python3.11/site-packages"
+        "PYTHONPATH": "${HOME}/.aidevops/stagehand-python/.venv/lib/python3.11/site-packages"
       }
     }
   }

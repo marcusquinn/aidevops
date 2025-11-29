@@ -163,3 +163,24 @@ test-*.yaml
 
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
+
+# AI Tool Symlinks - Track these (they point to .agent and AGENTS.md)
+# Rules file symlinks -> AGENTS.md
+!.cursorrules
+!.windsurfrules
+!.continuerules
+!CLAUDE.md
+!GEMINI.md
+!AGENT.md
+
+# Agent/skills folder symlinks -> .agent
+!.opencode/
+!.claude/
+!.codex/
+!.cursor/
+!.factory/
+!.gemini/
+!.continue
+!.kiro
+!.ai
+!.qoder/

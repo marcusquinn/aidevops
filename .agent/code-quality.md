@@ -1,6 +1,6 @@
 # Code Quality Standards - Multi-Platform Excellence
 
-> **⚠️ IMPORTANT**: This document is supplementary to the [MASTER-GUIDE.md](../MASTER-GUIDE.md).
+> **⚠️ IMPORTANT**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
 > For any conflicts, the Master Guide takes precedence as the single source of truth.
 
 ## 🎯 **CURRENT QUALITY STATUS**
@@ -16,7 +16,7 @@ This framework maintains excellent ratings across multiple quality platforms:
 
 ### **S7682 - Return Statements**
 
-**Reference**: See MASTER-GUIDE.md for current requirements
+**Reference**: See AGENTS.md for current requirements
 
 ```bash
 # ✅ CORRECT - Always explicit return
