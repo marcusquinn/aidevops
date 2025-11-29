@@ -147,9 +147,9 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Hostinger](https://www.hostinger.com/)**: Shared hosting, domains, email
 - **[Hetzner Cloud](https://www.hetzner.com/cloud)**: VPS servers, networking, load balancers
 - **[Closte](https://closte.com/)**: Managed hosting, application deployment
-- **[Coolify](https://coolify.io/)** ✅ **Enhanced with CLI**: Self-hosted PaaS with CLI integration
+- **[Coolify](https://coolify.io/)** *Enhanced with CLI*: Self-hosted PaaS with CLI integration
 - **[Cloudron](https://www.cloudron.io/)**: Server and app management platform
-- **[Vercel](https://vercel.com/)** ✅ **Enhanced with CLI**: Modern web deployment platform with CLI integration
+- **[Vercel](https://vercel.com/)** *Enhanced with CLI*: Modern web deployment platform with CLI integration
 - **[AWS](https://aws.amazon.com/)**: Cloud infrastructure support via standard protocols
 - **[DigitalOcean](https://www.digitalocean.com/)**: Cloud infrastructure support via standard protocols
 
@@ -163,9 +163,9 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ### **🔧 Development & Git Platforms with CLI Integration (5 platforms)**
 
-- **[GitHub](https://github.com/)** ✅ **Enhanced with CLI**: Repository management, actions, API, GitHub CLI (gh) integration
-- **[GitLab](https://gitlab.com/)** ✅ **Enhanced with CLI**: Self-hosted and cloud Git platform with GitLab CLI (glab) integration  
-- **[Gitea](https://gitea.io/)** ✅ **Enhanced with CLI**: Lightweight Git service with Gitea CLI (tea) integration
+- **[GitHub](https://github.com/)** *Enhanced with CLI*: Repository management, actions, API, GitHub CLI (gh) integration
+- **[GitLab](https://gitlab.com/)** *Enhanced with CLI*: Self-hosted and cloud Git platform with GitLab CLI (glab) integration  
+- **[Gitea](https://gitea.io/)** *Enhanced with CLI*: Lightweight Git service with Gitea CLI (tea) integration
 - **[Agno](https://agno.com/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
 
