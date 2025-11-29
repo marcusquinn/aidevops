@@ -14,6 +14,8 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m' # No Color
 
+# HTTP Constants
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
     local _arg1="$1"
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $_arg1"; }
@@ -135,7 +137,7 @@ EOF
     response=$(curl -s -w "%{http_code}" \
         -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3+json" \
-        -H "Content-Type: application/json" \
+        -H "$CONTENT_TYPE_JSON" \
         -X POST \
         -d "$json_payload" \
         "$GITHUB_API_URL/repos/$REPO_OWNER/$REPO_NAME/releases")

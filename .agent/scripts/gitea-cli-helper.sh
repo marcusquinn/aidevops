@@ -53,7 +53,7 @@ readonly SUCCESS_ISSUE_CLOSED="Issue closed successfully"
 readonly SUCCESS_PR_MERGED="Pull request merged successfully"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 readonly AUTH_HEADER_TOKEN="Authorization: token"
 
 # ------------------------------------------------------------------------------

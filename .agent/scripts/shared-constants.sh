@@ -17,6 +17,16 @@
 readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 readonly CONTENT_TYPE_FORM="Content-Type: application/x-www-form-urlencoded"
 readonly USER_AGENT="User-Agent: AI-DevOps-Framework/1.6.0"
+readonly AUTH_HEADER_PREFIX="Authorization: Bearer"
+
+# =============================================================================
+# Common Help Text Labels
+# =============================================================================
+
+readonly HELP_LABEL_COMMANDS="Commands:"
+readonly HELP_LABEL_EXAMPLES="Examples:"
+readonly HELP_LABEL_OPTIONS="Options:"
+readonly HELP_LABEL_USAGE="Usage:"
 
 # HTTP Status Codes
 readonly HTTP_OK=200

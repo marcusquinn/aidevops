@@ -15,12 +15,14 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# HTTP Constants
+readonly AUTH_HEADER_PREFIX="Authorization: Bearer"
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 
 print_info() {
     local msg="$1"
@@ -123,7 +125,7 @@ api_request() {
         exit 1
     fi
     
-    local auth_header="Authorization: Bearer $api_key"
+    local auth_header="$AUTH_HEADER_PREFIX $api_key"
     local url="$API_BASE_URL/$endpoint"
     
     if [[ "$method" == "GET" ]]; then

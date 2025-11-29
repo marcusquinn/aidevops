@@ -15,6 +15,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# HTTP Constants
+readonly AUTH_HEADER_PREFIX="Authorization: Bearer"
 # Error message constants
 readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 readonly HELP_SHOW_MESSAGE="Show this help"
@@ -172,7 +174,7 @@ api_call() {
         exit 1
     fi
     
-    curl -s -H "Authorization: Bearer $api_token" "$base_url/$endpoint"
+    curl -s -H "$AUTH_HEADER_PREFIX $api_token" "$base_url/$endpoint"
     return 0
 }
 

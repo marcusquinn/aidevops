@@ -24,6 +24,7 @@ readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Common constants
 readonly AUTH_BEARER_PREFIX="Authorization: Bearer"
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 readonly HETZNER_API_SERVERS="https://api.hetzner.cloud/v1/servers"
 
 print_info() {
@@ -254,7 +255,7 @@ create_server() {
     local response
     response=$(curl -s -X POST \
         -H "$AUTH_BEARER_PREFIX $api_token" \
-        -H "Content-Type: application/json" \
+        -H "$CONTENT_TYPE_JSON" \
         -d "{
             \"name\": \"$server_name\",
             \"server_type\": \"$server_type\",

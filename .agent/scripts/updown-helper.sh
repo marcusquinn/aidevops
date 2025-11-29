@@ -25,6 +25,8 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
+# HTTP Constants
+readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 # Error Messages
 readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_API_KEY_MISSING="API key not found in configuration"
@@ -109,7 +111,7 @@ execute_request() {
     curl_cmd+=(-H "X-API-KEY: $api_key")
     
     if [[ -n "$data" ]]; then
-        curl_cmd+=(-H "Content-Type: application/json")
+        curl_cmd+=(-H "$CONTENT_TYPE_JSON")
         curl_cmd+=(-d "$data")
     fi
     

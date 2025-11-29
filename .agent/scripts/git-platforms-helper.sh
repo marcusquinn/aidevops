@@ -12,6 +12,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# HTTP Constants
+readonly AUTH_HEADER_PREFIX="Authorization: Bearer"
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
@@ -39,6 +41,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# HTTP Constants
+readonly AUTH_HEADER_PREFIX="Authorization: Bearer"
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
@@ -165,7 +169,7 @@ api_request() {
             auth_header="Authorization: token $api_token"
             ;;
         *)
-            auth_header="Authorization: Bearer $api_token"
+            auth_header="$AUTH_HEADER_PREFIX $api_token"
             ;;
     esac
     
