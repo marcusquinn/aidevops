@@ -107,6 +107,7 @@ Extract code structure with ~80% token reduction:
 ```
 
 **What gets extracted**:
+
 ```typescript
 // Original (full implementation)
 export class UserService {
@@ -205,6 +206,7 @@ See the token reduction in action:
 ```
 
 Output:
+
 ```
 ┌─────────────────────────────────────────────────┐
 │              Context Comparison                 │
@@ -314,17 +316,20 @@ File naming: `{repo-name}-{mode}-{timestamp}.{format}`
 ### Common Issues
 
 **"npx not found"**
+
 ```bash
 # Install Node.js
 brew install node  # macOS
 ```
 
 **"Permission denied"**
+
 ```bash
 chmod +x ~/.agent/scripts/context-builder-helper.sh
 ```
 
 **Large output file**
+
 ```bash
 # Use compression
 ./context-builder-helper.sh compress

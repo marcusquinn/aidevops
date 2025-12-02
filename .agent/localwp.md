@@ -1,6 +1,7 @@
 # LocalWP Database Access Subagent
 
 ---
+
 description: "[DEV-3] LocalWP database access - read-only SQL, schema inspection. Requires LocalWP running. Called from @wp-dev"
 mode: subagent
 temperature: 0.1

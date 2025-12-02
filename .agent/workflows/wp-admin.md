@@ -1,6 +1,7 @@
 # WordPress Admin Subagent
 
 ---
+
 description: "[DEV-2] WordPress admin - content, customization, maintenance. WP-CLI + MainWP for site management"
 mode: subagent
 temperature: 0.2
@@ -23,6 +24,7 @@ tools:
 - **Preferred Plugins**: See `wp-preferred.md` for curated recommendations
 
 **Site Management Options**:
+
 | Method | When to Use |
 |--------|-------------|
 | WP-CLI (SSH) | Direct access, any site |
@@ -30,6 +32,7 @@ tools:
 | WordPress MCP | AI-powered admin actions |
 
 **Common WP-CLI Commands**:
+
 ```bash
 wp post list --post_status=draft
 wp plugin update --all

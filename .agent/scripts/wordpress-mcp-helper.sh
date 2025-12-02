@@ -47,7 +47,7 @@ print_error() {
 }
 
 # Configuration paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CONFIG_FILE="${SCRIPT_DIR}/../configs/wordpress-sites-config.json"
 MCP_ENV_FILE="${HOME}/.config/aidevops/mcp-env.sh"
 LOCAL_SITES_PATH="${HOME}/Local Sites"
@@ -252,7 +252,7 @@ generate_ssh_config() {
       "command": "$ssh_command",
       "args": [
         "$ssh_host",
-        "cd $wp_path && wp mcp-adapter serve --server=$server --user=$user"
+        "cd $wp_path && wp mcp-adapter serve --server=$server --user=$user" || exit
       ]
     }
   }

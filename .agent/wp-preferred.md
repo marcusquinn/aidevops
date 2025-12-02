@@ -19,6 +19,7 @@
 - **Flying**: Analytics, Pages, Scripts (performance suite)
 
 **Quick Install (minimal stack)**:
+
 ```bash
 wp plugin install antispam-bee compressx fluent-smtp kadence-blocks simple-cloudflare-turnstile --activate
 wp theme install kadence --activate

@@ -1,6 +1,7 @@
 # WordPress Development & Debugging Subagent
 
 ---
+
 description: "[DEV-1] WordPress development & debugging - theme/plugin dev, testing, error diagnosis. Uses Context7 for latest docs"
 mode: subagent
 temperature: 0.2
@@ -27,6 +28,7 @@ tools:
 - **Preferred Plugins**: See `wp-preferred.md` for curated recommendations
 
 **Dependency Checks** (run first):
+
 ```bash
 php -v          # >= 7.4
 composer -V     # Package manager
@@ -40,6 +42,7 @@ node -v         # >= 18 (for HTTP transport, wp-env, Playground)
 - Requires: WordPress Abilities API plugin
 
 **Testing Environments**:
+
 | Environment | Best For | Command |
 |-------------|----------|---------|
 | WordPress Playground | Quick testing | `npx @wp-playground/cli server` |
@@ -161,6 +164,7 @@ For HTTP transport, create an Application Password:
 3. Enter name: `mcp-adapter-dev`
 4. Click "Add New Application Password"
 5. Store securely:
+
    ```bash
    setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"
    ```
