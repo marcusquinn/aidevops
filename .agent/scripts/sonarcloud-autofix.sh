@@ -14,11 +14,11 @@ readonly YELLOW='\033[1;33m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
-print_header() { echo -e "${PURPLE}$1${NC}"; }
-print_info() { echo -e "${BLUE}$1${NC}"; }
-print_success() { echo -e "${GREEN}✅ $1${NC}"; }
-print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
-print_error() { echo -e "${RED}❌ $1${NC}"; }
+print_header() { local msg="$1"; echo -e "${PURPLE}$msg${NC}"; return 0; }
+print_info() { local msg="$1"; echo -e "${BLUE}$msg${NC}"; return 0; }
+print_success() { local msg="$1"; echo -e "${GREEN}✅ $msg${NC}"; return 0; }
+print_warning() { local msg="$1"; echo -e "${YELLOW}⚠️  $msg${NC}"; return 0; }
+print_error() { local msg="$1"; echo -e "${RED}❌ $msg${NC}"; return 0; }
 
 # Fix missing return statements (S7682)
 fix_missing_returns() {
