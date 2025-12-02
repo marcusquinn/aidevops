@@ -13,11 +13,10 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
 # Print functions
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-    local _arg1="$1"
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $_arg1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $_arg1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $_arg1" >&2; }
+print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; return 0; }
+print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 0; }
+print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
+print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -120,7 +119,6 @@ verify_deployment() {
         print_error "Some templates failed to deploy"
         return 1
     fi
-    return 0
 }
 
 main() {

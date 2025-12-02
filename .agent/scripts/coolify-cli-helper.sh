@@ -163,7 +163,6 @@ start_local_dev_server() {
 }
 
 start_local_server() {
-    local _project_path="$1"
     local port="$2"
     
     print_info "Starting local development server on http://localhost:$port"
@@ -438,7 +437,6 @@ add_context() {
 # ------------------------------------------------------------------------------
 
 build_project() {
-    local _context_name="$1"
     local project_path="${2:-.}"
 
     print_info "Building project locally..."

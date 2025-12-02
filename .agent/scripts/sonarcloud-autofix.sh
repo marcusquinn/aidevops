@@ -55,8 +55,6 @@ fix_missing_returns() {
 
 # Fix positional parameter assignments (S7679)
 fix_positional_parameters() {
-    local _arg1="$1"
-    local _arg2="$2"
     local file="$1"
     print_info "Fixing positional parameter assignments in: $file"
     
@@ -78,7 +76,6 @@ fix_positional_parameters() {
 
 # Add default case to switch statements (S131)
 fix_missing_default_case() {
-    local _arg1="$1"
     local file="$1"
     print_info "Adding default cases to switch statements in: $file"
     
@@ -127,7 +124,6 @@ apply_sonarcloud_fixes() {
 
 # Main function
 main() {
-    local _arg2="$2"
     print_header "SonarCloud Auto-Fix Tool"
     
     case "${1:-help}" in

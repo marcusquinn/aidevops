@@ -68,8 +68,8 @@ get_server_config() {
         *)
             echo ""
             ;;
-esac
-
+    esac
+    return 0
 }
 
 # List all available servers

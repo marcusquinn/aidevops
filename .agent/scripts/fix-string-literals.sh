@@ -67,7 +67,6 @@ find_repeated_strings() {
 
 # Find repeated strings across all shell files
 analyze_repeated_strings() {
-    local _arg1="$1"
     local target_dir="${1:-.}"
     
     print_header "Analyzing Repeated String Literals"
@@ -228,7 +227,6 @@ show_help() {
 
 # Main function
 main() {
-    local _arg1="$1"
     local command="${1:-analyze}"
     local target="${2:-.}"
 

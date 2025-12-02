@@ -75,7 +75,6 @@ log() {
 }
 
 rotate_logs() {
-    local _arg1="$1"
     log "INFO" "Checking log retention policy (${RETENTION_DAYS_LOGS} days)..."
     
     if [[ ! -f "$LOG_FILE" ]]; then
@@ -279,7 +278,6 @@ show_help() {
 }
 
 main() {
-    local _arg1="$1"
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$_arg1" in

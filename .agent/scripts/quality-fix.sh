@@ -130,7 +130,6 @@ fix_return_statements() {
 }
 
 fix_positional_parameters() {
-    local _arg1="$1"
     print_info "Fixing positional parameter violations (S7679)..."
     
     local files_fixed=0

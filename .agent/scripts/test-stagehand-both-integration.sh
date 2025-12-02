@@ -159,7 +159,6 @@ test_documentation_completeness() {
 
 # Test helper script consistency
 test_helper_consistency() {
-    local _arg1="$1"
     print_info "Testing helper script consistency..."
     
     local js_helper="${SCRIPT_DIR}/../../.agent/scripts/stagehand-helper.sh"

@@ -311,8 +311,6 @@ EOF
 
 # Setup CapSolver integration for CAPTCHA solving
 capsolver_setup() {
-    local _arg1="$1"
-    local _arg3="$3"
     print_header "Setting up CapSolver Integration for CAPTCHA Solving"
 
     local capsolver_config="$CONFIG_DIR/capsolver-config.json"

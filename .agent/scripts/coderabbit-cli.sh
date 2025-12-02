@@ -100,7 +100,6 @@ get_coderabbit_reviews() {
 
 # Apply CodeRabbit auto-fixes
 apply_coderabbit_fixes() {
-    local _arg1="$1"
     print_header "Applying CodeRabbit Auto-Fixes"
 
     local file="${1:-}"
@@ -378,7 +377,6 @@ show_help() {
 
 # Main function
 main() {
-    local _arg2="$2"
     local command="${1:-help}"
 
     case "$command" in

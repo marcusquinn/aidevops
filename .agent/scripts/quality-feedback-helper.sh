@@ -422,7 +422,7 @@ main() {
     
     # If commit SHA provided, use it directly
     if [[ -n "$commit_sha" ]]; then
-        get_sha() { echo "$commit_sha"; }
+        get_sha() { echo "$commit_sha"; return 0; }
     fi
     
     case "$command" in
