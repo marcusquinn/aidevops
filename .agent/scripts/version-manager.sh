@@ -226,20 +226,12 @@ create_github_release() {
             return 1
         fi
     else
-        # Fallback to API-based approach
-        print_info "GitHub CLI not available, trying API-based approach"
-
-        local api_helper="$REPO_ROOT/.agent/scripts/github-release-helper.sh"
-        if [[ -x "$api_helper" ]]; then
-            "$api_helper" create "$version"
-            return $?
-        else
-            print_warning "GitHub release creation skipped - no available method"
-            print_info "Options:"
-            print_info "1. Install GitHub CLI: brew install gh (macOS)"
-            print_info "2. Set GITHUB_TOKEN environment variable for API access"
-            return 0
-        fi
+        # GitHub CLI not available
+        print_warning "GitHub release creation skipped - GitHub CLI not available"
+        print_info "To enable GitHub releases:"
+        print_info "1. Install GitHub CLI: brew install gh (macOS)"
+        print_info "2. Authenticate: gh auth login"
+        return 0
     fi
     return 0
 }
