@@ -36,11 +36,12 @@ The AI DevOps Framework uses professional semantic versioning with automated too
 - **Purpose**: Intelligent version detection from commit messages
 - **Capabilities**: Automatic version bumping based on commit patterns
 
-### GitHub Integration: github-release-helper.sh
+### GitHub Integration
 
-- **Location**: `.agent/scripts/github-release-helper.sh`
-- **Purpose**: GitHub release creation via API
-- **Capabilities**: API-based release creation, release checking
+GitHub releases are created via `gh` CLI (preferred) or GitHub API fallback:
+- **Primary**: `gh release create` with keyring-based authentication
+- **Fallback**: GitHub API with `GITHUB_TOKEN` environment variable
+- **Managed by**: `version-manager.sh github-release` command
 
 ## Usage Guide
 
@@ -194,11 +195,11 @@ gh auth login
 #### **2. GitHub API (Fallback)**
 
 ```bash
-# Set GitHub token
+# Set GitHub token (only needed if gh CLI not authenticated)
 export GITHUB_TOKEN=your_personal_access_token
 
-# Create release via API
-./.agent/scripts/github-release-helper.sh create 1.3.0
+# Create release via version-manager
+./.agent/scripts/version-manager.sh github-release
 ```
 
 #### **3. Manual Creation**
@@ -213,12 +214,10 @@ If neither method is available, the system will skip GitHub release creation wit
 
 ## Version History Tracking
 
-### Current Version Progression
+Version history is maintained in CHANGELOG.md. Key milestones:
 
-- **v1.0.0**: Initial comprehensive framework release
-- **v1.1.0**: Version management system and branding consistency
-- **v1.2.0**: Pandoc document conversion integration
-- **v1.3.0**: Agno AgentOS local AI integration
+- **v1.x**: Initial framework with version management, Pandoc, Agno integration
+- **v2.x**: Enhanced agent architecture, code quality automation, MCP integrations
 
 ### **Semantic Versioning Rules**
 
