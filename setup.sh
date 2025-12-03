@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.3.3
+# Version: 2.5.0
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -532,6 +532,50 @@ setup_nodejs_env() {
     fi
 }
 
+# Setup Augment Context Engine MCP
+setup_augment_context_engine() {
+    print_info "Setting up Augment Context Engine MCP..."
+
+    # Check Node.js version (requires 22+)
+    if ! command -v node &> /dev/null; then
+        print_warning "Node.js not found - Augment Context Engine setup skipped"
+        print_info "Install Node.js 22+ to enable Augment Context Engine"
+        return
+    fi
+
+    local node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    if [[ $node_version -lt 22 ]]; then
+        print_warning "Node.js 22+ required for Augment Context Engine, found v$node_version"
+        print_info "Install: brew install node@22 (macOS) or nvm install 22"
+        return
+    fi
+
+    # Check if auggie is installed
+    if ! command -v auggie &> /dev/null; then
+        print_warning "Auggie CLI not found"
+        print_info "Install with: npm install -g @augmentcode/auggie@prerelease"
+        print_info "Then run: auggie login"
+        return
+    fi
+
+    # Check if logged in
+    if [[ ! -f "$HOME/.augment/session.json" ]]; then
+        print_warning "Auggie not logged in"
+        print_info "Run: auggie login"
+        return
+    fi
+
+    print_success "Auggie CLI found and authenticated"
+
+    # The actual MCP configuration is handled by ai-cli-config.sh
+    # which is called via configure_ai_clis
+    # This function just validates prerequisites
+
+    print_info "Augment Context Engine will be configured by ai-cli-config.sh"
+    print_info "Supported tools: OpenCode, Cursor, Gemini CLI, Claude Code, Droid"
+    print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
+}
+
 # Main setup function
 main() {
     echo "🤖 AI DevOps Framework Setup"
@@ -553,6 +597,7 @@ main() {
     configure_ai_clis
     setup_python_env
     setup_nodejs_env
+    setup_augment_context_engine
 
     echo ""
     print_success "🎉 Setup complete!"
@@ -571,6 +616,12 @@ main() {
     echo "For development on aidevops framework itself:"
     echo "  See ~/Git/aidevops/AGENTS.md"
     echo ""
+    echo "OpenCode Primary Agents (12 total, Tab to switch):"
+    echo "• Plan+      - Enhanced planning with context tools (read-only)"
+    echo "• Build+     - Enhanced build with context tools (full access)"
+    echo "• Accounting, AI-DevOps, Content, Health, Legal, Marketing,"
+    echo "  Research, Sales, SEO, WordPress"
+    echo ""
     echo "AI CLI Tools (configured to read AGENTS.md automatically):"
     echo "• aider-guided    - Aider with AGENTS.md context"
     echo "• claude-guided   - Claude CLI with AGENTS.md context"
@@ -579,6 +630,11 @@ main() {
     echo "• ai-with-context - Universal wrapper for any AI tool"
     echo "• agents          - View repository AGENTS.md"
     echo "• cdai            - Navigate to AI framework"
+    echo ""
+    echo "MCP Integrations:"
+    echo "• Augment Context Engine - Semantic codebase retrieval"
+    echo "• Context7               - Real-time library documentation"
+    echo "• Repomix                - Token-efficient codebase packing"
     echo ""
     echo "AI Memory Files (created for comprehensive tool support):"
     echo "• ~/CLAUDE.md     - Claude CLI memory file"

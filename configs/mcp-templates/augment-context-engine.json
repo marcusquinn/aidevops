@@ -1,0 +1,113 @@
+{
+  "_comment": "Augment Context Engine MCP configuration snippets for various AI tools",
+  "_documentation": "https://docs.augmentcode.com/context-services/mcp/overview",
+  "_install": "npm install -g @augmentcode/auggie@prerelease && auggie login",
+
+  "opencode": {
+    "_file": "~/.config/opencode/opencode.json",
+    "_section": "mcp",
+    "augment-context-engine": {
+      "type": "local",
+      "command": ["auggie", "--mcp"],
+      "enabled": true
+    }
+  },
+
+  "claude_code_command": "claude mcp add-json auggie-mcp --scope user '{\"type\":\"stdio\",\"command\":\"auggie\",\"args\":[\"--mcp\"]}'",
+
+  "cursor_macos": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "augment-context-engine": {
+        "command": "bash",
+        "args": ["-c", "auggie --mcp -m default -w \"${WORKSPACE_FOLDER_PATHS%%,*}\""]
+      }
+    }
+  },
+
+  "cursor_windows": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "augment-context-engine": {
+        "command": "powershell",
+        "args": ["-Command", "auggie --mcp -m default -w \"($env:WORKSPACE_FOLDER_PATHS -split ',')[0]\""]
+      }
+    }
+  },
+
+  "zed_macos": {
+    "_method": "Custom Server UI",
+    "Augment-Context-Engine": {
+      "command": "bash",
+      "args": ["-c", "auggie -m default --mcp -w $(pwd)"],
+      "env": {}
+    }
+  },
+
+  "github_copilot": {
+    "_file": ".vscode/mcp.json (project root)",
+    "servers": {
+      "augmentcode": {
+        "type": "stdio",
+        "command": "auggie",
+        "args": ["--mcp", "-m", "default"]
+      }
+    },
+    "inputs": []
+  },
+
+  "kilo_code": {
+    "_method": "Global MCP Config",
+    "mcpServers": {
+      "augment-context-engine": {
+        "command": "auggie",
+        "type": "stdio",
+        "args": ["--mcp"],
+        "disabled": false,
+        "alwaysAllow": ["codebase-retrieval"]
+      }
+    }
+  },
+
+  "kiro": {
+    "_method": "Command Palette: Kiro: Open user MCP config (JSON)",
+    "mcpServers": {
+      "Augment-Context-Engine": {
+        "command": "auggie",
+        "args": ["--mcp", "-m", "default", "-w", "./"],
+        "disabled": false,
+        "autoApprove": ["codebase-retrieval"]
+      }
+    }
+  },
+
+  "antigravity": {
+    "_method": "MCP server icon → Manage → View raw config",
+    "mcpServers": {
+      "augment-context-engine": {
+        "command": "auggie",
+        "args": ["--mcp", "-m", "default", "-w", "/path/to/your/project"]
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_file": "~/.gemini/settings.json",
+    "mcpServers": {
+      "augment-context-engine": {
+        "command": "auggie",
+        "args": ["--mcp"]
+      }
+    }
+  },
+
+  "droid_command": "droid mcp add augment-code \"auggie\" --mcp",
+
+  "with_env_vars": {
+    "_description": "For CI/CD - add env section to any config",
+    "env": {
+      "AUGMENT_API_TOKEN": "your-access-token",
+      "AUGMENT_API_URL": "your-tenant-url"
+    }
+  }
+}

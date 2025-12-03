@@ -66,9 +66,32 @@ try:
 except:
     config = {"$schema": "https://opencode.ai/config.json"}
 
-# Primary agents in desired order (Build+ first, then alphabetical)
+# Primary agents in desired order (Plan+ first, Build+ second, then alphabetical)
 # Each agent specifies which MCP tools it can access
+# All agents get augment-context-engine_* for semantic codebase retrieval
 primary_agents = {
+    "Plan+": {
+        "description": "Read ~/.aidevops/agents/plan-plus.md",
+        "mode": "primary",
+        "temperature": 0.2,
+        "permission": {
+            "edit": "deny",
+            "bash": "ask"
+        },
+        "tools": {
+            "write": False,
+            "edit": False,
+            "bash": True,
+            "read": True,
+            "glob": True,
+            "grep": True,
+            "webfetch": True,
+            "task": True,
+            "context7_*": True,
+            "augment-context-engine_*": True,
+            "repomix_*": True
+        }
+    },
     "Build+": {
         "description": "Read ~/.aidevops/agents/build-plus.md",
         "mode": "primary",
@@ -82,7 +105,9 @@ primary_agents = {
             "grep": True,
             "webfetch": True,
             "task": True,
-            "context7_*": True
+            "context7_*": True,
+            "augment-context-engine_*": True,
+            "repomix_*": True
         }
     },
     "Accounting": {
@@ -98,7 +123,8 @@ primary_agents = {
             "grep": True,
             "webfetch": True,
             "task": True,
-            "quickfile_*": True
+            "quickfile_*": True,
+            "augment-context-engine_*": True
         }
     },
     "AI-DevOps": {
@@ -115,6 +141,7 @@ primary_agents = {
             "webfetch": True,
             "task": True,
             "context7_*": True,
+            "augment-context-engine_*": True,
             "repomix_*": True
         }
     },
@@ -126,7 +153,8 @@ primary_agents = {
             "write": True,
             "edit": True,
             "read": True,
-            "webfetch": True
+            "webfetch": True,
+            "augment-context-engine_*": True
         }
     },
     "Health": {
@@ -135,7 +163,8 @@ primary_agents = {
         "temperature": 0.2,
         "tools": {
             "write": True,
-            "read": True
+            "read": True,
+            "augment-context-engine_*": True
         }
     },
     "Legal": {
@@ -144,7 +173,8 @@ primary_agents = {
         "temperature": 0.1,
         "tools": {
             "write": True,
-            "read": True
+            "read": True,
+            "augment-context-engine_*": True
         }
     },
     "Marketing": {
@@ -154,7 +184,8 @@ primary_agents = {
         "tools": {
             "write": True,
             "read": True,
-            "webfetch": True
+            "webfetch": True,
+            "augment-context-engine_*": True
         }
     },
     "Research": {
@@ -165,7 +196,8 @@ primary_agents = {
             "read": True,
             "webfetch": True,
             "bash": True,
-            "context7_*": True
+            "context7_*": True,
+            "augment-context-engine_*": True
         }
     },
     "Sales": {
@@ -175,7 +207,8 @@ primary_agents = {
         "tools": {
             "write": True,
             "read": True,
-            "webfetch": True
+            "webfetch": True,
+            "augment-context-engine_*": True
         }
     },
     "SEO": {
@@ -188,7 +221,8 @@ primary_agents = {
             "bash": True,
             "webfetch": True,
             "gsc_*": True,
-            "ahrefs_*": True
+            "ahrefs_*": True,
+            "augment-context-engine_*": True
         }
     },
     "WordPress": {
@@ -203,7 +237,8 @@ primary_agents = {
             "glob": True,
             "grep": True,
             "localwp_*": True,
-            "context7_*": True
+            "context7_*": True,
+            "augment-context-engine_*": True
         }
     }
 }
@@ -257,8 +292,10 @@ echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
 
 echo ""
 echo -e "${GREEN}Done!${NC}"
-echo "  Primary agents: 11 (in opencode.json, Tab-switchable)"
+echo "  Primary agents: 12 (in opencode.json, Tab-switchable)"
 echo "  Subagents: $subagent_count (in ~/.config/opencode/agent/, @mentionable)"
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
+echo ""
+echo "Tab order: Plan+ → Build+ → Accounting → AI-DevOps → Content → ..."
 echo ""
 echo "Restart OpenCode to load new configuration."

@@ -765,6 +765,192 @@ EOF
     return 0
 }
 
+# Function to configure Augment Context Engine MCP for various AI tools
+configure_augment_context_engine_mcp() {
+    log_info "Configuring Augment Context Engine MCP for AI tools..."
+
+    # Check if auggie is installed
+    if ! command -v auggie >/dev/null 2>&1; then
+        log_warning "Auggie CLI not found - skipping Augment Context Engine MCP setup"
+        log_info "Install with: npm install -g @augmentcode/auggie@prerelease"
+        log_info "Then run: auggie login"
+        return 0
+    fi
+
+    # Check if logged in
+    if [[ ! -f "$HOME/.augment/session.json" ]]; then
+        log_warning "Auggie not logged in - skipping Augment Context Engine MCP setup"
+        log_info "Run: auggie login"
+        return 0
+    fi
+
+    log_success "Auggie CLI found and authenticated"
+
+    # Configure OpenCode
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    if [[ -f "$opencode_config" ]]; then
+        log_info "Configuring Augment Context Engine for OpenCode..."
+        # Use Python to safely merge MCP config
+        python3 << PYEOF
+import json
+import sys
+
+config_path = "$opencode_config"
+
+try:
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+except:
+    config = {"\$schema": "https://opencode.ai/config.json"}
+
+# Add MCP server if not present
+if 'mcp' not in config:
+    config['mcp'] = {}
+
+if 'augment-context-engine' not in config['mcp']:
+    config['mcp']['augment-context-engine'] = {
+        "type": "local",
+        "command": ["auggie", "--mcp"],
+        "enabled": True
+    }
+    print("Added augment-context-engine MCP to OpenCode")
+else:
+    print("augment-context-engine MCP already configured in OpenCode")
+
+# Add to tools section (disabled globally, enabled per-agent)
+if 'tools' not in config:
+    config['tools'] = {}
+
+if 'augment-context-engine_*' not in config['tools']:
+    config['tools']['augment-context-engine_*'] = False
+    print("Added augment-context-engine_* to tools (disabled globally)")
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+PYEOF
+        log_success "OpenCode configured for Augment Context Engine"
+    fi
+
+    # Configure Cursor
+    local cursor_config="$HOME/.cursor/mcp.json"
+    if [[ -d "$HOME/.cursor" ]]; then
+        log_info "Configuring Augment Context Engine for Cursor..."
+        if [[ -f "$cursor_config" ]]; then
+            # Merge with existing config
+            python3 << PYEOF
+import json
+
+config_path = "$cursor_config"
+
+try:
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+except:
+    config = {}
+
+if 'mcpServers' not in config:
+    config['mcpServers'] = {}
+
+if 'augment-context-engine' not in config['mcpServers']:
+    config['mcpServers']['augment-context-engine'] = {
+        "command": "bash",
+        "args": ["-c", "auggie --mcp -m default -w \"\${WORKSPACE_FOLDER_PATHS%%,*}\""]
+    }
+    print("Added augment-context-engine to Cursor")
+else:
+    print("augment-context-engine already configured in Cursor")
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+PYEOF
+        else
+            # Create new config
+            cat > "$cursor_config" << 'EOF'
+{
+  "mcpServers": {
+    "augment-context-engine": {
+      "command": "bash",
+      "args": ["-c", "auggie --mcp -m default -w \"${WORKSPACE_FOLDER_PATHS%%,*}\""]
+    }
+  }
+}
+EOF
+        fi
+        log_success "Cursor configured for Augment Context Engine"
+    fi
+
+    # Configure Gemini CLI
+    local gemini_config="$HOME/.gemini/settings.json"
+    if [[ -d "$HOME/.gemini" ]]; then
+        log_info "Configuring Augment Context Engine for Gemini CLI..."
+        if [[ -f "$gemini_config" ]]; then
+            # Merge with existing config
+            python3 << PYEOF
+import json
+
+config_path = "$gemini_config"
+
+try:
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+except:
+    config = {}
+
+if 'mcpServers' not in config:
+    config['mcpServers'] = {}
+
+if 'augment-context-engine' not in config['mcpServers']:
+    config['mcpServers']['augment-context-engine'] = {
+        "command": "auggie",
+        "args": ["--mcp"]
+    }
+    print("Added augment-context-engine to Gemini CLI")
+else:
+    print("augment-context-engine already configured in Gemini CLI")
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+PYEOF
+        else
+            # Create new config with MCP
+            cat > "$gemini_config" << 'EOF'
+{
+  "mcpServers": {
+    "augment-context-engine": {
+      "command": "auggie",
+      "args": ["--mcp"]
+    }
+  }
+}
+EOF
+        fi
+        log_success "Gemini CLI configured for Augment Context Engine"
+    fi
+
+    # Configure Claude Code (if installed)
+    if command -v claude >/dev/null 2>&1; then
+        log_info "Configuring Augment Context Engine for Claude Code..."
+        # Check if already configured
+        if claude mcp list 2>/dev/null | grep -q "auggie-mcp"; then
+            log_info "auggie-mcp already configured in Claude Code"
+        else
+            claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"]}' 2>/dev/null || true
+            log_success "Claude Code configured for Augment Context Engine"
+        fi
+    fi
+
+    # Configure Droid (if installed)
+    if command -v droid >/dev/null 2>&1; then
+        log_info "Configuring Augment Context Engine for Droid..."
+        droid mcp add augment-code "auggie" --mcp 2>/dev/null || true
+        log_success "Droid configured for Augment Context Engine"
+    fi
+
+    log_success "Augment Context Engine MCP configured for detected AI tools"
+    log_info "Verification prompt: 'What is this project? Please use codebase retrieval tool.'"
+    return 0
+}
+
 # Main configuration function
 main() {
     echo "🤖 AI CLI Configuration Script"
@@ -794,6 +980,7 @@ main() {
     create_ai_wrapper
     create_ai_memory_files
     create_project_memory_files
+    configure_augment_context_engine_mcp
 
     echo
     log_success "All AI CLI tools configured to read AGENTS.md automatically!"
@@ -806,6 +993,10 @@ main() {
     echo "  • ai-with-context - Universal wrapper for any AI tool"
     echo "  • agents          - View repository AGENTS.md"
     echo "  • cdai            - Navigate to AI framework"
+    echo
+    log_info "MCP Integrations:"
+    echo "  • Augment Context Engine - Semantic codebase retrieval"
+    echo "  • Verification: 'What is this project? Please use codebase retrieval tool.'"
     echo
     log_info "Next steps:"
     echo "  1. Restart your shell: source ~/.zshrc (or ~/.bashrc)"
