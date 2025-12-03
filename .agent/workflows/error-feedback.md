@@ -131,7 +131,7 @@ cat test-results.json | jq '.failures'
 
 ```bash
 # Universal quality check (aidevops)
-bash ~/git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/quality-check.sh
 
 # ShellCheck (bash scripts)
 shellcheck script.sh
@@ -150,10 +150,10 @@ composer phpcs
 
 ```bash
 # Codacy auto-fix
-bash ~/git/aidevops/.agent/scripts/codacy-cli.sh analyze --fix
+bash ~/Git/aidevops/.agent/scripts/codacy-cli.sh analyze --fix
 
 # Qlty auto-format
-bash ~/git/aidevops/.agent/scripts/qlty-cli.sh fmt --all
+bash ~/Git/aidevops/.agent/scripts/qlty-cli.sh fmt --all
 
 # ESLint auto-fix
 npx eslint . --fix
@@ -543,7 +543,7 @@ gh run view {id} --log-failed
 gh pr checks
 
 # Run local quality check
-bash ~/git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/quality-check.sh
 ```
 
 ### Common Fix Commands
@@ -559,6 +559,6 @@ npm run lint:fix
 npm run typecheck
 
 # Quality issues
-bash ~/git/aidevops/.agent/scripts/codacy-cli.sh analyze --fix
-bash ~/git/aidevops/.agent/scripts/qlty-cli.sh fmt --all
+bash ~/Git/aidevops/.agent/scripts/codacy-cli.sh analyze --fix
+bash ~/Git/aidevops/.agent/scripts/qlty-cli.sh fmt --all
 ```

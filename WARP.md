@@ -426,8 +426,8 @@ bash .agent/scripts/validate-mcp-integrations.sh
 
 **⚠️ CRITICAL**: Use these directories for AI operations:
 
-- **`~/.agent/tmp/`** - Temporary files during operations (session-specific)
-- **`~/.agent/memory/`** - Persistent memory across sessions (patterns, preferences)
+- **`~/.aidevops/.agent-workspace/tmp/`** - Temporary files during operations (session-specific)
+- **`~/.aidevops/.agent-workspace/memory/`** - Persistent memory across sessions (patterns, preferences)
 
 **DO NOT** store credentials or sensitive data in these directories.
 

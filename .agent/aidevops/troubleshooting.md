@@ -1,17 +1,29 @@
-# MCP Integrations Troubleshooting Guide
+# Troubleshooting Guide
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Chrome DevTools Issues**: Install Chrome Canary, fix permissions (`sudo chown -R $(whoami) ~/.cache/puppeteer`)
-- **Playwright Issues**: Install browsers (`npx playwright install`), increase timeout
-- **API Authentication**: Verify keys with curl, check env vars (`echo $AHREFS_API_KEY`)
-- **Debug Logging**: `DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest`
-- **Log Locations**: `/tmp/chrome-mcp.log`, `/tmp/playwright-mcp.log`, `~/.mcp/logs/`
-- **Reset Config**: Backup then `rm ~/.config/mcp/config.json`, rerun setup
-- **Clear Cache**: `rm -rf ~/.cache/puppeteer ~/.cache/playwright`, reinstall browsers
-- **Diagnostics**: `bash .agent/scripts/collect-mcp-diagnostics.sh`
+**Before reporting a bug**: Check service status page first.
+
+**Service Status Pages**:
+- GitHub: https://www.githubstatus.com/
+- GitLab: https://status.gitlab.com/
+- Cloudflare: https://www.cloudflarestatus.com/
+- Hetzner: https://status.hetzner.com/
+- Hostinger: https://status.hostinger.com/
+- SonarCloud: https://sonarcloudstatus.io/
+- Codacy: https://status.codacy.com/
+- Snyk: https://status.snyk.io/
+
+**MCP Issues**:
+- Chrome DevTools: Install Chrome Canary, fix permissions
+- Playwright: Install browsers (`bunx playwright install`)
+- API Auth: Verify keys with curl, check env vars
+- Debug: `DEBUG=chrome-devtools-mcp bunx chrome-devtools-mcp@latest`
+- Diagnostics: `bash .agent/scripts/collect-mcp-diagnostics.sh`
+
+**Retry Strategy**: Use exponential backoff for transient failures
 <!-- AI-CONTEXT-END -->
 
 ## Common Issues & Solutions

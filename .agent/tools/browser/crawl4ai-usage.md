@@ -250,7 +250,7 @@ echo "Analysis complete: raw-$TIMESTAMP.json and structured-$TIMESTAMP.json"
 
 ```bash
 # Create dedicated environment file
-cat > ~/.agent/tmp/crawl4ai.env << EOF
+cat > ~/.aidevops/.agent-workspace/tmp/crawl4ai.env << EOF
 OPENAI_API_KEY=your-key-here
 LLM_PROVIDER=openai/gpt-4o-mini
 LLM_TEMPERATURE=0.7

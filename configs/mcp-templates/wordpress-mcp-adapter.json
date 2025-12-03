@@ -23,7 +23,7 @@
       ],
       "env": {
         "WP_API_URL": "https://example.com/wp-json/mcp/mcp-adapter-default-server",
-        "LOG_FILE": "~/.agent/tmp/mcp-wordpress.log",
+        "LOG_FILE": "~/.aidevops/.agent-workspace/tmp/mcp-wordpress.log",
         "WP_API_USERNAME": "YOUR_USERNAME",
         "WP_API_PASSWORD": "YOUR_APPLICATION_PASSWORD"
       }

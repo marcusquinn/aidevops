@@ -21,13 +21,13 @@ Achieves ~80% token reduction while preserving code structure understanding.
 
 ## Reference Documentation
 
-Read `~/git/aidevops/.agent/context-builder.md` for complete operational guidance.
+Read `~/Git/aidevops/.agent/context-builder.md` for complete operational guidance.
 
 ## Available Commands
 
 ```bash
 # Helper script location
-~/git/aidevops/.agent/scripts/context-builder-helper.sh
+~/Git/aidevops/.agent/scripts/context-builder-helper.sh
 
 # Compress mode (recommended) - ~80% token reduction
 context-builder-helper.sh compress [path] [style]
@@ -66,7 +66,7 @@ When Repomix MCP is enabled:
 
 ## Output Location
 
-All context files are saved to: `~/.agent/work/context/`
+All context files are saved to: `~/.aidevops/.agent-workspace/work/context/`
 
 ## Workflow Integration
 

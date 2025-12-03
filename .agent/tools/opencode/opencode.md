@@ -6,19 +6,27 @@
 
 - **Primary Agent**: `aidevops` - Full framework access
 - **Subagents**: hostinger, hetzner, wordpress, seo, code-quality, browser-automation, etc.
-- **Setup**: `.agent/scripts/setup-opencode-agents.sh install`
-- **Config**: `~/.config/opencode/opencode.json`
-- **Agents**: `~/.config/opencode/agent/*.md`
+- **Setup**: `./setup.sh` (from aidevops repo)
 - **MCPs disabled globally** - enabled per-agent to save context tokens
+
+**Critical Paths** (AI assistants often need these):
+
+| Purpose | Path |
+|---------|------|
+| Main config | `~/.config/opencode/opencode.json` |
+| Agent files | `~/.config/opencode/agent/*.md` |
+| Alternative config | `~/.opencode/` (some installations) |
+| aidevops agents | `~/.aidevops/agents/` (after setup.sh) |
+| Credentials | `~/.config/aidevops/mcp-env.sh` |
 
 **Key Commands**:
 
 ```bash
 # Install agents
-.agent/scripts/setup-opencode-agents.sh install
+.agent/scripts/generate-opencode-agents.sh
 
 # Check status
-.agent/scripts/setup-opencode-agents.sh status
+.agent/scripts/generate-opencode-agents.sh
 
 # In OpenCode:
 # - Tab to switch primary agents
@@ -36,15 +44,15 @@ OpenCode is a CLI AI assistant that supports specialized agents and MCP (Model C
 ### Prerequisites
 
 1. **OpenCode CLI** installed - https://opencode.ai
-2. **aidevops framework** cloned to `~/git/aidevops/`
+2. **aidevops framework** cloned to `~/Git/aidevops/`
 3. **MCP servers** installed (optional, per-service)
 
 ### Quick Setup
 
 ```bash
 # Run the setup script
-cd ~/git/aidevops
-.agent/scripts/setup-opencode-agents.sh install
+cd ~/Git/aidevops
+.agent/scripts/generate-opencode-agents.sh
 ```
 
 This creates:
@@ -292,12 +300,36 @@ brew install mcp-local-wp
 
 ## File Locations
 
-| File | Purpose |
-|------|---------|
-| `~/.config/opencode/opencode.json` | Main configuration |
-| `~/.config/opencode/agent/*.md` | Agent definitions |
-| `~/.config/aidevops/mcp-env.sh` | API credentials |
-| `~/git/aidevops/.agent/scripts/setup-opencode-agents.sh` | Setup script |
+**OpenCode Configuration:**
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `~/.config/opencode/opencode.json` | Main configuration | MCP servers, agents, tools |
+| `~/.config/opencode/agent/*.md` | Agent markdown files | Per-agent instructions |
+| `~/.opencode/` | Alternative location | Some installations use this |
+| `~/.opencode/agent/` | Alternative agent location | Check if ~/.config not working |
+
+**aidevops Integration:**
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `~/.aidevops/agents/` | Deployed aidevops agents | Created by setup.sh |
+| `~/.config/aidevops/mcp-env.sh` | API credentials | 600 permissions |
+| `~/Git/aidevops/.agent/` | Source agents | Development repo |
+| `~/Git/aidevops/setup.sh` | Deployment script | Copies to ~/.aidevops/ |
+
+**Troubleshooting Path Issues:**
+
+```bash
+# Check which OpenCode config is active
+ls -la ~/.config/opencode/ ~/.opencode/ 2>/dev/null
+
+# Verify agent deployment
+ls -la ~/.aidevops/agents/ 2>/dev/null
+
+# Check if aidevops agents are referenced
+grep -l "aidevops" ~/.config/opencode/agent/*.md 2>/dev/null
+```
 
 ## Continuous Improvement with @agent-review
 

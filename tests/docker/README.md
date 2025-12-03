@@ -20,6 +20,6 @@ docker-compose build --no-cache
 ## What's Tested
 
 - Syntax validation for all 87+ scripts
-- setup-opencode-agents.sh (help, status, install)
+- generate-opencode-agents.sh (help, status, install)
 - setup-local-api-keys.sh (help, list, set)
 - setup-mcp-integrations.sh (help)

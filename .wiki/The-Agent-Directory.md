@@ -99,7 +99,7 @@ AI assistants can:
 2. **Retrieve** context in future sessions
 3. **Update** as they learn more about your workflow
 
-**Note:** Actual memory files are stored in `~/.agent/memory/` (outside Git).
+**Note:** Actual memory files are stored in `~/.aidevops/.agent-workspace/memory/` (outside Git).
 
 ## Service Documentation (*.md files)
 

@@ -70,20 +70,20 @@ deploy_git_agents() {
 }
 
 deploy_agent_directory() {
-    local agent_dir="$HOME/.agent"
-    local target_file="$agent_dir/README.md"
+    local agent_workspace="$HOME/.aidevops/.agent-workspace"
+    local target_file="$agent_workspace/README.md"
     
-    print_info "Deploying minimal .agent directory structure..."
+    print_info "Deploying .agent-workspace directory structure..."
     
-    # Create .agent directory if it doesn't exist
-    if [[ ! -d "$agent_dir" ]]; then
-        mkdir -p "$agent_dir"
-        print_info "Created .agent directory: $agent_dir"
+    # Create workspace directories if they don't exist
+    if [[ ! -d "$agent_workspace" ]]; then
+        mkdir -p "$agent_workspace"/{work,tmp,memory}
+        print_info "Created workspace directory: $agent_workspace"
     fi
     
     # Backup existing README if it exists
     if [[ -f "$target_file" ]]; then
-        print_warning "Existing .agent/README.md found, creating backup..."
+        print_warning "Existing .agent-workspace/README.md found, creating backup..."
         cp "$target_file" "$target_file.backup.$(date +%Y%m%d_%H%M%S)"
     fi
     
@@ -99,7 +99,7 @@ verify_deployment() {
     local files_to_check=(
         "$HOME/AGENTS.md"
         "$HOME/git/AGENTS.md"
-        "$HOME/.agent/README.md"
+        "$HOME/.aidevops/.agent-workspace/README.md"
     )
     
     local all_good=true
@@ -142,4 +142,3 @@ main() {
 }
 
 main "$@"
-    return 0

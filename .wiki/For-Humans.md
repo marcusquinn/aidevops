@@ -128,7 +128,7 @@ The framework handles security automatically:
 |------|--------------|
 | `AGENTS.md` | Main instructions for AI assistants |
 | `.agent/` folder | All documentation and scripts |
-| `~/.agent/` folder | Your personal working directory |
+| `~/.aidevops/.agent-workspace/` folder | Your personal working directory |
 
 ## FAQ
 
@@ -138,7 +138,7 @@ No! Just clone the repo and tell your AI assistant about it. The AI reads the do
 
 ### Will this mess up my computer?
 
-No. The framework creates files only in organized directories (`~/.agent/work/`, etc.), never randomly in your home folder.
+No. The framework creates files only in organized directories (`~/.aidevops/.agent-workspace/work/`, etc.), never randomly in your home folder.
 
 ### Is it safe to use with my real accounts?
 

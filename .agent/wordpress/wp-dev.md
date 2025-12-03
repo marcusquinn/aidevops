@@ -23,7 +23,7 @@ tools:
 - **MCP Adapter Repo**: `~/git/wordpress/mcp-adapter`
 - **Local Sites**: `~/Local Sites/`
 - **Sites Config**: `~/.config/aidevops/wordpress-sites.json`
-- **Working Dir**: `~/.agent/work/wordpress/`
+- **Working Dir**: `~/.aidevops/.agent-workspace/work/wordpress/`
 - **Preferred Plugins**: See `wp-preferred.md` for curated recommendations
 
 **Dependency Checks** (run first):

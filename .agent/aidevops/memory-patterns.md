@@ -34,21 +34,21 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 ### **2. Claude CLI** - **IMPLEMENTED** ✅
 
 - **Memory File**: `~/CLAUDE.md` (home directory)
-- **Project File**: `~/git/aidevops/CLAUDE.md` (project-specific)
+- **Project File**: `~/Git/aidevops/CLAUDE.md` (project-specific)
 - **Behavior**: Persistent memory for Claude CLI sessions
 - **Status**: **CREATED** - Both home and project files
 
 ### **3. Gemini CLI** - **IMPLEMENTED** ✅
 
 - **Memory File**: `~/GEMINI.md` (home directory)
-- **Project File**: `~/git/aidevops/GEMINI.md` (project-specific)
+- **Project File**: `~/Git/aidevops/GEMINI.md` (project-specific)
 - **Behavior**: Persistent memory for Gemini CLI sessions
 - **Status**: **CREATED** - Both home and project files
 
 ### **4. Cursor AI** - **IMPLEMENTED** ✅
 
 - **Rules File**: `~/.cursorrules` (home directory)
-- **Project File**: `~/git/aidevops/.cursorrules` (project-specific)
+- **Project File**: `~/Git/aidevops/.cursorrules` (project-specific)
 - **Behavior**: Persistent rules and context for Cursor AI
 - **Status**: **CREATED** - Both home and project files
 
@@ -80,10 +80,10 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 ### **✅ PROJECT-LEVEL MEMORY FILES:**
 
 ```bash
-~/git/aidevops/CLAUDE.md      # Claude project memory
-~/git/aidevops/GEMINI.md      # Gemini project memory
-~/git/aidevops/.cursorrules   # Cursor project rules
-~/git/aidevops/AGENTS.md      # Authoritative source
+~/Git/aidevops/CLAUDE.md      # Claude project memory
+~/Git/aidevops/GEMINI.md      # Gemini project memory
+~/Git/aidevops/.cursorrules   # Cursor project rules
+~/Git/aidevops/AGENTS.md      # Authoritative source
 ```
 
 ### **✅ CONSISTENT MEMORY FILE CONTENT:**

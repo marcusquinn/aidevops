@@ -7,7 +7,7 @@
 - **Purpose**: Generate token-efficient context for AI coding assistants
 - **Tool**: Repomix wrapper with aidevops conventions
 - **Key Feature**: Tree-sitter compression (~80% token reduction)
-- **Output Dir**: `~/.agent/work/context/`
+- **Output Dir**: `~/.aidevops/.agent-workspace/work/context/`
 
 **Commands**:
 
@@ -78,10 +78,10 @@ The helper script is included in the aidevops framework:
 
 ```bash
 # Already available at
-~/git/aidevops/.agent/scripts/context-builder-helper.sh
+~/Git/aidevops/.agent/scripts/context-builder-helper.sh
 
 # Or add to PATH
-alias context-builder='~/git/aidevops/.agent/scripts/context-builder-helper.sh'
+alias context-builder='~/Git/aidevops/.agent/scripts/context-builder-helper.sh'
 ```
 
 ### Dependencies
@@ -176,7 +176,7 @@ Understand token distribution before packing:
 ./context-builder-helper.sh analyze . 50
 
 # Analyze specific project
-./context-builder-helper.sh analyze ~/git/aidevops 100
+./context-builder-helper.sh analyze ~/Git/aidevops 100
 ```
 
 ### 5. Remote Repository
@@ -254,10 +254,10 @@ When running as MCP server:
 
 ## Output Files
 
-All output is saved to `~/.agent/work/context/`:
+All output is saved to `~/.aidevops/.agent-workspace/work/context/`:
 
 ```
-~/.agent/work/context/
+~/.aidevops/.agent-workspace/work/context/
 ├── aidevops-full-20250129-143022.xml
 ├── aidevops-compressed-20250129-143045.xml
 ├── react-remote-20250129-150000.xml
@@ -325,7 +325,7 @@ brew install node  # macOS
 **"Permission denied"**
 
 ```bash
-chmod +x ~/.agent/scripts/context-builder-helper.sh
+chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh
 ```
 
 **Large output file**
@@ -351,11 +351,11 @@ Use the `@context-builder` subagent or call the helper directly:
 ### Manual Workflow
 
 1. Generate context: `./context-builder-helper.sh compress .`
-2. Copy output: `cat ~/.agent/work/context/myapp-*.xml | pbcopy`
+2. Copy output: `cat ~/.aidevops/.agent-workspace/work/context/myapp-*.xml | pbcopy`
 3. Paste into AI conversation with your question
 
 ## Related Documentation
 
 - [Repomix Documentation](https://repomix.com/guide/)
 - [RepoPrompt Concepts](https://repoprompt.com/docs)
-- [aidevops Framework](~/git/aidevops/AGENTS.md)
+- [aidevops Framework](~/Git/aidevops/AGENTS.md)

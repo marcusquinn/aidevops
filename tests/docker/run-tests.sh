@@ -25,8 +25,8 @@ done
 # Test setup scripts
 echo -e "\n=== Setup Script Tests ==="
 
-# setup-opencode-agents.sh
-s="${SCRIPTS_DIR}/setup-opencode-agents.sh"
+# generate-opencode-agents.sh
+s="${SCRIPTS_DIR}/generate-opencode-agents.sh"
 if "$s" help &>/dev/null; then pass "opencode help"; else fail "opencode help"; fi
 if "$s" status &>/dev/null; then pass "opencode status"; else fail "opencode status"; fi
 if "$s" install &>/dev/null; then pass "opencode install"; else fail "opencode install"; fi

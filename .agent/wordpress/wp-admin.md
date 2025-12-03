@@ -19,7 +19,7 @@ tools:
 
 - **Sites Config**: `~/.config/aidevops/wordpress-sites.json`
 - **MainWP Config**: `configs/mainwp-config.json`
-- **Working Dir**: `~/.agent/work/wordpress/`
+- **Working Dir**: `~/.aidevops/.agent-workspace/work/wordpress/`
 - **Preferred Plugins**: See `wp-preferred.md` for curated recommendations
 
 **Site Management Options**:

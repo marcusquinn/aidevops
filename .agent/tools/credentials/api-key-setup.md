@@ -6,7 +6,7 @@
 
 - **Secrets Location**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
 - **Working Dirs**: `~/.aidevops/` (agno, stagehand, reports)
-- **Setup**: `bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup`
+- **Setup**: `bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh setup`
 
 **Commands**:
 - `set <service-name> <VALUE>` - Store API key (converts to UPPER_CASE export)
@@ -39,7 +39,7 @@ This file is automatically sourced by your shell (zsh and bash) on startup.
 ### 1. Initialize Secure Storage
 
 ```bash
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
+bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
 ```
 
 This will:
@@ -148,7 +148,7 @@ cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
 
 ### NEVER Store In
 
-- Repository files (any file in `~/git/aidevops/`)
+- Repository files (any file in `~/Git/aidevops/`)
 - Documentation or code examples
 - Git-tracked configuration files
 

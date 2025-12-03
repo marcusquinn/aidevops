@@ -78,7 +78,7 @@ Fixes #123"
 # Run tests, linters, quality checks
 npm test
 composer test
-bash ~/git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/quality-check.sh
 ```
 
 **Remote Testing (When Requested):**
@@ -108,7 +108,7 @@ git push gitlab [branch-name]
 npm test
 composer test
 # Run quality checks
-bash ~/git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/quality-check.sh
 ```
 
 ### 2. Create Pull Request

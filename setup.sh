@@ -259,11 +259,159 @@ deploy_ai_templates() {
     return 0
 }
 
+# Deploy aidevops agents to user location
+deploy_aidevops_agents() {
+    print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
+    
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local source_dir="$script_dir/.agent"
+    local target_dir="$HOME/.aidevops/agents"
+    local backup_base="$HOME/.aidevops/config-backups"
+    local backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
+    
+    # Create backup if target exists
+    if [[ -d "$target_dir" ]]; then
+        mkdir -p "$backup_dir"
+        cp -R "$target_dir" "$backup_dir/"
+        print_info "Backed up existing agents to $backup_dir"
+    fi
+    
+    # Create target directory and copy agents
+    mkdir -p "$target_dir"
+    
+    # Copy all agent files and folders (excluding scripts which are large)
+    # We copy scripts separately to maintain structure
+    cp -R "$source_dir"/* "$target_dir/"
+    
+    if [[ $? -eq 0 ]]; then
+        print_success "Deployed agents to $target_dir"
+        
+        # Set permissions on scripts
+        chmod +x "$target_dir/scripts/"*.sh 2>/dev/null || true
+        
+        # Count what was deployed
+        local agent_count
+        agent_count=$(find "$target_dir" -name "*.md" -type f | wc -l | tr -d ' ')
+        local script_count
+        script_count=$(find "$target_dir/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
+        
+        print_info "Deployed $agent_count agent files and $script_count scripts"
+    else
+        print_error "Failed to deploy agents"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Inject aidevops reference into AI assistant AGENTS.md files
+inject_agents_reference() {
+    print_info "Adding aidevops reference to AI assistant configurations..."
+    
+    local reference_line='Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.'
+    
+    # AI assistant agent directories - these get cleaned and receive AGENTS.md reference
+    # Format: "config_dir:agents_subdir" where agents_subdir is the folder containing agent files
+    local ai_agent_dirs=(
+        "$HOME/.config/opencode:agent"
+        "$HOME/.cursor:rules"
+        "$HOME/.claude:commands"
+        "$HOME/.continue:."
+        "$HOME/.cody:."
+        "$HOME/.opencode:."
+    )
+    
+    local updated_count=0
+    
+    for entry in "${ai_agent_dirs[@]}"; do
+        local config_dir="${entry%%:*}"
+        local agents_subdir="${entry##*:}"
+        local agents_dir="$config_dir/$agents_subdir"
+        local agents_file="$agents_dir/AGENTS.md"
+        
+        # Only process if the config directory exists (tool is installed)
+        if [[ -d "$config_dir" ]]; then
+            # Create agents subdirectory if needed
+            mkdir -p "$agents_dir"
+            
+            # Check if AGENTS.md exists and has our reference
+            if [[ -f "$agents_file" ]]; then
+                # Check first line for our reference
+                local first_line
+                first_line=$(head -1 "$agents_file" 2>/dev/null || echo "")
+                if [[ "$first_line" != *"~/.aidevops/agents/AGENTS.md"* ]]; then
+                    # Prepend reference to existing file
+                    local temp_file
+                    temp_file=$(mktemp)
+                    echo "$reference_line" > "$temp_file"
+                    echo "" >> "$temp_file"
+                    cat "$agents_file" >> "$temp_file"
+                    mv "$temp_file" "$agents_file"
+                    print_success "Added reference to $agents_file"
+                    ((updated_count++))
+                else
+                    print_info "Reference already exists in $agents_file"
+                fi
+            else
+                # Create new file with just the reference
+                echo "$reference_line" > "$agents_file"
+                print_success "Created $agents_file with aidevops reference"
+                ((updated_count++))
+            fi
+        fi
+    done
+    
+    if [[ $updated_count -eq 0 ]]; then
+        print_info "No AI assistant configs found to update (tools may not be installed yet)"
+    else
+        print_success "Updated $updated_count AI assistant configuration(s)"
+    fi
+    
+    return 0
+}
+
+# Update OpenCode configuration
+update_opencode_config() {
+    print_info "Updating OpenCode configuration..."
+    
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    local backup_base="$HOME/.aidevops/config-backups"
+    local backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
+    
+    if [[ ! -f "$opencode_config" ]]; then
+        print_info "OpenCode config not found at $opencode_config - skipping"
+        return 0
+    fi
+    
+    # Create backup
+    mkdir -p "$backup_dir"
+    cp "$opencode_config" "$backup_dir/opencode.json"
+    print_info "Backed up opencode.json to $backup_dir"
+    
+    # Generate OpenCode agent configuration
+    # - Primary agents: Added to opencode.json (for Tab order & MCP control)
+    # - Subagents: Generated as markdown in ~/.config/opencode/agent/
+    local generator_script=".agent/scripts/generate-opencode-agents.sh"
+    if [[ -f "$generator_script" ]]; then
+        print_info "Generating OpenCode agent configuration..."
+        if bash "$generator_script"; then
+            print_success "OpenCode agents configured (11 primary in JSON, subagents as markdown)"
+        else
+            print_warning "OpenCode agent generation encountered issues"
+        fi
+    else
+        print_warning "OpenCode agent generator not found at $generator_script"
+    fi
+    
+    return 0
+}
+
 # Verify repository location
 verify_location() {
     local current_dir
     current_dir="$(pwd)"
-    local expected_location="$HOME/git/aidevops"
+    local expected_location="$HOME/Git/aidevops"
 
     if [[ "$current_dir" != "$expected_location" ]]; then
         print_warning "Repository is not in the recommended location"
@@ -386,8 +534,8 @@ setup_nodejs_env() {
 
 # Main setup function
 main() {
-    echo "🤖 AI Assistant Server Access Framework Setup"
-    echo "=============================================="
+    echo "🤖 AI DevOps Framework Setup"
+    echo "============================="
     echo ""
 
     verify_location
@@ -399,6 +547,9 @@ main() {
     set_permissions
     setup_aliases
     deploy_ai_templates
+    deploy_aidevops_agents
+    inject_agents_reference
+    update_opencode_config
     configure_ai_clis
     setup_python_env
     setup_nodejs_env
@@ -406,21 +557,19 @@ main() {
     echo ""
     print_success "🎉 Setup complete!"
     echo ""
+    echo "Deployed to:"
+    echo "  ~/.aidevops/agents/     - Agent files (main agents, subagents, scripts)"
+    echo "  ~/.aidevops/config-backups/ - Backups of previous configurations"
+    echo ""
     echo "Next steps:"
     echo "1. Edit configuration files in configs/ with your actual credentials"
     echo "2. Setup Git CLI tools and authentication (shown during setup)"
-    echo "3. Configure Git CLI helpers: cp configs/*-cli-config.json.txt configs/"
-    echo "4. Customize .ai-context.md with your infrastructure details"
-    echo "5. Setup CodeRabbit CLI: bash .agent/scripts/coderabbit-cli.sh install && bash .agent/scripts/coderabbit-cli.sh setup"
-    echo "6. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
-    echo "7. Setup Codacy CLI: bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_TOKEN && bash .agent/scripts/codacy-cli.sh install"
-    echo "8. Setup AmpCode CLI: bash .agent/scripts/ampcode-cli.sh install && bash .agent/scripts/ampcode-cli.sh setup"
-    echo "9. Setup Continue.dev: bash .agent/scripts/continue-cli.sh setup"
-    echo "6. Test access: ./.agent/scripts/servers-helper.sh list"
-    echo "7. Test TOON format: ./.agent/scripts/toon-helper.sh info"
-    echo "8. Setup DSPy: ./.agent/scripts/dspy-helper.sh install && ./.agent/scripts/dspy-helper.sh test"
-    echo "9. Setup DSPyGround: ./.agent/scripts/dspyground-helper.sh install"
-    echo "10. Read documentation in .agent/ for provider-specific setup"
+    echo "3. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
+    echo "4. Test access: ./.agent/scripts/servers-helper.sh list"
+    echo "5. Read documentation: ~/.aidevops/agents/AGENTS.md"
+    echo ""
+    echo "For development on aidevops framework itself:"
+    echo "  See ~/Git/aidevops/AGENTS.md"
     echo ""
     echo "AI CLI Tools (configured to read AGENTS.md automatically):"
     echo "• aider-guided    - Aider with AGENTS.md context"

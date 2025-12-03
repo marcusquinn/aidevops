@@ -8,7 +8,7 @@
 - Version: 1.99.3 (auto-detected)
 - Global config: `~/.codeium/windsurf/memories/global_rules.md`
 - Memory file: `~/WINDSURF.md`
-- Project rules: `~/git/aidevops/.windsurfrules`
+- Project rules: `~/Git/aidevops/.windsurfrules`
 - CLI path: `~/.codeium/windsurf/bin/windsurf`
 - Aliases: `windsurf-guided` (shows AGENTS.md then launches)
 - Universal wrapper: `ai-with-context windsurf [path]`
@@ -34,7 +34,7 @@ Windsurf IDE (by Codeium) is now fully integrated into our AI-assisted DevOps fr
 
 ### **✅ PROJECT-LEVEL CONFIGURATION:**
 
-- **Project Rules**: `~/git/aidevops/.windsurfrules`
+- **Project Rules**: `~/Git/aidevops/.windsurfrules`
 - **Cascade AI Integration**: Leverages Windsurf's superior context understanding
 - **Memory Management**: Utilizes Windsurf's memory system for project continuity
 - **Terminal Integration**: Uses Windsurf's integrated terminal for DevOps operations
@@ -64,7 +64,7 @@ Windsurf's Cascade AI is specifically configured for:
 ~/WINDSURF.md                                   # Windsurf-specific memory
 
 # Project Memory Files:
-~/git/aidevops/.windsurfrules        # Project-specific rules
+~/Git/aidevops/.windsurfrules        # Project-specific rules
 ```
 
 ### **✅ CONFIGURATION CONTENT:**
@@ -105,10 +105,10 @@ ai-with-context windsurf
 cdai && windsurf .
 
 # Open specific project with context
-windsurf ~/git/aidevops
+windsurf ~/Git/aidevops
 
 # Launch with universal wrapper for full context
-ai-with-context windsurf ~/git/aidevops
+ai-with-context windsurf ~/Git/aidevops
 ```
 
 ## **🎯 WINDSURF ADVANTAGES:**
@@ -149,7 +149,7 @@ ai-with-context windsurf ~/git/aidevops
 # All Windsurf files created automatically:
 ~/.codeium/windsurf/memories/global_rules.md    ✅ Global rules
 ~/WINDSURF.md                                   ✅ Memory file
-~/git/aidevops/.windsurfrules        ✅ Project rules
+~/Git/aidevops/.windsurfrules        ✅ Project rules
 ```
 
 ## **🎉 ACHIEVEMENT SUMMARY:**

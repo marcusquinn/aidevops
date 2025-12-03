@@ -30,7 +30,7 @@ readonly SCRIPT_NAME
 readonly VERSION="1.0.0"
 
 # Default output directory
-readonly DEFAULT_OUTPUT_DIR="$HOME/.agent/work/context"
+readonly DEFAULT_OUTPUT_DIR="$HOME/.aidevops/.agent-workspace/work/context"
 
 # Colors for output
 readonly RED='\033[0;31m'
@@ -451,7 +451,7 @@ EXAMPLES:
   context-builder-helper.sh compare .
 
 OUTPUT:
-  Files are saved to: ~/.agent/work/context/
+  Files are saved to: ~/.aidevops/.agent-workspace/work/context/
   Format: {repo-name}-{mode}-{timestamp}.{style}
 
 TOKEN EFFICIENCY:

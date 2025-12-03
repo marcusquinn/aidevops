@@ -4,8 +4,8 @@
 
 ## 📍 **Authoritative Source**
 All AI assistant instructions, configurations, and documentation are maintained at:
-**Repository**: `~/git/aidevops/`
-**Documentation**: `~/git/aidevops/AGENTS.md`
+**Repository**: `~/Git/aidevops/`
+**Documentation**: `~/Git/aidevops/AGENTS.md`
 
 ## 🎯 **Primary Directive**
 AI assistants operating in this environment should:
@@ -17,8 +17,9 @@ AI assistants operating in this environment should:
 
 ## 📁 **Working Directories**
 
-- **Temporary files**: Use `~/.agent/tmp/`
-- **Persistent memory**: Use `~/.agent/memory/`
+- **Work files**: Use `~/.aidevops/.agent-workspace/work/[project]/`
+- **Temporary files**: Use `~/.aidevops/.agent-workspace/tmp/`
+- **Persistent memory**: Use `~/.aidevops/.agent-workspace/memory/`
 - **Never create temporary files** in the home directory root
 
 ## 🔐 **CRITICAL: Credential & Secret Storage**
@@ -39,8 +40,7 @@ AI assistants operating in this environment should:
 
 ### **❌ FORBIDDEN Storage Locations:**
 
-- **NEVER in `~/.agent/tmp/`** - Temporary files are not secure
-- **NEVER in `~/.agent/memory/`** - Memory files may be logged
+- **NEVER in `~/.aidevops/.agent-workspace/`** - Working files are not secure
 - **NEVER in any Git repository** - Risk of accidental commit
 - **NEVER in home directory root** - Security exposure risk
 - **NEVER in code or scripts** - Hardcoded credentials forbidden
@@ -49,13 +49,13 @@ AI assistants operating in this environment should:
 ### **🛡️ Security Commands:**
 ```bash
 # Store API keys securely
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
+bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
 
 # Or paste export commands from services
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh add 'export TOKEN="xxx"'
+bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh add 'export TOKEN="xxx"'
 
 # List configured services (keys are never displayed)
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh list
+bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh list
 
 # Verify secure storage location
 ls -la ~/.config/aidevops/
@@ -72,13 +72,13 @@ ls -la ~/.config/aidevops/
 ## 🔗 **Quick Access**
 ```bash
 # Navigate to authoritative repository
-cd ~/git/aidevops
+cd ~/Git/aidevops
 
 # View complete AI assistant documentation
-cat ~/git/aidevops/AGENTS.md
+cat ~/Git/aidevops/AGENTS.md
 
 # Access working directories
-ls ~/.agent/
+ls ~/.aidevops/.agent-workspace/
 ```
 
 ## ⚠️ **Security Warning**

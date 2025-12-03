@@ -32,7 +32,7 @@ This integration provides your AI assistant with powerful website performance au
 
 ```bash
 # Install required dependencies
-cd ~/git/aidevops
+cd ~/Git/aidevops
 ./.agent/scripts/pagespeed-helper.sh install-deps
 
 # This will install:
@@ -114,7 +114,7 @@ Add this to your AI assistant's system prompt:
 
 ```text
 For website performance optimization, use the PageSpeed and Lighthouse tools available in
-~/git/aidevops/.agent/scripts/pagespeed-helper.sh. Always provide specific,
+~/Git/aidevops/.agent/scripts/pagespeed-helper.sh. Always provide specific,
 actionable recommendations focusing on Core Web Vitals and user experience.
 ```
 

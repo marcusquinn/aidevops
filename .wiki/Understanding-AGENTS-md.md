@@ -59,7 +59,7 @@ Never expose credentials in logs, output, or error messages
 ### 📁 Working Directories
 
 ```text
-~/.agent/
+~/.aidevops/.agent-workspace/
 ├── tmp/      # Temporary files
 ├── work/     # Project files  
 └── memory/   # Persistent context

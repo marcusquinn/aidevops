@@ -4,8 +4,8 @@
 
 ## 📍 **Authoritative Source**
 All AI assistant instructions for DevOps operations are maintained at:
-**Repository**: `~/git/aidevops/`
-**Documentation**: `~/git/aidevops/AGENTS.md`
+**Repository**: `~/Git/aidevops/`
+**Documentation**: `~/Git/aidevops/AGENTS.md`
 
 ## 🎯 **Git Directory Context**
 AI assistants operating in the git directory should:
@@ -18,18 +18,18 @@ AI assistants operating in the git directory should:
 For all infrastructure, hosting, and DevOps tasks:
 ```bash
 # Use the DevOps framework
-cd ~/git/aidevops
+cd ~/Git/aidevops
 ./.agent/scripts/servers-helper.sh help
 
 # View complete provider documentation
-ls ~/git/aidevops/docs/
+ls ~/Git/aidevops/docs/
 ```
 
 ## 📁 **Working Directories**
 
-- **DevOps temporary files**: Use `~/.agent/tmp/`
-
-- **DevOps memory**: Use `~/.agent/memory/`
+- **Work files**: Use `~/.aidevops/.agent-workspace/work/[project]/`
+- **Temporary files**: Use `~/.aidevops/.agent-workspace/tmp/`
+- **Persistent memory**: Use `~/.aidevops/.agent-workspace/memory/`
 - **Project-specific work**: Use individual project directories
 
 ## 🔐 **CRITICAL: Credential & Secret Storage**
@@ -37,33 +37,27 @@ ls ~/git/aidevops/docs/
 
 ### **✅ APPROVED Storage Location:**
 
-- **API Keys & Tokens**: `~/.config/aidevops/api-keys.txt`
-- **Service Configurations**: `~/git/aidevops/configs/[service]-config.json`
+- **API Keys & Tokens**: `~/.config/aidevops/mcp-env.sh`
+- **Service Configurations**: `~/Git/aidevops/configs/[service]-config.json`
 - **File Permissions**: 600 (owner read/write only)
 
 ### **❌ FORBIDDEN Storage Locations:**
 
-- **NEVER in `~/.agent/tmp/`** - Temporary files are not secure
-
-- **NEVER in `~/.agent/memory/`** - Memory files may be logged
-
+- **NEVER in `~/.aidevops/.agent-workspace/`** - Working files are not secure
 - **NEVER in any Git repository** - Risk of accidental commit
-
 - **NEVER in home directory root** - Security exposure risk
-
 - **NEVER in code or scripts** - Hardcoded credentials forbidden
 
 ### **🛡️ Security Commands:**
 ```bash
 # Store API keys securely
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
+bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
 
 # List configured services (keys are never displayed)
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh list
+bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh list
 
-# Verify secure storage location and preview API keys
+# Verify secure storage location
 ls -la ~/.config/aidevops/
-cat ~/.config/aidevops/api-keys.txt
 ```
 
 ### **🚨 ABSOLUTE PROHIBITIONS:**
@@ -77,13 +71,13 @@ cat ~/.config/aidevops/api-keys.txt
 ## 🔗 **Framework Access**
 ```bash
 # Navigate to DevOps framework
-cd ~/git/aidevops
+cd ~/Git/aidevops
 
-# List available providers
-ls ~/git/aidevops/providers/
+# View agent documentation
+ls ~/Git/aidevops/.agent/
 
 # View setup documentation
-cat ~/git/aidevops/README.md
+cat ~/Git/aidevops/README.md
 ```
 
 ## ⚠️ **Security Warning**

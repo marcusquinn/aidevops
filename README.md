@@ -271,10 +271,10 @@ Call them in your AI assistant conversation with a simple @mention
 
 ```bash
 # Install aidevops agents for OpenCode
-.agent/scripts/setup-opencode-agents.sh install
+.agent/scripts/generate-opencode-agents.sh
 
 # Check status
-.agent/scripts/setup-opencode-agents.sh status
+.agent/scripts/generate-opencode-agents.sh  # Shows status after generation
 ```
 
 ### **Setup for Other AI Assistants**

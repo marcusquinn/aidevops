@@ -106,7 +106,7 @@ bash .agent/scripts/setup-local-api-keys.sh list
 The framework creates organized working directories:
 
 ```text
-~/.agent/
+~/.aidevops/.agent-workspace/
 ├── tmp/        # Temporary session files (auto-cleanup)
 ├── work/       # Project working directories
 │   ├── wordpress/

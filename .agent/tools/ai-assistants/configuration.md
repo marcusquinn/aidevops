@@ -14,7 +14,7 @@
 - Benefits: Consistent guidance, security protocols, unified DevOps approach
 <!-- AI-CONTEXT-END -->
 
-**Objective**: Ensure all AI CLI tools automatically read `~/AGENTS.md` and `~/git/aidevops/AGENTS.md` at the start of every session for consistent AI agent guidance.
+**Objective**: Ensure all AI CLI tools automatically read `~/AGENTS.md` and `~/Git/aidevops/AGENTS.md` at the start of every session for consistent AI agent guidance.
 
 ## Configured AI Tools
 
@@ -25,7 +25,7 @@
 - **Config File**: `~/.aider.conf.yml`
 - **Auto-reads**: Both AGENTS.md files on every session start
 - **Model**: `openrouter/anthropic/claude-sonnet-4`
-- **Working Directory**: `~/git/aidevops`
+- **Working Directory**: `~/Git/aidevops`
 - **Usage**: `aider` (automatic) or `aider-guided` (explicit)
 
 ### **2. OpenAI CLI**
@@ -62,17 +62,17 @@
 
 ```bash
 # AI tools with explicit AGENTS.md context
-alias aider-guided='aider --read ~/AGENTS.md --read ~/git/aidevops/AGENTS.md'
+alias aider-guided='aider --read ~/AGENTS.md --read ~/Git/aidevops/AGENTS.md'
 alias openai-guided='echo "Reading AGENTS.md..." && cat ~/AGENTS.md && openai'
 alias claude-guided='echo "Reading AGENTS.md..." && cat ~/AGENTS.md && claude'
 alias ai-guided='echo "Reading AGENTS.md..." && cat ~/AGENTS.md && ai-shell'
 
 # Quick AGENTS.md access
-alias agents='cat ~/git/aidevops/AGENTS.md'
+alias agents='cat ~/Git/aidevops/AGENTS.md'
 alias agents-home='cat ~/AGENTS.md'
 
 # Navigate to AI framework
-alias cdai='cd ~/git/aidevops'
+alias cdai='cd ~/Git/aidevops'
 ```
 
 ### **✅ UNIVERSAL WRAPPER:**
@@ -171,7 +171,7 @@ configure_ai_clis    # Runs .agent/scripts/ai-cli-config.sh
 
 ```bash
 # Run AI CLI configuration script
-cd ~/git/aidevops
+cd ~/Git/aidevops
 bash .agent/scripts/ai-cli-config.sh
 
 # Restart shell to load aliases
