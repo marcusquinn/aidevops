@@ -21,6 +21,7 @@
 - MainWP REST API: Fleet operations
 
 **Key Commands**:
+
 ```bash
 # LocalWP sites
 .agent/scripts/wordpress-mcp-helper.sh list-sites

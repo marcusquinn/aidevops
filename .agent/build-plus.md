@@ -38,6 +38,7 @@
 ### Context-First Development
 
 Before implementing:
+
 ```bash
 # Generate token-efficient codebase context
 .agent/scripts/context-builder-helper.sh compress [path]

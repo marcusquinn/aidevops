@@ -47,7 +47,7 @@ Guidance for:
 
 ### Important Notice
 
-This agent provides general wellness information only. Health decisions 
+This agent provides general wellness information only. Health decisions
 should be made in consultation with qualified healthcare professionals.
 
 *Extend this agent with specific health tracking tools and integrations as needed.*

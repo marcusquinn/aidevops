@@ -200,6 +200,7 @@ Preference order for code quality:
    - Use when deterministic tools insufficient
 
 **In agent instructions:**
+
 ```markdown
 # Good
 Run ShellCheck before committing. Use `@code-quality` for comprehensive analysis.
@@ -319,6 +320,7 @@ Read subagents only when task requires them.
 **Include code examples when:**
 
 1. **It's the authoritative reference** - No implementation exists elsewhere
+
    ```bash
    # Pattern for credential storage (authoritative)
    # Store actual values in ~/.config/aidevops/mcp-env.sh
@@ -326,6 +328,7 @@ Read subagents only when task requires them.
    ```
 
 2. **Security-critical template** - Must be followed exactly
+
    ```bash
    # Correct: Placeholder for secret
    curl -H "Authorization: Bearer ${API_TOKEN}" ...
@@ -335,6 +338,7 @@ Read subagents only when task requires them.
    ```
 
 3. **Command syntax reference** - The example IS the documentation
+
    ```bash
    .agent/scripts/[service]-helper.sh [command] [account] [target]
    ```
@@ -342,6 +346,7 @@ Read subagents only when task requires them.
 **Avoid code examples when:**
 
 1. **Code exists in codebase** - Use search pattern reference
+
    ```markdown
    # Bad
    Here's how to handle errors:
@@ -352,6 +357,7 @@ Read subagents only when task requires them.
    ```
 
 2. **External library patterns** - Use Context7 MCP
+
    ```markdown
    # Bad
    Here's the React Query pattern:
@@ -362,6 +368,7 @@ Read subagents only when task requires them.
    ```
 
 3. **Will become outdated** - Point to maintained source
+
    ```markdown
    # Bad
    Current API endpoint: https://api.service.com/v2/...
@@ -414,6 +421,7 @@ When code examples are used during a task:
    - Is this a single-point fix or systemic pattern?
 
 3. **Duplicate/Conflict Check** (CRITICAL):
+
    ```bash
    # Search for similar instructions
    rg "pattern" .agent/
@@ -428,6 +436,7 @@ When code examples are used during a task:
    - Flag if change might conflict with other agents
 
 5. **Request permission**:
+
    ```
    > Agent Feedback: While [task], I noticed [issue] in 
    > `.agent/[file].md`. Related instructions also exist in 

@@ -14,7 +14,7 @@
 - Compliance checklists
 - GDPR/data protection
 
-**Disclaimer**: AI assistance for legal matters is informational only. 
+**Disclaimer**: AI assistance for legal matters is informational only.
 Always consult qualified legal professionals for binding advice.
 
 <!-- AI-CONTEXT-END -->
@@ -46,8 +46,8 @@ Checklists for:
 
 ### Important Notice
 
-This agent provides informational assistance only. Legal documents and 
-compliance decisions should always be reviewed by qualified legal 
+This agent provides informational assistance only. Legal documents and
+compliance decisions should always be reviewed by qualified legal
 professionals before implementation.
 
 *Extend this agent with specific legal templates and compliance frameworks as needed.*

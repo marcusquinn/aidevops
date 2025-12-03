@@ -109,6 +109,7 @@ For versioning, releases, and git operations:
 | Feature development | `workflows/feature-development.md` |
 
 **Quick commands:**
+
 ```bash
 # Version bump and release
 .agent/scripts/version-manager.sh release [major|minor|patch]

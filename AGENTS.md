@@ -14,6 +14,7 @@
 - Alternative: `~/.opencode/`
 
 **Development Commands**:
+
 ```bash
 # Deploy agents locally
 ./setup.sh
@@ -25,10 +26,11 @@
 .agent/scripts/version-manager.sh release [major|minor|patch]
 ```
 
-**Quality Standards**: SonarCloud A-grade, ShellCheck zero violations, 
+**Quality Standards**: SonarCloud A-grade, ShellCheck zero violations,
 `local var="$1"` pattern, explicit returns
 
 **File Structure**:
+
 ```
 .agent/
 ├── AGENTS.md              # User guide (distributed)

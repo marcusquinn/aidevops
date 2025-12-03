@@ -19,6 +19,7 @@
 - Content optimization
 
 **MCP Integration**:
+
 ```bash
 # GSC queries via MCP
 gsc_search_analytics [site] [query]

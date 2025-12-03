@@ -145,7 +145,9 @@ fi
 ```
 
 # After
+
 See error handling pattern at `.agent/scripts/hostinger-helper.sh:145`
+
 ```
 
 ### Session Review Workflow

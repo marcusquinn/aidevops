@@ -17,6 +17,7 @@
 6. Updates OpenCode agent paths in `opencode.json`
 
 **Run**:
+
 ```bash
 cd ~/Git/aidevops
 ./setup.sh
@@ -86,6 +87,7 @@ Setup.sh updates `~/.config/opencode/opencode.json` agent paths to point to `~/.
 If setup.sh doesn't support your AI assistant:
 
 1. Add to your AI assistant's AGENTS.md or config:
+
    ```
    Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
    ```
@@ -107,6 +109,7 @@ Previous configs are backed up automatically.
 ### Troubleshooting
 
 **"Command not found" errors:**
+
 ```bash
 # Install missing dependencies
 brew install jq curl  # macOS
@@ -119,6 +122,7 @@ apt-get install jq curl  # Ubuntu/Debian
 - See `tools/opencode/opencode.md` for path details
 
 **Permissions issues:**
+
 ```bash
 # Ensure correct permissions
 chmod 600 ~/.config/aidevops/mcp-env.sh

@@ -40,11 +40,13 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 ## Available Tools
 
 ### System
+
 - `quickfile_system_get_account` - Account details
 - `quickfile_system_search_events` - Event log
 - `quickfile_system_create_note` - Add notes
 
 ### Clients
+
 - `quickfile_client_search` - Search clients
 - `quickfile_client_get` - Get client details
 - `quickfile_client_create` - New client
@@ -54,6 +56,7 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 - `quickfile_client_login_url` - Client portal URL
 
 ### Invoices
+
 - `quickfile_invoice_search` - Search invoices
 - `quickfile_invoice_get` - Get invoice
 - `quickfile_invoice_create` - Create invoice/estimate
@@ -64,18 +67,21 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 - `quickfile_estimate_convert_to_invoice` - Convert to invoice
 
 ### Purchases
+
 - `quickfile_purchase_search` - Search purchases
 - `quickfile_purchase_get` - Get purchase
 - `quickfile_purchase_create` - Create purchase
 - `quickfile_purchase_delete` - Delete purchase
 
 ### Suppliers
+
 - `quickfile_supplier_search` - Search suppliers
 - `quickfile_supplier_get` - Get supplier
 - `quickfile_supplier_create` - New supplier
 - `quickfile_supplier_delete` - Delete supplier
 
 ### Banking
+
 - `quickfile_bank_get_accounts` - List accounts
 - `quickfile_bank_get_balances` - Get balances
 - `quickfile_bank_search` - Search transactions
@@ -83,6 +89,7 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 - `quickfile_bank_create_transaction` - Add transaction
 
 ### Reports
+
 - `quickfile_report_profit_loss` - P&L report
 - `quickfile_report_balance_sheet` - Balance sheet
 - `quickfile_report_vat_obligations` - VAT returns
@@ -93,26 +100,31 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 ## Example Prompts
 
 ### Account Overview
+
 "Show me my QuickFile account details and this year's financial summary"
 
 ### Client Operations
+
 "Search for clients in London"
 "Create a new client for Acme Ltd with email john@acme.com"
 "Update client 12345 with new address"
 
 ### Invoice Operations
+
 "List all unpaid invoices from the last 30 days"
 "Create an invoice for client 12345 for 8 hours of consulting at £100/hour"
 "Send invoice 67890 to the client"
 "Get the PDF for invoice 67890"
 
 ### Financial Reports
+
 "Generate a profit and loss report for Q1 2024"
 "Show me the balance sheet as of today"
 "List all open VAT returns"
 "Show me the debtor ageing report"
 
 ### Purchase Operations
+
 "Record a purchase invoice from Amazon for £50 office supplies"
 "List all purchases from supplier 11111"
 

@@ -21,7 +21,7 @@
 - `troubleshooting.md` - Service status, debugging
 - `architecture.md` - Framework structure
 
-**Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP, 
+**Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP,
 Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations
 
 <!-- AI-CONTEXT-END -->
