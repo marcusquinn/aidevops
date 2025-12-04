@@ -184,6 +184,8 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ### **AI Prompt Optimization**
 
+- **[Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview)**: Semantic codebase retrieval with deep code understanding
+- **[Repomix](https://repomix.com/)**: Pack codebases into AI-friendly context (80% token reduction with compress mode)
 - **[DSPy](https://dspy.ai/)**: Framework for programming with language models
 - **[DSPyGround](https://dspyground.com/)**: Interactive playground for prompt optimization
 - **[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)**: Token-Oriented Object Notation - 20-60% token reduction for LLM prompts
