@@ -259,20 +259,20 @@ Call them in your AI assistant conversation with a simple @mention
 
 Ordered as they appear in OpenCode Tab selector and other AI assistants:
 
-| Name | File | Purpose |
-|------|------|---------|
-| Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search |
-| Build+ | `build-plus.md` | Enhanced Build with context tools (Augment, Context7) |
-| Accounting | `accounting.md` | Financial operations (QuickFile integration) |
-| AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup |
-| Content | `content.md` | Content creation workflows |
-| Health | `health.md` | Health and wellness guidance |
-| Legal | `legal.md` | Legal compliance and documentation |
-| Marketing | `marketing.md` | Marketing strategy and automation |
-| Research | `research.md` | Research and analysis tasks |
-| Sales | `sales.md` | Sales operations and CRM |
-| SEO | `seo.md` | SEO optimization, Search Console, keyword research |
-| WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) |
+| Name | File | Purpose | MCPs Enabled |
+|------|------|---------|--------------|
+| Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search | context7, augment, repomix |
+| Build+ | `build-plus.md` | Enhanced Build with context tools | context7, augment, repomix |
+| Accounting | `accounting.md` | Financial operations | quickfile, augment |
+| AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup | context7, augment, repomix |
+| Content | `content.md` | Content creation workflows | augment |
+| Health | `health.md` | Health and wellness guidance | augment |
+| Legal | `legal.md` | Legal compliance and documentation | augment |
+| Marketing | `marketing.md` | Marketing strategy and automation | augment |
+| Research | `research.md` | Research and analysis tasks | context7, augment |
+| Sales | `sales.md` | Sales operations and CRM | augment |
+| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, augment |
+| WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
 
 ### **Example Subagents with MCP Integration**
 
