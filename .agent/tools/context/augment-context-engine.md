@@ -22,12 +22,15 @@
 
 **Verification Prompt**:
 
-```
+```text
 What is this project? Please use codebase retrieval tool to get the answer.
 ```
 
 **Supported AI Tools**: OpenCode, Claude Code, Cursor, Zed, GitHub Copilot,
 Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid (Factory.AI)
+
+**Enabled for Agents**: All 12 primary agents (Plan+, Build+, Accounting,
+AI-DevOps, Content, Health, Legal, Marketing, Research, Sales, SEO, WordPress)
 
 <!-- AI-CONTEXT-END -->
 
@@ -309,7 +312,7 @@ droid mcp add augment-code "auggie" -w /path/to/project --mcp
 
 After configuring any tool, test with this prompt:
 
-```
+```text
 What is this project? Please use codebase retrieval tool to get the answer.
 ```
 
@@ -331,7 +334,7 @@ auggie token print
 
 Output:
 
-```
+```text
 TOKEN={"accessToken":"your-access-token","tenantURL":"your-tenant-url","scopes":["read","write"]}
 ```
 

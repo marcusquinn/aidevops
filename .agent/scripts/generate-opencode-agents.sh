@@ -58,7 +58,8 @@ python3 << 'PYEOF'
 import json
 import sys
 
-config_path = sys.argv[1] if len(sys.argv) > 1 else "/Users/marcusquinn/.config/opencode/opencode.json"
+import os
+config_path = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/.config/opencode/opencode.json")
 
 try:
     with open(config_path, 'r') as f:

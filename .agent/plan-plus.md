@@ -44,7 +44,7 @@
 
 Use Augment Context Engine for deep code understanding:
 
-```
+```text
 "What is this project? Please use codebase retrieval tool."
 ```
 
@@ -105,7 +105,7 @@ Once planning is complete:
 
 ### Pre-Implementation Analysis
 
-```
+```text
 Analyze this codebase and create a plan for [feature].
 Consider:
 - Existing patterns and architecture
@@ -118,7 +118,7 @@ Consider:
 
 ### Architecture Review
 
-```
+```text
 Review the architecture of this project.
 - Identify the main components
 - Map the data flow
@@ -128,7 +128,7 @@ Review the architecture of this project.
 
 ### Code Review Planning
 
-```
+```text
 Create a code review checklist for this PR.
 Focus on:
 - Security vulnerabilities

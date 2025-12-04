@@ -160,7 +160,6 @@ configure_claude_cli() {
     "~/AGENTS.md",
     "~/git/aidevops/AGENTS.md"
   ]
-    return 0
 }
 EOF
 
@@ -199,7 +198,6 @@ EOF
     "~/AGENTS.md",
     "~/git/aidevops/AGENTS.md"
   ]
-    return 0
 }
 EOF
 
