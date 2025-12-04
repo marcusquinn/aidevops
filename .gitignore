@@ -173,6 +173,9 @@ test-*.yaml
 !.ai
 !.qoder/
 
+# Superset local config
+.superset/
+
 # Repomix generated outputs (generate on-demand, don't commit)
 repomix-output.*
 *-repomix-*.xml
