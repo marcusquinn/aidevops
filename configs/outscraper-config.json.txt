@@ -36,13 +36,11 @@
     "opencode": {
       "_file": "~/.config/opencode/opencode.json",
       "_section": "mcp",
+      "_note": "OpenCode uses bash wrapper pattern for env vars",
       "outscraper": {
         "type": "local",
-        "command": ["uvx", "outscraper-mcp-server"],
-        "enabled": true,
-        "env": {
-          "OUTSCRAPER_API_KEY": "${OUTSCRAPER_API_KEY}"
-        }
+        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uvx outscraper-mcp-server"],
+        "enabled": true
       }
     },
     "claude_desktop": {

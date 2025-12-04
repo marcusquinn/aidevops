@@ -15,11 +15,8 @@
 ```json
 "outscraper": {
   "type": "local",
-  "command": ["uvx", "outscraper-mcp-server"],
-  "enabled": true,
-  "env": {
-    "OUTSCRAPER_API_KEY": "${OUTSCRAPER_API_KEY}"
-  }
+  "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uvx outscraper-mcp-server"],
+  "enabled": true
 }
 ```
 
@@ -135,11 +132,8 @@ Edit `~/.config/opencode/opencode.json`:
   "mcp": {
     "outscraper": {
       "type": "local",
-      "command": ["uvx", "outscraper-mcp-server"],
-      "enabled": true,
-      "env": {
-        "OUTSCRAPER_API_KEY": "${OUTSCRAPER_API_KEY}"
-      }
+      "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uvx outscraper-mcp-server"],
+      "enabled": true
     }
   },
   "tools": {
@@ -148,14 +142,11 @@ Edit `~/.config/opencode/opencode.json`:
 }
 ```
 
-Enable per-agent in the `agent` section:
+The `@outscraper` subagent is automatically created by `generate-opencode-agents.sh` with:
 
 ```json
-"agent": {
-  "Research": {
-    "tools": {
-      "outscraper_*": true
-    }
+"tools": {
+  "outscraper_*": true
   },
   "Sales": {
     "tools": {
