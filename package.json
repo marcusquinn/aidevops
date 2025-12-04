@@ -1,37 +1,51 @@
 {
-  "name": "aidevops-dspy-integration",
-  "version": "2.7.4",
-  "description": "AI DevOps Framework with DSPy, DSPyGround, Crawl4AI, and CapSolver integration",
+  "name": "aidevops",
+  "version": "2.8.0",
+  "description": "AI DevOps Framework with DSPy, Bun, Elysia, and high-performance tooling",
+  "type": "module",
   "main": "index.js",
   "scripts": {
+    "dev": "bun run .opencode/server/api-gateway.ts",
+    "dashboard": "bun run .opencode/server/mcp-dashboard.ts",
+    "quality": "bun run .opencode/tool/parallel-quality.ts",
     "dspy:init": "dspyground init",
     "dspy:dev": "dspyground dev",
     "dspy:build": "dspyground build",
     "install:python": "python3 -m venv python-env/dspy-env && source python-env/dspy-env/bin/activate && pip install -r requirements.txt",
-    "setup": "npm run install:python && npm install",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "setup": "bun install && npm run install:python",
+    "setup:bun": "bun install",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "dspy",
     "dspyground",
     "crawl4ai",
     "capsolver",
-    "captcha-solving",
-    "web-scraping",
+    "bun",
+    "elysia",
     "ai",
     "devops",
     "prompt-optimization",
-    "llm"
+    "llm",
+    "mcp"
   ],
   "author": "AI DevOps Framework",
   "license": "MIT",
   "dependencies": {
-    "dspyground": "^0.1.0"
+    "dspyground": "^0.1.0",
+    "elysia": "^1.1.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0"
+    "bun": ">=1.0.0",
+    "node": ">=18.0.0"
   },
   "repository": {
     "type": "git",
