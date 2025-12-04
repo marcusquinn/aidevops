@@ -8,6 +8,7 @@
 - **Install**: `uv tool run outscraper-mcp-server` or `pip install outscraper-mcp-server`
 - **Auth**: API key from <https://auth.outscraper.com/profile>
 - **Env Var**: `OUTSCRAPER_API_KEY`
+- **API Base**: `https://api.app.outscraper.com`
 - **Docs**: <https://app.outscraper.com/api-docs>
 
 **OpenCode Config**:
@@ -33,10 +34,15 @@ Search for coffee shops near Times Square NYC using Google Maps search and retur
 - Search: `google_search`, `google_search_news`
 - Reviews: `google_play_reviews`, `amazon_reviews`, `tripadvisor_reviews`,
   `apple_store_reviews`, `youtube_comments`, `g2_reviews`, `trustpilot_reviews`,
-  `glassdoor_reviews`, `capterra_reviews`
-- Business: `emails_and_contacts`, `phones_enricher`, `company_insights`,
-  `email_validation`, `whitepages_data`, `amazon_products`
+  `glassdoor_reviews`, `capterra_reviews`, `yelp_reviews`
+- Business: `emails_and_contacts`, `contacts_and_leads`, `phones_enricher`,
+  `company_insights`, `email_validation`, `whitepages_phones`, `whitepages_addresses`,
+  `amazon_products`, `company_websites_finder`, `similarweb`
+- Search Platforms: `yelp_search`, `trustpilot_search`, `yellowpages_search`
 - Geo: `geocoding`, `reverse_geocoding`
+
+**Direct API** (not in MCP): `GET /profile/balance`, `GET /invoices`,
+`POST /tasks`, `GET /webhook-calls`, `GET /locations`
 
 **Supported AI Tools**: OpenCode, Claude Code, Cursor, Windsurf, Gemini CLI,
 VS Code (Copilot), Raycast, custom MCP clients
@@ -53,9 +59,12 @@ Outscraper provides comprehensive data extraction from online platforms:
 |----------|-------------|
 | **Google Maps** | Business search, reviews, photos, directions |
 | **Search** | Google organic results, news, ads |
-| **Reviews** | Amazon, TripAdvisor, Apple Store, YouTube, G2, Trustpilot, Glassdoor, Capterra |
-| **Business Intel** | Email extraction, phone validation, company insights |
+| **Reviews** | Amazon, TripAdvisor, Apple Store, YouTube, G2, Trustpilot, Glassdoor, Capterra, Yelp |
+| **Business Intel** | Email extraction, phone validation, company insights, contacts & leads |
+| **Domain Intel** | Similarweb traffic, company website finder |
+| **Directories** | Yellow Pages search, Trustpilot search, Yelp search |
 | **Geolocation** | Address to coordinates, reverse geocoding |
+| **Whitepages** | Phone identity lookup, address/resident lookup |
 
 Use cases:
 
@@ -64,6 +73,276 @@ Use cases:
 - Lead generation with contact enrichment
 - Market research across platforms
 - Location-based data collection
+
+## Full API Reference
+
+**Base URL**: `https://api.app.outscraper.com`
+
+This is the URL used by the official Python SDK. The OpenAPI spec references
+`api.outscraper.cloud` but the SDK source confirms `api.app.outscraper.com`.
+
+**Authentication**: API key in `X-API-KEY` header
+
+### Account & Billing Endpoints
+
+These endpoints are available via direct API calls (not in Python SDK):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/profile/balance` | GET | Account balance, status, and upcoming invoice |
+| `/invoices` | GET | User invoice history |
+
+#### Get Account Balance
+
+```python
+import requests
+
+response = requests.get(
+    'https://api.app.outscraper.com/profile/balance',
+    headers={'X-API-KEY': 'YOUR_API_KEY'}
+)
+balance_info = response.json()
+# Returns: {"balance": 100.00, "account_status": "active", "upcoming_invoice": {...}}
+```
+
+#### Get Invoices
+
+```python
+response = requests.get(
+    'https://api.app.outscraper.com/invoices',
+    headers={'X-API-KEY': 'YOUR_API_KEY'}
+)
+invoices = response.json()
+```
+
+### System & Request Endpoints
+
+| Endpoint | Method | In SDK | Description |
+|----------|--------|--------|-------------|
+| `/tasks` | GET | Yes | Fetch user UI tasks (platform task history) |
+| `/tasks` | POST | No | Create a new UI task via API |
+| `/tasks-validate` | POST | No | Validate/estimate a task before creation |
+| `/tasks/{taskId}` | PUT | No | Restart a task |
+| `/tasks/{taskId}` | DELETE | No | Terminate a task |
+| `/requests` | GET | Yes | Fetch up to 100 of your last API requests |
+| `/requests/{requestId}` | GET | Yes | Fetch request data from archive (async results) |
+| `/webhook-calls` | GET | No | Failed webhook calls (last 24 hours) |
+| `/locations` | GET | No | Country locations for Google Maps searches |
+
+#### Get UI Tasks
+
+Fetch user UI tasks created through the platform.
+
+```python
+from outscraper import ApiClient
+client = ApiClient(api_key='YOUR_API_KEY')
+
+# Get tasks with optional filtering
+tasks, has_more = client.get_tasks(query='', page_size=10)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | Search query/tag to filter tasks |
+| `last_id` | string | Last task ID for pagination |
+| `page_size` | int | Number of items to return (default: 10) |
+
+#### Create UI Task
+
+Create a task via API (same as creating through the web UI).
+
+```python
+import requests
+
+task_data = {
+    "service": "google_maps_search",
+    "query": ["restaurants brooklyn usa"],
+    "limit": 100
+}
+
+response = requests.post(
+    'https://api.app.outscraper.com/tasks',
+    headers={'X-API-KEY': 'YOUR_API_KEY'},
+    json=task_data
+)
+task = response.json()
+```
+
+#### Validate/Estimate Task
+
+Validate a task and get cost estimate before creation.
+
+```python
+response = requests.post(
+    'https://api.app.outscraper.com/tasks-validate',
+    headers={'X-API-KEY': 'YOUR_API_KEY'},
+    json=task_data
+)
+validation = response.json()
+# Returns: {"valid": true, "estimated_cost": 5.00, ...}
+```
+
+#### Restart Task
+
+```python
+response = requests.put(
+    f'https://api.app.outscraper.com/tasks/{task_id}',
+    headers={'X-API-KEY': 'YOUR_API_KEY'}
+)
+```
+
+#### Terminate Task
+
+```python
+response = requests.delete(
+    f'https://api.app.outscraper.com/tasks/{task_id}',
+    headers={'X-API-KEY': 'YOUR_API_KEY'}
+)
+```
+
+#### Get Requests History
+
+Fetch your recent API requests (running or finished).
+
+```python
+# Get finished requests
+requests = client.get_requests_history(type='finished', skip=0, page_size=25)
+
+# Get running requests
+running = client.get_requests_history(type='running')
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `type` | string | Filter: `running` or `finished` |
+| `skip` | int | Skip first N records (pagination) |
+| `page_size` | int | Number of items (default: 25, max: 100) |
+
+#### Get Request Archive
+
+Retrieve results from async requests.
+
+```python
+# Get archived request data
+result = client.get_request_archive(request_id='your_request_id')
+# Returns: {"id": "...", "status": "Pending|Completed|Failed", "data": [...]}
+```
+
+#### Get Failed Webhook Calls
+
+Retrieve failed webhook calls from the last 24 hours.
+
+```python
+response = requests.get(
+    'https://api.app.outscraper.com/webhook-calls',
+    headers={'X-API-KEY': 'YOUR_API_KEY'}
+)
+failed_webhooks = response.json()
+```
+
+#### Get Locations
+
+Get available country locations for Google Maps searches.
+
+```python
+response = requests.get(
+    'https://api.app.outscraper.com/locations',
+    headers={'X-API-KEY': 'YOUR_API_KEY'}
+)
+locations = response.json()
+# Returns list of countries with their location codes
+```
+
+### Google Services
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/google-search-v3` | GET | Google Search results |
+| `/google-search-news` | GET | Google News search |
+| `/google-maps-search` | POST | Google Maps places search (speed-optimized) |
+| `/maps/search` | GET | Google Maps search (legacy) |
+| `/maps/reviews-v3` | GET | Google Maps reviews (speed-optimized) |
+| `/maps/reviews-v2` | GET | Google Maps reviews (legacy) |
+| `/maps/photos-v3` | GET | Google Maps photos |
+| `/maps/directions` | GET | Google Maps directions |
+| `/google-play/reviews` | GET | Google Play Store reviews |
+
+### Amazon Services
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/amazon/products-v2` | GET | Amazon product data |
+| `/amazon/reviews` | GET | Amazon product reviews |
+
+### Review Platforms
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/yelp-search` | GET | Yelp search results |
+| `/yelp/reviews` | GET | Yelp business reviews |
+| `/tripadvisor/reviews` | GET | Tripadvisor reviews |
+| `/appstore/reviews` | GET | Apple App Store reviews |
+| `/youtube-comments` | GET | YouTube video comments |
+| `/g2/reviews` | GET | G2 product reviews |
+| `/trustpilot` | GET | Trustpilot business data |
+| `/trustpilot/reviews` | GET | Trustpilot reviews |
+| `/glassdoor/reviews` | GET | Glassdoor company reviews |
+| `/capterra-reviews` | GET | Capterra software reviews |
+
+### Business Intelligence
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/emails-and-contacts` | GET | Extract emails/contacts from domains |
+| `/contacts-and-leads` | GET | Contacts and leads scraper (with roles) |
+| `/phones-enricher` | GET | Phone carrier data/validation |
+| `/company-insights` | GET | Company details (revenue, size, etc.) |
+| `/email-validator` | GET | Email address verification |
+| `/company-website-finder` | GET | Find company websites by name |
+| `/similarweb` | GET | Similarweb traffic data |
+| `/yellowpages-search` | GET | Yellow Pages search |
+
+### Geolocation
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/geocoding` | GET | Address to coordinates |
+| `/reverse-geocoding` | GET | Coordinates to address |
+
+### Whitepages
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/whitepages-phones` | GET | Phone number owner lookup |
+| `/whitepages-addresses` | GET | Address/resident lookup |
+
+### Common Parameters
+
+Most endpoints support these parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string/list | Search query or queries (up to 250) |
+| `limit` | int | Maximum results per query |
+| `language` | string | Language code (e.g., 'en', 'de', 'es') |
+| `region` | string | Country code (e.g., 'US', 'GB', 'CA') |
+| `fields` | string/list | Fields to include in response |
+| `async` | bool | Submit async and retrieve later |
+| `ui` | bool | Execute as UI task |
+| `webhook` | string | Callback URL for completion notification |
+
+### Account Access via API
+
+The following account features are available via API:
+
+| Feature | Endpoint | Description |
+|---------|----------|-------------|
+| Balance | `GET /profile/balance` | Current balance, account status |
+| Invoices | `GET /invoices` | Invoice history |
+| Usage | `GET /requests` | API request history |
+| Tasks | `GET /tasks` | UI task history |
+
+For subscription management and detailed analytics, visit <https://app.outscraper.com>
 
 ## Prerequisites
 
@@ -313,8 +592,10 @@ droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=yo
 
 | Tool | Description |
 |------|-------------|
-| `google_maps_search` | Search businesses/places with detailed info |
-| `google_maps_reviews` | Extract customer reviews from places |
+| `google_maps_search` | Search businesses/places with detailed info (speed-optimized) |
+| `google_maps_search_v1` | Legacy Google Maps search |
+| `google_maps_reviews` | Extract customer reviews (speed-optimized, v3) |
+| `google_maps_reviews_v2` | Legacy reviews extraction |
 | `google_maps_photos` | Get photos from places |
 | `google_maps_directions` | Get directions between locations |
 
@@ -323,7 +604,7 @@ droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=yo
 | Tool | Description |
 |------|-------------|
 | `google_search` | Organic listings, ads, related data |
-| `google_search_news` | Search Google News |
+| `google_search_news` | Search Google News with date filtering |
 
 ### Review Extraction Tools
 
@@ -331,6 +612,7 @@ droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=yo
 |------|-------------|
 | `google_play_reviews` | App reviews from Play Store |
 | `amazon_reviews` | Product reviews from Amazon |
+| `yelp_reviews` | Business reviews from Yelp |
 | `tripadvisor_reviews` | Business reviews from TripAdvisor |
 | `apple_store_reviews` | App reviews from App Store |
 | `youtube_comments` | Comments from YouTube videos |
@@ -344,11 +626,29 @@ droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=yo
 | Tool | Description |
 |------|-------------|
 | `emails_and_contacts` | Extract emails/contacts from websites |
+| `contacts_and_leads` | Advanced leads scraper with contact roles |
 | `phones_enricher` | Validate phones, get carrier data |
-| `company_insights` | Company details (revenue, size, etc.) |
-| `email_validation` | Validate email deliverability |
-| `whitepages_data` | Address/phone owner insights |
+| `company_insights` | Company details (revenue, size, founding year) |
+| `validate_emails` | Validate email deliverability |
+| `company_websites_finder` | Find company websites by business name |
+| `similarweb` | Website traffic and analytics data |
 | `amazon_products` | Product information from Amazon |
+
+### Search & Directory Tools
+
+| Tool | Description |
+|------|-------------|
+| `yelp_search` | Search businesses on Yelp |
+| `trustpilot_search` | Search companies on Trustpilot |
+| `trustpilot` | Get Trustpilot business data |
+| `yellowpages_search` | Search Yellow Pages directory |
+
+### Whitepages Tools
+
+| Tool | Description |
+|------|-------------|
+| `whitepages_phones` | Phone number owner lookup |
+| `whitepages_addresses` | Address/resident insights |
 
 ### Geolocation Tools
 
@@ -356,6 +656,22 @@ droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=yo
 |------|-------------|
 | `geocoding` | Address → coordinates |
 | `reverse_geocoding` | Coordinates → address |
+
+### Account & System Tools
+
+| Tool/Endpoint | Description |
+|---------------|-------------|
+| `GET /profile/balance` | Account balance, status, upcoming invoice |
+| `GET /invoices` | User invoice history |
+| `get_tasks` / `GET /tasks` | Fetch UI task history |
+| `POST /tasks` | Create UI task via API |
+| `POST /tasks-validate` | Validate/estimate task before creation |
+| `PUT /tasks/{id}` | Restart a task |
+| `DELETE /tasks/{id}` | Terminate a task |
+| `get_requests_history` / `GET /requests` | View recent API requests |
+| `get_request_archive` / `GET /requests/{id}` | Retrieve async request results |
+| `GET /webhook-calls` | Failed webhook calls (last 24 hours) |
+| `GET /locations` | Country locations for Google Maps |
 
 ## Advanced Features
 
@@ -389,6 +705,122 @@ Filter reviews by date with `cutoff` parameter:
 
 ```text
 Get recent Google Maps reviews for "Starbucks NYC" from the last 30 days.
+```
+
+## Python SDK Examples
+
+The official SDK is at <https://github.com/outscraper/outscraper-python>
+
+### Basic Initialization
+
+```python
+from outscraper import ApiClient
+import requests
+
+# SDK client (recommended for most operations)
+client = ApiClient(api_key='YOUR_API_KEY')
+
+# Direct API calls (for endpoints not in SDK)
+API_BASE = 'https://api.app.outscraper.com'
+headers = {'X-API-KEY': 'YOUR_API_KEY'}
+```
+
+### Account & Billing (Direct API Only)
+
+These endpoints are not in the Python SDK - use direct requests:
+
+```python
+# Get account balance and status
+response = requests.get(f'{API_BASE}/profile/balance', headers=headers)
+balance_info = response.json()
+print(f"Balance: ${balance_info.get('balance', 0):.2f}")
+print(f"Status: {balance_info.get('account_status')}")
+
+# Get invoice history
+response = requests.get(f'{API_BASE}/invoices', headers=headers)
+invoices = response.json()
+for invoice in invoices:
+    print(f"Invoice {invoice['id']}: ${invoice['amount']}")
+```
+
+### Task Management (Direct API + SDK)
+
+```python
+# Create a task via API (not in SDK)
+task_data = {
+    "service": "google_maps_search",
+    "query": ["coffee shops manhattan"],
+    "limit": 50
+}
+
+# Validate first to get cost estimate (not in SDK)
+response = requests.post(f'{API_BASE}/tasks-validate', headers=headers, json=task_data)
+estimate = response.json()
+print(f"Estimated cost: ${estimate.get('estimated_cost', 0):.2f}")
+
+# Create the task (not in SDK)
+response = requests.post(f'{API_BASE}/tasks', headers=headers, json=task_data)
+task = response.json()
+task_id = task['id']
+
+# Check task status via SDK (in SDK)
+tasks, has_more = client.get_tasks(page_size=1)
+
+# Terminate task if needed (not in SDK)
+requests.delete(f'{API_BASE}/tasks/{task_id}', headers=headers)
+```
+
+### System Request Management (SDK Methods)
+
+```python
+# Get your UI task history
+tasks, has_more = client.get_tasks(query='restaurants', page_size=10)
+for task in tasks:
+    print(f"Task: {task['id']} - {task.get('status')}")
+
+# Get your recent API requests
+finished_requests = client.get_requests_history(type='finished', page_size=25)
+running_requests = client.get_requests_history(type='running')
+
+# Retrieve async request results
+result = client.get_request_archive(request_id='abc123')
+if result['status'] == 'Completed':
+    data = result['data']
+```
+
+### Async Request Pattern
+
+```python
+# Submit async request for large queries
+results = client.google_maps_search(
+    'restaurants brooklyn usa',
+    limit=100,
+    async_request=True  # Returns request ID immediately
+)
+request_id = results['id']
+
+# Poll for results (SDK handles this automatically if async_request=False)
+import time
+while True:
+    result = client.get_request_archive(request_id)
+    if result['status'] != 'Pending':
+        break
+    time.sleep(5)
+
+data = result.get('data', [])
+```
+
+### Webhook Integration
+
+```python
+# Use webhooks for async notification
+results = client.google_maps_reviews(
+    'ChIJrc9T9fpYwokRdvjYRHT8nI4',
+    reviews_limit=100,
+    async_request=True,
+    webhook='https://your-server.com/outscraper-callback'
+)
+# Outscraper will POST results to your webhook URL when complete
 ```
 
 ## Usage Examples

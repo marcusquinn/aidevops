@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.4] - 2025-12-04
+
+### Fixed
+
+- **Outscraper API URL Correction** - Fixed base URL from `api.outscraper.cloud` to `api.app.outscraper.com`
+  - Matches official Python SDK at <https://github.com/outscraper/outscraper-python>
+
+### Added
+
+- **Outscraper Account & Billing API Documentation** - New endpoints not available in Python SDK
+  - `GET /profile/balance` - Account balance, status, and upcoming invoice
+  - `GET /invoices` - User invoice history
+- **Outscraper Task Management API Documentation** - Full task lifecycle control
+  - `POST /tasks` - Create UI tasks programmatically
+  - `POST /tasks-validate` - Validate and estimate task cost before creation
+  - `PUT /tasks/{taskId}` - Restart tasks
+  - `DELETE /tasks/{taskId}` - Terminate tasks
+  - `GET /webhook-calls` - Failed webhook calls (last 24 hours)
+  - `GET /locations` - Country locations for Google Maps searches
+- **SDK vs Direct API Clarification** - Added "In SDK" column to endpoint tables
+  - Clearly marked which features require direct API calls vs SDK methods
+  - Added link to official SDK repository
+- **Expanded Tool Coverage** - Additional tools documented
+  - `yelp_reviews`, `yelp_search`, `trustpilot_search`, `yellowpages_search`
+  - `contacts_and_leads`, `whitepages_phones`, `whitepages_addresses`
+  - `company_websites_finder`, `similarweb`
+- **Python Examples** - Comprehensive code examples for all API patterns
+  - Account & Billing section (Direct API Only)
+  - Task Management section (Direct API + SDK hybrid)
+  - Proper initialization patterns with both SDK and direct requests
+
+### Changed
+
+- **Account Access Documentation** - Replaced incorrect "Account Limitations" section
+  - Previously stated account info was dashboard-only (incorrect)
+  - New "Account Access via API" section with accurate endpoint information
+
 ## [2.7.3] - 2025-12-04
 
 ### Fixed
