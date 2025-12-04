@@ -883,20 +883,20 @@ Always use configuration files, never hardcode credentials:
 cp .agent/scripts/template-helper.sh .agent/scripts/newprovider-helper.sh
 ```
 
-2. Implement standard functions:
+1. Implement standard functions:
 
 - `list()` - List resources
 - `connect()` - Connect to service
 - `exec()` - Execute operations
 - `info()` - Display information
 
-3. Add configuration:
+1. Add configuration:
 
 ```bash
 cp configs/template-config.json.txt configs/newprovider-config.json
 ```
 
-4. Update documentation
+1. Update documentation
 
 ---
 
