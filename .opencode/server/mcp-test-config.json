@@ -31,7 +31,7 @@
     "filesystem": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-server-filesystem", "/Users/marcusquinn/Git"],
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "~/Git"],
       "description": "File system access"
     },
     "memory": {
