@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.8.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.8.1-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -470,12 +470,14 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Ordered as they appear in OpenCode Tab selector and other AI assistants:
+Ordered as they appear in OpenCode Tab selector and other AI assistants (14 total):
 
 | Name | File | Purpose | MCPs Enabled |
 |------|------|---------|--------------|
 | Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search | context7, augment, repomix |
 | Build+ | `build-plus.md` | Enhanced Build with context tools | context7, augment, repomix |
+| Build-Agent | `build-agent.md` | Design and improve AI agents | context7, augment, repomix |
+| Build-MCP | `build-mcp.md` | Build MCP servers with TS+Bun+ElysiaJS | context7, augment, repomix |
 | Accounting | `accounting.md` | Financial operations | quickfile, augment |
 | AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup | context7, augment, repomix |
 | Content | `content.md` | Content creation workflows | augment |
@@ -500,7 +502,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@code-quality` | Quality scanning, security, learning loop | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
-| `@agent-review` | Session analysis, agent improvement | (read/write only) |
+| `@agent-review` | Session analysis, agent improvement (under build-agent/) | (read/write only) |
 
 ### **Setup for OpenCode**
 
