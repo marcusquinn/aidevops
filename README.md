@@ -251,16 +251,33 @@ Call them in your AI assistant conversation with a simple @mention
 
 | Concept | Description |
 |---------|-------------|
-| **Primary Agent** | Main assistant you interact with (full framework access) |
+| **Main Agent** | Domain-focused assistant (e.g., WordPress, SEO, DevOps) |
 | **Subagent** | Specialized assistant for specific services (invoked with @mention) |
-| **MCP Tools** | Only loaded when relevant subagent is invoked (saves tokens) |
+| **MCP Tools** | Only loaded when relevant agent is invoked (saves tokens) |
 
-### **Available Subagents**
+### **Main Agents**
+
+| Agent | Purpose |
+|-------|---------|
+| `plan-plus.md` | Read-only planning with semantic codebase search |
+| `build-plus.md` | Enhanced Build with context tools (Augment, Context7) |
+| `aidevops.md` | Framework operations, meta-agents, setup |
+| `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) |
+| `seo.md` | SEO optimization, Search Console, keyword research |
+| `content.md` | Content creation workflows |
+| `research.md` | Research and analysis tasks |
+| `marketing.md` | Marketing strategy and automation |
+| `sales.md` | Sales operations |
+| `legal.md` | Legal compliance |
+| `accounting.md` | Financial operations (QuickFile integration) |
+| `health.md` | Health and wellness |
+
+### **Example Subagents with MCP Integration**
+
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 80+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
-| `@plan-plus` | Read-only planning with semantic search | augment-context-engine, context7 |
-| `@build-plus` | Enhanced coding with context tools | augment-context-engine, context7 |
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
