@@ -56,7 +56,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-12-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-13-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 ## **Enterprise-Grade Quality & Security**
@@ -221,10 +221,11 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 - **[PageSpeed Insights MCP](https://pagespeed.web.dev/)**: Website performance auditing and optimization
 
-### **Development Tools**
+### **Context & Development Tools**
 
-- **[Next.js DevTools MCP](https://nextjs.org/)**: React/Next.js development assistance
+- **[Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview)**: Semantic codebase retrieval with deep code understanding
 - **[Context7 MCP](https://context7.io/)**: Real-time documentation access for thousands of libraries
+- **[Next.js DevTools MCP](https://nextjs.org/)**: React/Next.js development assistance
 - **[LocalWP MCP](https://localwp.com/)**: Direct WordPress database access
 
 **Quick Setup:**
@@ -258,6 +259,8 @@ Call them in your AI assistant conversation with a simple @mention
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
+| `@plan-plus` | Read-only planning with semantic search | augment-context-engine, context7 |
+| `@build-plus` | Enhanced coding with context tools | augment-context-engine, context7 |
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
@@ -306,7 +309,7 @@ The review agent will:
 
 **This creates a feedback loop:**
 
-```
+```text
 Session → @agent-review → Improvements → Better Agents → Better Sessions
                 ↓
          PR to aidevops repo (optional)
@@ -324,7 +327,7 @@ The agent will create a branch, apply changes, and submit a PR to `marcusquinn/a
 
 The `@code-quality` agent also learns from issues. After fixing violations from SonarCloud, Codacy, ShellCheck, etc., it analyzes patterns and updates framework guidance to prevent recurrence:
 
-```
+```text
 Quality Issue → Fix Applied → Pattern Identified → Framework Updated → Issue Prevented
 ```
 

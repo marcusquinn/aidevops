@@ -21,11 +21,12 @@
 
 | Agent | Purpose |
 |-------|---------|
+| `plan-plus.md` | Read-only planning with semantic codebase search |
+| `build-plus.md` | Enhanced Build with context tools |
 | `aidevops.md` | Framework operations, meta-agents, setup |
 | `wordpress.md` | WordPress ecosystem management |
 | `seo.md` | SEO optimization and analysis |
 | `content.md` | Content creation workflows |
-| `build-plus.md` | Enhanced Build with context tools |
 | `research.md` | Research and analysis tasks |
 | `marketing.md` | Marketing strategy |
 | `sales.md` | Sales operations |
@@ -37,14 +38,14 @@
 
 | Folder | Contents |
 |--------|----------|
-| `aidevops/` | Framework meta-agents (agent-designer, setup, troubleshooting) |
+| `aidevops/` | Framework meta-agents (agent-designer, add-new-mcp, setup, troubleshooting) |
 | `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp) |
 | `seo/` | SEO subagents (google-search-console) |
 | `content/` | Content subagents (guidelines) |
 | `tools/git/` | Git platform CLIs (github, gitlab, gitea, workflow) |
 | `tools/code-review/` | Quality tools (sonarcloud, codacy, coderabbit, snyk, secretlint) |
 | `tools/browser/` | Browser automation (playwright, chrome-devtools, crawl4ai) |
-| `tools/context/` | Context tools (context-builder, context7, toon, dspy) |
+| `tools/context/` | Context tools (augment-context-engine, context-builder, context7, toon, dspy) |
 | `tools/credentials/` | Credential management (vaultwarden, api-keys) |
 | `tools/deployment/` | Deployment tools (coolify, vercel) |
 | `tools/opencode/` | OpenCode configuration and paths |
@@ -87,7 +88,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 
 ## Working Directories
 
-```
+```text
 ~/.aidevops/.agent-workspace/
 ├── work/[project]/    # Persistent project files
 ├── tmp/session-*/     # Temporary session files (cleanup)
