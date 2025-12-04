@@ -334,6 +334,97 @@ Repomix runs as an MCP server for direct AI assistant integration:
 
 See `.agent/tools/context/context-builder.md` for complete documentation.
 
+## **Augment Context Engine - Semantic Codebase Search**
+
+[Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) provides semantic codebase retrieval - understanding your code at a deeper level than simple text search. It's the recommended tool for real-time interactive coding sessions.
+
+### Why Augment Context Engine?
+
+| Feature | grep/glob | Augment Context Engine |
+|---------|-----------|------------------------|
+| Text matching | Exact patterns | Semantic understanding |
+| Cross-file context | Manual | Automatic |
+| Code relationships | None | Understands dependencies |
+| Natural language | No | Yes |
+
+Use it to:
+
+- Find related code across your entire codebase
+- Understand project architecture quickly
+- Discover patterns and implementations
+- Get context-aware code suggestions
+
+### Quick Setup
+
+```bash
+# 1. Install Auggie CLI (requires Node.js 22+)
+npm install -g @augmentcode/auggie@prerelease
+
+# 2. Authenticate (opens browser)
+auggie login
+
+# 3. Verify installation
+auggie token print
+```
+
+### MCP Integration
+
+Add to your AI assistant's MCP configuration:
+
+**OpenCode** (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "augment-context-engine": {
+      "type": "local",
+      "command": ["auggie", "--mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Claude Code**:
+
+```bash
+claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"]}'
+```
+
+**Cursor**: Settings → Tools & MCP → New MCP Server:
+
+```json
+{
+  "mcpServers": {
+    "augment-context-engine": {
+      "command": "bash",
+      "args": ["-c", "auggie --mcp -m default -w \"${WORKSPACE_FOLDER_PATHS%%,*}\""]
+    }
+  }
+}
+```
+
+### Verification
+
+Test with this prompt:
+
+```text
+What is this project? Please use codebase retrieval tool to get the answer.
+```
+
+The AI should provide a semantic understanding of your project architecture.
+
+### Repomix vs Augment Context Engine
+
+| Use Case | Tool | When to Use |
+|----------|------|-------------|
+| **Interactive coding** | Augment Context Engine | Real-time semantic search during development |
+| **Share with external AI** | Repomix | Self-contained snapshot for ChatGPT, Claude web, etc. |
+| **Architecture review** | Repomix (compress) | 80% token reduction, structure only |
+| **CI/CD integration** | Repomix GitHub Action | Automated context in releases |
+
+See `.agent/tools/context/augment-context-engine.md` for complete documentation including configurations for Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, and Factory.AI Droid.
+
 ## **AI Agents & Subagents**
 
 **Agents are specialized AI personas with focused knowledge and tool access.** Instead of giving your AI assistant access to everything at once (which wastes context tokens), agents provide targeted capabilities for specific tasks.
