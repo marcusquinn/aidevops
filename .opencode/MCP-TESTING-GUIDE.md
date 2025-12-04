@@ -208,16 +208,19 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 ### Server Not Responding
 
 1. Check if server is running:
+
    ```bash
    ./.agent/scripts/mcp-inspector-helper.sh health
    ```
 
 2. Check server logs:
+
    ```bash
    bun run dev 2>&1 | tee server.log
    ```
 
 3. Test direct connection:
+
    ```bash
    curl -v http://localhost:3100/health
    ```
@@ -226,12 +229,14 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 
 1. Ensure server is started first
 2. Check port availability:
+
    ```bash
    lsof -i :3100
    lsof -i :3101
    ```
 
 3. Try with verbose output:
+
    ```bash
    DEBUG=* npx @modelcontextprotocol/inspector --cli ...
    ```
@@ -239,6 +244,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 ### Stdio Server Issues
 
 1. Test command directly:
+
    ```bash
    npx -y @context7/mcp-server@latest
    ```

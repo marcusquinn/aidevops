@@ -25,7 +25,7 @@ readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
 # Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly CONFIG_FILE="${SCRIPT_DIR}/../../.opencode/server/mcp-test-config.json"
 
