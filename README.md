@@ -56,7 +56,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-13-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-17-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 ## **Enterprise-Grade Quality & Security**
@@ -200,35 +200,65 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ## **MCP Integrations**
 
-**Model Context Protocol servers for real-time AI assistant integration:**
+**Model Context Protocol servers for real-time AI assistant integration.** The framework helps configure these MCPs for OpenCode, Claude Desktop, Cursor, and other AI assistants.
 
-### **Web & Browser Automation**
+### **All Supported MCPs**
 
-- **[Stagehand AI (JavaScript)](https://github.com/browserbase/stagehand)**: AI-powered browser automation with natural language
-- **[Stagehand AI (Python)](https://github.com/browserbase/stagehand-python)**: Python version with Pydantic validation
-- **[Chrome DevTools MCP](https://developer.chrome.com/docs/devtools/)**: Browser automation, performance analysis, debugging
-- **[Playwright MCP](https://playwright.dev/)**: Cross-browser testing and automation
-- **[Cloudflare Browser Rendering](https://workers.cloudflare.com/)**: Server-side web scraping
+| MCP | Purpose | API Key Required |
+|-----|---------|------------------|
+| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
+| [Context7](https://context7.com/) | Library documentation lookup | No |
+| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
+| [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
+| [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
+| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
+| [Playwright](https://playwright.dev/) | Cross-browser testing | No |
+| [Crawl4AI](https://github.com/unclecode/crawl4ai) | Web crawling & scraping | No |
+| [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
+| [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Yes (Google API) |
+| [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
+| [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
+| [Grep by Vercel](https://grep.app/) | GitHub code search | No |
+| [LocalWP](https://localwp.com/) | WordPress database access | No (local) |
+| [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
+| [Next.js DevTools](https://nextjs.org/docs) | React/Next.js assistance | No |
+| [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
 
-### **SEO & Research Tools**
+### **By Category**
 
-- **[Ahrefs MCP](https://ahrefs.com/)**: SEO analysis, backlink research, keyword data
-- **[Perplexity MCP](https://www.perplexity.ai/)**: AI-powered web search and research
-- **[Google Search Console MCP](https://search.google.com/search-console)**: Search performance insights
-- **[Grep by Vercel MCP](https://grep.app/)**: Search code snippets across GitHub repositories
+**Context & Codebase:**
 
-### **Performance & Analytics**
+- [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) - Semantic codebase retrieval with deep code understanding
+- [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
+- [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-- **[PageSpeed Insights MCP](https://pagespeed.web.dev/)**: Website performance auditing and optimization
+**Browser Automation:**
 
-### **Context & Development Tools**
+- [Stagehand (JavaScript)](https://github.com/browserbase/stagehand) - AI-powered browser automation with natural language
+- [Stagehand (Python)](https://github.com/anthropics/stagehand-python) - Python version with Pydantic validation
+- [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser automation, performance analysis, debugging
+- [Playwright](https://playwright.dev/) - Cross-browser testing and automation
+- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI
+- [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
 
-- **[Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview)**: Semantic codebase retrieval with deep code understanding
-- **[Context7 MCP](https://context7.io/)**: Real-time documentation access for thousands of libraries
-- **[Next.js DevTools MCP](https://nextjs.org/)**: React/Next.js development assistance
-- **[LocalWP MCP](https://localwp.com/)**: Direct WordPress database access
+**SEO & Research:**
 
-**Quick Setup:**
+- [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data
+- [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
+- [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
+- [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
+
+**Performance & Security:**
+
+- [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) - Website performance auditing
+- [Snyk](https://snyk.io/) - Security vulnerability scanning
+
+**WordPress & Development:**
+
+- [LocalWP](https://localwp.com/) - Direct WordPress database access
+- [Next.js DevTools](https://nextjs.org/docs) - React/Next.js development assistance
+
+### **Quick Setup**
 
 ```bash
 # Install all MCP integrations
