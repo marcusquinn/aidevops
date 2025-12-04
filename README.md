@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.6.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.7.3-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -56,7 +56,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-17-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-18-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 ## **Enterprise-Grade Quality & Security**
@@ -206,23 +206,24 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 | MCP | Purpose | API Key Required |
 |-----|---------|------------------|
-| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
-| [Context7](https://context7.com/) | Library documentation lookup | No |
-| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
-| [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
-| [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
-| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
-| [Playwright](https://playwright.dev/) | Cross-browser testing | No |
-| [Crawl4AI](https://github.com/unclecode/crawl4ai) | Web crawling & scraping | No |
 | [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
+| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
+| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
+| [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
+| [Context7](https://context7.com/) | Library documentation lookup | No |
+| [Crawl4AI](https://github.com/unclecode/crawl4ai) | Web crawling & scraping | No |
 | [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Yes (Google API) |
-| [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
-| [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
 | [Grep by Vercel](https://grep.app/) | GitHub code search | No |
 | [LocalWP](https://localwp.com/) | WordPress database access | No (local) |
-| [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
 | [Next.js DevTools](https://nextjs.org/docs) | React/Next.js assistance | No |
+| [Outscraper](https://outscraper.com/) | Google Maps & business data extraction | Yes |
+| [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
+| [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
+| [Playwright](https://playwright.dev/) | Cross-browser testing | No |
+| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
 | [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
+| [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
+| [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
 
 ### **By Category**
 
@@ -247,6 +248,10 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
 - [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
 - [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
+
+**Data Extraction:**
+
+- [Outscraper](https://outscraper.com/) - Google Maps, business data, reviews extraction
 
 **Performance & Security:**
 

@@ -5,7 +5,7 @@
 ## Quick Reference
 
 - **Purpose**: Business intelligence extraction from Google Maps, Amazon, reviews, contacts
-- **Install**: `pip install outscraper-mcp-server` or `uvx outscraper-mcp-server`
+- **Install**: `uv tool run outscraper-mcp-server` or `pip install outscraper-mcp-server`
 - **Auth**: API key from <https://auth.outscraper.com/profile>
 - **Env Var**: `OUTSCRAPER_API_KEY`
 - **Docs**: <https://app.outscraper.com/api-docs>
@@ -144,16 +144,10 @@ Edit `~/.config/opencode/opencode.json`:
 
 The `@outscraper` subagent is automatically created by `generate-opencode-agents.sh` with:
 
-```json
-"tools": {
-  "outscraper_*": true
-  },
-  "Sales": {
-    "tools": {
-      "outscraper_*": true
-    }
-  }
-}
+```yaml
+tools:
+  outscraper_*: true
+  webfetch: true
 ```
 
 ### Claude Desktop / Claude Code
@@ -429,6 +423,10 @@ from the past week with their sources and summaries.
 
 ## Verification
 
+**Tested tools** (Dec 2024):
+- `google_search` - Working perfectly
+- `google_maps_search` - Working (minor null field warnings, non-blocking)
+
 After configuration, test with this prompt:
 
 ```text
@@ -492,6 +490,18 @@ pip install uv
 1. Ensure MCP server is enabled in config
 2. Restart the AI tool after config changes
 3. Check that the agent has `outscraper_*: true`
+
+### OpenCode-specific issues
+
+**"env" key not supported**: OpenCode doesn't support the `env` key in MCP config.
+Use the bash wrapper pattern instead:
+
+```json
+"command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"]
+```
+
+**"uvx" conflicts**: The `uvx` command may conflict with other packages.
+Use `uv tool run outscraper-mcp-server` instead.
 
 ### Python version errors
 

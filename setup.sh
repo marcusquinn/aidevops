@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.6.0
+# Version: 2.7.3
 
 # Colors for output
 GREEN='\033[0;32m'
