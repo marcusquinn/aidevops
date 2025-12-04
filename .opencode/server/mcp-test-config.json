@@ -1,0 +1,53 @@
+{
+  "mcpServers": {
+    "api-gateway": {
+      "type": "streamable-http",
+      "url": "http://localhost:3100",
+      "description": "AI DevOps API Gateway - SonarCloud, Crawl4AI, Quality metrics"
+    },
+    "mcp-dashboard": {
+      "type": "streamable-http", 
+      "url": "http://localhost:3101",
+      "description": "MCP Server Dashboard with WebSocket monitoring"
+    },
+    "crawl4ai": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["crawl4ai-mcp-server@latest"],
+      "description": "Web crawling and data extraction"
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@context7/mcp-server@latest"],
+      "description": "Library documentation retrieval"
+    },
+    "repomix": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "repomix@latest", "--mcp"],
+      "description": "Repository packaging for AI analysis"
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "/Users/marcusquinn/Git"],
+      "description": "File system access"
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-memory"],
+      "description": "Persistent memory storage"
+    },
+    "github": {
+      "type": "stdio",
+      "command": "gh",
+      "args": ["mcp-server"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "description": "GitHub API integration"
+    }
+  }
+}
