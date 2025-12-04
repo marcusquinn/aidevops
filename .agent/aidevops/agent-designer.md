@@ -49,7 +49,7 @@ LLMs are stateless functions. AGENTS.md is the only file that goes into every co
 Research indicates:
 - Frontier thinking models can follow ~150-200 instructions consistently
 - Instruction-following quality degrades **uniformly** as count increases
-- Claude Code's system prompt already consumes ~50 instructions
+- AI assistant system prompts already consume ~50 instructions
 - The system may tell models to ignore AGENTS.md content deemed irrelevant
 
 **Implication**: Every instruction in AGENTS.md must be universally applicable to ALL tasks.
@@ -532,15 +532,4 @@ Main agents provide overview and point to subagents for details (progressive dis
 
 ### Reviewing Existing Agents
 
-When reviewing agents for improvement:
-
-1. **Count instructions** - Is it over budget?
-2. **Check universal applicability** - Task-specific content?
-3. **Find duplicates** - Same guidance elsewhere?
-4. **Verify code examples** - Still accurate? Authoritative?
-5. **Test AI-CONTEXT block** - Does condensed version capture essentials?
-6. **Check for stale numbers** - Hardcoded counts, versions, dates?
-7. **Verify sources** - Primary sources? Cross-referenced?
-8. **MCP configuration** - Appropriate tools enabled/disabled?
-
-Use `@agent-review` subagent for systematic review sessions.
+Use `@agent-review` subagent for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
