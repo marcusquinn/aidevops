@@ -33,9 +33,9 @@
 - **Per-Agent**: Enabled only for agents that need it
 - **Rationale**: Context efficiency - each agent only loads needed MCPs
 
-**Related Subagents to Call**:
+**Related Agents to Call**:
 
-- `@agent-designer` - Design guidance for agent/subagent structure
+- `@Build-Agent` - Design guidance for agent/subagent structure
 - `@agent-review` - Review new documentation quality
 - `@best-practices` - Code quality standards
 - `@secretlint` - Check for credential leaks before commit
@@ -48,12 +48,12 @@ This guide ensures consistent, comprehensive MCP integration across the aidevops
 framework. Follow this process for any new MCP server to maintain quality and
 coverage across all supported AI assistants.
 
-## Pre-Implementation: Call Related Subagents
+## Pre-Implementation: Call Related Agents
 
-Before starting, consider calling these subagents:
+Before starting, consider calling these agents:
 
 ```text
-@agent-designer - Should this MCP have its own subagent? Which agents need it?
+@Build-Agent - Should this MCP have its own subagent? Which agents need it?
 @architecture - Does this fit the current framework structure?
 ```
 

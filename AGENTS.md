@@ -61,14 +61,14 @@ See `.agent/aidevops/` for framework development guidance:
 
 | File | Purpose |
 |------|---------|
-| `agent-designer.md` | Composing efficient agents |
-| `agent-review.md` | Reviewing and improving agents |
+| `build-agent.md` | Composing efficient agents (main agent) |
+| `build-agent/agent-review.md` | Reviewing and improving agents |
 | `architecture.md` | Framework structure |
 | `setup.md` | AI guide to setup.sh |
 
 ## Agent Design Principles
 
-From `agent-designer.md`:
+From `build-agent.md`:
 
 1. **Instruction budget**: ~50-100 max in root AGENTS.md
 2. **Universal applicability**: Every instruction relevant to >80% of tasks
@@ -98,7 +98,7 @@ find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 ## Self-Assessment Protocol
 
-When developing agents, apply self-assessment from `agent-designer.md`:
+When developing agents, apply self-assessment from `build-agent.md`:
 
 - **Triggers**: Observable failure, user correction, contradiction, staleness
 - **Process**: Complete task, cite evidence, check duplicates, propose fix

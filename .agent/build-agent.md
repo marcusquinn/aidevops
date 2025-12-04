@@ -1,42 +1,37 @@
-# Agent Designer - Composing Efficient AI Agents
+# Build-Agent - Composing Efficient AI Agents
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-**Instruction Limits** (research-backed):
-- ~150-200 discrete instructions: frontier thinking models can follow
-- ~50 instructions: consumed by AI assistant harness system prompt
-- **Budget for AGENTS.md**: ~50-100 instructions max (leaving room for user messages)
-- Instruction-following degrades uniformly as count increases (not just "later" ones)
+- **Purpose**: Design, create, and improve AI agents for the aidevops framework
+- **Pattern**: Main agents at root, subagents in folders
+- **Budget**: ~50-100 instructions per agent (research-backed limit)
 
-**Token Efficiency Rules**:
+**Instruction Limits**:
+- ~150-200: frontier models can follow
+- ~50: consumed by AI assistant system prompt
+- **Your budget**: ~50-100 instructions max
+
+**Token Efficiency**:
 - Root AGENTS.md: <150 lines, universally applicable only
-- Subagents: Progressive disclosure (read only when task requires)
-- MCP servers: Disabled globally, enabled per-agent to keep context lean
-- Code references: Use search patterns (e.g., `rg "function_name"`) not `file:line` (drifts)
+- Subagents: Progressive disclosure (read when needed)
+- MCP servers: Disabled globally, enabled per-agent
+- Code refs: Use search patterns (`rg "pattern"`) not `file:line`
 
 **Agent Hierarchy**:
-- **Main Agents**: High-level orchestration, call subagents when needed
-- **Subagents**: Focused parallel execution, minimal context, specific tools
-- Decision: If task can run independently without conflicting context → subagent
+- **Main Agents**: Orchestration, call subagents when needed
+- **Subagents**: Focused execution, minimal context, specific tools
 
-**Quality Preferences**:
-1. Linters first (deterministic, fast, cheap)
-2. Static analysis second
-3. LLM review last (expensive, slow, variable)
+**Subagents** (`build-agent/`):
 
-**Information Quality** (all domains):
-- Primary sources over secondary
-- Cross-reference claims across sources
-- Note source biases and agendas
-- Fact-check before including in agents
+| Subagent | When to Read |
+|----------|--------------|
+| `agent-review.md` | Reviewing and improving existing agents |
 
-**Self-Assessment Triggers**:
-1. Observable failure (commands fail, paths don't exist)
-2. User correction (immediate trigger)
-3. Contradiction with authoritative docs
-4. Staleness indicators (version mismatches, deprecated APIs)
+**Related Agents**:
+- `@code-quality` for linting agent markdown
+- `aidevops/architecture.md` for framework structure
 
 <!-- AI-CONTEXT-END -->
 
@@ -532,4 +527,4 @@ Main agents provide overview and point to subagents for details (progressive dis
 
 ### Reviewing Existing Agents
 
-Use `@agent-review` subagent for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
+See `build-agent/agent-review.md` for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.

@@ -38,7 +38,8 @@
 
 | Folder | Contents |
 |--------|----------|
-| `aidevops/` | Framework meta-agents (agent-designer, add-new-mcp, setup, troubleshooting) |
+| `aidevops/` | Framework meta-agents (add-new-mcp, setup, troubleshooting) |
+| `build-agent/` | Agent design subagents (agent-review) |
 | `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp) |
 | `seo/` | SEO subagents (google-search-console) |
 | `content/` | Content subagents (guidelines) |

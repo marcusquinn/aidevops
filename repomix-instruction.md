@@ -46,6 +46,6 @@ Focus on `.agent/` for the authoritative content.
 | Task | Key Files |
 |------|-----------|
 | Add new service | `.agent/aidevops/add-new-mcp-to-aidevops.md` |
-| Create agent | `.agent/aidevops/agent-designer.md` |
-| Review agents | `.agent/aidevops/agent-review.md` |
+| Create agent | `.agent/build-agent.md` |
+| Review agents | `.agent/build-agent/agent-review.md` |
 | Release version | `.agent/workflows/release-process.md` |

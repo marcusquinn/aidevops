@@ -15,11 +15,12 @@
 - Release: `.agent/scripts/version-manager.sh release [major|minor|patch]`
 
 **Subagents** (`aidevops/`):
-- `agent-designer.md` - Composing efficient agents
-- `agent-review.md` - Reviewing and improving agents
 - `setup.md` - AI guide to setup.sh
 - `troubleshooting.md` - Service status, debugging
 - `architecture.md` - Framework structure
+
+**Related Main Agents**:
+- `Build-Agent` - Composing efficient agents (see `build-agent.md`)
 
 **Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP,
 Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations
