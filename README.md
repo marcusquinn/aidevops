@@ -88,16 +88,43 @@ cd aidevops && ./setup.sh
 
 **That's it! Your AI assistant now has agentic access to 30+ service integrations.**
 
-**Recommended CLI AI Assistants:** (In order of our testing experience and preference from real-world project use.)
+**Supported AI Assistants:** (OpenCode is our daily driver and preferred tool. All 18 assistants below have MCP configuration support.)
 
-- **[OpenCode](https://opencode.ai/)** (Preferred - Powerful and clear agentic TUI/CLI with MCP support)
-- **[Factory AI Droid](https://www.factory.ai/)** (Enterprise-grade agentic AI & Collaboration)
-- **[Augment Code (Auggie)](https://www.augmentcode.com/)** (Professional coding assistant, with deep codebase indexing for context continuity on large codebases)
-- **[AmpCode](https://ampcode.com/)** (Professional AI coding assistant, including a free ad-supported use option)
-- **[Warp AI](https://www.warp.dev/)** (Terminal-integrated dedicated app and interface for coding)
-- **[Continue.dev](https://continue.dev/)** (AI pair programmer)
-- **[Claude Desktop](https://claude.ai/)** (Advanced reasoning with MCPs and agents)
-- **[OpenAI Codex](https://openai.com/)** (Code-focused model with MCPs and agents)
+**Preferred:**
+
+- **[OpenCode](https://opencode.ai/)** - Primary choice. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, and excellent DX.
+
+**IDE-Based:**
+
+- **[Cursor](https://cursor.sh/)** - AI-first IDE with MCP support
+- **[Windsurf](https://codeium.com/windsurf)** - Codeium's AI IDE
+- **[Continue.dev](https://continue.dev/)** - VS Code/JetBrains extension
+- **[Cody](https://sourcegraph.com/cody)** - Sourcegraph's AI assistant
+- **[Zed](https://zed.dev/)** - High-performance editor with AI
+
+**Claude Family:**
+
+- **[Claude Code](https://claude.ai/)** - CLI version with `claude mcp add`
+- **[Claude Desktop](https://claude.ai/)** - GUI with MCP config
+
+**Enterprise & Professional:**
+
+- **[Factory AI Droid](https://www.factory.ai/)** - Enterprise-grade agentic AI
+- **[Augment Code](https://www.augmentcode.com/)** - Deep codebase indexing
+- **[GitHub Copilot](https://github.com/features/copilot)** - Agent mode for MCP
+
+**Specialized:**
+
+- **[Kilo Code](https://kilocode.ai/)** - VS Code extension
+- **[Kiro](https://kiro.dev/)** - AWS's AI assistant
+- **[AntiGravity](https://antigravity.dev/)** - AI coding tool
+- **[Gemini CLI](https://ai.google.dev/)** - Google's CLI
+
+**Terminal & CLI:**
+
+- **[Aider](https://aider.chat/)** - CLI pair programmer with native MCP
+- **[Warp AI](https://www.warp.dev/)** - Terminal with AI (no native MCP, use OpenCode/Claude in Warp)
+- **[Qwen](https://qwen.ai/)** - Alibaba's CLI (MCP support experimental)
 
 ## **Core Capabilities**
 
@@ -202,7 +229,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 ## **MCP Integrations**
 
-**Model Context Protocol servers for real-time AI assistant integration.** The framework helps configure these MCPs for OpenCode, Claude Desktop, Cursor, and other AI assistants.
+**Model Context Protocol servers for real-time AI assistant integration.** The framework helps configure these MCPs for **18 AI assistants** including OpenCode (preferred), Cursor, Claude Code/Desktop, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Warp AI, Aider, and Qwen.
 
 ### **All Supported MCPs**
 

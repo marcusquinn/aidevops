@@ -112,6 +112,24 @@ primary_agents = {
             "repomix_*": True
         }
     },
+    "Build-MCP": {
+        "description": "Read ~/.aidevops/agents/build-mcp.md - Build MCP servers with TS+Bun+ElysiaJS",
+        "mode": "primary",
+        "temperature": 0.2,
+        "tools": {
+            "write": True,
+            "edit": True,
+            "bash": True,
+            "read": True,
+            "glob": True,
+            "grep": True,
+            "webfetch": True,
+            "task": True,
+            "context7_*": True,
+            "augment-context-engine_*": True,
+            "repomix_*": True
+        }
+    },
     "Accounting": {
         "description": "Read ~/.aidevops/agents/accounting.md",
         "mode": "primary",
