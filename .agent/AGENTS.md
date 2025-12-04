@@ -24,6 +24,8 @@
 | `plan-plus.md` | Read-only planning with semantic codebase search |
 | `build-plus.md` | Enhanced Build with context tools |
 | `aidevops.md` | Framework operations, meta-agents, setup |
+| `build-agent.md` | Agent design and composition |
+| `build-mcp.md` | MCP server development |
 | `wordpress.md` | WordPress ecosystem management |
 | `seo.md` | SEO optimization and analysis |
 | `content.md` | Content creation workflows |
@@ -38,22 +40,26 @@
 
 | Folder | Contents |
 |--------|----------|
-| `aidevops/` | Framework meta-agents (add-new-mcp, setup, troubleshooting) |
+| `aidevops/` | Framework meta-agents (add-new-mcp, setup, troubleshooting, architecture, security) |
 | `build-agent/` | Agent design subagents (agent-review) |
-| `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp) |
+| `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
+| `memory/` | Cross-session memory patterns |
+| `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp, wp-preferred) |
 | `seo/` | SEO subagents (google-search-console) |
 | `content/` | Content subagents (guidelines) |
-| `tools/git/` | Git platform CLIs (github, gitlab, gitea, workflow) |
-| `tools/code-review/` | Quality tools (sonarcloud, codacy, coderabbit, snyk, secretlint) |
-| `tools/browser/` | Browser automation (playwright, chrome-devtools, crawl4ai) |
-| `tools/context/` | Context tools (augment-context-engine, context-builder, context7, toon, dspy) |
-| `tools/credentials/` | Credential management (vaultwarden, api-keys) |
-| `tools/deployment/` | Deployment tools (coolify, vercel) |
+| `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
+| `tools/browser/` | Browser automation (playwright, stagehand, stagehand-python, chrome-devtools, crawl4ai, pagespeed) |
+| `tools/code-review/` | Quality tools (sonarcloud, codacy, coderabbit, qlty, snyk, auditing, automation) |
+| `tools/context/` | Context tools (augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
+| `tools/conversion/` | Format conversion (pandoc) |
+| `tools/data-extraction/` | Data extraction (outscraper) |
+| `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
+| `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, workflow, integration) |
 | `tools/opencode/` | OpenCode configuration and paths |
-| `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, dns) |
+| `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (release, bug-fixing, versioning) |
+| `workflows/` | Process guides (release, versioning, bug-fixing, feature-development, code-review, error-feedback, multi-repo-workspace) |
 
 <!-- AI-CONTEXT-END -->
 
@@ -79,6 +85,8 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Code quality tasks → `tools/code-review/`
 - WordPress work → `wordpress/`
 - Release/versioning → `workflows/`
+- Browser automation → `tools/browser/`
+- MCP development → `build-mcp/`
 
 ## Security
 
@@ -98,6 +106,22 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 
 Never create files in `~/` root.
 
+## Key Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `quality-check.sh` | Run all quality checks (ShellCheck, SonarCloud, secrets) |
+| `version-manager.sh` | Version bumps and releases |
+| `linter-manager.sh` | Install and manage linters |
+| `github-cli-helper.sh` | GitHub operations |
+| `coolify-helper.sh` | Coolify deployment management |
+| `stagehand-helper.sh` | Browser automation with Stagehand |
+| `crawl4ai-helper.sh` | Web crawling and extraction |
+| `toon-helper.sh` | TOON format conversion |
+| `sonarcloud-cli.sh` | SonarCloud analysis |
+| `codacy-cli.sh` | Codacy code quality |
+| `secretlint-helper.sh` | Secret detection |
+
 ## Development Workflows
 
 For versioning, releases, and git operations:
@@ -109,6 +133,8 @@ For versioning, releases, and git operations:
 | Git branching | `tools/git/workflow.md` |
 | Bug fixes | `workflows/bug-fixing.md` |
 | Feature development | `workflows/feature-development.md` |
+| Code review | `workflows/code-review.md` |
+| Multi-repo work | `workflows/multi-repo-workspace.md` |
 
 **Quick commands:**
 
