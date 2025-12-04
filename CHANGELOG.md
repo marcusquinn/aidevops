@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0] - 2025-12-04
+
+### Added
+
+- **Outscraper MCP Server Integration** - Data extraction service for OpenCode
+  - Automatic MCP server configuration in `generate-opencode-agents.sh`
+  - Adds `outscraper` to MCP section with uvx command and environment variable
+  - Subagent-only access pattern via `@outscraper` for controlled usage
+
+### Changed
+
+- **Tool-Specific Subagent Strategy** - Enhanced security model for external service tools
+  - Added special handling for tool-specific subagents (outscraper, mainwp, localwp, quickfile, google-search-console)
+  - Main agents (Content, Marketing, Research, Sales, SEO) no longer have direct outscraper access
+  - Tools disabled globally (`outscraper_*: false`) with access only through dedicated subagents
+- Updated `outscraper.md` documentation to reflect subagent-only access pattern
+- Updated `outscraper-config.json.txt` agent enablement section
+
+## [2.6.0] - 2025-12-04
+
+### Added
+
+- **Repomix AI Context Generation** - Configuration and documentation for Repomix integration
+  - `repomix.config.json` - Default configuration with XML output, line numbers, security checks, smart includes for .md/.sh/.json.txt files
+  - `.repomixignore` - Additional exclusions beyond .gitignore (symlinked dirs, binaries, generated outputs)
+  - `repomix-instruction.md` - Custom AI instructions embedded in Repomix output to help AI understand codebase structure
+
+### Changed
+
+- Updated `.gitignore` with `repomix-output.*` patterns to exclude generated outputs
+- Enhanced `README.md` with comprehensive "Repomix - AI Context Generation" section:
+  - Comparison table with Augment Context Engine
+  - Quick usage commands and configuration files reference
+  - Key design decisions (no pre-generated files, .gitignore inheritance, Secretlint enabled, symlinks excluded)
+  - MCP integration configuration example
+
+## [2.5.3] - 2025-12-04
+
+### Security
+
+- **Plan+ Agent Permission Bypass Fix** - Closed vulnerability allowing read-only agent to bypass restrictions
+  - Disabled `bash` tool to prevent shell command file writes
+  - Disabled `task` tool to prevent spawning write-capable subagents (subagents don't inherit parent permissions)
+  - Added explicit `write: deny` permission for defense in depth
+  - Updated `.agent/plan-plus.md` documentation to reflect strict read-only mode
+
+### Added
+
+- **Permission Model Limitations Documentation** - New section in `.agent/tools/opencode/opencode.md`
+  - Documents OpenCode permission inheritance behavior
+  - Explains subagent permission isolation
+  - Provides guidance for securing read-only agents
+
 ## [2.2.0] - 2025-11-30
 
 ### Added
@@ -180,7 +233,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/marcusquinn/aidevops/compare/v2.6.0...v2.7.0
+[2.6.0]: https://github.com/marcusquinn/aidevops/compare/v2.5.3...v2.6.0
+[2.5.3]: https://github.com/marcusquinn/aidevops/compare/v2.2.0...v2.5.3
+[2.2.0]: https://github.com/marcusquinn/aidevops/compare/v2.0.0...v2.2.0
 [2.0.0]: https://github.com/marcusquinn/aidevops/compare/v1.9.1...v2.0.0
 [1.9.1]: https://github.com/marcusquinn/aidevops/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/marcusquinn/aidevops/compare/v1.8.0...v1.9.0

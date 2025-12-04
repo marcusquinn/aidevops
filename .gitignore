@@ -172,3 +172,9 @@ test-*.yaml
 !.kiro
 !.ai
 !.qoder/
+
+# Repomix generated outputs (generate on-demand, don't commit)
+repomix-output.*
+*-repomix-*.xml
+*-repomix-*.md
+*-repomix-*.json

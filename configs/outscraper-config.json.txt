@@ -1,0 +1,137 @@
+{
+  "_comment": "Outscraper MCP Server Configuration",
+  "_description": "Business intelligence extraction from Google Maps, Amazon, reviews, contacts",
+  "_documentation": "https://github.com/outscraper/outscraper-mcp",
+  "_api_docs": "https://app.outscraper.com/api-docs",
+  "_pricing": "https://outscraper.com/pricing/",
+
+  "prerequisites": {
+    "python": "3.10+",
+    "package_manager": "uv (recommended) or pip",
+    "api_key_source": "https://auth.outscraper.com/profile"
+  },
+
+  "installation": {
+    "uvx": "uvx outscraper-mcp-server",
+    "uv": "uv add outscraper-mcp-server",
+    "pip": "pip install outscraper-mcp-server",
+    "smithery": "npx -y @smithery/cli install outscraper-mcp-server --client claude"
+  },
+
+  "environment_variables": {
+    "OUTSCRAPER_API_KEY": {
+      "description": "API key from Outscraper profile page",
+      "required": true,
+      "source": "https://auth.outscraper.com/profile"
+    }
+  },
+
+  "aidevops_env_setup": {
+    "_file": "~/.config/aidevops/mcp-env.sh",
+    "_permissions": "chmod 600",
+    "content": "export OUTSCRAPER_API_KEY=\"your_api_key_here\""
+  },
+
+  "mcp_config": {
+    "opencode": {
+      "_file": "~/.config/opencode/opencode.json",
+      "_section": "mcp",
+      "outscraper": {
+        "type": "local",
+        "command": ["uvx", "outscraper-mcp-server"],
+        "enabled": true,
+        "env": {
+          "OUTSCRAPER_API_KEY": "${OUTSCRAPER_API_KEY}"
+        }
+      }
+    },
+    "claude_desktop": {
+      "_file": "~/Library/Application Support/Claude/claude_desktop_config.json",
+      "mcpServers": {
+        "outscraper": {
+          "command": "uvx",
+          "args": ["outscraper-mcp-server"],
+          "env": {
+            "OUTSCRAPER_API_KEY": "your_api_key_here"
+          }
+        }
+      }
+    },
+    "cursor": {
+      "_file": "~/.cursor/mcp.json",
+      "mcpServers": {
+        "outscraper": {
+          "command": "uvx",
+          "args": ["outscraper-mcp-server"],
+          "env": {
+            "OUTSCRAPER_API_KEY": "your_api_key_here"
+          }
+        }
+      }
+    },
+    "gemini_cli": {
+      "_file": "~/.gemini/settings.json",
+      "mcpServers": {
+        "outscraper": {
+          "command": "uvx",
+          "args": ["outscraper-mcp-server"],
+          "env": {
+            "OUTSCRAPER_API_KEY": "your_api_key_here"
+          }
+        }
+      }
+    }
+  },
+
+  "tools_reference": {
+    "google_maps": {
+      "google_maps_search": "Search for businesses and places with detailed information",
+      "google_maps_reviews": "Extract customer reviews from any Google Maps place",
+      "google_maps_photos": "Get photos from Google Maps places",
+      "google_maps_directions": "Get directions between locations on Google Maps"
+    },
+    "search": {
+      "google_search": "Search Google and retrieve organic listings, ads, and related data",
+      "google_search_news": "Search Google News for articles and metadata"
+    },
+    "reviews": {
+      "google_play_reviews": "Get reviews for apps from Google Play Store",
+      "amazon_reviews": "Extract reviews from Amazon products",
+      "tripadvisor_reviews": "Get reviews from Tripadvisor businesses",
+      "apple_store_reviews": "Extract reviews from AppStore apps",
+      "youtube_comments": "Get comments from YouTube videos",
+      "g2_reviews": "Extract reviews from G2 products",
+      "trustpilot_reviews": "Get business data and reviews from Trustpilot",
+      "glassdoor_reviews": "Extract company reviews from Glassdoor",
+      "capterra_reviews": "Get software product reviews from Capterra"
+    },
+    "business_intelligence": {
+      "emails_and_contacts": "Extract emails and contact information from websites",
+      "phones_enricher": "Get carrier data and validate phone numbers",
+      "company_insights": "Find company details like revenue, size, founding year, etc.",
+      "email_validation": "Validate email addresses and check deliverability",
+      "whitepages_data": "Get insights about addresses and phone number owners",
+      "amazon_products": "Get information about products on Amazon"
+    },
+    "geolocation": {
+      "geocoding": "Convert addresses to coordinates (latitude, longitude)",
+      "reverse_geocoding": "Convert coordinates to human-readable addresses"
+    }
+  },
+
+  "agent_enablement": {
+    "_strategy": "Enable only for the outscraper subagent to reduce MCP tool loading overhead",
+    "_opencode_access": "@outscraper subagent only",
+    "enabled_agents": [],
+    "disabled_agents": ["Plan+", "Build+", "AI-DevOps", "WordPress", "Accounting", "Health", "Legal", "Research", "Sales", "Marketing", "SEO", "Content"]
+  },
+
+  "verification": {
+    "prompt": "Search for coffee shops near Times Square NYC using Google Maps search and return the top 5 results with ratings.",
+    "expected_behavior": [
+      "Confirms access to Outscraper tools",
+      "Returns business names, addresses, ratings",
+      "Includes review counts and categories"
+    ]
+  }
+}

@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.5.2-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.6.0-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -270,6 +270,64 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand-python   # Python versio
 bash .agent/scripts/setup-mcp-integrations.sh stagehand-both     # Both versions
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ```
+
+## **Repomix - AI Context Generation**
+
+[Repomix](https://repomix.com/) packages your codebase into AI-friendly formats for sharing with AI assistants. This framework includes optimized Repomix configuration for consistent context generation.
+
+### Why Repomix?
+
+| Use Case | Tool | When to Use |
+|----------|------|-------------|
+| **Interactive coding** | Augment Context Engine | Real-time semantic search during development |
+| **Share with external AI** | Repomix | Self-contained snapshot for ChatGPT, Claude web, etc. |
+| **Architecture review** | Repomix (compress) | 80% token reduction, structure only |
+| **CI/CD integration** | GitHub Action | Automated context in releases |
+
+### Quick Usage
+
+```bash
+# Pack current repo with configured defaults
+npx repomix
+
+# Compress mode (~80% smaller, structure only)
+npx repomix --compress
+
+# Or use the helper script
+.agent/scripts/context-builder-helper.sh pack      # Full context
+.agent/scripts/context-builder-helper.sh compress  # Compressed
+```
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `repomix.config.json` | Default settings (style, includes, security) |
+| `.repomixignore` | Additional exclusions beyond .gitignore |
+| `repomix-instruction.md` | Custom AI instructions included in output |
+
+### Key Design Decisions
+
+- **No pre-generated files**: Outputs are generated on-demand to avoid staleness
+- **Inherits .gitignore**: Security patterns automatically respected
+- **Secretlint enabled**: Scans for exposed credentials before output
+- **Symlinks excluded**: Avoids duplicating `.agent/` content
+
+### MCP Integration
+
+Repomix runs as an MCP server for direct AI assistant integration:
+
+```json
+{
+  "repomix": {
+    "type": "local",
+    "command": ["npx", "-y", "repomix@latest", "--mcp"],
+    "enabled": true
+  }
+}
+```
+
+See `.agent/tools/context/context-builder.md` for complete documentation.
 
 ## **AI Agents & Subagents**
 

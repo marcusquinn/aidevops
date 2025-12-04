@@ -367,6 +367,62 @@ ls -la ~/.aidevops/agents/ 2>/dev/null
 grep -l "aidevops" ~/.config/opencode/agent/*.md 2>/dev/null
 ```
 
+## Permission Model Limitations
+
+### Critical: Subagent Permission Inheritance
+
+**OpenCode subagents do NOT inherit parent agent permission restrictions.**
+
+When a parent agent uses the `task` tool to spawn a subagent:
+- The subagent runs with its OWN tool permissions
+- Parent's `write: false` is NOT enforced on the subagent
+- Parent's `bash: deny` is NOT enforced on the subagent
+
+**Implications for Read-Only Agents:**
+
+| Configuration | Is Actually Read-Only? |
+|---------------|----------------------|
+| `write: false, edit: false, task: true` | NO - subagents can write |
+| `write: false, edit: false, bash: true` | NO - bash can write files |
+| `write: false, edit: false, bash: false, task: false` | YES - truly read-only |
+
+**Example**: Plan+ with `task: true` could call a subagent that creates files, defeating its read-only purpose.
+
+### Bash Escapes All Restrictions
+
+When `bash: true`, the agent can execute ANY shell command, including:
+- `echo "content" > file.txt` - creates files
+- `sed -i 's/old/new/' file.txt` - modifies files
+- `rm file.txt` - deletes files
+
+**For true read-only behavior**: Set both `bash: false` AND `task: false`
+
+### Plan+ Read-Only Configuration
+
+Plan+ is configured as strictly read-only:
+
+```json
+"Plan+": {
+  "permission": {
+    "edit": "deny",
+    "write": "deny",
+    "bash": "deny"
+  },
+  "tools": {
+    "write": false,
+    "edit": false,
+    "bash": false,
+    "task": false,
+    "read": true,
+    "glob": true,
+    "grep": true,
+    "webfetch": true
+  }
+}
+```
+
+Use Build+ (Tab) for any operations requiring file changes.
+
 ## Continuous Improvement with @agent-review
 
 **End every session by calling `@agent-review`** to analyze the conversation and improve agents:

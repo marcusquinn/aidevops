@@ -77,17 +77,18 @@ primary_agents = {
         "temperature": 0.2,
         "permission": {
             "edit": "deny",
-            "bash": "ask"
+            "write": "deny",
+            "bash": "deny"
         },
         "tools": {
             "write": False,
             "edit": False,
-            "bash": True,
+            "bash": False,
             "read": True,
             "glob": True,
             "grep": True,
             "webfetch": True,
-            "task": True,
+            "task": False,
             "context7_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
@@ -246,6 +247,32 @@ primary_agents = {
 
 config['agent'] = primary_agents
 
+# =============================================================================
+# MCP SERVERS - Ensure required MCP servers are configured
+# =============================================================================
+
+if 'mcp' not in config:
+    config['mcp'] = {}
+
+if 'tools' not in config:
+    config['tools'] = {}
+
+# Outscraper MCP - for business intelligence extraction (subagent only)
+if 'outscraper' not in config['mcp']:
+    config['mcp']['outscraper'] = {
+        "type": "local",
+        "command": ["uvx", "outscraper-mcp-server"],
+        "enabled": True,
+        "env": {
+            "OUTSCRAPER_API_KEY": "${OUTSCRAPER_API_KEY}"
+        }
+    }
+    print("  Added outscraper MCP server")
+
+if 'outscraper_*' not in config['tools']:
+    config['tools']['outscraper_*'] = False
+    print("  Added outscraper_* to tools (disabled globally, enabled for @outscraper subagent)")
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 
@@ -266,13 +293,44 @@ find "$OPENCODE_AGENT_DIR" -name "*.md" -type f -delete 2>/dev/null || true
 subagent_count=0
 
 # Generate SUBAGENT files from subfolders
+# Some subagents need specific MCP tools enabled
 while IFS= read -r f; do
     name=$(basename "$f" .md)
     [[ "$name" == "AGENTS" || "$name" == "README" ]] && continue
     
     rel_path="${f#$AGENTS_DIR/}"
     
-    cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
+    # Determine additional tools based on subagent name/path
+    extra_tools=""
+    case "$name" in
+        outscraper)
+            extra_tools=$'  outscraper_*: true\n  webfetch: true'
+            ;;
+        mainwp|localwp)
+            extra_tools=$'  localwp_*: true'
+            ;;
+        quickfile)
+            extra_tools=$'  quickfile_*: true'
+            ;;
+        google-search-console)
+            extra_tools=$'  gsc_*: true'
+            ;;
+    esac
+    
+    if [[ -n "$extra_tools" ]]; then
+        cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
+---
+description: Read ~/.aidevops/agents/${rel_path}
+mode: subagent
+temperature: 0.2
+tools:
+  read: true
+  bash: true
+$extra_tools
+---
+EOF
+    else
+        cat > "$OPENCODE_AGENT_DIR/$name.md" << EOF
 ---
 description: Read ~/.aidevops/agents/${rel_path}
 mode: subagent
@@ -282,6 +340,7 @@ tools:
   bash: true
 ---
 EOF
+    fi
     ((subagent_count++))
 done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f | sort)
 

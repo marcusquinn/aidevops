@@ -1,0 +1,37 @@
+# .repomixignore - Additional exclusions beyond .gitignore
+# Note: .gitignore patterns are automatically inherited (useGitignore: true)
+
+# Symlinked directories (avoid duplication - these mirror .agent/)
+.ai/
+.continue/
+.cursor/
+.claude/
+.factory/
+.codex/
+.kiro/
+.opencode/
+
+# Binary and media files (not useful for AI context)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.svg
+*.pdf
+*.zip
+*.tar
+*.gz
+
+# Generated outputs (prevent recursion)
+repomix-output.*
+*-repomix-*.xml
+*-repomix-*.md
+
+# Large generated files
+*.sarif
+reports/
+.scannerwork/
+
+# Test fixtures that add noise
+tests/toon-test-documents/

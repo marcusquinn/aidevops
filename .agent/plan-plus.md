@@ -22,11 +22,12 @@
 - `context7.md` - Library documentation lookup
 - `toon.md` - Token-optimized data format
 
-**Permissions** (Read-Only Mode):
+**Permissions** (Strictly Read-Only):
 
 - `write`: disabled (no file creation)
 - `edit`: disabled (no file modifications)
-- `bash`: ask (prompts for approval - use for read-only inspection)
+- `bash`: disabled (prevents shell-based writes)
+- `task`: disabled (prevents subagent permission bypass)
 
 **Workflow**:
 
@@ -71,17 +72,20 @@ Use Context7 MCP for library documentation:
 - Resolve library IDs: `resolve-library-id("next.js")`
 - Get documentation: `get-library-docs("/vercel/next.js", topic="routing")`
 
-### Analysis Without Changes
+### Strictly Read-Only Mode
 
-Plan+ has read-only permissions:
+Plan+ enforces true read-only through comprehensive tool restrictions:
 
 - **Read files**: Full access to read any file
 - **Search**: Glob and grep for code discovery
 - **Web fetch**: Access documentation and references
-- **Task delegation**: Delegate to explore agents for research
-- **No writes**: Cannot create or modify files
-- **No edits**: Cannot change existing code
-- **Bash (ask)**: Can run read-only commands after approval
+- **MCP tools**: Context7, Augment, Repomix for analysis
+- **No writes**: Cannot create files
+- **No edits**: Cannot modify files
+- **No bash**: Prevents shell-based file operations
+- **No task delegation**: Prevents subagent permission bypass
+
+**Note**: Use Build+ (Tab) for any operations requiring file changes.
 
 ### Planning Best Practices
 

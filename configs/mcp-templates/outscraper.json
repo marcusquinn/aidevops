@@ -1,0 +1,172 @@
+{
+  "_comment": "Outscraper MCP configuration snippets for various AI tools",
+  "_documentation": "https://github.com/outscraper/outscraper-mcp",
+  "_install": "pip install outscraper-mcp-server OR uvx outscraper-mcp-server",
+  "_api_key": "https://auth.outscraper.com/profile",
+
+  "opencode": {
+    "_file": "~/.config/opencode/opencode.json",
+    "_section": "mcp",
+    "outscraper": {
+      "type": "local",
+      "command": ["uvx", "outscraper-mcp-server"],
+      "enabled": true,
+      "env": {
+        "OUTSCRAPER_API_KEY": "${OUTSCRAPER_API_KEY}"
+      }
+    }
+  },
+
+  "claude_desktop": {
+    "_file": "~/Library/Application Support/Claude/claude_desktop_config.json",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        }
+      }
+    }
+  },
+
+  "claude_code_command": "claude mcp add-json outscraper --scope user '{\"type\":\"stdio\",\"command\":\"uvx\",\"args\":[\"outscraper-mcp-server\"],\"env\":{\"OUTSCRAPER_API_KEY\":\"your_api_key_here\"}}'",
+
+  "smithery_command": "npx -y @smithery/cli install outscraper-mcp-server --client claude",
+
+  "cursor": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        }
+      }
+    }
+  },
+
+  "windsurf": {
+    "_file": "~/.codeium/windsurf/mcp_config.json",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        }
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_file": "~/.gemini/settings.json",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        }
+      }
+    }
+  },
+
+  "github_copilot": {
+    "_file": ".vscode/mcp.json (project root)",
+    "servers": {
+      "outscraper": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        }
+      }
+    }
+  },
+
+  "kilo_code": {
+    "_method": "Global MCP Config",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "type": "stdio",
+        "disabled": false,
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        },
+        "alwaysAllow": ["google_maps_search", "google_search"]
+      }
+    }
+  },
+
+  "kiro": {
+    "_method": "Command Palette: Kiro: Open user MCP config (JSON)",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "disabled": false,
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        },
+        "autoApprove": ["google_maps_search", "google_search"]
+      }
+    }
+  },
+
+  "droid_command": "droid mcp add outscraper \"uvx\" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here",
+
+  "raycast": {
+    "_note": "Configure in Raycast MCP settings",
+    "mcpServers": {
+      "outscraper": {
+        "command": "uvx",
+        "args": ["outscraper-mcp-server"],
+        "env": {
+          "OUTSCRAPER_API_KEY": "your_api_key_here"
+        }
+      }
+    }
+  },
+
+  "tools_available": {
+    "_description": "25+ tools for data extraction",
+    "google_maps": [
+      "google_maps_search",
+      "google_maps_reviews",
+      "google_maps_photos",
+      "google_maps_directions"
+    ],
+    "search": [
+      "google_search",
+      "google_search_news"
+    ],
+    "reviews": [
+      "google_play_reviews",
+      "amazon_reviews",
+      "tripadvisor_reviews",
+      "apple_store_reviews",
+      "youtube_comments",
+      "g2_reviews",
+      "trustpilot_reviews",
+      "glassdoor_reviews",
+      "capterra_reviews"
+    ],
+    "business": [
+      "emails_and_contacts",
+      "phones_enricher",
+      "company_insights",
+      "email_validation",
+      "whitepages_data",
+      "amazon_products"
+    ],
+    "geolocation": [
+      "geocoding",
+      "reverse_geocoding"
+    ]
+  }
+}
