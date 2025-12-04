@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.2] - 2025-12-04
+
+### Fixed
+
+- **Outscraper MCP Server Fails to Start** - Fixed `uvx` command conflict
+  - `uvx` on some systems is a different tool (not uv's uvx alias)
+  - Changed to `uv tool run outscraper-mcp-server` which is the correct way to run Python tools with uv
+  - Updated `generate-opencode-agents.sh`, `outscraper.md`, `outscraper.json` template, and `outscraper-config.json.txt`
+
 ## [2.7.1] - 2025-12-04
 
 ### Fixed
@@ -242,7 +251,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.7.2...HEAD
+[2.7.2]: https://github.com/marcusquinn/aidevops/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/marcusquinn/aidevops/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/marcusquinn/aidevops/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/marcusquinn/aidevops/compare/v2.5.3...v2.6.0

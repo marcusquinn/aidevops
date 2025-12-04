@@ -261,7 +261,7 @@ if 'tools' not in config:
 if 'outscraper' not in config['mcp']:
     config['mcp']['outscraper'] = {
         "type": "local",
-        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uvx outscraper-mcp-server"],
+        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
         "enabled": True
     }
     print("  Added outscraper MCP server")
