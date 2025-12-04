@@ -486,9 +486,10 @@ All agent files should follow this structure:
 
 ```
 .agent/
-├── AGENTS.md                 # Entry point for users
-├── {domain}.md               # Main agents at root
+├── AGENTS.md                 # Entry point (ALLCAPS - special root file)
+├── {domain}.md               # Main agents at root (lowercase)
 ├── {domain}/                 # Subagents for that domain
+│   ├── {subagent}.md         # Specialized guidance (lowercase)
 ├── tools/                    # Cross-domain utilities
 │   ├── {category}/           # Grouped by function
 ├── services/                 # External integrations
@@ -497,9 +498,37 @@ All agent files should follow this structure:
 ```
 
 **Naming conventions:**
-- Lowercase with hyphens: `code-review.md`, `context-builder.md`
-- Main agent matches folder name: `wordpress.md` + `wordpress/`
-- Descriptive but concise names
+
+- **Main agents**: Lowercase with hyphens at root (`build-mcp.md`, `wordpress.md`)
+- **Subagents**: Lowercase with hyphens in folders (`build-mcp/deployment.md`)
+- **Special files**: ALLCAPS for entry points only (`AGENTS.md`, `README.md`)
+- **Pattern**: Main agent matches folder name: `{domain}.md` + `{domain}/`
+
+**Why lowercase for main agents (not ALLCAPS)?**
+
+- Location (root vs folder) already distinguishes main from subagents
+- ALLCAPS causes cross-platform issues (Linux is case-sensitive)
+- Matches common framework conventions (OpenCode, Cursor, Continue)
+- `ls .agent/*.md` instantly shows all main agents
+
+**Why main agents stay at root (not inside folders)?**
+
+- Tooling uses `find -mindepth 2` to discover subagents
+- Quick visibility: main agents visible without opening folders
+- Clear mental model: "main file + supporting folder"
+- OpenCode expects main agents at predictable paths
+
+**Main agent → subagent relationship:**
+
+Main agents provide overview and point to subagents for details (progressive disclosure):
+
+```markdown
+**Subagents** (`build-mcp/`):
+| Subagent | When to Read |
+|----------|--------------|
+| `deployment.md` | Adding MCP to AI assistants |
+| `server-patterns.md` | Registering tools, resources |
+```
 
 ### Reviewing Existing Agents
 
