@@ -96,11 +96,11 @@ cd aidevops && ./setup.sh
 
 **IDE-Based:**
 
+- **[Zed](https://zed.dev/)** - High-performance editor with AI (Preferred, with the OpenCode Agent Extension)
 - **[Cursor](https://cursor.sh/)** - AI-first IDE with MCP support
 - **[Windsurf](https://codeium.com/windsurf)** - Codeium's AI IDE
 - **[Continue.dev](https://continue.dev/)** - VS Code/JetBrains extension
 - **[Cody](https://sourcegraph.com/cody)** - Sourcegraph's AI assistant
-- **[Zed](https://zed.dev/)** - High-performance editor with AI
 
 **Claude Family:**
 
