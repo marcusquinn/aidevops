@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.5.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.5.1-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -257,20 +257,22 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-| Agent | Purpose |
-|-------|---------|
-| `plan-plus.md` | Read-only planning with semantic codebase search |
-| `build-plus.md` | Enhanced Build with context tools (Augment, Context7) |
-| `aidevops.md` | Framework operations, meta-agents, setup |
-| `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) |
-| `seo.md` | SEO optimization, Search Console, keyword research |
-| `content.md` | Content creation workflows |
-| `research.md` | Research and analysis tasks |
-| `marketing.md` | Marketing strategy and automation |
-| `sales.md` | Sales operations |
-| `legal.md` | Legal compliance |
-| `accounting.md` | Financial operations (QuickFile integration) |
-| `health.md` | Health and wellness |
+Ordered as they appear in OpenCode Tab selector and other AI assistants:
+
+| Name | File | Purpose |
+|------|------|---------|
+| Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search |
+| Build+ | `build-plus.md` | Enhanced Build with context tools (Augment, Context7) |
+| Accounting | `accounting.md` | Financial operations (QuickFile integration) |
+| AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup |
+| Content | `content.md` | Content creation workflows |
+| Health | `health.md` | Health and wellness guidance |
+| Legal | `legal.md` | Legal compliance and documentation |
+| Marketing | `marketing.md` | Marketing strategy and automation |
+| Research | `research.md` | Research and analysis tasks |
+| Sales | `sales.md` | Sales operations and CRM |
+| SEO | `seo.md` | SEO optimization, Search Console, keyword research |
+| WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) |
 
 ### **Example Subagents with MCP Integration**
 
