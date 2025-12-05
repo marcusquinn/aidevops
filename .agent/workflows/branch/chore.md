@@ -10,6 +10,7 @@
 - **Scope**: Non-code changes, maintenance tasks
 
 **Create**:
+
 ```bash
 git checkout main && git pull origin main
 git checkout -b chore/{description}

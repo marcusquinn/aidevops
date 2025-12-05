@@ -11,6 +11,7 @@
 - **2FA**: Enable on all Git platforms
 
 **Pre-commit check**:
+
 ```bash
 git diff --cached | grep -iE "(api_key|token|password|secret)" && echo "WARNING: Possible secret!"
 ```
@@ -164,12 +165,14 @@ trufflehog git file://. --only-verified
 
 1. **Rotate the secret immediately**
 2. Remove from git history:
+
    ```bash
    git filter-branch --force --index-filter \
      "git rm --cached --ignore-unmatch path/to/secret" \
      --prune-empty --tag-name-filter cat -- --all
    git push origin --force --all
    ```
+
 3. Force-push to all remotes
 4. Notify affected parties
 

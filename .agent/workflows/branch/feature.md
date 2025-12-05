@@ -10,6 +10,7 @@
 - **Detailed guide**: `workflows/feature-development.md`
 
 **Create**:
+
 ```bash
 git checkout main && git pull origin main
 git checkout -b feature/{description}

@@ -11,6 +11,7 @@
 - **Trigger**: Called by @versioning before version bump completes
 
 **Commands**:
+
 ```bash
 # Preview changelog entry from commits
 .agent/scripts/version-manager.sh changelog-preview

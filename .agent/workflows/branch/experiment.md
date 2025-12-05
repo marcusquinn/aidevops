@@ -10,6 +10,7 @@
 - **Key rule**: May never merge - that's okay
 
 **Create**:
+
 ```bash
 git checkout main && git pull origin main
 git checkout -b experiment/{description}

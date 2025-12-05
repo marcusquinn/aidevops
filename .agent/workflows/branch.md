@@ -20,6 +20,7 @@
 **Branch naming**: `{type}/{short-description}` (e.g., `feature/user-dashboard`)
 
 **Mandatory start**:
+
 ```bash
 git checkout main && git pull origin main && git checkout -b {type}/{description}
 ```

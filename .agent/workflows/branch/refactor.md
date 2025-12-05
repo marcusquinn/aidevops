@@ -10,6 +10,7 @@
 - **Key rule**: Same behavior, different structure
 
 **Create**:
+
 ```bash
 git checkout main && git pull origin main
 git checkout -b refactor/{description}

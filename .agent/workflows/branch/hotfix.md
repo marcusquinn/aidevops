@@ -11,6 +11,7 @@
 - **Detailed guide**: `workflows/bug-fixing.md` (Hotfix section)
 
 **Create from latest tag**:
+
 ```bash
 git fetch --tags
 git checkout $(git describe --tags --abbrev=0)
@@ -45,6 +46,7 @@ hotfix/payment-processing-failure
 Hotfixes have an expedited process:
 
 1. **Create from latest release tag** (not main)
+
    ```bash
    git fetch --tags
    git checkout $(git describe --tags --abbrev=0)
@@ -56,6 +58,7 @@ Hotfixes have an expedited process:
 3. **Test immediately** - verify fix works
 
 4. **Commit with HOTFIX marker**
+
    ```bash
    git commit -m "fix: [HOTFIX] critical auth bypass
 
@@ -68,6 +71,7 @@ Hotfixes have an expedited process:
 5. **Push and fast-track review** (or deploy directly if authorized)
 
 6. **Merge to main after deployment**
+
    ```bash
    git checkout main
    git pull origin main

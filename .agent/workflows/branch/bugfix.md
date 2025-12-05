@@ -10,6 +10,7 @@
 - **Detailed guide**: `workflows/bug-fixing.md`
 
 **Create**:
+
 ```bash
 git checkout main && git pull origin main
 git checkout -b bugfix/{description}
