@@ -88,11 +88,12 @@ cd aidevops && ./setup.sh
 
 **That's it! Your AI assistant now has agentic access to 30+ service integrations.**
 
-**Supported AI Assistants:** (OpenCode is our daily driver and preferred tool. All 18 assistants below have MCP configuration support.)
+**Supported AI Assistants:** (OpenCode & Zed are our daily drivers and preferred tools, so will have the most continual testing. All 18 assistants below have MCP configuration support.)
 
 **Preferred:**
 
 - **[OpenCode](https://opencode.ai/)** - Primary choice. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, and excellent DX.
+- **[Zed](https://zed.dev/)** - High-performance editor with AI (Preferred, with the OpenCode Agent Extension)
 
 **IDE-Based:**
 
