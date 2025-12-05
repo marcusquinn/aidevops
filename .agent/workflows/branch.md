@@ -25,6 +25,8 @@
 git checkout main && git pull origin main && git checkout -b {type}/{description}
 ```
 
+**Lifecycle**: Create → Develop → Preflight → Version → Push → PR → Review → Merge → Release → Postflight → Cleanup
+
 <!-- AI-CONTEXT-END -->
 
 ## Purpose
@@ -75,18 +77,114 @@ git checkout -b {type}/{description}
 ## Branch Lifecycle
 
 ```
-main ─────────────────────────────────────────► main
-       \                                    /
-        └─► feature/xyz ─► PR ─► review ─► merge
+main ─────────────────────────────────────────────────────────────► main
+       \                                                          /
+        └─► feature/xyz ─► preflight ─► PR ─► review ─► merge ─► release
 ```
 
-1. **Create** branch from `main`
-2. **Develop** with regular commits
-3. **Push** to remote for backup/collaboration
-4. **PR** when ready for review
-5. **Review** and address feedback
-6. **Merge** via PR (squash or merge commit)
-7. **Delete** branch after merge
+### 1. Create Branch
+
+Start from updated `main`. Reference domain agents for implementation guidance.
+
+```bash
+git checkout main && git pull origin main
+git checkout -b {type}/{description}
+```
+
+**Agents**: Domain agents (`wordpress.md`, `seo.md`, etc.) for implementation patterns
+
+### 2. Develop
+
+Regular commits following conventional format (`feat:`, `fix:`, `refactor:`, etc.).
+
+**Agents**: `branch/{type}.md` for branch-specific guidance
+
+### 3. Preflight (Local Quality)
+
+Run quality checks before pushing. Catches issues early.
+
+```bash
+.agent/scripts/quality-check.sh --fast
+```
+
+**Agents**: `workflows/preflight.md`
+
+### 4. Version (If Applicable)
+
+Bump version for releases. Skip for WIP or intermediate commits.
+
+```bash
+.agent/scripts/version-manager.sh bump [major|minor|patch]
+```
+
+**Agents**: `workflows/version-bump.md`, `workflows/changelog.md`
+
+### 5. Push
+
+Push to remote for backup and collaboration.
+
+```bash
+git push -u origin HEAD
+```
+
+### 6. Pull Request
+
+Create PR/MR. CI/CD runs automatically.
+
+```bash
+gh pr create --fill        # GitHub
+glab mr create --fill      # GitLab
+```
+
+**Agents**: `workflows/pull-request.md`
+
+### 7. Review Feedback
+
+Address reviewer comments. Re-request review when ready.
+
+```bash
+git add . && git commit -m "fix: address review feedback"
+git push
+```
+
+**Agents**: `workflows/code-review.md`
+
+### 8. Merge
+
+Final CI/CD verification, then merge via PR.
+
+```bash
+gh pr merge --squash --delete-branch
+```
+
+### 9. Release (If Applicable)
+
+Tag and publish for version releases.
+
+```bash
+.agent/scripts/version-manager.sh release [major|minor|patch]
+```
+
+**Agents**: `workflows/release.md`
+
+### 10. Postflight
+
+Verify CI/CD and quality tools after release.
+
+```bash
+gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
+```
+
+**Agents**: `workflows/postflight.md`
+
+### 11. Cleanup
+
+Delete branch after merge (usually automatic).
+
+```bash
+git branch -d {branch-name}           # Local
+git push origin --delete {branch-name} # Remote (if not auto-deleted)
+```
 
 ## Commit Message Standards
 
@@ -143,9 +241,33 @@ git stash pop
 ## Full Workflow Chain
 
 ```
-branch.md → pull-request.md → preflight.md → release.md → postflight.md
-(create)    (review/merge)    (quality)      (publish)    (verify)
+┌─────────────────────────────────────────────────────────────────────────┐
+│  1. Create    2. Develop    3. Preflight    4. Version    5. Push      │
+│  branch.md    branch/*.md   preflight.md    version-bump  (git push)   │
+│                                             changelog.md               │
+├─────────────────────────────────────────────────────────────────────────┤
+│  6. PR           7. Review      8. Merge       9. Release   10. Post   │
+│  pull-request    code-review    (gh pr merge)  release.md   postflight │
+├─────────────────────────────────────────────────────────────────────────┤
+│  11. Cleanup - Delete branch after merge                               │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Lifecycle Summary
+
+| Stage | Action | Agent/Command | Required |
+|-------|--------|---------------|----------|
+| 1 | Create branch | `branch.md`, `branch/{type}.md` | Yes |
+| 2 | Develop | Domain agents, conventional commits | Yes |
+| 3 | Preflight | `preflight.md`, `quality-check.sh` | Yes |
+| 4 | Version | `version-bump.md`, `changelog.md` | For releases |
+| 5 | Push | `git push -u origin HEAD` | Yes |
+| 6 | PR | `pull-request.md` | Yes |
+| 7 | Review | `code-review.md` | Yes |
+| 8 | Merge | `gh pr merge --squash` | Yes |
+| 9 | Release | `release.md` | For releases |
+| 10 | Postflight | `postflight.md` | For releases |
+| 11 | Cleanup | Delete branch | Yes |
 
 ## Related Workflows
 
