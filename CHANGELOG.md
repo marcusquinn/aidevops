@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0] - 2025-12-05
+
+### Added
+
+- **Conversation Starter Prompts** - Plan+ and Build+ agents now offer guided workflow selection
+  - Git repository context: Workflow menu (Feature, Bug Fix, Hotfix, Refactor, PR, Release, etc.)
+  - Non-git context: Remote services menu (101domains, Closte, Cloudflare, Hetzner, etc.)
+  - Automatic subagent context loading based on user selection
+- **Workflow Subagents** - Three new workflow subagents for release lifecycle
+  - `workflows/preflight.md` - Pre-release quality checks (ShellCheck, Secretlint, SonarCloud)
+  - `workflows/pull-request.md` - PR/MR workflow for GitHub, GitLab, and Gitea
+  - `workflows/postflight.md` - Post-release CI/CD verification and rollback procedures
+- **Preflight Integration** - Automatic quality gates before version bumping
+  - New `--skip-preflight` flag for emergency releases
+  - Phased checks: instant blocking, fast blocking, medium, slow advisory
+
+### Changed
+
+- **Enhanced Branch Lifecycle** - Expanded `workflows/branch.md` from 7 to 11 stages
+  - New stages: Preflight, Version, Postflight
+  - Subagent references at each lifecycle stage
+  - Visual workflow chain diagram
+
 ## [2.9.0] - 2025-12-05
 
 ### Added
@@ -356,7 +379,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.9.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.10.0...HEAD
+[2.10.0]: https://github.com/marcusquinn/aidevops/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/marcusquinn/aidevops/compare/v2.8.1...v2.9.0
 [2.8.1]: https://github.com/marcusquinn/aidevops/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/marcusquinn/aidevops/compare/v2.7.4...v2.8.0
