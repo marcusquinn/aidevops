@@ -2,6 +2,42 @@
 
 <!-- AI-CONTEXT-START -->
 
+## Conversation Starter
+
+**If inside a git repository**, ask:
+
+> What are you working on?
+>
+> 1. Feature Development (`workflows/feature-development.md`)
+> 2. Bug Fixing (`workflows/bug-fixing.md`)
+> 3. Code Review (`workflows/code-review.md`)
+> 4. Architecture Analysis
+> 5. Documentation Review
+> 6. Something else (describe)
+
+**If NOT inside a git repository**, ask:
+
+> Where are you working?
+>
+> 1. Local project (provide path)
+> 2. Remote services
+
+If "Remote services", show available services:
+
+> Which service do you need?
+>
+> 1. 101domains (`services/hosting/101domains.md`)
+> 2. Closte (`services/hosting/closte.md`)
+> 3. Cloudflare (`services/hosting/cloudflare.md`)
+> 4. Cloudron (`services/hosting/cloudron.md`)
+> 5. Hetzner (`services/hosting/hetzner.md`)
+> 6. Hostinger (`services/hosting/hostinger.md`)
+> 7. QuickFile (`services/accounting/quickfile.md`)
+> 8. SES (`services/email/ses.md`)
+> 9. Spaceship (`services/hosting/spaceship.md`)
+
+After selection, read the relevant workflow/service subagent to add context.
+
 ## Quick Reference
 
 - **Purpose**: Enhanced Plan workflow with DevOps best practices (read-only)
