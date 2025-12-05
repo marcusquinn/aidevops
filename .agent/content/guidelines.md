@@ -106,6 +106,7 @@ For HTML content fields (especially WordPress content areas), use these HTML tag
 >
 > We finish them with marine-grade coatings — ensuring they resist swelling, warping and weathering.
 
-  task: true
+task: true
 ---
+
 **Follow these guidelines for all product page updates.**
