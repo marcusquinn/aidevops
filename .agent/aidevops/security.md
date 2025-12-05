@@ -20,6 +20,10 @@
 - Scripts: 755
 - SSH keys: 600 (private), 644 (public)
 
+**Script Security**:
+- `scripts/` - Shared, committed (use placeholders for secrets)
+- `scripts-private/` - Local only, gitignored (real credentials OK)
+
 **Incident Response**: Disable creds → Block IPs → Isolate systems → Investigate → Rotate all creds → Patch
 
 **Security Checklist**: MFA on cloud accounts, regular token rotation, audit SSH keys, monitor logs
@@ -218,6 +222,38 @@ echo "*.password" >> .gitignore
 echo ".env" >> .gitignore
 echo "*.key" >> .gitignore
 echo "*.pem" >> .gitignore
+```
+
+## Script Security
+
+### Directory Structure
+
+```text
+.agent/
+├── scripts/              # Shared (committed to Git)
+│   └── [helper].sh       # Use placeholders: YOUR_API_KEY_HERE
+└── scripts-private/      # Private (gitignored, never committed)
+    └── [custom].sh       # Real credentials OK here
+```
+
+### Guidelines
+
+**Shared scripts (`scripts/`):**
+- Use placeholders: `readonly API_TOKEN="YOUR_API_TOKEN_HERE"`
+- Load from secure storage: `api_key=$(.agent/scripts/setup-local-api-keys.sh get service)`
+- Never hardcode actual credentials
+
+**Private scripts (`scripts-private/`):**
+- Safe for real API keys (gitignored)
+- Create from templates in `scripts/`
+- Never share outside secure channels
+
+### Verification
+
+```bash
+# Verify private scripts are gitignored
+git status --ignored | grep scripts-private
+# Should show: .agent/scripts-private/ (ignored)
 ```
 
 ## 🌐 **Network Security**
