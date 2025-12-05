@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.9.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.10.0-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -96,7 +96,7 @@ cd aidevops && ./setup.sh
 
 **IDE-Based:**
 
-- **[Zed](https://zed.dev/)** - High-performance editor with AI (Preferred, with the OpenCode Agent Extension)
+
 - **[Cursor](https://cursor.sh/)** - AI-first IDE with MCP support
 - **[Windsurf](https://codeium.com/windsurf)** - Codeium's AI IDE
 - **[Continue.dev](https://continue.dev/)** - VS Code/JetBrains extension
