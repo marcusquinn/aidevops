@@ -1,0 +1,163 @@
+name: Update Website Docs
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout aidevops repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install marked (Markdown parser)
+        run: npm install marked
+
+      - name: Convert README to HTML
+        run: |
+          # Create conversion script
+          cat > convert.js << 'EOF'
+          const { marked } = require('marked');
+          const fs = require('fs');
+
+          // Configure marked for GitHub-flavored markdown
+          marked.setOptions({
+            gfm: true,
+            breaks: false
+          });
+
+          const readme = fs.readFileSync('README.md', 'utf8');
+          const content = marked.parse(readme);
+
+          // Output just the content
+          console.log(content);
+          EOF
+
+          node convert.js > readme_content.html
+
+      - name: Generate docs.html
+        run: |
+          cat > docs.html << 'HEADER'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Documentation - AI DevOps Framework</title>
+              <meta name="description" content="Complete documentation for the AI DevOps Framework - transform your AI assistant into a powerful infrastructure management tool.">
+              <link rel="stylesheet" href="styles.css">
+              <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+          </head>
+          <body class="docs-page">
+              <nav class="nav">
+                  <div class="nav-container">
+                      <a href="/" class="nav-logo">AI DevOps</a>
+                      <div class="nav-links">
+                          <a href="docs.html" class="nav-link">Docs</a>
+                          <a href="https://github.com/marcusquinn/aidevops" target="_blank" rel="noopener noreferrer" class="btn-nav" aria-label="View on GitHub">
+                              <span class="btn-icon-left">
+                                  <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                                  </svg>
+                              </span>
+                              <span class="btn-text">GitHub</span>
+                              <span class="btn-icon-right">
+                                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                      <path d="M4.5 12h15m0 0l-6.75-6.75M19.5 12l-6.75 6.75"/>
+                                  </svg>
+                              </span>
+                          </a>
+                          <a href="https://x.com/marcusquinn" target="_blank" rel="noopener noreferrer" class="nav-icon" aria-label="X/Twitter">
+                              <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                              </svg>
+                          </a>
+                          <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+                              <svg class="sun-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                  <circle cx="12" cy="12" r="5"/>
+                                  <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                              </svg>
+                              <svg class="moon-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                  <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+                              </svg>
+                          </button>
+                      </div>
+                  </div>
+              </nav>
+
+              <main class="docs-container">
+                  <div class="docs-content">
+          HEADER
+
+          # Append converted markdown
+          cat readme_content.html >> docs.html
+
+          # Append footer
+          cat >> docs.html << 'FOOTER'
+                      <div class="back-to-top">
+                          <a href="#">Back to top</a>
+                      </div>
+                  </div>
+              </main>
+
+              <footer class="footer">
+                  <div class="container">
+                      <p>Powered and inspired by <a href="https://opencode.ai" target="_blank" rel="noopener noreferrer">OpenCode</a>, <a href="https://tabby.sh" target="_blank" rel="noopener noreferrer">Tabby</a>, and <a href="https://zed.dev" target="_blank" rel="noopener noreferrer">Zed</a></p>
+                      <p class="copyright">MIT License - Created by Marcus Quinn</p>
+                  </div>
+              </footer>
+
+              <script src="script.js"></script>
+          </body>
+          </html>
+          FOOTER
+
+      - name: Checkout website repo
+        uses: actions/checkout@v4
+        with:
+          repository: marcusquinn/aidevops.sh
+          path: website
+          token: ${{ secrets.WEBSITE_PAT }}
+
+      - name: Update docs.html in website repo
+        run: |
+          cp docs.html website/docs.html
+          cd website
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if there are changes
+          if git diff --quiet docs.html 2>/dev/null; then
+            echo "No changes to docs.html"
+            exit 0
+          fi
+          
+          git add docs.html
+          git commit -m "docs: sync from aidevops README.md
+
+          Auto-generated from marcusquinn/aidevops README.md
+          Triggered by: ${{ github.event_name }}
+          Source commit: ${{ github.sha }}"
+          
+          git push
+
+      - name: Summary
+        run: |
+          echo "## Docs Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Source: \`marcusquinn/aidevops/README.md\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Target: \`marcusquinn/aidevops.sh/docs.html\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Trigger: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
