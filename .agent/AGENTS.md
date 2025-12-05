@@ -54,12 +54,13 @@
 | `tools/conversion/` | Format conversion (pandoc) |
 | `tools/data-extraction/` | Data extraction (outscraper) |
 | `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
-| `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, workflow, integration) |
+| `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security) |
 | `tools/opencode/` | OpenCode configuration and paths |
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (release, versioning, bug-fixing, feature-development, code-review, error-feedback, multi-repo-workspace) |
+| `workflows/` | Process guides (branch, release, version-bump, bug-fixing, feature-development, code-review, error-feedback, multi-repo-workspace) |
+| `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment) |
 
 <!-- AI-CONTEXT-END -->
 
