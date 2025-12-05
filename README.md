@@ -92,6 +92,7 @@ cd aidevops && ./setup.sh
 
 **Preferred:**
 
+- **[Tabby](https://tabby.sh/)** - Modern terminal with colour-coded Profiles. Use different profile colours per project/repo to visually distinguish which codebase you're working in.
 - **[OpenCode](https://opencode.ai/)** - Primary choice. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, and excellent DX.
 - **[Zed](https://zed.dev/)** - High-performance editor with AI (Preferred, with the OpenCode Agent Extension)
 
