@@ -10,7 +10,7 @@
 - **Credentials**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
 
 **Critical Rules**:
-- NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
+- NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
 - Store secrets ONLY in `~/.config/aidevops/mcp-env.sh`
@@ -81,7 +81,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 Read subagents only when task requires them. The AI-CONTEXT section above contains essential information for most tasks.
 
 **When to read more:**
-- Specific service operations → `services/hosting/[provider].md`
+- Specific service operations → `services/[type]/[provider].md`
 - Code quality tasks → `tools/code-review/`
 - WordPress work → `wordpress/`
 - Release/versioning → `workflows/`
@@ -104,7 +104,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 └── memory/            # Cross-session patterns and preferences
 ```
 
-Never create files in `~/` root.
+Never create files in `~/` root for files needed only with the current task.
 
 ## Key Scripts
 
