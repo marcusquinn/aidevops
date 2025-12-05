@@ -140,9 +140,19 @@ git stash pop
 3. `git stash pop` to restore work
 4. If stash conflicts, `git stash show -p` to review
 
+## Full Workflow Chain
+
+```
+branch.md → pull-request.md → preflight.md → release.md → postflight.md
+(create)    (review/merge)    (quality)      (publish)    (verify)
+```
+
 ## Related Workflows
 
-- **Pull requests**: `workflows/pull-request.md` (next step after branch)
+- **Pull requests**: `workflows/pull-request.md` (review before merge)
+- **Preflight**: `workflows/preflight.md` (quality checks before release)
 - **Version bumping**: `workflows/version-bump.md`
+- **Changelog**: `workflows/changelog.md`
 - **Creating releases**: `workflows/release.md`
+- **Postflight**: `workflows/postflight.md` (verify after release)
 - **Code review**: `workflows/code-review.md`

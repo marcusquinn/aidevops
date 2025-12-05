@@ -13,6 +13,7 @@
 - **Skip patterns**: docs, style, test, chore, ci, WIP, SKIP VERSION
 - **Full release**: See `workflows/release.md` for tagging and GitHub release
 - **Changelog**: See `workflows/changelog.md` for changelog management
+- **Preflight**: Quality checks run automatically before release (see `workflows/preflight.md`)
 
 <!-- AI-CONTEXT-END -->
 

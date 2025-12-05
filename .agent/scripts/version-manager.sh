@@ -450,9 +450,27 @@ main() {
                 exit 1
             fi
 
-            local force_flag="$3"
+            # Parse flags (can be in any order after bump_type)
+            local force_flag=""
+            local skip_preflight=""
+            for arg in "${@:3}"; do
+                case "$arg" in
+                    "--force") force_flag="--force" ;;
+                    "--skip-preflight") skip_preflight="--skip-preflight" ;;
+                esac
+            done
 
             print_info "Creating release with $bump_type version bump..."
+
+            # Run preflight checks unless skipped
+            if [[ "$skip_preflight" != "--skip-preflight" ]]; then
+                if ! run_preflight_checks; then
+                    print_error "Preflight checks failed. Fix issues or use --skip-preflight to bypass."
+                    exit 1
+                fi
+            else
+                print_warning "Skipping preflight checks with --skip-preflight"
+            fi
 
             # Check changelog has content before proceeding
             if ! check_changelog_unreleased; then
@@ -532,12 +550,15 @@ main() {
             echo ""
             echo "Options:"
             echo "  --force                       Bypass changelog check (use with release)"
+            echo "  --skip-preflight              Bypass quality checks (use with release)"
             echo ""
             echo "Examples:"
             echo "  $0 get"
             echo "  $0 bump minor"
             echo "  $0 release patch"
             echo "  $0 release minor --force"
+            echo "  $0 release patch --skip-preflight"
+            echo "  $0 release patch --force --skip-preflight"
             echo "  $0 github-release"
             echo "  $0 validate"
             echo "  $0 changelog-check"
