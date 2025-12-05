@@ -24,7 +24,7 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
 
 # Repository info
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
 readonly SONAR_PROJECT_KEY="marcusquinn_aidevops"
 
 # Counters
@@ -498,7 +498,7 @@ main() {
     
     print_header
     
-    cd "$REPO_ROOT"
+    cd "$REPO_ROOT" || exit
     
     case "$mode" in
         quick)
