@@ -12,10 +12,11 @@
 - **Commit patterns**: BREAKING/MAJOR (major), FEATURE/NEW (minor), FIX/PATCH (patch)
 - **Skip patterns**: docs, style, test, chore, ci, WIP, SKIP VERSION
 - **Full release**: See `workflows/release.md` for tagging and GitHub release
+- **Changelog**: See `workflows/changelog.md` for changelog management
 
 <!-- AI-CONTEXT-END -->
 
-This workflow covers version number management only. For the complete release process (tagging, GitHub releases, changelog), see `workflows/release.md`.
+This workflow covers version number management only. For the complete release process (tagging, GitHub releases), see `workflows/release.md`. For changelog management, see `workflows/changelog.md`.
 
 ## Version Management Tools
 
@@ -171,9 +172,11 @@ chmod +x .agent/scripts/*.sh
 
 ## Next Steps
 
-After bumping the version, proceed to `workflows/release.md` for:
+After bumping the version:
 
-- Creating git tags
-- Pushing to remote
-- Creating GitHub/GitLab releases
-- Post-release tasks
+1. **Update changelog** - See `workflows/changelog.md`
+2. **Create release** - See `workflows/release.md` for:
+   - Creating git tags
+   - Pushing to remote
+   - Creating GitHub/GitLab releases
+   - Post-release tasks

@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Branch Workflow System** - New `workflows/branch.md` with 6 branch type subagents
+  - Feature, bugfix, hotfix, refactor, chore, experiment branch workflows
+  - Standardized naming conventions and merge strategies
+- **Setup.sh --clean Flag** - Remove stale deployed files during setup
+  - New `verify-mirrors.sh` script for checking agent directory mirrors
+- **Git Safety Practices** - Added to all build agents
+  - Pre-destructive operation stash guidance
+  - Protection for uncommitted and untracked files
+- **Changelog Workflow** - New `workflows/changelog.md` subagent
+  - Changelog validation in version-manager.sh
+  - `changelog-check` and `changelog-preview` commands
+  - Enforced changelog updates before releases
+
+### Changed
+
+- **Restructured Git Tools** - `tools/git.md` reorganized with platform CLI subagents
+  - GitHub, GitLab, and Gitea CLI helpers as dedicated subagents
+  - New `git/authentication.md` and `git/security.md` subagents
+- **Consolidated Security Documentation** - Scripts security merged into `aidevops/security.md`
+- **Separated Version Workflows** - Split into `version-bump.md` and `release.md` for clarity
+
+### Removed
+
+- Redundant `workflows/README.md` (content merged into main workflow docs)
+- `release-improvements.md` (consolidated into release.md)
+
+## [2.8.1] - 2025-12-04
+
+### Added
+
+- **OpenCode Tools** - Custom tool definitions for OpenCode AI assistant
+- **MCP Testing Infrastructure** - Docker-based testing for MCP servers
+
+### Changed
+
+- Minor documentation updates and quality improvements
+
+## [2.8.0] - 2025-12-04
+
+### Added
+
+- **Build-Agent** - New main agent for composing efficient AI agents
+  - Promoted from `agent-designer.md` to main agent status
+  - Comprehensive guidance on instruction budgets and agent design
+- **Build-MCP** - New main agent for MCP server development
+  - TypeScript + Bun + ElysiaJS stack guidance
+  - Tool, resource, and prompt registration patterns
+
+### Changed
+
+- **Agent Naming Conventions** - Documented in `agent-designer.md`
+- Reduced instruction count in agent-designer.md for efficiency
+- Updated README with Build-Agent and Build-MCP in main agents table
+
 ## [2.7.4] - 2025-12-04
 
 ### Fixed
@@ -298,7 +354,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.7.3...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/marcusquinn/aidevops/compare/v2.8.0...v2.8.1
+[2.8.0]: https://github.com/marcusquinn/aidevops/compare/v2.7.4...v2.8.0
+[2.7.4]: https://github.com/marcusquinn/aidevops/compare/v2.7.3...v2.7.4
 [2.7.3]: https://github.com/marcusquinn/aidevops/compare/v2.7.2...v2.7.3
 [2.7.2]: https://github.com/marcusquinn/aidevops/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/marcusquinn/aidevops/compare/v2.7.0...v2.7.1

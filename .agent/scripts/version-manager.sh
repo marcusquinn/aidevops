@@ -66,6 +66,92 @@ bump_version() {
     return 0
 }
 
+# Function to check changelog has entry for version
+check_changelog_version() {
+    local version="$1"
+    local changelog_file="$REPO_ROOT/CHANGELOG.md"
+    
+    if [[ ! -f "$changelog_file" ]]; then
+        print_warning "CHANGELOG.md not found"
+        return 1
+    fi
+    
+    # Check if version entry exists
+    if grep -q "^\## \[$version\]" "$changelog_file"; then
+        print_success "CHANGELOG.md: $version ✓"
+        return 0
+    else
+        print_error "CHANGELOG.md missing entry for version $version"
+        return 1
+    fi
+}
+
+# Function to check changelog has unreleased content
+check_changelog_unreleased() {
+    local changelog_file="$REPO_ROOT/CHANGELOG.md"
+    
+    if [[ ! -f "$changelog_file" ]]; then
+        print_warning "CHANGELOG.md not found"
+        return 1
+    fi
+    
+    # Check if [Unreleased] section exists
+    if ! grep -q "^\## \[Unreleased\]" "$changelog_file"; then
+        print_error "CHANGELOG.md missing [Unreleased] section"
+        return 1
+    fi
+    
+    # Check if there's content under [Unreleased]
+    local unreleased_content
+    unreleased_content=$(sed -n '/^## \[Unreleased\]/,/^## \[/p' "$changelog_file" | grep -v "^##" | grep -v "^$" | head -5)
+    
+    if [[ -z "$unreleased_content" ]]; then
+        print_warning "CHANGELOG.md [Unreleased] section is empty"
+        return 1
+    fi
+    
+    print_success "CHANGELOG.md has unreleased content ✓"
+    return 0
+}
+
+# Function to generate changelog preview from commits
+generate_changelog_preview() {
+    local prev_tag
+    prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    
+    local version
+    version=$(get_current_version)
+    
+    echo "## [$version] - $(date +%Y-%m-%d)"
+    echo ""
+    
+    # Categorize commits
+    local added="" changed="" fixed="" removed="" security=""
+    
+    local commits
+    if [[ -n "$prev_tag" ]]; then
+        commits=$(git log "$prev_tag"..HEAD --pretty=format:"%s" 2>/dev/null)
+    else
+        commits=$(git log --oneline -20 --pretty=format:"%s" 2>/dev/null)
+    fi
+    
+    while IFS= read -r commit; do
+        case "$commit" in
+            feat:*|feat\(*) added="$added\n- ${commit#feat: }" ;;
+            fix:*|fix\(*) fixed="$fixed\n- ${commit#fix: }" ;;
+            security:*) security="$security\n- ${commit#security: }" ;;
+            refactor:*|docs:*|chore:*) changed="$changed\n- $commit" ;;
+        esac
+    done <<< "$commits"
+    
+    [[ -n "$added" ]] && echo -e "### Added\n$added\n"
+    [[ -n "$changed" ]] && echo -e "### Changed\n$changed\n"
+    [[ -n "$fixed" ]] && echo -e "### Fixed\n$fixed\n"
+    [[ -n "$security" ]] && echo -e "### Security\n$security\n"
+    
+    return 0
+}
+
 # Function to validate version consistency across files
 validate_version_consistency() {
     local expected_version="$1"
@@ -344,7 +430,21 @@ main() {
                 exit 1
             fi
 
+            local force_flag="$3"
+
             print_info "Creating release with $bump_type version bump..."
+
+            # Check changelog has content before proceeding
+            if ! check_changelog_unreleased; then
+                if [[ "$force_flag" != "--force" ]]; then
+                    print_error "CHANGELOG.md [Unreleased] section is empty or missing"
+                    print_info "Add changelog entries or use --force to bypass"
+                    print_info "Run: $0 changelog-preview to see suggested entries"
+                    exit 1
+                else
+                    print_warning "Bypassing changelog check with --force"
+                fi
+            fi
 
             local new_version
             new_version=$(bump_version "$bump_type")
@@ -359,6 +459,7 @@ main() {
                     create_git_tag "$new_version"
                     create_github_release "$new_version"
                     print_success "Release $new_version created successfully!"
+                    print_warning "Remember to update CHANGELOG.md [Unreleased] → [$new_version]"
                 else
                     print_error "Version validation failed. Please fix inconsistencies before creating release."
                     exit 1
@@ -377,6 +478,23 @@ main() {
             version=$(get_current_version)
             validate_version_consistency "$version"
             ;;
+        "changelog-check")
+            local version
+            version=$(get_current_version)
+            print_info "Checking CHANGELOG.md for version $version..."
+            if check_changelog_version "$version"; then
+                print_success "CHANGELOG.md is in sync with VERSION"
+            else
+                print_error "CHANGELOG.md is out of sync with VERSION ($version)"
+                print_info "Run: $0 changelog-preview to see suggested entries"
+                exit 1
+            fi
+            ;;
+        "changelog-preview")
+            print_info "Generating changelog preview from commits..."
+            echo ""
+            generate_changelog_preview
+            ;;
         *)
             echo "AI DevOps Framework Version Manager"
             echo ""
@@ -389,13 +507,21 @@ main() {
             echo "  github-release                Create GitHub release for current version"
             echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
             echo "  validate                      Validate version consistency across all files"
+            echo "  changelog-check               Check CHANGELOG.md has entry for current version"
+            echo "  changelog-preview             Generate changelog entry from commits since last tag"
+            echo ""
+            echo "Options:"
+            echo "  --force                       Bypass changelog check (use with release)"
             echo ""
             echo "Examples:"
             echo "  $0 get"
             echo "  $0 bump minor"
             echo "  $0 release patch"
+            echo "  $0 release minor --force"
             echo "  $0 github-release"
             echo "  $0 validate"
+            echo "  $0 changelog-check"
+            echo "  $0 changelog-preview"
             ;;
     esac
     return 0

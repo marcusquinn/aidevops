@@ -10,11 +10,12 @@
 - **Validator**: `.agent/scripts/validate-version-consistency.sh`
 - **GitHub Actions**: `.github/workflows/version-validation.yml`
 - **Version bump only**: See `workflows/version-bump.md`
-- **Fail-Safe**: Won't create releases if version inconsistencies found
+- **Changelog**: See `workflows/changelog.md` (enforced before release)
+- **Fail-Safe**: Won't create releases if version inconsistencies or empty changelog
 
 <!-- AI-CONTEXT-END -->
 
-This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`.
+This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`. For changelog format and validation, see `workflows/changelog.md`.
 
 ## Release Workflow Overview
 
@@ -74,6 +75,16 @@ go vet ./... && go test ./...
 ```
 
 ### 3. Update Changelog
+
+See `workflows/changelog.md` for detailed guidance. The release command will fail if changelog is empty.
+
+```bash
+# Preview changelog entry from commits
+./.agent/scripts/version-manager.sh changelog-preview
+
+# Validate changelog matches version
+./.agent/scripts/version-manager.sh changelog-check
+```
 
 Update CHANGELOG.md following [Keep a Changelog](https://keepachangelog.com/) format:
 
