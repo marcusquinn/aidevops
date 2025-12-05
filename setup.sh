@@ -12,6 +12,9 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Global flags
+CLEAN_MODE=false
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
@@ -279,6 +282,12 @@ deploy_aidevops_agents() {
     
     # Create target directory and copy agents
     mkdir -p "$target_dir"
+    
+    # If clean mode, remove stale files first
+    if [[ "$CLEAN_MODE" == "true" ]]; then
+        print_info "Clean mode: removing stale files from $target_dir"
+        rm -rf "${target_dir:?}"/*
+    fi
     
     # Copy all agent files and folders (excluding scripts which are large)
     # We copy scripts separately to maintain structure
@@ -576,10 +585,43 @@ setup_augment_context_engine() {
     print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
 }
 
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --clean)
+                CLEAN_MODE=true
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: ./setup.sh [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --clean    Remove stale files before deploying (cleans ~/.aidevops/agents/)"
+                echo "  --help     Show this help message"
+                echo ""
+                echo "Default behavior adds/overwrites files without removing deleted agents."
+                echo "Use --clean after removing or renaming agents to sync deletions."
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+}
+
 # Main setup function
 main() {
+    parse_args "$@"
+    
     echo "🤖 AI DevOps Framework Setup"
     echo "============================="
+    if [[ "$CLEAN_MODE" == "true" ]]; then
+        echo "Mode: Clean (removing stale files)"
+    fi
     echo ""
 
     verify_location
