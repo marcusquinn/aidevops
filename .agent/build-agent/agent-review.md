@@ -1,3 +1,24 @@
+---
+description: Systematic review and improvement of agent instructions
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+permission:
+  edit:
+    ".agent/*": allow
+    "*": deny
+  write:
+    ".agent/*": allow
+    "*": deny
+---
+
 # Agent Review - Reviewing and Improving Agents
 
 <!-- AI-CONTEXT-START -->

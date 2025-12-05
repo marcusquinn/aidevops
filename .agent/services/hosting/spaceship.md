@@ -1,3 +1,17 @@
+---
+description: Spaceship domain registrar integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Spaceship Domain Registrar Guide
 
 <!-- AI-CONTEXT-START -->

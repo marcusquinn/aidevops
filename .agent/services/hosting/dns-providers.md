@@ -1,3 +1,17 @@
+---
+description: DNS provider configuration and management
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # DNS Providers Configuration Guide
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: AI memory files system patterns
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Comprehensive AI Memory Files System
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Quality management and monitoring specification
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Quality Management Specification
 
 <!-- AI-CONTEXT-START -->

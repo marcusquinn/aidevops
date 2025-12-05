@@ -1,3 +1,17 @@
+---
+description: Memory template directory documentation
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Memory Template Directory
 
 **Security Notice: This is a template directory only.**

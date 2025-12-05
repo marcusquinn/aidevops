@@ -1,3 +1,17 @@
+---
+description: AI CLI configuration and AGENTS.md auto-reading
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # AI CLI Configuration - AGENTS.md Auto-Reading
 
 <!-- AI-CONTEXT-START -->

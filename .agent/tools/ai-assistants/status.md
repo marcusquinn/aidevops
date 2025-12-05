@@ -1,3 +1,17 @@
+---
+description: AI CLI integration status and coverage
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # AI CLI Integration Status - Complete Coverage
 
 <!-- AI-CONTEXT-START -->

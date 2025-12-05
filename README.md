@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.10.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.11.0-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -259,6 +259,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 **Context & Codebase:**
 
 - [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) - Semantic codebase retrieval with deep code understanding
+- [osgrep](https://github.com/Ryandonofrio3/osgrep) - Local semantic search (100% private, no cloud) ⚠️ *experimental*
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
@@ -453,6 +454,23 @@ The AI should provide a semantic understanding of your project architecture.
 | **CI/CD integration** | Repomix GitHub Action | Automated context in releases |
 
 See `.agent/tools/context/augment-context-engine.md` for complete documentation including configurations for Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, and Factory.AI Droid.
+
+### osgrep - Local Alternative (Experimental)
+
+[osgrep](https://github.com/Ryandonofrio3/osgrep) provides 100% local semantic search with no cloud dependency:
+
+```bash
+npm install -g osgrep && osgrep setup
+osgrep "where is authentication handled?"
+```
+
+| Feature | osgrep | Augment |
+|---------|--------|---------|
+| Privacy | 100% local | Cloud-based |
+| Auth | None required | Account + login |
+| Node.js | 18+ | 22+ |
+
+⚠️ **Status**: Currently experiencing indexing issues (v0.4.x). See `.agent/tools/context/osgrep.md` for details and GitHub issues #58, #26 for progress.
 
 ## **AI Agents & Subagents**
 

@@ -1,0 +1,205 @@
+{
+  "provider": "osgrep",
+  "description": "osgrep - Local semantic search for your AI agent (open source)",
+  "documentation": "https://github.com/Ryandonofrio3/osgrep",
+  "license": "Apache-2.0",
+  "prerequisites": {
+    "node_version": "18+",
+    "install_command": "npm install -g osgrep",
+    "setup_command": "osgrep setup",
+    "index_command": "osgrep index",
+    "model_download": "~150MB (transformers.js embeddings)",
+    "data_location": "~/.osgrep/"
+  },
+  "mcp_tools": ["search"],
+  "verification_prompt": "Search for authentication handling in this codebase using semantic search.",
+  "configurations": {
+    "opencode": {
+      "config_location": "~/.config/opencode/opencode.json",
+      "mcp_config": {
+        "osgrep": {
+          "type": "local",
+          "command": ["osgrep", "serve"],
+          "enabled": true
+        }
+      },
+      "tools_config": {
+        "osgrep_*": false
+      },
+      "agent_tools": {
+        "osgrep_*": true
+      }
+    },
+    "claude_code": {
+      "method": "cli",
+      "auto_install": "osgrep install-claude-code",
+      "user_scope": "claude mcp add-json osgrep-mcp --scope user '{\"type\":\"stdio\",\"command\":\"osgrep\",\"args\":[\"serve\"]}'",
+      "project_scope": "claude mcp add-json osgrep-mcp --scope project '{\"type\":\"stdio\",\"command\":\"osgrep\",\"args\":[\"serve\"]}'"
+    },
+    "cursor": {
+      "config_location": "~/.cursor/mcp.json",
+      "config": {
+        "mcpServers": {
+          "osgrep": {
+            "command": "osgrep",
+            "args": ["serve"]
+          }
+        }
+      }
+    },
+    "zed": {
+      "method": "custom_server_ui",
+      "config": {
+        "osgrep": {
+          "command": "osgrep",
+          "args": ["serve"],
+          "env": {}
+        }
+      }
+    },
+    "github_copilot": {
+      "config_location": ".vscode/mcp.json",
+      "scope": "project",
+      "config": {
+        "servers": {
+          "osgrep": {
+            "type": "stdio",
+            "command": "osgrep",
+            "args": ["serve"]
+          }
+        },
+        "inputs": []
+      }
+    },
+    "kilo_code": {
+      "method": "global_mcp_config",
+      "config": {
+        "mcpServers": {
+          "osgrep": {
+            "command": "osgrep",
+            "type": "stdio",
+            "args": ["serve"],
+            "disabled": false,
+            "alwaysAllow": ["search"]
+          }
+        }
+      }
+    },
+    "kiro": {
+      "method": "command_palette",
+      "commands": [
+        "Kiro: Open workspace MCP config (JSON)",
+        "Kiro: Open user MCP config (JSON)"
+      ],
+      "config": {
+        "mcpServers": {
+          "osgrep": {
+            "command": "osgrep",
+            "args": ["serve"],
+            "disabled": false,
+            "autoApprove": ["search"]
+          }
+        }
+      }
+    },
+    "antigravity": {
+      "method": "raw_config",
+      "path": "MCP server icon → Manage MCP server → View raw config",
+      "config": {
+        "mcpServers": {
+          "osgrep": {
+            "command": "osgrep",
+            "args": ["serve"]
+          }
+        }
+      }
+    },
+    "gemini_cli": {
+      "config_locations": {
+        "user": "~/.gemini/settings.json",
+        "project": ".gemini/settings.json"
+      },
+      "config": {
+        "mcpServers": {
+          "osgrep": {
+            "command": "osgrep",
+            "args": ["serve"]
+          }
+        }
+      }
+    }
+  },
+  "cli_commands": {
+    "search": {
+      "description": "Semantic search (default command)",
+      "usage": "osgrep \"query\"",
+      "options": {
+        "-m": "Max total results (default: 25)",
+        "--per-file": "Max matches per file (default: 1)",
+        "-c, --content": "Show full chunk content",
+        "--compact": "File paths only (like grep -l)",
+        "-s, --sync": "Force re-index before search",
+        "-r, --reset": "Reset and re-index from scratch"
+      }
+    },
+    "index": {
+      "description": "Index repository",
+      "usage": "osgrep index",
+      "options": {
+        "--dry-run": "See what would be indexed"
+      }
+    },
+    "serve": {
+      "description": "Start background server",
+      "usage": "osgrep serve",
+      "env": {
+        "OSGREP_PORT": "Server port (default: 4444)"
+      }
+    },
+    "list": {
+      "description": "List indexed repositories",
+      "usage": "osgrep list"
+    },
+    "doctor": {
+      "description": "Check installation health",
+      "usage": "osgrep doctor"
+    },
+    "setup": {
+      "description": "Download models upfront",
+      "usage": "osgrep setup"
+    },
+    "install-claude-code": {
+      "description": "Auto-configure Claude Code integration",
+      "usage": "osgrep install-claude-code"
+    }
+  },
+  "ignore_files": [".gitignore", ".osgrepignore"],
+  "troubleshooting": {
+    "command_not_found": {
+      "issue": "osgrep: command not found",
+      "solution": "npm install -g osgrep"
+    },
+    "node_version": {
+      "issue": "Node.js version too old",
+      "solution": "Install Node.js 18+ via nvm or Homebrew"
+    },
+    "stale_index": {
+      "issue": "Index feels stale",
+      "solution": "Run 'osgrep index' or 'osgrep \"query\" -s'"
+    },
+    "fresh_start": {
+      "issue": "Need fresh start",
+      "solution": "rm -rf ~/.osgrep/data && osgrep index"
+    },
+    "models_issue": {
+      "issue": "Models not downloading",
+      "solution": "Run 'osgrep setup' and check 'osgrep doctor'"
+    }
+  },
+  "notes": {
+    "privacy": "100% local - no cloud, no auth required",
+    "models": "Uses transformers.js for local embeddings",
+    "benchmark": "~20% token savings, ~30% speedup vs manual context",
+    "auto_index": "Each repository gets its own index automatically"
+  }
+}

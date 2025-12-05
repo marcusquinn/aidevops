@@ -1,3 +1,23 @@
+---
+description: Full release workflow with version bump, tag, and GitHub release
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+permission:
+  edit:
+    "VERSION": allow
+    "CHANGELOG.md": allow
+    "package.json": allow
+    "*": deny
+---
+
 # Release Workflow
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Guidance for AI assistants to help with bug fixing workflows
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Bug Fixing Guide for AI Assistants
 
 This document provides guidance for AI assistants to help with bug fixing workflows.

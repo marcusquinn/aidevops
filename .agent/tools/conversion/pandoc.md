@@ -1,3 +1,17 @@
+---
+description: Pandoc document format conversion
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Pandoc Document Conversion for AI DevOps
 
 <!-- AI-CONTEXT-START -->

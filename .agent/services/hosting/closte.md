@@ -1,3 +1,17 @@
+---
+description: Closte managed WordPress hosting
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Closte Provider Guide
 
 <!-- AI-CONTEXT-START -->

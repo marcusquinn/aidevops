@@ -1,3 +1,17 @@
+---
+description: API wrapper pattern for REST API to MCP conversion
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # API Wrapper Pattern - REST API to MCP
 
 <!-- AI-CONTEXT-START -->

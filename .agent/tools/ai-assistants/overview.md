@@ -1,3 +1,17 @@
+---
+description: Overview of AI CLI tools and assistants
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # AI CLI Tools & Assistants - Comprehensive Reference
 
 <!-- AI-CONTEXT-START -->

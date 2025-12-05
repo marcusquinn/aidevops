@@ -87,6 +87,137 @@ Subagents are for focused, parallel execution:
 - Completes discrete tasks, returns results
 - Doesn't need knowledge of other domains
 
+#### Subagent YAML Frontmatter (Required)
+
+Every subagent **must** include YAML frontmatter defining its tool permissions. Without explicit permissions, subagents default to read-only analysis mode, which causes confusion when agents recommend actions they cannot perform.
+
+**Required frontmatter structure:**
+
+```yaml
+---
+description: Brief description of agent purpose
+mode: subagent
+tools:
+  read: true      # Read file contents
+  write: false    # Create new files
+  edit: false     # Modify existing files
+  bash: false     # Execute shell commands
+  glob: true      # Find files by pattern
+  grep: true      # Search file contents
+  list: true      # List directory contents
+  webfetch: false # Fetch web content
+permission:
+  edit:
+    "path/pattern/*": allow
+    "*": deny
+  bash:
+    "safe-command*": allow
+    "*": deny
+---
+```
+
+**Tool permission options:**
+
+| Tool | Purpose | Risk Level |
+|------|---------|------------|
+| `read` | Read file contents | Low - passive observation |
+| `glob` | Find files by pattern | Low - discovery only |
+| `grep` | Search file contents | Low - discovery only |
+| `list` | List directories | Low - discovery only |
+| `webfetch` | Fetch URLs | Low - read-only external |
+| `edit` | Modify existing files | Medium - changes files |
+| `write` | Create new files | Medium - adds files |
+| `bash` | Execute commands | High - arbitrary execution |
+
+**Path-based permissions** (optional, for granular control):
+
+```yaml
+permission:
+  edit:
+    ".agent/*": allow           # Can edit agent files
+    "*.md": allow               # Can edit markdown
+    "*": deny                   # Deny everything else
+  bash:
+    "git *": allow              # Can run git commands
+    "npm *": allow              # Can run npm commands
+    "rm *": deny                # Cannot delete
+    "*": deny                   # Deny other commands
+```
+
+**Example: Read-only analysis agent**
+
+```yaml
+---
+description: Analyzes agent files for quality issues
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+---
+```
+
+**Example: Write-capable task agent**
+
+```yaml
+---
+description: Updates wiki documentation from agent changes
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+permission:
+  edit:
+    ".wiki/*": allow
+    ".agent/*": deny
+  bash:
+    "git *": allow
+    "*": deny
+---
+```
+
+**Example: Deployment agent with specific bash permissions**
+
+```yaml
+---
+description: Deploys agents to user home directory
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+permission:
+  edit:
+    "~/.aidevops/*": allow
+    "*": deny
+  bash:
+    "./setup.sh*": allow
+    "cp *": allow
+    "mkdir *": allow
+    "rm -rf *": deny
+    "*": deny
+---
+```
+
+**Why this matters:**
+- Prevents confusion when agents recommend actions they cannot perform
+- Makes agent capabilities explicit and predictable
+- Enables safer parallel execution (read-only agents can't conflict)
+- Documents intent for both humans and AI systems
+
 #### Decision Framework
 
 ```
@@ -256,35 +387,40 @@ Agent instructions must be accurate. Apply these standards:
 
 Before adding content to any agent file:
 
-1. **Is this universally applicable?**
+1. **Does this subagent have YAML frontmatter?**
+   - All subagents require tool permission declarations
+   - Without frontmatter, agents default to read-only
+   - See "Subagent YAML Frontmatter" section for template
+
+2. **Is this universally applicable?**
    - Will this instruction be relevant to >80% of tasks for this agent?
    - If not, move to a more specific subagent
 
-2. **Could this be a pointer instead?**
+3. **Could this be a pointer instead?**
    - Does the content exist elsewhere?
    - Use search patterns to reference codebase
    - Use Context7 MCP for external library documentation
 
-3. **Is this a code example?**
+4. **Is this a code example?**
    - Is it authoritative (the reference implementation)?
    - Will it drift from actual implementation?
    - For security patterns: include placeholders, note secure storage
 
-4. **What's the instruction count impact?**
+5. **What's the instruction count impact?**
    - Each bullet point, rule, or directive counts
    - Combine related instructions where possible
    - Remove redundant or obvious instructions
 
-5. **Does this duplicate other agents?**
+6. **Does this duplicate other agents?**
    - Search: `rg "pattern" .agent/` before adding
    - Check for conflicting guidance across files
    - Single source of truth for each concept
 
-6. **Should another agent be called instead?**
+7. **Should another agent be called instead?**
    - Does an existing agent handle this?
    - Would calling it and improving its instructions be more efficient than duplicating?
 
-7. **Are sources verified?**
+8. **Are sources verified?**
    - Primary sources used?
    - Facts cross-referenced?
    - Biases acknowledged?
@@ -455,6 +591,8 @@ This protocol should also be reviewed when:
 
 All agent files should follow this structure:
 
+**Main agents** (no frontmatter required):
+
 ```markdown
 # Agent Name - Brief Purpose
 
@@ -475,6 +613,29 @@ All agent files should follow this structure:
 [Verbose human-readable content, examples, edge cases]
 [Read only when specific details needed]
 ```
+
+**Subagents** (YAML frontmatter required):
+
+```markdown
+---
+description: Brief description of agent purpose
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+---
+
+# Subagent Name - Brief Purpose
+
+[Subagent content...]
+```
+
+See "Subagent YAML Frontmatter" section for full permission options.
 
 **Avoid in agents:**
 - Hardcoded counts that change (e.g., "29+ services")

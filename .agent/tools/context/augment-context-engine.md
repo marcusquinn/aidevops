@@ -1,3 +1,17 @@
+---
+description: Augment Context Engine for codebase semantic search
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Augment Context Engine MCP Setup
 
 <!-- AI-CONTEXT-START -->

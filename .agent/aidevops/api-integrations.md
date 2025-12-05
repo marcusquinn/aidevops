@@ -1,4 +1,18 @@
-# 🔌 Comprehensive API Integration Guide
+---
+description: Comprehensive API integration guide
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
+# Comprehensive API Integration Guide
 
 <!-- AI-CONTEXT-START -->
 

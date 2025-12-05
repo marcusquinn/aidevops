@@ -1,3 +1,17 @@
+---
+description: Crawl4AI usage patterns and best practices
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Crawl4AI Usage Guide for AI Assistants
 
 <!-- AI-CONTEXT-START -->

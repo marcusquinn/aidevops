@@ -1,3 +1,17 @@
+---
+description: MCP transport protocols - stdio, HTTP, SSE
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # MCP Transports - stdio, HTTP, SSE
 
 <!-- AI-CONTEXT-START -->

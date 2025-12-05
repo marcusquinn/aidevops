@@ -1,4 +1,18 @@
-# 🔒 Local Browser Automation with Agno Integration
+---
+description: Local browser automation with Agno integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
+# Local Browser Automation with Agno Integration
 
 <!-- AI-CONTEXT-START -->
 

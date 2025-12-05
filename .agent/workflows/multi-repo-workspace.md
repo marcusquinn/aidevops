@@ -1,3 +1,17 @@
+---
+description: Guidelines for working in multi-repository workspaces
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Multi-Repository Workspace Guidelines
 
 This document provides guidelines for AI assistants working in workspaces that contain multiple repository folders.

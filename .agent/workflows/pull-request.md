@@ -1,3 +1,17 @@
+---
+description: Create, review, and merge PRs/MRs across platforms
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Pull Request Workflow
 
 <!-- AI-CONTEXT-START -->

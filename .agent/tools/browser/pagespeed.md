@@ -1,3 +1,17 @@
+---
+description: PageSpeed Insights and Lighthouse performance testing
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # PageSpeed Insights & Lighthouse Integration Guide
 
 <!-- AI-CONTEXT-START -->

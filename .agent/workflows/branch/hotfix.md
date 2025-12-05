@@ -1,3 +1,17 @@
+---
+description: Urgent hotfix branch for critical production issues
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Hotfix Branch Workflow
 
 <!-- AI-CONTEXT-START -->

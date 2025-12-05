@@ -1,3 +1,17 @@
+---
+description: Secretlint for detecting exposed secrets
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Secretlint - Secret Detection Tool
 
 <!-- AI-CONTEXT-START -->

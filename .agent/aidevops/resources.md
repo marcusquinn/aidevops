@@ -1,3 +1,17 @@
+---
+description: External resources and documentation links
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # External Resources & Links
 
 <!-- AI-CONTEXT-START -->

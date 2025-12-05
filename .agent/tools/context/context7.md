@@ -1,3 +1,17 @@
+---
+description: Real-time library documentation via Context7 MCP
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Context7 MCP Setup Guide
 
 <!-- AI-CONTEXT-START -->

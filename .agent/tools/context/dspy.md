@@ -1,3 +1,17 @@
+---
+description: DSPy framework for programmatic LLM optimization
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # DSPy Integration Guide
 
 <!-- AI-CONTEXT-START -->

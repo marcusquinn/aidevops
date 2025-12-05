@@ -1,3 +1,17 @@
+---
+description: Refactor branch for code restructuring without behavior change
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Refactor Branch Workflow
 
 <!-- AI-CONTEXT-START -->

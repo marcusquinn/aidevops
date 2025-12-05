@@ -1,3 +1,17 @@
+---
+description: Guide for adding new MCP integrations
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Adding New MCP Integrations to AI DevOps
 
 <!-- AI-CONTEXT-START -->

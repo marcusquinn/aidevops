@@ -1,3 +1,17 @@
+---
+description: AI DevOps code review tools and resources
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # AI DevOps Resources
 
 <!-- AI-CONTEXT-START -->

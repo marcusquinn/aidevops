@@ -1,3 +1,17 @@
+---
+description: Coolify CLI for deployment management
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Coolify CLI Integration
 
 <!-- AI-CONTEXT-START -->

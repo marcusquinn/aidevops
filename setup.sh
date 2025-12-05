@@ -585,6 +585,49 @@ setup_augment_context_engine() {
     print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
 }
 
+# Setup osgrep - Local Semantic Search
+setup_osgrep() {
+    print_info "Setting up osgrep (local semantic search)..."
+
+    # Check Node.js version (requires 18+)
+    if ! command -v node &> /dev/null; then
+        print_warning "Node.js not found - osgrep setup skipped"
+        print_info "Install Node.js 18+ to enable osgrep"
+        return
+    fi
+
+    local node_version
+    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+    if [[ $node_version -lt 18 ]]; then
+        print_warning "Node.js 18+ required for osgrep, found v$node_version"
+        print_info "Install: brew install node@18 (macOS) or nvm install 18"
+        return
+    fi
+
+    # Check if osgrep is installed
+    if ! command -v osgrep &> /dev/null; then
+        print_warning "osgrep CLI not found"
+        print_info "Install with: npm install -g osgrep"
+        print_info "Then run: osgrep setup (downloads ~150MB embedding models)"
+        return
+    fi
+
+    # Check if models are downloaded
+    if [[ ! -d "$HOME/.osgrep" ]]; then
+        print_warning "osgrep models not yet downloaded"
+        print_info "Run: osgrep setup"
+        print_info "This downloads ~150MB of embedding models for local semantic search"
+    else
+        print_success "osgrep CLI found and configured"
+    fi
+
+    # Note about Claude Code integration
+    print_info "osgrep provides 100% local semantic search (no cloud, no auth)"
+    print_info "For Claude Code: osgrep install-claude-code"
+    print_info "Supported tools: OpenCode, Cursor, Gemini CLI, Claude Code, Zed"
+    print_info "Verification: 'Search for authentication handling in this codebase'"
+}
+
 # Parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -640,6 +683,7 @@ main() {
     setup_python_env
     setup_nodejs_env
     setup_augment_context_engine
+    setup_osgrep
 
     echo ""
     print_success "🎉 Setup complete!"
@@ -674,9 +718,13 @@ main() {
     echo "• cdai            - Navigate to AI framework"
     echo ""
     echo "MCP Integrations:"
-    echo "• Augment Context Engine - Semantic codebase retrieval"
+    echo "• Augment Context Engine - Cloud semantic codebase retrieval"
     echo "• Context7               - Real-time library documentation"
     echo "• Repomix                - Token-efficient codebase packing"
+    echo ""
+    echo "CLI Tools (use via bash):"
+    echo "• osgrep                 - Local semantic search (100% private)"
+    echo "                           Usage: osgrep \"search query\""
     echo ""
     echo "AI Memory Files (created for comprehensive tool support):"
     echo "• ~/CLAUDE.md     - Claude CLI memory file"

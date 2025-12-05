@@ -1,3 +1,17 @@
+---
+description: Guidance for developing new features in any codebase
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Feature Development Guide for AI Assistants
 
 This document provides guidance for developing new features in any codebase.

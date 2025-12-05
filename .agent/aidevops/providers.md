@@ -1,3 +1,17 @@
+---
+description: Provider scripts and configuration context
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Provider Scripts AI Context
 
 <!-- AI-CONTEXT-START -->

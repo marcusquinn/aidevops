@@ -1,3 +1,17 @@
+---
+description: Setup guide for code quality services
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Code Quality Services Setup Guide
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Codacy auto-fix for code quality issues
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Codacy Auto-Fix Integration Guide
 
 <!-- AI-CONTEXT-START -->

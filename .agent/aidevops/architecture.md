@@ -1,3 +1,17 @@
+---
+description: AI DevOps framework architecture context
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # AI DevOps Framework Context
 
 <!-- AI-CONTEXT-START -->

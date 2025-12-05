@@ -1,3 +1,17 @@
+---
+description: Stagehand Python SDK for browser automation
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Stagehand Python AI Browser Automation Integration
 
 <!-- AI-CONTEXT-START -->

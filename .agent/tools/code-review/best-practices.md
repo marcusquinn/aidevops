@@ -1,3 +1,17 @@
+---
+description: Best practices for AI-assisted coding
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # AI-Assisted Coding Best Practices
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Gitea CLI (tea) for repos, PRs, and issues
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Gitea CLI Helper Documentation
 
 <!-- AI-CONTEXT-START -->

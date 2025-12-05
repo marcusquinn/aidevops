@@ -1,3 +1,17 @@
+---
+description: Git branch creation and management workflow
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Branch Workflow
 
 <!-- AI-CONTEXT-START -->

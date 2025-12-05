@@ -1,3 +1,24 @@
+---
+description: Update GitHub wiki from latest codebase state
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+permission:
+  edit:
+    ".wiki/*": allow
+    "*": deny
+  write:
+    ".wiki/*": allow
+    "*": deny
+---
+
 # Wiki Update Workflow
 
 <!-- AI-CONTEXT-START -->

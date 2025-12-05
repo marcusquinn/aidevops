@@ -1,3 +1,17 @@
+---
+description: Self-hosted PaaS deployment with Coolify
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Coolify Provider Guide
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: QuickFile accounting API integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # QuickFile Agent
 
 <!-- AI-CONTEXT-START -->

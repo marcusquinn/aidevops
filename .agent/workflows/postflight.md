@@ -1,3 +1,17 @@
+---
+description: Verify release health after tag and GitHub release
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Postflight Verification Workflow
 
 <!-- AI-CONTEXT-START -->

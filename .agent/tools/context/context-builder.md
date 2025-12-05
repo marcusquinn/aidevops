@@ -1,3 +1,17 @@
+---
+description: Token-efficient AI context generation tool
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Context Builder - Token-Efficient AI Context Generation
 
 <!-- AI-CONTEXT-START -->

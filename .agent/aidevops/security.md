@@ -1,3 +1,17 @@
+---
+description: Security best practices for AI DevOps
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Security Best Practices
 
 <!-- AI-CONTEXT-START -->

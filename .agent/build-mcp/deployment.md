@@ -1,3 +1,17 @@
+---
+description: MCP deployment and AI assistant configurations
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # MCP Deployment - AI Assistant Configurations
 
 <!-- AI-CONTEXT-START -->

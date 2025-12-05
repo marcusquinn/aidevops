@@ -70,6 +70,7 @@ except:
 # Primary agents in desired order (Plan+ first, Build+ second, then alphabetical)
 # Each agent specifies which MCP tools it can access
 # All agents get augment-context-engine_* for semantic codebase retrieval
+# NOTE: osgrep is CLI-based (not MCP). Use via bash: osgrep "query"
 primary_agents = {
     "Plan+": {
         "description": "Read ~/.aidevops/agents/plan-plus.md",
@@ -292,6 +293,9 @@ if 'mcp' not in config:
 
 if 'tools' not in config:
     config['tools'] = {}
+
+# NOTE: osgrep is a CLI tool, not MCP. Use via bash: osgrep "query"
+# For Claude Code: osgrep install-claude-code
 
 # Outscraper MCP - for business intelligence extraction (subagent only)
 if 'outscraper' not in config['mcp']:

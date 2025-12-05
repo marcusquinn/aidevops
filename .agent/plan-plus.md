@@ -46,14 +46,16 @@ After selection, read the relevant workflow/service subagent to add context.
 
 **Key Enhancements**:
 
-- Augment Context Engine for semantic codebase retrieval
+- osgrep for local semantic search (100% private, no cloud)
+- Augment Context Engine for cloud semantic codebase retrieval
 - Context Builder integration for token-efficient codebase context
 - Context7 MCP for real-time documentation
 - Full analysis capabilities without making changes
 
 **Context Tools** (`tools/context/`):
 
-- `augment-context-engine.md` - Semantic codebase retrieval
+- `osgrep.md` - Local semantic search (privacy-first)
+- `augment-context-engine.md` - Cloud semantic codebase retrieval
 - `context-builder.md` - Token-efficient codebase packing
 - `context7.md` - Library documentation lookup
 - `toon.md` - Token-optimized data format
@@ -67,7 +69,7 @@ After selection, read the relevant workflow/service subagent to add context.
 
 **Workflow**:
 
-1. Use Augment Context Engine for semantic code search
+1. Use osgrep for local semantic code search (or Augment for cloud)
 2. Build context with context-builder as needed
 3. Lookup docs via Context7
 4. Analyze and plan implementation

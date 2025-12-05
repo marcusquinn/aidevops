@@ -1,3 +1,17 @@
+---
+description: Crawl4AI MCP server integration setup
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Crawl4AI Integration Guide
 
 <!-- AI-CONTEXT-START -->

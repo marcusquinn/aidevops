@@ -1,3 +1,17 @@
+---
+description: Git security practices and secret scanning
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Git Security Practices
 
 <!-- AI-CONTEXT-START -->

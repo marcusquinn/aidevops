@@ -1,3 +1,17 @@
+---
+description: Domain purchasing and management guide
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Domain Purchasing & Management Guide
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Best practices and provider selection guide
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Best Practices & Provider Selection Guide
 
 <!-- AI-CONTEXT-START -->

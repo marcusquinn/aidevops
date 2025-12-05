@@ -1,3 +1,17 @@
+---
+description: Snyk security scanning for vulnerabilities
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Snyk Security Platform Integration
 
 <!-- AI-CONTEXT-START -->

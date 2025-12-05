@@ -1,3 +1,17 @@
+---
+description: Directory of service links and URLs
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Service Links Directory
 
 <!-- AI-CONTEXT-START -->

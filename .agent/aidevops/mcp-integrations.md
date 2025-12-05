@@ -1,4 +1,18 @@
-# 🚀 Advanced MCP Integrations for AI DevOps
+---
+description: Advanced MCP integrations for AI DevOps
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
+# Advanced MCP Integrations for AI DevOps
 
 <!-- AI-CONTEXT-START -->
 

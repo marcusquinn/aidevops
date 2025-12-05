@@ -1,3 +1,22 @@
+---
+description: Bump version numbers across project files
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+permission:
+  edit:
+    "VERSION": allow
+    "package.json": allow
+    "*": deny
+---
+
 # Version Bump Workflow
 
 <!-- AI-CONTEXT-START -->

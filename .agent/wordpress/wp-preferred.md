@@ -1,3 +1,17 @@
+---
+description: WordPress preferred plugins and theme recommendations
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # WordPress Preferred Plugins & Theme
 
 <!-- AI-CONTEXT-START -->

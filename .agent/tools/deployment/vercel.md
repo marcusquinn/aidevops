@@ -1,3 +1,17 @@
+---
+description: Vercel CLI for serverless deployment
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Vercel CLI Integration
 
 <!-- AI-CONTEXT-START -->

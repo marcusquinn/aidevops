@@ -1,3 +1,17 @@
+---
+description: 101domains registrar integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # 101domains Registrar Guide
 
 <!-- AI-CONTEXT-START -->

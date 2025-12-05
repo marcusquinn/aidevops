@@ -1,3 +1,17 @@
+---
+description: Quality checks before version bump and release
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Preflight Workflow
 
 <!-- AI-CONTEXT-START -->

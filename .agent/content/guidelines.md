@@ -1,3 +1,17 @@
+---
+description: Content guidelines for AI copywriting
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Content Guidelines for AI Copywriting
 
 <!-- AI-CONTEXT-START -->

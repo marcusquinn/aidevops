@@ -1,3 +1,17 @@
+---
+description: Agno multi-modal AI agent framework
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Agno Integration for AI DevOps Framework
 
 <!-- AI-CONTEXT-START -->

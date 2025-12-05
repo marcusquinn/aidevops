@@ -1,3 +1,17 @@
+---
+description: Framework requirements and capabilities
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Framework Requirements & Capabilities
 
 <!-- AI-CONTEXT-START -->

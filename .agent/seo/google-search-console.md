@@ -1,3 +1,17 @@
+---
+description: Google Search Console MCP usage examples
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Google Search Console MCP Usage Examples
 
 <!-- AI-CONTEXT-START -->

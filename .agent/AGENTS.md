@@ -50,7 +50,7 @@
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (playwright, stagehand, stagehand-python, chrome-devtools, crawl4ai, pagespeed) |
 | `tools/code-review/` | Quality tools (sonarcloud, codacy, coderabbit, qlty, snyk, auditing, automation) |
-| `tools/context/` | Context tools (augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
+| `tools/context/` | Context tools (osgrep, augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
 | `tools/conversion/` | Format conversion (pandoc) |
 | `tools/data-extraction/` | Data extraction (outscraper) |
 | `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |

@@ -1,3 +1,17 @@
+---
+description: Troubleshooting guide for common issues
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Troubleshooting Guide
 
 <!-- AI-CONTEXT-START -->

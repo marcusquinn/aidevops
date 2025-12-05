@@ -1,3 +1,17 @@
+---
+description: Coolify server installation and configuration
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Coolify Setup Guide
 
 <!-- AI-CONTEXT-START -->

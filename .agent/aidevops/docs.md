@@ -1,3 +1,17 @@
+---
+description: Documentation AI context and guidelines
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Documentation AI Context
 
 <!-- AI-CONTEXT-START -->

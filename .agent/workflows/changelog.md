@@ -1,3 +1,24 @@
+---
+description: Maintain CHANGELOG.md following Keep a Changelog format
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+permission:
+  edit:
+    "CHANGELOG.md": allow
+    "*": deny
+  write:
+    "CHANGELOG.md": allow
+    "*": deny
+---
+
 # Changelog Workflow
 
 <!-- AI-CONTEXT-START -->

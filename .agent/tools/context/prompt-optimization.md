@@ -1,3 +1,17 @@
+---
+description: Prompt optimization using DSPy and DSPyGround
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Prompt Optimization with DSPy & DSPyGround
 
 <!-- AI-CONTEXT-START -->

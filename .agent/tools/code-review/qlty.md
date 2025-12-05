@@ -1,3 +1,17 @@
+---
+description: Qlty CLI for multi-linter code quality
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Qlty CLI Configuration Guide
 
 <!-- AI-CONTEXT-START -->

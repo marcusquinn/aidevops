@@ -1,3 +1,17 @@
+---
+description: Complete service integration guide
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Complete Service Integration Guide
 
 <!-- AI-CONTEXT-START -->

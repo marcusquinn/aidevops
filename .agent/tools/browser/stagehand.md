@@ -1,4 +1,18 @@
-# 🤘 Stagehand AI Browser Automation Integration
+---
+description: Stagehand AI browser automation with natural language
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
+# Stagehand AI Browser Automation Integration
 
 <!-- AI-CONTEXT-START -->
 

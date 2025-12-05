@@ -1,3 +1,17 @@
+---
+description: Experiment branch for exploratory work that may not merge
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Experiment Branch Workflow
 
 <!-- AI-CONTEXT-START -->

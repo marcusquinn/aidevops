@@ -1,3 +1,17 @@
+---
+description: Bugfix branch creation and resolution workflow
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Bugfix Branch Workflow
 
 <!-- AI-CONTEXT-START -->

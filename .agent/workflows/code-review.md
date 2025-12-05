@@ -1,3 +1,17 @@
+---
+description: Comprehensive code review checklist and guidance
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Code Review Guide for AI Assistants
 
 This document provides a comprehensive code review checklist for AI assistants reviewing any codebase.

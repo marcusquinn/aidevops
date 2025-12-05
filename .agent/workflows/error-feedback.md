@@ -1,3 +1,17 @@
+---
+description: Error checking, debugging, and feedback loops for CI/CD
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Error Checking and Feedback Loops
 
 This document outlines processes for error checking, debugging, and establishing feedback loops for autonomous CI/CD operation.

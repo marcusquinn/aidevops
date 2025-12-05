@@ -1,3 +1,17 @@
+---
+description: Localhost development environment setup
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Localhost Development Environment Guide
 
 <!-- AI-CONTEXT-START -->

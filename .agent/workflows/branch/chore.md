@@ -1,3 +1,17 @@
+---
+description: Chore branch for maintenance and non-code changes
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Chore Branch Workflow
 
 <!-- AI-CONTEXT-START -->

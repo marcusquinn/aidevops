@@ -1,3 +1,17 @@
+---
+description: CapSolver CAPTCHA solving with Crawl4AI
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # CapSolver + Crawl4AI Integration Guide
 
 <!-- AI-CONTEXT-START -->

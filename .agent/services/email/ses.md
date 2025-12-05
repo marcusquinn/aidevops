@@ -1,3 +1,17 @@
+---
+description: Amazon SES email service integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Amazon SES Provider Guide
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Configuration files AI context
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Configuration Files AI Context
 
 <!-- AI-CONTEXT-START -->

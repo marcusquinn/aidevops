@@ -1,3 +1,17 @@
+---
+description: Authentication setup for GitHub, GitLab, and Gitea
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Git Platform Authentication
 
 <!-- AI-CONTEXT-START -->

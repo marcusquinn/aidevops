@@ -1,3 +1,17 @@
+---
+description: Cloudflare DNS and CDN API integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Cloudflare API Setup for AI-Assisted Development
 
 <!-- AI-CONTEXT-START -->

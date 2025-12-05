@@ -1,3 +1,17 @@
+---
+description: Hetzner Cloud server provisioning
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Hetzner Cloud Provider Guide
 
 <!-- AI-CONTEXT-START -->

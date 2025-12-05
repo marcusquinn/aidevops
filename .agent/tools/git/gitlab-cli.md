@@ -1,3 +1,17 @@
+---
+description: GitLab CLI (glab) for repos, MRs, issues, and pipelines
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # GitLab CLI Helper Documentation
 
 <!-- AI-CONTEXT-START -->

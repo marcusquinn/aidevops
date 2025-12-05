@@ -1,3 +1,17 @@
+---
+description: CodeRabbit AI code review integration
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # CodeRabbit Analysis Trigger
 
 <!-- AI-CONTEXT-START -->

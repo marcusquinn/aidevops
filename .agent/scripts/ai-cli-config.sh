@@ -949,6 +949,34 @@ EOF
     return 0
 }
 
+# Configure osgrep CLI tool (NOT MCP - it's a CLI tool used via bash)
+configure_osgrep_cli() {
+    log_info "Checking osgrep CLI (local semantic search)..."
+
+    # Check if osgrep is installed
+    if ! command -v osgrep &> /dev/null; then
+        log_info "osgrep not installed. Install with: npm install -g osgrep && osgrep setup"
+        log_info "osgrep is a CLI tool (not MCP). Use via bash: osgrep \"query\""
+        return 0
+    fi
+
+    log_success "osgrep CLI found (v$(osgrep --version 2>/dev/null || echo 'unknown'))"
+
+    # Configure Claude Code using osgrep's native plugin system
+    if command -v claude >/dev/null 2>&1; then
+        log_info "Configuring osgrep for Claude Code (native plugin)..."
+        if osgrep install-claude-code 2>/dev/null; then
+            log_success "Claude Code configured for osgrep (native plugin)"
+        else
+            log_info "Claude Code osgrep plugin may already be installed or failed"
+        fi
+    fi
+
+    log_info "osgrep usage: osgrep \"search query\" (via bash, not MCP)"
+    log_info "Verification: cd /path/to/repo && osgrep \"API endpoints\""
+    return 0
+}
+
 # Main configuration function
 main() {
     echo "🤖 AI CLI Configuration Script"
@@ -979,6 +1007,7 @@ main() {
     create_ai_memory_files
     create_project_memory_files
     configure_augment_context_engine_mcp
+    configure_osgrep_cli
 
     echo
     log_success "All AI CLI tools configured to read AGENTS.md automatically!"
@@ -993,8 +1022,9 @@ main() {
     echo "  • cdai            - Navigate to AI framework"
     echo
     log_info "MCP Integrations:"
-    echo "  • Augment Context Engine - Semantic codebase retrieval"
-    echo "  • Verification: 'What is this project? Please use codebase retrieval tool.'"
+    echo "  • osgrep                 - Local semantic search (100% private)"
+    echo "  • Augment Context Engine - Cloud semantic codebase retrieval"
+    echo "  • Verification: 'Search for X in this codebase' or 'What is this project?'"
     echo
     log_info "Next steps:"
     echo "  1. Restart your shell: source ~/.zshrc (or ~/.bashrc)"

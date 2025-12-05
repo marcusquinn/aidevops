@@ -1,3 +1,17 @@
+---
+description: Code quality standards across multiple platforms
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Code Quality Standards - Multi-Platform Excellence
 
 <!-- AI-CONTEXT-START -->

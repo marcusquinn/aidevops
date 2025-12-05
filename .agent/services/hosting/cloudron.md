@@ -1,3 +1,17 @@
+---
+description: Cloudron self-hosted app platform
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Cloudron App Platform Guide
 
 <!-- AI-CONTEXT-START -->

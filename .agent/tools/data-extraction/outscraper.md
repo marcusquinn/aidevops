@@ -1,3 +1,17 @@
+---
+description: Outscraper MCP for business data extraction
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Outscraper MCP Server
 
 <!-- AI-CONTEXT-START -->

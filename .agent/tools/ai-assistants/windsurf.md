@@ -1,3 +1,17 @@
+---
+description: Windsurf IDE integration for AI DevOps
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Windsurf IDE Integration - Complete AI DevOps Support
 
 <!-- AI-CONTEXT-START -->

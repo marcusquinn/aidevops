@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] - 2025-12-05
+
+### Added
+
+- **osgrep Local Semantic Search** - New tool integration for 100% private semantic code search
+  - Documentation in `.agent/tools/context/osgrep.md`
+  - Config templates for osgrep MCP integration
+  - Updated setup.sh and scripts for osgrep CLI support
+  - GitHub issue comments submitted (#58, #26) for upstream bug tracking
+
 ## [2.10.0] - 2025-12-05
 
 ### Added
@@ -379,7 +389,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.10.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.11.0...HEAD
+[2.11.0]: https://github.com/marcusquinn/aidevops/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/marcusquinn/aidevops/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/marcusquinn/aidevops/compare/v2.8.1...v2.9.0
 [2.8.1]: https://github.com/marcusquinn/aidevops/compare/v2.8.0...v2.8.1

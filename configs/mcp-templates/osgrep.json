@@ -1,0 +1,97 @@
+{
+  "_comment": "osgrep MCP configuration snippets for various AI tools",
+  "_documentation": "https://github.com/Ryandonofrio3/osgrep",
+  "_install": "npm install -g osgrep && osgrep setup",
+  "_note": "100% local - no authentication required",
+
+  "opencode": {
+    "_file": "~/.config/opencode/opencode.json",
+    "_section": "mcp",
+    "osgrep": {
+      "type": "local",
+      "command": ["osgrep", "serve"],
+      "enabled": true
+    }
+  },
+
+  "claude_code_auto": "osgrep install-claude-code",
+  "claude_code_manual": "claude mcp add-json osgrep-mcp --scope user '{\"type\":\"stdio\",\"command\":\"osgrep\",\"args\":[\"serve\"]}'",
+
+  "cursor": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "osgrep": {
+        "command": "osgrep",
+        "args": ["serve"]
+      }
+    }
+  },
+
+  "zed": {
+    "_method": "Custom Server UI",
+    "osgrep": {
+      "command": "osgrep",
+      "args": ["serve"],
+      "env": {}
+    }
+  },
+
+  "github_copilot": {
+    "_file": ".vscode/mcp.json (project root)",
+    "servers": {
+      "osgrep": {
+        "type": "stdio",
+        "command": "osgrep",
+        "args": ["serve"]
+      }
+    },
+    "inputs": []
+  },
+
+  "kilo_code": {
+    "_method": "Global MCP Config",
+    "mcpServers": {
+      "osgrep": {
+        "command": "osgrep",
+        "type": "stdio",
+        "args": ["serve"],
+        "disabled": false,
+        "alwaysAllow": ["search"]
+      }
+    }
+  },
+
+  "kiro": {
+    "_method": "Command Palette: Kiro: Open user MCP config (JSON)",
+    "mcpServers": {
+      "osgrep": {
+        "command": "osgrep",
+        "args": ["serve"],
+        "disabled": false,
+        "autoApprove": ["search"]
+      }
+    }
+  },
+
+  "antigravity": {
+    "_method": "MCP server icon → Manage → View raw config",
+    "mcpServers": {
+      "osgrep": {
+        "command": "osgrep",
+        "args": ["serve"]
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_file": "~/.gemini/settings.json",
+    "mcpServers": {
+      "osgrep": {
+        "command": "osgrep",
+        "args": ["serve"]
+      }
+    }
+  },
+
+  "droid_command": "droid mcp add osgrep \"osgrep\" serve"
+}

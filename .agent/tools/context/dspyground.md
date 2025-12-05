@@ -1,3 +1,17 @@
+---
+description: DSPyGround visual prompt optimization playground
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # DSPyGround Integration Guide
 
 <!-- AI-CONTEXT-START -->

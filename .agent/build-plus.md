@@ -48,12 +48,14 @@ After selection, read the relevant workflow/service subagent to add context, the
 - **Enhancement**: Integrated context tools and quality gates
 
 **Key Enhancements**:
+- osgrep for local semantic search (100% private, no cloud)
 - Context Builder integration for token-efficient codebase context
 - Context7 MCP for real-time documentation
 - Automatic quality checks pre-commit
 - DSPy/TOON for optimized data handling
 
 **Context Tools** (`tools/context/`):
+- `osgrep.md` - Local semantic search (privacy-first)
 - `context-builder.md` - Token-efficient codebase packing
 - `context7.md` - Library documentation lookup
 - `toon.md` - Token-optimized data format

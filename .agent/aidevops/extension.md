@@ -1,3 +1,17 @@
+---
+description: Guidelines for extending the framework
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Framework Extension Guidelines
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Automated quality checks and CI/CD integration
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Quality Automation Guide
 
 <!-- AI-CONTEXT-START -->

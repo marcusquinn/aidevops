@@ -1,3 +1,17 @@
+---
+description: Feature branch creation and development workflow
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Feature Branch Workflow
 
 <!-- AI-CONTEXT-START -->

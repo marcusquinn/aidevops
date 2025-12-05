@@ -1,3 +1,17 @@
+---
+description: MCP server patterns for tools, resources, and prompts
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # MCP Server Patterns - Tools, Resources, Prompts
 
 <!-- AI-CONTEXT-START -->

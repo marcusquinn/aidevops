@@ -1,3 +1,17 @@
+---
+description: Cross-browser testing automation with Playwright MCP
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Playwright MCP Usage Examples
 
 <!-- AI-CONTEXT-START -->

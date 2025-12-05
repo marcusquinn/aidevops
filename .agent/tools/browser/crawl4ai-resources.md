@@ -1,3 +1,17 @@
+---
+description: Crawl4AI documentation and resource links
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Crawl4AI Resources & Links
 
 <!-- AI-CONTEXT-START -->

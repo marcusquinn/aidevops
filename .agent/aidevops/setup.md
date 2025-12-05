@@ -1,3 +1,17 @@
+---
+description: AI assistant guide for setup.sh script
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # Setup Guide - AI Assistant for setup.sh
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,17 @@
+---
+description: Chrome DevTools MCP for debugging and inspection
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Chrome DevTools MCP Usage Examples
 
 <!-- AI-CONTEXT-START -->

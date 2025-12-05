@@ -1,3 +1,24 @@
+---
+description: GitHub Actions CI/CD workflow setup and management
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+permission:
+  edit:
+    ".github/workflows/*": allow
+    "*": deny
+  write:
+    ".github/workflows/*": allow
+    "*": deny
+---
+
 # GitHub Actions Setup Guide
 
 <!-- AI-CONTEXT-START -->

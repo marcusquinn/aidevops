@@ -1,3 +1,17 @@
+---
+description: Code auditing services and security analysis
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: true
+---
+
 # Code Auditing Services Guide
 
 <!-- AI-CONTEXT-START -->

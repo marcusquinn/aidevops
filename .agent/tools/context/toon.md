@@ -1,3 +1,17 @@
+---
+description: TOON format for token-efficient data serialization
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  list: true
+  webfetch: false
+---
+
 # TOON Format Integration - AI DevOps Framework
 
 <!-- AI-CONTEXT-START -->
