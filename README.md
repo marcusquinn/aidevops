@@ -96,7 +96,6 @@ cd aidevops && ./setup.sh
 
 **IDE-Based:**
 
-
 - **[Cursor](https://cursor.sh/)** - AI-first IDE with MCP support
 - **[Windsurf](https://codeium.com/windsurf)** - Codeium's AI IDE
 - **[Continue.dev](https://continue.dev/)** - VS Code/JetBrains extension
