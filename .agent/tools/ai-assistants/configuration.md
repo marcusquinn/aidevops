@@ -8,8 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: false
+  task: true
 ---
 
 # AI CLI Configuration - AGENTS.md Auto-Reading

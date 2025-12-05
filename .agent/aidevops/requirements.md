@@ -8,8 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: false
+  task: true
 ---
 
 # Framework Requirements & Capabilities
@@ -295,6 +295,7 @@ find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 - **Maintenance windows**: Notifications for planned maintenance
 - **Status updates**: Regular status updates for long operations
 
+  task: true
 ---
 
 **These requirements ensure the framework provides enterprise-grade DevOps automation capabilities while maintaining security, performance, and reliability standards.** 🎯🔒⚡

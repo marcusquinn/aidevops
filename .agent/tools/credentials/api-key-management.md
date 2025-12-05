@@ -1,3 +1,17 @@
+---
+description: API key management and rotation guide
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  webfetch: false
+  task: true
+---
+
 # API Key Management Guide
 
 <!-- AI-CONTEXT-START -->

@@ -8,15 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: false
-permission:
-  edit:
-    ".wiki/*": allow
-    "*": deny
-  write:
-    ".wiki/*": allow
-    "*": deny
+  task: true
 ---
 
 # Wiki Update Workflow

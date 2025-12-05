@@ -1,3 +1,17 @@
+---
+description: Environment variables integration for credentials
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  webfetch: false
+  task: true
+---
+
 # Environment Variables Integration
 
 <!-- AI-CONTEXT-START -->

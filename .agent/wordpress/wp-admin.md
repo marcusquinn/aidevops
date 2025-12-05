@@ -10,6 +10,7 @@ tools:
   webfetch: true
   wordpress-mcp_*: true
   context7_*: true
+  task: true
 ---
 
 # WordPress Admin Subagent

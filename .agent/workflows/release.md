@@ -8,14 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: false
-permission:
-  edit:
-    "VERSION": allow
-    "CHANGELOG.md": allow
-    "package.json": allow
-    "*": deny
+  task: true
 ---
 
 # Release Workflow

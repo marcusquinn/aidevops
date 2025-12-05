@@ -8,8 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: true
+  task: true
 ---
 
 # CapSolver + Crawl4AI Integration Guide

@@ -8,15 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: false
-permission:
-  edit:
-    "CHANGELOG.md": allow
-    "*": deny
-  write:
-    "CHANGELOG.md": allow
-    "*": deny
+  task: true
 ---
 
 # Changelog Workflow

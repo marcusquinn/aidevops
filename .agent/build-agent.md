@@ -104,15 +104,8 @@ tools:
   bash: false     # Execute shell commands
   glob: true      # Find files by pattern
   grep: true      # Search file contents
-  list: true      # List directory contents
   webfetch: false # Fetch web content
-permission:
-  edit:
-    "path/pattern/*": allow
-    "*": deny
-  bash:
-    "safe-command*": allow
-    "*": deny
+  task: true      # Spawn subagents
 ---
 ```
 
@@ -123,25 +116,19 @@ permission:
 | `read` | Read file contents | Low - passive observation |
 | `glob` | Find files by pattern | Low - discovery only |
 | `grep` | Search file contents | Low - discovery only |
-| `list` | List directories | Low - discovery only |
 | `webfetch` | Fetch URLs | Low - read-only external |
+| `task` | Spawn subagents | Medium - delegates work |
 | `edit` | Modify existing files | Medium - changes files |
 | `write` | Create new files | Medium - adds files |
 | `bash` | Execute commands | High - arbitrary execution |
 
-**Path-based permissions** (optional, for granular control):
+**MCP tool patterns** (for agents needing specific MCP access):
 
 ```yaml
-permission:
-  edit:
-    ".agent/*": allow           # Can edit agent files
-    "*.md": allow               # Can edit markdown
-    "*": deny                   # Deny everything else
-  bash:
-    "git *": allow              # Can run git commands
-    "npm *": allow              # Can run npm commands
-    "rm *": deny                # Cannot delete
-    "*": deny                   # Deny other commands
+tools:
+  context7_*: true              # Context7 documentation tools
+  augment-context-engine_*: true # Augment codebase search
+  wordpress-mcp_*: true         # WordPress MCP tools
 ```
 
 **Example: Read-only analysis agent**
@@ -157,7 +144,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
+  webfetch: false
+  task: true
 ---
 ```
 
@@ -174,23 +162,18 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
-permission:
-  edit:
-    ".wiki/*": allow
-    ".agent/*": deny
-  bash:
-    "git *": allow
-    "*": deny
+  webfetch: false
+  task: true
 ---
 ```
 
-**Example: Deployment agent with specific bash permissions**
+**Example: Agent with MCP access**
 
 ```yaml
 ---
-description: Deploys agents to user home directory
+description: WordPress development with MCP tools
 mode: subagent
+temperature: 0.2
 tools:
   read: true
   write: true
@@ -198,25 +181,40 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
-permission:
-  edit:
-    "~/.aidevops/*": allow
-    "*": deny
-  bash:
-    "./setup.sh*": allow
-    "cp *": allow
-    "mkdir *": allow
-    "rm -rf *": deny
-    "*": deny
+  webfetch: true
+  task: true
+  wordpress-mcp_*: true
+  context7_*: true
 ---
 ```
+
+**Note on permissions**: Path-based permissions (e.g., restricting which files can be edited) are configured in `opencode.json` for OpenCode, not in markdown frontmatter. The frontmatter defines which tools are available; the JSON config defines granular restrictions.
 
 **Why this matters:**
 - Prevents confusion when agents recommend actions they cannot perform
 - Makes agent capabilities explicit and predictable
 - Enables safer parallel execution (read-only agents can't conflict)
 - Documents intent for both humans and AI systems
+
+#### Agent Directory Architecture
+
+This repository has two agent directories with different purposes:
+
+| Directory | Purpose | Used By |
+|-----------|---------|---------|
+| `.agent/` | Source of truth with full documentation | Deployed to `~/.aidevops/agents/` by `setup.sh` |
+| `.opencode/agent/` | Generated stubs for OpenCode | OpenCode CLI (reads these directly) |
+
+**How it works:**
+1. `.agent/` contains the authoritative agent files with rich documentation
+2. `setup.sh` deploys `.agent/` to `~/.aidevops/agents/`
+3. `generate-opencode-agents.sh` creates minimal stubs in `~/.config/opencode/agent/` that reference the deployed files
+4. OpenCode reads the stubs, which point to the full agent content
+
+**Frontmatter in `.agent/` files** serves as:
+- Documentation of intended permissions
+- Reference for non-OpenCode AI assistants (Claude, Cursor, etc.)
+- Template for what the generated stubs should enable
 
 #### Decision Framework
 
@@ -627,7 +625,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
+  webfetch: false
+  task: true
 ---
 
 # Subagent Name - Brief Purpose

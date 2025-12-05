@@ -1,3 +1,17 @@
+---
+description: API key setup with secure local storage
+mode: subagent
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  webfetch: false
+  task: true
+---
+
 # API Key Setup Guide - Secure Local Storage
 
 <!-- AI-CONTEXT-START -->

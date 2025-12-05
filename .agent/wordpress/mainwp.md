@@ -9,6 +9,7 @@ tools:
   edit: true
   glob: true
   grep: true
+  task: true
 ---
 
 # MainWP WordPress Management Guide
@@ -384,6 +385,7 @@ done
 - **Security assessment**: Automated security posture assessment
 - **Capacity planning**: Automated resource usage analysis and planning
 
+  task: true
 ---
 
 **MainWP provides comprehensive WordPress management capabilities with powerful API access, making it ideal for automated WordPress site management at scale.** 🚀

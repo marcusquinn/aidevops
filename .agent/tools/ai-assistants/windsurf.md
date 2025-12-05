@@ -8,8 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: false
+  task: true
 ---
 
 # Windsurf IDE Integration - Complete AI DevOps Support

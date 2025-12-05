@@ -8,8 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: true
+  task: true
 ---
 
 # WordPress Preferred Plugins & Theme

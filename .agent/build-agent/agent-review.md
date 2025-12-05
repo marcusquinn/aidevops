@@ -8,15 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: false
-permission:
-  edit:
-    ".agent/*": allow
-    "*": deny
-  write:
-    ".agent/*": allow
-    "*": deny
+  task: true
 ---
 
 # Agent Review - Reviewing and Improving Agents

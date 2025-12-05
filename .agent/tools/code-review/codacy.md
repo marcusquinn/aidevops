@@ -8,8 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: false
+  task: true
 ---
 
 # Codacy Auto-Fix Integration Guide

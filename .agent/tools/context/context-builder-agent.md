@@ -8,6 +8,7 @@ tools:
   write: true
   glob: true
   repomix_*: true
+  task: true
 ---
 
 # Context Builder Agent

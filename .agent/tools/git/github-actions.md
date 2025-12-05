@@ -8,15 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: true
-permission:
-  edit:
-    ".github/workflows/*": allow
-    "*": deny
-  write:
-    ".github/workflows/*": allow
-    "*": deny
+  task: true
 ---
 
 # GitHub Actions Setup Guide

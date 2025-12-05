@@ -8,8 +8,8 @@ tools:
   bash: false
   glob: true
   grep: true
-  list: true
   webfetch: false
+  task: true
 ---
 
 # Framework Extension Guidelines
@@ -305,6 +305,7 @@ echo "configs/[service-name]-config.json" >> .gitignore
 - **Examples**: Provide real, working examples
 - **Troubleshooting**: Include common issues and solutions
 
+  task: true
 ---
 
 **Following these guidelines ensures new services integrate seamlessly with the framework while maintaining security, quality, and consistency standards.**

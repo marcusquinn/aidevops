@@ -1,3 +1,17 @@
+---
+description: Vaultwarden self-hosted password management
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  webfetch: true
+  task: true
+---
+
 # Vaultwarden (Self-hosted Bitwarden) Guide
 
 <!-- AI-CONTEXT-START -->
@@ -362,6 +376,7 @@ find "$BACKUP_DIR" -name "vault-*.json.gpg" -mtime +30 -delete
 - **Monitoring integration**: Secure access to monitoring service credentials
 - **Incident response**: Quick access to emergency credentials
 
+  task: true
 ---
 
 **Vaultwarden provides enterprise-grade password and secrets management with comprehensive API access, making it ideal for secure DevOps workflows and AI-assisted credential management.** 🚀

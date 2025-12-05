@@ -8,8 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: true
+  task: true
 ---
 
 # Local Browser Automation with Agno Integration

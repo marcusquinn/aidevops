@@ -1,3 +1,17 @@
+---
+description: Local semantic codebase search with osgrep
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  webfetch: false
+  task: true
+---
+
 # osgrep - Local Semantic Search
 
 <!-- AI-CONTEXT-START -->

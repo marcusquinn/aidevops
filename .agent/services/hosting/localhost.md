@@ -8,7 +8,6 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: false
 ---
 

@@ -8,17 +8,8 @@ tools:
   bash: true
   glob: true
   grep: true
-  list: true
   webfetch: false
-permission:
-  edit:
-    "VERSION": allow
-    "package.json": allow
-    "README.md": allow
-    "setup.sh": allow
-    "sonar-project.properties": allow
-    "CHANGELOG.md": allow
-    "*": deny
+  task: true
 ---
 
 # Version Bump Workflow

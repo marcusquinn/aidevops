@@ -6,6 +6,7 @@ tools:
   bash: true
   read: true
   localwp_*: true
+  task: true
 ---
 
 # LocalWP Database Access Subagent
@@ -307,6 +308,7 @@ DEBUG=mcp-local-wp ./.agent/scripts/localhost-helper.sh start-mcp
 | Local development | `localhost.md` |
 | MCP setup | `context7-mcp-setup.md` |
 
+  task: true
 ---
 
 **Transform your WordPress development workflow with AI that actually understands your database!**
