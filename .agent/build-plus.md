@@ -25,6 +25,11 @@
 - Automatic linting
 - Security scanning
 
+**Git Workflow** (`workflows/`, `tools/git/`):
+- Branch strategy: `workflows/branch.md`
+- Git operations: `tools/git.md`
+- **Safety**: Stash before destructive operations
+
 **Workflow**:
 1. Build context with context-builder
 2. Lookup docs via Context7 as needed
@@ -66,3 +71,23 @@ Use Context7 MCP for real-time documentation:
 For LLM-optimized data exchange:
 - TOON format for structured data (see `tools/context/toon.md`)
 - Token-efficient serialization
+
+### Git Safety Practices
+
+**Before destructive operations** (reset, clean, rebase, checkout with changes):
+
+```bash
+# Protect ALL work including untracked files
+git stash --include-untracked -m "safety: before [operation]"
+
+# After operation, restore if needed
+git stash pop
+```
+
+**Why this matters**: `git restore` only recovers tracked files. Untracked new files are permanently lost without stash.
+
+**Safe workflow**:
+1. `git stash --include-untracked` before risky operations
+2. Perform operation
+3. `git stash pop` to restore work
+4. If stash conflicts, `git stash show -p` to review

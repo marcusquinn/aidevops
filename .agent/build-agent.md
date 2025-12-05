@@ -33,6 +33,10 @@
 - `@code-quality` for linting agent markdown
 - `aidevops/architecture.md` for framework structure
 
+**Git Workflow**:
+- Branch strategy: `workflows/branch.md`
+- Git operations: `tools/git.md`
+
 <!-- AI-CONTEXT-END -->
 
 ## Detailed Guidance

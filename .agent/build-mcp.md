@@ -30,6 +30,10 @@ npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 - `@code-quality` for linting TypeScript
 - `tools/context/context7.md` for MCP SDK docs
 
+**Git Workflow**:
+- Branch strategy: `workflows/branch.md`
+- Git operations: `tools/git.md`
+
 **MCPs to Enable**: context7, augment-context-engine, repomix
 
 <!-- AI-CONTEXT-END -->

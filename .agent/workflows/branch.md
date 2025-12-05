@@ -119,6 +119,26 @@ git merge main
 # Resolve conflicts if any
 ```
 
+## Safety: Protecting Uncommitted Work
+
+**Before destructive operations** (reset, clean, rebase, checkout with changes):
+
+```bash
+# Protect ALL work including untracked files
+git stash --include-untracked -m "safety: before [operation]"
+
+# After operation, restore if needed
+git stash pop
+```
+
+**Why this matters**: `git restore` only recovers tracked files. Untracked new files are permanently lost without stash.
+
+**Safe workflow**:
+1. `git stash --include-untracked` before risky operations
+2. Perform operation
+3. `git stash pop` to restore work
+4. If stash conflicts, `git stash show -p` to review
+
 ## Related Workflows
 
 - **Version bumping**: `workflows/version-bump.md`
