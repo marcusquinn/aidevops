@@ -152,6 +152,26 @@ generate_changelog_preview() {
     return 0
 }
 
+# Function to run preflight quality checks
+run_preflight_checks() {
+    print_info "Running preflight quality checks..."
+    
+    local preflight_script="$REPO_ROOT/.agent/scripts/quality-check.sh"
+    
+    if [[ -f "$preflight_script" ]]; then
+        if bash "$preflight_script"; then
+            print_success "Preflight checks passed ✓"
+            return 0
+        else
+            print_error "Preflight checks failed"
+            return 1
+        fi
+    else
+        print_warning "Preflight script not found, skipping checks"
+        return 0
+    fi
+}
+
 # Function to validate version consistency across files
 validate_version_consistency() {
     local expected_version="$1"

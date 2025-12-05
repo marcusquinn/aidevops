@@ -142,6 +142,7 @@ git stash pop
 
 ## Related Workflows
 
+- **Pull requests**: `workflows/pull-request.md` (next step after branch)
 - **Version bumping**: `workflows/version-bump.md`
 - **Creating releases**: `workflows/release.md`
 - **Code review**: `workflows/code-review.md`

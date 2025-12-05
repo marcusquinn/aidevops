@@ -1,0 +1,207 @@
+name: Postflight Verification
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to verify (leave empty for latest)'
+        required: false
+
+jobs:
+  postflight:
+    name: Verify Release Health
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    permissions:
+      contents: read
+      checks: read
+      security-events: read
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.tag || github.ref }}
+        fetch-depth: 0
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Wait for CI/CD Pipelines
+      run: |
+        echo "Waiting for all check runs to complete..."
+        sleep 60  # Initial wait for workflows to start
+        
+        # Poll for completion
+        for i in {1..20}; do
+          PENDING=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '[.check_runs[] | select(.status != "completed")] | length')
+          
+          if [[ "$PENDING" == "0" ]]; then
+            echo "All check runs completed"
+            break
+          fi
+          
+          echo "Waiting for $PENDING check runs... (attempt $i/20)"
+          sleep 30
+        done
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Verify CI/CD Status
+      id: cicd
+      run: |
+        echo "## CI/CD Pipeline Status" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Get all check runs
+        CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          --jq '.check_runs[] | {name, status, conclusion}')
+        
+        # Count results
+        TOTAL=$(echo "$CHECK_RUNS" | jq -s 'length')
+        PASSED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "success")] | length')
+        FAILED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "failure")] | length')
+        
+        echo "| Check | Status | Conclusion |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|--------|------------|" >> $GITHUB_STEP_SUMMARY
+        
+        gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          --jq '.check_runs[] | "| \(.name) | \(.status) | \(.conclusion // "pending") |"' >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Total**: $TOTAL | **Passed**: $PASSED | **Failed**: $FAILED" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "$FAILED" != "0" ]]; then
+          echo "::error::$FAILED check runs failed"
+          echo "cicd_status=failed" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        echo "cicd_status=passed" >> $GITHUB_OUTPUT
+        echo "All CI/CD checks passed"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Check SonarCloud Quality Gate
+      id: sonarcloud
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## SonarCloud Analysis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Get quality gate status
+        QG_RESPONSE=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops")
+        STATUS=$(echo "$QG_RESPONSE" | jq -r '.projectStatus.status // "UNKNOWN"')
+        
+        echo "**Quality Gate**: $STATUS" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Get metrics
+        METRICS=$(curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aidevops&metricKeys=bugs,vulnerabilities,code_smells,security_hotspots")
+        
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "$METRICS" | jq -r '.component.measures[] | "| \(.metric) | \(.value) |"' >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+        
+        if [[ "$STATUS" == "ERROR" ]]; then
+          echo "::warning::SonarCloud quality gate failed"
+          echo "sonar_status=failed" >> $GITHUB_OUTPUT
+        elif [[ "$STATUS" == "OK" ]]; then
+          echo "sonar_status=passed" >> $GITHUB_OUTPUT
+        else
+          echo "sonar_status=unknown" >> $GITHUB_OUTPUT
+        fi
+      continue-on-error: true
+    
+    - name: Security Scan with Snyk
+      id: snyk
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Security Scan (Snyk)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Install Snyk
+        npm install -g snyk
+        
+        # Authenticate if token available
+        if [[ -n "${{ secrets.SNYK_TOKEN }}" ]]; then
+          snyk auth ${{ secrets.SNYK_TOKEN }}
+          
+          # Run security scan
+          if snyk test --severity-threshold=high --json > snyk-results.json 2>/dev/null; then
+            echo "**Status**: No high/critical vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            echo "snyk_status=passed" >> $GITHUB_OUTPUT
+          else
+            VULN_COUNT=$(jq '.vulnerabilities | length // 0' snyk-results.json)
+            echo "**Status**: $VULN_COUNT vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Severity | Package | Title |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|---------|-------|" >> $GITHUB_STEP_SUMMARY
+            jq -r '.vulnerabilities[:5][] | "| \(.severity) | \(.packageName) | \(.title) |"' snyk-results.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+            echo "snyk_status=issues" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "**Status**: Skipped (SNYK_TOKEN not configured)" >> $GITHUB_STEP_SUMMARY
+          echo "snyk_status=skipped" >> $GITHUB_OUTPUT
+        fi
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      continue-on-error: true
+    
+    - name: Check for Secrets
+      id: secrets
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Secret Detection (Secretlint)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Install secretlint
+        npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+        
+        # Run scan
+        if secretlint "**/*" --format compact 2>/dev/null; then
+          echo "**Status**: No secrets detected" >> $GITHUB_STEP_SUMMARY
+          echo "secrets_status=passed" >> $GITHUB_OUTPUT
+        else
+          echo "**Status**: Potential secrets detected" >> $GITHUB_STEP_SUMMARY
+          echo "::error::Potential secrets detected in codebase"
+          echo "secrets_status=failed" >> $GITHUB_OUTPUT
+        fi
+      continue-on-error: true
+    
+    - name: Generate Final Report
+      if: always()
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Postflight Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| CI/CD Pipelines | ${{ steps.cicd.outputs.cicd_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| SonarCloud | ${{ steps.sonarcloud.outputs.sonar_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Snyk Security | ${{ steps.snyk.outputs.snyk_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Secret Detection | ${{ steps.secrets.outputs.secrets_status || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "*Generated by AI DevOps Framework Postflight Verification*" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Notify on Critical Failure
+      if: failure()
+      run: |
+        echo "::error::Postflight verification failed for release ${{ github.event.release.tag_name || github.ref_name }}"
+        echo ""
+        echo "Recommended actions:"
+        echo "1. Review the failed checks in the workflow summary"
+        echo "2. If critical issues found, consider rollback"
+        echo "3. See: .agent/workflows/postflight.md#rollback-procedures"

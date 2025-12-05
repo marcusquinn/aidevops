@@ -7,15 +7,17 @@
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch]`
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
+- **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)
 - **Validator**: `.agent/scripts/validate-version-consistency.sh`
 - **GitHub Actions**: `.github/workflows/version-validation.yml`
 - **Version bump only**: See `workflows/version-bump.md`
 - **Changelog**: See `workflows/changelog.md` (enforced before release)
+- **Postflight verification**: See `workflows/postflight.md` (verify after release)
 - **Fail-Safe**: Won't create releases if version inconsistencies or empty changelog
 
 <!-- AI-CONTEXT-END -->
 
-This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`. For changelog format and validation, see `workflows/changelog.md`.
+This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`. For changelog format and validation, see `workflows/changelog.md`. For PR-based merges before release, see `workflows/pull-request.md`.
 
 ## Release Workflow Overview
 
@@ -197,12 +199,30 @@ jobs:
 
 ## Post-Release Tasks
 
+### Postflight Verification
+
+After release publication, run postflight checks to verify release health:
+
+```bash
+# Run full postflight verification
+./.agent/scripts/postflight-check.sh
+
+# Quick check (CI/CD + SonarCloud only)
+./.agent/scripts/postflight-check.sh --quick
+
+# Or check CI/CD manually
+gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
+```
+
+See `workflows/postflight.md` for detailed verification procedures and rollback guidance.
+
 ### Immediate
 
-1. Verify release artifacts and download links
-2. Update documentation site
-3. Notify stakeholders
-4. Monitor for issues
+1. Run postflight verification (see above)
+2. Verify release artifacts and download links
+3. Update documentation site
+4. Notify stakeholders
+5. Monitor for issues
 
 ### Follow-up
 

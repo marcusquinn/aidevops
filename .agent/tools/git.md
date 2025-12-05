@@ -153,6 +153,7 @@ glab release list
 ## Related
 
 - **Branching workflows**: `workflows/branch.md`
+- **Pull requests**: `workflows/pull-request.md`
 - **Version management**: `workflows/version-bump.md`
 - **Releases**: `workflows/release.md`
 - **CI/CD**: `git/github-actions.md`

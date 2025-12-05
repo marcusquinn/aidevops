@@ -529,10 +529,22 @@ Main agents provide overview and point to subagents for details (progressive dis
 | `server-patterns.md` | Registering tools, resources |
 ```
 
+### Deployment Sync
+
+Agent changes in `.agent/` require `setup.sh` to deploy to `~/.aidevops/agents/`:
+
+```bash
+cd ~/Git/aidevops && ./setup.sh
+```
+
+**Offer to run setup.sh when:**
+- Creating new agents
+- Renaming or moving agents
+- Merging or deleting agents
+- Modifying agent content users need immediately
+
+See `aidevops/setup.md` for deployment details.
+
 ### Reviewing Existing Agents
 
 See `build-agent/agent-review.md` for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
-
-### Deploying Agent Changes
-
-After creating, renaming, moving, merging, or deleting agents, offer to run `./setup.sh` to sync changes from `.agent/` to `~/.aidevops/agents/` for local AI assistants.
