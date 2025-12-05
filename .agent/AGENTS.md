@@ -128,8 +128,8 @@ For versioning, releases, and git operations:
 
 | Task | Subagent |
 |------|----------|
-| Version bumps | `workflows/versioning.md` |
-| Creating releases | `workflows/release-process.md` |
+| Version bumps | `workflows/version-bump.md` |
+| Creating releases | `workflows/release.md` |
 | Git branching | `tools/git/workflow.md` |
 | Bug fixes | `workflows/bug-fixing.md` |
 | Feature development | `workflows/feature-development.md` |

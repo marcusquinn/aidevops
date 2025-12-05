@@ -12,7 +12,7 @@ Everything AI assistants need lives in `.agent/`. This page explains the structu
 └── *.md           # Service documentation (80+ files)
 ```
 
-**Key principle:** When referencing this repo with AI, use `@.agent` to include relevant context.
+**Key principle:** When referencing this repo with AI, use `@[agent-name]` to include relevant context.
 
 ## scripts/ - Automation Helpers
 
@@ -62,7 +62,7 @@ Step-by-step process guides for common development tasks:
 | `bug-fixing.md` | Bug fix and hotfix procedures |
 | `feature-development.md` | Feature development lifecycle |
 | `code-review.md` | Code review checklist |
-| `release-process.md` | Semantic versioning and releases |
+| `release.md` | Semantic versioning and releases |
 | `error-checking-feedback-loops.md` | CI/CD monitoring |
 | `multi-repo-workspace.md` | Multi-repository safety |
 | `wordpress-local-testing.md` | WordPress testing environments |
@@ -73,7 +73,7 @@ Step-by-step process guides for common development tasks:
 |-----------|----------|
 | Starting a new feature | `feature-development.md` |
 | Fixing a bug | `bug-fixing.md` |
-| Preparing a release | `release-process.md` |
+| Preparing a release | `release.md` |
 | Reviewing code | `code-review.md` |
 | CI/CD failures | `error-checking-feedback-loops.md` |
 | Working across repos | `multi-repo-workspace.md` |

@@ -12,7 +12,7 @@ The AI DevOps Framework includes comprehensive workflow guides for AI assistants
 | [Code Review](Code-Review) | Universal code review checklist |
 | [Error Feedback Loops](Error-Feedback-Loops) | CI/CD feedback automation |
 | [Multi-Repo Workspace](Multi-Repo-Workspace) | Multi-repository safety |
-| [Release Process](Release-Process) | Semantic versioning and releases |
+| [Release](Release) | Semantic versioning and releases |
 | [WordPress Testing](WordPress-Testing) | WordPress local testing environments |
 
 ## Using Workflows
