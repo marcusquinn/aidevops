@@ -31,6 +31,12 @@ The `.agent/workflows/` directory contains process guides for common development
 |----------|-------------|
 | **[multi-repo-workspace.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/multi-repo-workspace.md)** | Working across multiple repositories safely |
 
+### Documentation
+
+| Workflow | When to Use |
+|----------|-------------|
+| **[wiki-update.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/wiki-update.md)** | Updating GitHub wiki from codebase changes |
+
 ### Platform-Specific
 
 | Workflow | When to Use |
@@ -61,6 +67,15 @@ The `.agent/workflows/` directory contains process guides for common development
 1. Read multi-repo-workspace.md FIRST
 2. Always verify which repo you're in
 3. Don't assume features from one repo exist in another
+```
+
+### Updating the Wiki
+
+```text
+1. Build codebase context with Augment/Repomix
+2. Review .wiki/ pages against current codebase
+3. Update pages, commit to .wiki/ directory
+4. Push to main - auto-syncs to GitHub wiki
 ```
 
 ## How AI Uses Workflows
