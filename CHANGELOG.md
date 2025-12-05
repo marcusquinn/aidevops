@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.0] - 2025-12-05
+
+### Added
+
+- **YAML Frontmatter with Tool Permissions** - Added to ~120 subagent files
+  - Standardized tool permission declarations across all subagents
+  - Enables OpenCode to enforce tool access controls per agent
+- **Agent Directory Architecture Documentation** - Documented `.agent/` vs `.opencode/agent/` structure
+  - Clarified deployment paths and directory purposes
+
+### Changed
+
+- **OpenCode Frontmatter Format** - Updated `build-agent.md` with correct format
+  - Removed invalid `list` tool references from frontmatter
+  - Removed invalid `permission` blocks from frontmatter
+  - Aligned with OpenCode configuration validation requirements
+
+### Removed
+
+- **Duplicate Wiki File** - Removed `Workflow-Guides.md` (duplicate of `Workflows-Guide.md`)
+
+### Fixed
+
+- **OpenCode Config Validation Errors** - Fixed frontmatter format issues
+  - Corrected tool permission syntax across subagent files
+  - Resolved validation errors preventing agent loading
+
 ## [2.11.0] - 2025-12-05
 
 ### Added
@@ -389,7 +416,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.11.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/marcusquinn/aidevops/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/marcusquinn/aidevops/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/marcusquinn/aidevops/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/marcusquinn/aidevops/compare/v2.8.1...v2.9.0
