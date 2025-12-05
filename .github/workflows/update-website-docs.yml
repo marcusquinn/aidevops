@@ -27,10 +27,10 @@ jobs:
 
       - name: Convert README to HTML
         run: |
-          # Create conversion script
-          cat > convert.js << 'EOF'
-          const { marked } = require('marked');
-          const fs = require('fs');
+          # Create conversion script using ES modules
+          cat > convert.mjs << 'EOF'
+          import { marked } from 'marked';
+          import fs from 'fs';
 
           // Configure marked for GitHub-flavored markdown
           marked.setOptions({
@@ -45,7 +45,7 @@ jobs:
           console.log(content);
           EOF
 
-          node convert.js > readme_content.html
+          node convert.mjs > readme_content.html
 
       - name: Generate docs.html
         run: |
