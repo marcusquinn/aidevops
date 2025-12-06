@@ -44,6 +44,7 @@ The script updates 5 files atomically:
 If you edit VERSION directly, the other 4 files become stale.
 
 **Always use**:
+
 ```bash
 .agent/scripts/version-manager.sh bump [major|minor|patch]
 # or for full release:
