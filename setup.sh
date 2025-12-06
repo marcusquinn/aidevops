@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.14.0
+# Version: 2.15.0
 #
 # Quick Install (one-liner):
 #   bash <(curl -fsSL https://aidevops.dev/install)
@@ -875,6 +875,20 @@ update_opencode_config() {
         fi
     else
         print_warning "OpenCode agent generator not found at $generator_script"
+    fi
+    
+    # Generate OpenCode commands
+    # - Commands from workflows and agents -> /command-name
+    local commands_script=".agent/scripts/generate-opencode-commands.sh"
+    if [[ -f "$commands_script" ]]; then
+        print_info "Generating OpenCode commands..."
+        if bash "$commands_script"; then
+            print_success "OpenCode commands configured"
+        else
+            print_warning "OpenCode command generation encountered issues"
+        fi
+    else
+        print_warning "OpenCode command generator not found at $commands_script"
     fi
     
     return 0
