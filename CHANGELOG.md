@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.19.13] - 2025-12-06
+
+### Security
+
+- **SonarCloud Security Hotspots Resolved** - Fixed 9 of 10 security hotspots
+  - Added `--proto '=https'` to curl commands to enforce HTTPS and prevent protocol downgrade attacks
+  - Added `--ignore-scripts` to npm install commands to prevent execution of postinstall scripts
+  - Files fixed: aidevops-update-check.sh, codacy-cli.sh, qlty-cli.sh, linter-manager.sh, markdown-lint-fix.sh, setup-mcp-integrations.sh
+  - 1 hotspot acknowledged as safe (localhost-helper.sh http:// for local dev when SSL disabled)
+
+## [2.19.12] - 2025-12-06
+
+### Fixed
+
+- Version bump release (no functional changes)
+
 ## [2.19.11] - 2025-12-06
 
 ### Added
@@ -587,7 +603,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.19.11...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.19.13...HEAD
+[2.19.13]: https://github.com/marcusquinn/aidevops/compare/v2.19.12...v2.19.13
+[2.19.12]: https://github.com/marcusquinn/aidevops/compare/v2.19.11...v2.19.12
 [2.19.11]: https://github.com/marcusquinn/aidevops/compare/v2.17.1...v2.19.11
 [2.17.1]: https://github.com/marcusquinn/aidevops/compare/v2.17.0...v2.17.1
 [2.17.0]: https://github.com/marcusquinn/aidevops/compare/v2.16.0...v2.17.0
