@@ -85,4 +85,4 @@ See `workflows/version-bump.md` for version management.
 
 - **Detailed workflow**: `workflows/feature-development.md`
 - **Version bumping**: `workflows/version-bump.md`
-- **Code review**: `workflows/code-review.md`
+- **Code review**: `workflows/code-audit-remote.md`

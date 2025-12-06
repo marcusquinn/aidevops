@@ -187,55 +187,82 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /changelog command"
 
 # =============================================================================
-# CODE-REVIEW COMMAND
+# LINTERS-LOCAL COMMAND
 # =============================================================================
-# Comprehensive code review
+# Run local linting tools (fast, offline)
 
-cat > "$OPENCODE_COMMAND_DIR/code-review.md" << 'EOF'
+cat > "$OPENCODE_COMMAND_DIR/linters-local.md" << 'EOF'
 ---
-description: Comprehensive code review checklist and guidance
+description: Run local linting tools (ShellCheck, secretlint, pattern checks)
+agent: Build+
+---
+
+Run the local linters script:
+
+!`~/.aidevops/agents/scripts/linters-local.sh $ARGUMENTS`
+
+This runs fast, offline checks:
+1. ShellCheck for shell scripts
+2. Secretlint for exposed secrets
+3. Pattern validation (return statements, positional parameters)
+4. Markdown formatting checks
+
+For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /linters-local command"
+
+# =============================================================================
+# CODE-AUDIT-REMOTE COMMAND
+# =============================================================================
+# Run remote code auditing services
+
+cat > "$OPENCODE_COMMAND_DIR/code-audit-remote.md" << 'EOF'
+---
+description: Run remote code auditing (CodeRabbit, Codacy, SonarCloud)
 agent: Build+
 subtask: true
 ---
 
-Read ~/.aidevops/agents/workflows/code-review.md and follow its instructions.
+Read ~/.aidevops/agents/workflows/code-audit-remote.md and follow its instructions.
 
-Review target: $ARGUMENTS
+Audit target: $ARGUMENTS
 
-This covers:
-1. Code quality and style
-2. Security considerations
-3. Performance implications
-4. Test coverage
-5. Documentation
+This calls external quality services:
+1. CodeRabbit - AI-powered code review
+2. Codacy - Code quality analysis
+3. SonarCloud - Security and maintainability
+
+For local linting (fast, offline), use /linters-local first
 EOF
 ((command_count++))
-echo -e "  ${GREEN}✓${NC} Created /code-review command"
+echo -e "  ${GREEN}✓${NC} Created /code-audit-remote command"
 
 # =============================================================================
-# QUALITY-CHECK COMMAND
+# CODE-STANDARDS COMMAND
 # =============================================================================
-# Run all quality checks
+# Check against documented code standards
 
-cat > "$OPENCODE_COMMAND_DIR/quality-check.md" << 'EOF'
+cat > "$OPENCODE_COMMAND_DIR/code-standards.md" << 'EOF'
 ---
-description: Run comprehensive code quality checks
+description: Check code against documented quality standards
 agent: Build+
+subtask: true
 ---
 
-Run the quality check script:
+Read ~/.aidevops/agents/tools/code-review/code-standards.md and follow its instructions.
 
-!`~/.aidevops/agents/scripts/quality-check.sh $ARGUMENTS`
+Check target: $ARGUMENTS
 
-This runs:
-1. ShellCheck for shell scripts
-2. SonarCloud analysis
-3. Secret detection
-4. Markdown linting
-5. Return statement validation
+This validates against our documented standards:
+- S7682: Explicit return statements
+- S7679: Positional parameters assigned to locals
+- S1192: Constants for repeated strings
+- S1481: No unused variables
+- ShellCheck: Zero violations
 EOF
 ((command_count++))
-echo -e "  ${GREEN}✓${NC} Created /quality-check command"
+echo -e "  ${GREEN}✓${NC} Created /code-standards command"
 
 # =============================================================================
 # BRANCH COMMANDS
@@ -321,23 +348,29 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /context command"
 
 # =============================================================================
-# PULL-REQUEST COMMAND
+# PR COMMAND (UNIFIED ORCHESTRATOR)
 # =============================================================================
-# Create and manage PRs
+# Unified PR workflow - orchestrates all quality checks
 
 cat > "$OPENCODE_COMMAND_DIR/pr.md" << 'EOF'
 ---
-description: Create, review, and manage pull requests
+description: Unified PR workflow - orchestrates linting, auditing, standards, and intent vs reality
 agent: Build+
 ---
 
-Read ~/.aidevops/agents/workflows/pull-request.md and follow its instructions.
+Read ~/.aidevops/agents/workflows/pr.md and follow its instructions.
 
 Action: $ARGUMENTS
 
+This orchestrates all quality checks:
+1. /linters-local - ShellCheck, secretlint, pattern checks
+2. /code-audit-remote - CodeRabbit, Codacy, SonarCloud
+3. /code-standards - Documented standards compliance
+4. Intent vs Reality - Compare PR description to actual changes
+
 Supports:
-- create: Create new PR from current branch
-- review: Review an existing PR
+- review: Run all checks and analyze PR
+- create: Create new PR after checks pass
 - merge: Merge a PR after approval
 EOF
 ((command_count++))
@@ -353,18 +386,21 @@ echo "  Commands created: $command_count"
 echo "  Location: $OPENCODE_COMMAND_DIR"
 echo ""
 echo "Available commands:"
-echo "  /agent-review  - Review and improve agent instructions"
-echo "  /preflight     - Quality checks before release"
-echo "  /postflight    - Verify release health"
-echo "  /release       - Full release workflow"
-echo "  /version-bump  - Bump project version"
-echo "  /changelog     - Update CHANGELOG.md"
-echo "  /code-review   - Comprehensive code review"
-echo "  /quality-check - Run quality checks"
-echo "  /feature       - Create feature branch"
-echo "  /bugfix        - Create bugfix branch"
-echo "  /hotfix        - Create hotfix branch"
-echo "  /context       - Build AI context"
-echo "  /pr            - Manage pull requests"
+echo "  /agent-review     - Review and improve agent instructions"
+echo "  /preflight        - Quality checks before release"
+echo "  /postflight       - Verify release health"
+echo "  /release          - Full release workflow"
+echo "  /version-bump     - Bump project version"
+echo "  /changelog        - Update CHANGELOG.md"
+echo "  /linters-local    - Run local linting (ShellCheck, secretlint)"
+echo "  /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
+echo "  /code-standards   - Check against documented standards"
+echo "  /pr               - Unified PR workflow (orchestrates all checks)"
+echo "  /feature          - Create feature branch"
+echo "  /bugfix           - Create bugfix branch"
+echo "  /hotfix           - Create hotfix branch"
+echo "  /context          - Build AI context"
+echo ""
+echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
 echo ""
 echo "Restart OpenCode to load new commands."

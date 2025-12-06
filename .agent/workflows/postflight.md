@@ -25,7 +25,7 @@ tools:
 - **Commands**:
   - `gh run list --workflow=code-quality.yml --limit=5`
   - `gh api repos/{owner}/{repo}/commits/{sha}/check-runs`
-  - `.agent/scripts/quality-check.sh`
+  - `.agent/scripts/linters-local.sh`
 - **Rollback**: See [Rollback Procedures](#rollback-procedures)
 
 <!-- AI-CONTEXT-END -->
@@ -370,7 +370,7 @@ Run postflight checks manually after release:
 
 # Or individual checks
 gh run list --limit=5
-./.agent/scripts/quality-check.sh
+./.agent/scripts/linters-local.sh
 ```
 
 **When to use manual mode:**
@@ -436,7 +436,7 @@ git commit -m "fix: resolve critical issue from v{VERSION}"
 ```bash
 # Verify the rollback
 gh run list --limit=5  # Check CI/CD passes
-./.agent/scripts/quality-check.sh  # Verify quality restored
+./.agent/scripts/linters-local.sh  # Verify quality restored
 
 # Check SonarCloud
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq '.projectStatus.status'

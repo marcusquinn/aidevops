@@ -11,7 +11,7 @@
 
 **Key Operations**:
 - Setup: `./setup.sh`
-- Quality check: `.agent/scripts/quality-check.sh`
+- Quality check: `.agent/scripts/linters-local.sh`
 - Release: `.agent/scripts/version-manager.sh release [major|minor|patch]`
 
 **Subagents** (`aidevops/`):

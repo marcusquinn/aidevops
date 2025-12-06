@@ -27,7 +27,7 @@ npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 | `api-wrapper.md` | Wrapping REST APIs as MCP |
 
 **Related Agents**:
-- `@code-quality` for linting TypeScript
+- `@code-standards` for linting TypeScript
 - `tools/context/context7.md` for MCP SDK docs
 
 **Git Workflow**:
@@ -185,7 +185,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
 3. **Logging**: `console.error()` only (stdout is protocol)
 4. **Types**: Export input/output types
 
-Run `@code-quality` before committing TypeScript.
+Run `@code-standards` before committing TypeScript.
 
 ## References
 

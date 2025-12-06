@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- Master script: `bash .agent/scripts/quality-check.sh` (multi-platform validation)
+- Master script: `bash .agent/scripts/linters-local.sh` (multi-platform validation)
 - Fix script: `bash .agent/scripts/quality-fix.sh [file|dir]`
 - SonarCloud rules: S7679 (positional params), S1481 (unused vars), S1192 (strings), S7682 (returns)
 - Specialized fixes:
@@ -42,10 +42,10 @@ This guide provides detailed documentation of our quality automation tools and t
 
 ### Core Quality Scripts
 
-#### quality-check.sh - Master Quality Validator
+#### linters-local.sh - Master Quality Validator
 
 **Purpose**: Comprehensive multi-platform quality validation
-**Usage**: `bash .agent/scripts/quality-check.sh`
+**Usage**: `bash .agent/scripts/linters-local.sh`
 
 **Checks Performed**:
 
@@ -153,7 +153,7 @@ bash .agent/scripts/sonarscanner-cli.sh analyze
 # Run before every commit
 
 # 1. Comprehensive quality check
-bash .agent/scripts/quality-check.sh
+bash .agent/scripts/linters-local.sh
 
 # 2. Fix common issues
 bash .agent/scripts/quality-fix.sh .
@@ -162,7 +162,7 @@ bash .agent/scripts/quality-fix.sh .
 bash .agent/scripts/markdown-formatter.sh .
 
 # 4. Verify improvements
-bash .agent/scripts/quality-check.sh
+bash .agent/scripts/linters-local.sh
 ```
 
 #### Continuous Quality Monitoring
@@ -175,7 +175,7 @@ bash .agent/scripts/quality-check.sh
 bash .agent/scripts/quality-cli-manager.sh analyze all
 
 # 2. Generate quality report
-bash .agent/scripts/quality-check.sh > quality-report.txt
+bash .agent/scripts/linters-local.sh > quality-report.txt
 
 # 3. Track progress
 echo "$(date): $(grep 'SonarCloud:' quality-report.txt)" >> quality-history.log
@@ -193,7 +193,7 @@ echo "$(date): $(grep 'SonarCloud:' quality-report.txt)" >> quality-history.log
 #### Target Thresholds
 
 ```bash
-# quality-check.sh thresholds
+# linters-local.sh thresholds
 readonly MAX_TOTAL_ISSUES=100
 readonly MAX_RETURN_ISSUES=0
 readonly MAX_POSITIONAL_ISSUES=0

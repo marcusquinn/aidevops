@@ -51,7 +51,7 @@ For implementation tasks, follow `workflows/branch.md` lifecycle.
 
 **Quality Integration** (`tools/code-review/`):
 
-- Pre-commit: `.agent/scripts/quality-check.sh`
+- Pre-commit: `.agent/scripts/linters-local.sh`
 - Patterns: `tools/code-review/best-practices.md`
 
 <!-- AI-CONTEXT-END -->
@@ -142,7 +142,7 @@ Integrate quality checks into workflow:
 
 1. **Pre-implementation**: Check existing code quality
 2. **During**: Follow patterns in `tools/code-review/best-practices.md`
-3. **Pre-commit**: Run `.agent/scripts/quality-check.sh`
+3. **Pre-commit**: Run `.agent/scripts/linters-local.sh`
 
 ## Git Safety Practices
 

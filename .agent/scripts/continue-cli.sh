@@ -588,7 +588,7 @@ show_help() {
     echo "  $0 setup"
     echo "  $0 chat"
     echo "  $0 explain .agent/scripts/hostinger-helper.sh"
-    echo "  $0 refactor .agent/scripts/quality-check.sh"
+    echo "  $0 refactor .agent/scripts/linters-local.sh"
     echo "  $0 test .agent/scripts/setup-wizard-helper.sh bash"
     echo "  $0 review"
     echo ""

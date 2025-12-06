@@ -4,7 +4,7 @@
       "command": "node",
       "args": [
         "-e",
-        "const { Stagehand } = require('@browserbasehq/stagehand'); console.log('Stagehand AI Browser Automation Ready');"
+        "const { Stagehand } = require('@browserbasehq/stagehand'); console.log('Stagehand JavaScript AI Browser Automation Ready');"
       ],
       "env": {
         "STAGEHAND_ENV": "LOCAL",

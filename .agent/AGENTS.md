@@ -49,7 +49,7 @@
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (playwright, stagehand, stagehand-python, chrome-devtools, crawl4ai, pagespeed) |
-| `tools/code-review/` | Quality tools (sonarcloud, codacy, coderabbit, qlty, snyk, auditing, automation) |
+| `tools/code-review/` | Quality tools (code-standards, codacy, coderabbit, qlty, snyk, auditing, automation) |
 | `tools/context/` | Context tools (osgrep, augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
 | `tools/conversion/` | Format conversion (pandoc) |
 | `tools/data-extraction/` | Data extraction (outscraper) |
@@ -59,7 +59,7 @@
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (branch, release, version-bump, bug-fixing, feature-development, code-review, error-feedback, multi-repo-workspace) |
+| `workflows/` | Process guides (branch, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace) |
 | `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment) |
 
 <!-- AI-CONTEXT-END -->
@@ -111,7 +111,8 @@ Never create files in `~/` root for files needed only with the current task.
 
 | Script | Purpose |
 |--------|---------|
-| `quality-check.sh` | Run all quality checks (ShellCheck, SonarCloud, secrets) |
+| `linters-local.sh` | Run local linting (ShellCheck, secretlint, patterns) |
+| `code-audit-helper.sh` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `version-manager.sh` | Version bumps and releases |
 | `linter-manager.sh` | Install and manage linters |
 | `github-cli-helper.sh` | GitHub operations |
@@ -122,6 +123,30 @@ Never create files in `~/` root for files needed only with the current task.
 | `sonarcloud-cli.sh` | SonarCloud analysis |
 | `codacy-cli.sh` | Codacy code quality |
 | `secretlint-helper.sh` | Secret detection |
+
+## Quality Workflow
+
+```
+Development → @code-standards (reference)
+     ↓
+Pre-commit → /linters-local (fast, offline)
+     ↓
+PR Review → /pr (orchestrates all checks)
+     ├── /linters-local
+     ├── /code-audit-remote
+     ├── /code-standards
+     └── Intent vs Reality analysis
+     ↓
+Post-merge → /postflight (verify CI)
+```
+
+| Stage | Command | Purpose |
+|-------|---------|---------|
+| During development | `@code-standards` | Reference quality rules |
+| Pre-commit | `/linters-local` | Fast local checks |
+| PR creation | `/pr review` | Full orchestrated review |
+| PR review | `/code-audit-remote` | Remote service audits |
+| Post-merge | `/postflight` | Verify release health |
 
 ## Development Workflows
 
@@ -134,7 +159,8 @@ For versioning, releases, and git operations:
 | Git branching | `tools/git/workflow.md` |
 | Bug fixes | `workflows/bug-fixing.md` |
 | Feature development | `workflows/feature-development.md` |
-| Code review | `workflows/code-review.md` |
+| PR review | `workflows/pr.md` |
+| Remote auditing | `workflows/code-audit-remote.md` |
 | Multi-repo work | `workflows/multi-repo-workspace.md` |
 
 **Quick commands:**
@@ -143,6 +169,9 @@ For versioning, releases, and git operations:
 # Version bump and release
 .agent/scripts/version-manager.sh release [major|minor|patch]
 
-# Quality check before commit
-.agent/scripts/quality-check.sh
+# Local linting before commit
+.agent/scripts/linters-local.sh
+
+# Full PR review (orchestrates all checks)
+/pr review
 ```

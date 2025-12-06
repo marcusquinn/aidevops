@@ -142,4 +142,4 @@ If experiment succeeds and should be productionized:
 ## Related
 
 - **If experiment succeeds**: `branch/feature.md`
-- **Code review**: `workflows/code-review.md` (experiments benefit from early feedback)
+- **Code review**: `workflows/code-audit-remote.md` (experiments benefit from early feedback)

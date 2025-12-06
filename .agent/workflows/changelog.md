@@ -23,6 +23,7 @@ tools:
 - **Generate**: Create entry from commits since last tag
 - **Sections**: Added, Changed, Fixed, Removed, Security, Deprecated
 - **Trigger**: Called by @versioning before version bump completes
+- **Related**: `@version-bump`, `@release`
 
 **Commands**:
 
@@ -67,44 +68,44 @@ Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
 - Soon-to-be removed features
 ```
 
-## Commit Type to Section Mapping
+## Writing Good Entries
 
-| Commit Prefix | Changelog Section |
-|---------------|-------------------|
-| `feat:` | Added |
-| `fix:` | Fixed |
-| `refactor:` | Changed |
-| `docs:` | Changed |
-| `chore:` | Changed |
-| `security:` | Security |
-| `deprecate:` | Deprecated |
-| `remove:` | Removed |
+- **User perspective**: Describe impact, not implementation details
+- **Actionable**: What can users do now that they couldn't before?
+- **Concise**: One line per change, expand only if necessary
+- **Past tense**: "Added", "Fixed", "Removed" (not "Add", "Fix")
 
-## Validation Rules
+**Examples**:
 
-1. **Version Match**: Latest `## [X.Y.Z]` must match VERSION file
-2. **Unreleased Section**: Must exist at top for ongoing work
-3. **Date Format**: YYYY-MM-DD (ISO 8601)
-4. **Link Format**: Comparison links at bottom must be valid
+- Good: "Added bulk export for usage metrics"
+- Bad: "Refactored MetricsExporter class to support batch operations"
+- Good: "Fixed login timeout on slow connections"
+- Bad: "Updated auth.js to handle edge case"
 
-## Generating Entries
+## Validation
 
-To generate a changelog entry from commits:
+Before releasing, verify:
+
+- Latest `## [X.Y.Z]` matches VERSION file
+- Date format: YYYY-MM-DD
+- Comparison links at bottom are updated
+
+## Generating Entries from Commits
+
+To preview a changelog entry from recent commits:
 
 ```bash
-# Get commits since last tag
-git log $(git describe --tags --abbrev=0)..HEAD --pretty=format:"- %s"
-
-# Or use the helper
 .agent/scripts/version-manager.sh changelog-preview
 ```
 
 ## Before Releasing
 
-1. Move items from `[Unreleased]` to new version section
-2. Add date to version header
+1. Create new version section with date: `## [X.Y.Z] - YYYY-MM-DD`
+2. Add entries under appropriate subsections (Added, Changed, Fixed, etc.)
 3. Update comparison links at bottom
 4. Validate with `version-manager.sh changelog-check`
+
+**Note**: If using `[Unreleased]` for ongoing work, move items from there to the new version section. Otherwise, add entries directly to the new section.
 
 ## Link Format
 

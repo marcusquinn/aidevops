@@ -151,7 +151,7 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 ## Related Agents
 
 - `@aidevops` - For infrastructure operations
-- `@code-quality` - For code review
+- `@code-standards` - For code review
 
 ## Reference
 

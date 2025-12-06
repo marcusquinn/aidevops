@@ -316,7 +316,7 @@ Stagehand complements existing browser automation tools:
 
 ```bash
 # Run quality checks on Stagehand scripts
-bash .agent/scripts/quality-check.sh ~/.aidevops/stagehand/
+bash .agent/scripts/linters-local.sh ~/.aidevops/stagehand/
 
 # Lint JavaScript/TypeScript files
 bash .agent/scripts/linter-manager.sh install javascript
@@ -404,7 +404,7 @@ bash .agent/scripts/stagehand-helper.sh clean        # Clean cache and logs
 
 - **Browser Automation**: docs/BROWSER-AUTOMATION.md
 - **MCP Integrations**: docs/MCP-INTEGRATIONS.md
-- **Quality Standards**: .agent/spec/code-quality.md
+- **Quality Standards**: .agent/tools/code-review/code-standards.md
 
 ### **Community & Support**
 

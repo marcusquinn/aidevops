@@ -113,4 +113,4 @@ PR reviewers should verify:
 ## Related
 
 - **Version bumping**: `workflows/version-bump.md`
-- **Code review**: `workflows/code-review.md`
+- **Code review**: `workflows/code-audit-remote.md`

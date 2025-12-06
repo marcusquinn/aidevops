@@ -189,7 +189,7 @@ The `validate` command checks:
 
 ## Preflight Quality Checks
 
-The `release` command automatically runs `.agent/scripts/quality-check.sh` before proceeding.
+The `release` command automatically runs `.agent/scripts/linters-local.sh` before proceeding.
 
 To bypass (not recommended):
 

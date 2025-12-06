@@ -156,7 +156,7 @@ generate_changelog_preview() {
 run_preflight_checks() {
     print_info "Running preflight quality checks..."
     
-    local preflight_script="$REPO_ROOT/.agent/scripts/quality-check.sh"
+    local preflight_script="$REPO_ROOT/.agent/scripts/linters-local.sh"
     
     if [[ -f "$preflight_script" ]]; then
         if bash "$preflight_script"; then

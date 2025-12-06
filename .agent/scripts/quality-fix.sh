@@ -255,7 +255,7 @@ main() {
     echo ""
     
     print_success "🎉 Universal quality fixes completed!"
-    print_info "Review changes and run quality-check.sh to validate improvements"
+    print_info "Review changes and run linters-local.sh to validate improvements"
     print_info "Commit changes with: git add . && git commit -m '🎯 Universal quality fixes'"
     return 0
 }

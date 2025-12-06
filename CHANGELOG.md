@@ -7,12 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.17.0] - 2025-12-06
+
+### Added
+
+- **linters-local.sh Script** - New local quality check script for offline linting
+  - ShellCheck, secretlint, and pattern-based checks
+  - No external service dependencies required
+- **code-standards.md** - Consolidated code review guidance and quality standards
+- **code-audit-remote.md Workflow** - Remote repository audit workflow
+  - CodeRabbit, Codacy, and SonarCloud integration
+- **pr.md Workflow** - Unified PR orchestrator (renamed from pull-request.md)
+- **Stagehand Python MCP Templates** - New templates for Python-based browser automation
+  - `stagehand-both.json` - Combined TypeScript and Python configuration
+  - `stagehand-python.json` - Python-only configuration
+
+### Changed
+
+- **changelog.md Workflow** - Improved entry writing guidance and formatting
+- **Consolidated Code Review Agents** - Merged code-quality.md into code-standards.md
+- **Renamed pull-request.md to pr.md** - Shorter, consistent naming
+- **Updated Workflow Agents** - Enhanced branch, preflight, postflight, release workflows
+- **Cross-Reference Updates** - Updated ~40 agent files with new paths
+
+### Removed
+
+- **quality-check.sh** - Replaced by linters-local.sh
+- **code-quality.md** - Consolidated into code-standards.md
+- **code-review.md Workflow** - Consolidated into code-audit-remote.md
+
+## [2.16.0] - 2025-12-06
+
+### Added
+
+- **Unified PR Command** - New `/pr` command orchestrating all quality checks
+  - Combines linters-local, code-audit-remote, and code-standards checks
+  - Intent vs reality analysis for comprehensive PR validation
+- **Local Linting Command** - New `/linters-local` command for fast, offline linting
+  - ShellCheck, secretlint, and pattern checks
+  - No external service dependencies
+- **Remote Audit Command** - New `/code-audit-remote` command for remote auditing
+  - CodeRabbit, Codacy, and SonarCloud integration
+- **Code Standards Command** - New `/code-standards` command for quality standards checking
+- **New Scripts and Workflows**:
+  - `linters-local.sh` - Local linting script (replaces quality-check.sh)
+  - `workflows/pr.md` - Unified PR orchestrator workflow
+  - `workflows/code-audit-remote.md` - Remote auditing workflow
+  - `tools/code-review/code-standards.md` - Quality standards reference
+
+### Changed
+
+- **Renamed Scripts and Workflows** - Clarified naming for local vs remote operations
+  - `quality-check.sh` → `linters-local.sh` (clarifies local-only scope)
+  - `workflows/code-review.md` → `workflows/code-audit-remote.md` (clarifies remote services)
+  - `tools/code-review/code-quality.md` → `tools/code-review/code-standards.md` (clarifies reference purpose)
+  - `workflows/pull-request.md` → `workflows/pr.md` (now orchestrates all checks)
+  - `@code-quality` subagent → `@code-standards`
+- **Updated Documentation** - Comprehensive cross-reference updates
+  - Updated `generate-opencode-commands.sh` with new command structure
+  - Updated AGENTS.md with new quality workflow documentation
+  - Updated README.md with new commands and workflow
+  - Updated cross-references across ~40 agent files
+
+### Removed
+
+- `quality-check.sh` - Replaced by `linters-local.sh`
+- `workflows/code-review.md` - Replaced by `workflows/code-audit-remote.md`
+- `workflows/pull-request.md` - Replaced by `workflows/pr.md`
+- `tools/code-review/code-quality.md` - Replaced by `tools/code-review/code-standards.md`
+
 ## [2.15.0] - 2025-12-06
 
 ### Added
 
 - **OpenCode Commands Generation** - New `generate-opencode-commands.sh` script
-  - Creates 13 workflow slash commands for OpenCode: `/agent-review`, `/preflight`, `/postflight`, `/release`, `/version-bump`, `/changelog`, `/code-review`, `/quality-check`, `/feature`, `/bugfix`, `/hotfix`, `/context`, `/pr`
+  - Creates 13 workflow slash commands for OpenCode: `/agent-review`, `/preflight`, `/postflight`, `/release`, `/version-bump`, `/changelog`, `/code-audit-remote`, `/linters-local`, `/feature`, `/bugfix`, `/hotfix`, `/context`, `/pr`
   - Commands deployed to `~/.config/opencode/commands/` directory
   - Integrated into `setup.sh` for automatic deployment during installation
 
@@ -481,7 +550,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.17.0...HEAD
+[2.17.0]: https://github.com/marcusquinn/aidevops/compare/v2.16.0...v2.17.0
+[2.16.0]: https://github.com/marcusquinn/aidevops/compare/v2.15.0...v2.16.0
 [2.15.0]: https://github.com/marcusquinn/aidevops/compare/v2.14.0...v2.15.0
 [2.14.0]: https://github.com/marcusquinn/aidevops/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/marcusquinn/aidevops/compare/v2.12.0...v2.13.0

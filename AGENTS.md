@@ -20,7 +20,7 @@
 ./setup.sh
 
 # Quality check
-.agent/scripts/quality-check.sh
+.agent/scripts/linters-local.sh
 
 # Release
 .agent/scripts/version-manager.sh release [major|minor|patch]
@@ -87,7 +87,7 @@ From `build-agent.md`:
 
 ```bash
 # Before committing
-.agent/scripts/quality-check.sh
+.agent/scripts/linters-local.sh
 
 # ShellCheck all scripts
 find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;

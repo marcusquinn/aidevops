@@ -40,7 +40,7 @@ cp configs/gitea-cli-config.json.txt configs/gitea-cli-config.json
 
 ```bash
 # Comprehensive multi-platform quality validation
-bash .agent/scripts/quality-check.sh
+bash .agent/scripts/linters-local.sh
 
 # Run all quality CLI tools
 bash .agent/scripts/quality-cli-manager.sh analyze all
@@ -136,7 +136,7 @@ aidevops/
 ├── .agent/                     # Service-specific documentation
 ├── .agent/                   # AI agent development tools
 │   ├── scripts/              # Quality automation and development tools
-│   │   ├── quality-check.sh      # Multi-platform validation
+│   │   ├── linters-local.sh      # Multi-platform validation
 │   │   ├── quality-fix.sh        # Universal automated fixes
 │   │   ├── quality-cli-manager.sh # Unified quality tool interface
 │   │   ├── coderabbit-cli.sh     # AI-powered code review
@@ -144,7 +144,7 @@ aidevops/
 │   │   ├── qlty-cli.sh           # Universal linting/formatting
 │   │   └── sonarscanner-cli.sh   # SonarCloud analysis
 │   ├── spec/                 # Technical specifications
-│   │   └── code-quality.md   # Quality standards reference
+│   │   └── code-standards.md   # Quality standards reference
 │   └── wiki/                 # Internal knowledge base
 ├── ssh/                      # SSH key management utilities
 └── templates/                # Deployment templates for AI assistants
@@ -297,8 +297,8 @@ source "$SCRIPT_DIR/shared-constants.sh"
 **Before making changes:**
 
 1. Read `AGENTS.md` for authoritative guidance
-2. Run `bash .agent/scripts/quality-check.sh` to establish baseline
-3. Review `.agent/spec/code-quality.md` for detailed patterns
+2. Run `bash .agent/scripts/linters-local.sh` to establish baseline
+3. Review `.agent/tools/code-review/code-standards.md` for detailed patterns
 
 **After making changes:**
 
@@ -446,7 +446,7 @@ Current version: **1.9.0** (tracked in README.md, package.json, sonar-project.pr
 ## Important Notes
 
 - This framework achieves **industry-leading quality** with 0 SonarCloud issues
-- All changes must follow patterns in `AGENTS.md` and `.agent/spec/code-quality.md`
+- All changes must follow patterns in `AGENTS.md` and `.agent/tools/code-review/code-standards.md`
 - Use **bulk operations** for universal fixes across multiple files
 - **ShellCheck compliance** is mandatory for all shell scripts
 - Git platform CLI helpers provide **enhanced capabilities** beyond basic git operations
@@ -456,7 +456,7 @@ Current version: **1.9.0** (tracked in README.md, package.json, sonar-project.pr
 ## References
 
 - **Authoritative Guide**: `AGENTS.md` (single source of truth)
-- **Quality Standards**: `.agent/spec/code-quality.md`
+- **Quality Standards**: `.agent/tools/code-review/code-standards.md`
 - **Provider Patterns**: `.agent/scripts/shared-constants.sh`
 - **Service Documentation**: `.agent/` directory
 - **AI Tools Reference**: `.agent/ai-cli-tools.md`

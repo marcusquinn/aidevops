@@ -145,7 +145,7 @@ cat test-results.json | jq '.failures'
 
 ```bash
 # Universal quality check (aidevops)
-bash ~/Git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/linters-local.sh
 
 # ShellCheck (bash scripts)
 shellcheck script.sh
@@ -557,7 +557,7 @@ gh run view {id} --log-failed
 gh pr checks
 
 # Run local quality check
-bash ~/Git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/linters-local.sh
 ```
 
 ### Common Fix Commands

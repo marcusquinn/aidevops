@@ -392,10 +392,10 @@ check_npm_audit() {
 check_local_quality() {
     print_section "Local Quality Checks"
     
-    local quality_script="$REPO_ROOT/.agent/scripts/quality-check.sh"
+    local quality_script="$REPO_ROOT/.agent/scripts/linters-local.sh"
     
     if [[ -f "$quality_script" ]]; then
-        print_info "Running quality-check.sh..."
+        print_info "Running linters-local.sh..."
         
         if bash "$quality_script" &> /dev/null; then
             print_success "Local quality checks passed"
@@ -404,7 +404,7 @@ check_local_quality() {
             print_info "Run: bash $quality_script (for details)"
         fi
     else
-        print_skip "quality-check.sh not found"
+        print_skip "linters-local.sh not found"
     fi
     
     return 0

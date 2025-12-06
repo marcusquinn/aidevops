@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "stagehand-js": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const { Stagehand } = require('@browserbasehq/stagehand'); console.log('Stagehand JavaScript Ready');"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false"
+      }
+    },
+    "stagehand-python": {
+      "command": "python",
+      "args": [
+        "-c",
+        "from stagehand import Stagehand; print('Stagehand Python Ready')"
+      ],
+      "env": {
+        "STAGEHAND_ENV": "LOCAL",
+        "STAGEHAND_VERBOSE": "1",
+        "STAGEHAND_HEADLESS": "false"
+      }
+    }
+  }
+}

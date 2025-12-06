@@ -247,7 +247,7 @@ main() {
         print_info "  ./.agent/scripts/quality-fix.sh"
         echo ""
         print_info "To check current status, run:"
-        print_info "  ./.agent/scripts/quality-check.sh"
+        print_info "  ./.agent/scripts/linters-local.sh"
         echo ""
         print_info "To bypass this check (not recommended), use:"
         print_info "  git commit --no-verify"

@@ -31,7 +31,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`. For changelog format and validation, see `workflows/changelog.md`. For PR-based merges before release, see `workflows/pull-request.md`.
+This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`. For changelog format and validation, see `workflows/changelog.md`. For PR-based merges before release, see `workflows/pr.md`.
 
 ## Release Workflow Overview
 
@@ -82,7 +82,7 @@ git checkout -b release/v{MAJOR}.{MINOR}.{PATCH}
 
 ```bash
 # For this framework
-./.agent/scripts/quality-check.sh
+./.agent/scripts/linters-local.sh
 
 # Generic checks
 npm run lint && npm test

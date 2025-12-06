@@ -1,7 +1,20 @@
 #!/bin/bash
 # shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
-# Multi-Platform Quality Validation Script
-# Ensures compliance across SonarCloud, CodeFactor, and Codacy
+# =============================================================================
+# Local Linters - Fast Offline Quality Checks
+# =============================================================================
+# Runs local linting tools without requiring external service APIs.
+# Use this for pre-commit checks and fast feedback during development.
+#
+# Checks performed:
+#   - ShellCheck for shell scripts
+#   - Secretlint for exposed secrets
+#   - Pattern validation (return statements, positional parameters)
+#   - Markdown formatting
+#
+# For remote auditing (CodeRabbit, Codacy, SonarCloud), use:
+#   /code-audit-remote or code-audit-helper.sh
+# =============================================================================
 
 set -euo pipefail
 
@@ -19,37 +32,37 @@ readonly MAX_POSITIONAL_ISSUES=0
 readonly MAX_STRING_LITERAL_ISSUES=0
 
 print_header() {
-    echo -e "${BLUE}🎯 AI DevOps Framework - Multi-Platform Quality Check${NC}"
+    echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
     echo -e "${BLUE}================================================================${NC}"
     return 0
 }
 
 print_success() {
     local message="$1"
-    echo -e "${GREEN}✅ $message${NC}"
+    echo -e "${GREEN}[PASS] $message${NC}"
     return 0
 }
 
 print_warning() {
     local message="$1"
-    echo -e "${YELLOW}⚠️  $message${NC}"
+    echo -e "${YELLOW}[WARN] $message${NC}"
     return 0
 }
 
 print_error() {
     local message="$1"
-    echo -e "${RED}❌ $message${NC}"
+    echo -e "${RED}[FAIL] $message${NC}"
     return 0
 }
 
 print_info() {
     local message="$1"
-    echo -e "${BLUE}ℹ️  $message${NC}"
+    echo -e "${BLUE}[INFO] $message${NC}"
     return 0
 }
 
 check_sonarcloud_status() {
-    echo -e "${BLUE}📊 Checking SonarCloud Status...${NC}"
+    echo -e "${BLUE}Checking SonarCloud Status (remote API)...${NC}"
     
     local response
     if response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1"); then
@@ -79,7 +92,7 @@ check_sonarcloud_status() {
 }
 
 check_return_statements() {
-    echo -e "${BLUE}🔄 Checking Return Statements (S7682)...${NC}"
+    echo -e "${BLUE}Checking Return Statements (S7682)...${NC}"
     
     local violations=0
     local files_checked=0
@@ -121,7 +134,7 @@ check_return_statements() {
 }
 
 check_positional_parameters() {
-    echo -e "${BLUE}📝 Checking Positional Parameters (S7679)...${NC}"
+    echo -e "${BLUE}Checking Positional Parameters (S7679)...${NC}"
     
     local violations=0
     
@@ -154,7 +167,7 @@ check_positional_parameters() {
 }
 
 check_string_literals() {
-    echo -e "${BLUE}📄 Checking String Literals (S1192)...${NC}"
+    echo -e "${BLUE}Checking String Literals (S1192)...${NC}"
     
     local violations=0
     
@@ -182,7 +195,7 @@ check_string_literals() {
 }
 
 run_shellcheck() {
-    echo -e "${BLUE}🐚 Running ShellCheck Validation...${NC}"
+    echo -e "${BLUE}Running ShellCheck Validation...${NC}"
     
     local violations=0
     
@@ -205,7 +218,7 @@ run_shellcheck() {
 
 # Check for secrets in codebase
 check_secrets() {
-    echo -e "${BLUE}🔐 Checking for Exposed Secrets (Secretlint)...${NC}"
+    echo -e "${BLUE}Checking for Exposed Secrets (Secretlint)...${NC}"
     
     local secretlint_script=".agent/scripts/secretlint-helper.sh"
     local violations=0
@@ -250,64 +263,47 @@ check_secrets() {
 }
 
 # Check AI-Powered Quality CLIs integration
-check_quality_clis() {
-    print_info "🤖 Checking AI-Powered Quality CLIs Integration..."
+check_remote_cli_status() {
+    print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
     # Secretlint
     local secretlint_script=".agent/scripts/secretlint-helper.sh"
     if [[ -f "$secretlint_script" ]]; then
         if command -v secretlint &> /dev/null || [[ -f "node_modules/.bin/secretlint" ]]; then
-            print_success "Secretlint: Integration ready"
-            print_info "Run: bash $secretlint_script scan (for secret detection)"
+            print_success "Secretlint: Ready"
         else
             print_info "Secretlint: Available for setup"
-            print_info "Run: bash $secretlint_script install"
         fi
-    else
-        print_warning "Secretlint helper script not found"
     fi
-    echo ""
 
     # CodeRabbit CLI
     local coderabbit_script=".agent/scripts/coderabbit-cli.sh"
     if [[ -f "$coderabbit_script" ]]; then
         if bash "$coderabbit_script" status > /dev/null 2>&1; then
-            print_success "CodeRabbit CLI: Integration ready"
-            print_info "Run: bash $coderabbit_script review (for local code review)"
+            print_success "CodeRabbit CLI: Ready"
         else
             print_info "CodeRabbit CLI: Available for setup"
-            print_info "Run: bash $coderabbit_script install && bash $coderabbit_script setup"
         fi
-    else
-        print_warning "CodeRabbit CLI script not found"
     fi
 
     # Codacy CLI
     local codacy_script=".agent/scripts/codacy-cli.sh"
     if [[ -f "$codacy_script" ]]; then
         if bash "$codacy_script" status > /dev/null 2>&1; then
-            print_success "Codacy CLI: Integration ready"
-            print_info "Run: bash $codacy_script analyze (for local analysis)"
+            print_success "Codacy CLI: Ready"
         else
             print_info "Codacy CLI: Available for setup"
-            print_info "Run: bash $codacy_script install && bash $codacy_script init"
         fi
-    else
-        print_warning "Codacy CLI script not found"
     fi
 
     # SonarScanner CLI
     local sonar_script=".agent/scripts/sonarscanner-cli.sh"
     if [[ -f "$sonar_script" ]]; then
         if bash "$sonar_script" status > /dev/null 2>&1; then
-            print_success "SonarScanner CLI: Integration ready"
-            print_info "Run: bash $sonar_script analyze (for SonarCloud analysis)"
+            print_success "SonarScanner CLI: Ready"
         else
             print_info "SonarScanner CLI: Available for setup"
-            print_info "Run: bash $sonar_script install && bash $sonar_script init"
         fi
-    else
-        print_warning "SonarScanner CLI script not found"
     fi
 
     return 0
@@ -318,7 +314,7 @@ main() {
     
     local exit_code=0
     
-    # Run all quality checks
+    # Run all local quality checks
     check_sonarcloud_status || exit_code=1
     echo ""
     
@@ -337,19 +333,20 @@ main() {
     check_secrets || exit_code=1
     echo ""
 
-    check_quality_clis
+    check_remote_cli_status
 
     echo ""
-    print_info "📝 Markdown Formatting Tools Available:"
+    print_info "Markdown Formatting Tools Available:"
     print_info "Run: bash .agent/scripts/markdown-lint-fix.sh manual . (for quick fixes)"
     print_info "Run: bash .agent/scripts/markdown-formatter.sh format . (for comprehensive formatting)"
     echo ""
 
     # Final summary
     if [[ $exit_code -eq 0 ]]; then
-        print_success "🎉 ALL QUALITY CHECKS PASSED! Framework maintains A-grade standards."
+        print_success "ALL LOCAL CHECKS PASSED!"
+        print_info "For remote auditing, run: /code-audit-remote"
     else
-        print_error "❌ QUALITY ISSUES DETECTED. Please address violations before committing."
+        print_error "QUALITY ISSUES DETECTED. Please address violations before committing."
     fi
     
     return $exit_code

@@ -19,9 +19,9 @@ tools:
 ## Quick Reference
 
 - **Auto-run**: Called by `version-manager.sh release` before version bump
-- **Manual**: `.agent/scripts/quality-check.sh`
+- **Manual**: `.agent/scripts/linters-local.sh`
 - **Skip**: `version-manager.sh release [type] --force --skip-preflight`
-- **Fast mode**: `.agent/scripts/quality-check.sh --fast`
+- **Fast mode**: `.agent/scripts/linters-local.sh --fast`
 
 **Check Phases** (fast → slow):
 1. Version consistency (~1s, blocking)
@@ -50,15 +50,15 @@ Preflight ensures code quality before version bumping and release. It catches is
 |-------|------|----------|
 | Shell script linting | ShellCheck | Yes |
 | Secret detection | Secretlint | Yes |
-| Return statements | quality-check.sh | Yes |
+| Return statements | linters-local.sh | Yes |
 
 ### Phase 3: Medium Blocking (~30s)
 
 | Check | Tool | Blocking |
 |-------|------|----------|
 | Markdown formatting | markdownlint | Advisory |
-| Positional parameters | quality-check.sh | Advisory |
-| String literal duplication | quality-check.sh | Advisory |
+| Positional parameters | linters-local.sh | Advisory |
+| String literal duplication | linters-local.sh | Advisory |
 
 ### Phase 4: Slow Advisory (~60s+)
 
@@ -84,10 +84,10 @@ Run quality checks independently:
 
 ```bash
 # Full quality check
-.agent/scripts/quality-check.sh
+.agent/scripts/linters-local.sh
 
 # Fast checks only (ShellCheck, secrets, returns)
-.agent/scripts/quality-check.sh --fast
+.agent/scripts/linters-local.sh --fast
 
 # Specific checks
 shellcheck .agent/scripts/*.sh
@@ -185,8 +185,8 @@ Ensures VERSION file matches all references:
 Checks current quality gate status:
 
 ```bash
-# Via quality-check.sh
-.agent/scripts/quality-check.sh
+# Via linters-local.sh
+.agent/scripts/linters-local.sh
 
 # Direct API (requires SONAR_TOKEN)
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"

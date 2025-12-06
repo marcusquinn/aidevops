@@ -9,7 +9,7 @@ Shared prompts for Plan+ and Build+ agents to ensure consistent UX.
 > **Planning & Analysis** (Plan+):
 >
 > 1. Architecture Analysis
-> 2. Code Review (`workflows/code-review.md`)
+> 2. Code Review (`workflows/code-audit-remote.md`)
 > 3. Documentation Review
 >
 > **Implementation** (Build+):

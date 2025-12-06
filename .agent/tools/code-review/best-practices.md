@@ -23,9 +23,9 @@ tools:
 - **S7679**: Never use `$1` directly - assign to local variables
 - **S1192**: Create `readonly CONSTANT="value"` for repeated strings
 - **S1481**: Remove unused variables or enhance functionality
-- **Pre-Dev**: Run `quality-check.sh`, note current issues, plan improvements
+- **Pre-Dev**: Run `linters-local.sh`, note current issues, plan improvements
 - **Post-Dev**: Re-run quality check, test functionality, commit with metrics
-- **Quality Scripts**: `quality-check.sh`, `fix-content-type.sh`, `fix-auth-headers.sh`, `fix-error-messages.sh`
+- **Quality Scripts**: `linters-local.sh`, `fix-content-type.sh`, `fix-auth-headers.sh`, `fix-error-messages.sh`
 - **Targets**: SonarCloud <50 issues, 0 critical violations, 100% feature preservation
 <!-- AI-CONTEXT-END -->
 
@@ -81,14 +81,14 @@ printf 'Price: %s50/month\n' '$'  # Not: echo "Price: $50/month"
 
 #### Pre-Development Checklist
 
-1. **Run quality check**: `bash .agent/scripts/quality-check.sh`
+1. **Run quality check**: `bash .agent/scripts/linters-local.sh`
 2. **Check current issues**: Note SonarCloud/Codacy/CodeFactor status
 3. **Plan improvements**: How will changes enhance quality?
 4. **Test functionality**: Ensure no feature loss
 
 #### Post-Development Validation
 
-1. **Quality verification**: Re-run quality-check.sh
+1. **Quality verification**: Re-run linters-local.sh
 2. **Functionality testing**: Verify all features work
 3. **Documentation updates**: Update AGENTS.md if needed
 4. **Commit with metrics**: Include before/after quality metrics
@@ -153,7 +153,7 @@ fi
 
 #### Available Quality Scripts
 
-- **quality-check.sh**: Run before and after changes
+- **linters-local.sh**: Run before and after changes
 - **fix-content-type.sh**: Fix Content-Type header duplications
 - **fix-auth-headers.sh**: Fix Authorization header patterns
 - **fix-error-messages.sh**: Standardize error messages

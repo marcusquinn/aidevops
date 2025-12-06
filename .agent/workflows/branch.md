@@ -118,7 +118,7 @@ Regular commits following conventional format (`feat:`, `fix:`, `refactor:`, etc
 Run quality checks before pushing. Catches issues early.
 
 ```bash
-.agent/scripts/quality-check.sh --fast
+.agent/scripts/linters-local.sh --fast
 ```
 
 **Agents**: `workflows/preflight.md`
@@ -150,7 +150,7 @@ gh pr create --fill        # GitHub
 glab mr create --fill      # GitLab
 ```
 
-**Agents**: `workflows/pull-request.md`
+**Agents**: `workflows/pr.md`
 
 ### 7. Review Feedback
 
@@ -161,7 +161,7 @@ git add . && git commit -m "fix: address review feedback"
 git push
 ```
 
-**Agents**: `workflows/code-review.md`
+**Agents**: `workflows/code-audit-remote.md`
 
 ### 8. Merge
 
@@ -273,7 +273,7 @@ git stash pop
 |-------|--------|---------------|----------|
 | 1 | Create branch | `branch.md`, `branch/{type}.md` | Yes |
 | 2 | Develop | Domain agents, conventional commits | Yes |
-| 3 | Preflight | `preflight.md`, `quality-check.sh` | Yes |
+| 3 | Preflight | `preflight.md`, `linters-local.sh` | Yes |
 | 4 | Version | `version-bump.md`, `changelog.md` | For releases |
 | 5 | Push | `git push -u origin HEAD` | Yes |
 | 6 | PR | `pull-request.md` | Yes |
@@ -285,10 +285,10 @@ git stash pop
 
 ## Related Workflows
 
-- **Pull requests**: `workflows/pull-request.md` (review before merge)
+- **Pull requests**: `workflows/pr.md` (review before merge)
 - **Preflight**: `workflows/preflight.md` (quality checks before release)
 - **Version bumping**: `workflows/version-bump.md`
 - **Changelog**: `workflows/changelog.md`
 - **Creating releases**: `workflows/release.md`
 - **Postflight**: `workflows/postflight.md` (verify after release)
-- **Code review**: `workflows/code-review.md`
+- **Code review**: `workflows/code-audit-remote.md`

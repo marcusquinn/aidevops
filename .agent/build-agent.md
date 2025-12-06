@@ -30,7 +30,7 @@
 | `agent-review.md` | Reviewing and improving existing agents |
 
 **Related Agents**:
-- `@code-quality` for linting agent markdown
+- `@code-standards` for linting agent markdown
 - `aidevops/architecture.md` for framework structure
 
 **Git Workflow**:
@@ -239,7 +239,7 @@ When designing an agent, prefer calling existing agents over duplicating:
 ```markdown
 # Good: Reference existing capability
 For Git operations, invoke `@git-platforms` subagent.
-For code quality, invoke `@code-quality` subagent.
+For code quality, invoke `@code-standards` subagent.
 
 # Bad: Duplicate instructions
 ## Git Operations
@@ -331,7 +331,7 @@ Preference order for code quality:
 
 ```markdown
 # Good
-Run ShellCheck before committing. Use `@code-quality` for comprehensive analysis.
+Run ShellCheck before committing. Use `@code-standards` for comprehensive analysis.
 
 # Bad
 Ask the AI to check your code formatting and style.

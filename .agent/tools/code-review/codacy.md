@@ -80,9 +80,9 @@ bash .agent/scripts/quality-cli-manager.sh status codacy
 
 ```bash
 # Pre-commit auto-fix workflow
-bash .agent/scripts/quality-check.sh
+bash .agent/scripts/linters-local.sh
 bash .agent/scripts/codacy-cli.sh analyze --fix
-bash .agent/scripts/quality-check.sh  # Verify improvements
+bash .agent/scripts/linters-local.sh  # Verify improvements
 ```
 
 ### **📊 EXPECTED RESULTS**

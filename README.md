@@ -532,7 +532,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
 | `@seo` | Search Console, keyword research | gsc, ahrefs |
-| `@code-quality` | Quality scanning, security, learning loop | context7 |
+| `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
 | `@agent-review` | Session analysis, agent improvement (under build-agent/) | (read/write only) |
@@ -612,9 +612,10 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/feature` | Start a new feature branch workflow |
 | `/bugfix` | Start a bugfix branch workflow |
 | `/hotfix` | Start an urgent hotfix workflow |
-| `/code-review` | Comprehensive code review checklist |
-| `/quality-check` | Run all quality linters and scanners |
-| `/pr` | Create a pull request |
+| `/linters-local` | Run local linting (ShellCheck, secretlint) |
+| `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
+| `/code-standards` | Check against documented quality standards |
+| `/pr` | Unified PR workflow (orchestrates all checks) |
 
 **Release Workflow** (in order):
 

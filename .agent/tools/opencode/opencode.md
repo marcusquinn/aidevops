@@ -191,7 +191,7 @@ OpenCode doesn't have built-in workflow orchestration, but agents should be invo
 │     @crawl4ai-usage      - Data extraction                      │
 │                                                                 │
 │  4. QUALITY (sequential)                                        │
-│     @code-quality        - Run checks, apply fixes              │
+│     @code-standards        - Run checks, apply fixes              │
 │     @agent-review        - Session analysis + PR                │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -226,11 +226,11 @@ OpenCode processes one `@mention` per message. For parallel work, send separate 
 
 **Always end sessions with these agents in order:**
 
-1. **@code-quality** - Fix any quality issues introduced
+1. **@code-standards** - Fix any quality issues introduced
 2. **@agent-review** - Analyze session, suggest improvements, optionally create PR
 
 ```bash
-> @code-quality check and fix any issues in today's changes
+> @code-standards check and fix any issues in today's changes
 # Wait for fixes...
 > @agent-review analyze this session
 ```
@@ -252,7 +252,7 @@ opencode
 > @seo get top queries for example.com last 30 days
 
 # Invoke code quality
-> @code-quality run ShellCheck on all scripts
+> @code-standards run ShellCheck on all scripts
 ```
 
 ## MCP Server Configuration
@@ -469,7 +469,7 @@ This creates a branch, applies changes, and submits a PR to `marcusquinn/aidevop
 
 ## Code Quality Learning Loop
 
-The `@code-quality` agent doesn't just fix issues - it learns from them:
+The `@code-standards` agent doesn't just fix issues - it learns from them:
 
 ```
 Quality Issue → Fix Applied → Pattern Identified → Framework Updated → Issue Prevented

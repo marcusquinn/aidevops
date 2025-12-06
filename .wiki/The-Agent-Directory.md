@@ -25,7 +25,7 @@ Everything AI assistants need lives in `.agent/`. This page explains the structu
 | `*-helper.sh` | Service automation | `hostinger-helper.sh`, `hetzner-helper.sh` |
 | `*-cli.sh` | CLI tool wrappers | `codacy-cli.sh`, `coderabbit-cli.sh` |
 | `setup-*.sh` | Configuration wizards | `setup-local-api-keys.sh` |
-| `quality-*.sh` | Code quality tools | `quality-check.sh`, `quality-fix.sh` |
+| `quality-*.sh` | Code quality tools | `linters-local.sh`, `quality-fix.sh` |
 
 ### Using Scripts
 
@@ -44,7 +44,7 @@ bash ~/git/aidevops/.agent/scripts/[service]-helper.sh [command] [account] [targ
 
 | Script | Description |
 |--------|-------------|
-| `quality-check.sh` | Run all quality checks |
+| `linters-local.sh` | Run all quality checks |
 | `quality-feedback-helper.sh` | Get CI/CD feedback via GitHub API |
 | `setup-local-api-keys.sh` | Securely store API keys |
 | `github-cli-helper.sh` | Enhanced GitHub operations |
@@ -61,7 +61,8 @@ Step-by-step process guides for common development tasks:
 | `git-workflow.md` | Git practices and branching |
 | `bug-fixing.md` | Bug fix and hotfix procedures |
 | `feature-development.md` | Feature development lifecycle |
-| `code-review.md` | Code review checklist |
+| `pr.md` | Unified PR workflow (orchestrates all checks) |
+| `code-audit-remote.md` | Remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `release.md` | Semantic versioning and releases |
 | `error-checking-feedback-loops.md` | CI/CD monitoring |
 | `multi-repo-workspace.md` | Multi-repository safety |
@@ -74,7 +75,7 @@ Step-by-step process guides for common development tasks:
 | Starting a new feature | `feature-development.md` |
 | Fixing a bug | `bug-fixing.md` |
 | Preparing a release | `release.md` |
-| Reviewing code | `code-review.md` |
+| Reviewing code | `pr.md` (orchestrates all checks) |
 | CI/CD failures | `error-checking-feedback-loops.md` |
 | Working across repos | `multi-repo-workspace.md` |
 

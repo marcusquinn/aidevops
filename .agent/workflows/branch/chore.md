@@ -148,4 +148,4 @@ git commit -m "docs: improve installation instructions
 ## Related
 
 - **Version bumping**: `workflows/version-bump.md` (usually not needed)
-- **Code review**: `workflows/code-review.md`
+- **Code review**: `workflows/code-audit-remote.md`

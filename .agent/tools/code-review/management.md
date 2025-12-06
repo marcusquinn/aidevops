@@ -24,7 +24,7 @@ tools:
 - S7679 fix: Use `printf '%s50/month\n' '$'` instead of `echo "$50/month"`
 - S1481 fix: Enhance usage of variable or remove if truly unused
 - S1192 fix: Create `readonly CONSTANT="repeated string"` at file top
-- Key scripts: quality-check.sh, quality-fix.sh, quality-cli-manager.sh
+- Key scripts: linters-local.sh, quality-fix.sh, quality-cli-manager.sh
 - Achievement: 349 -> 42 issues (88% reduction), 100% critical resolved
 - Success: Zero S7679/S1481, <10 S1192, 100% feature retention
 <!-- AI-CONTEXT-END -->
@@ -125,7 +125,7 @@ curl -H "$CONTENT_TYPE_JSON"
 
 #### Automated Quality Tools
 
-- **quality-check.sh**: Comprehensive multi-platform quality validation
+- **linters-local.sh**: Comprehensive multi-platform quality validation
 - **fix-content-type.sh**: Content-Type header consolidation
 - **fix-auth-headers.sh**: Authorization header standardization
 - **fix-error-messages.sh**: Common error message constants

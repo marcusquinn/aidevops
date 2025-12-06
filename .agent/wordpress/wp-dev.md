@@ -52,7 +52,7 @@ node -v         # >= 18 (for HTTP transport, wp-env, Playground)
 - `@localwp` - Database inspection during debugging
 - `@wp-admin` - Content/maintenance tasks (hand off)
 - `@browser-automation` - E2E testing with Playwright
-- `@code-quality` - PHP/JS code quality checks
+- `@code-standards` - PHP/JS code quality checks
 
 **Related Workflows** (in .agent/workflows/):
 - `bug-fixing.md` - Systematic debugging approach
@@ -647,8 +647,8 @@ grep -r "password\|api_key\|secret" --include="*.php" .
 | Database inspection | `@localwp` | Read-only SQL access to LocalWP databases |
 | Content/maintenance | `@wp-admin` | Admin tasks outside development scope |
 | E2E testing | `@browser-automation` | Playwright/Stagehand for UI testing |
-| Code quality | `@code-quality` | PHP/JS linting, security scanning |
-| Security scanning | `@code-quality` | Snyk, Secretlint for vulnerability detection |
+| Code quality | `@code-standards` | PHP/JS linting, security scanning |
+| Security scanning | `@code-standards` | Snyk, Secretlint for vulnerability detection |
 | DNS issues | `@dns-providers` | Cloudflare, Namecheap, Spaceship, 101domains |
 | Email testing | `@ses` | Amazon SES configuration |
 | SSL/CDN | `@cloudflare` | Cloudflare SSL, caching, security |

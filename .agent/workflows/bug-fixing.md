@@ -88,7 +88,7 @@ npm test
 composer test
 
 # Run quality checks
-bash ~/Git/aidevops/.agent/scripts/quality-check.sh
+bash ~/Git/aidevops/.agent/scripts/linters-local.sh
 ```
 
 ### 6. Commit Changes

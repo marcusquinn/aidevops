@@ -503,7 +503,7 @@ Secretlint integrates with the framework's quality pipeline:
 
 ```bash
 # Run as part of quality checks
-./.agent/scripts/quality-check.sh  # Includes secretlint
+./.agent/scripts/linters-local.sh  # Includes secretlint
 
 # Pre-commit validation
 ./.agent/scripts/pre-commit-hook.sh  # Includes secretlint

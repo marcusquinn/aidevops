@@ -295,7 +295,7 @@ shellcheck setup.sh
 npx markdownlint-cli .agent/tools/{category}/{mcp-name}.md
 
 # Comprehensive quality check
-.agent/scripts/quality-check.sh
+.agent/scripts/linters-local.sh
 
 # Check for credential leaks
 .agent/scripts/secretlint-helper.sh check

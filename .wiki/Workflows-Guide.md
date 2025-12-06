@@ -22,7 +22,8 @@ The `.agent/workflows/` directory contains process guides for common development
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[code-review.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/code-review.md)** | Code review checklist before merging |
+| **[pr.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/pr.md)** | Unified PR workflow (orchestrates all checks) |
+| **[code-audit-remote.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/code-audit-remote.md)** | Remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | **[error-checking-feedback-loops.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/error-checking-feedback-loops.md)** | Monitoring CI/CD, fixing failures |
 
 ### Context & Safety
@@ -145,11 +146,11 @@ Following consistent workflows:
 bash ~/git/aidevops/.agent/scripts/quality-feedback-helper.sh status --pr NUMBER
 ```
 
-### Run Code Review Check
+### Run Local Linting
 
 ```bash
-# Run automated quality checks
-bash ~/git/aidevops/.agent/scripts/quality-check.sh
+# Run local quality checks (fast, offline)
+bash ~/git/aidevops/.agent/scripts/linters-local.sh
 ```
 
 ### Monitor CI/CD

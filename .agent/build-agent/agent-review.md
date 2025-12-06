@@ -180,7 +180,7 @@ Improvements to aidevops agents benefit all users:
 
 1. Create improvement proposal
 2. Make changes in `~/Git/aidevops/`
-3. Run quality check: `.agent/scripts/quality-check.sh`
+3. Run quality check: `.agent/scripts/linters-local.sh`
 4. Commit with descriptive message
 5. Create PR to upstream
 
