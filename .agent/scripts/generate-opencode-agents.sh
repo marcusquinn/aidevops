@@ -30,11 +30,18 @@ echo -e "${BLUE}Generating OpenCode agent configuration...${NC}"
 # Ensure directories exist
 mkdir -p "$OPENCODE_AGENT_DIR"
 
-# Ensure AGENTS.md exists at config level
-if [[ ! -f "$OPENCODE_CONFIG_DIR/AGENTS.md" ]]; then
-    echo 'Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.' > "$OPENCODE_CONFIG_DIR/AGENTS.md"
-    echo -e "  ${GREEN}✓${NC} Created AGENTS.md"
-fi
+# Always update AGENTS.md with version check (ensures updates get deployed)
+cat > "$OPENCODE_CONFIG_DIR/AGENTS.md" << 'EOF'
+Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
+
+## aidevops Framework Status
+!`aidevops version 2>/dev/null || echo "aidevops CLI not installed"`
+
+If an update is available, ask the user: "An aidevops update is available. Update now or later?"
+- Now: Run `aidevops update` then remind user to restart OpenCode
+- Later: Continue with current session
+EOF
+echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
 # Remove old primary agent markdown files (they're now in JSON)
 for f in Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md; do
