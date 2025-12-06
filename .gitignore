@@ -173,10 +173,13 @@ test-*.yaml
 !.cursor/
 !.factory/
 !.gemini/
-!.continue
-!.kiro
-!.ai
 !.qoder/
+
+# Symlinks that cause duplicate @ references in OpenCode - removed from repo
+# Other AI tools should use ~/.aidevops/agents/ (deployed location)
+.ai
+.kiro
+.continue
 
 # Superset local config
 .superset/
