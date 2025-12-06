@@ -36,15 +36,11 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 ## aidevops Framework Status
 
-**MANDATORY**: At the START of each new conversation, you MUST:
-1. Use the Bash tool to run: `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh`
-2. Include the version in your first response (e.g., "aidevops v2.19.2")
+**CRITICAL - DO THIS FIRST**: Before responding to ANY user message in a new conversation:
+1. Run this command using the Bash tool: `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh`
+2. Include the version naturally in your greeting (e.g., "Hello! aidevops v2.19.6 - How can I help?")
 
-Do NOT show the command output to the user - just mention the version naturally.
-
-If output contains `UPDATE_AVAILABLE|current|latest`, ask: "An aidevops update is available (current → latest). Update now or later?"
-- Now: Run `aidevops update` then remind user to restart OpenCode
-- Later: Continue with current session
+If the output contains `UPDATE_AVAILABLE|current|latest`, inform the user: "An aidevops update is available (current → latest). Run `aidevops update` to update, then restart OpenCode."
 EOF
 echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
