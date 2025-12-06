@@ -41,6 +41,13 @@ cat > "$OPENCODE_COMMAND_DIR/agent-review.md" << 'EOF'
 description: Systematic review and improvement of agent instructions
 agent: Build-Agent
 subtask: true
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/build-agent/agent-review.md and follow its instructions.
@@ -69,6 +76,11 @@ cat > "$OPENCODE_COMMAND_DIR/preflight.md" << 'EOF'
 description: Run quality checks before version bump and release
 agent: Build+
 subtask: true
+tools:
+  read: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/preflight.md and follow its instructions.
@@ -94,6 +106,11 @@ cat > "$OPENCODE_COMMAND_DIR/postflight.md" << 'EOF'
 description: Verify release health after tag and GitHub release
 agent: Build+
 subtask: true
+tools:
+  read: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/postflight.md and follow its instructions.
@@ -118,6 +135,13 @@ cat > "$OPENCODE_COMMAND_DIR/release.md" << 'EOF'
 ---
 description: Full release workflow with version bump, tag, and GitHub release
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/release.md and follow its instructions.
@@ -147,6 +171,13 @@ cat > "$OPENCODE_COMMAND_DIR/version-bump.md" << 'EOF'
 ---
 description: Bump project version (major, minor, or patch)
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/version-bump.md and follow its instructions.
@@ -172,6 +203,13 @@ cat > "$OPENCODE_COMMAND_DIR/changelog.md" << 'EOF'
 ---
 description: Update CHANGELOG.md following Keep a Changelog format
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/changelog.md and follow its instructions.
@@ -196,6 +234,11 @@ cat > "$OPENCODE_COMMAND_DIR/code-review.md" << 'EOF'
 description: Comprehensive code review checklist and guidance
 agent: Build+
 subtask: true
+tools:
+  read: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/code-review.md and follow its instructions.
@@ -221,6 +264,11 @@ cat > "$OPENCODE_COMMAND_DIR/quality-check.md" << 'EOF'
 ---
 description: Run comprehensive code quality checks
 agent: Build+
+tools:
+  read: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Run the quality check script:
@@ -246,6 +294,13 @@ cat > "$OPENCODE_COMMAND_DIR/feature.md" << 'EOF'
 ---
 description: Create and develop a feature branch
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/branch/feature.md and follow its instructions.
@@ -264,6 +319,13 @@ cat > "$OPENCODE_COMMAND_DIR/bugfix.md" << 'EOF'
 ---
 description: Create and resolve a bugfix branch
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/branch/bugfix.md and follow its instructions.
@@ -282,6 +344,13 @@ cat > "$OPENCODE_COMMAND_DIR/hotfix.md" << 'EOF'
 ---
 description: Urgent hotfix for critical production issues
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/branch/hotfix.md and follow its instructions.
@@ -306,6 +375,12 @@ cat > "$OPENCODE_COMMAND_DIR/context.md" << 'EOF'
 description: Build token-efficient AI context for complex tasks
 agent: Build+
 subtask: true
+tools:
+  read: true
+  bash: true
+  glob: true
+  grep: true
+  repomix_*: true
 ---
 
 Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
@@ -329,6 +404,13 @@ cat > "$OPENCODE_COMMAND_DIR/pr.md" << 'EOF'
 ---
 description: Create, review, and manage pull requests
 agent: Build+
+tools:
+  read: true
+  edit: true
+  write: true
+  bash: true
+  glob: true
+  grep: true
 ---
 
 Read ~/.aidevops/agents/workflows/pull-request.md and follow its instructions.
