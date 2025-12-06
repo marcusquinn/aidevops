@@ -44,6 +44,7 @@ find_missing_returns_in_file() {
         if (in_function) {
             # Previous function ended without proper closing
             if (function_content !~ /return[[:space:]]+[0-9]+/ && 
+                function_content !~ /return[[:space:]]+\$/ &&
                 function_content !~ /return[[:space:]]*$/ &&
                 function_content !~ /exit[[:space:]]+[0-9]+/) {
                 print "Missing return: " function_name
@@ -69,6 +70,7 @@ find_missing_returns_in_file() {
         # Function ends
         if (brace_count == 0) {
             if (function_content !~ /return[[:space:]]+[0-9]+/ && 
+                function_content !~ /return[[:space:]]+\$/ &&
                 function_content !~ /return[[:space:]]*$/ &&
                 function_content !~ /exit[[:space:]]+[0-9]+/) {
                 print "Missing return: " function_name

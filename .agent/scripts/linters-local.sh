@@ -102,18 +102,19 @@ check_return_statements() {
             ((files_checked++))
             
             # Check if file has functions without return statements
-            local functions_without_return
-            functions_without_return=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" "$file" 2>/dev/null || echo "0")
+            local functions_count
+            functions_count=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {" "$file" 2>/dev/null || echo "0")
+            # Count all return patterns: return 0, return 1, return $var, return $((expr))
             local return_statements
-            return_statements=$(grep -c "return [01]" "$file" 2>/dev/null || echo "0")
+            return_statements=$(grep -cE "return [0-9]+|return \\\$" "$file" 2>/dev/null || echo "0")
 
             # Ensure variables are numeric
-            functions_without_return=${functions_without_return//[^0-9]/}
+            functions_count=${functions_count//[^0-9]/}
             return_statements=${return_statements//[^0-9]/}
-            functions_without_return=${functions_without_return:-0}
+            functions_count=${functions_count:-0}
             return_statements=${return_statements:-0}
 
-            if [[ $return_statements -lt $functions_without_return ]]; then
+            if [[ $return_statements -lt $functions_count ]]; then
                 ((violations++))
                 print_warning "Missing return statements in $file"
             fi
@@ -138,12 +139,50 @@ check_positional_parameters() {
     
     local violations=0
     
-    # Find direct usage of positional parameters (not in local assignments)
+    # Find direct usage of positional parameters inside functions (not in local assignments)
+    # Exclude: heredocs (<<), awk scripts, main script body, and local assignments
     local tmp_file
     tmp_file=$(mktemp)
     
-    if grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]' > "$tmp_file"; then
+    # Only check inside function bodies, exclude heredocs, awk/sed patterns, and comments
+    for file in .agent/scripts/*.sh; do
+        if [[ -f "$file" ]]; then
+            # Use awk to find $1-$9 usage inside functions, excluding:
+            # - local assignments (local var="$1")
+            # - heredocs (<<EOF ... EOF)
+            # - awk/sed scripts (contain $1, $2 for field references)
+            # - comments (lines starting with #)
+            # - echo/print statements showing usage examples
+            awk '
+            /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { in_func=1; next }
+            in_func && /^\}$/ { in_func=0; next }
+            /<<.*EOF/ || /<<.*"EOF"/ || /<<-.*EOF/ { in_heredoc=1; next }
+            in_heredoc && /^EOF/ { in_heredoc=0; next }
+            in_heredoc { next }
+            # Track multi-line awk scripts (awk ... single-quote opens, closes on later line)
+            /awk[[:space:]]+\047[^\047]*$/ { in_awk=1; next }
+            in_awk && /\047/ { in_awk=0; next }
+            in_awk { next }
+            # Skip single-line awk/sed scripts (they use $1, $2 for fields)
+            /awk.*\047.*\047/ { next }
+            /awk.*".*"/ { next }
+            /sed.*\047/ || /sed.*"/ { next }
+            # Skip comments and usage examples
+            /^[[:space:]]*#/ { next }
+            /echo.*\$[1-9]/ { next }
+            /print.*\$[1-9]/ { next }
+            /Usage:/ { next }
+            in_func && /\$[1-9]/ && !/local.*=.*\$[1-9]/ {
+                print FILENAME ":" NR ": " $0
+            }
+            ' "$file" >> "$tmp_file"
+        fi
+    done
+    
+    if [[ -s "$tmp_file" ]]; then
         violations=$(wc -l < "$tmp_file")
+        violations=${violations//[^0-9]/}
+        violations=${violations:-0}
         
         if [[ $violations -gt 0 ]]; then
             print_warning "Found $violations positional parameter violations:"
