@@ -679,17 +679,23 @@ bash .agent/scripts/continue-cli.sh review
 
 ## **Documentation & Resources**
 
-**Complete Guides Available:**
+**Wiki Guides:**
 
-- **[MCP Integrations Guide](.agent/aidevops/mcp-integrations.md)** - MCP servers setup
-- **[API Integrations Guide](.agent/aidevops/api-integrations.md)** - Service APIs
-- **[Pandoc Conversion Guide](.agent/tools/conversion/pandoc.md)** - Document format conversion
-- **[Agno Integration Guide](.agent/tools/ai-assistants/agno.md)** - Local AI agent operating system
-- **[Browser Automation Guide](.agent/tools/browser/browser-automation.md)** - Web scraping and automation
-- **[PageSpeed & Lighthouse Guide](.agent/tools/browser/pagespeed.md)** - Performance auditing
-- **[Service Links Directory](.agent/aidevops/service-links.md)** - Direct links to all services
-- **[Security Best Practices](.agent/aidevops/security.md)** - Enterprise security standards
+- **[Getting Started](.wiki/Getting-Started.md)** - Installation and setup
 - **[CLI Reference](.wiki/CLI-Reference.md)** - aidevops command documentation
+- **[MCP Integrations](.wiki/MCP-Integrations.md)** - MCP servers setup
+- **[Providers](.wiki/Providers.md)** - Service provider configurations
+- **[Workflows Guide](.wiki/Workflows-Guide.md)** - Development workflows
+- **[The Agent Directory](.wiki/The-Agent-Directory.md)** - Agent file structure
+- **[Understanding AGENTS.md](.wiki/Understanding-AGENTS-md.md)** - How agents work
+
+**Agent Guides** (in `.agent/`):
+
+- **[API Integrations](.agent/aidevops/api-integrations.md)** - Service APIs
+- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - Web scraping and automation
+- **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Performance auditing
+- **[Pandoc](.agent/tools/conversion/pandoc.md)** - Document format conversion
+- **[Security](.agent/aidevops/security.md)** - Enterprise security standards
 
 **Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `.agent/`
 
