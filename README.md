@@ -604,21 +604,33 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 
 ### **Available Commands**
 
+**Development Workflow** (typical order):
+
 | Command | Purpose |
 |---------|---------|
-| `/agent-review` | Analyze session and suggest agent improvements |
-| `/preflight` | Run quality checks before release |
-| `/postflight` | Verify release health after deployment |
-| `/release` | Full release workflow (bump, tag, GitHub release) |
-| `/version-bump` | Bump version following semver |
-| `/changelog` | Update CHANGELOG.md with recent changes |
-| `/code-review` | Comprehensive code review checklist |
-| `/quality-check` | Run all quality linters and scanners |
+| `/context` | Build AI context with Repomix for complex tasks |
 | `/feature` | Start a new feature branch workflow |
 | `/bugfix` | Start a bugfix branch workflow |
 | `/hotfix` | Start an urgent hotfix workflow |
-| `/context` | Build AI context with Repomix |
+| `/code-review` | Comprehensive code review checklist |
+| `/quality-check` | Run all quality linters and scanners |
 | `/pr` | Create a pull request |
+
+**Release Workflow** (in order):
+
+| Command | Purpose |
+|---------|---------|
+| `/preflight` | Run quality checks before release |
+| `/changelog` | Update CHANGELOG.md with recent changes |
+| `/version-bump` | Bump version following semver |
+| `/release` | Full release workflow (bump, tag, GitHub release) |
+| `/postflight` | Verify release health after deployment |
+
+**Meta/Improvement**:
+
+| Command | Purpose |
+|---------|---------|
+| `/agent-review` | Analyze session and suggest agent improvements |
 
 ### **Installation**
 
