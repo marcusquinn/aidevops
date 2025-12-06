@@ -523,6 +523,10 @@ main() {
             check_npm_audit || true
             check_local_quality || true
             ;;
+        *)
+            print_error "Unknown mode: $mode"
+            return 1
+            ;;
     esac
     
     print_summary

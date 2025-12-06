@@ -411,6 +411,8 @@ while IFS= read -r f; do
         google-search-console)
             extra_tools=$'  gsc_*: true'
             ;;
+        *)
+            ;;  # No extra tools for other agents
     esac
     
     if [[ -n "$extra_tools" ]]; then

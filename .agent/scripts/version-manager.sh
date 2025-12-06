@@ -126,7 +126,7 @@ generate_changelog_preview() {
     echo ""
     
     # Categorize commits
-    local added="" changed="" fixed="" removed="" security=""
+    local added="" changed="" fixed="" security=""
     
     local commits
     if [[ -n "$prev_tag" ]]; then
@@ -141,6 +141,7 @@ generate_changelog_preview() {
             fix:*|fix\(*) fixed="$fixed\n- ${commit#fix: }" ;;
             security:*) security="$security\n- ${commit#security: }" ;;
             refactor:*|docs:*|chore:*) changed="$changed\n- $commit" ;;
+            *) ;; # Ignore other commit types
         esac
     done <<< "$commits"
     
@@ -498,6 +499,7 @@ main() {
                 case "$arg" in
                     "--force") force_flag="--force" ;;
                     "--skip-preflight") skip_preflight="--skip-preflight" ;;
+                    *) ;;  # Ignore unknown flags
                 esac
             done
 
