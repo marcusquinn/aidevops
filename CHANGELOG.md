@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.17.1] - 2025-12-06
+
+### Changed
+
+- Removed AI tool symlink directories and files that caused duplicate `@` references in OpenCode
+- Updated .gitignore to ignore tool-specific symlinks (.ai, .kiro, .continue, .cursorrules, .windsurfrules, .continuerules, .claude/, .codex/, .cursor/, .factory/)
+- Added "AI Tool Configuration" section to AGENTS.md documenting canonical agent location (~/.aidevops/agents/)
+
 ## [2.17.0] - 2025-12-06
 
 ### Added
@@ -550,7 +558,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.17.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.17.1...HEAD
+[2.17.1]: https://github.com/marcusquinn/aidevops/compare/v2.17.0...v2.17.1
 [2.17.0]: https://github.com/marcusquinn/aidevops/compare/v2.16.0...v2.17.0
 [2.16.0]: https://github.com/marcusquinn/aidevops/compare/v2.15.0...v2.16.0
 [2.15.0]: https://github.com/marcusquinn/aidevops/compare/v2.14.0...v2.15.0
