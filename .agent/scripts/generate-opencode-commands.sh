@@ -112,7 +112,7 @@ echo -e "  ${GREEN}✓${NC} Created /postflight command"
 # =============================================================================
 # RELEASE COMMAND
 # =============================================================================
-# Full release workflow
+# Full release workflow - direct execution, no subagent needed
 
 cat > "$OPENCODE_COMMAND_DIR/release.md" << 'EOF'
 ---
@@ -120,20 +120,23 @@ description: Full release workflow with version bump, tag, and GitHub release
 agent: Build+
 ---
 
-Read ~/.aidevops/agents/workflows/release.md and follow its instructions.
+Execute a release for the current repository.
 
-Release type: $ARGUMENTS
+Release type: $ARGUMENTS (valid: major, minor, patch)
 
-Valid types: major, minor, patch
+**Steps:**
+1. Run `git log v$(cat VERSION 2>/dev/null || echo "0.0.0")..HEAD --oneline` to see commits since last release
+2. If no release type provided, determine it from commits:
+   - Any `feat:` or new feature → minor
+   - Only `fix:`, `docs:`, `chore:`, `perf:`, `refactor:` → patch
+   - Any `BREAKING CHANGE:` or `!` → major
+3. Run the single release command:
+   ```bash
+   .agent/scripts/version-manager.sh release [type] --skip-preflight --force
+   ```
+4. Report the result with the GitHub release URL
 
-This will:
-1. Run preflight checks
-2. Bump version in VERSION file
-3. Update CHANGELOG.md
-4. Create git tag
-5. Push to remote
-6. Create GitHub release
-7. Run postflight verification
+**CRITICAL**: Use only the single command above - it handles everything atomically.
 EOF
 ((command_count++))
 echo -e "  ${GREEN}✓${NC} Created /release command"
