@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.0] - 2025-12-06
+
+### Added
+
+- **Conversation Starter Workflow** - New `workflows/conversation-starter.md` for Plan+ and Build+
+  - Unified prompts for git repository context (12 workflow options)
+  - Remote services menu for non-git contexts (9 service integrations)
+  - Automatic subagent context loading based on user selection
+
+### Changed
+
+- **Plan+ Agent Refactored** - Aligned with upstream OpenCode Plan prompts
+  - 5-phase planning workflow: Understand, Investigate, Synthesize, Finalize, Handoff
+  - Parallel explore agents support (1-3 agents in single message)
+  - Reduced AI-CONTEXT from 100 to 49 lines (within instruction budget)
+  - Added context tools table (osgrep, Augment, context-builder, Context7)
+
+- **Build+ Agent Refactored** - Aligned with upstream OpenCode Build prompt (beast.txt)
+  - Reduced AI-CONTEXT from 119 to 55 lines (within instruction budget)
+  - Added context tools and quality integration tables
+  - Preserved all 9 workflow steps with enhanced guidance
+  - Added file reading best practices section
+
 ## [2.13.0] - 2025-12-06
 
 ### Added
@@ -449,7 +472,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.13.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.14.0...HEAD
+[2.14.0]: https://github.com/marcusquinn/aidevops/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/marcusquinn/aidevops/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/marcusquinn/aidevops/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/marcusquinn/aidevops/compare/v2.10.0...v2.11.0
