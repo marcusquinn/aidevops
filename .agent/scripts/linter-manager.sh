@@ -214,8 +214,9 @@ install_javascript_linters() {
     local total=0
 
     # ESLint (JavaScript/TypeScript linter)
+    # Use --ignore-scripts to prevent execution of postinstall scripts for security
     print_info "Installing ESLint..."
-    if npm install -g eslint &>/dev/null; then
+    if npm install -g --ignore-scripts eslint &>/dev/null; then
         print_success "ESLint installed"
         ((success++))
     else
@@ -224,8 +225,9 @@ install_javascript_linters() {
     ((total++))
 
     # TypeScript ESLint parser and plugin
+    # Use --ignore-scripts to prevent execution of postinstall scripts for security
     print_info "Installing TypeScript ESLint support..."
-    if npm install -g @typescript-eslint/parser @typescript-eslint/eslint-plugin &>/dev/null; then
+    if npm install -g --ignore-scripts @typescript-eslint/parser @typescript-eslint/eslint-plugin &>/dev/null; then
         print_success "TypeScript ESLint support installed"
         ((success++))
     else
@@ -245,8 +247,9 @@ install_css_linters() {
     local total=0
 
     # Stylelint (CSS/SCSS/Less linter)
+    # Use --ignore-scripts to prevent execution of postinstall scripts for security
     print_info "Installing Stylelint..."
-    if npm install -g stylelint stylelint-config-standard &>/dev/null; then
+    if npm install -g --ignore-scripts stylelint stylelint-config-standard &>/dev/null; then
         print_success "Stylelint installed"
         ((success++))
     else

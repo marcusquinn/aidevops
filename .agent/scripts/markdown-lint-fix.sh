@@ -66,8 +66,9 @@ install_markdownlint() {
     print_header "Installing markdownlint-cli"
     
     if command -v npm &> /dev/null; then
+        # Use --ignore-scripts to prevent execution of postinstall scripts for security
         print_info "Installing markdownlint-cli via npm..."
-        npm install -g markdownlint-cli
+        npm install -g --ignore-scripts markdownlint-cli
         
         if check_markdownlint; then
             print_success "markdownlint-cli installed successfully"

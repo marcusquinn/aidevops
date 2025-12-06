@@ -21,13 +21,15 @@ get_version() {
 get_remote_version() {
     local version
     if command -v jq &>/dev/null; then
-        version=$(curl -fsSL "https://api.github.com/repos/marcusquinn/aidevops/contents/VERSION" 2>/dev/null | jq -r '.content // empty' 2>/dev/null | base64 -d 2>/dev/null | tr -d '\n')
+        # Use --proto =https to enforce HTTPS and prevent protocol downgrade
+        version=$(curl --proto '=https' -fsSL "https://api.github.com/repos/marcusquinn/aidevops/contents/VERSION" 2>/dev/null | jq -r '.content // empty' 2>/dev/null | base64 -d 2>/dev/null | tr -d '\n')
         if [[ -n "$version" ]]; then
             echo "$version"
             return 0
         fi
     fi
-    curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" 2>/dev/null || echo "unknown"
+    # Use --proto =https to enforce HTTPS and prevent protocol downgrade
+    curl --proto '=https' -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" 2>/dev/null || echo "unknown"
 }
 
 main() {

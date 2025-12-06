@@ -145,7 +145,8 @@ install_codacy_cli() {
         Linux*)
             platform="Linux"
             print_info "Installing via curl script..."
-            bash <(curl -Ls https://raw.githubusercontent.com/codacy/codacy-cli-v2/main/codacy-cli.sh)
+            # Use --proto =https to enforce HTTPS and prevent protocol downgrade
+            bash <(curl --proto '=https' -Ls https://raw.githubusercontent.com/codacy/codacy-cli-v2/main/codacy-cli.sh)
             ;;
         *)
             print_error "Unsupported platform: $(uname -s)"

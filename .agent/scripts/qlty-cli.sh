@@ -110,8 +110,9 @@ install_qlty() {
     print_info "Installing Qlty CLI..."
 
     # Install using the official installer
+    # Use --proto =https to enforce HTTPS and prevent protocol downgrade
     if command -v curl &> /dev/null; then
-        curl -sSL https://qlty.sh | bash
+        curl --proto '=https' -sSL https://qlty.sh | bash
     else
         print_error "curl is required to install Qlty CLI"
         return 1

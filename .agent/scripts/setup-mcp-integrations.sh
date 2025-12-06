@@ -158,8 +158,9 @@ install_mcp() {
             print_info "Also installing Lighthouse CLI for comprehensive auditing..."
 
             # Install Lighthouse CLI if not present
+            # Use --ignore-scripts to prevent execution of postinstall scripts for security
             if ! command -v lighthouse &> /dev/null; then
-                npm install -g lighthouse
+                npm install -g --ignore-scripts lighthouse
             fi
 
             if command -v claude &> /dev/null; then
