@@ -19,6 +19,7 @@ tools:
 ## Quick Reference
 
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch]`
+- **NEVER edit VERSION directly** - The script updates all 5 version files atomically
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
 - **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)

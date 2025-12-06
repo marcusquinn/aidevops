@@ -22,12 +22,33 @@ tools:
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch]`
 - **Validate first**: `.agent/scripts/version-manager.sh validate`
 - **Files updated**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties
+- **NEVER edit VERSION directly** - Always use the script to update all 5 files atomically
 - **Manual step**: Update CHANGELOG.md `[Unreleased]` to `[X.X.X] - YYYY-MM-DD` BEFORE running release
 - **Preflight**: Quality checks run automatically (bypass with `--skip-preflight`)
 
 <!-- AI-CONTEXT-END -->
 
 This is the authoritative guide for AI agents performing version bumps in the aidevops repository.
+
+## Critical: Never Edit VERSION Directly
+
+**DO NOT** manually edit the VERSION file. This causes version inconsistencies and CI failures.
+
+The script updates 5 files atomically:
+1. VERSION
+2. README.md (badge)
+3. sonar-project.properties
+4. setup.sh (header comment)
+5. package.json
+
+If you edit VERSION directly, the other 4 files become stale.
+
+**Always use**:
+```bash
+.agent/scripts/version-manager.sh bump [major|minor|patch]
+# or for full release:
+.agent/scripts/version-manager.sh release [major|minor|patch]
+```
 
 ## The Primary Tool: version-manager.sh
 
