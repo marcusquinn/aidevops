@@ -25,7 +25,8 @@ print_error() { local msg="$1"; echo -e "${RED}❌ $msg${NC}"; return 0; }
 
 # Available MCP integrations
 get_mcp_command() {
-    case "$1" in
+    local integration="$1"
+    case "$integration" in
         "chrome-devtools") echo "npx chrome-devtools-mcp@latest" ;;
         "playwright") echo "npx playwright-mcp@latest" ;;
         "cloudflare-browser") echo "npx cloudflare-browser-rendering-mcp@latest" ;;

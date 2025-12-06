@@ -13,10 +13,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh"
 
 # Use shared print functions with fallback for compatibility
-print_info() { print_shared_info "$1"; return 0; }
-print_success() { print_shared_success "$1"; return 0; }
-print_warning() { print_shared_warning "$1"; return 0; }
-print_error() { print_shared_error "$1"; return 0; }
+print_info() { local msg="$1"; print_shared_info "$msg"; return 0; }
+print_success() { local msg="$1"; print_shared_success "$msg"; return 0; }
+print_warning() { local msg="$1"; print_shared_warning "$msg"; return 0; }
+print_error() { local msg="$1"; print_shared_error "$msg"; return 0; }
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

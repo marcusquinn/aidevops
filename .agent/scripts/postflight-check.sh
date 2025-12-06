@@ -467,7 +467,8 @@ main() {
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        local arg="$1"
+        case "$arg" in
             --quick)
                 mode="quick"
                 shift
@@ -489,7 +490,7 @@ main() {
                 return 0
                 ;;
             *)
-                echo "Unknown option: $1"
+                echo "Unknown option: $arg"
                 show_usage
                 return 1
                 ;;

@@ -15,6 +15,7 @@ get_version() {
     else
         echo "unknown"
     fi
+    return 0
 }
 
 get_remote_version() {
@@ -43,6 +44,7 @@ main() {
     else
         echo "aidevops v$current"
     fi
+    return 0
 }
 
 main "$@"

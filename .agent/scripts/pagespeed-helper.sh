@@ -15,12 +15,12 @@ readonly PURPLE='\033[0;35m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
-print_header() { echo -e "${PURPLE}$1${NC}"; return 0; }
-print_info() { echo -e "${BLUE}$1${NC}"; return 0; }
-print_success() { echo -e "${GREEN}$1${NC}"; return 0; }
-print_warning() { echo -e "${YELLOW}$1${NC}"; return 0; }
-print_error() { echo -e "${RED}$1${NC}"; return 0; }
-print_metric() { echo -e "${CYAN}$1${NC}"; return 0; }
+print_header() { local msg="$1"; echo -e "${PURPLE}$msg${NC}"; return 0; }
+print_info() { local msg="$1"; echo -e "${BLUE}$msg${NC}"; return 0; }
+print_success() { local msg="$1"; echo -e "${GREEN}$msg${NC}"; return 0; }
+print_warning() { local msg="$1"; echo -e "${YELLOW}$msg${NC}"; return 0; }
+print_error() { local msg="$1"; echo -e "${RED}$msg${NC}"; return 0; }
+print_metric() { local msg="$1"; echo -e "${CYAN}$msg${NC}"; return 0; }
 
 # Configuration
 readonly PAGESPEED_API_URL="https://www.googleapis.com/pagespeedonline/v5/runPagespeed"

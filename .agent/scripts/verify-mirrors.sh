@@ -20,10 +20,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; return 0; }
+print_success() { local msg="$1"; echo -e "${GREEN}[OK]${NC} $msg"; return 0; }
+print_warning() { local msg="$1"; echo -e "${YELLOW}[WARN]${NC} $msg"; return 0; }
+print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg"; return 0; }
 
 # Get repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -58,11 +58,13 @@ usage() {
         local target="${entry##*:}"
         echo "  $link_path -> $target"
     done
+    return 0
 }
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        local arg="$1"
+        case "$arg" in
             --fix)
                 FIX_MODE=true
                 shift
@@ -72,12 +74,13 @@ parse_args() {
                 exit 0
                 ;;
             *)
-                print_error "Unknown option: $1"
+                print_error "Unknown option: $arg"
                 usage
                 exit 1
                 ;;
         esac
     done
+    return 0
 }
 
 verify_symlink() {
@@ -160,6 +163,7 @@ main() {
             print_warning "$issues issue(s) found. Run with --fix to repair."
         fi
     fi
+    return 0
 }
 
 main "$@"
