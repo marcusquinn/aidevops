@@ -253,3 +253,30 @@ Either update CHANGELOG.md or bypass:
 - `workflows/changelog.md` - Changelog management details
 - `workflows/release.md` - Full release process
 - `workflows/preflight.md` - Quality checks before release
+
+## AI Decision-Making for Release Type
+
+When performing releases, **determine the release type autonomously** by analyzing the changes:
+
+1. Review commits since last release: `git log v{LAST_TAG}..HEAD --oneline`
+2. Categorize each change: bug fix, feature, or breaking change
+3. Apply semver rules - highest category wins:
+   - Any breaking change → `major`
+   - Any new feature (no breaking) → `minor`
+   - Only fixes/docs/improvements → `patch`
+4. State your analysis briefly and proceed with the release
+
+**Do not ask the user** to choose patch/minor/major. The semver rules are deterministic - apply them based on the actual changes made.
+
+### Change Type Indicators
+
+| Commit Prefix | Type | Release |
+|---------------|------|---------|
+| `feat:` | New feature | minor |
+| `fix:` | Bug fix | patch |
+| `docs:` | Documentation | patch |
+| `chore:` | Maintenance | patch |
+| `refactor:` | Code restructure | patch |
+| `perf:` | Performance | patch |
+| `BREAKING CHANGE:` | Breaking | major |
+| `!` after type (e.g., `feat!:`) | Breaking | major |
