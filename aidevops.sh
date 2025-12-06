@@ -39,6 +39,16 @@ get_version() {
 
 # Get remote version
 get_remote_version() {
+    # Use GitHub API (not cached) instead of raw.githubusercontent.com (cached 5 min)
+    local version
+    if command -v jq &>/dev/null; then
+        version=$(curl -fsSL "https://api.github.com/repos/marcusquinn/aidevops/contents/VERSION" 2>/dev/null | jq -r '.content // empty' 2>/dev/null | base64 -d 2>/dev/null | tr -d '\n')
+        if [[ -n "$version" ]]; then
+            echo "$version"
+            return 0
+        fi
+    fi
+    # Fallback to raw (cached) if jq unavailable or API fails
     curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" 2>/dev/null || echo "unknown"
 }
 
