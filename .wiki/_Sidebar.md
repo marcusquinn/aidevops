@@ -2,6 +2,7 @@
 
 - [Home](Home)
 - [Getting Started](Getting-Started)
+- [CLI Reference](CLI-Reference)
 - [For Humans](For-Humans)
 
 ### Core Concepts

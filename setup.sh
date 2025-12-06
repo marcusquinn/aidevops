@@ -3,7 +3,11 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.12.0
+# Version: 2.13.0
+#
+# Quick Install (one-liner):
+#   bash <(curl -fsSL https://aidevops.dev/install)
+#   OR: bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -14,11 +18,112 @@ NC='\033[0m' # No Color
 
 # Global flags
 CLEAN_MODE=false
+REPO_URL="https://github.com/marcusquinn/aidevops.git"
+INSTALL_DIR="$HOME/Git/aidevops"
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Bootstrap: Clone or update repo if running remotely (via curl)
+bootstrap_repo() {
+    # Detect if running from curl (no script directory context)
+    local script_path="${BASH_SOURCE[0]}"
+    
+    # If script_path is empty or stdin, we're running from curl
+    if [[ -z "$script_path" || "$script_path" == "/dev/stdin" || "$script_path" == "bash" ]]; then
+        print_info "Remote install detected - bootstrapping repository..."
+        
+        # Check for git
+        if ! command -v git >/dev/null 2>&1; then
+            print_error "git is required but not installed"
+            echo "Install git first: brew install git (macOS) or sudo apt install git (Linux)"
+            exit 1
+        fi
+        
+        # Create parent directory
+        mkdir -p "$(dirname "$INSTALL_DIR")"
+        
+        if [[ -d "$INSTALL_DIR/.git" ]]; then
+            print_info "Existing installation found - updating..."
+            cd "$INSTALL_DIR" || exit 1
+            git pull --ff-only
+            if [[ $? -ne 0 ]]; then
+                print_warning "Git pull failed - trying reset to origin/main"
+                git fetch origin
+                git reset --hard origin/main
+            fi
+        else
+            print_info "Cloning aidevops to $INSTALL_DIR..."
+            if [[ -d "$INSTALL_DIR" ]]; then
+                print_warning "Directory exists but is not a git repo - backing up"
+                mv "$INSTALL_DIR" "$INSTALL_DIR.backup.$(date +%Y%m%d_%H%M%S)"
+            fi
+            git clone "$REPO_URL" "$INSTALL_DIR"
+            if [[ $? -ne 0 ]]; then
+                print_error "Failed to clone repository"
+                exit 1
+            fi
+        fi
+        
+        print_success "Repository ready at $INSTALL_DIR"
+        
+        # Re-execute the local script
+        cd "$INSTALL_DIR" || exit 1
+        exec bash "./setup.sh" "$@"
+    fi
+}
+
+# Detect package manager
+detect_package_manager() {
+    if command -v brew >/dev/null 2>&1; then
+        echo "brew"
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo "apt"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "dnf"
+    elif command -v yum >/dev/null 2>&1; then
+        echo "yum"
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "pacman"
+    elif command -v apk >/dev/null 2>&1; then
+        echo "apk"
+    else
+        echo "unknown"
+    fi
+}
+
+# Install packages using detected package manager
+install_packages() {
+    local pkg_manager="$1"
+    shift
+    local packages=("$@")
+    
+    case "$pkg_manager" in
+        brew)
+            brew install "${packages[@]}"
+            ;;
+        apt)
+            sudo apt-get update && sudo apt-get install -y "${packages[@]}"
+            ;;
+        dnf)
+            sudo dnf install -y "${packages[@]}"
+            ;;
+        yum)
+            sudo yum install -y "${packages[@]}"
+            ;;
+        pacman)
+            sudo pacman -S --noconfirm "${packages[@]}"
+            ;;
+        apk)
+            sudo apk add "${packages[@]}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 # Check system requirements
 check_requirements() {
@@ -32,13 +137,39 @@ check_requirements() {
     command -v ssh >/dev/null 2>&1 || missing_deps+=("ssh")
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        print_error "Missing required dependencies: ${missing_deps[*]}"
+        print_warning "Missing required dependencies: ${missing_deps[*]}"
+        
+        local pkg_manager
+        pkg_manager=$(detect_package_manager)
+        
+        if [[ "$pkg_manager" == "unknown" ]]; then
+            print_error "Could not detect package manager"
+            echo ""
+            echo "Please install manually:"
+            echo "  macOS: brew install ${missing_deps[*]}"
+            echo "  Ubuntu/Debian: sudo apt-get install ${missing_deps[*]}"
+            echo "  Fedora: sudo dnf install ${missing_deps[*]}"
+            echo "  CentOS/RHEL: sudo yum install ${missing_deps[*]}"
+            echo "  Arch: sudo pacman -S ${missing_deps[*]}"
+            echo "  Alpine: sudo apk add ${missing_deps[*]}"
+            exit 1
+        fi
+        
         echo ""
-        echo "Install missing dependencies:"
-        echo "  macOS: brew install ${missing_deps[*]}"
-        echo "  Ubuntu/Debian: sudo apt-get install ${missing_deps[*]}"
-        echo "  CentOS/RHEL: sudo yum install ${missing_deps[*]}"
-        exit 1
+        read -r -p "Install missing dependencies using $pkg_manager? (y/n): " install_deps
+        
+        if [[ "$install_deps" == "y" ]]; then
+            print_info "Installing ${missing_deps[*]}..."
+            if install_packages "$pkg_manager" "${missing_deps[@]}"; then
+                print_success "Dependencies installed successfully"
+            else
+                print_error "Failed to install dependencies"
+                exit 1
+            fi
+        else
+            print_error "Cannot continue without required dependencies"
+            exit 1
+        fi
     fi
     
     print_success "All required dependencies found"
@@ -48,11 +179,35 @@ check_requirements() {
 check_optional_deps() {
     print_info "Checking optional dependencies..."
     
+    local missing_optional=()
+    
     if ! command -v sshpass >/dev/null 2>&1; then
-        print_warning "sshpass not found - needed for password-based SSH (like Hostinger)"
-        echo "  Install: brew install sshpass (macOS) or sudo apt-get install sshpass (Linux)"
+        missing_optional+=("sshpass")
     else
         print_success "sshpass found"
+    fi
+    
+    if [[ ${#missing_optional[@]} -gt 0 ]]; then
+        print_warning "Missing optional dependencies: ${missing_optional[*]}"
+        echo "  sshpass - needed for password-based SSH (like Hostinger)"
+        
+        local pkg_manager
+        pkg_manager=$(detect_package_manager)
+        
+        if [[ "$pkg_manager" != "unknown" ]]; then
+            read -r -p "Install optional dependencies using $pkg_manager? (y/n): " install_optional
+            
+            if [[ "$install_optional" == "y" ]]; then
+                print_info "Installing ${missing_optional[*]}..."
+                if install_packages "$pkg_manager" "${missing_optional[@]}"; then
+                    print_success "Optional dependencies installed"
+                else
+                    print_warning "Failed to install optional dependencies (non-critical)"
+                fi
+            else
+                print_info "Skipped optional dependencies"
+            fi
+        fi
     fi
     return 0
 }
@@ -62,74 +217,276 @@ setup_git_clis() {
     print_info "Setting up Git CLI tools..."
     
     local cli_tools=()
-    local installs_needed=()
+    local missing_packages=()
+    local missing_names=()
     
     # Check for GitHub CLI
     if ! command -v gh >/dev/null 2>&1; then
-        print_warning "GitHub CLI (gh) not found"
-        echo "  GitHub CLI provides enhanced GitHub integration"
-        echo "  Install: brew install gh (macOS) or sudo apt install gh (Ubuntu)"
-        echo "  Alternative: https://cli.github.com/manual/installation"
-        installs_needed+=("GitHub CLI")
+        missing_packages+=("gh")
+        missing_names+=("GitHub CLI")
     else
         cli_tools+=("GitHub CLI")
     fi
     
     # Check for GitLab CLI
     if ! command -v glab >/dev/null 2>&1; then
-        print_warning "GitLab CLI (glab) not found"
-        echo "  GitLab CLI provides enhanced GitLab integration"
-        echo "  Install: brew install glab (macOS) or sudo apt install glab (Ubuntu)"
-        echo "  Alternative: https://glab.readthedocs.io/en/latest/installation/"
-        installs_needed+=("GitLab CLI")
+        missing_packages+=("glab")
+        missing_names+=("GitLab CLI")
     else
         cli_tools+=("GitLab CLI")
     fi
     
-    # Check for Gitea CLI
-    if ! command -v tea >/dev/null 2>&1; then
-        print_warning "Gitea CLI (tea) not found"
-        echo "  Gitea CLI provides enhanced Gitea integration"
-        echo "  Install: go install code.gitea.io/tea/cmd/tea@latest"
-        echo "  Alternative: https://dl.gitea.io/tea/"
-        installs_needed+=("Gitea CLI")
-    else
-        cli_tools+=("Gitea CLI")
-    fi
-    
-    # Report status and provide setup guidance
+    # Report found tools
     if [[ ${#cli_tools[@]} -gt 0 ]]; then
         print_success "Found Git CLI tools: ${cli_tools[*]}"
     fi
     
-    if [[ ${#installs_needed[@]} -gt 0 ]]; then
-        print_warning "Missing Git CLI tools: ${installs_needed[*]}"
-        echo ""
-        echo "🚀 BULK INSTALLATION COMMANDS:"
-        echo "  macOS: brew install ${installs_needed[*]//GitHub CLI/gh} ${installs_needed[*]//GitLab CLI/glab} ${installs_needed[*]//Gitea CLI/tea}"
-        echo "  Ubuntu: sudo apt install ${installs_needed[*]//GitHub CLI/gh} ${installs_needed[*]//GitLab CLI/glab} ${installs_needed[*]//Gitea CLI/tea}"
-        echo ""
-        echo "📋 CONFIGURATION STEPS:"
-        echo "  1. GitHub CLI: gh auth login"
-        echo "  2. GitLab CLI: glab auth login"  
-        echo "  3. Gitea CLI: tea login add or configure API token in configs/gitea-cli-config.json"
-        echo ""
-        echo "📁 CONFIGURATION TEMPLATES:"
-        echo "  GitHub: cp configs/github-cli-config.json.txt configs/github-cli-config.json"
-        echo "  GitLab: cp configs/gitlab-cli-config.json.txt configs/gitlab-cli-config.json"
-        echo "  Gitea: cp configs/gitea-cli-config.json.txt configs/gitea-cli-config.json"
-        echo ""
-        print_info "Git CLI helpers available in .agent/scripts/:"
-        echo "  • .agent/scripts/github-cli-helper.sh - GitHub repository management"
-        echo "  • .agent/scripts/gitlab-cli-helper.sh - GitLab project management"
-        echo "  • .agent/scripts/gitea-cli-helper.sh - Gitea repository management"
-        echo ""
-        echo "📖 USAGE EXAMPLES:"
-        echo "  • ./.agent/scripts/github-cli-helper.sh list-repos <account>"
-        echo "  • ./.agent/scripts/gitlab-cli-helper.sh create-project <account> <name>"
-        echo "  • ./.agent/scripts/gitea-cli-helper.sh create-repo <account> <repo>"
+    # Offer to install missing tools
+    if [[ ${#missing_packages[@]} -gt 0 ]]; then
+        print_warning "Missing Git CLI tools: ${missing_names[*]}"
+        echo "  These provide enhanced Git platform integration (repos, PRs, issues)"
+        
+        local pkg_manager
+        pkg_manager=$(detect_package_manager)
+        
+        if [[ "$pkg_manager" != "unknown" ]]; then
+            echo ""
+            read -r -p "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_git_clis
+            
+            if [[ "$install_git_clis" == "y" ]]; then
+                print_info "Installing ${missing_packages[*]}..."
+                if install_packages "$pkg_manager" "${missing_packages[@]}"; then
+                    print_success "Git CLI tools installed"
+                    echo ""
+                    echo "📋 Next steps - authenticate each CLI:"
+                    for pkg in "${missing_packages[@]}"; do
+                        case "$pkg" in
+                            gh) echo "  • gh auth login" ;;
+                            glab) echo "  • glab auth login" ;;
+                        esac
+                    done
+                else
+                    print_warning "Failed to install some Git CLI tools (non-critical)"
+                fi
+            else
+                print_info "Skipped Git CLI tools installation"
+                echo ""
+                echo "📋 Manual installation:"
+                echo "  macOS: brew install ${missing_packages[*]}"
+                echo "  Ubuntu: sudo apt install ${missing_packages[*]}"
+                echo "  Fedora: sudo dnf install ${missing_packages[*]}"
+            fi
+        else
+            echo ""
+            echo "📋 Manual installation:"
+            echo "  macOS: brew install ${missing_packages[*]}"
+            echo "  Ubuntu: sudo apt install ${missing_packages[*]}"
+            echo "  Fedora: sudo dnf install ${missing_packages[*]}"
+        fi
     else
-        print_success "✅ All Git CLI tools installed and ready for use!"
+        print_success "All Git CLI tools installed and ready!"
+    fi
+    
+    # Check for Gitea CLI separately (not in standard package managers)
+    if ! command -v tea >/dev/null 2>&1; then
+        print_info "Gitea CLI (tea) not found - install manually if needed:"
+        echo "  go install code.gitea.io/tea/cmd/tea@latest"
+        echo "  Or download from: https://dl.gitea.io/tea/"
+    else
+        print_success "Gitea CLI (tea) found"
+    fi
+    
+    return 0
+}
+
+# Setup recommended tools (Tabby terminal, Zed editor)
+setup_recommended_tools() {
+    print_info "Checking recommended development tools..."
+    
+    local missing_tools=()
+    local missing_names=()
+    
+    # Check for Tabby terminal
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS - check Applications folder
+        if [[ ! -d "/Applications/Tabby.app" ]]; then
+            missing_tools+=("tabby")
+            missing_names+=("Tabby (modern terminal)")
+        else
+            print_success "Tabby terminal found"
+        fi
+    elif [[ "$(uname)" == "Linux" ]]; then
+        # Linux - check if tabby command exists
+        if ! command -v tabby >/dev/null 2>&1; then
+            missing_tools+=("tabby")
+            missing_names+=("Tabby (modern terminal)")
+        else
+            print_success "Tabby terminal found"
+        fi
+    fi
+    
+    # Check for Zed editor
+    local zed_exists=false
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS - check Applications folder
+        if [[ ! -d "/Applications/Zed.app" ]]; then
+            missing_tools+=("zed")
+            missing_names+=("Zed (AI-native editor)")
+        else
+            print_success "Zed editor found"
+            zed_exists=true
+        fi
+    elif [[ "$(uname)" == "Linux" ]]; then
+        # Linux - check if zed command exists
+        if ! command -v zed >/dev/null 2>&1; then
+            missing_tools+=("zed")
+            missing_names+=("Zed (AI-native editor)")
+        else
+            print_success "Zed editor found"
+            zed_exists=true
+        fi
+    fi
+    
+    # Check for OpenCode extension in existing Zed installation
+    if [[ "$zed_exists" == "true" ]]; then
+        local zed_extensions_dir=""
+        if [[ "$(uname)" == "Darwin" ]]; then
+            zed_extensions_dir="$HOME/Library/Application Support/Zed/extensions/installed"
+        elif [[ "$(uname)" == "Linux" ]]; then
+            zed_extensions_dir="$HOME/.local/share/zed/extensions/installed"
+        fi
+        
+        if [[ -d "$zed_extensions_dir" ]]; then
+            if [[ ! -d "$zed_extensions_dir/opencode" ]]; then
+                read -r -p "Install OpenCode extension for Zed? (y/n): " install_opencode_ext
+                if [[ "$install_opencode_ext" == "y" ]]; then
+                    print_info "Installing OpenCode extension..."
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        open "zed://extension/opencode" 2>/dev/null
+                        print_success "OpenCode extension install triggered"
+                        print_info "Zed will open and prompt to install the extension"
+                    elif [[ "$(uname)" == "Linux" ]]; then
+                        xdg-open "zed://extension/opencode" 2>/dev/null || \
+                        print_info "Open Zed and install 'opencode' from Extensions"
+                    fi
+                fi
+            else
+                print_success "OpenCode extension already installed in Zed"
+            fi
+        fi
+    fi
+    
+    # Offer to install missing tools
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        print_warning "Missing recommended tools: ${missing_names[*]}"
+        echo "  Tabby - Modern terminal with profiles, SSH manager, split panes"
+        echo "  Zed   - High-performance AI-native code editor"
+        echo ""
+        
+        # Install Tabby if missing
+        if [[ " ${missing_tools[*]} " =~ " tabby " ]]; then
+            read -r -p "Install Tabby terminal? (y/n): " install_tabby
+            
+            if [[ "$install_tabby" == "y" ]]; then
+                print_info "Installing Tabby..."
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    if command -v brew >/dev/null 2>&1; then
+                        brew install --cask tabby
+                        if [[ $? -eq 0 ]]; then
+                            print_success "Tabby installed successfully"
+                        else
+                            print_warning "Failed to install Tabby via Homebrew"
+                            echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+                        fi
+                    else
+                        print_warning "Homebrew not found"
+                        echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+                    fi
+                elif [[ "$(uname)" == "Linux" ]]; then
+                    local pkg_manager
+                    pkg_manager=$(detect_package_manager)
+                    case "$pkg_manager" in
+                        apt)
+                            # Add packagecloud repo for Tabby
+                            print_info "Adding Tabby repository..."
+                            curl -s https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh | sudo bash
+                            sudo apt-get install -y tabby-terminal
+                            ;;
+                        dnf|yum)
+                            print_info "Adding Tabby repository..."
+                            curl -s https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh | sudo bash
+                            sudo "$pkg_manager" install -y tabby-terminal
+                            ;;
+                        pacman)
+                            # AUR package
+                            print_info "Tabby available in AUR as 'tabby-bin'"
+                            echo "  Install with: yay -S tabby-bin"
+                            ;;
+                        *)
+                            echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+                            ;;
+                    esac
+                fi
+            else
+                print_info "Skipped Tabby installation"
+            fi
+        fi
+        
+        # Install Zed if missing
+        if [[ " ${missing_tools[*]} " =~ " zed " ]]; then
+            read -r -p "Install Zed editor? (y/n): " install_zed
+            
+            if [[ "$install_zed" == "y" ]]; then
+                print_info "Installing Zed..."
+                local zed_installed=false
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    if command -v brew >/dev/null 2>&1; then
+                        brew install --cask zed
+                        if [[ $? -eq 0 ]]; then
+                            print_success "Zed installed successfully"
+                            zed_installed=true
+                        else
+                            print_warning "Failed to install Zed via Homebrew"
+                            echo "  Download manually: https://zed.dev/download"
+                        fi
+                    else
+                        print_warning "Homebrew not found"
+                        echo "  Download manually: https://zed.dev/download"
+                    fi
+                elif [[ "$(uname)" == "Linux" ]]; then
+                    # Zed provides an install script for Linux
+                    print_info "Running Zed install script..."
+                    curl -f https://zed.dev/install.sh | sh
+                    if [[ $? -eq 0 ]]; then
+                        print_success "Zed installed successfully"
+                        zed_installed=true
+                    else
+                        print_warning "Failed to install Zed"
+                        echo "  See: https://zed.dev/docs/linux"
+                    fi
+                fi
+                
+                # Install OpenCode extension for Zed
+                if [[ "$zed_installed" == "true" ]]; then
+                    read -r -p "Install OpenCode extension for Zed? (y/n): " install_opencode_ext
+                    if [[ "$install_opencode_ext" == "y" ]]; then
+                        print_info "Installing OpenCode extension..."
+                        if [[ "$(uname)" == "Darwin" ]]; then
+                            open "zed://extension/opencode" 2>/dev/null
+                            print_success "OpenCode extension install triggered"
+                            print_info "Zed will open and prompt to install the extension"
+                        elif [[ "$(uname)" == "Linux" ]]; then
+                            xdg-open "zed://extension/opencode" 2>/dev/null || \
+                            print_info "Open Zed and install 'opencode' from Extensions (Cmd+Shift+X)"
+                        fi
+                    fi
+                fi
+            else
+                print_info "Skipped Zed installation"
+            fi
+        fi
+    else
+        print_success "All recommended tools installed!"
     fi
     
     return 0
@@ -204,30 +561,135 @@ set_permissions() {
     return 0
 }
 
+# Install aidevops CLI command
+install_aidevops_cli() {
+    print_info "Installing aidevops CLI command..."
+    
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local cli_source="$script_dir/aidevops.sh"
+    local cli_target="/usr/local/bin/aidevops"
+    
+    if [[ ! -f "$cli_source" ]]; then
+        print_warning "aidevops.sh not found - skipping CLI installation"
+        return 0
+    fi
+    
+    # Check if we can write to /usr/local/bin
+    if [[ -w "/usr/local/bin" ]]; then
+        # Direct symlink
+        ln -sf "$cli_source" "$cli_target"
+        print_success "Installed aidevops command to $cli_target"
+    elif [[ -w "$HOME/.local/bin" ]] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
+        # Use ~/.local/bin instead
+        cli_target="$HOME/.local/bin/aidevops"
+        ln -sf "$cli_source" "$cli_target"
+        print_success "Installed aidevops command to $cli_target"
+        
+        # Check if ~/.local/bin is in PATH
+        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            print_warning "Add ~/.local/bin to your PATH for the 'aidevops' command"
+            print_info "Add this to your shell config: export PATH=\"\$HOME/.local/bin:\$PATH\""
+        fi
+    else
+        # Need sudo
+        print_info "Installing aidevops command requires sudo..."
+        if sudo ln -sf "$cli_source" "$cli_target"; then
+            print_success "Installed aidevops command to $cli_target"
+        else
+            print_warning "Could not install aidevops command globally"
+            print_info "You can run it directly: $cli_source"
+        fi
+    fi
+    
+    return 0
+}
+
 # Setup shell aliases
 setup_aliases() {
     print_info "Setting up shell aliases..."
     
     local shell_rc=""
+    local shell_name=""
+    
+    # Detect shell - check $SHELL first, then try to detect from process
     if [[ "$SHELL" == *"zsh"* ]]; then
         shell_rc="$HOME/.zshrc"
+        shell_name="zsh"
     elif [[ "$SHELL" == *"bash"* ]]; then
-        shell_rc="$HOME/.bashrc"
+        # macOS: use .bash_profile (login shell), Linux: use .bashrc
+        if [[ "$(uname)" == "Darwin" ]]; then
+            shell_rc="$HOME/.bash_profile"
+        else
+            shell_rc="$HOME/.bashrc"
+        fi
+        shell_name="bash"
+    elif [[ "$SHELL" == *"fish"* ]]; then
+        shell_rc="$HOME/.config/fish/config.fish"
+        shell_name="fish"
+    elif [[ "$SHELL" == *"ksh"* ]]; then
+        shell_rc="$HOME/.kshrc"
+        shell_name="ksh"
+    elif [[ -n "$ZSH_VERSION" ]]; then
+        shell_rc="$HOME/.zshrc"
+        shell_name="zsh"
+    elif [[ -n "$BASH_VERSION" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            shell_rc="$HOME/.bash_profile"
+        else
+            shell_rc="$HOME/.bashrc"
+        fi
+        shell_name="bash"
     else
-        print_warning "Unknown shell, skipping alias setup"
-        return
+        # Fallback: check common rc files
+        if [[ -f "$HOME/.zshrc" ]]; then
+            shell_rc="$HOME/.zshrc"
+            shell_name="zsh"
+        elif [[ -f "$HOME/.bashrc" ]]; then
+            shell_rc="$HOME/.bashrc"
+            shell_name="bash"
+        elif [[ -f "$HOME/.bash_profile" ]]; then
+            shell_rc="$HOME/.bash_profile"
+            shell_name="bash"
+        else
+            print_warning "Could not detect shell configuration file"
+            print_info "Supported shells: bash, zsh, fish, ksh"
+            print_info "You can manually add aliases to your shell config"
+            return 0
+        fi
+    fi
+    
+    # Create the rc file if it doesn't exist (common on fresh systems)
+    if [[ ! -f "$shell_rc" ]]; then
+        print_info "Creating $shell_rc (file did not exist)"
+        touch "$shell_rc"
     fi
     
     # Check if aliases already exist
     if grep -q "# AI Assistant Server Access" "$shell_rc" 2>/dev/null; then
         print_info "Server Access aliases already configured in $shell_rc - Skipping"
-        return
+        return 0
     fi
     
+    print_info "Detected shell: $shell_name"
     read -r -p "Add shell aliases to $shell_rc? (y/n): " add_aliases
     
     if [[ "$add_aliases" == "y" ]]; then
-        cat >> "$shell_rc" << 'EOF'
+        # Fish shell uses different syntax
+        if [[ "$shell_name" == "fish" ]]; then
+            mkdir -p "$HOME/.config/fish"
+            cat >> "$shell_rc" << 'EOF'
+
+# AI Assistant Server Access Framework
+alias servers './.agent/scripts/servers-helper.sh'
+alias servers-list './.agent/scripts/servers-helper.sh list'
+alias hostinger './.agent/scripts/hostinger-helper.sh'
+alias hetzner './.agent/scripts/hetzner-helper.sh'
+alias aws-helper './.agent/scripts/aws-helper.sh'
+EOF
+        else
+            # Bash, zsh, ksh use same syntax
+            cat >> "$shell_rc" << 'EOF'
 
 # AI Assistant Server Access Framework
 alias servers='./.agent/scripts/servers-helper.sh'
@@ -236,11 +698,13 @@ alias hostinger='./.agent/scripts/hostinger-helper.sh'
 alias hetzner='./.agent/scripts/hetzner-helper.sh'
 alias aws-helper='./.agent/scripts/aws-helper.sh'
 EOF
+        fi
         print_success "Aliases added to $shell_rc"
         print_info "Run 'source $shell_rc' or restart your terminal to use aliases"
     else
         print_info "Skipped alias setup by user request"
     fi
+    return 0
 }
 
 # Deploy AI assistant templates
@@ -658,6 +1122,9 @@ parse_args() {
 
 # Main setup function
 main() {
+    # Bootstrap first (handles curl install)
+    bootstrap_repo "$@"
+    
     parse_args "$@"
     
     echo "🤖 AI DevOps Framework Setup"
@@ -670,10 +1137,12 @@ main() {
     verify_location
     check_requirements
     check_optional_deps
+    setup_recommended_tools
     setup_git_clis
     setup_ssh_key
     setup_configs
     set_permissions
+    install_aidevops_cli
     setup_aliases
     deploy_ai_templates
     deploy_aidevops_agents
@@ -687,6 +1156,11 @@ main() {
 
     echo ""
     print_success "🎉 Setup complete!"
+    echo ""
+    echo "CLI Command:"
+    echo "  aidevops status     - Check installation status"
+    echo "  aidevops update     - Update to latest version"
+    echo "  aidevops uninstall  - Remove aidevops"
     echo ""
     echo "Deployed to:"
     echo "  ~/.aidevops/agents/     - Agent files (main agents, subagents, scripts)"

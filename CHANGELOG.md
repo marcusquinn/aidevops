@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] - 2025-12-06
+
+### Added
+
+- **One-liner Install Command** - Universal install/update via curl
+  - `bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)`
+  - Auto-detects curl execution, clones repo to ~/Git/aidevops
+  - Re-executes local setup.sh after cloning for full setup
+- **Global `aidevops` CLI Command** - New CLI installed to /usr/local/bin/aidevops
+  - `aidevops status` - Comprehensive installation status check
+  - `aidevops update` - Update to latest version
+  - `aidevops uninstall` - Clean removal with prompts
+  - `aidevops version` - Version info with update check
+  - `aidevops help` - Usage information
+- **Interactive Setup Prompts** - Enhanced setup.sh with optional installations
+  - Required dependencies (jq, curl, ssh) via detected package manager
+  - Optional dependencies (sshpass)
+  - Recommended tools (Tabby terminal, Zed editor)
+  - OpenCode extension for Zed
+  - Git CLI tools (gh, glab)
+  - SSH key generation
+  - Shell aliases
+- **Multi-Platform Package Manager Support** - Auto-detects brew, apt, dnf, yum, pacman, apk
+- **Multi-Shell Support** - Detects and configures bash, zsh, fish, ksh with correct rc files
+- **CLI Reference Documentation** - New `.wiki/CLI-Reference.md` with complete CLI docs
+
+### Changed
+
+- **setup.sh** - Major refactor with bootstrap_repo(), install_aidevops_cli(), setup_recommended_tools()
+- **README.md** - Updated Quick Start section with one-liner install
+- **Getting-Started.md** - Comprehensive installation guide update
+- **Home.md** - Updated with new install method
+
 ## [2.12.0] - 2025-12-05
 
 ### Added

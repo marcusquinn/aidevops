@@ -2,48 +2,104 @@
 
 This guide helps you set up and start using the AI DevOps Framework.
 
-## Prerequisites
+## Quick Install
 
-| Requirement | Purpose |
-|-------------|---------|
-| Git | Version control |
-| Node.js 18+ | Script runtime |
-| GitHub CLI (`gh`) | GitHub operations |
-| Bash shell | Script execution |
-
-## Installation
-
-### Step 1: Clone the Repository
+Run this single command to install or update:
 
 ```bash
-# Create standard directory structure
-mkdir -p ~/git
-cd ~/git
+bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
+```
 
-# Clone the framework
+This handles everything automatically:
+
+- Clones repository to `~/Git/aidevops`
+- Installs the `aidevops` CLI command globally
+- Detects and uses your package manager (brew, apt, dnf, yum, pacman, apk)
+- Configures all supported AI assistants
+- Offers to install recommended tools
+
+## What Setup Installs
+
+### Required Dependencies (Auto-installed)
+
+| Dependency | Purpose |
+|------------|---------|
+| git | Version control |
+| jq | JSON processing |
+| curl | HTTP requests |
+| ssh | Remote connections |
+
+### Optional Dependencies
+
+| Dependency | Purpose |
+|------------|---------|
+| sshpass | Password-based SSH authentication |
+
+### Recommended Tools (Prompted)
+
+| Tool | Purpose |
+|------|---------|
+| [Tabby](https://tabby.sh) | Modern terminal with AI features |
+| [Zed](https://zed.dev) | High-performance editor with AI |
+| OpenCode for Zed | AI coding extension |
+
+### Git CLI Tools (Prompted)
+
+| Tool | Purpose |
+|------|---------|
+| gh | GitHub CLI |
+| glab | GitLab CLI |
+
+### SSH Key
+
+Setup offers to generate an Ed25519 SSH key if you don't have one.
+
+## The `aidevops` CLI
+
+After installation, you have the `aidevops` command available globally:
+
+```bash
+aidevops status      # Check installation status
+aidevops update      # Update to latest version
+aidevops uninstall   # Remove from system
+aidevops version     # Show version info
+aidevops help        # Show all commands
+```
+
+See [CLI Reference](CLI-Reference) for complete documentation.
+
+## Manual Installation
+
+If you prefer manual setup:
+
+```bash
+# Clone the repository
+mkdir -p ~/Git
+cd ~/Git
 git clone https://github.com/marcusquinn/aidevops.git
 cd aidevops
+
+# Run setup
+./setup.sh
 ```
 
-### Step 2: Configure Your AI Assistant
+## AI Assistant Configuration
 
-Add this to your AI assistant's system prompt or instructions:
+Setup automatically configures these AI assistants:
 
-```text
-Before performing DevOps operations, read ~/git/aidevops/AGENTS.md 
-for authoritative guidance on this infrastructure management framework.
-```
+| Tool | Configuration File |
+|------|-------------------|
+| **OpenCode** | `~/.config/opencode/AGENTS.md` |
+| **Cursor** | `.cursorrules` |
+| **Claude Code** | `CLAUDE.md` |
+| **Windsurf** | `.windsurfrules`, `WINDSURF.md` |
+| **Continue.dev** | `.continuerules` |
+| **Gemini** | `GEMINI.md` |
+| **Warp** | `WARP.md` |
+| **Codex** | `.codex/AGENTS.md` |
+| **Kiro** | `.kiro/` |
 
-**For specific tools:**
-
-| Tool | Configuration |
-|------|---------------|
-| **Claude Projects** | Add AGENTS.md as project knowledge |
-| **Cursor** | Reference in `.cursorrules` |
-| **VS Code + Continue** | Add to context |
-| **OpenCode** | Uses AGENTS.md automatically |
-
-### Step 3: Set Up API Keys (Optional)
+## API Keys (Optional)
 
 For services requiring authentication:
 
@@ -63,16 +119,24 @@ bash .agent/scripts/setup-local-api-keys.sh list
 ## Directory Structure
 
 ```text
-~/git/aidevops/
-├── AGENTS.md              # 📖 AI assistant instructions
-├── CHANGELOG.md           # Version history
-├── .agent/                # 🤖 All AI-relevant content
-│   ├── scripts/           # 90+ automation scripts
-│   ├── workflows/         # Development process guides
-│   ├── memory/            # Context persistence templates
-│   └── *.md               # Service documentation
-├── .github/workflows/     # CI/CD automation
-└── configs/               # Configuration templates
+~/Git/aidevops/              # Repository location
+├── AGENTS.md                # AI assistant instructions
+├── aidevops.sh              # CLI source script
+├── setup.sh                 # Installer/updater
+├── .agent/                  # All AI-relevant content
+│   ├── scripts/             # 90+ automation scripts
+│   ├── workflows/           # Development process guides
+│   ├── memory/              # Context persistence templates
+│   └── *.md                 # Service documentation
+├── .github/workflows/       # CI/CD automation
+└── configs/                 # Configuration templates
+
+~/.aidevops/                 # User installation
+├── agents/                  # Deployed agent files
+│   └── AGENTS.md            # User guide
+└── backups/                 # Configuration backups
+
+/usr/local/bin/aidevops      # CLI command (or ~/.local/bin/)
 ```
 
 ## First Steps with Your AI
@@ -120,24 +184,33 @@ The framework creates organized working directories:
 
 ## Next Steps
 
-1. **[Understanding AGENTS.md](Understanding-AGENTS-md)** - Learn how AI guidance works
-2. **[The .agent Directory](The-Agent-Directory)** - Explore the framework structure
-3. **[Workflows Guide](Workflows-Guide)** - Development processes
+1. **[CLI Reference](CLI-Reference)** - Master the `aidevops` command
+2. **[Understanding AGENTS.md](Understanding-AGENTS-md)** - Learn how AI guidance works
+3. **[The .agent Directory](The-Agent-Directory)** - Explore the framework structure
+4. **[Workflows Guide](Workflows-Guide)** - Development processes
 
 ## Troubleshooting
+
+### Check Installation Status
+
+```bash
+aidevops status
+```
+
+This shows the status of all components including version, dependencies, and tools.
 
 ### AI Can't Find AGENTS.md
 
 Ensure the repository is at the standard location:
 
 ```bash
-ls ~/git/aidevops/AGENTS.md
+ls ~/Git/aidevops/AGENTS.md
 ```
 
 ### Scripts Not Executable
 
 ```bash
-chmod +x ~/git/aidevops/.agent/scripts/*.sh
+chmod +x ~/Git/aidevops/.agent/scripts/*.sh
 ```
 
 ### API Keys Not Working
@@ -146,4 +219,10 @@ chmod +x ~/git/aidevops/.agent/scripts/*.sh
 # Verify keys are loaded
 source ~/.config/aidevops/mcp-env.sh
 env | grep -i api
+```
+
+### Update to Latest Version
+
+```bash
+aidevops update
 ```

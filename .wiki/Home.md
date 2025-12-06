@@ -16,23 +16,37 @@ This framework enables AI assistants (like Claude, GPT, Augment, etc.) to help y
 
 ## Quick Start
 
-### 1. Clone the Repository
+### One-Liner Install
 
 ```bash
-mkdir -p ~/git
-cd ~/git
-git clone https://github.com/marcusquinn/aidevops.git
+bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
 ```
 
-### 2. Tell Your AI Assistant
+This single command handles everything:
 
-Point your AI assistant to this framework:
+- Fresh install or update existing installation
+- Clones repository to `~/Git/aidevops`
+- Installs the `aidevops` CLI command
+- Configures AI assistants automatically
+- Offers to install recommended tools
 
-> "Read ~/git/aidevops/AGENTS.md for guidance on DevOps operations"
+### Using the CLI
 
-### 3. Start Working
+After installation, manage your setup with the `aidevops` command:
+
+```bash
+aidevops status     # Check installation status
+aidevops update     # Update to latest version
+aidevops version    # Show version info
+aidevops help       # Show all commands
+```
+
+See [CLI Reference](CLI-Reference) for full documentation.
+
+### What Gets Configured
 
 Your AI assistant now has access to:
+
 - 90+ automation scripts
 - 13 MCP server integrations  
 - Comprehensive workflow guides
@@ -51,6 +65,7 @@ Your AI assistant now has access to:
 ## Navigation
 
 - **[Getting Started](Getting-Started)** - Installation and setup
+- **[CLI Reference](CLI-Reference)** - The `aidevops` command
 - **[Understanding AGENTS.md](Understanding-AGENTS-md)** - How AI guidance works
 - **[The .agent Directory](The-Agent-Directory)** - Framework structure
 - **[Workflows Guide](Workflows-Guide)** - Development processes
@@ -58,4 +73,4 @@ Your AI assistant now has access to:
 
 ## Version
 
-**Current: v2.0.0** | [View Changelog](https://github.com/marcusquinn/aidevops/blob/main/CHANGELOG.md)
+**Current: v2.12.0** | [View Changelog](https://github.com/marcusquinn/aidevops/blob/main/CHANGELOG.md)
