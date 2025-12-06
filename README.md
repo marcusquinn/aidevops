@@ -598,6 +598,54 @@ The `@code-quality` agent also learns from issues. After fixing violations from 
 Quality Issue → Fix Applied → Pattern Identified → Framework Updated → Issue Prevented
 ```
 
+## **Slash Commands (OpenCode)**
+
+**Slash commands provide quick access to common workflows directly from the OpenCode prompt.** Type `/` to see available commands.
+
+### **Available Commands**
+
+| Command | Purpose |
+|---------|---------|
+| `/agent-review` | Analyze session and suggest agent improvements |
+| `/preflight` | Run quality checks before release |
+| `/postflight` | Verify release health after deployment |
+| `/release` | Full release workflow (bump, tag, GitHub release) |
+| `/version-bump` | Bump version following semver |
+| `/changelog` | Update CHANGELOG.md with recent changes |
+| `/code-review` | Comprehensive code review checklist |
+| `/quality-check` | Run all quality linters and scanners |
+| `/feature` | Start a new feature branch workflow |
+| `/bugfix` | Start a bugfix branch workflow |
+| `/hotfix` | Start an urgent hotfix workflow |
+| `/context` | Build AI context with Repomix |
+| `/pr` | Create a pull request |
+
+### **Installation**
+
+Slash commands are automatically installed by `setup.sh`:
+
+```bash
+# Commands are deployed to:
+~/.config/opencode/commands/
+
+# Regenerate commands manually:
+.agent/scripts/generate-opencode-commands.sh
+```
+
+### **Usage**
+
+In OpenCode, type the command at the prompt:
+
+```text
+/preflight
+/release minor
+/feature add-user-authentication
+```
+
+Commands invoke the corresponding workflow subagent with appropriate context.
+
+---
+
 ### **Creating Custom Agents**
 
 Create a markdown file in `~/.config/opencode/agent/` (OpenCode) or reference in your AI's system prompt:
