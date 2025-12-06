@@ -681,15 +681,15 @@ bash .agent/scripts/continue-cli.sh review
 
 **Complete Guides Available:**
 
-- **[MCP Integrations Guide](.agent/mcp-integrations.md)** - MCP servers setup
-- **[API Integrations Guide](.agent/api-integrations.md)** - Service APIs
-- **[Pandoc Conversion Guide](.agent/pandoc-conversion.md)** - Document format conversion
-- **[Agno Integration Guide](.agent/agno-integration.md)** - Local AI agent operating system
-- **[Browser Automation Guide](.agent/browser-automation.md)** - LinkedIn automation and web scraping
-- **[PageSpeed & Lighthouse Guide](.agent/pagespeed-lighthouse.md)** - Performance auditing
-- **[AI CLI Tools Reference](.agent/ai-cli-tools.md)** - AI assistant integration
-- **[Service Links Directory](.agent/service-links.md)** - Direct links to all services
-- **[Security Best Practices](.agent/security.md)** - Enterprise security standards
+- **[MCP Integrations Guide](.agent/aidevops/mcp-integrations.md)** - MCP servers setup
+- **[API Integrations Guide](.agent/aidevops/api-integrations.md)** - Service APIs
+- **[Pandoc Conversion Guide](.agent/tools/conversion/pandoc.md)** - Document format conversion
+- **[Agno Integration Guide](.agent/tools/ai-assistants/agno.md)** - Local AI agent operating system
+- **[Browser Automation Guide](.agent/tools/browser/browser-automation.md)** - Web scraping and automation
+- **[PageSpeed & Lighthouse Guide](.agent/tools/browser/pagespeed.md)** - Performance auditing
+- **[Service Links Directory](.agent/aidevops/service-links.md)** - Direct links to all services
+- **[Security Best Practices](.agent/aidevops/security.md)** - Enterprise security standards
+- **[CLI Reference](.wiki/CLI-Reference.md)** - aidevops command documentation
 
 **Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `.agent/`
 
