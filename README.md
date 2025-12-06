@@ -1,6 +1,6 @@
 # AI DevOps Framework
 
-**Unleash your AI assistant's true potential with specialist DevOps agents — designed to manage your all your infrastructure and services with security and reliability guidance on every decision.**
+**[aidevops.sh](https://aidevops.sh)** — Unleash your AI assistant's true potential with specialist DevOps agents, designed to manage all your infrastructure and services with security and reliability guidance on every decision.
 
 *"List all my servers and websites, and check each for theme and plugin update needs, SEO and page loading performance scores, and give me a list of recommended priorities"* - **One conversation, complete infrastructure management.**
 
