@@ -158,13 +158,15 @@ test-*.yaml
 .github/instructions/codacy.instructions.md
 
 # AI Tool Symlinks - Track these (they point to .agent and AGENTS.md)
-# Rules file symlinks -> AGENTS.md
-!.cursorrules
-!.windsurfrules
-!.continuerules
+# Rules files - only actual files tracked, not symlinks
 !CLAUDE.md
 !GEMINI.md
 !AGENT.md
+
+# Rules symlinks removed - cause duplicate refs in OpenCode
+.cursorrules
+.windsurfrules
+.continuerules
 
 # Agent/skills folders - only .opencode tracked (has actual config)
 !.opencode/
