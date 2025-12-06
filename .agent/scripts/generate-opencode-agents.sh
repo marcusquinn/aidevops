@@ -36,7 +36,9 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 ## aidevops Framework Status
 
-At the START of each new conversation, run `aidevops version` to check the framework version. Report the version to the user in your first response (e.g., "aidevops v2.18.5"). If an update is available, ask the user: "An aidevops update is available (current: X.X.X, latest: Y.Y.Y). Update now or later?"
+At the START of each new conversation, run `~/.aidevops/agents/scripts/aidevops-update-check.sh` and report the result in your first response. 
+
+If output is `UPDATE_AVAILABLE|current|latest`, ask: "An aidevops update is available (current → latest). Update now or later?"
 - Now: Run `aidevops update` then remind user to restart OpenCode
 - Later: Continue with current session
 EOF
