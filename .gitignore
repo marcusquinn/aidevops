@@ -166,20 +166,21 @@ test-*.yaml
 !GEMINI.md
 !AGENT.md
 
-# Agent/skills folder symlinks -> .agent
+# Agent/skills folders - only .opencode tracked (has actual config)
 !.opencode/
-!.claude/
-!.codex/
-!.cursor/
-!.factory/
 !.gemini/
 !.qoder/
 
-# Symlinks that cause duplicate @ references in OpenCode - removed from repo
-# Other AI tools should use ~/.aidevops/agents/ (deployed location)
+# AI tool directories removed - cause duplicate @ refs in OpenCode
+# These tools should use ~/.aidevops/agents/ (deployed location)
+# See .agent/AGENTS.md "AI Tool Configuration" section
 .ai
 .kiro
 .continue
+.claude/
+.codex/
+.cursor/
+.factory/
 
 # Superset local config
 .superset/
