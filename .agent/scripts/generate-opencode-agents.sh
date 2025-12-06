@@ -108,6 +108,8 @@ primary_agents = {
             "grep": True,
             "webfetch": True,
             "task": True,
+            "todoread": True,
+            "todowrite": True,
             "context7_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
@@ -126,6 +128,8 @@ primary_agents = {
             "grep": True,
             "webfetch": True,
             "task": True,
+            "todoread": True,
+            "todowrite": True,
             "context7_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
@@ -144,6 +148,8 @@ primary_agents = {
             "grep": True,
             "webfetch": True,
             "task": True,
+            "todoread": True,
+            "todowrite": True,
             "context7_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
@@ -179,6 +185,8 @@ primary_agents = {
             "grep": True,
             "webfetch": True,
             "task": True,
+            "todoread": True,
+            "todowrite": True,
             "context7_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True

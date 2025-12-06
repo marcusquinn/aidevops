@@ -1,19 +1,3 @@
----
-description: Enhanced Build agent with DevOps quality gates and context tools
-tools:
-  read: true
-  edit: true
-  write: true
-  bash: true
-  glob: true
-  grep: true
-  webfetch: true
-  task: true
-  todoread: true
-  todowrite: true
-  mcp: true
----
-
 # Build+ - Enhanced Build Agent
 
 <!-- AI-CONTEXT-START -->
