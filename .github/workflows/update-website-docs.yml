@@ -55,10 +55,72 @@ jobs:
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Documentation - AI DevOps Framework</title>
-              <meta name="description" content="Complete documentation for the AI DevOps Framework - transform your AI assistant into a powerful infrastructure management tool.">
+              
+              <!-- Primary Meta Tags -->
+              <title>AIDevOps Documentation - AI DevOps Framework Setup &amp; Configuration Guide</title>
+              <meta name="title" content="AIDevOps Documentation - AI DevOps Framework Setup & Configuration Guide">
+              <meta name="description" content="Complete AIDevOps documentation: setup guide, MCP server configuration, service integrations, AI assistant compatibility, and DevOps automation tutorials for the AI DevOps framework.">
+              <meta name="keywords" content="ai devops documentation, aidevops guide, ai devops setup, mcp server configuration, ai assistant devops, devops framework docs, ai infrastructure guide, aidevops tutorial">
+              <meta name="author" content="Marcus Quinn">
+              <meta name="robots" content="index, follow">
+              <link rel="canonical" href="https://aidevops.sh/docs.html">
+              
+              <!-- Open Graph / Facebook -->
+              <meta property="og:type" content="article">
+              <meta property="og:url" content="https://aidevops.sh/docs.html">
+              <meta property="og:title" content="AIDevOps Documentation - Setup & Configuration Guide">
+              <meta property="og:description" content="Complete AIDevOps documentation: setup guide, MCP server configuration, service integrations, AI assistant compatibility, and DevOps automation tutorials.">
+              <meta property="og:image" content="https://aidevops.sh/og-image.png">
+              <meta property="og:site_name" content="AI DevOps">
+              <meta property="og:locale" content="en_US">
+              
+              <!-- Twitter -->
+              <meta name="twitter:card" content="summary_large_image">
+              <meta name="twitter:url" content="https://aidevops.sh/docs.html">
+              <meta name="twitter:title" content="AIDevOps Documentation - Setup & Configuration Guide">
+              <meta name="twitter:description" content="Complete AIDevOps documentation: setup guide, MCP server configuration, service integrations, AI assistant compatibility, and DevOps automation tutorials.">
+              <meta name="twitter:image" content="https://aidevops.sh/og-image.png">
+              <meta name="twitter:creator" content="@marcuswquinn">
+              
+              <!-- Additional SEO -->
+              <meta name="theme-color" content="#B2E969">
+              <meta name="apple-mobile-web-app-title" content="AI DevOps Docs">
+              <meta name="application-name" content="AI DevOps">
+              
               <link rel="stylesheet" href="styles.css">
-              <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+              <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 576 512'><path fill='%23B2E969' d='M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z'/></svg>">
+              
+              <!-- JSON-LD Structured Data -->
+              <script type="application/ld+json">
+              {
+                  "@context": "https://schema.org",
+                  "@type": "TechArticle",
+                  "@id": "https://aidevops.sh/docs.html#article",
+                  "headline": "AIDevOps Framework Documentation",
+                  "description": "Complete documentation for the AIDevOps framework - setup guide, MCP server configuration, service integrations, and DevOps automation tutorials.",
+                  "url": "https://aidevops.sh/docs.html",
+                  "author": {
+                      "@type": "Person",
+                      "name": "Marcus Quinn",
+                      "url": "https://x.com/marcuswquinn"
+                  },
+                  "publisher": {
+                      "@type": "Organization",
+                      "name": "AI DevOps",
+                      "url": "https://aidevops.sh/"
+                  },
+                  "mainEntityOfPage": {
+                      "@type": "WebPage",
+                      "@id": "https://aidevops.sh/docs.html"
+                  },
+                  "about": {
+                      "@type": "SoftwareApplication",
+                      "name": "AIDevOps Framework",
+                      "applicationCategory": "DeveloperApplication"
+                  },
+                  "keywords": "ai devops, aidevops, documentation, setup guide, mcp servers, devops automation"
+              }
+              </script>
           </head>
           <body class="docs-page">
               <nav class="nav">
@@ -79,7 +141,7 @@ jobs:
                                   </svg>
                               </span>
                           </a>
-                          <a href="https://x.com/marcusquinn" target="_blank" rel="noopener noreferrer" class="nav-icon" aria-label="X/Twitter">
+                          <a href="https://x.com/marcuswquinn" target="_blank" rel="noopener noreferrer" class="nav-icon" aria-label="X/Twitter">
                               <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                                   <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
                               </svg>
