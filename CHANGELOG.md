@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.19.11] - 2025-12-06
+
+### Added
+
+- **Session Greeting with Version Check** - AI assistants now greet with aidevops version at session start
+  - Automatic version check via `aidevops-update-check.sh` script
+  - Update notification when new version available
+  - Clickable URL format: "Hi! We're running https://aidevops.sh v{version}"
+
+### Changed
+
+- **OpenCode AGENTS.md Instructions** - Strengthened version check compliance
+  - Changed from "MANDATORY" to "CRITICAL - DO THIS FIRST"
+  - Explicit Bash tool specification to prevent webfetch errors
+  - Added `instructions` field to opencode.json for reliable loading
+
+### Fixed
+
+- **TypeError on Session Start** - Fixed `undefined is not an object (evaluating 'response.headers')` error
+  - Caused by ambiguous "silently run" instruction interpreted as webfetch
+  - Now explicitly specifies Bash tool for version check script
+- **Local Linter False Positives** - Improved accuracy of linters-local.sh
+  - Return statement check now recognizes `return $var` and `return $((expr))` patterns
+  - Positional parameter check excludes multi-line awk scripts, heredocs, and comments
+  - Reduced false positives from 15 to 0
+- **SonarCloud S131 Violations** - Added default cases to case statements
+  - version-manager.sh, postflight-check.sh, generate-opencode-agents.sh
+- **SonarCloud S7682 and S7679 Issues** - Resolved return statement and positional parameter violations
+
 ## [2.17.1] - 2025-12-06
 
 ### Changed
@@ -558,7 +587,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.17.1...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.19.11...HEAD
+[2.19.11]: https://github.com/marcusquinn/aidevops/compare/v2.17.1...v2.19.11
 [2.17.1]: https://github.com/marcusquinn/aidevops/compare/v2.17.0...v2.17.1
 [2.17.0]: https://github.com/marcusquinn/aidevops/compare/v2.16.0...v2.17.0
 [2.16.0]: https://github.com/marcusquinn/aidevops/compare/v2.15.0...v2.16.0
