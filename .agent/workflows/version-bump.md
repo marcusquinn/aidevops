@@ -18,11 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Script**: `.agent/scripts/version-manager.sh`
-- **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch]`
-- **Validate first**: `.agent/scripts/version-manager.sh validate`
-- **Files updated**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties
-- **NEVER edit VERSION directly** - Always use the script to update all 5 files atomically
+- **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
+- **CRITICAL**: This single command does everything - bump, commit, tag, push, GitHub release
+- **NEVER** run separate commands, manually edit VERSION, or bump versions yourself
+- **Files updated atomically**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties
 - **Manual step**: Update CHANGELOG.md `[Unreleased]` to `[X.X.X] - YYYY-MM-DD` BEFORE running release
 - **Preflight**: Quality checks run automatically (bypass with `--skip-preflight`)
 

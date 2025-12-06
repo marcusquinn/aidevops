@@ -18,8 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch]`
-- **NEVER edit VERSION directly** - The script updates all 5 version files atomically
+- **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
+- **CRITICAL**: Always use the script above - it updates all 5 version files atomically
+- **NEVER** manually edit VERSION, bump versions yourself, or use separate commands
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
 - **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)
@@ -47,14 +48,21 @@ This workflow covers the release process: tagging, pushing, and creating GitHub/
 
 ## Quick Release (aidevops)
 
-For this framework, use the integrated release command:
+**MANDATORY**: Use this single command for ALL releases:
 
 ```bash
-# Bump version, update files, validate, create tag, and create GitHub release
-./.agent/scripts/version-manager.sh release [major|minor|patch]
+./.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight
 ```
 
-This handles steps 1-7 automatically.
+This command:
+1. Bumps version in all 5 files atomically (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
+2. Validates consistency
+3. Commits the version bump
+4. Creates git tag
+5. Pushes to remote
+6. Creates GitHub release
+
+**DO NOT** run separate bump/tag/push commands - use this single command only.
 
 ## Pre-Release Checklist
 
