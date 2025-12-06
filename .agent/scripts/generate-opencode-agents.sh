@@ -99,6 +99,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/build-plus.md",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -119,6 +122,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/build-agent.md - Design and improve AI agents",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -139,6 +145,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/build-mcp.md - Build MCP servers with TS+Bun+ElysiaJS",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -159,6 +168,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/accounting.md",
         "mode": "primary",
         "temperature": 0.1,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -176,6 +188,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/aidevops.md",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -196,6 +211,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/content.md",
         "mode": "primary",
         "temperature": 0.3,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -208,6 +226,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/health.md",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "read": True,
@@ -218,6 +239,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/legal.md",
         "mode": "primary",
         "temperature": 0.1,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "read": True,
@@ -228,6 +252,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/marketing.md",
         "mode": "primary",
         "temperature": 0.3,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "read": True,
@@ -239,6 +266,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/research.md",
         "mode": "primary",
         "temperature": 0.3,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "read": True,
             "webfetch": True,
@@ -251,6 +281,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/sales.md",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "read": True,
@@ -262,6 +295,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/seo.md",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "read": True,
@@ -276,6 +312,9 @@ primary_agents = {
         "description": "Read ~/.aidevops/agents/wordpress.md",
         "mode": "primary",
         "temperature": 0.2,
+        "permission": {
+            "external_directory": "allow"
+        },
         "tools": {
             "write": True,
             "edit": True,
@@ -368,6 +407,8 @@ while IFS= read -r f; do
 description: Read ~/.aidevops/agents/${rel_path}
 mode: subagent
 temperature: 0.2
+permission:
+  external_directory: allow
 tools:
   read: true
   bash: true
@@ -380,6 +421,8 @@ EOF
 description: Read ~/.aidevops/agents/${rel_path}
 mode: subagent
 temperature: 0.2
+permission:
+  external_directory: allow
 tools:
   read: true
   bash: true
