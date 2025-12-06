@@ -41,7 +41,7 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 2. Greet with exactly this format (with line breaks):
    "Hi!
    
-   We're running AI DevOps v{version}.
+   We're running aidevops.sh v{version}.
    
    What would you like to work on?"
 
