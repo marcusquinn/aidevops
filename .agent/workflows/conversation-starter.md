@@ -14,15 +14,15 @@ Shared prompts for Plan+ and Build+ agents to ensure consistent UX.
 >
 > **Implementation** (Build+):
 >
-> 4. Feature Development (`workflows/feature-development.md`, `workflows/branch/feature.md`)
-> 5. Bug Fixing (`workflows/bug-fixing.md`, `workflows/branch/bugfix.md`)
-> 6. Hotfix (`workflows/branch/hotfix.md`)
-> 7. Refactoring (`workflows/branch/refactor.md`)
-> 8. Preflight Checks (`workflows/preflight.md`)
-> 9. Pull/Merge Request (`workflows/pull-request.md`)
-> 10. Release (`workflows/release.md`)
-> 11. Postflight Checks (`workflows/postflight.md`)
-> 12. Something else (describe)
+> 1. Feature Development (`workflows/feature-development.md`, `workflows/branch/feature.md`)
+> 2. Bug Fixing (`workflows/bug-fixing.md`, `workflows/branch/bugfix.md`)
+> 3. Hotfix (`workflows/branch/hotfix.md`)
+> 4. Refactoring (`workflows/branch/refactor.md`)
+> 5. Preflight Checks (`workflows/preflight.md`)
+> 6. Pull/Merge Request (`workflows/pull-request.md`)
+> 7. Release (`workflows/release.md`)
+> 8. Postflight Checks (`workflows/postflight.md`)
+> 9. Something else (describe)
 
 After selection, read the relevant workflow subagent to add context.
 
