@@ -286,6 +286,47 @@ update_version_in_files() {
     return 0
 }
 
+# Function to commit version changes
+commit_version_changes() {
+    local version="$1"
+    
+    cd "$REPO_ROOT" || exit 1
+    
+    print_info "Committing version changes..."
+    
+    # Stage all version-related files
+    git add VERSION package.json README.md setup.sh sonar-project.properties 2>/dev/null
+    
+    # Check if there are changes to commit
+    if git diff --cached --quiet; then
+        print_info "No version changes to commit"
+        return 0
+    fi
+    
+    if git commit -m "chore(release): bump version to $version"; then
+        print_success "Committed version changes"
+        return 0
+    else
+        print_error "Failed to commit version changes"
+        return 1
+    fi
+}
+
+# Function to push changes and tags
+push_changes() {
+    cd "$REPO_ROOT" || exit 1
+    
+    print_info "Pushing changes to remote..."
+    
+    if git push origin main --tags; then
+        print_success "Pushed changes and tags to remote"
+        return 0
+    else
+        print_error "Failed to push to remote"
+        return 1
+    fi
+}
+
 # Function to create git tag
 create_git_tag() {
     local version="$1"
@@ -494,7 +535,9 @@ main() {
                 print_info "Validating version consistency..."
                 if validate_version_consistency "$new_version"; then
                     print_success "Version validation passed"
+                    commit_version_changes "$new_version"
                     create_git_tag "$new_version"
+                    push_changes
                     create_github_release "$new_version"
                     print_success "Release $new_version created successfully!"
                     print_warning "Remember to update CHANGELOG.md [Unreleased] → [$new_version]"
