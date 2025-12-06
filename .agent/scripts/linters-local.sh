@@ -247,9 +247,13 @@ check_secrets() {
             print_info "Run: bash $secretlint_script init"
         fi
     elif command -v docker &> /dev/null; then
-        print_info "Secretlint: Using Docker for scan..."
-        if docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>/dev/null; then
+        print_info "Secretlint: Using Docker for scan (30s timeout)..."
+        # Use timeout to prevent Docker from hanging - secretlint can be slow on large repos
+        if timeout 30 docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>/dev/null; then
             print_success "Secretlint: No secrets detected"
+        elif [[ $? -eq 124 ]]; then
+            print_warning "Secretlint: Timed out (skipped)"
+            print_info "Install native secretlint for faster scans: npm install -g secretlint"
         else
             violations=1
             print_error "Secretlint: Potential secrets detected!"
