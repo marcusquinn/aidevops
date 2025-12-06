@@ -38,7 +38,15 @@ jobs:
             breaks: false
           });
 
-          const readme = fs.readFileSync('README.md', 'utf8');
+          let readme = fs.readFileSync('README.md', 'utf8');
+          
+          // Convert relative links to absolute GitHub URLs
+          // Matches markdown links like [text](.agent/file.md) or [text](LICENSE)
+          const repoBase = 'https://github.com/marcusquinn/aidevops/blob/main/';
+          readme = readme.replace(/\]\((?!http|#|mailto:)([^)]+)\)/g, (match, path) => {
+            return `](${repoBase}${path})`;
+          });
+          
           const content = marked.parse(readme);
 
           // Output just the content

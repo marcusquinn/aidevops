@@ -681,15 +681,15 @@ bash .agent/scripts/continue-cli.sh review
 
 **Complete Guides Available:**
 
-- **[MCP Integrations Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/mcp-integrations.md)** - MCP servers setup
-- **[API Integrations Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/api-integrations.md)** - Service APIs
-- **[Pandoc Conversion Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/pandoc-conversion.md)** - Document format conversion
-- **[Agno Integration Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/agno-integration.md)** - Local AI agent operating system
-- **[Browser Automation Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/browser-automation.md)** - LinkedIn automation and web scraping
-- **[PageSpeed & Lighthouse Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/pagespeed-lighthouse.md)** - Performance auditing
-- **[AI CLI Tools Reference](https://github.com/marcusquinn/aidevops/blob/main/.agent/ai-cli-tools.md)** - AI assistant integration
-- **[Service Links Directory](https://github.com/marcusquinn/aidevops/blob/main/.agent/service-links.md)** - Direct links to all services
-- **[Security Best Practices](https://github.com/marcusquinn/aidevops/blob/main/.agent/security.md)** - Enterprise security standards
+- **[MCP Integrations Guide](.agent/mcp-integrations.md)** - MCP servers setup
+- **[API Integrations Guide](.agent/api-integrations.md)** - Service APIs
+- **[Pandoc Conversion Guide](.agent/pandoc-conversion.md)** - Document format conversion
+- **[Agno Integration Guide](.agent/agno-integration.md)** - Local AI agent operating system
+- **[Browser Automation Guide](.agent/browser-automation.md)** - LinkedIn automation and web scraping
+- **[PageSpeed & Lighthouse Guide](.agent/pagespeed-lighthouse.md)** - Performance auditing
+- **[AI CLI Tools Reference](.agent/ai-cli-tools.md)** - AI assistant integration
+- **[Service Links Directory](.agent/service-links.md)** - Direct links to all services
+- **[Security Best Practices](.agent/security.md)** - Enterprise security standards
 
 **Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `.agent/`
 
@@ -747,7 +747,7 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 4. Test with your infrastructure
 5. Submit pull request
 
-**License:** MIT License - see [LICENSE](https://github.com/marcusquinn/aidevops/blob/main/LICENSE) file for details
+**License:** MIT License - see [LICENSE](LICENSE) file for details
 **Created by Marcus Quinn** - Copyright © 2025
 
 ---
