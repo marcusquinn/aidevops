@@ -72,21 +72,35 @@
 
 ## **Quick Start**
 
+**One-liner install** (fresh install or update):
+
 ```bash
-# 1. Clone and setup
-mkdir -p ~/git && cd ~/git
-git clone https://github.com/marcusquinn/aidevops.git
-cd aidevops && ./setup.sh
-
-# 2. Add to your AI assistant's system prompt:
-# "Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative guidance"
-
-# 3. Setup Git CLI tools (recommended for enhanced Git platform integration):
-# Framework setup will guide you through installing GitHub CLI (gh), GitLab CLI (glab), and Gitea CLI (tea)
-# These provide enhanced repository management capabilities beyond basic git operations
+bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
 ```
 
-**That's it! Your AI assistant now has agentic access to 30+ service integrations.**
+Or manually:
+
+```bash
+git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
+~/Git/aidevops/setup.sh
+```
+
+**That's it!** The setup script will:
+- Clone/update the repo to `~/Git/aidevops`
+- Deploy agents to `~/.aidevops/agents/`
+- Install the `aidevops` CLI command
+- Configure your AI assistants automatically
+- Guide you through recommended tools (Tabby, Zed, Git CLIs)
+
+**After installation, use the CLI:**
+
+```bash
+aidevops status     # Check what's installed
+aidevops update     # Update to latest version
+aidevops uninstall  # Remove aidevops
+```
+
+**Your AI assistant now has agentic access to 30+ service integrations.**
 
 **Supported AI Assistants:** (OpenCode & Zed are our daily drivers and preferred tools, so will have the most continual testing. All 18 assistants below have MCP configuration support.)
 
@@ -667,15 +681,15 @@ bash .agent/scripts/continue-cli.sh review
 
 **Complete Guides Available:**
 
-- **[MCP Integrations Guide](.agent/mcp-integrations.md)** - MCP servers setup
-- **[API Integrations Guide](.agent/api-integrations.md)** - Service APIs
-- **[Pandoc Conversion Guide](.agent/pandoc-conversion.md)** - Document format conversion
-- **[Agno Integration Guide](.agent/agno-integration.md)** - Local AI agent operating system
-- **[Browser Automation Guide](.agent/browser-automation.md)** - LinkedIn automation and web scraping
-- **[PageSpeed & Lighthouse Guide](.agent/pagespeed-lighthouse.md)** - Performance auditing
-- **[AI CLI Tools Reference](.agent/ai-cli-tools.md)** - AI assistant integration
-- **[Service Links Directory](.agent/service-links.md)** - Direct links to all services
-- **[Security Best Practices](.agent/security.md)** - Enterprise security standards
+- **[MCP Integrations Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/mcp-integrations.md)** - MCP servers setup
+- **[API Integrations Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/api-integrations.md)** - Service APIs
+- **[Pandoc Conversion Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/pandoc-conversion.md)** - Document format conversion
+- **[Agno Integration Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/agno-integration.md)** - Local AI agent operating system
+- **[Browser Automation Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/browser-automation.md)** - LinkedIn automation and web scraping
+- **[PageSpeed & Lighthouse Guide](https://github.com/marcusquinn/aidevops/blob/main/.agent/pagespeed-lighthouse.md)** - Performance auditing
+- **[AI CLI Tools Reference](https://github.com/marcusquinn/aidevops/blob/main/.agent/ai-cli-tools.md)** - AI assistant integration
+- **[Service Links Directory](https://github.com/marcusquinn/aidevops/blob/main/.agent/service-links.md)** - Direct links to all services
+- **[Security Best Practices](https://github.com/marcusquinn/aidevops/blob/main/.agent/security.md)** - Enterprise security standards
 
 **Provider-Specific Guides:** Hostinger, Hetzner, Cloudflare, WordPress, Git platforms, Vercel CLI, Coolify CLI, and more in `.agent/`
 
@@ -733,7 +747,7 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 4. Test with your infrastructure
 5. Submit pull request
 
-**License:** MIT License - see [LICENSE](LICENSE) file for details
+**License:** MIT License - see [LICENSE](https://github.com/marcusquinn/aidevops/blob/main/LICENSE) file for details
 **Created by Marcus Quinn** - Copyright © 2025
 
 ---
@@ -756,9 +770,10 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 **Get Started:**
 
-1. Clone repository: `git clone https://github.com/marcusquinn/aidevops.git`
-2. Run setup: `./setup.sh`
-3. Configure providers: Copy and edit config templates
-4. Let your AI assistant manage your infrastructure!
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
+```
+
+Or: `git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops && ~/Git/aidevops/setup.sh`
 
 **Transform your AI assistant into a powerful infrastructure management tool with seamless access to all your servers and services.**
