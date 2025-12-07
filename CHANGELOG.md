@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New Subagents in README** - Added @dataforseo, @serper, @list-keys to example subagents table
+- **New Slash Command** - Added `/list-keys` command to development workflow table
+
+### Changed
+
+- **SEO Agent MCPs** - Updated to include dataforseo and serper MCPs
+
 ## [2.20.3] - 2025-12-07
 
 ### Changed
