@@ -321,6 +321,7 @@ primary_agents = {
             "ahrefs_*": True,
             "dataforseo_*": True,
             "serper_*": True,
+            "context7_*": True,
             "augment-context-engine_*": True
         }
     },

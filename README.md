@@ -523,7 +523,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 | Marketing | `marketing.md` | Marketing strategy and automation | augment |
 | Research | `research.md` | Research and analysis tasks | context7, augment |
 | Sales | `sales.md` | Sales operations and CRM | augment |
-| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, dataforseo, serper, augment |
+| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, dataforseo, serper, context7, augment |
 | WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
 
 ### **Example Subagents with MCP Integration**
@@ -535,7 +535,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
-| `@seo` | Search Console, keyword research | gsc, ahrefs, dataforseo, serper |
+| `@seo` | Search Console, keyword research | gsc, ahrefs, dataforseo, serper, context7 |
 | `@dataforseo` | SERP, keywords, backlinks, on-page analysis | dataforseo |
 | `@serper` | Google Search API (web, images, news, places) | serper |
 | `@list-keys` | List all configured API keys and storage locations | (read-only) |
