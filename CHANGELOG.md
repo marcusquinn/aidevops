@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - resolve changelog update regex and restore CHANGELOG.md
+
 ## [2.20.2] - 2025-12-07
 
 ### Fixed
