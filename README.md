@@ -297,7 +297,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
 - [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
 - [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
-- **Keyword Research** - ClearSERP-style keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
+- **Keyword Research** - Strategic keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
 
 **Data Extraction:**
 
@@ -736,7 +736,7 @@ See `.agent/opencode-integration.md` for complete documentation.
 ./.agent/scripts/101domains-helper.sh check-availability example.com
 ```
 
-### **Keyword Research (ClearSERP-Style)**
+### **Strategic Keyword Research**
 
 ```bash
 # Basic keyword research with volume, CPC, difficulty

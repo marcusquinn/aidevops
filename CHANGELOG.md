@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- add ClearSERP-style keyword research system
+- add strategic keyword research system
 - enable context7 MCP for SEO agent
 
 ### Changed
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Keyword Research System** - ClearSERP-style keyword research with full feature parity
+- **Keyword Research System** - Strategic keyword research with SERP weakness detection
   - New `keyword-research.md` subagent with comprehensive documentation
   - New `keyword-research-helper.sh` script (~1000 lines, bash 3.2 compatible)
   - 6 research modes: keyword expansion, autocomplete, domain research, competitor research, keyword gap, extended SERP analysis
