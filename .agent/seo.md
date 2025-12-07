@@ -5,8 +5,8 @@
 ## Quick Reference
 
 - **Purpose**: SEO optimization and analysis
-- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights
-- **MCP**: GSC, DataForSEO, Serper for comprehensive SEO data
+- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Context7
+- **MCP**: GSC, DataForSEO, Serper, Context7 for comprehensive SEO data and library docs
 
 **Subagents** (`seo/`):
 
