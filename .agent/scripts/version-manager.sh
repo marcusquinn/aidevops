@@ -270,44 +270,52 @@ EOF
     
     if [[ -z "$changelog_content" ]]; then
         print_warning "No conventional commits found for changelog generation"
-        changelog_content="### Changed\n\n- Version bump and maintenance updates\n"
+        changelog_content="### Changed
+
+- Version bump and maintenance updates
+"
     fi
     
-    # Create the new version section
-    local new_section="## [$version] - $today
-
-$changelog_content"
-    
-    # Create temp file for the update
-    local temp_file
+    # Create temp files for the update
+    local temp_file content_file
     temp_file=$(mktemp)
+    content_file=$(mktemp)
     
-    # Process the changelog:
-    # 1. Keep everything before [Unreleased]
-    # 2. Add new [Unreleased] section (empty)
-    # 3. Add the new version section
-    # 4. Keep everything after the old [Unreleased] content
+    # Write the new version section to a temp file (avoids awk multiline issues)
+    cat > "$content_file" << EOF
+## [$version] - $today
+
+$changelog_content
+EOF
     
-    awk -v new_section="$new_section" -v version="$version" -v today="$today" '
-    BEGIN { in_unreleased = 0; printed_new = 0 }
-    /^## \[Unreleased\]/ {
-        print "## [Unreleased]"
-        print ""
-        print new_section
-        in_unreleased = 1
-        printed_new = 1
-        next
-    }
-    /^## \[/ && in_unreleased {
-        in_unreleased = 0
-        print
-        next
-    }
-    !in_unreleased { print }
-    ' "$changelog_file" > "$temp_file"
+    # Process the changelog using sed instead of awk for reliability
+    # 1. Find the [Unreleased] line
+    # 2. Keep it, add blank line, then insert new version content
+    # 3. Skip any existing content under [Unreleased] until next ## section
+    
+    local in_unreleased=0
+    local printed_new=0
+    
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "## [Unreleased]"* ]]; then
+            echo "## [Unreleased]"
+            echo ""
+            cat "$content_file"
+            in_unreleased=1
+            printed_new=1
+        elif [[ "$line" == "## ["* ]] && [[ $in_unreleased -eq 1 ]]; then
+            # Next version section found, stop skipping
+            in_unreleased=0
+            echo "$line"
+        elif [[ $in_unreleased -eq 0 ]]; then
+            echo "$line"
+        fi
+        # Skip lines while in_unreleased=1 (old unreleased content)
+    done < "$changelog_file" > "$temp_file"
     
     # Replace original file
     mv "$temp_file" "$changelog_file"
+    rm -f "$content_file"
     
     print_success "Updated CHANGELOG.md: [Unreleased] → [$version] - $today"
     return 0
