@@ -1106,6 +1106,95 @@ setup_osgrep() {
     print_info "Verification: 'Search for authentication handling in this codebase'"
 }
 
+# Setup SEO MCP Servers (DataForSEO, Serper)
+setup_seo_mcps() {
+    print_info "Setting up SEO MCP servers..."
+
+    local has_node=false
+    local has_python=false
+    local has_uv=false
+
+    # Check Node.js
+    if command -v node &> /dev/null; then
+        has_node=true
+    fi
+
+    # Check Python
+    if command -v python3 &> /dev/null; then
+        has_python=true
+    fi
+
+    # Check uv (Python package manager)
+    if command -v uv &> /dev/null; then
+        has_uv=true
+    elif command -v uvx &> /dev/null; then
+        has_uv=true
+    fi
+
+    # DataForSEO MCP (Node.js based)
+    if [[ "$has_node" == "true" ]]; then
+        print_info "DataForSEO MCP available via: npx dataforseo-mcp-server"
+        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
+        print_info "  DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD"
+    else
+        print_warning "Node.js not found - DataForSEO MCP requires Node.js"
+    fi
+
+    # Serper MCP (Python based, uses uv/uvx)
+    if [[ "$has_uv" == "true" ]]; then
+        print_info "Serper MCP available via: uvx serper-mcp-server"
+        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
+        print_info "  SERPER_API_KEY"
+    elif [[ "$has_python" == "true" ]]; then
+        print_info "Serper MCP available via: pip install serper-mcp-server"
+        print_info "Then run: python3 -m serper_mcp_server"
+        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
+        print_info "  SERPER_API_KEY"
+        
+        # Offer to install uv for better experience
+        read -r -p "Install uv (recommended Python package manager)? (y/n): " install_uv
+        if [[ "$install_uv" == "y" ]]; then
+            print_info "Installing uv..."
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            if [[ $? -eq 0 ]]; then
+                print_success "uv installed successfully"
+                print_info "Restart your terminal or run: source ~/.bashrc (or ~/.zshrc)"
+            else
+                print_warning "Failed to install uv"
+            fi
+        fi
+    else
+        print_warning "Python not found - Serper MCP requires Python 3.11+"
+    fi
+
+    # Check if credentials are configured
+    if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+        # shellcheck source=/dev/null
+        source "$HOME/.config/aidevops/mcp-env.sh"
+        
+        if [[ -n "$DATAFORSEO_USERNAME" && -n "$DATAFORSEO_PASSWORD" ]]; then
+            print_success "DataForSEO credentials configured"
+        else
+            print_info "DataForSEO: Set credentials with:"
+            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
+            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
+        fi
+        
+        if [[ -n "$SERPER_API_KEY" ]]; then
+            print_success "Serper API key configured"
+        else
+            print_info "Serper: Set API key with:"
+            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY your_key"
+        fi
+    else
+        print_info "Configure SEO API credentials:"
+        print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh setup"
+    fi
+
+    print_info "SEO MCP documentation: ~/.aidevops/agents/seo/"
+    return 0
+}
+
 # Parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -1167,6 +1256,7 @@ main() {
     setup_nodejs_env
     setup_augment_context_engine
     setup_osgrep
+    setup_seo_mcps
 
     echo ""
     print_success "🎉 Setup complete!"
@@ -1209,6 +1299,8 @@ main() {
     echo "• Augment Context Engine - Cloud semantic codebase retrieval"
     echo "• Context7               - Real-time library documentation"
     echo "• Repomix                - Token-efficient codebase packing"
+    echo "• DataForSEO             - Comprehensive SEO data APIs"
+    echo "• Serper                 - Google Search API"
     echo ""
     echo "CLI Tools (use via bash):"
     echo "• osgrep                 - Local semantic search (100% private)"

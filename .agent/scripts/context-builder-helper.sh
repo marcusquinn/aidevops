@@ -20,10 +20,10 @@
 set -euo pipefail
 
 # Configuration
-# shellcheck disable=SC2034
 declare SCRIPT_DIR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
+export SCRIPT_DIR  # Available for sourced scripts
 declare SCRIPT_NAME
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME

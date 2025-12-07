@@ -45,7 +45,7 @@
 | `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |
 | `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp, wp-preferred) |
-| `seo/` | SEO subagents (google-search-console) |
+| `seo/` | SEO subagents (google-search-console, dataforseo, serper) |
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (playwright, stagehand, stagehand-python, chrome-devtools, crawl4ai, pagespeed) |
@@ -55,6 +55,7 @@
 | `tools/data-extraction/` | Data extraction (outscraper) |
 | `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
 | `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security) |
+| `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
 | `tools/opencode/` | OpenCode configuration and paths |
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
@@ -88,6 +89,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Release/versioning → `workflows/`
 - Browser automation → `tools/browser/`
 - MCP development → `build-mcp/`
+- SEO analysis → `seo/` (google-search-console, dataforseo, serper)
 
 ## Security
 
@@ -111,6 +113,7 @@ Never create files in `~/` root for files needed only with the current task.
 
 | Script | Purpose |
 |--------|---------|
+| `list-keys-helper.sh` | List all API keys with their storage locations |
 | `linters-local.sh` | Run local linting (ShellCheck, secretlint, patterns) |
 | `code-audit-helper.sh` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `version-manager.sh` | Version bumps and releases |
@@ -123,6 +126,7 @@ Never create files in `~/` root for files needed only with the current task.
 | `sonarcloud-cli.sh` | SonarCloud analysis |
 | `codacy-cli.sh` | Codacy code quality |
 | `secretlint-helper.sh` | Secret detection |
+| `opencode-test-helper.sh` | Test OpenCode config changes via CLI |
 
 ## Quality Workflow
 

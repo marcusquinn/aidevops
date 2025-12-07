@@ -63,6 +63,7 @@ echo -e "${BLUE}Configuring primary agents in opencode.json...${NC}"
 # Check if opencode.json exists
 if [[ ! -f "$OPENCODE_CONFIG" ]]; then
     echo -e "${YELLOW}Warning: $OPENCODE_CONFIG not found. Creating minimal config.${NC}"
+    # shellcheck disable=SC2016
     echo '{"$schema": "https://opencode.ai/config.json"}' > "$OPENCODE_CONFIG"
 fi
 
@@ -318,6 +319,8 @@ primary_agents = {
             "webfetch": True,
             "gsc_*": True,
             "ahrefs_*": True,
+            "dataforseo_*": True,
+            "serper_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -370,6 +373,32 @@ if 'outscraper_*' not in config['tools']:
     config['tools']['outscraper_*'] = False
     print("  Added outscraper_* to tools (disabled globally, enabled for @outscraper subagent)")
 
+# DataForSEO MCP - for comprehensive SEO data
+if 'dataforseo' not in config['mcp']:
+    config['mcp']['dataforseo'] = {
+        "type": "local",
+        "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD /opt/homebrew/bin/npx dataforseo-mcp-server"],
+        "enabled": True
+    }
+    print("  Added dataforseo MCP server")
+
+if 'dataforseo_*' not in config['tools']:
+    config['tools']['dataforseo_*'] = False
+    print("  Added dataforseo_* to tools (disabled globally, enabled for SEO agent)")
+
+# Serper MCP - for Google Search API
+if 'serper' not in config['mcp']:
+    config['mcp']['serper'] = {
+        "type": "local",
+        "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY /opt/homebrew/bin/serper-mcp-server"],
+        "enabled": True
+    }
+    print("  Added serper MCP server")
+
+if 'serper_*' not in config['tools']:
+    config['tools']['serper_*'] = False
+    print("  Added serper_* to tools (disabled globally, enabled for SEO agent)")
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 
@@ -395,7 +424,7 @@ while IFS= read -r f; do
     name=$(basename "$f" .md)
     [[ "$name" == "AGENTS" || "$name" == "README" ]] && continue
     
-    rel_path="${f#$AGENTS_DIR/}"
+    rel_path="${f#"$AGENTS_DIR"/}"
     
     # Determine additional tools based on subagent name/path
     extra_tools=""
@@ -411,6 +440,12 @@ while IFS= read -r f; do
             ;;
         google-search-console)
             extra_tools=$'  gsc_*: true'
+            ;;
+        dataforseo)
+            extra_tools=$'  dataforseo_*: true\n  webfetch: true'
+            ;;
+        serper)
+            extra_tools=$'  serper_*: true\n  webfetch: true'
             ;;
         *)
             ;;  # No extra tools for other agents

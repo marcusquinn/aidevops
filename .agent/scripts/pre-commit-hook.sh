@@ -197,7 +197,7 @@ main() {
     
     if [[ ${#modified_files[@]} -eq 0 ]]; then
         print_info "No shell files modified, skipping quality checks"
-        exit 0
+        return 0
     fi
     
     print_info "Checking ${#modified_files[@]} modified shell files:"
@@ -239,7 +239,7 @@ main() {
     # Final decision
     if [[ $total_violations -eq 0 ]]; then
         print_success "🎉 All quality checks passed! Commit approved."
-        exit 0
+        return 0
     else
         print_error "❌ Quality violations detected ($total_violations total)"
         echo ""
@@ -252,9 +252,8 @@ main() {
         print_info "To bypass this check (not recommended), use:"
         print_info "  git commit --no-verify"
 
-        exit 1
+        return 1
     fi
-    return 0
 }
 
 main "$@"

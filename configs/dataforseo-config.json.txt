@@ -1,0 +1,76 @@
+{
+  "_comments": {
+    "note": "DataForSEO MCP configuration for different AI assistants",
+    "signup": "Get credentials from https://app.dataforseo.com/",
+    "env_setup": "Store as DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/mcp-env.sh",
+    "docs": "https://docs.dataforseo.com/v3/"
+  },
+  "opencode": {
+    "_note": "OpenCode environment blocks don't expand shell variables - use bash wrapper",
+    "dataforseo": {
+      "type": "local",
+      "command": [
+        "/bin/bash",
+        "-c",
+        "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"
+      ],
+      "enabled": true
+    }
+  },
+  "claude_desktop": {
+    "_note": "Add to ~/Library/Application Support/Claude/claude_desktop_config.json",
+    "mcpServers": {
+      "dataforseo": {
+        "command": "npx",
+        "args": ["dataforseo-mcp-server"],
+        "env": {
+          "DATAFORSEO_USERNAME": "YOUR_DATAFORSEO_USERNAME",
+          "DATAFORSEO_PASSWORD": "YOUR_DATAFORSEO_PASSWORD"
+        }
+      }
+    }
+  },
+  "cursor": {
+    "_note": "Add to ~/.cursor/mcp.json",
+    "mcpServers": {
+      "dataforseo": {
+        "command": "npx",
+        "args": ["dataforseo-mcp-server"],
+        "env": {
+          "DATAFORSEO_USERNAME": "YOUR_DATAFORSEO_USERNAME",
+          "DATAFORSEO_PASSWORD": "YOUR_DATAFORSEO_PASSWORD"
+        }
+      }
+    }
+  },
+  "windsurf": {
+    "_note": "Add to ~/.codeium/windsurf/mcp_config.json",
+    "mcpServers": {
+      "dataforseo": {
+        "command": "npx",
+        "args": ["dataforseo-mcp-server"],
+        "env": {
+          "DATAFORSEO_USERNAME": "YOUR_DATAFORSEO_USERNAME",
+          "DATAFORSEO_PASSWORD": "YOUR_DATAFORSEO_PASSWORD"
+        }
+      }
+    }
+  },
+  "environment_variables": {
+    "_note": "Optional environment variables for module control",
+    "ENABLED_MODULES": "SERP,KEYWORDS_DATA,BACKLINKS,DATAFORSEO_LABS,ONPAGE,BUSINESS_DATA,DOMAIN_ANALYTICS,CONTENT_ANALYSIS,AI_OPTIMIZATION",
+    "DATAFORSEO_FULL_RESPONSE": "false",
+    "DATAFORSEO_SIMPLE_FILTER": "false"
+  },
+  "available_modules": {
+    "SERP": "Real-time SERP data for Google, Bing, Yahoo",
+    "KEYWORDS_DATA": "Keyword research, search volume, CPC",
+    "ONPAGE": "Website crawling, on-page SEO metrics",
+    "DATAFORSEO_LABS": "Keywords, SERPs, domains from proprietary databases",
+    "BACKLINKS": "Backlink analysis, referring domains, anchor text",
+    "BUSINESS_DATA": "Business reviews (Google, Trustpilot, Tripadvisor)",
+    "DOMAIN_ANALYTICS": "Website traffic, technologies, Whois",
+    "CONTENT_ANALYSIS": "Brand monitoring, sentiment analysis",
+    "AI_OPTIMIZATION": "Keyword discovery, LLM benchmarking"
+  }
+}

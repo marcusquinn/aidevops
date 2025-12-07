@@ -39,13 +39,15 @@ get_mcp_command() {
         "stagehand") echo "node ${HOME}/.aidevops/stagehand/examples/basic-example.js" ;;
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
         "stagehand-both") echo "both" ;;
+        "dataforseo") echo "npx dataforseo-mcp-server" ;;
+        "serper") echo "uvx serper-mcp-server" ;;
         *) echo "" ;;
     esac
     return 0
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel stagehand stagehand-python stagehand-both"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel stagehand stagehand-python stagehand-both dataforseo serper"
 
 # Check prerequisites
 check_prerequisites() {
@@ -239,6 +241,57 @@ install_mcp() {
             print_success "Both Stagehand integrations completed"
             print_info "JavaScript: ./.agent/scripts/stagehand-helper.sh"
             print_info "Python: ./.agent/scripts/stagehand-python-helper.sh"
+            ;;
+        "dataforseo")
+            print_info "Setting up DataForSEO MCP for comprehensive SEO data..."
+            print_warning "DataForSEO MCP requires API credentials"
+            print_info "Get credentials from: https://app.dataforseo.com/"
+            print_info ""
+            print_info "Store in ~/.config/aidevops/mcp-env.sh:"
+            print_info "  export DATAFORSEO_USERNAME=\"your_username\""
+            print_info "  export DATAFORSEO_PASSWORD=\"your_password\""
+            print_info ""
+            print_info "Or use the helper script:"
+            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
+            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
+            print_info ""
+            print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
+            print_info '  "dataforseo": {'
+            print_info '    "type": "local",'
+            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
+            print_info '    "enabled": true'
+            print_info '  }'
+            print_info ""
+            print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
+            print_info "Docs: https://docs.dataforseo.com/v3/"
+            ;;
+        "serper")
+            print_info "Setting up Serper MCP for Google Search API..."
+            print_warning "Serper MCP requires API key"
+            print_info "Get API key from: https://serper.dev/"
+            print_info ""
+            print_info "Store in ~/.config/aidevops/mcp-env.sh:"
+            print_info "  export SERPER_API_KEY=\"your_api_key\""
+            print_info ""
+            print_info "Or use the helper script:"
+            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY your_key"
+            print_info ""
+            print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
+            print_info '  "serper": {'
+            print_info '    "type": "local",'
+            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=\$SERPER_API_KEY uvx serper-mcp-server"],'
+            print_info '    "enabled": true'
+            print_info '  }'
+            print_info ""
+            print_info "Available tools: google_search, google_search_images, google_search_videos, google_search_places, google_search_maps, google_search_reviews, google_search_news, google_search_shopping, google_search_lens, google_search_scholar, google_search_patents, google_search_autocomplete, webpage_scrape"
+            print_info "GitHub: https://github.com/garylab/serper-mcp-server"
+            
+            # Check if uv is installed
+            if ! command -v uvx &> /dev/null && ! command -v uv &> /dev/null; then
+                print_warning "uv (Python package manager) not found"
+                print_info "Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+                print_info "Alternative: pip install serper-mcp-server"
+            fi
             ;;
         *)
             print_error "Unknown MCP integration: $mcp_name"

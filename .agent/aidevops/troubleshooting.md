@@ -218,6 +218,39 @@ echo $CLOUDFLARE_ACCOUNT_ID
 echo $CLOUDFLARE_API_TOKEN
 ```
 
+### **5. Test Configuration Changes with CLI**
+
+The OpenCode TUI requires restart to pick up `opencode.json` changes. Use CLI for quick testing:
+
+```bash
+# Test new MCP configuration
+opencode run "List available tools from dataforseo_*" --agent SEO
+
+# Debug MCP connection (shows errors in terminal)
+opencode run "Call serper_google_search with query 'test'" --agent SEO 2>&1
+
+# Verify agent has correct tool access
+opencode run "What MCP tools can you access?" --agent SEO
+
+# Test slash commands
+opencode run "/new-command arg1" --agent Build+
+```
+
+**Workflow for adding new MCPs:**
+
+1. Edit `~/.config/opencode/opencode.json`
+2. Test with CLI: `opencode run "Test [mcp]" --agent [agent] 2>&1`
+3. If working, restart TUI to use interactively
+4. If failing, check stderr output and iterate on config
+5. Update `generate-opencode-agents.sh` to persist changes
+
+**Helper script for common tests:**
+
+```bash
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Plan+
+```
+
 ## Performance Optimization
 
 ### **Chrome DevTools Optimization**

@@ -15,13 +15,11 @@
 
 set -euo pipefail
 
-AGENTS_DIR="$HOME/.aidevops/agents"
 OPENCODE_COMMAND_DIR="$HOME/.config/opencode/command"
 
 # Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${BLUE}Generating OpenCode commands...${NC}"
@@ -327,6 +325,48 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /hotfix command"
 
 # =============================================================================
+# LIST-KEYS COMMAND
+# =============================================================================
+# List all API keys available in session
+
+cat > "$OPENCODE_COMMAND_DIR/list-keys.md" << 'EOF'
+---
+description: List all API keys available in session with their storage locations
+agent: Build+
+---
+
+Run the list-keys helper script and format the output as a markdown table:
+
+!`~/.aidevops/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
+
+Parse the JSON output and present as markdown tables grouped by source.
+
+Format with padded columns for readability:
+
+```
+### ~/.config/aidevops/mcp-env.sh
+
+| Key                        | Status        |
+|----------------------------|---------------|
+| OPENAI_API_KEY             | ✓ loaded      |
+| ANTHROPIC_API_KEY          | ✓ loaded      |
+| TEST_KEY                   | ⚠ placeholder |
+```
+
+Status icons:
+- ✓ loaded
+- ⚠ placeholder (needs real value)  
+- ✗ not loaded
+- ℹ configured
+
+Pad key names to align columns. End with total count.
+
+Security: Key values are NEVER displayed.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /list-keys command"
+
+# =============================================================================
 # CONTEXT BUILDER COMMAND
 # =============================================================================
 # Token-efficient context generation
@@ -403,6 +443,7 @@ echo "  /feature          - Create feature branch"
 echo "  /bugfix           - Create bugfix branch"
 echo "  /hotfix           - Create hotfix branch"
 echo "  /context          - Build AI context"
+echo "  /list-keys        - List API keys with storage locations"
 echo ""
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
 echo ""

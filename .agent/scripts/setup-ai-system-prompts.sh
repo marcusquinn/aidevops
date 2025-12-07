@@ -115,7 +115,7 @@ configure_warp() {
     print_info "Creating Warp workflow for DevOps setup..."
     
     if warp-cli workflow create devops-setup \
-        --command "cd $FRAMEWORK_PATH && cat AGENTS.md" \ || exit
+        --command "cd $FRAMEWORK_PATH && cat AGENTS.md" \
         --description "Read AI DevOps framework guidance" 2>/dev/null; then
         print_success "Created Warp workflow 'devops-setup'"
         print_info "Use: warp-cli workflow run devops-setup"

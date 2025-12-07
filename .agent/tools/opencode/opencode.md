@@ -255,6 +255,85 @@ opencode
 > @code-standards run ShellCheck on all scripts
 ```
 
+## CLI Testing Mode
+
+The OpenCode TUI requires a restart to pick up configuration changes (new MCPs, agents, slash commands). Use the CLI for quick testing without restarting.
+
+### When to Use CLI Testing
+
+- **New MCP servers** added to `opencode.json`
+- **Agent configuration changes** (tools, permissions)
+- **Slash commands** added or modified
+- **Quick one-off commands** with specific agents
+- **Debugging MCP connection issues**
+
+### Basic CLI Testing
+
+```bash
+# Test with specific agent (fresh config load)
+opencode run "List your available tools" --agent SEO
+
+# Test new MCP functionality
+opencode run "Use dataforseo to get SERP for 'test query'" --agent SEO
+
+# Test with different model
+opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-20250514
+
+# Capture errors for debugging
+opencode run "Test the serper MCP" --agent SEO 2>&1
+```
+
+### Persistent Server Mode (Faster Iteration)
+
+For iterative testing, use serve mode to avoid MCP cold boot on each run:
+
+```bash
+# Terminal 1: Start headless server (keeps MCPs warm)
+opencode serve --port 4096
+
+# Terminal 2: Run tests against it (fast, reuses MCP connections)
+opencode run --attach http://localhost:4096 "Test query" --agent SEO
+opencode run --attach http://localhost:4096 "Another test" --agent SEO
+
+# After config changes: Ctrl+C in Terminal 1, restart server
+```
+
+### Testing Scenarios
+
+| Scenario | Command |
+|----------|---------|
+| New MCP added | `opencode run "List tools from [mcp]_*" --agent [agent]` |
+| MCP auth issues | `opencode run "Call [mcp]_[tool]" --agent [agent] 2>&1` |
+| Agent permissions | `opencode run "Try to write a file" --agent Plan+` |
+| Slash command | `opencode run "/new-command arg1 arg2" --agent Build+` |
+| Quick task | `opencode run "Do X quickly" --agent Build+` |
+
+### Helper Script
+
+Use the helper script for common testing tasks:
+
+```bash
+# Test if MCP is accessible
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
+
+# Test agent permissions
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Plan+
+
+# List tools available to agent
+~/.aidevops/agents/scripts/opencode-test-helper.sh list-tools Build+
+
+# Start persistent server
+~/.aidevops/agents/scripts/opencode-test-helper.sh serve 4096
+```
+
+### Workflow: Adding New MCP
+
+1. Edit `~/.config/opencode/opencode.json` - add MCP config
+2. Test with CLI: `opencode run "Test [mcp]" --agent [agent] 2>&1`
+3. If errors, check stderr output and fix config
+4. If working, restart TUI to use interactively
+5. Update `generate-opencode-agents.sh` to persist changes
+
 ## MCP Server Configuration
 
 ### Required Environment Variables
