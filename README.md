@@ -523,7 +523,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 | Marketing | `marketing.md` | Marketing strategy and automation | augment |
 | Research | `research.md` | Research and analysis tasks | context7, augment |
 | Sales | `sales.md` | Sales operations and CRM | augment |
-| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, augment |
+| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, dataforseo, serper, augment |
 | WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
 
 ### **Example Subagents with MCP Integration**
@@ -535,7 +535,10 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
-| `@seo` | Search Console, keyword research | gsc, ahrefs |
+| `@seo` | Search Console, keyword research | gsc, ahrefs, dataforseo, serper |
+| `@dataforseo` | SERP, keywords, backlinks, on-page analysis | dataforseo |
+| `@serper` | Google Search API (web, images, news, places) | serper |
+| `@list-keys` | List all configured API keys and storage locations | (read-only) |
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
@@ -619,6 +622,7 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/linters-local` | Run local linting (ShellCheck, secretlint) |
 | `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `/code-standards` | Check against documented quality standards |
+| `/list-keys` | List all configured API keys and their storage locations |
 | `/pr` | Unified PR workflow (orchestrates all checks) |
 
 **Release Workflow** (in order):
