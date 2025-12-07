@@ -85,6 +85,7 @@ The release script automatically generates changelog entries from conventional c
 Commits with `chore:` prefix are excluded from the changelog.
 
 **Best practice**: Use conventional commit messages for accurate changelog generation:
+
 ```bash
 git commit -m "feat: add DataForSEO MCP integration"
 git commit -m "fix: resolve Serper API authentication"
