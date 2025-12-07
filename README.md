@@ -56,7 +56,7 @@
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-18-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 ## **Enterprise-Grade Quality & Security**
@@ -252,6 +252,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 |-----|---------|------------------|
 | [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
 | [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
+| [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
 | [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
 | [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
 | [Context7](https://context7.com/) | Library documentation lookup | No |
@@ -265,6 +266,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 | [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
 | [Playwright](https://playwright.dev/) | Cross-browser testing | No |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
+| [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
 | [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
 | [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
 | [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
@@ -290,6 +292,8 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 **SEO & Research:**
 
 - [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data
+- [DataForSEO](https://dataforseo.com/) - Comprehensive SEO data APIs (SERP, keywords, backlinks, on-page)
+- [Serper](https://serper.dev/) - Google Search API (web, images, news, places, shopping)
 - [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
 - [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
 - [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
@@ -624,7 +628,7 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/preflight` | Run quality checks before release |
 | `/changelog` | Update CHANGELOG.md with recent changes |
 | `/version-bump` | Bump version following semver |
-| `/release` | Full release workflow (bump, tag, GitHub release) |
+| `/release` | Full release workflow (bump, tag, GitHub release, auto-changelog) |
 | `/postflight` | Verify release health after deployment |
 
 **Meta/Improvement**:
