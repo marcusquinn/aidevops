@@ -7,22 +7,45 @@
 - **Purpose**: SEO optimization and analysis
 - **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Context7
 - **MCP**: GSC, DataForSEO, Serper, Context7 for comprehensive SEO data and library docs
+- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`
 
 **Subagents** (`seo/`):
 
 | Subagent | Purpose |
 |----------|---------|
+| `keyword-research.md` | Comprehensive keyword research with SERP weakness detection |
 | `google-search-console.md` | GSC queries and search performance |
 | `dataforseo.md` | Comprehensive SEO data APIs (SERP, keywords, backlinks) |
 | `serper.md` | Google Search API (web, images, news, places) |
 
 **Key Operations**:
+- Keyword research with weakness detection (`/keyword-research-extended`)
+- Autocomplete long-tail expansion (`/autocomplete-research`)
+- Competitor keyword analysis (`--competitor`)
+- Keyword gap analysis (`--gap`)
 - Search performance analysis (GSC)
 - SERP analysis (DataForSEO, Serper)
-- Keyword research (DataForSEO)
 - Backlink analysis (Ahrefs, DataForSEO)
 - Page speed optimization (PageSpeed)
-- Content optimization
+
+**Commands**:
+
+```bash
+# Basic keyword research
+/keyword-research "best seo tools, keyword research"
+
+# Long-tail autocomplete expansion
+/autocomplete-research "how to lose weight"
+
+# Full SERP analysis with weakness detection
+/keyword-research-extended "dog training tips"
+
+# Competitor research
+/keyword-research-extended --competitor petco.com
+
+# Keyword gap analysis
+/keyword-research-extended --gap mysite.com,competitor.com
+```
 
 **MCP Integration**:
 
@@ -41,9 +64,32 @@ serper.google_search [query]
 serper.google_search_news [query]
 ```
 
+**Testing**: Use OpenCode CLI to test SEO commands without restarting TUI:
+```bash
+opencode run "/keyword-research 'test query'" --agent SEO
+```
+See `tools/opencode/opencode.md` for CLI testing patterns.
+
 <!-- AI-CONTEXT-END -->
 
 ## SEO Workflow
+
+### Keyword Research (Primary)
+
+Use `/keyword-research` commands for comprehensive keyword analysis:
+
+```bash
+# Discovery workflow
+/keyword-research "seed keywords"           # Expand seed keywords
+/autocomplete-research "question phrase"    # Long-tail discovery
+/keyword-research-extended "top keywords"   # Full SERP analysis
+```
+
+See `seo/keyword-research.md` for complete documentation including:
+- 17 SERP weakness types
+- KeywordScore algorithm (0-100)
+- Domain/Competitor/Gap research modes
+- Provider configuration (DataForSEO, Serper, Ahrefs)
 
 ### Search Performance
 
@@ -63,7 +109,7 @@ Use DataForSEO or Serper for real-time SERP data:
 
 See `seo/dataforseo.md` and `seo/serper.md` for usage.
 
-### Keyword Research
+### Keyword Research (Legacy)
 
 Combine tools:
 - GSC for existing performance

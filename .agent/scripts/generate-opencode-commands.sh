@@ -420,6 +420,149 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /pr command"
 
 # =============================================================================
+# KEYWORD RESEARCH COMMAND
+# =============================================================================
+# Basic keyword expansion from seed keywords
+
+cat > "$OPENCODE_COMMAND_DIR/keyword-research.md" << 'EOF'
+---
+description: Keyword research with seed keyword expansion
+agent: SEO
+---
+
+Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+
+Keywords to research: $ARGUMENTS
+
+**Workflow:**
+1. If no locale preference saved, prompt user to select (US/English default)
+2. Call the keyword research helper or DataForSEO MCP directly
+3. Return first 100 results in markdown table format
+4. Ask if user needs more results (up to 10,000)
+5. Offer CSV export option
+
+**Output format:**
+```
+| Keyword                  | Volume  | CPC    | KD  | Intent       |
+|--------------------------|---------|--------|-----|--------------|
+| best seo tools 2025      | 12,100  | $4.50  | 45  | Commercial   |
+```
+
+**Options from arguments:**
+- `--provider dataforseo|serper|both`
+- `--locale us-en|uk-en|etc`
+- `--limit N`
+- `--csv` - Export to ~/Downloads/
+- `--min-volume N`, `--max-difficulty N`, `--intent type`
+- `--contains "term"`, `--excludes "term"`
+
+Wildcards supported: "best * for dogs" expands to variations.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /keyword-research command"
+
+# =============================================================================
+# AUTOCOMPLETE RESEARCH COMMAND
+# =============================================================================
+# Google autocomplete long-tail expansion
+
+cat > "$OPENCODE_COMMAND_DIR/autocomplete-research.md" << 'EOF'
+---
+description: Google autocomplete long-tail keyword expansion
+agent: SEO
+---
+
+Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+
+Seed keyword for autocomplete: $ARGUMENTS
+
+**Workflow:**
+1. Use DataForSEO or Serper autocomplete API
+2. Return all autocomplete suggestions
+3. Display in markdown table format
+4. Offer CSV export option
+
+**Output format:**
+```
+| Keyword                           | Volume  | CPC    | KD  | Intent       |
+|-----------------------------------|---------|--------|-----|--------------|
+| how to lose weight fast           |  8,100  | $2.10  | 42  | Informational|
+| how to lose weight in a week      |  5,400  | $1.80  | 38  | Informational|
+```
+
+**Options:**
+- `--provider dataforseo|serper|both`
+- `--locale us-en|uk-en|etc`
+- `--csv` - Export to ~/Downloads/
+
+This is ideal for discovering question-based and long-tail keywords.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /autocomplete-research command"
+
+# =============================================================================
+# KEYWORD RESEARCH EXTENDED COMMAND
+# =============================================================================
+# Full SERP analysis with weakness detection and KeywordScore
+
+cat > "$OPENCODE_COMMAND_DIR/keyword-research-extended.md" << 'EOF'
+---
+description: Full SERP analysis with weakness detection and KeywordScore
+agent: SEO
+subtask: true
+---
+
+Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+
+Research target: $ARGUMENTS
+
+**Modes (from arguments):**
+- Default: Full SERP analysis on keywords
+- `--domain example.com` - Keywords associated with domain's niche
+- `--competitor example.com` - Exact keywords competitor ranks for
+- `--gap yourdomain.com,competitor.com` - Keywords they have that you don't
+
+**Analysis levels:**
+- `--full` (default): Complete SERP analysis with 17 weaknesses + KeywordScore
+- `--quick`: Basic metrics only (Volume, CPC, KD, Intent) - faster, cheaper
+
+**Additional options:**
+- `--ahrefs` - Include Ahrefs DR/UR metrics
+- `--provider dataforseo|serper|both`
+- `--limit N` (default 100, max 10,000)
+- `--csv` - Export to ~/Downloads/
+
+**Extended output format:**
+```
+| Keyword         | Vol    | KD  | KS  | Weaknesses | Weakness Types                   | DS  | PS  |
+|-----------------|--------|-----|-----|------------|----------------------------------|-----|-----|
+| best seo tools  | 12.1K  | 45  | 72  | 5          | Low DS, Old Content, No HTTPS... | 23  | 15  |
+```
+
+**Competitor/Gap output format:**
+```
+| Keyword         | Vol    | KD  | Position | Est Traffic | Ranking URL                    |
+|-----------------|--------|-----|----------|-------------|--------------------------------|
+| best seo tools  | 12.1K  | 45  | 3        | 2,450       | example.com/blog/seo-tools     |
+```
+
+**KeywordScore (0-100):**
+- 90-100: Exceptional opportunity
+- 70-89: Strong opportunity
+- 50-69: Moderate opportunity
+- 30-49: Challenging
+- 0-29: Very difficult
+
+**17 SERP Weaknesses detected:**
+Domain: Low DS, Low PS, No Backlinks
+Technical: Slow Page, High Spam, Non-HTTPS, Broken, Flash, Frames, Non-Canonical
+Content: Old Content, Title Mismatch, No Keyword in Headings, No Headings, Unmatched Intent
+SERP: UGC-Heavy Results
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /keyword-research-extended command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -444,7 +587,11 @@ echo "  /bugfix           - Create bugfix branch"
 echo "  /hotfix           - Create hotfix branch"
 echo "  /context          - Build AI context"
 echo "  /list-keys        - List API keys with storage locations"
+echo "  /keyword-research - Seed keyword expansion"
+echo "  /autocomplete-research - Google autocomplete long-tails"
+echo "  /keyword-research-extended - Full SERP analysis with weakness detection"
 echo ""
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
+echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 echo ""
 echo "Restart OpenCode to load new commands."

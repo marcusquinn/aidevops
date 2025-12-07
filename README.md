@@ -40,7 +40,7 @@
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.20.5-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.21.0-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -297,6 +297,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
 - [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
 - [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
+- **Keyword Research** - ClearSERP-style keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
 
 **Data Extraction:**
 
@@ -625,6 +626,14 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/list-keys` | List all configured API keys and their storage locations |
 | `/pr` | Unified PR workflow (orchestrates all checks) |
 
+**SEO Workflow**:
+
+| Command | Purpose |
+|---------|---------|
+| `/keyword-research` | Seed keyword expansion with volume, CPC, difficulty |
+| `/autocomplete-research` | Google autocomplete long-tail discovery |
+| `/keyword-research-extended` | Full SERP analysis with weakness detection |
+
 **Release Workflow** (in order):
 
 | Command | Purpose |
@@ -726,6 +735,37 @@ See `.agent/opencode-integration.md` for complete documentation.
 # Check domain availability
 ./.agent/scripts/101domains-helper.sh check-availability example.com
 ```
+
+### **Keyword Research (ClearSERP-Style)**
+
+```bash
+# Basic keyword research with volume, CPC, difficulty
+./.agent/scripts/keyword-research-helper.sh research "seo tools" --limit 20
+
+# Google autocomplete long-tail discovery
+./.agent/scripts/keyword-research-helper.sh autocomplete "how to" --provider both
+
+# Extended research with SERP weakness detection
+./.agent/scripts/keyword-research-helper.sh extended "keywords" --quick
+
+# Competitor keyword research
+./.agent/scripts/keyword-research-helper.sh extended --competitor ahrefs.com --limit 50
+
+# Keyword gap analysis (find keywords competitor ranks for but you don't)
+./.agent/scripts/keyword-research-helper.sh extended --gap semrush.com,ahrefs.com
+
+# Domain research (all keywords a domain ranks for)
+./.agent/scripts/keyword-research-helper.sh extended --domain example.com --limit 100
+```
+
+**Features:**
+
+- **6 Research Modes**: Keyword expansion, autocomplete, domain research, competitor research, keyword gap, extended SERP analysis
+- **17 SERP Weaknesses**: Low domain score, no backlinks, thin content, UGC-heavy, non-HTTPS, and more
+- **KeywordScore Algorithm**: 0-100 score based on weakness count, volume, and difficulty
+- **Multi-Provider**: DataForSEO (primary), Serper (autocomplete), Ahrefs (domain ratings)
+- **Locale Support**: US/UK/CA/AU/DE/FR/ES with saved preferences
+- **Output Formats**: Markdown tables (TUI) and CSV export to ~/Downloads
 
 ### **Quality Control & Performance**
 

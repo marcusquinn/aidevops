@@ -25,6 +25,12 @@
 **Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP,
 Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations
 
+**Testing**: Use OpenCode CLI to test config changes without restarting TUI:
+```bash
+opencode run "Test query" --agent AI-DevOps
+```
+See `tools/opencode/opencode.md` for CLI testing patterns.
+
 <!-- AI-CONTEXT-END -->
 
 ## Framework Overview

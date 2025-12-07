@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.0] - 2025-12-07
+
+### Added
+
+- **Keyword Research System** - ClearSERP-style keyword research with full feature parity
+  - New `keyword-research.md` subagent with comprehensive documentation
+  - New `keyword-research-helper.sh` script (~1000 lines, bash 3.2 compatible)
+  - 6 research modes: keyword expansion, autocomplete, domain research, competitor research, keyword gap, extended SERP analysis
+  - 17 SERP weakness detection categories across domain/authority, technical, content, and SERP composition
+  - KeywordScore algorithm (0-100) based on weakness count, volume, and difficulty
+  - Multi-provider support: DataForSEO (primary), Serper (autocomplete), Ahrefs (domain ratings)
+  - Locale support with saved preferences (US/UK/CA/AU/DE/FR/ES)
+  - Output formats: Markdown tables (TUI) and CSV export to ~/Downloads
+- **New OpenCode Slash Commands** - 3 new SEO workflow commands
+  - `/keyword-research` - Seed keyword expansion with volume, CPC, difficulty
+  - `/autocomplete-research` - Google autocomplete long-tail discovery
+  - `/keyword-research-extended` - Full SERP analysis with weakness detection
+- **OpenCode CLI Testing Reference** - Added to main agents (build-agent, build-mcp, build-plus, aidevops, seo)
+  - Pattern: `opencode run "Test query" --agent [agent-name]`
+  - New `opencode-test-helper.sh` script for testing MCP and agent configurations
+
+### Changed
+
+- Updated `seo.md` with keyword research subagent references
+- Updated `generate-opencode-commands.sh` with 3 new SEO commands (18 total)
+- Updated README with keyword research section and SEO workflow commands
+
+### Fixed
+
+- Added missing return statements to API functions in `keyword-research-helper.sh`
+- Added missing return statements to print functions in `opencode-test-helper.sh`
+
 ## [2.20.5] - 2025-12-07
 
 ### Added
