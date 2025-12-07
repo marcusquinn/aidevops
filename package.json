@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "2.20.4",
+  "version": "2.20.5",
   "description": "AI DevOps Framework with DSPy, Bun, Elysia, and high-performance tooling",
   "type": "module",
   "main": "index.js",
