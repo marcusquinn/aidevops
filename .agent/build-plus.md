@@ -55,9 +55,11 @@ For implementation tasks, follow `workflows/branch.md` lifecycle.
 - Patterns: `tools/code-review/best-practices.md`
 
 **Testing**: Use OpenCode CLI to test config changes without restarting TUI:
+
 ```bash
 opencode run "Test query" --agent Build+
 ```
+
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
 <!-- AI-CONTEXT-END -->

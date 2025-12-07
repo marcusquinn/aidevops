@@ -65,9 +65,11 @@ serper.google_search_news [query]
 ```
 
 **Testing**: Use OpenCode CLI to test SEO commands without restarting TUI:
+
 ```bash
 opencode run "/keyword-research 'test query'" --agent SEO
 ```
+
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
 <!-- AI-CONTEXT-END -->

@@ -51,6 +51,7 @@ Basic keyword expansion from seed keywords.
 - `--excludes "term"` - Exclude keywords containing term
 
 **Wildcard Support**:
+
 ```bash
 /keyword-research "best * for dogs"
 # Returns: best food for dogs, best toys for dogs, etc.
@@ -239,6 +240,7 @@ Full-featured provider with all capabilities.
 - `onpage/instant_pages` - Page speed, technical analysis
 
 **Required Env Vars**:
+
 ```bash
 DATAFORSEO_USERNAME="your_username"
 DATAFORSEO_PASSWORD="your_password"
@@ -253,6 +255,7 @@ Faster, simpler API for basic research.
 - `autocomplete` - Long-tail suggestions
 
 **Required Env Vars**:
+
 ```bash
 SERPER_API_KEY="your_api_key"
 ```
@@ -266,6 +269,7 @@ Premium metrics for Domain Rating (DR) and URL Rating (UR).
 - `url-rating` - UR metric
 
 **Required Env Vars**:
+
 ```bash
 AHREFS_API_KEY="your_api_key"
 ```
@@ -349,16 +353,19 @@ Default: `~/Downloads/keyword-research-YYYYMMDD-HHMMSS.csv`
 ### CSV Columns
 
 **Basic Research**:
+
 ```
 Keyword,Volume,CPC,Difficulty,Intent
 ```
 
 **Extended Research**:
+
 ```
 Keyword,Volume,CPC,Difficulty,Intent,KeywordScore,DomainScore,PageScore,WeaknessCount,Weaknesses,DR,UR
 ```
 
 **Competitor/Gap Research**:
+
 ```
 Keyword,Volume,CPC,Difficulty,Intent,Position,EstTraffic,RankingURL
 ```
@@ -401,6 +408,7 @@ Keyword,Volume,CPC,Difficulty,Intent,Position,EstTraffic,RankingURL
 ### Provider Status
 
 Check provider availability:
+
 ```bash
 /list-keys --service dataforseo
 /list-keys --service serper

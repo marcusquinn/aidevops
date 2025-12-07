@@ -38,9 +38,11 @@ tools:
 **Process**: Complete task first, cite evidence, check duplicates, propose specific fix, ask permission
 
 **Testing**: Use OpenCode CLI to test agent/config changes without restarting TUI:
+
 ```bash
 opencode run "Test query" --agent [agent-name]
 ```
+
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
 <!-- AI-CONTEXT-END -->

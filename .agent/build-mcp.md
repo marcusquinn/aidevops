@@ -35,9 +35,11 @@ npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 - Git operations: `tools/git.md`
 
 **Testing**: Use OpenCode CLI to test new MCPs without restarting TUI:
+
 ```bash
 opencode run "Test [mcp] tools" --agent Build+
 ```
+
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
 **MCPs to Enable**: context7, augment-context-engine, repomix

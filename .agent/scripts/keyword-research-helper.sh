@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # Source shared constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 if [[ -f "$SCRIPT_DIR/shared-constants.sh" ]]; then
     source "$SCRIPT_DIR/shared-constants.sh"
 fi
