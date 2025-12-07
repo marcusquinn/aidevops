@@ -6,7 +6,8 @@
 
 - **Purpose**: Comprehensive keyword research with SERP weakness detection and opportunity scoring
 - **Providers**: DataForSEO (primary), Serper (alternative), Ahrefs (optional DR/UR)
-- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`
+- **Webmaster Tools**: Google Search Console, Bing Webmaster Tools (for owned sites)
+- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/webmaster-keywords`
 - **Config**: `~/.config/aidevops/keyword-research.json`
 
 **Research Modes**:
@@ -18,6 +19,7 @@
 | Domain Research | `--domain` | Keywords associated with a domain's niche |
 | Competitor Research | `--competitor` | Exact keywords a competitor ranks for |
 | Keyword Gap | `--gap` | Keywords competitor ranks for that you don't |
+| Webmaster Tools | `webmaster <url>` | Keywords from GSC + Bing for your verified sites |
 
 **Analysis Levels**:
 
@@ -415,8 +417,102 @@ Check provider availability:
 /list-keys --service ahrefs
 ```
 
+## Webmaster Tools Integration
+
+### /webmaster-keywords
+
+Get keywords from Google Search Console and Bing Webmaster Tools for your verified sites, enriched with DataForSEO volume/difficulty data.
+
+```bash
+# List verified sites
+keyword-research-helper.sh sites
+
+# Get keywords for a site (last 30 days)
+keyword-research-helper.sh webmaster https://example.com
+
+# Last 90 days
+keyword-research-helper.sh webmaster https://example.com --days 90
+
+# Without enrichment (faster, no DataForSEO credits)
+keyword-research-helper.sh webmaster https://example.com --no-enrich
+
+# Export to CSV
+keyword-research-helper.sh webmaster https://example.com --csv
+```
+
+**Output**: Keyword, Clicks, Impressions, CTR, Position, Volume, KD, CPC, Sources (GSC/Bing/Both)
+
+### Data Sources
+
+| Source | Data Provided |
+|--------|---------------|
+| Google Search Console | Clicks, Impressions, CTR, Position |
+| Bing Webmaster Tools | Clicks, Impressions, Position |
+| DataForSEO (enrichment) | Volume, CPC, Keyword Difficulty |
+
+### Benefits
+
+1. **Real Performance Data**: Actual clicks/impressions from search engines
+2. **Combined View**: GSC + Bing data in one table
+3. **Enriched Metrics**: Add volume/difficulty from DataForSEO
+4. **Opportunity Detection**: Find high-impression, low-CTR keywords to optimize
+5. **Position Tracking**: Monitor ranking changes over time
+
+### Google Search Console Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or use existing)
+3. Enable "Search Console API"
+4. Create a Service Account → Download JSON key
+5. In [Google Search Console](https://search.google.com/search-console), add the service account email as a user with "Full" permissions
+
+**Environment variables**:
+
+```bash
+# Option 1: Service account file (recommended)
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+
+# Option 2: Access token (for testing)
+export GSC_ACCESS_TOKEN="your_access_token"
+```
+
+### Bing Webmaster Tools Setup
+
+1. Go to [Bing Webmaster Tools](https://www.bing.com/webmasters)
+2. Sign in with Microsoft/Google/Facebook account
+3. Add and verify your site(s)
+4. Click **Settings** → **API Access**
+5. Accept Terms → Click **Generate API Key**
+
+**Environment variable**:
+
+```bash
+export BING_WEBMASTER_API_KEY="your_api_key"
+```
+
+### Workflow Example
+
+```bash
+# 1. List your verified sites
+keyword-research-helper.sh sites
+
+# 2. Get keywords for your site
+keyword-research-helper.sh webmaster https://mysite.com --days 30
+
+# 3. Find optimization opportunities (high impressions, low CTR)
+keyword-research-helper.sh webmaster https://mysite.com | sort -t'|' -k3 -rn | head -20
+
+# 4. Research competitors for those keywords
+keyword-research-helper.sh extended --competitor competitor.com
+
+# 5. Export for content planning
+keyword-research-helper.sh webmaster https://mysite.com --csv
+```
+
 ## Resources
 
 - DataForSEO Docs: https://docs.dataforseo.com/v3/
 - Serper Docs: https://serper.dev/docs
 - Ahrefs API: https://ahrefs.com/api
+- Google Search Console API: https://developers.google.com/webmaster-tools
+- Bing Webmaster API: https://learn.microsoft.com/en-us/bingwebmaster/

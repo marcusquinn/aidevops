@@ -563,6 +563,64 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /keyword-research-extended command"
 
 # =============================================================================
+# WEBMASTER KEYWORDS COMMAND
+# =============================================================================
+# Keywords from Google Search Console and Bing Webmaster Tools
+
+cat > "$OPENCODE_COMMAND_DIR/webmaster-keywords.md" << 'EOF'
+---
+description: Keywords from GSC + Bing for your verified sites
+agent: SEO
+---
+
+Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+
+Site URL: $ARGUMENTS
+
+**Workflow:**
+1. List verified sites if no URL provided: `keyword-research-helper.sh sites`
+2. Fetch keywords from Google Search Console
+3. Fetch keywords from Bing Webmaster Tools
+4. Combine and deduplicate results
+5. Enrich with DataForSEO volume/difficulty data (unless --no-enrich)
+6. Display in markdown table format
+
+**Output format:**
+```
+| Keyword                  | Clicks | Impressions | CTR   | Position | Volume | KD | CPC  | Sources  |
+|--------------------------|--------|-------------|-------|----------|--------|----|----- |----------|
+| best seo tools           |    245 |       8,100 | 3.02% |      4.2 | 12,100 | 45 | 4.50 | GSC+Bing |
+| keyword research tips    |    128 |       3,400 | 3.76% |      6.8 |  2,400 | 32 | 2.10 | GSC      |
+```
+
+**Options:**
+- `--days N` - Days of data (default: 30)
+- `--limit N` - Number of results (default: 100)
+- `--no-enrich` - Skip DataForSEO enrichment (faster, no credits)
+- `--csv` - Export to ~/Downloads/
+
+**Commands:**
+```bash
+# List verified sites
+keyword-research-helper.sh sites
+
+# Get keywords for a site
+keyword-research-helper.sh webmaster https://example.com
+
+# Last 90 days, no enrichment
+keyword-research-helper.sh webmaster https://example.com --days 90 --no-enrich
+```
+
+**Use cases:**
+1. Find high-impression, low-CTR keywords to optimize
+2. Track ranking changes over time
+3. Discover keywords you're ranking for but not targeting
+4. Compare Google vs Bing performance
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -590,8 +648,9 @@ echo "  /list-keys        - List API keys with storage locations"
 echo "  /keyword-research - Seed keyword expansion"
 echo "  /autocomplete-research - Google autocomplete long-tails"
 echo "  /keyword-research-extended - Full SERP analysis with weakness detection"
+echo "  /webmaster-keywords - Keywords from GSC + Bing for your sites"
 echo ""
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
-echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
+echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended -> /webmaster-keywords"
 echo ""
 echo "Restart OpenCode to load new commands."

@@ -633,6 +633,7 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/keyword-research` | Seed keyword expansion with volume, CPC, difficulty |
 | `/autocomplete-research` | Google autocomplete long-tail discovery |
 | `/keyword-research-extended` | Full SERP analysis with weakness detection |
+| `/webmaster-keywords` | Keywords from GSC + Bing for your verified sites |
 
 **Release Workflow** (in order):
 
