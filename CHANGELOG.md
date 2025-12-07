@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Context7 MCP for SEO Agent** - Enable library documentation lookup for SEO workflows
+
 ## [2.20.4] - 2025-12-07
 
 ### Changed
