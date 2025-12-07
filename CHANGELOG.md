@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.0] - 2025-12-07
+
+### Added
+
+- add ClearSERP-style keyword research system
+- enable context7 MCP for SEO agent
+
+### Changed
+
+- Documentation: add changelog entry for SEO context7
+- Documentation: add changelog entry for new subagents
+- Documentation: add new subagents and /list-keys command to README
+- Documentation: add changelog entry for README updates
+- Documentation: add DataForSEO and Serper MCPs to README
+
+### Fixed
+
+- resolve changelog update regex and restore CHANGELOG.md
 ## [2.21.0] - 2025-12-07
 
 ### Added
