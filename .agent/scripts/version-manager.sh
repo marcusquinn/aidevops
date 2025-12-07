@@ -153,6 +153,166 @@ generate_changelog_preview() {
     return 0
 }
 
+# Function to generate changelog content from commits (cleaner format)
+generate_changelog_content() {
+    local prev_tag
+    prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    
+    # Categorize commits
+    local added="" changed="" fixed="" security="" removed="" deprecated=""
+    
+    local commits
+    if [[ -n "$prev_tag" ]]; then
+        commits=$(git log "$prev_tag"..HEAD --pretty=format:"%s" 2>/dev/null)
+    else
+        commits=$(git log --oneline -20 --pretty=format:"%s" 2>/dev/null)
+    fi
+    
+    while IFS= read -r commit; do
+        # Skip empty lines and release commits
+        [[ -z "$commit" ]] && continue
+        [[ "$commit" == chore\(release\):* ]] && continue
+        
+        # Clean up commit message - remove type prefix for cleaner output
+        local clean_msg="$commit"
+        
+        case "$commit" in
+            feat:*) 
+                clean_msg="${commit#feat: }"
+                added="${added}- ${clean_msg}\n"
+                ;;
+            feat\(*\):*)
+                clean_msg=$(echo "$commit" | sed 's/^feat([^)]*): //')
+                added="${added}- ${clean_msg}\n"
+                ;;
+            fix:*)
+                clean_msg="${commit#fix: }"
+                fixed="${fixed}- ${clean_msg}\n"
+                ;;
+            fix\(*\):*)
+                clean_msg=$(echo "$commit" | sed 's/^fix([^)]*): //')
+                fixed="${fixed}- ${clean_msg}\n"
+                ;;
+            security:*)
+                clean_msg="${commit#security: }"
+                security="${security}- ${clean_msg}\n"
+                ;;
+            docs:*)
+                clean_msg="${commit#docs: }"
+                changed="${changed}- Documentation: ${clean_msg}\n"
+                ;;
+            refactor:*)
+                clean_msg="${commit#refactor: }"
+                changed="${changed}- Refactor: ${clean_msg}\n"
+                ;;
+            perf:*)
+                clean_msg="${commit#perf: }"
+                changed="${changed}- Performance: ${clean_msg}\n"
+                ;;
+            BREAKING\ CHANGE:*|breaking:*)
+                clean_msg="${commit#BREAKING CHANGE: }"
+                clean_msg="${clean_msg#breaking: }"
+                removed="${removed}- **BREAKING**: ${clean_msg}\n"
+                ;;
+            deprecate:*|deprecated:*)
+                clean_msg="${commit#deprecate: }"
+                clean_msg="${clean_msg#deprecated: }"
+                deprecated="${deprecated}- ${clean_msg}\n"
+                ;;
+            # Skip chore commits (noise in changelog)
+            chore:*|chore\(*) ;;
+            *) ;; # Ignore other commit types
+        esac
+    done <<< "$commits"
+    
+    # Output in Keep a Changelog order
+    [[ -n "$added" ]] && printf "### Added\n\n%b\n" "$added"
+    [[ -n "$changed" ]] && printf "### Changed\n\n%b\n" "$changed"
+    [[ -n "$deprecated" ]] && printf "### Deprecated\n\n%b\n" "$deprecated"
+    [[ -n "$removed" ]] && printf "### Removed\n\n%b\n" "$removed"
+    [[ -n "$fixed" ]] && printf "### Fixed\n\n%b\n" "$fixed"
+    [[ -n "$security" ]] && printf "### Security\n\n%b\n" "$security"
+    
+    return 0
+}
+
+# Function to update CHANGELOG.md with new version
+update_changelog() {
+    local version="$1"
+    local changelog_file="$REPO_ROOT/CHANGELOG.md"
+    local today
+    today=$(date +%Y-%m-%d)
+    
+    if [[ ! -f "$changelog_file" ]]; then
+        print_warning "CHANGELOG.md not found, creating new one"
+        cat > "$changelog_file" << 'EOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+EOF
+    fi
+    
+    # Check if [Unreleased] section exists
+    if ! grep -q "^\## \[Unreleased\]" "$changelog_file"; then
+        print_error "CHANGELOG.md missing [Unreleased] section"
+        return 1
+    fi
+    
+    # Generate changelog content from commits
+    local changelog_content
+    changelog_content=$(generate_changelog_content)
+    
+    if [[ -z "$changelog_content" ]]; then
+        print_warning "No conventional commits found for changelog generation"
+        changelog_content="### Changed\n\n- Version bump and maintenance updates\n"
+    fi
+    
+    # Create the new version section
+    local new_section="## [$version] - $today
+
+$changelog_content"
+    
+    # Create temp file for the update
+    local temp_file
+    temp_file=$(mktemp)
+    
+    # Process the changelog:
+    # 1. Keep everything before [Unreleased]
+    # 2. Add new [Unreleased] section (empty)
+    # 3. Add the new version section
+    # 4. Keep everything after the old [Unreleased] content
+    
+    awk -v new_section="$new_section" -v version="$version" -v today="$today" '
+    BEGIN { in_unreleased = 0; printed_new = 0 }
+    /^## \[Unreleased\]/ {
+        print "## [Unreleased]"
+        print ""
+        print new_section
+        in_unreleased = 1
+        printed_new = 1
+        next
+    }
+    /^## \[/ && in_unreleased {
+        in_unreleased = 0
+        print
+        next
+    }
+    !in_unreleased { print }
+    ' "$changelog_file" > "$temp_file"
+    
+    # Replace original file
+    mv "$temp_file" "$changelog_file"
+    
+    print_success "Updated CHANGELOG.md: [Unreleased] → [$version] - $today"
+    return 0
+}
+
 # Function to run preflight quality checks
 run_preflight_checks() {
     print_info "Running preflight quality checks..."
@@ -295,8 +455,8 @@ commit_version_changes() {
     
     print_info "Committing version changes..."
     
-    # Stage all version-related files
-    git add VERSION package.json README.md setup.sh sonar-project.properties 2>/dev/null
+    # Stage all version-related files (including CHANGELOG.md)
+    git add VERSION package.json README.md setup.sh sonar-project.properties CHANGELOG.md 2>/dev/null
     
     # Check if there are changes to commit
     if git diff --cached --quiet; then
@@ -534,6 +694,11 @@ main() {
                 print_info "Updating version references in files..."
                 update_version_in_files "$new_version"
 
+                print_info "Updating CHANGELOG.md..."
+                if ! update_changelog "$new_version"; then
+                    print_warning "Failed to update CHANGELOG.md automatically"
+                fi
+
                 print_info "Validating version consistency..."
                 if validate_version_consistency "$new_version"; then
                     print_success "Version validation passed"
@@ -542,7 +707,6 @@ main() {
                     push_changes
                     create_github_release "$new_version"
                     print_success "Release $new_version created successfully!"
-                    print_warning "Remember to update CHANGELOG.md [Unreleased] → [$new_version]"
                 else
                     print_error "Version validation failed. Please fix inconsistencies before creating release."
                     exit 1

@@ -21,15 +21,15 @@ tools:
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
 - **CRITICAL**: Always use the script above - it updates all 5 version files atomically
 - **NEVER** manually edit VERSION, bump versions yourself, or use separate commands
+- **Auto-changelog**: Release script auto-generates CHANGELOG.md from conventional commits
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
 - **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)
 - **Validator**: `.agent/scripts/validate-version-consistency.sh`
 - **GitHub Actions**: `.github/workflows/version-validation.yml`
 - **Version bump only**: See `workflows/version-bump.md`
-- **Changelog**: See `workflows/changelog.md` (enforced before release)
+- **Changelog format**: See `workflows/changelog.md`
 - **Postflight verification**: See `workflows/postflight.md` (verify after release)
-- **Fail-Safe**: Won't create releases if version inconsistencies or empty changelog
 
 <!-- AI-CONTEXT-END -->
 
@@ -37,14 +37,16 @@ This workflow covers the release process: tagging, pushing, and creating GitHub/
 
 ## Release Workflow Overview
 
-1. Bump version (see `workflows/version-bump.md`)
-2. Run code quality checks
-3. Update changelog
-4. Commit version changes
-5. Create version tags
+The release script handles everything automatically:
+
+1. Bump version in all files (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
+2. **Auto-generate CHANGELOG.md** from conventional commits
+3. Validate version consistency
+4. Commit all changes
+5. Create version tag
 6. Push to remote
-7. Create GitHub/GitLab release
-8. Post-release tasks
+7. Create GitHub release
+8. Post-release verification
 
 ## Quick Release (aidevops)
 
@@ -56,13 +58,38 @@ This workflow covers the release process: tagging, pushing, and creating GitHub/
 
 This command:
 1. Bumps version in all 5 files atomically (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
-2. Validates consistency
-3. Commits the version bump
-4. Creates git tag
-5. Pushes to remote
-6. Creates GitHub release
+2. **Auto-generates CHANGELOG.md** from conventional commits (feat:, fix:, docs:, etc.)
+3. Validates consistency
+4. Commits version bump + changelog
+5. Creates git tag
+6. Pushes to remote
+7. Creates GitHub release
 
 **DO NOT** run separate bump/tag/push commands - use this single command only.
+
+## Auto-Changelog Generation
+
+The release script automatically generates changelog entries from conventional commits:
+
+| Commit Type | Changelog Section |
+|-------------|-------------------|
+| `feat:` | Added |
+| `fix:` | Fixed |
+| `docs:` | Changed (Documentation) |
+| `refactor:` | Changed (Refactor) |
+| `perf:` | Changed (Performance) |
+| `security:` | Security |
+| `BREAKING CHANGE:` | Removed (BREAKING) |
+| `deprecate:` | Deprecated |
+
+Commits with `chore:` prefix are excluded from the changelog.
+
+**Best practice**: Use conventional commit messages for accurate changelog generation:
+```bash
+git commit -m "feat: add DataForSEO MCP integration"
+git commit -m "fix: resolve Serper API authentication"
+git commit -m "docs: update release workflow documentation"
+```
 
 ## Pre-Release Checklist
 
@@ -99,32 +126,34 @@ flake8 . && pytest
 go vet ./... && go test ./...
 ```
 
-### 3. Update Changelog
+### 3. Changelog (Auto-Generated)
 
-See `workflows/changelog.md` for detailed guidance. The release command will fail if changelog is empty.
+The release script **automatically generates** CHANGELOG.md entries from conventional commits. No manual changelog editing required.
 
 ```bash
-# Preview changelog entry from commits
+# Preview what will be generated (optional)
 ./.agent/scripts/version-manager.sh changelog-preview
 
-# Validate changelog matches version
+# Validate existing changelog (optional)
 ./.agent/scripts/version-manager.sh changelog-check
 ```
 
-Update CHANGELOG.md following [Keep a Changelog](https://keepachangelog.com/) format:
+The auto-generated changelog follows [Keep a Changelog](https://keepachangelog.com/) format:
 
 ```markdown
 ## [X.Y.Z] - YYYY-MM-DD
 
 ### Added
-- New feature description (#PR)
+- Feature from feat: commits
 
 ### Changed
-- Changed behavior description (#PR)
+- Changes from docs:, refactor:, perf: commits
 
 ### Fixed
-- Bug fix description (#PR)
+- Fixes from fix: commits
 ```
+
+See `workflows/changelog.md` for manual changelog guidance if needed.
 
 ### 4. Commit Version Changes
 
