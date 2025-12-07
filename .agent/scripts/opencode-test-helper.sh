@@ -24,10 +24,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $1"; return 0; }
+print_success() { echo -e "${GREEN}[OK]${NC} $1"; return 0; }
+print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; return 0; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; return 0; }
 
 show_help() {
     cat << 'EOF'

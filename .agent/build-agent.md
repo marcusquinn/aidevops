@@ -37,6 +37,12 @@
 - Branch strategy: `workflows/branch.md`
 - Git operations: `tools/git.md`
 
+**Testing**: Use OpenCode CLI to test config changes without restarting TUI:
+```bash
+opencode run "Test query" --agent Build+
+```
+See `tools/opencode/opencode.md` for CLI testing patterns.
+
 <!-- AI-CONTEXT-END -->
 
 ## Detailed Guidance

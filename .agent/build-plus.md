@@ -54,6 +54,12 @@ For implementation tasks, follow `workflows/branch.md` lifecycle.
 - Pre-commit: `.agent/scripts/linters-local.sh`
 - Patterns: `tools/code-review/best-practices.md`
 
+**Testing**: Use OpenCode CLI to test config changes without restarting TUI:
+```bash
+opencode run "Test query" --agent Build+
+```
+See `tools/opencode/opencode.md` for CLI testing patterns.
+
 <!-- AI-CONTEXT-END -->
 
 ## Build Workflow
