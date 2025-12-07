@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.20.3] - 2025-12-07
+
 ### Changed
 
-- **README Documentation** - Added DataForSEO and Serper MCPs to documentation
-  - Added to MCP table with API key requirements
-  - Added to SEO & Research category section
-  - Updated MCP count badge from 18 to 20
-  - Noted auto-changelog in release workflow description
+- Documentation: add changelog entry for README updates
+- Documentation: add DataForSEO and Serper MCPs to README
 
+### Fixed
+
+- resolve changelog update regex and restore CHANGELOG.md
 ## [2.20.2] - 2025-12-07
 
 ### Fixed
