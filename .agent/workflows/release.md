@@ -21,6 +21,13 @@ tools:
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
 - **CRITICAL**: Always use the script above - it updates all 5 version files atomically
 - **NEVER** manually edit VERSION, bump versions yourself, or use separate commands
+
+**Before releasing**: Check for uncommitted changes and commit them first:
+
+```bash
+git status --short  # Check for uncommitted changes
+git add -A && git commit -m "feat: description of changes"  # Commit if needed
+```
 - **Auto-changelog**: Release script auto-generates CHANGELOG.md from conventional commits
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
