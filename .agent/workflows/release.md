@@ -28,6 +28,7 @@ tools:
 git status --short  # Check for uncommitted changes
 git add -A && git commit -m "feat: description of changes"  # Commit if needed
 ```
+
 - **Auto-changelog**: Release script auto-generates CHANGELOG.md from conventional commits
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
