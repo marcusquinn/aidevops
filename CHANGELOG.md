@@ -7,32 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.23.0] - 2025-12-09
+
 ### Added
 
-- **Webmaster Tools Integration** - Keywords from Google Search Console and Bing Webmaster Tools
-  - New `webmaster` command to fetch keywords from verified sites
-  - New `sites` command to list verified GSC and Bing sites
-  - Combined GSC + Bing data with deduplication
-  - DataForSEO enrichment for volume/difficulty metrics
-  - New `/webmaster-keywords` OpenCode slash command
-- **Google Search Console API** - Full integration for search analytics
-  - `gsc_search_analytics()` - Query performance data
-  - `gsc_top_queries()` - Top queries with clicks/impressions
-  - `gsc_page_queries()` - Queries for specific pages
-  - `gsc_list_sites()` - List verified properties
-- **Bing Webmaster Tools API** - Full integration for Bing search data
-  - `bing_query_stats()` - Top queries with traffic data
-  - `bing_keyword()` - Keyword details for date range
-  - `bing_related_keywords()` - Related keyword suggestions
-  - `bing_page_query_stats()` - Queries for specific pages
-  - `bing_list_sites()` - List verified sites
+- add Google Search Console and Bing Webmaster Tools integration
+- add ClearSERP-style keyword research system
+- enable context7 MCP for SEO agent
 
 ### Changed
 
-- Updated `keyword-research.md` with webmaster tools documentation
-- Updated `generate-opencode-commands.sh` with `/webmaster-keywords` command (19 total)
-- Updated README with webmaster keywords in SEO workflow
+- Documentation: replace ClearSERP references with strategic keyword research
+- Documentation: add changelog entry for SEO context7
+- Documentation: add changelog entry for new subagents
+- Documentation: add new subagents and /list-keys command to README
+- Documentation: add changelog entry for README updates
+- Documentation: add DataForSEO and Serper MCPs to README
 
+### Fixed
+
+- resolve changelog update regex and restore CHANGELOG.md
 ## [2.22.0] - 2025-12-07
 
 ### Added
