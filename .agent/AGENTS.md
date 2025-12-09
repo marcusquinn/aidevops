@@ -17,6 +17,25 @@
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
+**Testing Config Changes**: Use CLI to test without TUI restart:
+
+```bash
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp <name> <agent>
+```
+
+**MCP Setup Validation** (MANDATORY after config changes):
+
+```bash
+# 1. Verify MCP status
+opencode mcp list
+
+# 2. If "Connection closed" - diagnose
+~/.aidevops/agents/scripts/mcp-diagnose.sh <name>
+
+# 3. Check for version updates
+~/.aidevops/agents/scripts/tool-version-check.sh
+```
+
 ## Main Agents
 
 | Agent | Purpose |

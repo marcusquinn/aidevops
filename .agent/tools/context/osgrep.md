@@ -19,9 +19,10 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Local semantic codebase search (open source alternative to Augment)
-- **Type**: CLI tool (not MCP) - use via bash
-- **Status**: ⚠️ Known indexing issues (v0.4.x) - see GitHub issues #58, #26
+- **Type**: MCP server + CLI tool
+- **Status**: Stable (v0.5.16+) - native OpenCode plugin support
 - **Install**: `npm install -g osgrep && osgrep setup`
+- **OpenCode**: `osgrep install-opencode` (auto-configures MCP + tool shim)
 - **Auth**: None required (100% local)
 - **Data**: `~/.osgrep/` (indexes, models, config)
 - **Docs**: <https://github.com/Ryandonofrio3/osgrep>
@@ -45,14 +46,8 @@ osgrep "API endpoints" --compact
 osgrep install-claude-code
 ```
 
-**Note**: osgrep is a CLI tool, not an MCP server. AI agents should use it
-via bash commands. For Claude Code, use the native plugin system.
-
-**Known Issues** (v0.4.15):
-- Indexing may hang on some repositories (GitHub #58)
-- Index may appear complete but be empty (GitHub #26)
-- Server returns "unauthorized" for API requests
-- Workaround: Use Claude Code plugin or wait for fixes
+**Note**: osgrep runs as an MCP server via `osgrep serve`. AI agents can use
+the MCP integration or bash commands directly.
 
 <!-- AI-CONTEXT-END -->
 
@@ -89,8 +84,13 @@ Use it to:
 | Indexing | Auto per-repo | Cloud sync |
 | Cost | Free (Apache 2.0) | Free tier available |
 
-**Recommendation**: Use osgrep for local-first, privacy-focused development.
-Use Augment for cloud sync and team features.
+**Semantic Search Strategy**:
+
+1. **Try osgrep first** (primary) - Local, fast (~50ms), no auth required
+2. **Fall back to Augment** if osgrep returns insufficient results or fails
+
+osgrep is the recommended primary tool for semantic search. Use Augment Context
+Engine as fallback for cloud sync features or when osgrep is unavailable.
 
 ## Prerequisites
 
@@ -181,6 +181,18 @@ osgrep doctor   # Check installation health
 
 ### OpenCode
 
+**Automatic Setup (Recommended)**:
+
+```bash
+osgrep install-opencode
+```
+
+This creates:
+- MCP server config using `osgrep mcp` command
+- Tool shim at `~/.config/opencode/tool/osgrep.ts`
+
+**Manual Setup** (if needed):
+
 Edit `~/.config/opencode/opencode.json`:
 
 ```json
@@ -188,7 +200,7 @@ Edit `~/.config/opencode/opencode.json`:
   "mcp": {
     "osgrep": {
       "type": "local",
-      "command": ["osgrep", "serve"],
+      "command": ["osgrep", "mcp"],
       "enabled": true
     }
   },

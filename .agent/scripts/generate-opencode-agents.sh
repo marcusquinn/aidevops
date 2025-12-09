@@ -83,8 +83,8 @@ except:
 
 # Primary agents in desired order (Plan+ first, Build+ second, then alphabetical)
 # Each agent specifies which MCP tools it can access
-# All agents get augment-context-engine_* for semantic codebase retrieval
-# NOTE: osgrep is CLI-based (not MCP). Use via bash: osgrep "query"
+# Semantic search strategy: osgrep first (local, fast), augment fallback (cloud)
+# All agents get both osgrep_* and augment-context-engine_* for semantic codebase retrieval
 primary_agents = {
     "Plan+": {
         "description": "Read ~/.aidevops/agents/plan-plus.md",
@@ -105,6 +105,7 @@ primary_agents = {
             "webfetch": True,
             "task": False,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
         }
@@ -128,6 +129,7 @@ primary_agents = {
             "todoread": True,
             "todowrite": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
         }
@@ -151,6 +153,7 @@ primary_agents = {
             "todoread": True,
             "todowrite": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
         }
@@ -174,6 +177,7 @@ primary_agents = {
             "todoread": True,
             "todowrite": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
         }
@@ -195,6 +199,7 @@ primary_agents = {
             "webfetch": True,
             "task": True,
             "quickfile_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -217,6 +222,7 @@ primary_agents = {
             "todoread": True,
             "todowrite": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True,
             "repomix_*": True
         }
@@ -233,6 +239,7 @@ primary_agents = {
             "edit": True,
             "read": True,
             "webfetch": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -246,6 +253,7 @@ primary_agents = {
         "tools": {
             "write": True,
             "read": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -259,6 +267,7 @@ primary_agents = {
         "tools": {
             "write": True,
             "read": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -273,6 +282,7 @@ primary_agents = {
             "write": True,
             "read": True,
             "webfetch": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -288,6 +298,7 @@ primary_agents = {
             "webfetch": True,
             "bash": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -302,6 +313,7 @@ primary_agents = {
             "write": True,
             "read": True,
             "webfetch": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -322,6 +334,7 @@ primary_agents = {
             "dataforseo_*": True,
             "serper_*": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     },
@@ -341,6 +354,7 @@ primary_agents = {
             "grep": True,
             "localwp_*": True,
             "context7_*": True,
+            "osgrep_*": True,
             "augment-context-engine_*": True
         }
     }
@@ -358,8 +372,18 @@ if 'mcp' not in config:
 if 'tools' not in config:
     config['tools'] = {}
 
-# NOTE: osgrep is a CLI tool, not MCP. Use via bash: osgrep "query"
-# For Claude Code: osgrep install-claude-code
+# osgrep MCP - local semantic search (primary, try first)
+# Install: npm install -g osgrep && osgrep install-opencode
+if 'osgrep' not in config['mcp']:
+    config['mcp']['osgrep'] = {
+        "type": "local",
+        "command": ["osgrep", "mcp"],
+        "enabled": True
+    }
+
+# Ensure osgrep_* is disabled globally (enabled per-agent)
+if 'osgrep_*' not in config['tools']:
+    config['tools']['osgrep_*'] = False
 
 # Outscraper MCP - for business intelligence extraction (subagent only)
 if 'outscraper' not in config['mcp']:

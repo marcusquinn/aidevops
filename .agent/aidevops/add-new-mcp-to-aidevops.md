@@ -103,6 +103,26 @@ npm docs @example/mcp
 
 Use WebFetch to gather official setup guides for each AI tool the MCP supports.
 
+## Step 1.5: Pre-Flight Version Check (CRITICAL)
+
+Before configuring any MCP, verify you have the latest version:
+
+```bash
+# Check installed vs latest
+npm view {package} version  # Latest available
+{tool} --version            # Currently installed
+
+# If outdated, update FIRST
+npm update -g {package}
+```
+
+**Why this matters**: MCP integration methods change between versions.
+For example:
+- osgrep v0.4.x used `osgrep serve` (HTTP server)
+- osgrep v0.5.x uses `osgrep mcp` (native MCP) + `osgrep install-opencode`
+
+Using outdated commands will result in "Connection closed" errors.
+
 ## Step 2: Determine Agent Enablement
 
 **Critical Decision**: Which agents should have this MCP enabled?
@@ -327,7 +347,24 @@ for agent, cfg in d.get('agent',{}).items():
 "
 ```
 
-### Test in OpenCode
+### Test with CLI First (No Restart Required)
+
+Use the OpenCode CLI to test MCP accessibility without restarting the TUI:
+
+```bash
+# Test MCP accessibility with specific agent
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp {mcp-name} Build+
+
+# Or direct CLI test
+opencode run "List tools from {mcp-name}" --agent Build+
+
+# List all tools available to an agent
+~/.aidevops/agents/scripts/opencode-test-helper.sh list-tools Build+
+```
+
+### Test in OpenCode TUI
+
+If CLI tests pass, restart OpenCode TUI for interactive testing:
 
 1. Restart OpenCode
 2. Switch to an enabled agent (Tab)

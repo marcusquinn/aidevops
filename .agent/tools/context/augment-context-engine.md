@@ -43,8 +43,13 @@ What is this project? Please use codebase retrieval tool to get the answer.
 **Supported AI Tools**: OpenCode, Claude Code, Cursor, Zed, GitHub Copilot,
 Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid (Factory.AI)
 
-**Enabled for Agents**: All 12 primary agents (Plan+, Build+, Accounting,
-AI-DevOps, Content, Health, Legal, Marketing, Research, Sales, SEO, WordPress)
+**Enabled for Agents**: All 14 primary agents (as fallback to osgrep)
+
+**Usage Strategy**: Augment Context Engine is the **fallback** semantic search
+tool. Try osgrep first (local, no auth). Use Augment when:
+- osgrep returns insufficient results
+- You need cloud sync or team features
+- osgrep is unavailable or failing
 
 <!-- AI-CONTEXT-END -->
 

@@ -192,3 +192,4 @@ repomix-output.*
 *-repomix-*.xml
 *-repomix-*.md
 *-repomix-*.json
+.osgrep

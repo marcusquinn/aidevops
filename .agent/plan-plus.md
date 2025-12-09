@@ -33,12 +33,15 @@ See `workflows/conversation-starter.md` for initial prompts based on context.
 
 **Context Tools** (`tools/context/`):
 
-| Tool | Use Case |
-|------|----------|
-| osgrep | Local semantic code search (CLI: `osgrep "query"`) |
-| Augment Context Engine | Cloud semantic codebase retrieval (MCP) |
-| context-builder | Token-efficient codebase packing |
-| Context7 | Real-time library documentation (MCP) |
+| Tool | Use Case | Priority |
+|------|----------|----------|
+| osgrep | Local semantic code search (MCP) | **Primary** - try first |
+| Augment Context Engine | Cloud semantic codebase retrieval (MCP) | Fallback if osgrep insufficient |
+| context-builder | Token-efficient codebase packing | For external AI sharing |
+| Context7 | Real-time library documentation (MCP) | Library docs lookup |
+
+**Semantic Search Strategy**: Try osgrep first (local, fast, no auth). Fall back
+to Augment Context Engine if osgrep returns insufficient results.
 
 **Planning Phases**:
 
@@ -70,8 +73,8 @@ See `workflows/conversation-starter.md` for initial prompts based on context.
 
 Use context tools for deep understanding:
 
-- **Augment Context Engine**: `"What is this project? Please use codebase retrieval tool."`
-- **osgrep**: Local semantic search (CLI: `osgrep "query"`)
+- **osgrep** (try first): Local semantic search via MCP
+- **Augment Context Engine** (fallback): Cloud semantic retrieval if osgrep insufficient
 - **context-builder**: Token-efficient codebase packing
 - **Context7 MCP**: Library documentation lookup
 

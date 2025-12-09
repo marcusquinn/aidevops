@@ -42,12 +42,16 @@ For implementation tasks, follow `workflows/branch.md` lifecycle.
 
 **Context Tools** (`tools/context/`):
 
-| Tool | Use Case |
-|------|----------|
-| osgrep | Local semantic code search (CLI: `osgrep "query"`) |
-| context-builder | Token-efficient codebase packing |
-| Context7 | Real-time library documentation (MCP) |
-| TOON | Token-optimized data serialization |
+| Tool | Use Case | Priority |
+|------|----------|----------|
+| osgrep | Local semantic code search (MCP) | **Primary** - try first |
+| Augment Context Engine | Cloud semantic codebase retrieval (MCP) | Fallback if osgrep insufficient |
+| context-builder | Token-efficient codebase packing | For external AI sharing |
+| Context7 | Real-time library documentation (MCP) | Library docs lookup |
+| TOON | Token-optimized data serialization | Data format optimization |
+
+**Semantic Search Strategy**: Try osgrep first (local, fast, no auth). Fall back
+to Augment Context Engine if osgrep returns insufficient results.
 
 **Quality Integration** (`tools/code-review/`):
 
