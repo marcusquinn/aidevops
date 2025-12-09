@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.23.1] - 2025-12-09
+
+### Changed
+
+- Documentation: remove ClearSERP references from changelog
 ## [2.23.0] - 2025-12-09
 
 ### Added
