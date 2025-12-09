@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.24.0] - 2025-12-09
+
+### Added
+
+- add uncommitted changes check before release
+- complete osgrep integration with self-testing improvements
 ## [2.23.1] - 2025-12-09
 
 ### Changed
