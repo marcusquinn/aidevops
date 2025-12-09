@@ -12,12 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add Google Search Console and Bing Webmaster Tools integration
-- add ClearSERP-style keyword research system
+- add strategic keyword research system
 - enable context7 MCP for SEO agent
 
 ### Changed
 
-- Documentation: replace ClearSERP references with strategic keyword research
+- Documentation: update keyword research documentation
 - Documentation: add changelog entry for SEO context7
 - Documentation: add changelog entry for new subagents
 - Documentation: add new subagents and /list-keys command to README
