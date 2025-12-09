@@ -455,6 +455,24 @@ update_version_in_files() {
     return 0
 }
 
+# Function to check for uncommitted changes
+check_working_tree_clean() {
+    local uncommitted
+    uncommitted=$(git status --porcelain 2>/dev/null)
+    
+    if [[ -n "$uncommitted" ]]; then
+        print_error "Working tree has uncommitted changes:"
+        echo "$uncommitted" | head -20
+        echo ""
+        print_info "Options:"
+        print_info "  1. Commit your changes first: git add -A && git commit -m 'your message'"
+        print_info "  2. Stash changes: git stash"
+        print_info "  3. Use --allow-dirty to release anyway (not recommended)"
+        return 1
+    fi
+    return 0
+}
+
 # Function to commit version changes
 commit_version_changes() {
     local version="$1"
@@ -663,15 +681,28 @@ main() {
             # Parse flags (can be in any order after bump_type)
             local force_flag=""
             local skip_preflight=""
+            local allow_dirty=""
             for arg in "${@:3}"; do
                 case "$arg" in
                     "--force") force_flag="--force" ;;
                     "--skip-preflight") skip_preflight="--skip-preflight" ;;
+                    "--allow-dirty") allow_dirty="--allow-dirty" ;;
                     *) ;;  # Ignore unknown flags
                 esac
             done
 
             print_info "Creating release with $bump_type version bump..."
+
+            # Check for uncommitted changes
+            if [[ "$allow_dirty" != "--allow-dirty" ]]; then
+                if ! check_working_tree_clean; then
+                    print_error "Cannot release with uncommitted changes."
+                    print_info "Commit your changes first, or use --allow-dirty to bypass (not recommended)"
+                    exit 1
+                fi
+            else
+                print_warning "Releasing with uncommitted changes (--allow-dirty)"
+            fi
 
             # Run preflight checks unless skipped
             if [[ "$skip_preflight" != "--skip-preflight" ]]; then

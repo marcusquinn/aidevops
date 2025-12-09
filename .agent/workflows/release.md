@@ -35,18 +35,30 @@ tools:
 
 This workflow covers the release process: tagging, pushing, and creating GitHub/GitLab releases. For version number management only, see `workflows/version-bump.md`. For changelog format and validation, see `workflows/changelog.md`. For PR-based merges before release, see `workflows/pr.md`.
 
+## Pre-Release Checklist
+
+Before running the release command:
+
+- [ ] All working changes committed (no uncommitted files)
+- [ ] Tests passing
+- [ ] CHANGELOG.md has unreleased content (or use `--force`)
+
+The release script will **refuse to release** if there are uncommitted changes.
+This prevents accidentally releasing without your session's work.
+
 ## Release Workflow Overview
 
 The release script handles everything automatically:
 
-1. Bump version in all files (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
-2. **Auto-generate CHANGELOG.md** from conventional commits
-3. Validate version consistency
-4. Commit all changes
-5. Create version tag
-6. Push to remote
-7. Create GitHub release
-8. Post-release verification
+1. **Check for uncommitted changes** (fails if dirty, use `--allow-dirty` to bypass)
+2. Bump version in all files (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
+3. **Auto-generate CHANGELOG.md** from conventional commits
+4. Validate version consistency
+5. Commit all changes
+6. Create version tag
+7. Push to remote
+8. Create GitHub release
+9. Post-release verification
 
 ## Quick Release (aidevops)
 
@@ -56,14 +68,20 @@ The release script handles everything automatically:
 ./.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight
 ```
 
+**Flags**:
+- `--skip-preflight` - Skip linting checks (faster)
+- `--force` - Bypass empty changelog check
+- `--allow-dirty` - Release with uncommitted changes (not recommended)
+
 This command:
-1. Bumps version in all 5 files atomically (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
-2. **Auto-generates CHANGELOG.md** from conventional commits (feat:, fix:, docs:, etc.)
-3. Validates consistency
-4. Commits version bump + changelog
-5. Creates git tag
-6. Pushes to remote
-7. Creates GitHub release
+1. Checks for uncommitted changes (fails if dirty)
+2. Bumps version in all 5 files atomically (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
+3. **Auto-generates CHANGELOG.md** from conventional commits (feat:, fix:, docs:, etc.)
+4. Validates consistency
+5. Commits version bump + changelog
+6. Creates git tag
+7. Pushes to remote
+8. Creates GitHub release
 
 **DO NOT** run separate bump/tag/push commands - use this single command only.
 
