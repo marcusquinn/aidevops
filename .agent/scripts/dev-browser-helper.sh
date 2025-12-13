@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # Source shared constants and functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
     source "${SCRIPT_DIR}/shared-constants.sh"
 fi
@@ -99,7 +99,7 @@ install_dev_browser() {
     
     if [[ -d "${DEV_BROWSER_DIR}/.git" ]]; then
         print_info "Updating existing installation..."
-        cd "${DEV_BROWSER_DIR}"
+        cd "${DEV_BROWSER_DIR}" || exit
         git pull origin main || {
             print_warning "Git pull failed, continuing with existing version"
         }
@@ -110,7 +110,7 @@ install_dev_browser() {
     fi
     
     # Install dependencies
-    cd "${DEV_BROWSER_SKILL_DIR}"
+    cd "${DEV_BROWSER_SKILL_DIR}" || exit
     print_info "Installing dependencies..."
     bun install
     
@@ -164,7 +164,7 @@ start_server() {
     fi
     
     print_info "Starting dev-browser server on port ${SERVER_PORT}..."
-    cd "${DEV_BROWSER_SKILL_DIR}"
+    cd "${DEV_BROWSER_SKILL_DIR}" || exit
     
     # Start server in background
     if [[ "${headless}" == "true" ]]; then
@@ -285,7 +285,7 @@ run_test() {
     fi
     
     print_info "Running test script..."
-    cd "${DEV_BROWSER_SKILL_DIR}" && bun x tsx <<'EOF'
+    cd "${DEV_BROWSER_SKILL_DIR}" && bun x tsx <<'EOF' || exit
 import { connect, waitForPageLoad } from "@/client.js";
 
 const client = await connect("http://localhost:9222");
