@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.26.0] - 2025-12-13
+
+### Added
+
+- add SQL migrations workflow with best practices
 ## [2.25.0] - 2025-12-13
 
 ### Added
