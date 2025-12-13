@@ -62,15 +62,24 @@ done
 
 echo ""
 
+# Determine package manager (prefer bun)
+if command -v bun &> /dev/null; then
+    PKG_MGR="bun"
+    PKG_UPDATE="bun update -g"
+else
+    PKG_MGR="npm"
+    PKG_UPDATE="npm update -g"
+fi
+
 if [[ $OUTDATED_COUNT -gt 0 ]]; then
     echo -e "${YELLOW}Found $OUTDATED_COUNT outdated tool(s)${NC}"
     echo ""
     
     if [[ "$AUTO_UPDATE" == "--update" ]]; then
-        echo "Updating outdated tools..."
+        echo "Updating outdated tools using $PKG_MGR..."
         for pkg in "${OUTDATED_PACKAGES[@]}"; do
             echo "  Updating $pkg..."
-            npm update -g "$pkg" 2>&1 | tail -1
+            $PKG_UPDATE "$pkg" 2>&1 | tail -1
         done
         echo ""
         echo -e "${GREEN}Updates complete. Re-run to verify.${NC}"
@@ -80,7 +89,7 @@ if [[ $OUTDATED_COUNT -gt 0 ]]; then
         echo ""
         echo "Or update individually:"
         for pkg in "${OUTDATED_PACKAGES[@]}"; do
-            echo "  npm update -g $pkg"
+            echo "  $PKG_UPDATE $pkg"
         done
     fi
 else

@@ -43,22 +43,24 @@ check_prerequisites() {
     fi
     
     # Check Node.js
-    if ! command -v node &> /dev/null; then
-        print_error "Node.js is required but not installed"
-        print_info "Install Node.js from: https://nodejs.org/"
-        return 1
-    fi
-    
-    local node_version
-    node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-    if [[ $node_version -lt 18 ]]; then
-        print_error "Node.js 18+ is required, found v$node_version"
-        return 1
-    fi
-    
-    # Check npm
-    if ! command -v npm &> /dev/null; then
-        print_error "npm is required but not installed"
+    # Check for Bun (preferred) or Node.js
+    if command -v bun &> /dev/null; then
+        print_success "Bun $(bun --version) found (preferred)"
+    elif command -v node &> /dev/null; then
+        local node_version
+        node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+        if [[ $node_version -lt 18 ]]; then
+            print_error "Node.js 18+ is required, found v$node_version"
+            return 1
+        fi
+        if ! command -v npm &> /dev/null; then
+            print_error "npm is required but not installed"
+            return 1
+        fi
+        print_info "Node.js found (install Bun for faster setup: curl -fsSL https://bun.sh/install | bash)"
+    else
+        print_error "Bun or Node.js is required"
+        print_info "Install Bun: curl -fsSL https://bun.sh/install | bash"
         return 1
     fi
     
@@ -433,12 +435,20 @@ setup_agent_ui() {
     # Check if already initialized
     if [[ ! -f "package.json" ]]; then
         print_info "Creating Agent-UI project..."
-        # NOSONAR - npm scripts required for project scaffolding
-        npx create-agent-ui@latest . --yes
+        if command -v bun &> /dev/null; then
+            bun x create-agent-ui@latest . --yes
+        else
+            # NOSONAR - npm scripts required for project scaffolding
+            npx create-agent-ui@latest . --yes
+        fi
     else
         print_info "Agent-UI already initialized, updating dependencies..."
-        # NOSONAR - npm scripts required for native dependencies
-        npm install
+        if command -v bun &> /dev/null; then
+            bun install
+        else
+            # NOSONAR - npm scripts required for native dependencies
+            npm install
+        fi
     fi
     
     # Create configuration
@@ -453,11 +463,15 @@ EOF
         print_success "Created Agent-UI configuration"
     fi
     
-    # Create startup script
+    # Create startup script (prefers bun)
     cat > start_agent_ui.sh << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
-npm run dev
+if command -v bun &> /dev/null; then
+    bun run dev
+else
+    npm run dev
+fi
 EOF
     chmod +x start_agent_ui.sh
     

@@ -19,20 +19,36 @@ print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 
 print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
 print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
+# Determine package runner (bun x or npx)
+get_pkg_runner() {
+    if command -v bun &> /dev/null; then
+        echo "bun x"
+    elif command -v npx &> /dev/null; then
+        echo "npx"
+    else
+        echo ""
+    fi
+}
+
+PKG_RUNNER=""
+
 # Check if TOON CLI is available
 check_toon() {
-    if ! command -v npx &> /dev/null; then
-        print_error "npx is not available. Please install Node.js first:"
+    PKG_RUNNER=$(get_pkg_runner)
+    
+    if [[ -z "$PKG_RUNNER" ]]; then
+        print_error "bun or npx is required. Install Bun (recommended):"
         echo ""
+        echo "Bun:     curl -fsSL https://bun.sh/install | bash"
+        echo ""
+        echo "Or Node.js:"
         echo "macOS:   brew install node"
         echo "Ubuntu:  sudo apt-get install nodejs npm"
-        echo "CentOS:  sudo yum install nodejs npm"
-        echo "Windows: Download from https://nodejs.org/"
         return 1
     fi
     
     # Test TOON CLI availability
-    if ! npx @toon-format/cli --help &> /dev/null; then
+    if ! $PKG_RUNNER @toon-format/cli --help &> /dev/null; then
         print_warning "TOON CLI not found, will install on first use"
     fi
     
@@ -73,7 +89,7 @@ json_to_toon() {
     fi
     
     print_info "Converting JSON to TOON format..."
-    if npx @toon-format/cli "${cmd_args[@]}" "$input_file"; then
+    if $PKG_RUNNER @toon-format/cli "${cmd_args[@]}" "$input_file"; then
         if [[ -n "$output_file" ]]; then
             print_success "Converted to TOON: $output_file"
         else
@@ -114,7 +130,7 @@ toon_to_json() {
     fi
     
     print_info "Converting TOON to JSON format..."
-    if npx @toon-format/cli "${cmd_args[@]}" "$input_file"; then
+    if $PKG_RUNNER @toon-format/cli "${cmd_args[@]}" "$input_file"; then
         if [[ -n "$output_file" ]]; then
             print_success "Converted to JSON: $output_file"
         else
@@ -159,7 +175,7 @@ convert_stdin() {
     esac
     
     print_info "Converting from stdin..."
-    if npx @toon-format/cli "${cmd_args[@]}"; then
+    if $PKG_RUNNER @toon-format/cli "${cmd_args[@]}"; then
         print_success "Conversion completed"
         return 0
     else
@@ -249,7 +265,7 @@ compare_formats() {
 
     # Show TOON with stats
     print_info "TOON format with token statistics:"
-    npx @toon-format/cli --stats "$input_file"
+    $PKG_RUNNER @toon-format/cli --stats "$input_file"
 
     return 0
 }
@@ -271,7 +287,7 @@ validate_toon() {
     print_info "Validating TOON format: $input_file"
 
     # Try to decode with strict validation
-    if npx @toon-format/cli --decode "$input_file" > /dev/null 2>&1; then
+    if $PKG_RUNNER @toon-format/cli --decode "$input_file" > /dev/null 2>&1; then
         print_success "TOON format is valid"
         return 0
     else
@@ -288,7 +304,7 @@ show_info() {
 
     if check_toon; then
         print_info "TOON CLI version:"
-        npx @toon-format/cli --help | head -1
+        $PKG_RUNNER @toon-format/cli --help | head -1
         echo ""
 
         print_info "TOON Format Benefits:"

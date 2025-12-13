@@ -49,6 +49,18 @@ print_header() {
     return 0
 }
 
+# Install global npm package (prefers Bun if available)
+install_npm_global() {
+    local packages=("$@")
+    if command -v bun &>/dev/null; then
+        bun install -g "${packages[@]}" &>/dev/null
+    elif command -v npm &>/dev/null; then
+        npm install -g --ignore-scripts "${packages[@]}" &>/dev/null
+    else
+        return 1
+    fi
+}
+
 # Detect project languages and frameworks
 detect_project_languages() {
     local languages=()
@@ -214,9 +226,8 @@ install_javascript_linters() {
     local total=0
 
     # ESLint (JavaScript/TypeScript linter)
-    # Use --ignore-scripts to prevent execution of postinstall scripts for security
     print_info "Installing ESLint..."
-    if npm install -g --ignore-scripts eslint &>/dev/null; then
+    if install_npm_global eslint; then
         print_success "ESLint installed"
         ((success++))
     else
@@ -225,9 +236,8 @@ install_javascript_linters() {
     ((total++))
 
     # TypeScript ESLint parser and plugin
-    # Use --ignore-scripts to prevent execution of postinstall scripts for security
     print_info "Installing TypeScript ESLint support..."
-    if npm install -g --ignore-scripts @typescript-eslint/parser @typescript-eslint/eslint-plugin &>/dev/null; then
+    if install_npm_global @typescript-eslint/parser @typescript-eslint/eslint-plugin; then
         print_success "TypeScript ESLint support installed"
         ((success++))
     else
@@ -247,9 +257,8 @@ install_css_linters() {
     local total=0
 
     # Stylelint (CSS/SCSS/Less linter)
-    # Use --ignore-scripts to prevent execution of postinstall scripts for security
     print_info "Installing Stylelint..."
-    if npm install -g --ignore-scripts stylelint stylelint-config-standard &>/dev/null; then
+    if install_npm_global stylelint stylelint-config-standard; then
         print_success "Stylelint installed"
         ((success++))
     else
@@ -358,8 +367,8 @@ install_security_linters() {
     if command -v secretlint &>/dev/null; then
         print_success "Secretlint already installed"
         ((success++))
-    elif npm install -g --ignore-scripts secretlint @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
-        print_success "Secretlint installed via npm"
+    elif install_npm_global secretlint @secretlint/secretlint-rule-preset-recommend; then
+        print_success "Secretlint installed"
         ((success++))
     else
         print_error "Failed to install Secretlint"

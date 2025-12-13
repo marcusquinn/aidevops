@@ -271,10 +271,16 @@ if 'outscraper_*' not in config['tools']:
     print("  Added outscraper_* to tools (disabled globally, enabled for @outscraper subagent)")
 
 # DataForSEO MCP - for comprehensive SEO data
+# Uses bun x if available, falls back to npx
+import shutil
+bun_path = shutil.which('bun')
+npx_path = shutil.which('npx') or '/opt/homebrew/bin/npx'
+pkg_runner = f"{bun_path} x" if bun_path else npx_path
+
 if 'dataforseo' not in config['mcp']:
     config['mcp']['dataforseo'] = {
         "type": "local",
-        "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD /opt/homebrew/bin/npx dataforseo-mcp-server"],
+        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD {pkg_runner} dataforseo-mcp-server"],
         "enabled": True
     }
     print("  Added dataforseo MCP server")
@@ -287,7 +293,7 @@ if 'dataforseo_*' not in config['tools']:
 if 'serper' not in config['mcp']:
     config['mcp']['serper'] = {
         "type": "local",
-        "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY /opt/homebrew/bin/serper-mcp-server"],
+        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY {pkg_runner} serper-mcp-server"],
         "enabled": True
     }
     print("  Added serper MCP server")
@@ -299,11 +305,18 @@ if 'serper_*' not in config['tools']:
 # Playwriter MCP - browser automation via Chrome extension
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
 if 'playwriter' not in config['mcp']:
-    config['mcp']['playwriter'] = {
-        "type": "local",
-        "command": ["npx", "playwriter@latest"],
-        "enabled": True
-    }
+    if bun_path:
+        config['mcp']['playwriter'] = {
+            "type": "local",
+            "command": ["bun", "x", "playwriter@latest"],
+            "enabled": True
+        }
+    else:
+        config['mcp']['playwriter'] = {
+            "type": "local",
+            "command": ["npx", "playwriter@latest"],
+            "enabled": True
+        }
     print("  Added playwriter MCP server (install Chrome extension separately)")
 
 with open(config_path, 'w') as f:

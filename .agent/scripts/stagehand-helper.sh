@@ -68,38 +68,54 @@ create_stagehand_directories() {
 install_stagehand() {
     print_info "Installing Stagehand AI Browser Automation Framework..."
     
-    # Check if Node.js is installed
-    if ! command -v node &> /dev/null; then
-        print_error "Node.js is required but not installed. Please install Node.js first."
-        return 1
-    fi
-    
-    # Check if npm is installed
-    if ! command -v npm &> /dev/null; then
-        print_error "npm is required but not installed. Please install npm first."
+    # Check for Bun (preferred) or Node.js
+    local use_bun=false
+    if command -v bun &> /dev/null; then
+        use_bun=true
+        print_success "Using Bun $(bun --version)"
+    elif command -v node &> /dev/null; then
+        if ! command -v npm &> /dev/null; then
+            print_error "npm is required but not installed. Please install npm or Bun."
+            return 1
+        fi
+        print_info "Using Node.js (install Bun for faster setup: curl -fsSL https://bun.sh/install | bash)"
+    else
+        print_error "Bun or Node.js is required. Install Bun: curl -fsSL https://bun.sh/install | bash"
         return 1
     fi
     
     # Create project directory
     create_stagehand_directories
     
-    # Initialize npm project if needed
+    # Initialize project if needed
     if [[ ! -f "${STAGEHAND_CONFIG_DIR}/package.json" ]]; then
-        print_info "Initializing npm project..."
+        print_info "Initializing project..."
         cd "$STAGEHAND_CONFIG_DIR" || return 1
-        npm init -y > /dev/null 2>&1
+        if [[ "$use_bun" == "true" ]]; then
+            bun init -y > /dev/null 2>&1
+        else
+            npm init -y > /dev/null 2>&1
+        fi
     fi
     
     # Install Stagehand
     print_info "Installing @browserbasehq/stagehand..."
     cd "$STAGEHAND_CONFIG_DIR" || return 1
-    # NOSONAR - npm scripts required for Playwright browser automation binaries
-    npm install @browserbasehq/stagehand
+    if [[ "$use_bun" == "true" ]]; then
+        bun add @browserbasehq/stagehand
+    else
+        # NOSONAR - npm scripts required for Playwright browser automation binaries
+        npm install @browserbasehq/stagehand
+    fi
     
     # Install additional dependencies for better functionality
     print_info "Installing additional dependencies..."
-    # NOSONAR - npm scripts required for dependency compilation
-    npm install zod dotenv
+    if [[ "$use_bun" == "true" ]]; then
+        bun add zod dotenv
+    else
+        # NOSONAR - npm scripts required for dependency compilation
+        npm install zod dotenv
+    fi
     
     print_success "Stagehand installation completed"
     return 0
