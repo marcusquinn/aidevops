@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - add retry loop for website docs push race condition
+
 ## [2.27.3] - 2025-12-13
 
 ### Fixed
