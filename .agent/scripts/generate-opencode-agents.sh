@@ -296,6 +296,16 @@ if 'serper_*' not in config['tools']:
     config['tools']['serper_*'] = False
     print("  Added serper_* to tools (disabled globally, enabled for SEO agent)")
 
+# Playwriter MCP - browser automation via Chrome extension
+# Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
+if 'playwriter' not in config['mcp']:
+    config['mcp']['playwriter'] = {
+        "type": "local",
+        "command": ["npx", "playwriter@latest"],
+        "enabled": True
+    }
+    print("  Added playwriter MCP server (install Chrome extension separately)")
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 
@@ -343,6 +353,9 @@ while IFS= read -r f; do
             ;;
         serper)
             extra_tools=$'  serper_*: true\n  webfetch: true'
+            ;;
+        playwriter)
+            extra_tools=$'  playwriter_*: true'
             ;;
         *)
             ;;  # No extra tools for other agents
