@@ -446,6 +446,41 @@ Proceeding with changes on main..."
 
 **Never block** the user - these are guidelines, not restrictions.
 
+## SQL Migrations
+
+When changes include database schema modifications:
+
+### Detection
+
+Look for:
+- Files in `migrations/`, `database/migrations/`, or similar
+- SQL files with schema changes (`CREATE TABLE`, `ALTER TABLE`, etc.)
+- ORM migration files (Prisma, Laravel, Rails, etc.)
+
+### Branch Naming for Migrations
+
+| Change Type | Branch | Example |
+|-------------|--------|---------|
+| New table | `feature/` | `feature/add-user-preferences-table` |
+| Schema fix | `bugfix/` | `bugfix/fix-orders-foreign-key` |
+| Data backfill | `chore/` | `chore/backfill-user-status` |
+
+### Pre-Push Checklist for Migrations
+
+Before pushing migration files:
+
+1. ✅ Migration has both UP and DOWN sections
+2. ✅ DOWN section actually reverses the UP changes
+3. ✅ Tested locally (run up, run down, run up again)
+4. ✅ No modifications to already-pushed migrations
+5. ✅ Timestamp is current (regenerate if rebasing)
+
+### Critical Rule
+
+**NEVER modify migrations that have been pushed/deployed.** Create a new migration to fix issues.
+
+See `workflows/sql-migrations.md` for full migration workflow.
+
 ## Related Workflows
 
 | Workflow | When to Read |
@@ -459,6 +494,7 @@ Proceeding with changes on main..."
 | `release.md` | Full release process |
 | `feature-development.md` | Feature implementation patterns |
 | `bug-fixing.md` | Bug fix patterns |
+| `sql-migrations.md` | Database schema version control |
 
 ## Platform CLI Reference
 

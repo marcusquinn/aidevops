@@ -132,6 +132,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Browser automation → `tools/browser/`
 - MCP development → `build-mcp/`
 - SEO analysis → `seo/` (google-search-console, dataforseo, serper)
+- Database migrations → `workflows/sql-migrations.md`
 - Working in `~/Git/aidevops/` → `aidevops/architecture.md` (framework internals)
 
 ## Security
