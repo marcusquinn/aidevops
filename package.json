@@ -37,7 +37,9 @@
     "elysia": "^1.1.0"
   },
   "devDependencies": {
+    "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
     "@types/bun": "latest",
+    "secretlint": "^11.2.5",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {

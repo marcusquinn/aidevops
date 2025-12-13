@@ -3,13 +3,18 @@
 # Generate OpenCode Agent Configuration
 # =============================================================================
 # Architecture:
-#   - Primary agents: Defined in opencode.json (controls Tab order & MCP access)
-#   - Subagents: Markdown files in ~/.config/opencode/agent/ (@mentionable)
+#   - Primary agents: Auto-discovered from root .md files in ~/.aidevops/agents/
+#   - Subagents: Auto-discovered from subfolder .md files (@mentionable)
 #   - AGENTS.md: At ~/.config/opencode/AGENTS.md (global context reference)
 #
 # Source: ~/.aidevops/agents/
-#   - Root .md files = Primary agents (defined in JSON for ordering)
-#   - Subfolder .md files = Subagents (generated as markdown)
+#   - Root .md files = Primary agents (auto-discovered, Tab-switchable)
+#   - Subfolder .md files = Subagents (auto-discovered, @mentionable)
+#
+# Agent Configuration:
+#   - Frontmatter in .md files can specify: mode, tools, temperature
+#   - Special handling for Plan+ (read-only) and agents with specific MCP needs
+#   - Default: full build permissions with common context tools
 # =============================================================================
 
 set -euo pipefail
@@ -49,8 +54,9 @@ If the output contains `UPDATE_AVAILABLE|current|latest`, inform the user: "An a
 EOF
 echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
-# Remove old primary agent markdown files (they're now in JSON)
-for f in Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md; do
+# Remove old primary agent markdown files (they're now in JSON, auto-discovered)
+# This cleans up any legacy files from before auto-discovery
+for f in Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md; do
     rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
@@ -67,13 +73,15 @@ if [[ ! -f "$OPENCODE_CONFIG" ]]; then
     echo '{"$schema": "https://opencode.ai/config.json"}' > "$OPENCODE_CONFIG"
 fi
 
-# Use Python to update the agent section (preserves other config)
+# Use Python to auto-discover and configure primary agents
 python3 << 'PYEOF'
 import json
-import sys
-
 import os
-config_path = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/.config/opencode/opencode.json")
+import glob
+import re
+
+config_path = os.path.expanduser("~/.config/opencode/opencode.json")
+agents_dir = os.path.expanduser("~/.aidevops/agents")
 
 try:
     with open(config_path, 'r') as f:
@@ -81,286 +89,150 @@ try:
 except:
     config = {"$schema": "https://opencode.ai/config.json"}
 
-# Primary agents in desired order (Plan+ first, Build+ second, then alphabetical)
-# Each agent specifies which MCP tools it can access
-# Semantic search strategy: osgrep first (local, fast), augment fallback (cloud)
-# All agents get both osgrep_* and augment-context-engine_* for semantic codebase retrieval
-primary_agents = {
-    "Plan+": {
-        "description": "Read ~/.aidevops/agents/plan-plus.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "edit": "deny",
-            "write": "deny",
-            "bash": "deny"
-        },
-        "tools": {
-            "write": False,
-            "edit": False,
-            "bash": False,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "webfetch": True,
-            "task": False,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True,
-            "repomix_*": True
-        }
-    },
-    "Build+": {
-        "description": "Read ~/.aidevops/agents/build-plus.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "bash": True,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "webfetch": True,
-            "task": True,
-            "todoread": True,
-            "todowrite": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True,
-            "repomix_*": True
-        }
-    },
-    "Build-Agent": {
-        "description": "Read ~/.aidevops/agents/build-agent.md - Design and improve AI agents",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "bash": True,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "webfetch": True,
-            "task": True,
-            "todoread": True,
-            "todowrite": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True,
-            "repomix_*": True
-        }
-    },
-    "Build-MCP": {
-        "description": "Read ~/.aidevops/agents/build-mcp.md - Build MCP servers with TS+Bun+ElysiaJS",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "bash": True,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "webfetch": True,
-            "task": True,
-            "todoread": True,
-            "todowrite": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True,
-            "repomix_*": True
-        }
-    },
-    "Accounting": {
-        "description": "Read ~/.aidevops/agents/accounting.md",
-        "mode": "primary",
-        "temperature": 0.1,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "bash": True,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "webfetch": True,
-            "task": True,
-            "quickfile_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "AI-DevOps": {
-        "description": "Read ~/.aidevops/agents/aidevops.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "bash": True,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "webfetch": True,
-            "task": True,
-            "todoread": True,
-            "todowrite": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True,
-            "repomix_*": True
-        }
-    },
-    "Content": {
-        "description": "Read ~/.aidevops/agents/content.md",
-        "mode": "primary",
-        "temperature": 0.3,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "read": True,
-            "webfetch": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "Health": {
-        "description": "Read ~/.aidevops/agents/health.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "read": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "Legal": {
-        "description": "Read ~/.aidevops/agents/legal.md",
-        "mode": "primary",
-        "temperature": 0.1,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "read": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "Marketing": {
-        "description": "Read ~/.aidevops/agents/marketing.md",
-        "mode": "primary",
-        "temperature": 0.3,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "read": True,
-            "webfetch": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "Research": {
-        "description": "Read ~/.aidevops/agents/research.md",
-        "mode": "primary",
-        "temperature": 0.3,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "read": True,
-            "webfetch": True,
-            "bash": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "Sales": {
-        "description": "Read ~/.aidevops/agents/sales.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "read": True,
-            "webfetch": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "SEO": {
-        "description": "Read ~/.aidevops/agents/seo.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "read": True,
-            "bash": True,
-            "webfetch": True,
-            "gsc_*": True,
-            "ahrefs_*": True,
-            "dataforseo_*": True,
-            "serper_*": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    },
-    "WordPress": {
-        "description": "Read ~/.aidevops/agents/wordpress.md",
-        "mode": "primary",
-        "temperature": 0.2,
-        "permission": {
-            "external_directory": "allow"
-        },
-        "tools": {
-            "write": True,
-            "edit": True,
-            "bash": True,
-            "read": True,
-            "glob": True,
-            "grep": True,
-            "localwp_*": True,
-            "context7_*": True,
-            "osgrep_*": True,
-            "augment-context-engine_*": True
-        }
-    }
+# =============================================================================
+# AUTO-DISCOVER PRIMARY AGENTS from root .md files
+# =============================================================================
+
+# Agent display name mappings (filename -> display name)
+# If not in this map, derive from filename (e.g., build-agent.md -> Build-Agent)
+DISPLAY_NAMES = {
+    "plan-plus": "Plan+",
+    "build-plus": "Build+",
+    "build-agent": "Build-Agent",
+    "build-mcp": "Build-MCP",
+    "aidevops": "AI-DevOps",
 }
 
-config['agent'] = primary_agents
+# Agent ordering (agents listed here appear first in this order, rest alphabetical)
+AGENT_ORDER = ["Plan+", "Build+", "Build-Agent", "Build-MCP", "AI-DevOps"]
+
+# Special tool configurations per agent (by display name)
+# These are MCP tools that specific agents need access to
+AGENT_TOOLS = {
+    "Plan+": {
+        # Read-only agent - no write/edit/bash
+        "write": False, "edit": False, "bash": False,
+        "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+    },
+    "Build+": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+    },
+    "Build-Agent": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+    },
+    "Build-MCP": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+    },
+    "AI-DevOps": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+    },
+    "Accounting": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True, "quickfile_*": True,
+        "osgrep_*": True, "augment-context-engine_*": True
+    },
+    "SEO": {
+        "write": True, "read": True, "bash": True, "webfetch": True,
+        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True, "serper_*": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+    },
+    "WordPress": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "localwp_*": True, "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+    },
+    "Content": {
+        "write": True, "edit": True, "read": True, "webfetch": True,
+        "osgrep_*": True, "augment-context-engine_*": True
+    },
+    "Research": {
+        "read": True, "webfetch": True, "bash": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+    },
+}
+
+# Default tools for agents not in AGENT_TOOLS
+DEFAULT_TOOLS = {
+    "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+    "webfetch": True, "task": True,
+    "osgrep_*": True, "augment-context-engine_*": True
+}
+
+# Temperature settings (by display name, default 0.2)
+AGENT_TEMPS = {
+    "Plan+": 0.2,
+    "Accounting": 0.1,
+    "Legal": 0.1,
+    "Content": 0.3,
+    "Marketing": 0.3,
+    "Research": 0.3,
+}
+
+# Files to skip (not primary agents)
+SKIP_FILES = {"AGENTS.md", "README.md"}
+
+def filename_to_display(filename):
+    """Convert filename to display name."""
+    name = filename.replace(".md", "")
+    if name in DISPLAY_NAMES:
+        return DISPLAY_NAMES[name]
+    # Convert kebab-case to Title-Case
+    return "-".join(word.capitalize() for word in name.split("-"))
+
+def get_agent_config(display_name, filename):
+    """Generate agent configuration."""
+    tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
+    temp = AGENT_TEMPS.get(display_name, 0.2)
+    
+    config = {
+        "description": f"Read ~/.aidevops/agents/{filename}",
+        "mode": "primary",
+        "temperature": temp,
+        "permission": {},
+        "tools": tools
+    }
+    
+    # Special permissions
+    if display_name == "Plan+":
+        config["permission"] = {"edit": "deny", "write": "deny", "bash": "deny"}
+    else:
+        config["permission"] = {"external_directory": "allow"}
+    
+    return config
+
+# Discover all root-level .md files
+primary_agents = {}
+discovered = []
+
+for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
+    filename = os.path.basename(filepath)
+    if filename in SKIP_FILES:
+        continue
+    
+    display_name = filename_to_display(filename)
+    primary_agents[display_name] = get_agent_config(display_name, filename)
+    discovered.append(display_name)
+
+# Sort agents: ordered ones first, then alphabetical
+def sort_key(name):
+    if name in AGENT_ORDER:
+        return (0, AGENT_ORDER.index(name))
+    return (1, name.lower())
+
+sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])))
+
+config['agent'] = sorted_agents
+
+print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
+print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
 
 # =============================================================================
 # MCP SERVERS - Ensure required MCP servers are configured
@@ -515,10 +387,13 @@ echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
 
 echo ""
 echo -e "${GREEN}Done!${NC}"
-echo "  Primary agents: 12 (in opencode.json, Tab-switchable)"
-echo "  Subagents: $subagent_count (in ~/.config/opencode/agent/, @mentionable)"
+echo "  Primary agents: Auto-discovered from ~/.aidevops/agents/*.md (Tab-switchable)"
+echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable)"
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
 echo ""
-echo "Tab order: Plan+ → Build+ → Accounting → AI-DevOps → Content → ..."
+echo "Tab order: Plan+ → Build+ → Build-Agent → Build-MCP → AI-DevOps → (alphabetical)"
+echo ""
+echo "To add a new primary agent: Create ~/.aidevops/agents/{name}.md"
+echo "To add a new subagent: Create ~/.aidevops/agents/{folder}/{name}.md"
 echo ""
 echo "Restart OpenCode to load new configuration."
