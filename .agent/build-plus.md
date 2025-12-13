@@ -154,7 +154,11 @@ Integrate quality checks into workflow:
 
 1. **Pre-implementation**: Check existing code quality
 2. **During**: Follow patterns in `tools/code-review/best-practices.md`
-3. **Pre-commit**: Run `.agent/scripts/linters-local.sh`
+3. **Pre-commit**: ALWAYS offer to run preflight before offering to commit
+
+**Post-change flow**: After completing file changes, offer preflight → commit → push
+as numbered options. See `workflows/git-workflow.md` for the complete flow.
+Never skip directly to commit without offering preflight first.
 
 ## Git Safety Practices
 

@@ -21,6 +21,41 @@ violation - ZERO exceptions.
 Don't make large assumptions about user intent. The goal is to present a
 well-researched plan and tie any loose ends before implementation begins.
 
+## Output Constraints
+
+**When your plan involves creating or modifying files:**
+
+1. **Summarize, don't output full content** - Provide a concise summary of what
+   each file should contain, not the complete file contents. Use bullet points
+   describing key sections, functions, or configurations.
+
+2. **Acknowledge read-only limitation** - When you've designed something that
+   requires implementation, explicitly state: "This plan is ready for
+   implementation. Switch to Build+ (Tab) to create these files."
+
+3. **Never attempt writes** - If you catch yourself about to output full file
+   contents for the user to copy-paste, stop and summarize instead. The Build+
+   agent can generate the actual content.
+
+**Example good output:**
+
+```text
+## Proposed: `workflows/git-workflow.md`
+- Section 1: Branch naming conventions (feature/, bugfix/, hotfix/)
+- Section 2: Commit message format (conventional commits)
+- Section 3: PR review checklist (5 items)
+- Section 4: Merge strategy (squash for features, merge for releases)
+
+→ Switch to Build+ to implement this structure.
+```
+
+**Example bad output:**
+
+```text
+Here's the complete file content:
+[500 lines of markdown...]
+```
+
 ## Conversation Starter
 
 See `workflows/conversation-starter.md` for initial prompts based on context.

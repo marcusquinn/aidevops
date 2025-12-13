@@ -201,6 +201,106 @@ The `/pr` command produces a structured report:
 **Overall**: CHANGES REQUESTED
 ```
 
+## Fork Workflow (Non-Owner Repositories)
+
+When working on a repository you don't own, use the fork workflow:
+
+### Detect Non-Owner Status
+
+```bash
+# Get remote URL and extract owner
+REMOTE_URL=$(git remote get-url origin)
+REPO_OWNER=$(echo "$REMOTE_URL" | sed -E 's/.*[:/]([^/]+)\/[^/]+\.git$/\1/')
+
+# Get current user (GitHub)
+CURRENT_USER=$(gh api user --jq '.login')
+
+# Check if owner
+if [[ "$REPO_OWNER" != "$CURRENT_USER" ]]; then
+    echo "Fork workflow required"
+fi
+```
+
+### Fork and Setup
+
+**GitHub:**
+
+```bash
+# 1. Fork the repository
+gh repo fork {owner}/{repo} --clone=false
+
+# 2. Add fork as remote
+git remote add fork git@github.com:{your-username}/{repo}.git
+
+# 3. Verify remotes
+git remote -v
+# origin    git@github.com:{owner}/{repo}.git (fetch/push) - upstream
+# fork      git@github.com:{your-username}/{repo}.git (fetch/push) - your fork
+```
+
+**GitLab:**
+
+```bash
+# 1. Fork via web UI or API
+glab repo fork {owner}/{repo}
+
+# 2. Add fork as remote
+git remote add fork git@gitlab.com:{your-username}/{repo}.git
+```
+
+**Gitea:**
+
+```bash
+# 1. Fork via web UI
+# 2. Add fork as remote
+git remote add fork git@{gitea-host}:{your-username}/{repo}.git
+```
+
+### Push and Create PR to Upstream
+
+```bash
+# 1. Push to your fork
+git push fork {branch-name}
+
+# 2. Create PR to upstream (GitHub)
+gh pr create --repo {owner}/{repo} --head {your-username}:{branch-name}
+
+# GitLab equivalent
+glab mr create --target-project {owner}/{repo} --source-branch {branch-name}
+```
+
+### Keeping Fork Updated
+
+```bash
+# Fetch upstream changes
+git fetch origin main
+
+# Update your fork's main
+git checkout main
+git merge origin/main
+git push fork main
+
+# Rebase your feature branch
+git checkout {branch-name}
+git rebase main
+git push fork {branch-name} --force-with-lease
+```
+
+### Fork Workflow Diagram
+
+```text
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Upstream Repo  │     │    Your Fork    │     │   Local Clone   │
+│  (origin)       │     │    (fork)       │     │                 │
+├─────────────────┤     ├─────────────────┤     ├─────────────────┤
+│                 │     │                 │     │                 │
+│  main ◄─────────┼─────┼─── PR ◄─────────┼─────┼─── push fork    │
+│                 │     │                 │     │                 │
+│                 │     │  {branch} ◄─────┼─────┼─── your work    │
+│                 │     │                 │     │                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
 ## Creating Pull Requests
 
 ### GitHub (`gh`)

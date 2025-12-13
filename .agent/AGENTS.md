@@ -17,6 +17,29 @@
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
+## Git Workflow (File Changes)
+
+**When conversation indicates file creation/modification in a git repo**:
+
+1. Check current branch: `git branch --show-current`
+2. Check for existing branches that might match the task
+3. If on `main`: Present numbered options (existing branches, create new, or continue on main)
+4. Read `workflows/git-workflow.md` for full workflow guidance
+
+**Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
+
+**User prompts**: Always offer numbered options. User can reply with number or "yes" for default.
+
+**Issue URLs**: Paste any GitHub/GitLab/Gitea issue URL to auto-setup branch.
+
+**After completing file changes**, offer numbered options:
+
+1. Run preflight checks (`workflows/preflight.md`)
+2. Skip preflight and commit directly (not recommended)
+3. Continue making more changes
+
+Only offer to commit after preflight passes or user explicitly skips.
+
 **Testing Config Changes**: Use CLI to test without TUI restart:
 
 ```bash
@@ -79,8 +102,8 @@ opencode mcp list
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (branch, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace) |
-| `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment) |
+| `workflows/` | Process guides (git-workflow, branch, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace) |
+| `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment, release) |
 
 <!-- AI-CONTEXT-END -->
 

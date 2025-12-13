@@ -4,6 +4,19 @@ Shared prompts for Plan+ and Build+ agents to ensure consistent UX.
 
 ## Inside Git Repository
 
+**First**: Check git context before offering options:
+
+```bash
+BRANCH=$(git branch --show-current)
+if [[ "$BRANCH" == "main" ]]; then
+    echo "Currently on main branch - will suggest work branch for coding tasks"
+fi
+```
+
+If on `main` branch, include this note in the prompt:
+
+> **Note**: You're on the `main` branch. For file changes, I'll check for existing branches and offer options before proceeding.
+
 > What are you working on?
 >
 > **Planning & Analysis** (Plan+):
@@ -19,14 +32,15 @@ Shared prompts for Plan+ and Build+ agents to ensure consistent UX.
 > 3. Hotfix (`workflows/branch/hotfix.md`)
 > 4. Refactoring (`workflows/branch/refactor.md`)
 > 5. Preflight Checks (`workflows/preflight.md`)
-> 6. Pull/Merge Request (`workflows/pull-request.md`)
+> 6. Pull/Merge Request (`workflows/pr.md`)
 > 7. Release (`workflows/release.md`)
 > 8. Postflight Checks (`workflows/postflight.md`)
-> 9. Something else (describe)
+> 9. Work on Issue (paste GitHub/GitLab/Gitea issue URL)
+> 10. Something else (describe)
+
+**For implementation tasks (1-4, 9-10)**: Read `workflows/git-workflow.md` first for branch creation, issue URL handling, and fork detection.
 
 After selection, read the relevant workflow subagent to add context.
-
-For implementation tasks (4-11), follow `workflows/branch.md` lifecycle.
 
 ## Outside Git Repository
 

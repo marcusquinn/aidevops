@@ -30,6 +30,7 @@ tools:
 | Code restructure | `refactor/` | `branch/refactor.md` |
 | Docs, deps, config | `chore/` | `branch/chore.md` |
 | Spike, POC | `experiment/` | `branch/experiment.md` |
+| Version release | `release/` | `branch/release.md` |
 
 **Branch naming**: `{type}/{short-description}` (e.g., `feature/user-dashboard`)
 
@@ -46,6 +47,8 @@ git checkout main && git pull origin main && git checkout -b {type}/{description
 ## Purpose
 
 This workflow ensures all build agents use consistent branching practices. Every code change should go through a branch, PR, and merge process.
+
+**Important**: Before creating branches, read `workflows/git-workflow.md` for the complete git workflow including issue URL handling, fork detection, and new repo initialization.
 
 ## Checking for Existing Work
 
@@ -81,12 +84,14 @@ git checkout -b {type}/{description}
 | Restructuring code, same behavior | `refactor/` |
 | Updating docs, deps, CI, config | `chore/` |
 | Exploring, prototyping, POC | `experiment/` |
+| Preparing a version release | `release/` |
 
 ### Naming Conventions
 
 - Use lowercase with hyphens: `feature/user-authentication`
 - Be descriptive but concise: `bugfix/login-timeout` not `bugfix/fix`
 - Include issue number if applicable: `bugfix/123-login-timeout`
+- Release branches use version: `release/1.2.0` (semver format)
 
 ## Branch Lifecycle
 
