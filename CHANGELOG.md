@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add framework internals trigger to progressive disclosure
+
 ## [2.24.0] - 2025-12-09
 
 ### Added
