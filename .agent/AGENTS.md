@@ -18,9 +18,9 @@
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
 **SonarCloud Hotspot Patterns** (auto-excluded via `sonar-project.properties`):
-- `http://localhost` in helper/setup/cli scripts - local dev servers
-- `http://` string detection - checking for insecure URLs, not using them
-- `curl ... | bash` - official installers from verified HTTPS sources
+- Scripts matching `*-helper.sh`, `*-setup.sh`, `*-cli.sh`, `*-verify.sh` are excluded from:
+  - S5332 (clear-text protocol) - `http://localhost` for local dev
+  - S6506 (HTTPS not enforced) - `curl|bash` for official installers
 - Add `# SONAR:` comments for documentation, exclusions handle suppression
 
 ## Git Workflow (File Changes)
