@@ -1106,6 +1106,69 @@ setup_osgrep() {
     print_info "Verification: 'Search for authentication handling in this codebase'"
 }
 
+# Setup Browser Automation Tools (Bun, dev-browser, Playwriter)
+setup_browser_tools() {
+    print_info "Setting up browser automation tools..."
+    
+    local has_bun=false
+    local has_node=false
+    
+    # Check Bun
+    if command -v bun &> /dev/null; then
+        has_bun=true
+        print_success "Bun $(bun --version) found"
+    fi
+    
+    # Check Node.js (for Playwriter)
+    if command -v node &> /dev/null; then
+        has_node=true
+    fi
+    
+    # Install Bun if not present (required for dev-browser)
+    if [[ "$has_bun" == "false" ]]; then
+        print_info "Installing Bun (required for dev-browser)..."
+        if curl -fsSL https://bun.sh/install | bash 2>/dev/null; then
+            # Source the updated PATH
+            export BUN_INSTALL="$HOME/.bun"
+            export PATH="$BUN_INSTALL/bin:$PATH"
+            if command -v bun &> /dev/null; then
+                has_bun=true
+                print_success "Bun installed: $(bun --version)"
+            fi
+        else
+            print_warning "Bun installation failed - dev-browser will need manual setup"
+        fi
+    fi
+    
+    # Setup dev-browser if Bun is available
+    if [[ "$has_bun" == "true" ]]; then
+        local dev_browser_dir="$HOME/.aidevops/dev-browser"
+        
+        if [[ -d "${dev_browser_dir}/skills/dev-browser" ]]; then
+            print_success "dev-browser already installed"
+        else
+            print_info "Installing dev-browser (stateful browser automation)..."
+            if bash "$AGENTS_DIR/scripts/dev-browser-helper.sh" setup 2>/dev/null; then
+                print_success "dev-browser installed"
+                print_info "Start server with: bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start"
+            else
+                print_warning "dev-browser setup failed - run manually:"
+                print_info "  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup"
+            fi
+        fi
+    fi
+    
+    # Playwriter MCP (Node.js based, runs via npx)
+    if [[ "$has_node" == "true" ]]; then
+        print_success "Playwriter MCP available (runs via npx playwriter@latest)"
+        print_info "Install Chrome extension: https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe"
+    else
+        print_warning "Node.js not found - Playwriter MCP unavailable"
+    fi
+    
+    print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Stagehand (AI)"
+}
+
 # Setup SEO MCP Servers (DataForSEO, Serper)
 setup_seo_mcps() {
     print_info "Setting up SEO MCP servers..."
@@ -1257,6 +1320,7 @@ main() {
     setup_augment_context_engine
     setup_osgrep
     setup_seo_mcps
+    setup_browser_tools
 
     echo ""
     print_success "🎉 Setup complete!"
