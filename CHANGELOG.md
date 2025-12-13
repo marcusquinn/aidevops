@@ -11,13 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documentation: add changelog for v2.28.0
-- Performance: use Bun in GitHub Actions for faster CI
-- Refactor: prefer Bun over Node.js/npm across scripts
-## [2.28.0] - 2025-12-13
-
-### Changed
-
 - Performance: use Bun in GitHub Actions for faster CI (~3x faster installs)
 - Refactor: prefer Bun over Node.js/npm across local scripts
 
