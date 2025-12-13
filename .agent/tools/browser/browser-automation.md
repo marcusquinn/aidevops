@@ -413,7 +413,38 @@ watch -n 5 'ps aux | grep -E "(chrome|firefox)" | head -10'
 
 ## 🔗 **Integration with AI DevOps Framework**
 
-### **🎭 Playwriter - Chrome Extension MCP** ⭐ **NEW**
+### **🚀 Dev-Browser - Stateful Browser Automation** ⭐ **NEW**
+
+**Persistent Playwright server with stateful page management - 14% faster, 39% cheaper**
+
+```bash
+# Setup
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup
+
+# Start server (required before scripts)
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
+
+# Execute scripts via bun x tsx
+cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
+import { connect, waitForPageLoad } from "@/client.js";
+const client = await connect("http://localhost:9222");
+const page = await client.page("main");
+await page.goto("http://localhost:3000");
+await waitForPageLoad(page);
+console.log({ title: await page.title() });
+await client.disconnect();
+EOF
+```
+
+**Key Advantages**:
+- **Stateful**: Pages persist across script executions
+- **14% faster, 39% cheaper** than Playwright MCP
+- **Codebase-aware**: Read source to write selectors directly
+- **ARIA snapshots**: LLM-friendly element discovery
+
+See `tools/browser/dev-browser.md` for full documentation.
+
+### **🎭 Playwriter - Chrome Extension MCP**
 
 **Browser automation via Chrome extension with full Playwright API - minimal context bloat**
 

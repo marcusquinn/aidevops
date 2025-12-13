@@ -1,0 +1,47 @@
+{
+  "_comment": "Dev-browser is NOT an MCP server - it's a Claude Skill/subagent",
+  "_comment2": "Use the @dev-browser subagent which executes scripts via bash",
+  "_docs": "https://github.com/SawyerHood/dev-browser",
+  
+  "installation": {
+    "directory": "~/.aidevops/dev-browser",
+    "skill_directory": "~/.aidevops/dev-browser/skills/dev-browser",
+    "server_port": 9222,
+    "requires": ["bun", "playwright"]
+  },
+  
+  "setup_steps": [
+    "1. Run: bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup",
+    "2. Start server: bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start",
+    "3. Use @dev-browser subagent in OpenCode",
+    "4. Server must be running for scripts to work"
+  ],
+  
+  "commands": {
+    "setup": "bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup",
+    "start": "bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start",
+    "start_headless": "bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-headless",
+    "stop": "bash ~/.aidevops/agents/scripts/dev-browser-helper.sh stop",
+    "status": "bash ~/.aidevops/agents/scripts/dev-browser-helper.sh status",
+    "test": "bash ~/.aidevops/agents/scripts/dev-browser-helper.sh test"
+  },
+  
+  "script_execution": {
+    "_comment": "Scripts are executed via bun x tsx with heredoc",
+    "working_directory": "~/.aidevops/dev-browser/skills/dev-browser",
+    "command_template": "cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'\n...\nEOF"
+  },
+  
+  "key_features": [
+    "Stateful: Pages persist across script executions",
+    "14% faster, 39% cheaper than Playwright MCP",
+    "ARIA snapshots for LLM-friendly element discovery",
+    "Codebase-aware: Read source code for selectors"
+  ],
+  
+  "comparison": {
+    "vs_playwriter": "Playwriter uses existing browser sessions; dev-browser runs its own persistent server",
+    "vs_playwright_mcp": "Dev-browser is stateful and batches operations; Playwright MCP is stateless with round-trips",
+    "vs_stagehand": "Stagehand uses natural language; dev-browser uses Playwright scripts"
+  }
+}

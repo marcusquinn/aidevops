@@ -90,7 +90,7 @@ opencode mcp list
 | `seo/` | SEO subagents (google-search-console, dataforseo, serper) |
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
-| `tools/browser/` | Browser automation (playwriter, playwright, stagehand, chrome-devtools, crawl4ai, pagespeed) |
+| `tools/browser/` | Browser automation (dev-browser, playwriter, playwright, stagehand, crawl4ai, pagespeed) |
 | `tools/code-review/` | Quality tools (code-standards, codacy, coderabbit, qlty, snyk, auditing, automation) |
 | `tools/context/` | Context tools (osgrep, augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
 | `tools/conversion/` | Format conversion (pandoc) |
