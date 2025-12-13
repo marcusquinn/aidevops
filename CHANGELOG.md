@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.25.0] - 2025-12-13
+
+### Added
+
+- auto-discover primary agents from .agent/*.md files
+- add comprehensive git workflow with branch safety and preflight checks
+
+### Changed
+
+- Documentation: add framework internals trigger to progressive disclosure
 ## [2.24.0] - 2025-12-09
 
 ### Added
