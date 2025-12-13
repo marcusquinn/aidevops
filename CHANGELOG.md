@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.27.3] - 2025-12-13
+
+### Fixed
+
+- Add retry loop for website docs push race condition (3 attempts with backoff)
+- Add retry pattern to sync-wiki.yml workflow
+
+### Added
+
+- Document git push retry pattern in github-actions.md design patterns
+
 ## [2.27.2] - 2025-12-13
 
 ### Changed
