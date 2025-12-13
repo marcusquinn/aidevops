@@ -177,6 +177,10 @@ check_credentials() {
                 has_creds=true
             fi
             ;;
+        *)
+            print_error "Unknown provider: $provider"
+            return 1
+            ;;
     esac
     
     if [[ "$has_creds" == "false" ]]; then
@@ -1120,6 +1124,9 @@ print_research_table() {
                 printf "| %-30s | %7s | %4s | %8s | %11s | %-35s |\n" "${kw:0:30}" "$vol_fmt" "$kd" "$pos" "$traffic" "${url:0:35}"
             done
             ;;
+        *)
+            print_error "Unknown mode: $mode"
+            ;;
     esac
     echo ""
     return 0
@@ -1148,6 +1155,10 @@ export_csv() {
         "competitor")
             echo "Keyword,Volume,CPC,Difficulty,Intent,Position,EstTraffic,RankingURL" > "$filepath"
             echo "$json_data" | jq -r '.[] | "\"\(.keyword)\",\(.volume),\(.cpc),\(.difficulty),\"\(.intent)\",\(.position),\(.est_traffic),\"\(.ranking_url)\""' >> "$filepath"
+            ;;
+        *)
+            print_error "Unknown export mode: $mode"
+            return 1
             ;;
     esac
     
@@ -1561,6 +1572,9 @@ apply_filters() {
                 ;;
             "excludes")
                 result=$(echo "$result" | jq --arg v "$value" '[.[] | select(.keyword | contains($v) | not)]')
+                ;;
+            *)
+                print_warning "Unknown filter: $key"
                 ;;
         esac
     done

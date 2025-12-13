@@ -58,6 +58,9 @@ print_key() {
         "configured")
             status_color="${BLUE}"
             ;;
+        *)
+            # Default: keep GREEN
+            ;;
     esac
     
     # Simple format: "  KEY_NAME [status]" - no fixed width padding
@@ -95,6 +98,9 @@ is_placeholder() {
         # Template markers
         *\<*\>*|*\{*\}*|*\[*\]*)
             return 0 ;;
+        *)
+            # Not a placeholder pattern, continue checking
+            ;;
     esac
     
     # All same character (like "xxxx" or "0000")
@@ -167,6 +173,9 @@ list_env_only_keys() {
         case "$key_name" in
             SSH_AUTH_SOCK|GPG_AGENT_*|DBUS_*|XDG_*|GNOME_*|KDE_*)
                 continue
+                ;;
+            *)
+                # Process this key
                 ;;
         esac
         
@@ -407,6 +416,9 @@ output_json() {
         case "$key_name" in
             SSH_AUTH_SOCK|GPG_AGENT_*|DBUS_*|XDG_*|GNOME_*|KDE_*)
                 continue ;;
+            *)
+                # Process this key
+                ;;
         esac
         
         local status
@@ -456,6 +468,9 @@ main() {
         --json)
             output_json
             return 0
+            ;;
+        *)
+            # Default: run normal output
             ;;
     esac
     

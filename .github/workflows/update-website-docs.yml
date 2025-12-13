@@ -223,6 +223,8 @@ jobs:
           Triggered by: ${{ github.event_name }}
           Source commit: ${{ github.sha }}"
           
+          # Pull with rebase to handle concurrent pushes, then push
+          git pull --rebase origin main || true
           git push
 
       - name: Summary

@@ -28,6 +28,7 @@ get_pkg_runner() {
     else
         echo ""
     fi
+    return 0
 }
 
 PKG_RUNNER=""
