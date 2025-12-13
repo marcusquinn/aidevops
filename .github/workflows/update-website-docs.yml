@@ -17,13 +17,13 @@ jobs:
       - name: Checkout aidevops repo
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '20'
+          bun-version: latest
 
       - name: Install marked (Markdown parser)
-        run: npm install marked
+        run: bun install marked
 
       - name: Convert README to HTML
         run: |

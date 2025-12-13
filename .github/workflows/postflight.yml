@@ -27,10 +27,10 @@ jobs:
         ref: ${{ github.event.inputs.tag || github.ref }}
         fetch-depth: 0
     
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
       with:
-        node-version: '20'
+        bun-version: latest
     
     - name: Wait for CI/CD Pipelines
       run: |
@@ -126,8 +126,8 @@ jobs:
         echo "## Security Scan (Snyk)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Install Snyk
-        npm install -g snyk
+        # Install Snyk (Bun for faster install)
+        bun install -g snyk
         
         # Authenticate if token available
         if [[ -n "${{ secrets.SNYK_TOKEN }}" ]]; then
@@ -161,8 +161,8 @@ jobs:
         echo "## Secret Detection (Secretlint)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Install secretlint
-        npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+        # Install secretlint (Bun for faster install)
+        bun install -g secretlint @secretlint/secretlint-rule-preset-recommend
         
         # Run scan
         if secretlint "**/*" --format compact 2>/dev/null; then
