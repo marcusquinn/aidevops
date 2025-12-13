@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.27.2] - 2025-12-13
 
+### Changed
+
+- Documentation: add changelog for v2.27.2
+- Documentation: update AGENTS.md with complete SonarCloud exclusion patterns
+- Documentation: add SonarCloud security hotspot guidance to prevent recurring issues
+- Documentation: fix changelog formatting for v2.27.1
+
+### Fixed
+
+- add *-verify.sh to SonarCloud exclusions
+- add S6506 (HTTPS not enforced) to SonarCloud exclusions
+- auto-exclude S5332 security hotspots via sonar-project.properties
+- resolve code-review-monitoring workflow failures
+- resolve SonarCloud critical issues and website docs push conflict
+## [2.27.2] - 2025-12-13
+
 ### Fixed
 
 - Auto-exclude SonarCloud security hotspots (S5332, S6506) via sonar-project.properties
