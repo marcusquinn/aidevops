@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add dev-browser stateful browser automation support
 - add Playwriter MCP to setup auto-configuration
 - add Playwriter MCP browser automation support
+
 ## [2.26.0] - 2025-12-13
 
 ### Added
