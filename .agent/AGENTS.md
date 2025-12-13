@@ -17,6 +17,11 @@
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
+**SonarCloud Hotspot Patterns** (acceptable when documented with comments):
+- `http://` in string detection/comparison: `# SONAR: Detecting insecure URLs, not using them`
+- `http://` for localhost output: `# SONAR: Local dev without SSL is intentional`
+- `curl ... | bash` installers: `# SONAR: Official installer from verified HTTPS source`
+
 ## Git Workflow (File Changes)
 
 **When conversation indicates file creation/modification in a git repo**:

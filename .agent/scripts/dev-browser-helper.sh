@@ -72,6 +72,7 @@ install_bun() {
     fi
     
     print_info "Installing Bun..."
+    # SONAR: Official Bun installer from verified HTTPS source
     curl -fsSL https://bun.sh/install | bash
     
     # Source the updated PATH

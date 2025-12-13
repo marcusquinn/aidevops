@@ -179,6 +179,57 @@ find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 shellcheck script.sh
 ```
 
+## Security Hotspots (Acceptable Patterns)
+
+SonarCloud flags these patterns as security hotspots. They are acceptable when properly documented:
+
+### HTTP String Detection (S5332)
+
+When checking for insecure URLs, not using them:
+
+```bash
+# CORRECT - Detection with comment
+# SONAR: Detecting insecure URLs for security audit, not using them
+non_https=$(echo "$data" | jq '[.items[] | select(.url | startswith("http://"))] | length')
+
+# INCORRECT - No documentation
+non_https=$(echo "$data" | jq '[.items[] | select(.url | startswith("http://"))] | length')
+```
+
+### Localhost HTTP Output (S5332)
+
+Local development environments often lack SSL:
+
+```bash
+# CORRECT - Intentional localhost HTTP
+if [[ "$ssl" == "true" ]]; then
+    print_info "Access your app at: https://$domain"
+else
+    # SONAR: Local dev without SSL is intentional
+    print_info "Access your app at: http://$domain"
+fi
+```
+
+### Curl Pipe to Bash (S4423)
+
+For official installers from verified sources:
+
+```bash
+# CORRECT - Documented official installer
+# SONAR: Official Bun installer from verified HTTPS source
+curl -fsSL https://bun.sh/install | bash
+
+# BETTER - Download and inspect first (for new/unknown sources)
+curl -fsSL https://example.com/install.sh -o /tmp/install.sh
+less /tmp/install.sh  # Review script
+bash /tmp/install.sh
+```
+
+**When to suppress vs fix:**
+
+- **Suppress**: Official installers (bun, nvm, rustup), localhost dev, URL detection
+- **Fix**: Actual HTTP usage in production, unverified installer sources
+
 ## Platform Targets
 
 ### SonarCloud

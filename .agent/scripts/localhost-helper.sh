@@ -441,6 +441,7 @@ EOF
     if [[ "$ssl" == "true" ]]; then
         print_info "Access your app at: https://$domain"
     else
+        # SONAR: Local dev without SSL is intentional
         print_info "Access your app at: http://$domain"
     fi
     return 0

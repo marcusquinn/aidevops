@@ -988,6 +988,7 @@ detect_weaknesses() {
     fi
     
     # Check for non-HTTPS
+    # SONAR: Detecting insecure URLs for security audit, not using them
     local non_https_count
     non_https_count=$(echo "$serp_data" | jq '[.items[]? | select(.url | startswith("http://"))] | length' 2>/dev/null || echo "0")
     if [[ "$non_https_count" -gt 0 ]]; then
