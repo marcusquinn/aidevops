@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.27.3] - 2025-12-13
 
+### Changed
+
+- Documentation: add changelog for v2.27.3
+- Documentation: add git push retry pattern to design patterns
+
+### Fixed
+
+- add retry loop for website docs push race condition
+## [2.27.3] - 2025-12-13
+
 ### Fixed
 
 - Add retry loop for website docs push race condition (3 attempts with backoff)
