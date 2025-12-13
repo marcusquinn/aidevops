@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - auto-exclude S5332 security hotspots via sonar-project.properties
 - resolve code-review-monitoring workflow failures
 - resolve SonarCloud critical issues and website docs push conflict
+
 ## [2.27.2] - 2025-12-13
 
 ### Fixed
