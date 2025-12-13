@@ -141,6 +141,55 @@ https://github.com/marcusquinn/aidevops/actions
 - **Conditional execution**: Graceful handling of missing secrets
 - **Fail-fast security**: Stops workflow if security issues detected
 
+## Workflow Patterns
+
+### Handling Concurrent Push Failures
+
+When GitHub Actions workflows push to repositories, concurrent runs can cause push failures due to race conditions. Use these patterns for workflows that commit and push:
+
+#### Full Retry Pattern (Recommended for External Repos)
+
+```yaml
+# Retry loop to handle concurrent pushes (up to 3 attempts)
+for i in 1 2 3; do
+  echo "Push attempt $i..."
+  git pull --rebase origin main || true
+  if git push; then
+    echo "Push succeeded on attempt $i"
+    exit 0
+  fi
+  echo "Push failed, waiting before retry..."
+  sleep $((i * 5))  # Exponential backoff: 5s, 10s, 15s
+done
+
+echo "All push attempts failed"
+exit 1
+```
+
+#### Simple Pattern (For Same-Repo Auto-Fixes)
+
+```yaml
+# Pull with rebase to handle concurrent pushes, then push
+git pull --rebase origin main || true
+git push
+```
+
+#### When to Use Each Pattern
+
+| Scenario | Pattern | Rationale |
+|----------|---------|-----------|
+| Pushing to external repo | Full retry | Higher chance of conflicts |
+| Auto-fix commits to same repo | Simple | Usually succeeds |
+| Wiki sync | Full retry | Wiki can have manual edits |
+| Release workflows | Simple | Should be serialized anyway |
+
+#### Key Points
+
+- Always `git pull --rebase` before pushing to incorporate remote changes
+- Use `|| true` after pull to continue even if pull fails (empty repo, etc.)
+- Exponential backoff (`sleep $((i * 5))`) reduces collision probability
+- Exit with error after all retries fail to surface the issue
+
 ## Next Steps
 
 1. **Add CODACY_API_TOKEN** to GitHub repository secrets

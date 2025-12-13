@@ -49,5 +49,18 @@ jobs:
           # Commit changes
           git commit -m "Sync wiki from source repository"
 
-          # Push changes
-          git push https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git
+          # Retry loop to handle concurrent pushes (up to 3 attempts)
+          PUSH_URL="https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git pull --rebase origin master || true
+            if git push "$PUSH_URL"; then
+              echo "Push succeeded on attempt $i"
+              exit 0
+            fi
+            echo "Push failed, waiting before retry..."
+            sleep $((i * 5))
+          done
+          
+          echo "All push attempts failed"
+          exit 1
