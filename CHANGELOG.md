@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.27.2] - 2025-12-13
+
+### Fixed
+
+- Auto-exclude SonarCloud security hotspots (S5332, S6506) via sonar-project.properties
+- Resolve code-review-monitoring workflow failures (SARIF upload, git push race)
+- Resolve SonarCloud S131 critical issues (missing default cases)
+- Fix website docs workflow push conflicts
+
+### Added
+
+- S131 default case fixer script for future use (`fix-s131-default-cases.sh`)
+- SonarCloud security hotspot guidance in AGENTS.md and code-standards.md
+
 ## [2.27.1] - 2025-12-13
 
 ### Changed
