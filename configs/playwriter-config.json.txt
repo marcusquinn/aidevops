@@ -1,0 +1,50 @@
+{
+  "_comment": "Playwriter MCP - Browser automation via Chrome extension",
+  "_docs": "https://github.com/remorses/playwriter",
+  "_extension": "https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe",
+  
+  "opencode": {
+    "_location": "~/.config/opencode/opencode.json",
+    "_merge_into": "mcp",
+    "playwriter": {
+      "type": "local",
+      "command": ["npx", "playwriter@latest"],
+      "enabled": true
+    }
+  },
+  
+  "claude_desktop": {
+    "_location": "~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%/Claude/claude_desktop_config.json (Windows)",
+    "_merge_into": "mcpServers",
+    "playwriter": {
+      "command": "npx",
+      "args": ["playwriter@latest"]
+    }
+  },
+  
+  "cursor": {
+    "_location": "~/.cursor/mcp.json",
+    "_merge_into": "mcpServers",
+    "playwriter": {
+      "command": "npx",
+      "args": ["playwriter@latest"]
+    }
+  },
+
+  "setup_steps": [
+    "1. Install Chrome extension from Web Store link above",
+    "2. Pin extension to Chrome toolbar",
+    "3. Add MCP config to your AI assistant",
+    "4. Restart AI assistant",
+    "5. Click extension icon on tabs you want to control (turns green)",
+    "6. Use the 'execute' tool with Playwright code"
+  ],
+
+  "usage_notes": [
+    "Single 'execute' tool runs Playwright code - less context bloat",
+    "Works with your existing browser - reuse sessions, extensions",
+    "Disconnect extension to bypass automation detection",
+    "Only controls tabs where you clicked the extension icon",
+    "WebSocket server runs on localhost:19988"
+  ]
+}

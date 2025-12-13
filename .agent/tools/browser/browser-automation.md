@@ -22,10 +22,12 @@ tools:
 - **Frameworks**: Playwright, Selenium, BeautifulSoup
 - **AI Integration**: Agno agents for intelligent automation
 - **Stagehand**: AI-powered natural language browser control (JS + Python)
+- **Playwriter**: Chrome extension MCP with full Playwright API
 
 **Setup**: `bash .agent/scripts/agno-setup.sh setup`
 **Stagehand JS**: `bash .agent/scripts/stagehand-helper.sh setup`
 **Stagehand Python**: `bash .agent/scripts/stagehand-python-helper.sh setup`
+**Playwriter**: Install [Chrome extension](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) + `npx playwriter@latest`
 
 **Key Env Vars**:
 - `BROWSER_HEADLESS=false` (show browser)
@@ -411,7 +413,29 @@ watch -n 5 'ps aux | grep -E "(chrome|firefox)" | head -10'
 
 ## 🔗 **Integration with AI DevOps Framework**
 
-### **🤘 Stagehand AI Browser Automation** ⭐ **NEW**
+### **🎭 Playwriter - Chrome Extension MCP** ⭐ **NEW**
+
+**Browser automation via Chrome extension with full Playwright API - minimal context bloat**
+
+```bash
+# 1. Install Chrome extension
+# https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
+
+# 2. Add to MCP config (OpenCode)
+# "playwriter": { "type": "local", "command": ["npx", "playwriter@latest"] }
+
+# 3. Click extension icon on tabs to control (turns green)
+```
+
+**Key Advantages**:
+- **1 tool vs 17+** - Single `execute` tool runs Playwright code
+- **Your existing browser** - Reuse sessions, extensions, cookies
+- **Bypass detection** - Disconnect extension to bypass automation detection
+- **Collaborate with AI** - Work alongside it, help with captchas
+
+See `tools/browser/playwriter.md` for full documentation.
+
+### **🤘 Stagehand AI Browser Automation**
 
 **Revolutionary AI-powered browser automation with natural language control - Available in JavaScript and Python**
 
