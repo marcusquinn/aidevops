@@ -223,9 +223,20 @@ jobs:
           Triggered by: ${{ github.event_name }}
           Source commit: ${{ github.sha }}"
           
-          # Pull with rebase to handle concurrent pushes, then push
-          git pull --rebase origin main || true
-          git push
+          # Retry loop to handle concurrent pushes (up to 3 attempts)
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git pull --rebase origin main || true
+            if git push; then
+              echo "Push succeeded on attempt $i"
+              exit 0
+            fi
+            echo "Push failed, waiting before retry..."
+            sleep $((i * 5))
+          done
+          
+          echo "All push attempts failed"
+          exit 1
 
       - name: Summary
         run: |
