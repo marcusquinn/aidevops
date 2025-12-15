@@ -20,11 +20,17 @@ tools:
 <!-- AI-CONTEXT-START -->
 ## Quick Reference
 
-- **MCP Adapter Repo**: `~/git/wordpress/mcp-adapter`
+- **Plugin/Theme Dev**: `~/Git/wordpress/{slug}` for analysis, `{slug}-fix` for patches
+- **MCP Adapter Repo**: `~/Git/wordpress/mcp-adapter`
 - **Local Sites**: `~/Local Sites/`
 - **Sites Config**: `~/.config/aidevops/wordpress-sites.json`
 - **Working Dir**: `~/.aidevops/.agent-workspace/work/wordpress/`
 - **Preferred Plugins**: See `wp-preferred.md` for curated recommendations
+
+**Plugin/Theme Workflow**:
+- Clone to `~/Git/wordpress/{slug}/` for analysis
+- Fork + PR for open-source contributions
+- Create `{slug}-fix/` or `{slug}-addon/` for pro plugin patches (survives updates)
 
 **Dependency Checks** (run first):
 
@@ -415,6 +421,215 @@ add_filter('wp_title', 'my_plugin_filter_title', 10, 2);
 // Custom hooks
 do_action('my_plugin_before_output');
 $value = apply_filters('my_plugin_value', $default);
+```
+
+## Plugin & Theme Analysis Workflow
+
+### Local Development Directory
+
+All plugin and theme development/analysis happens in `~/Git/wordpress/`:
+
+```
+~/Git/wordpress/
+├── {plugin-slug}/              # Cloned plugin for analysis/patching
+├── {plugin-slug}-addon/        # Custom addon for pro/closed plugins
+├── {plugin-slug}-fix/          # Patches that survive updates
+├── {theme-slug}/               # Cloned theme
+└── {theme-slug}-child/         # Child theme customizations
+```
+
+### Workflow: Analyzing a Plugin/Theme
+
+1. **Clone to local dev folder**:
+   ```bash
+   # From WordPress plugin directory or GitHub
+   cd ~/Git/wordpress
+   git clone https://github.com/developer/plugin-slug.git
+   
+   # Or extract from zip (for pro plugins)
+   unzip ~/Downloads/plugin-name.zip -d ~/Git/wordpress/
+   mv ~/Git/wordpress/plugin-name ~/Git/wordpress/plugin-slug
+   cd ~/Git/wordpress/plugin-slug
+   git init
+   git add .
+   git commit -m "Initial import of plugin-slug v1.0.0"
+   ```
+
+2. **Analyze the code**:
+   ```bash
+   # Use osgrep for semantic search
+   osgrep "where does this plugin handle user authentication"
+   
+   # Or traditional grep
+   grep -r "add_action\|add_filter" --include="*.php" .
+   ```
+
+3. **Test in LocalWP**:
+   ```bash
+   # Symlink to LocalWP site
+   ln -s ~/Git/wordpress/plugin-slug "~/Local Sites/test-site/app/public/wp-content/plugins/"
+   ```
+
+### Workflow: Contributing to Open Source
+
+For open-source plugins/themes where you can submit PRs:
+
+1. **Fork on GitHub** (via web UI)
+
+2. **Clone your fork**:
+   ```bash
+   cd ~/Git/wordpress
+   git clone git@github.com:marcusquinn/plugin-slug.git
+   cd plugin-slug
+   git remote add upstream https://github.com/original/plugin-slug.git
+   ```
+
+3. **Create feature/fix branch**:
+   ```bash
+   git checkout -b fix/issue-description
+   ```
+
+4. **Make changes, test, commit**:
+   ```bash
+   git add .
+   git commit -m "fix: description of the fix"
+   git push origin fix/issue-description
+   ```
+
+5. **Create PR** on GitHub
+
+### Workflow: Patching Pro/Closed Plugins
+
+For premium plugins or plugins where PRs aren't accepted, create a companion plugin:
+
+1. **Create addon/fix plugin**:
+   ```bash
+   cd ~/Git/wordpress
+   mkdir plugin-slug-fix
+   cd plugin-slug-fix
+   git init
+   ```
+
+2. **Create the fix plugin**:
+   ```php
+   <?php
+   /**
+    * Plugin Name: Plugin Slug Fix
+    * Description: Patches and fixes for Plugin Slug that survive updates
+    * Version: 1.0.0
+    * Requires Plugins: plugin-slug
+    */
+   
+   // Ensure original plugin is loaded first
+   add_action('plugins_loaded', 'plugin_slug_fix_init', 20);
+   
+   function plugin_slug_fix_init() {
+       // Only run if original plugin is active
+       if (!class_exists('Original_Plugin_Class')) {
+           return;
+       }
+       
+       // Remove problematic hook
+       remove_action('init', 'original_problematic_function');
+       
+       // Add fixed version
+       add_action('init', 'fixed_function');
+   }
+   
+   function fixed_function() {
+       // Your fixed implementation
+   }
+   ```
+
+3. **For filter overrides**:
+   ```php
+   // Override a filter with higher priority
+   add_filter('original_filter', 'my_fixed_filter', 999);
+   
+   function my_fixed_filter($value) {
+       // Your fixed logic
+       return $modified_value;
+   }
+   ```
+
+### Naming Conventions
+
+| Scenario | Folder Name | Example |
+|----------|-------------|---------|
+| Cloned for analysis | `{slug}` | `readabler` |
+| Open source fork | `{slug}` | `flavor` (your fork) |
+| Addon for pro plugin | `{slug}-addon` | `kadence-blocks-addon` |
+| Fix/patch plugin | `{slug}-fix` | `media-file-renamer-fix` |
+| Child theme | `{slug}-child` | `kadence-child` |
+
+### Best Practices for Fix Plugins
+
+1. **Always check if original plugin exists**:
+   ```php
+   if (!function_exists('original_function')) {
+       return;
+   }
+   ```
+
+2. **Use appropriate hook priority**:
+   - Lower number = runs earlier
+   - Higher number = runs later (for overrides)
+   - Default is 10
+
+3. **Document what you're fixing**:
+   ```php
+   /**
+    * Fix: Original plugin doesn't handle multisite correctly
+    * Issue: https://github.com/original/plugin/issues/123
+    * Affects: v2.0.0 - v2.3.0
+    * Remove when: Fixed in upstream
+    */
+   ```
+
+4. **Version compatibility checks**:
+   ```php
+   if (defined('ORIGINAL_PLUGIN_VERSION') && 
+       version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')) {
+       // Apply fix only for versions before 2.4.0
+   }
+   ```
+
+5. **Keep fixes minimal and targeted**:
+   - One fix per function/hook
+   - Don't copy entire files
+   - Use hooks/filters when possible
+
+### Syncing with LocalWP
+
+```bash
+# Create sync script
+cat > ~/Git/wordpress/sync-to-local.sh << 'EOF'
+#!/bin/bash
+PLUGIN_SLUG="$1"
+SITE_NAME="${2:-test-site}"
+
+if [ -z "$PLUGIN_SLUG" ]; then
+    echo "Usage: sync-to-local.sh plugin-slug [site-name]"
+    exit 1
+fi
+
+SOURCE="$HOME/Git/wordpress/$PLUGIN_SLUG"
+DEST="$HOME/Local Sites/$SITE_NAME/app/public/wp-content/plugins/$PLUGIN_SLUG"
+
+rsync -av --delete \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='vendor' \
+    "$SOURCE/" "$DEST/"
+
+echo "Synced $PLUGIN_SLUG to $SITE_NAME"
+EOF
+chmod +x ~/Git/wordpress/sync-to-local.sh
+```
+
+Usage:
+```bash
+~/Git/wordpress/sync-to-local.sh readabler-fix my-test-site
 ```
 
 ## Debugging

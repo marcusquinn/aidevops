@@ -19,7 +19,7 @@
       "mcp_config": {
         "osgrep": {
           "type": "local",
-          "command": ["osgrep", "serve"],
+          "command": ["osgrep", "mcp"],
           "enabled": true
         }
       },

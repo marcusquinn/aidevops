@@ -22,11 +22,24 @@ tools:
 
 | Error | Cause | Fix |
 |-------|-------|-----|
+| "Config file is invalid" | Unrecognized key in config | Remove unsupported keys (see below) |
 | "Connection closed" | Wrong command or outdated version | Update tool, check command syntax |
 | "Command not found" | Tool not installed | `npm install -g {package}` |
 | "Permission denied" | Missing credentials | Check `~/.config/aidevops/mcp-env.sh` |
 | "Timeout" | Server not starting | Check Node.js version, run manually |
 | "unauthorized" | HTTP server instead of MCP | Use correct MCP command (not serve) |
+
+### Config Validation Errors
+
+If you see `Unrecognized key: "xxx"`, OpenCode doesn't support that config key.
+
+**Common unsupported keys**:
+
+- `workdir` - Not supported in OpenCode MCP config
+- `cwd` - Use shell wrapper instead: `["/bin/bash", "-c", "cd /path && command"]`
+- `env` - Use `environment` instead
+
+**Fix**: Edit `~/.config/opencode/opencode.json` and remove the unsupported key.
 
 ## Diagnostic Commands
 
