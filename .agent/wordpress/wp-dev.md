@@ -441,6 +441,7 @@ All plugin and theme development/analysis happens in `~/Git/wordpress/`:
 ### Workflow: Analyzing a Plugin/Theme
 
 1. **Clone to local dev folder**:
+
    ```bash
    # From WordPress plugin directory or GitHub
    cd ~/Git/wordpress
@@ -456,6 +457,7 @@ All plugin and theme development/analysis happens in `~/Git/wordpress/`:
    ```
 
 2. **Analyze the code**:
+
    ```bash
    # Use osgrep for semantic search
    osgrep "where does this plugin handle user authentication"
@@ -465,6 +467,7 @@ All plugin and theme development/analysis happens in `~/Git/wordpress/`:
    ```
 
 3. **Test in LocalWP**:
+
    ```bash
    # Symlink to LocalWP site
    ln -s ~/Git/wordpress/plugin-slug "~/Local Sites/test-site/app/public/wp-content/plugins/"
@@ -477,6 +480,7 @@ For open-source plugins/themes where you can submit PRs:
 1. **Fork on GitHub** (via web UI)
 
 2. **Clone your fork**:
+
    ```bash
    cd ~/Git/wordpress
    git clone git@github.com:marcusquinn/plugin-slug.git
@@ -485,11 +489,13 @@ For open-source plugins/themes where you can submit PRs:
    ```
 
 3. **Create feature/fix branch**:
+
    ```bash
    git checkout -b fix/issue-description
    ```
 
 4. **Make changes, test, commit**:
+
    ```bash
    git add .
    git commit -m "fix: description of the fix"
@@ -503,6 +509,7 @@ For open-source plugins/themes where you can submit PRs:
 For premium plugins or plugins where PRs aren't accepted, create a companion plugin:
 
 1. **Create addon/fix plugin**:
+
    ```bash
    cd ~/Git/wordpress
    mkdir plugin-slug-fix
@@ -511,6 +518,7 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    ```
 
 2. **Create the fix plugin**:
+
    ```php
    <?php
    /**
@@ -542,6 +550,7 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    ```
 
 3. **For filter overrides**:
+
    ```php
    // Override a filter with higher priority
    add_filter('original_filter', 'my_fixed_filter', 999);
@@ -565,6 +574,7 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
 ### Best Practices for Fix Plugins
 
 1. **Always check if original plugin exists**:
+
    ```php
    if (!function_exists('original_function')) {
        return;
@@ -577,6 +587,7 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    - Default is 10
 
 3. **Document what you're fixing**:
+
    ```php
    /**
     * Fix: Original plugin doesn't handle multisite correctly
@@ -587,6 +598,7 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    ```
 
 4. **Version compatibility checks**:
+
    ```php
    if (defined('ORIGINAL_PLUGIN_VERSION') && 
        version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')) {
@@ -628,6 +640,7 @@ chmod +x ~/Git/wordpress/sync-to-local.sh
 ```
 
 Usage:
+
 ```bash
 ~/Git/wordpress/sync-to-local.sh readabler-fix my-test-site
 ```

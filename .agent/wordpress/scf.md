@@ -98,6 +98,7 @@ Field values are stored in `wp_postmeta`:
 | `_{field_name}` | Field key reference (REQUIRED for ACF to recognize) |
 
 **Example**:
+
 ```
 meta_key: import_source
 meta_value: outscraper
@@ -194,6 +195,7 @@ $select_config = [
 ```
 
 **Saving values**: Use the choice KEY, not the label:
+
 ```php
 // Correct
 update_field('my_select', 'option1', $post_id);
@@ -223,6 +225,7 @@ $checkbox_config = [
 ```
 
 **Saving values**: Use array of choice keys:
+
 ```php
 update_field('my_checkboxes', ['Google My Business', 'Facebook Page'], $post_id);
 ```
@@ -241,6 +244,7 @@ $boolean_config = [
 ```
 
 **Saving values**:
+
 ```php
 update_field('my_toggle', 1, $post_id);  // or true
 update_field('my_toggle', 0, $post_id);  // or false
@@ -314,6 +318,7 @@ update_post_meta($post_id, '_social_media_google_my_business', 'field_646a486822
 **Cause**: Missing field key reference (`_{field_name}` meta).
 
 **Fix**:
+
 ```php
 // Check if key reference exists
 $key_ref = get_post_meta($post_id, '_field_name', true);
@@ -330,6 +335,7 @@ update_post_meta($post_id, '_field_name', 'field_abc123');
 **Cause**: Sub-fields stored in group's `post_content` instead of separate posts.
 
 **Diagnosis**:
+
 ```php
 // Check if sub-fields are separate posts
 global $wpdb;
@@ -354,6 +360,7 @@ print_r($sub_fields);
 2. Saving the label instead of the key
 
 **Diagnosis**:
+
 ```php
 // Check field configuration
 $field = acf_get_field('field_key_here');
@@ -361,6 +368,7 @@ echo "return_format: " . ($field['return_format'] ?? 'NOT SET');
 ```
 
 **Fix via database**:
+
 ```php
 global $wpdb;
 $field_post = $wpdb->get_row("SELECT * FROM {$wpdb->posts} WHERE post_name = 'field_key_here'");
@@ -376,6 +384,7 @@ wp_cache_flush();
 **Symptom**: Erratic behavior, wrong fields being updated.
 
 **Diagnosis**:
+
 ```php
 global $wpdb;
 $duplicates = $wpdb->get_results("
@@ -395,6 +404,7 @@ print_r($duplicates);
 **Symptom**: Values saved to wrong meta keys like `fieldgroup_` instead of `fieldgroup_subfield`.
 
 **Diagnosis**:
+
 ```php
 global $wpdb;
 $empty_names = $wpdb->get_results("
@@ -406,6 +416,7 @@ print_r($empty_names);
 ```
 
 **Fix**: Update the `post_excerpt` (field name) and `post_content` config:
+
 ```php
 $wpdb->update($wpdb->posts, ['post_excerpt' => 'correct_name'], ['ID' => $field_id]);
 $config = maybe_unserialize($field_post->post_content);
