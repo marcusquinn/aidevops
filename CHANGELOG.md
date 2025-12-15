@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.27.4] - 2025-12-15
+
+### Changed
+
+- Documentation: add MCP config validation errors, WordPress plugin workflow, SCF subagent
+- Documentation: fix duplicate changelog entry for v2.27.3
+
+### Fixed
+
+- resolve ShellCheck SC2129 and SC2086 in fix-s131-default-cases.sh
 ## [2.27.3] - 2025-12-13
 
 ### Fixed
