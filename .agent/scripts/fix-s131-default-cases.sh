@@ -154,10 +154,12 @@ add_default_case() {
         temp_file=$(mktemp)
         
         head -n $((esac_line - 1)) "$file" > "$temp_file"
-        echo "${case_indent}*)" >> "$temp_file"
-        echo "${case_indent}    $default_action" >> "$temp_file"
-        echo "${case_indent}    ;;" >> "$temp_file"
-        tail -n +$esac_line "$file" >> "$temp_file"
+        {
+            echo "${case_indent}*)"
+            echo "${case_indent}    $default_action"
+            echo "${case_indent}    ;;"
+        } >> "$temp_file"
+        tail -n +"$esac_line" "$file" >> "$temp_file"
         
         mv "$temp_file" "$file"
         print_success "Added default case at line $esac_line in $file"
