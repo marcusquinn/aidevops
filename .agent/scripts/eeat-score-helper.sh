@@ -28,7 +28,7 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m'
 
 # Constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly CONFIG_DIR="${HOME}/.config/aidevops"
 readonly CONFIG_FILE="${CONFIG_DIR}/eeat-score.json"
