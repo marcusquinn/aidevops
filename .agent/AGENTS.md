@@ -93,7 +93,7 @@ opencode mcp list
 | `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |
 | `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp, wp-preferred) |
-| `seo/` | SEO subagents (google-search-console, dataforseo, serper) |
+| `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score) |
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (dev-browser, playwriter, playwright, stagehand, crawl4ai, pagespeed) |
@@ -137,7 +137,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Release/versioning → `workflows/`
 - Browser automation → `tools/browser/`
 - MCP development → `build-mcp/`
-- SEO analysis → `seo/` (google-search-console, dataforseo, serper)
+- SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score)
 - Database migrations → `workflows/sql-migrations.md`
 - Working in `~/Git/aidevops/` → `aidevops/architecture.md` (framework internals)
 

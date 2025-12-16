@@ -17,6 +17,8 @@
 | `google-search-console.md` | GSC queries and search performance |
 | `dataforseo.md` | Comprehensive SEO data APIs (SERP, keywords, backlinks) |
 | `serper.md` | Google Search API (web, images, news, places) |
+| `site-crawler.md` | SEO site auditing (Screaming Frog-like capabilities) |
+| `eeat-score.md` | E-E-A-T content quality scoring and analysis |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
@@ -131,6 +133,38 @@ Combine tools:
 - Mobile usability
 - Structured data validation
 - On-page analysis (DataForSEO)
+- **Site crawling**: Use `site-crawler.md` for comprehensive audits
+
+### Site Auditing
+
+Use `seo/site-crawler.md` for Screaming Frog-like capabilities:
+
+```bash
+# Full site crawl
+site-crawler-helper.sh crawl https://example.com
+
+# Specific audits
+site-crawler-helper.sh audit-links https://example.com
+site-crawler-helper.sh audit-meta https://example.com
+site-crawler-helper.sh audit-redirects https://example.com
+```
+
+Output: `~/Downloads/{domain}/{datestamp}/` with CSV/XLSX reports.
+
+### E-E-A-T Content Quality
+
+Use `seo/eeat-score.md` for content quality analysis:
+
+```bash
+# Analyze crawled pages
+eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
+
+# Score single URL
+eeat-score-helper.sh score https://example.com/article
+```
+
+Scores 7 criteria (1-10): Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing.
+Output: `{domain}-eeat-score-{date}.xlsx` with scores and reasoning.
 
 ### Content Optimization
 

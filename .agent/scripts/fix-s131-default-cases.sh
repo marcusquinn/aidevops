@@ -164,6 +164,8 @@ add_default_case() {
         mv "$temp_file" "$file"
         print_success "Added default case at line $esac_line in $file"
     fi
+    
+    return 0
 }
 
 # Process a single file
