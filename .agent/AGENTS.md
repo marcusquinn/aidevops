@@ -23,14 +23,49 @@
   - S6506 (HTTPS not enforced) - `curl|bash` for official installers
 - Add `# SONAR:` comments for documentation, exclusions handle suppression
 
+## Planning Workflow
+
+**After completing planning/research in a conversation**, offer the user a choice:
+
+> We've planned [summary]. How would you like to proceed?
+>
+> 1. **Execute now** - Start implementation immediately
+> 2. **Add to TODO.md** - Record as quick task for later
+> 3. **Create execution plan** - Add to `todo/PLANS.md` with full PRD/tasks
+>
+> Which option? (1-3)
+
+| Scope | Time Estimate | Recommendation |
+|-------|---------------|----------------|
+| Trivial | < 30 mins | Execute now |
+| Small | 30 mins - 2 hours | TODO.md |
+| Medium | 2 hours - 1 day | TODO.md + notes |
+| Large | 1+ days | todo/PLANS.md |
+| Complex | Multi-session | todo/PLANS.md + PRD + tasks |
+
+**Planning files:**
+
+| File | Purpose |
+|------|---------|
+| `TODO.md` | Quick tasks, backlog (root level) |
+| `todo/PLANS.md` | Complex execution plans |
+| `todo/tasks/prd-*.md` | Product requirement documents |
+| `todo/tasks/tasks-*.md` | Implementation task lists |
+
+**Slash commands:** `/create-prd`, `/generate-tasks`, `/plan-status`
+
+**Full workflow:** See `workflows/plans.md` (full) or `workflows/plans-quick.md` (quick)
+
 ## Git Workflow (File Changes)
 
 **When conversation indicates file creation/modification in a git repo**:
 
 1. Check current branch: `git branch --show-current`
-2. Check for existing branches that might match the task
-3. If on `main`: Present numbered options (existing branches, create new, or continue on main)
-4. Read `workflows/git-workflow.md` for full workflow guidance
+2. Check `TODO.md` and `todo/PLANS.md` for matching tasks
+3. Check for existing branches that might match the task
+4. If on `main`: Present numbered options (tasks from TODO.md, existing branches, create new, or continue on main)
+5. Derive branch name from task/plan when available
+6. Read `workflows/git-workflow.md` for full workflow guidance
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
@@ -109,7 +144,8 @@ opencode mcp list
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (git-workflow, branch, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace) |
+| `workflows/` | Process guides (git-workflow, branch, plans, plans-quick, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace) |
+| `templates/` | PRD and task templates (prd-template, tasks-template) |
 | `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment, release) |
 
 <!-- AI-CONTEXT-END -->
@@ -132,6 +168,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 Read subagents only when task requires them. The AI-CONTEXT section above contains essential information for most tasks.
 
 **When to read more:**
+- Planning complex work → `workflows/plans.md` or `workflows/plans-quick.md`
 - Specific service operations → `services/[type]/[provider].md`
 - Code quality tasks → `tools/code-review/`
 - WordPress work → `wordpress/`
@@ -228,9 +265,11 @@ For versioning, releases, and git operations:
 
 | Task | Subagent |
 |------|----------|
+| Planning (full) | `workflows/plans.md` |
+| Planning (quick) | `workflows/plans-quick.md` |
 | Version bumps | `workflows/version-bump.md` |
 | Creating releases | `workflows/release.md` |
-| Git branching | `tools/git/workflow.md` |
+| Git branching | `workflows/git-workflow.md` |
 | Bug fixes | `workflows/bug-fixing.md` |
 | Feature development | `workflows/feature-development.md` |
 | PR review | `workflows/pr.md` |

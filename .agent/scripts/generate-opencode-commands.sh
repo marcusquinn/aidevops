@@ -420,6 +420,127 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /pr command"
 
 # =============================================================================
+# CREATE-PRD COMMAND
+# =============================================================================
+# Generate Product Requirements Document
+
+cat > "$OPENCODE_COMMAND_DIR/create-prd.md" << 'EOF'
+---
+description: Generate a Product Requirements Document for a feature
+agent: Plan+
+---
+
+Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
+
+Feature to document: $ARGUMENTS
+
+**Workflow:**
+1. Ask 3-5 clarifying questions with numbered options (1A, 2B format)
+2. Generate PRD using template from ~/.aidevops/agents/templates/prd-template.md
+3. Save to todo/tasks/prd-{feature-slug}.md
+4. Offer to generate tasks with /generate-tasks
+
+**Question format:**
+```
+1. What is the primary goal?
+   A. Option 1
+   B. Option 2
+   C. Option 3
+
+2. Who is the target user?
+   A. Option 1
+   B. Option 2
+```
+
+User can reply with "1A, 2B" or provide details.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /create-prd command"
+
+# =============================================================================
+# GENERATE-TASKS COMMAND
+# =============================================================================
+# Generate task list from PRD
+
+cat > "$OPENCODE_COMMAND_DIR/generate-tasks.md" << 'EOF'
+---
+description: Generate implementation tasks from a PRD
+agent: Plan+
+---
+
+Read ~/.aidevops/agents/workflows/plans.md and follow its task generation instructions.
+
+PRD or feature: $ARGUMENTS
+
+**Workflow:**
+1. If PRD file provided, read it
+2. If feature name provided, look for todo/tasks/prd-{name}.md
+3. Generate parent tasks (Phase 1) and present to user
+4. Wait for user to say "Go"
+5. Generate sub-tasks (Phase 2)
+6. Save to todo/tasks/tasks-{feature-slug}.md
+
+**Task 0.0 is always:** Create feature branch
+
+**Output format:**
+```markdown
+- [ ] 0.0 Create feature branch
+  - [ ] 0.1 Create and checkout: `git checkout -b feature/{slug}`
+
+- [ ] 1.0 First major task
+  - [ ] 1.1 Sub-task
+  - [ ] 1.2 Sub-task
+```
+
+Mark tasks complete by changing `- [ ]` to `- [x]` as work progresses.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
+
+# =============================================================================
+# PLAN-STATUS COMMAND
+# =============================================================================
+# Show active plans and TODO.md status
+
+cat > "$OPENCODE_COMMAND_DIR/plan-status.md" << 'EOF'
+---
+description: Show active plans and TODO.md status
+agent: Plan+
+---
+
+Read TODO.md and todo/PLANS.md to show current planning status.
+
+Filter: $ARGUMENTS (optional: "in-progress", "backlog", plan name)
+
+**Output format:**
+
+## TODO.md
+
+### In Progress
+- [ ] Task 1 @owner #tag ~estimate
+
+### Backlog (top 5)
+- [ ] Task 2 #tag
+- [ ] Task 3 #tag
+
+## Active Plans (todo/PLANS.md)
+
+### Plan Name
+**Status:** In Progress (Phase 2/4)
+**Progress:** 3/7 tasks complete
+**Next:** Task description
+
+---
+
+Offer options:
+1. Work on a specific task/plan
+2. Add new task to TODO.md
+3. Create new execution plan
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /plan-status command"
+
+# =============================================================================
 # KEYWORD RESEARCH COMMAND
 # =============================================================================
 # Basic keyword expansion from seed keywords
@@ -630,27 +751,41 @@ echo "  Commands created: $command_count"
 echo "  Location: $OPENCODE_COMMAND_DIR"
 echo ""
 echo "Available commands:"
-echo "  /agent-review     - Review and improve agent instructions"
-echo "  /preflight        - Quality checks before release"
-echo "  /postflight       - Verify release health"
-echo "  /release          - Full release workflow"
-echo "  /version-bump     - Bump project version"
-echo "  /changelog        - Update CHANGELOG.md"
-echo "  /linters-local    - Run local linting (ShellCheck, secretlint)"
-echo "  /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
-echo "  /code-standards   - Check against documented standards"
-echo "  /pr               - Unified PR workflow (orchestrates all checks)"
-echo "  /feature          - Create feature branch"
-echo "  /bugfix           - Create bugfix branch"
-echo "  /hotfix           - Create hotfix branch"
-echo "  /context          - Build AI context"
-echo "  /list-keys        - List API keys with storage locations"
-echo "  /keyword-research - Seed keyword expansion"
-echo "  /autocomplete-research - Google autocomplete long-tails"
-echo "  /keyword-research-extended - Full SERP analysis with weakness detection"
-echo "  /webmaster-keywords - Keywords from GSC + Bing for your sites"
 echo ""
+echo "  Planning:"
+echo "    /create-prd       - Generate Product Requirements Document"
+echo "    /generate-tasks   - Generate implementation tasks from PRD"
+echo "    /plan-status      - Show active plans and TODO.md status"
+echo ""
+echo "  Quality:"
+echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
+echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
+echo "    /code-standards   - Check against documented standards"
+echo "    /pr               - Unified PR workflow (orchestrates all checks)"
+echo "    /preflight        - Quality checks before release"
+echo "    /postflight       - Verify release health"
+echo ""
+echo "  Git & Release:"
+echo "    /feature          - Create feature branch"
+echo "    /bugfix           - Create bugfix branch"
+echo "    /hotfix           - Create hotfix branch"
+echo "    /release          - Full release workflow"
+echo "    /version-bump     - Bump project version"
+echo "    /changelog        - Update CHANGELOG.md"
+echo ""
+echo "  SEO:"
+echo "    /keyword-research - Seed keyword expansion"
+echo "    /autocomplete-research - Google autocomplete long-tails"
+echo "    /keyword-research-extended - Full SERP analysis with weakness detection"
+echo "    /webmaster-keywords - Keywords from GSC + Bing for your sites"
+echo ""
+echo "  Utilities:"
+echo "    /agent-review     - Review and improve agent instructions"
+echo "    /context          - Build AI context"
+echo "    /list-keys        - List API keys with storage locations"
+echo ""
+echo "Planning workflow: /create-prd -> /generate-tasks -> /feature -> implement -> /pr"
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
-echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended -> /webmaster-keywords"
+echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 echo ""
 echo "Restart OpenCode to load new commands."

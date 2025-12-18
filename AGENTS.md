@@ -32,15 +32,23 @@
 **File Structure**:
 
 ```text
-.agent/
-├── AGENTS.md              # User guide (distributed)
-├── {domain}.md            # Main agents (aidevops, wordpress, seo, etc.)
-├── {domain}/              # Subagents for each domain
-├── tools/                 # Cross-domain utilities
-├── services/              # External integrations  
-├── workflows/             # Process guides
-└── scripts/               # Helper scripts
-```text
+/
+├── TODO.md                # Quick tasks, backlog (root level)
+├── todo/
+│   ├── PLANS.md           # Complex execution plans
+│   └── tasks/             # PRD and task files
+│       ├── prd-*.md       # Product requirement documents
+│       └── tasks-*.md     # Implementation task lists
+└── .agent/
+    ├── AGENTS.md          # User guide (distributed)
+    ├── {domain}.md        # Main agents (aidevops, wordpress, seo, etc.)
+    ├── {domain}/          # Subagents for each domain
+    ├── tools/             # Cross-domain utilities
+    ├── services/          # External integrations  
+    ├── workflows/         # Process guides (incl. plans.md, plans-quick.md)
+    ├── templates/         # PRD and task templates
+    └── scripts/           # Helper scripts
+```
 
 <!-- AI-CONTEXT-END -->
 
