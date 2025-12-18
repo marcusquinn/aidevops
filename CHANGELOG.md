@@ -11,8 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- add OpenCode Antigravity OAuth plugin auto-installation
-- add site crawler and content quality scoring agents for SEO auditing
+- **OpenCode Antigravity OAuth Plugin** - Auto-install/update during setup
+  - Enables Google OAuth authentication for premium model access
+  - Available models: gemini-3-pro-high, claude-opus-4-5-thinking, claude-sonnet-4-5-thinking
+  - Multi-account load balancing for rate limit distribution and failover
+  - Documentation in README.md, aidevops.md, and opencode.md
+  - See: https://github.com/NoeFabris/opencode-antigravity-auth
+- **GSC User Helper Script** - New `gsc-add-user-helper.sh` for bulk adding users to Google Search Console properties
+- **Site Crawler v2.0.0** - Major rewrite of `site-crawler-helper.sh` (~1,000 lines added)
+  - Enhanced crawling capabilities
+  - Improved SEO analysis features
+- **Playwright Bulk Setup** - Improved browser automation documentation in `google-search-console.md` (+148 lines)
+
+### Changed
+
+- Updated `build-agent.md` with browser automation reference
+- Enhanced `google-search-console.md` with comprehensive Playwright setup guidance
+
 ## [2.28.0] - 2025-12-16
 
 ### Added
@@ -834,7 +849,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.19.13...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.29.0...HEAD
+[2.29.0]: https://github.com/marcusquinn/aidevops/compare/v2.28.0...v2.29.0
+[2.28.0]: https://github.com/marcusquinn/aidevops/compare/v2.27.4...v2.28.0
+[2.27.4]: https://github.com/marcusquinn/aidevops/compare/v2.27.3...v2.27.4
+[2.27.3]: https://github.com/marcusquinn/aidevops/compare/v2.27.2...v2.27.3
+[2.27.2]: https://github.com/marcusquinn/aidevops/compare/v2.27.1...v2.27.2
+[2.27.1]: https://github.com/marcusquinn/aidevops/compare/v2.27.0...v2.27.1
+[2.27.0]: https://github.com/marcusquinn/aidevops/compare/v2.26.0...v2.27.0
+[2.26.0]: https://github.com/marcusquinn/aidevops/compare/v2.25.0...v2.26.0
+[2.25.0]: https://github.com/marcusquinn/aidevops/compare/v2.24.0...v2.25.0
+[2.24.0]: https://github.com/marcusquinn/aidevops/compare/v2.23.1...v2.24.0
+[2.23.1]: https://github.com/marcusquinn/aidevops/compare/v2.23.0...v2.23.1
+[2.23.0]: https://github.com/marcusquinn/aidevops/compare/v2.22.0...v2.23.0
+[2.22.0]: https://github.com/marcusquinn/aidevops/compare/v2.21.0...v2.22.0
+[2.21.0]: https://github.com/marcusquinn/aidevops/compare/v2.20.5...v2.21.0
+[2.20.5]: https://github.com/marcusquinn/aidevops/compare/v2.20.4...v2.20.5
+[2.20.4]: https://github.com/marcusquinn/aidevops/compare/v2.20.3...v2.20.4
+[2.20.3]: https://github.com/marcusquinn/aidevops/compare/v2.20.2...v2.20.3
+[2.20.2]: https://github.com/marcusquinn/aidevops/compare/v2.19.13...v2.20.2
 [2.19.13]: https://github.com/marcusquinn/aidevops/compare/v2.19.12...v2.19.13
 [2.19.12]: https://github.com/marcusquinn/aidevops/compare/v2.19.11...v2.19.12
 [2.19.11]: https://github.com/marcusquinn/aidevops/compare/v2.17.1...v2.19.11
