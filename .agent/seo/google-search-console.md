@@ -1,31 +1,132 @@
 ---
-description: Google Search Console MCP usage examples
+description: Google Search Console MCP setup and usage
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
-  bash: false
+  write: true
+  edit: true
+  bash: true
   glob: true
   grep: true
   webfetch: true
+  task: true
 ---
 
-# Google Search Console MCP Usage Examples
+# Google Search Console MCP Setup & Usage
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **MCP Integration**: Google Search Console API for AI assistants
-- **Setup**: Create Google Cloud Project → Enable Search Console API → Service Account → JSON key
-- **Env Vars**: `GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"`, `GSC_SITE_URL="https://site.com"`
-- **Capabilities**: Search analytics, keyword tracking, device/geographic performance, index coverage
+- **Credentials**: `~/.config/aidevops/gsc-credentials.json` (service account JSON key)
+- **Setup**: Google Cloud Project → Enable Search Console API → Service Account → Add to GSC properties
+- **Capabilities**: Search analytics, URL inspection, indexing requests, sitemap management
 - **Key Methods**: `getSearchAnalytics()`, `getTopPages()`, `getTopQueries()`, `getCoreWebVitals()`
 - **Metrics**: clicks, impressions, ctr, position
 - **Dimensions**: query, page, country, device, searchAppearance
-- **Use Cases**: CTR optimization, position tracking, security/manual action monitoring
+- **Bulk Setup**: Use Playwright to add service account to all GSC properties automatically
+
+## Setup Steps
+
+### 1. Google Cloud Project Setup
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create or select a project
+3. Enable the **Google Search Console API**
+4. Go to **Credentials** → **Create Credentials** → **Service Account**
+5. Name it (e.g., `aidevops`) and create
+6. Go to **Keys** tab → **Add Key** → **Create new key** → **JSON**
+7. Save the downloaded file to `~/.config/aidevops/gsc-credentials.json`
+8. Set permissions: `chmod 600 ~/.config/aidevops/gsc-credentials.json`
+
+### 2. Add Service Account to GSC Properties
+The service account email (e.g., `aidevops@project-id.iam.gserviceaccount.com`) must be added as a user to each GSC property.
+
+**Manual method**: GSC → Property → Settings → Users and permissions → Add user
+
+**Automated method**: Use Playwright to bulk-add to all properties (see below)
+
+### 3. Verify Access
+```bash
+# Test GSC MCP connection
+opencode mcp list | grep -i search
+```
 <!-- AI-CONTEXT-END -->
+
+## Automated Bulk Setup with Playwright
+
+Add the service account to all GSC properties automatically:
+
+```javascript
+// Save as gsc-add-service-account.js
+import { chromium } from 'playwright';
+
+const SERVICE_ACCOUNT = "your-service-account@project.iam.gserviceaccount.com";
+
+async function main() {
+    // Launch Chrome with user profile (logged into Google)
+    const browser = await chromium.launchPersistentContext(
+        '/Users/USERNAME/Library/Application Support/Google/Chrome/Default',
+        { headless: false, channel: 'chrome' }
+    );
+    
+    const page = await browser.newPage();
+    await page.goto("https://search.google.com/search-console", { waitUntil: 'networkidle' });
+    await page.waitForTimeout(2000);
+    
+    // Get all domains from the page
+    const html = await page.content();
+    const domainRegex = /sc-domain:([a-z0-9.-]+)/g;
+    const matches = [...html.matchAll(domainRegex)];
+    const domains = [...new Set(matches.map(m => m[1]))];
+    
+    console.log(`Found ${domains.length} properties`);
+    
+    for (const domain of domains) {
+        console.log(`Processing ${domain}...`);
+        
+        try {
+            await page.goto(`https://search.google.com/search-console/users?resource_id=sc-domain:${domain}`, 
+                { waitUntil: 'networkidle' });
+            await page.waitForTimeout(400);
+            
+            const content = await page.content();
+            
+            // Skip if no access or already added
+            if (content.includes("don't have access")) {
+                console.log(`  ⏭ No access`);
+                continue;
+            }
+            if (content.includes(SERVICE_ACCOUNT)) {
+                console.log(`  ⏭ Already added`);
+                continue;
+            }
+            
+            // Click ADD USER, type email, press Enter
+            await page.click('text=ADD USER');
+            await page.waitForTimeout(400);
+            await page.keyboard.type(SERVICE_ACCOUNT, { delay: 5 });
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(1000);
+            
+            console.log(`  ✓ Added`);
+        } catch (error) {
+            console.error(`  ✗ ${error.message}`);
+        }
+    }
+    
+    await browser.close();
+}
+
+main().catch(console.error);
+```
+
+Run with: `node gsc-add-service-account.js`
+
+**Requirements**:
+- Playwright installed: `npm install playwright`
+- Chrome browser with logged-in Google session
+- User must have Owner access to GSC properties
 
 ## Search Performance Analysis
 
@@ -211,25 +312,48 @@ await googleSearchConsole.compareWithCompetitors({
 });
 ```
 
-## Setup Requirements
+## Troubleshooting
 
-### **Google Cloud Console Setup**
+### Empty Results from API
+If the API returns empty results `{}`:
+- Service account not added to any GSC properties
+- Use the Playwright script above to bulk-add access
 
-1. Create a Google Cloud Project
-2. Enable the Search Console API
-3. Create a Service Account
-4. Download the JSON key file
-5. Set `GOOGLE_APPLICATION_CREDENTIALS` environment variable
+### "No access to property" Error
+- The service account email must be added as a user (Full or Owner permission)
+- Domain must be verified in GSC first
 
-### **Search Console Property Verification**
-
-1. Verify your website in Google Search Console
-2. Grant access to your service account email
-3. Ensure proper permissions for data access
-
-### **Environment Configuration**
-
+### Connection Issues
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
-export GSC_SITE_URL="https://your-website.com"
+# Check credentials file exists and has correct permissions
+ls -la ~/.config/aidevops/gsc-credentials.json
+
+# Verify service account email
+cat ~/.config/aidevops/gsc-credentials.json | grep client_email
+
+# Test MCP connection
+opencode mcp list
+```
+
+### Chrome Profile Path (for Playwright)
+- **macOS**: `/Users/USERNAME/Library/Application Support/Google/Chrome/Default`
+- **Linux**: `~/.config/google-chrome/Default`
+- **Windows**: `%LOCALAPPDATA%\Google\Chrome\User Data\Default`
+
+## MCP Configuration
+
+Add to your MCP config (`~/.config/opencode/mcp.json` or similar):
+
+```json
+{
+  "mcpServers": {
+    "google-search-console": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/google-search-console-mcp"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "~/.config/aidevops/gsc-credentials.json"
+      }
+    }
+  }
+}
 ```
