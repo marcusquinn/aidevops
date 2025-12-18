@@ -61,7 +61,7 @@ pip install serper-mcp-server
 
 # Or install globally
 pip3 install serper-mcp-server
-```
+```text
 
 ## Configuration
 
@@ -70,7 +70,7 @@ pip3 install serper-mcp-server
 ```bash
 # Using the secure key management script
 bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY "your_api_key"
-```
+```text
 
 ### OpenCode Configuration
 
@@ -90,7 +90,7 @@ Add to `~/.config/opencode/opencode.json`:
     }
   }
 }
-```
+```text
 
 ### Claude Desktop Configuration
 
@@ -108,7 +108,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     }
   }
 }
-```
+```text
 
 ### Cursor Configuration
 
@@ -126,7 +126,7 @@ Add to `~/.cursor/mcp.json`:
     }
   }
 }
-```
+```text
 
 ### Alternative: Using pip
 
@@ -144,7 +144,7 @@ If you prefer pip over uv:
     }
   }
 }
-```
+```text
 
 ## Usage Examples
 
@@ -158,7 +158,7 @@ await serper.google_search({
   hl: "en",  // Language
   num: 10    // Number of results
 });
-```
+```text
 
 ### Image Search
 
@@ -169,7 +169,7 @@ await serper.google_search_images({
   gl: "us",
   num: 20
 });
-```
+```text
 
 ### News Search
 
@@ -180,7 +180,7 @@ await serper.google_search_news({
   gl: "us",
   tbs: "qdr:w"  // Past week
 });
-```
+```text
 
 ### Local/Places Search
 
@@ -190,7 +190,7 @@ await serper.google_search_places({
   q: "seo agency",
   location: "New York, NY"
 });
-```
+```text
 
 ### Shopping Search
 
@@ -200,7 +200,7 @@ await serper.google_search_shopping({
   q: "seo software",
   gl: "us"
 });
-```
+```text
 
 ### Scholar Search
 
@@ -210,7 +210,7 @@ await serper.google_search_scholar({
   q: "search engine optimization research",
   num: 10
 });
-```
+```text
 
 ### Webpage Scraping
 
@@ -219,7 +219,7 @@ await serper.google_search_scholar({
 await serper.webpage_scrape({
   url: "https://example.com/article"
 });
-```
+```text
 
 ## Search Parameters
 
@@ -238,9 +238,9 @@ Common parameters for all search tools:
 
 Test the integration:
 
-```
+```text
 Use the Serper MCP to search for "best seo tools 2024" in the United States
-```
+```text
 
 Expected: Google search results with titles, URLs, snippets, and related data.
 
@@ -254,7 +254,7 @@ npx @modelcontextprotocol/inspector uvx serper-mcp-server
 git clone https://github.com/garylab/serper-mcp-server.git
 cd serper-mcp-server
 npx @modelcontextprotocol/inspector uv run serper-mcp-server -e SERPER_API_KEY=your_key
-```
+```text
 
 ## Comparison with DataForSEO
 

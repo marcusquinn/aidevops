@@ -34,7 +34,7 @@ tools:
 ```bash
 cd ~/Git/aidevops
 ./setup.sh
-```
+```text
 
 **Post-setup locations**:
 - Agents: `~/.aidevops/agents/`
@@ -60,7 +60,7 @@ cd ~/Git/aidevops
 
 ### What Gets Deployed
 
-```
+```text
 ~/.aidevops/
 ├── agents/                    # Full agent structure
 │   ├── AGENTS.md             # User entry point
@@ -73,15 +73,15 @@ cd ~/Git/aidevops
 │   └── scripts/              # Helper scripts
 └── config-backups/           # Timestamped backups
     └── [YYYYMMDD_HHMMSS]/
-```
+```text
 
 ### AI Assistant Integration
 
 Setup.sh adds this line to AI assistant config files:
 
-```
+```text
 Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
-```
+```text
 
 **Files modified:**
 - `~/.opencode/AGENTS.md`
@@ -101,7 +101,7 @@ If setup.sh doesn't support your AI assistant:
 
 1. Add to your AI assistant's AGENTS.md or config:
 
-   ```
+   ```text
    Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
    ```
 
@@ -115,7 +115,7 @@ Re-run setup.sh after pulling updates:
 cd ~/Git/aidevops
 git pull
 ./setup.sh
-```
+```text
 
 Previous configs are backed up automatically.
 
@@ -127,7 +127,7 @@ Previous configs are backed up automatically.
 # Install missing dependencies
 brew install jq curl  # macOS
 apt-get install jq curl  # Ubuntu/Debian
-```
+```text
 
 **OpenCode not finding agents:**
 - Check `~/.config/opencode/opencode.json` agent paths
@@ -140,7 +140,7 @@ apt-get install jq curl  # Ubuntu/Debian
 # Ensure correct permissions
 chmod 600 ~/.config/aidevops/mcp-env.sh
 chmod 755 ~/.aidevops/agents/scripts/*.sh
-```
+```text
 
 ## Future Enhancements
 

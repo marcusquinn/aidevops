@@ -319,6 +319,20 @@ if 'playwriter' not in config['mcp']:
         }
     print("  Added playwriter MCP server (install Chrome extension separately)")
 
+# shadcn MCP - UI component library for browsing, searching, and installing components
+# Docs: https://ui.shadcn.com/docs/mcp
+if 'shadcn' not in config['mcp']:
+    config['mcp']['shadcn'] = {
+        "type": "local",
+        "command": ["npx", "shadcn@latest", "mcp"],
+        "enabled": True
+    }
+    print("  Added shadcn MCP server")
+
+if 'shadcn_*' not in config['tools']:
+    config['tools']['shadcn_*'] = False
+    print("  Added shadcn_* to tools (disabled globally, enabled for @shadcn subagent)")
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 
@@ -369,6 +383,9 @@ while IFS= read -r f; do
             ;;
         playwriter)
             extra_tools=$'  playwriter_*: true'
+            ;;
+        shadcn)
+            extra_tools=$'  shadcn_*: true\n  write: true\n  edit: true'
             ;;
         *)
             ;;  # No extra tools for other agents

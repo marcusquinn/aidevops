@@ -53,7 +53,7 @@ npm install -g dataforseo-mcp-server
 
 # Or run via npx (no install needed)
 npx dataforseo-mcp-server
-```
+```text
 
 ## Configuration
 
@@ -63,7 +63,7 @@ npx dataforseo-mcp-server
 # Using the secure key management script
 bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME "your_username"
 bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD "your_password"
-```
+```text
 
 ### OpenCode Configuration
 
@@ -83,7 +83,7 @@ Add to `~/.config/opencode/opencode.json`:
     }
   }
 }
-```
+```text
 
 ### Claude Desktop Configuration
 
@@ -102,7 +102,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     }
   }
 }
-```
+```text
 
 ### Cursor Configuration
 
@@ -121,7 +121,7 @@ Add to `~/.cursor/mcp.json`:
     }
   }
 }
-```
+```text
 
 ## Environment Variables
 
@@ -138,7 +138,7 @@ export DATAFORSEO_FULL_RESPONSE="false"
 
 # Optional - Use simplified filter schema for ChatGPT compatibility
 export DATAFORSEO_SIMPLE_FILTER="false"
-```
+```text
 
 ## Usage Examples
 
@@ -152,7 +152,7 @@ await dataforseo.serp({
   language_code: "en",
   device: "desktop"
 });
-```
+```text
 
 ### Keyword Research
 
@@ -163,7 +163,7 @@ await dataforseo.keywords_data({
   location_code: 2840,
   language_code: "en"
 });
-```
+```text
 
 ### Backlink Analysis
 
@@ -174,7 +174,7 @@ await dataforseo.backlinks({
   mode: "as_is",
   limit: 100
 });
-```
+```text
 
 ### On-Page SEO Audit
 
@@ -185,7 +185,7 @@ await dataforseo.onpage({
   max_crawl_pages: 100,
   load_resources: true
 });
-```
+```text
 
 ### Domain Analytics
 
@@ -195,15 +195,15 @@ await dataforseo.domain_analytics({
   target: "example.com",
   include_technologies: true
 });
-```
+```text
 
 ## Verification
 
 Test the integration:
 
-```
+```text
 Use the DataForSEO MCP to get SERP data for "best seo tools" in the United States
-```
+```text
 
 Expected: Search results with rankings, URLs, snippets, and related data.
 

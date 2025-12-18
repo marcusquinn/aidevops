@@ -44,7 +44,7 @@ site-crawler-helper.sh crawl https://example.com --format csv
 
 # JavaScript rendering
 site-crawler-helper.sh crawl https://example.com --render-js
-```
+```text
 
 **Key Features**:
 
@@ -110,7 +110,7 @@ site-crawler-helper.sh crawl https://example.com
 #   - redirects.csv
 #   - meta-issues.csv
 #   - summary.json
-```
+```text
 
 ### Targeted Audits
 
@@ -129,7 +129,7 @@ site-crawler-helper.sh audit-duplicates https://example.com
 
 # Structured data validation
 site-crawler-helper.sh audit-schema https://example.com
-```
+```text
 
 ### Crawl Configuration
 
@@ -149,7 +149,7 @@ site-crawler-helper.sh crawl https://example.com --user-agent "Googlebot"
 
 # Respect/ignore robots.txt
 site-crawler-helper.sh crawl https://example.com --ignore-robots
-```
+```text
 
 ### Export Options
 
@@ -165,13 +165,13 @@ site-crawler-helper.sh crawl https://example.com --format all
 
 # Custom output location
 site-crawler-helper.sh crawl https://example.com --output ~/SEO-Audits/
-```
+```text
 
 ## Output Structure
 
 All crawl outputs are organized by domain and timestamp:
 
-```
+```text
 ~/Downloads/
 └── example.com/
     ├── 2025-01-15_143022/
@@ -189,7 +189,7 @@ All crawl outputs are organized by domain and timestamp:
     ├── 2025-01-10_091500/
     │   └── ...
     └── _latest -> 2025-01-15_143022  # Symlink to latest
-```
+```text
 
 ## Spreadsheet Columns
 
@@ -252,14 +252,14 @@ site-crawler-helper.sh crawl https://example.com --format json
 
 # Then run E-E-A-T analysis on crawled pages
 eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
-```
+```text
 
 ### With PageSpeed Agent
 
 ```bash
 # Crawl and get performance data
 site-crawler-helper.sh crawl https://example.com --include-pagespeed
-```
+```text
 
 ### With Crawl4AI
 
@@ -282,7 +282,7 @@ site-crawler-helper.sh crawl https://example.com \
   --login-url https://example.com/login \
   --username user@example.com \
   --password-env SITE_PASSWORD
-```
+```text
 
 See `tools/browser/playwriter.md` for browser automation details.
 
@@ -299,7 +299,7 @@ site-crawler-helper.sh generate-sitemap https://example.com \
   --changefreq weekly \
   --priority-rules "/blog/*:0.8,/*:0.5" \
   --exclude "/admin/*,/private/*"
-```
+```text
 
 ## Crawl Comparison
 
@@ -320,7 +320,7 @@ site-crawler-helper.sh compare \
 #   - Changed titles/descriptions
 #   - New/fixed broken links
 #   - Redirect changes
-```
+```text
 
 ## Configuration File
 
@@ -345,7 +345,7 @@ Create `~/.config/aidevops/site-crawler.json` for defaults:
     "*.zip"
   ]
 }
-```
+```text
 
 ## Rate Limiting & Politeness
 
@@ -376,7 +376,7 @@ site-crawler-helper.sh crawl https://example.com --verbose
 
 # Save raw HTML for inspection
 site-crawler-helper.sh crawl https://example.com --save-html
-```
+```text
 
 ## Related Agents
 

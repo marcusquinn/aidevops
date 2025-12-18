@@ -46,7 +46,7 @@ tools:
 
 # Start MCP server
 .agent/scripts/context-builder-helper.sh mcp
-```
+```text
 
 **When to Use**:
 
@@ -96,7 +96,7 @@ The helper script is included in the aidevops framework:
 
 # Or add to PATH
 alias context-builder='~/Git/aidevops/.agent/scripts/context-builder-helper.sh'
-```
+```text
 
 ### Dependencies
 
@@ -118,7 +118,7 @@ Extract code structure with ~80% token reduction:
 
 # Output as markdown
 ./context-builder-helper.sh compress ~/projects/myapp markdown
-```
+```text
 
 **What gets extracted**:
 
@@ -149,7 +149,7 @@ export class UserService {
   async getUser(id: string): Promise<User | null>;
   private mapToUser(row: any): User;
 }
-```
+```text
 
 ### 2. Full Pack Mode
 
@@ -164,7 +164,7 @@ When you need complete implementation details:
 
 # JSON format (structured data)
 ./context-builder-helper.sh pack . json
-```
+```text
 
 ### 3. Quick Mode
 
@@ -176,7 +176,7 @@ Fast, focused context with auto-clipboard:
 
 # Pack specific directory
 ./context-builder-helper.sh quick src/components "**/*.tsx"
-```
+```text
 
 ### 4. Token Analysis
 
@@ -191,7 +191,7 @@ Understand token distribution before packing:
 
 # Analyze specific project
 ./context-builder-helper.sh analyze ~/Git/aidevops 100
-```
+```text
 
 ### 5. Remote Repository
 
@@ -209,7 +209,7 @@ Pack any GitHub repository without cloning:
 
 # With output format
 ./context-builder-helper.sh remote sveltejs/svelte main markdown
-```
+```text
 
 ### 6. Compare Full vs Compressed
 
@@ -217,11 +217,11 @@ See the token reduction in action:
 
 ```bash
 ./context-builder-helper.sh compare ~/projects/myapp
-```
+```text
 
 Output:
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │              Context Comparison                 │
 ├─────────────────────────────────────────────────┤
@@ -232,7 +232,7 @@ Output:
 └─────────────────────────────────────────────────┘
 
 Size reduction: 80.4%
-```
+```text
 
 ## MCP Server Integration
 
@@ -241,7 +241,7 @@ Context Builder can run as an MCP server for direct AI assistant integration:
 ```bash
 # Start MCP server
 ./context-builder-helper.sh mcp
-```
+```text
 
 ### OpenCode Configuration
 
@@ -257,7 +257,7 @@ Add to `~/.config/opencode/opencode.json`:
     }
   }
 }
-```
+```text
 
 ### Available MCP Tools
 
@@ -270,13 +270,13 @@ When running as MCP server:
 
 All output is saved to `~/.aidevops/.agent-workspace/work/context/`:
 
-```
+```text
 ~/.aidevops/.agent-workspace/work/context/
 ├── aidevops-full-20250129-143022.xml
 ├── aidevops-compressed-20250129-143045.xml
 ├── react-remote-20250129-150000.xml
 └── myapp-quick-20250129-151030.md
-```
+```text
 
 File naming: `{repo-name}-{mode}-{timestamp}.{format}`
 
@@ -311,7 +311,7 @@ File naming: `{repo-name}-{mode}-{timestamp}.{format}`
 
 # For debugging, pack only relevant directories
 ./context-builder-helper.sh pack src/services markdown
-```
+```text
 
 ## Comparison with RepoPrompt
 
@@ -334,13 +334,13 @@ File naming: `{repo-name}-{mode}-{timestamp}.{format}`
 ```bash
 # Install Node.js
 brew install node  # macOS
-```
+```text
 
 **"Permission denied"**
 
 ```bash
 chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh
-```
+```text
 
 **Large output file**
 
@@ -350,7 +350,7 @@ chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh
 
 # Or filter files
 ./context-builder-helper.sh pack . --include "src/**/*.ts" --ignore "**/*.test.ts"
-```
+```text
 
 ## Integration with AI Assistants
 
@@ -358,9 +358,9 @@ chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh
 
 Use the `@context-builder` subagent or call the helper directly:
 
-```
+```text
 @context-builder compress ~/projects/myapp
-```
+```text
 
 ### Manual Workflow
 

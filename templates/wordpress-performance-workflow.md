@@ -12,7 +12,7 @@ This template provides a comprehensive workflow for optimizing WordPress website
 # 1. PageSpeed Insights (desktop & mobile)
 # 2. Lighthouse comprehensive audit
 # 3. WordPress-specific recommendations
-```
+```text
 
 ## 📊 **Step-by-Step Optimization Process**
 
@@ -21,7 +21,7 @@ This template provides a comprehensive workflow for optimizing WordPress website
 ```bash
 # Create baseline report
 ./.agent/scripts/pagespeed-helper.sh audit https://your-site.com
-```
+```text
 
 **Key Metrics to Track:**
 
@@ -32,36 +32,40 @@ This template provides a comprehensive workflow for optimizing WordPress website
 
 ### **2. WordPress-Specific Optimizations**
 
-#### **Plugin Performance**
+#### Plugin Performance
+
 ```bash
 # Use Query Monitor plugin to identify slow plugins
 # Disable unnecessary plugins
 # Replace heavy plugins with lightweight alternatives
-```
+```text
 
-#### **Image Optimization**
+#### Image Optimization
+
 ```bash
 # Convert images to WebP format
 # Implement lazy loading
 # Use proper image dimensions
 # Consider CDN for image delivery
-```
+```text
 
-#### **Caching Implementation**
+#### Caching Implementation
+
 ```bash
 # Install caching plugin (WP Rocket recommended)
 # Configure page caching
 # Enable object caching (Redis/Memcached)
 # Set up CDN integration
-```
+```text
 
-#### **Database Optimization**
+#### Database Optimization
+
 ```bash
 # Clean up post revisions
 # Remove spam comments
 # Optimize database tables
 # Use WP-Optimize or similar plugin
-```
+```text
 
 ### **3. Server-Level Optimizations**
 
@@ -70,7 +74,7 @@ This template provides a comprehensive workflow for optimizing WordPress website
 # Ensure adequate server resources
 # Consider upgrading hosting if needed
 # Implement server-level caching
-```
+```text
 
 ### **4. Code Optimizations**
 
@@ -79,7 +83,7 @@ This template provides a comprehensive workflow for optimizing WordPress website
 # Remove unused CSS/JS
 # Optimize critical rendering path
 # Use lightweight theme
-```
+```text
 
 ## 🔄 **Continuous Monitoring Workflow**
 
@@ -100,14 +104,14 @@ cp ~/.ai-devops/reports/pagespeed/lighthouse_*.json "weekly-reports/lighthouse-$
 EOF
 
 chmod +x weekly-performance-check.sh
-```
+```text
 
 ### **Automated Monitoring with Cron**
 
 ```bash
 # Add to crontab for weekly monitoring
 # 0 9 * * 1 /path/to/weekly-performance-check.sh
-```
+```text
 
 ## 🎯 **AI Assistant Integration**
 
@@ -115,7 +119,7 @@ chmod +x weekly-performance-check.sh
 
 Add this to your AI assistant's system prompt:
 
-```
+```text
 For WordPress performance optimization, use the PageSpeed and Lighthouse tools in 
 ~/git/aidevops/.agent/scripts/pagespeed-helper.sh. Focus on:
 
@@ -126,22 +130,25 @@ For WordPress performance optimization, use the PageSpeed and Lighthouse tools i
 5. Server-level performance enhancements
 
 Always provide specific, actionable recommendations with implementation steps.
-```
+```text
 
-### **Common AI Assistant Tasks**
+### Common AI Assistant Tasks
 
 1. **"Audit my WordPress site performance"**
+
    ```bash
    ./.agent/scripts/pagespeed-helper.sh wordpress https://your-site.com
    ```
 
 2. **"Compare performance before and after optimization"**
+
    ```bash
    ./.agent/scripts/pagespeed-helper.sh report before-optimization.json
    ./.agent/scripts/pagespeed-helper.sh report after-optimization.json
    ```
 
 3. **"Monitor multiple WordPress sites"**
+
    ```bash
    # Create sites list
    echo "https://site1.com" > wordpress-sites.txt
@@ -196,7 +203,7 @@ Always provide specific, actionable recommendations with implementation steps.
 # Generate comprehensive report
 ./.agent/scripts/pagespeed-helper.sh lighthouse https://your-site.com json
 ./.agent/scripts/pagespeed-helper.sh report ~/.ai-devops/reports/pagespeed/lighthouse_*.json
-```
+```text
 
 ### **Track Improvements Over Time**
 
@@ -205,6 +212,6 @@ Always provide specific, actionable recommendations with implementation steps.
 echo "Performance improvement tracking:"
 echo "Before: $(jq '.categories.performance.score' before.json)"
 echo "After: $(jq '.categories.performance.score' after.json)"
-```
+```text
 
 This workflow ensures systematic WordPress performance optimization with measurable results and continuous monitoring.

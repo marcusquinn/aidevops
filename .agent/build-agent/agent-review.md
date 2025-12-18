@@ -41,7 +41,7 @@ tools:
 
 ```bash
 opencode run "Test query" --agent [agent-name]
-```
+```text
 
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
@@ -80,7 +80,7 @@ rg "pattern" .agent/
 
 # Check specific files that might overlap
 diff .agent/file1.md .agent/file2.md
-```
+```text
 
 - Same concept should have single authoritative source
 - Cross-references okay, duplicated instructions not okay
@@ -121,7 +121,7 @@ When proposing changes:
 - [ ] No conflicts with other agents
 - [ ] Instruction count impact: [+/- N]
 - [ ] Tested if code example
-```
+```text
 
 ### Common Improvement Patterns
 
@@ -137,7 +137,7 @@ When proposing changes:
 
 # After (1 instruction)
 - Pattern: `local var="$1"` for all parameters
-```
+```text
 
 #### Moving to Subagent
 
@@ -152,7 +152,7 @@ See `aidevops/architecture.md` for schema guidelines
 # After (in architecture.md)
 ## Database Schema Guidelines
 [50 lines of detailed rules]
-```
+```text
 
 #### Replacing Code with Reference
 
@@ -164,13 +164,13 @@ if ! result=$(command); then
     echo "Error: $result"
     return 1
 fi
-```
+```text
 
-# After
+## After
 
 See error handling pattern at `.agent/scripts/hostinger-helper.sh:145`
 
-```
+```text
 
 ### Session Review Workflow
 

@@ -29,7 +29,7 @@ Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations
 
 ```bash
 opencode run "Test query" --agent AI-DevOps
-```
+```text
 
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
@@ -59,7 +59,7 @@ All services follow unified patterns:
 help                    # Show service-specific help
 accounts|instances      # List configured accounts
 monitor|audit|status    # Service monitoring
-```
+```text
 
 ## Configuration
 
@@ -72,7 +72,7 @@ configs/[service]-config.json
 
 # Credentials
 ~/.config/aidevops/mcp-env.sh
-```
+```text
 
 ## Quality Standards
 
@@ -93,11 +93,11 @@ See `aidevops/extension.md` for adding new services:
 
 ## MCP Integrations
 
-```
+```text
 Port 3001: LocalWP WordPress database
 Port 3002: Vaultwarden credentials
 + Chrome DevTools, Playwright, Ahrefs, Context7, GSC MCPs
-```
+```text
 
 ## OpenCode Plugins
 
@@ -108,7 +108,7 @@ providing access to Antigravity rate limits and premium models.
 # Authenticate after setup
 opencode auth login
 # Select: Google → OAuth with Google (Antigravity)
-```
+```text
 
 **Available models**: gemini-3-pro-high, claude-opus-4-5-thinking, claude-sonnet-4-5-thinking
 

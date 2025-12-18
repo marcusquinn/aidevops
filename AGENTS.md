@@ -24,14 +24,14 @@
 
 # Release
 .agent/scripts/version-manager.sh release [major|minor|patch]
-```
+```text
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations,
 `local var="$1"` pattern, explicit returns
 
 **File Structure**:
 
-```
+```text
 .agent/
 ├── AGENTS.md              # User guide (distributed)
 ├── {domain}.md            # Main agents (aidevops, wordpress, seo, etc.)
@@ -40,7 +40,7 @@
 ├── services/              # External integrations  
 ├── workflows/             # Process guides
 └── scripts/               # Helper scripts
-```
+```text
 
 <!-- AI-CONTEXT-END -->
 
@@ -94,7 +94,7 @@ find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 # Release new version
 .agent/scripts/version-manager.sh release [major|minor|patch]
-```
+```text
 
 ## Self-Assessment Protocol
 

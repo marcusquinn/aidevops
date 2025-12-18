@@ -17,9 +17,9 @@ If on `main` branch, include this note in the prompt:
 
 > **Note**: You're on the `main` branch. For file changes, I'll check for existing branches and offer options before proceeding.
 
-> What are you working on?
->
-> **Planning & Analysis** (Plan+):
+What are you working on?
+
+**Planning & Analysis** (Plan+):
 >
 > 1. Architecture Analysis
 > 2. Code Review (`workflows/code-audit-remote.md`)

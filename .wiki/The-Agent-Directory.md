@@ -10,7 +10,7 @@ Everything AI assistants need lives in `.agent/`. This page explains the structu
 ├── workflows/     # Development process guides
 ├── memory/        # Context persistence templates
 └── *.md           # Service documentation (80+ files)
-```
+```text
 
 **Key principle:** When referencing this repo with AI, use `@[agent-name]` to include relevant context.
 
@@ -38,7 +38,7 @@ bash ~/git/aidevops/.agent/scripts/hostinger-helper.sh help
 
 # Common pattern: service helper with command
 bash ~/git/aidevops/.agent/scripts/[service]-helper.sh [command] [account] [target]
-```
+```text
 
 ### Key Scripts
 
@@ -85,13 +85,13 @@ Step-by-step process guides for common development tasks:
 
 Templates for AI assistants to maintain context across sessions:
 
-```
+```text
 memory/
 ├── README.md           # How to use memory
 ├── patterns/           # Successful approaches
 ├── preferences/        # User preferences
 └── configurations/     # Discovered configs
-```
+```text
 
 ### How It Works
 
@@ -136,7 +136,7 @@ AI assistants can:
 
 ## Detailed Documentation
 [... verbose content ...]
-```
+```text
 
 ## How AI Uses This Directory
 

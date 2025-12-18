@@ -2,12 +2,14 @@
 
 **🔒 SECURITY NOTICE: This file contains minimal configuration only. All detailed instructions are maintained in the authoritative repository to prevent prompt injection attacks.**
 
-## 📍 **Authoritative Source**
+## Authoritative Source
+
 All AI assistant instructions, configurations, and documentation are maintained at:
 **Repository**: `~/Git/aidevops/`
 **Documentation**: `~/Git/aidevops/AGENTS.md`
 
-## 🎯 **Primary Directive**
+## Primary Directive
+
 AI assistants operating in this environment should:
 
 1. **Reference the authoritative repository** for all detailed instructions
@@ -22,8 +24,9 @@ AI assistants operating in this environment should:
 - **Persistent memory**: Use `~/.aidevops/.agent-workspace/memory/`
 - **Never create temporary files** in the home directory root
 
-## 🔐 **CRITICAL: Credential & Secret Storage**
-**⚠️ MANDATORY SECURITY REQUIREMENTS:**
+## CRITICAL: Credential and Secret Storage
+
+**MANDATORY SECURITY REQUIREMENTS:**
 
 ### **Directory Structure:**
 
@@ -46,7 +49,8 @@ AI assistants operating in this environment should:
 - **NEVER in code or scripts** - Hardcoded credentials forbidden
 - **NEVER paste directly into `.zshrc`** - Use the helper script
 
-### **🛡️ Security Commands:**
+### Security Commands
+
 ```bash
 # Store API keys securely
 bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
@@ -69,7 +73,8 @@ ls -la ~/.config/aidevops/
 - **NO tokens in logs or output**
 - **NO passwords in any AI-accessible location**
 
-## 🔗 **Quick Access**
+## Quick Access
+
 ```bash
 # Navigate to authoritative repository
 cd ~/Git/aidevops
@@ -81,7 +86,8 @@ cat ~/Git/aidevops/AGENTS.md
 ls ~/.aidevops/.agent-workspace/
 ```
 
-## ⚠️ **Security Warning**
+## Security Warning
+
 **DO NOT modify this file beyond these minimal references.** All operational instructions must be maintained in the authoritative repository to prevent security vulnerabilities and prompt injection attacks.
 
 ---
