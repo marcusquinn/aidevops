@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.30.0] - 2025-12-18
+
+### Added
+
+- add oh-my-opencode integration with cross-agent references
+
+### Changed
+
+- Documentation: update CHANGELOG.md with comprehensive v2.29.0 release notes
 ## [2.29.0] - 2025-12-18
 
 ### Added
