@@ -16,6 +16,22 @@ tools:
 
 This document provides guidance for developing new features in any codebase.
 
+## Planning Before Development
+
+For complex features (1+ days), consider using the planning workflow first:
+
+| Complexity | Approach |
+|------------|----------|
+| Trivial (< 30 mins) | Start immediately |
+| Small (30 mins - 2 hours) | Add to `TODO.md`, then start |
+| Medium (2 hours - 1 day) | Add to `TODO.md` with notes |
+| Large (1+ days) | Use `/create-prd` → `/generate-tasks` |
+| Complex (multi-session) | Full `todo/PLANS.md` entry |
+
+**Quick start**: `/plan-status` to see existing tasks and plans.
+
+**Full planning workflow**: See `workflows/plans.md` for PRD and task generation.
+
 ## Feature Development Workflow
 
 ### 1. Create a Feature Branch
@@ -299,6 +315,26 @@ If implementing a feature inspired by another repository:
 - Check if dependencies are available
 - Provide fallback behavior
 - Document integration requirements
+
+## Completing the Feature
+
+### Update Planning Files
+
+If this feature was tracked in planning files:
+
+1. **TODO.md**: Move task to Done section with date
+   ```markdown
+   ## Done
+   - [x] Add user dashboard #feature 2025-01-15
+   ```
+
+2. **todo/PLANS.md**: Update status and add outcomes (if applicable)
+
+3. **todo/tasks/tasks-*.md**: Ensure all tasks checked off
+
+### Update CHANGELOG.md
+
+Add entry following `workflows/changelog.md` format.
 
 ## Feature Development Checklist
 

@@ -47,6 +47,49 @@ git status --short
 
 <!-- AI-CONTEXT-END -->
 
+## Branch Naming from TODO.md and PLANS.md
+
+When creating branches, derive names from planning files when available:
+
+### Check Planning Files First
+
+```bash
+# Check TODO.md for matching task
+grep -i "{keyword}" TODO.md
+
+# Check PLANS.md for matching plan
+grep -i "{keyword}" todo/PLANS.md
+
+# Check for PRD/tasks files
+ls todo/tasks/*{keyword}* 2>/dev/null
+```
+
+### Branch Name Derivation
+
+| Source | Branch Name Pattern | Example |
+|--------|---------------------|---------|
+| TODO.md task | `{type}/{slugified-description}` | `feature/add-ahrefs-mcp-server` |
+| PLANS.md entry | `{type}/{plan-slug}` | `feature/user-authentication-overhaul` |
+| PRD file | `{type}/{prd-feature-name}` | `feature/export-csv` |
+| Multiple tasks | `{type}/{summary-slug}` | `feature/seo-improvements` |
+
+### Slugification Rules
+
+- Lowercase all text
+- Replace spaces with hyphens
+- Remove special characters except hyphens
+- Truncate to ~50 chars if needed
+- Remove common words (the, a, an) if too long
+
+**Examples:**
+
+| Task/Plan | Generated Branch |
+|-----------|------------------|
+| `- [ ] Add Ahrefs MCP server integration #seo` | `feature/add-ahrefs-mcp-server` |
+| `- [ ] Fix login timeout bug #auth` | `bugfix/fix-login-timeout` |
+| `### [2025-01-15] User Authentication Overhaul` | `feature/user-authentication-overhaul` |
+| `prd-export-csv.md` | `feature/export-csv` |
+
 ## Core Principle: Branch-First Development
 
 Every code change should happen on a branch, enabling:
@@ -86,19 +129,38 @@ git branch -a | grep -E "(feature|bugfix|hotfix|refactor|chore|experiment|releas
 git status --short
 ```
 
-### Step 3: Present Options to User
+### Step 3: Check Planning Files
+
+Before suggesting branch names, check for matching tasks/plans:
+
+```bash
+# Check TODO.md In Progress section
+grep -A 20 "## In Progress" TODO.md | grep "^\- \[ \]"
+
+# Check TODO.md Backlog for matching work
+grep -i "{user_request_keywords}" TODO.md
+
+# Check PLANS.md for active plans
+grep -A 5 "^### \[" todo/PLANS.md | grep -i "{user_request_keywords}"
+```
+
+### Step 4: Present Options to User
 
 **If on `main` branch**, present numbered options:
 
 > I notice we're on `main`. For file changes, I recommend using a branch.
 >
-> **Existing branches that might be relevant:**
-> 1. `feature/user-auth` (3 days old, 5 commits ahead)
-> 2. `bugfix/login-timeout` (1 week old, 2 commits ahead)
+> **From TODO.md (matching your request):**
+> 1. `- [ ] Add Ahrefs MCP server integration #seo` → `feature/add-ahrefs-mcp-server`
+>
+> **From todo/PLANS.md:**
+> 2. `User Authentication Overhaul` (In Progress) → `feature/user-authentication-overhaul`
+>
+> **Existing branches:**
+> 3. `feature/user-auth` (3 days old, 5 commits ahead)
 >
 > **Or create new:**
-> 3. Create `feature/{suggested-name}` (recommended)
-> 4. Create `bugfix/{suggested-name}`
+> 4. Create `feature/{suggested-name}` (recommended)
 > 5. Continue on `main` (not recommended - harder to rollback)
 >
 > Which option? (1-5)

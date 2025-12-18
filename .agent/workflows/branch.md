@@ -93,6 +93,21 @@ git checkout -b {type}/{description}
 - Include issue number if applicable: `bugfix/123-login-timeout`
 - Release branches use version: `release/1.2.0` (semver format)
 
+### Branch Names from Planning Files
+
+When TODO.md or PLANS.md tasks exist, derive branch names from them:
+
+| Source | Example Task | Branch Name |
+|--------|--------------|-------------|
+| TODO.md | `- [ ] Add Ahrefs MCP server #seo` | `feature/add-ahrefs-mcp-server` |
+| TODO.md | `- [ ] Fix login timeout #auth` | `bugfix/fix-login-timeout` |
+| PLANS.md | `### User Auth Overhaul` | `feature/user-auth-overhaul` |
+| PRD file | `prd-export-csv.md` | `feature/export-csv` |
+
+**Slugification**: lowercase, spaces→hyphens, remove special chars, max ~50 chars.
+
+See `git-workflow.md` for full branch naming from planning files.
+
 ## Branch Lifecycle
 
 ```text
