@@ -39,7 +39,7 @@ php -v          # >= 7.4
 composer -V     # Package manager
 wp --version    # WP-CLI
 node -v         # >= 18 (for HTTP transport, wp-env, Playground)
-```
+```text
 
 **WordPress MCP Adapter**:
 - STDIO: `wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin`
@@ -98,7 +98,7 @@ wp --version
 
 # Node.js 18+ (for Playground, wp-env, HTTP transport)
 node -v
-```
+```text
 
 ### Installation (macOS)
 
@@ -114,7 +114,7 @@ brew install wp-cli
 
 # Node.js
 brew install node
-```
+```text
 
 ## WordPress MCP Adapter
 
@@ -128,7 +128,7 @@ The official WordPress MCP Adapter enables AI interaction with WordPress sites.
 
 # Update to latest
 cd ~/git/wordpress/mcp-adapter && git pull
-```
+```text
 
 ### STDIO Transport (Local Development)
 
@@ -144,7 +144,7 @@ wp plugin activate mcp-adapter
 
 # Start MCP server
 wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin
-```
+```text
 
 ### HTTP Transport (Remote Sites)
 
@@ -158,7 +158,7 @@ npx @automattic/mcp-wordpress-remote
 export WP_API_URL="https://your-site.com/wp-json/mcp/mcp-adapter-default-server"
 export WP_API_USERNAME="your-username"
 export WP_API_PASSWORD="your-application-password"
-```
+```text
 
 ### Application Passwords
 
@@ -186,7 +186,7 @@ npm install -g @wp-playground/cli
 
 # Start with blueprint
 npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json
-```
+```text
 
 **Blueprint Example** (`blueprint.json`):
 
@@ -216,7 +216,7 @@ npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json
     }
   ]
 }
-```
+```text
 
 **Multisite Blueprint**:
 
@@ -234,7 +234,7 @@ npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json
     }
   ]
 }
-```
+```text
 
 ### LocalWP (Full Development)
 
@@ -251,7 +251,7 @@ wp option get siteurl
 
 # LocalWP's WP-CLI path
 /Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar
-```
+```text
 
 **Plugin Sync Script** (`bin/localwp-sync.sh`):
 
@@ -269,7 +269,7 @@ rsync -av --delete \
   ./ "$PLUGIN_DIR/"
 
 echo "Plugin synced to LocalWP"
-```
+```text
 
 ### wp-env (Docker/CI)
 
@@ -290,7 +290,7 @@ wp-env run cli wp plugin list
 
 # Run tests
 wp-env run tests-cli phpunit
-```
+```text
 
 **Configuration** (`.wp-env.json`):
 
@@ -305,7 +305,7 @@ wp-env run tests-cli phpunit
     "SCRIPT_DEBUG": true
   }
 }
-```
+```text
 
 **Multisite** (`.wp-env.json`):
 
@@ -325,13 +325,13 @@ wp-env run tests-cli phpunit
     "BLOG_ID_CURRENT_SITE": 1
   }
 }
-```
+```text
 
 ## Theme Development
 
 ### Theme Structure (Block Theme)
 
-```
+```text
 theme-name/
 ├── style.css              # Theme metadata
 ├── theme.json             # Global settings
@@ -346,7 +346,7 @@ theme-name/
 │   └── footer.html
 └── patterns/              # Block patterns
     └── hero.php
-```
+```text
 
 ### Theme Scaffolding
 
@@ -356,11 +356,11 @@ wp scaffold theme theme-name --theme_name="Theme Name" --activate
 
 # Create child theme (for Kadence)
 wp scaffold child-theme kadence-child --parent_theme=kadence --activate
-```
+```text
 
 ### Template Hierarchy
 
-```
+```text
 is_front_page()  → front-page.html → home.html → index.html
 is_single()      → single-{post-type}-{slug}.html → single-{post-type}.html → single.html → singular.html → index.html
 is_page()        → page-{slug}.html → page-{id}.html → page.html → singular.html → index.html
@@ -368,7 +368,7 @@ is_archive()     → archive-{post-type}.html → archive.html → index.html
 is_category()    → category-{slug}.html → category-{id}.html → category.html → archive.html → index.html
 is_search()      → search.html → index.html
 is_404()         → 404.html → index.html
-```
+```text
 
 ## Plugin Development
 
@@ -384,7 +384,7 @@ wp scaffold post-type book --plugin=my-plugin
 
 # Plugin with block
 wp scaffold block my-block --plugin=my-plugin
-```
+```text
 
 ### Plugin Header
 
@@ -404,7 +404,7 @@ wp scaffold block my-block --plugin=my-plugin
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
-```
+```text
 
 ### Hooks & Filters
 
@@ -421,7 +421,7 @@ add_filter('wp_title', 'my_plugin_filter_title', 10, 2);
 // Custom hooks
 do_action('my_plugin_before_output');
 $value = apply_filters('my_plugin_value', $default);
-```
+```text
 
 ## Plugin & Theme Analysis Workflow
 
@@ -429,14 +429,14 @@ $value = apply_filters('my_plugin_value', $default);
 
 All plugin and theme development/analysis happens in `~/Git/wordpress/`:
 
-```
+```text
 ~/Git/wordpress/
 ├── {plugin-slug}/              # Cloned plugin for analysis/patching
 ├── {plugin-slug}-addon/        # Custom addon for pro/closed plugins
 ├── {plugin-slug}-fix/          # Patches that survive updates
 ├── {theme-slug}/               # Cloned theme
 └── {theme-slug}-child/         # Child theme customizations
-```
+```text
 
 ### Workflow: Analyzing a Plugin/Theme
 
@@ -637,13 +637,13 @@ rsync -av --delete \
 echo "Synced $PLUGIN_SLUG to $SITE_NAME"
 EOF
 chmod +x ~/Git/wordpress/sync-to-local.sh
-```
+```text
 
 Usage:
 
 ```bash
 ~/Git/wordpress/sync-to-local.sh readabler-fix my-test-site
-```
+```text
 
 ## Debugging
 
@@ -656,7 +656,7 @@ define('WP_DEBUG_LOG', true);      // Log to wp-content/debug.log
 define('WP_DEBUG_DISPLAY', false); // Don't show on screen
 define('SCRIPT_DEBUG', true);      // Use non-minified scripts
 define('SAVEQUERIES', true);       // Log database queries
-```
+```text
 
 ### Debug Log Location
 
@@ -666,7 +666,7 @@ tail -f ~/Local\ Sites/site-name/app/public/wp-content/debug.log
 
 # wp-env
 wp-env run cli tail -f /var/www/html/wp-content/debug.log
-```
+```text
 
 ### Query Monitor
 
@@ -674,7 +674,7 @@ Essential debugging plugin (included in recommended stack):
 
 ```bash
 wp plugin install query-monitor --activate
-```
+```text
 
 Shows:
 - Database queries
@@ -715,7 +715,7 @@ wp scaffold taxonomy tax-name --post_types=cpt-name --plugin=plugin-name
 
 # Block
 wp scaffold block block-name --plugin=plugin-name
-```
+```text
 
 ### Database Commands
 
@@ -738,7 +738,7 @@ wp db optimize
 
 # Check tables
 wp db check
-```
+```text
 
 ### Development Commands
 
@@ -758,7 +758,7 @@ wp cache flush
 
 # Transient cleanup
 wp transient delete --all
-```
+```text
 
 ## PHPUnit Testing
 
@@ -774,7 +774,7 @@ composer require --dev wp-phpunit/wp-phpunit
 
 # Run tests
 vendor/bin/phpunit
-```
+```text
 
 ### Test File Structure
 
@@ -806,7 +806,7 @@ class Test_My_Plugin extends WP_UnitTestCase {
         $this->assertEquals('Test Post', get_the_title($post_id));
     }
 }
-```
+```text
 
 ### phpunit.xml
 
@@ -826,7 +826,7 @@ class Test_My_Plugin extends WP_UnitTestCase {
         </testsuite>
     </testsuites>
 </phpunit>
-```
+```text
 
 ## E2E Testing
 
@@ -841,7 +841,7 @@ npx playwright test
 
 # Interactive
 npx playwright test --ui
-```
+```text
 
 ### Cypress
 
@@ -854,7 +854,7 @@ npx cypress run
 
 # Interactive
 npx cypress open
-```
+```text
 
 ## Security Scanning
 
@@ -866,7 +866,7 @@ Before committing WordPress code:
 
 # Check for hardcoded credentials
 grep -r "password\|api_key\|secret" --include="*.php" .
-```
+```text
 
 ## Related Subagents
 

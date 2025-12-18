@@ -44,7 +44,7 @@ tools:
 # In OpenCode:
 # - Tab to switch primary agents
 # - @agent-name to invoke subagents
-```
+```text
 
 <!-- AI-CONTEXT-END -->
 
@@ -62,7 +62,7 @@ The aidevops setup automatically installs the [opencode-antigravity-auth](https:
 opencode auth login
 # Select: Google → OAuth with Google (Antigravity)
 # Press Enter to skip Project ID prompt
-```
+```text
 
 **Available models via Antigravity:**
 
@@ -86,7 +86,7 @@ opencode auth login
 # Run the setup script
 cd ~/Git/aidevops
 .agent/scripts/generate-opencode-agents.sh
-```
+```text
 
 This creates:
 - `~/.config/opencode/agent/` directory
@@ -150,7 +150,7 @@ Specialized agents invoked with `@agent-name`. MCPs are enabled only for relevan
     }
   }
 }
-```
+```text
 
 **Key Design**:
 - MCPs are defined but `enabled: false` (not started at launch)
@@ -176,7 +176,7 @@ tools:
 # Agent Name
 
 Detailed instructions for the agent...
-```
+```text
 
 ## Usage
 
@@ -191,7 +191,7 @@ OpenCode doesn't have built-in workflow orchestration, but agents should be invo
 
 #### Recommended Workflow Order
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                    DEVELOPMENT WORKFLOW                         │
 ├─────────────────────────────────────────────────────────────────┤
@@ -214,7 +214,7 @@ OpenCode doesn't have built-in workflow orchestration, but agents should be invo
 │     @code-standards        - Run checks, apply fixes              │
 │     @agent-review        - Session analysis + PR                │
 └─────────────────────────────────────────────────────────────────┘
-```
+```text
 
 #### Parallel vs Sequential
 
@@ -240,7 +240,7 @@ OpenCode processes one `@mention` per message. For parallel work, send separate 
 > @hetzner create server app-server in brandlight
 # Wait for server...
 > @hostinger deploy WordPress to app.example.com
-```
+```text
 
 #### End-of-Session Pattern (MANDATORY)
 
@@ -253,7 +253,7 @@ OpenCode processes one `@mention` per message. For parallel work, send separate 
 > @code-standards check and fix any issues in today's changes
 # Wait for fixes...
 > @agent-review analyze this session
-```
+```text
 
 ### Example Workflows
 
@@ -273,7 +273,7 @@ opencode
 
 # Invoke code quality
 > @code-standards run ShellCheck on all scripts
-```
+```text
 
 ## CLI Testing Mode
 
@@ -301,7 +301,7 @@ opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-20250
 
 # Capture errors for debugging
 opencode run "Test the serper MCP" --agent SEO 2>&1
-```
+```text
 
 ### Persistent Server Mode (Faster Iteration)
 
@@ -316,7 +316,7 @@ opencode run --attach http://localhost:4096 "Test query" --agent SEO
 opencode run --attach http://localhost:4096 "Another test" --agent SEO
 
 # After config changes: Ctrl+C in Terminal 1, restart server
-```
+```text
 
 ### Testing Scenarios
 
@@ -344,7 +344,7 @@ Use the helper script for common testing tasks:
 
 # Start persistent server
 ~/.aidevops/agents/scripts/opencode-test-helper.sh serve 4096
-```
+```text
 
 ### Workflow: Adding New MCP
 
@@ -373,7 +373,7 @@ export HCLOUD_TOKEN_STORAGEBOX="your-token"
 # Google Search Console
 # Requires service account JSON file at:
 # ~/.config/aidevops/gsc-credentials.json
-```
+```text
 
 ### Installing MCP Servers
 
@@ -388,7 +388,7 @@ brew install mcp-hetzner
 brew install mcp-local-wp
 
 # Chrome DevTools MCP (auto-installed via npx)
-```
+```text
 
 ### OpenCode MCP Environment Variable Limitation
 
@@ -419,7 +419,7 @@ brew install mcp-local-wp
     }
   }
 }
-```
+```text
 
 This pattern:
 1. Uses `/bin/bash -c` to run a shell command
@@ -477,7 +477,7 @@ ls -la ~/.aidevops/agents/ 2>/dev/null
 
 # Check if aidevops agents are referenced
 grep -l "aidevops" ~/.config/opencode/agent/*.md 2>/dev/null
-```
+```text
 
 ## Permission Model Limitations
 
@@ -531,7 +531,7 @@ Plan+ is configured as strictly read-only:
     "webfetch": true
   }
 }
-```
+```text
 
 Use Build+ (Tab) for any operations requiring file changes.
 
@@ -541,7 +541,7 @@ Use Build+ (Tab) for any operations requiring file changes.
 
 ```text
 @agent-review analyze this session and suggest improvements to the agents used
-```
+```text
 
 The review agent will:
 1. Identify which agents were used
@@ -552,17 +552,17 @@ The review agent will:
 
 **Feedback Loop:**
 
-```
+```text
 Session → @agent-review → Improvements → Better Agents → Better Sessions
                 ↓
          PR to aidevops repo (optional)
-```
+```text
 
 **Contributing back:**
 
 ```text
 @agent-review create a PR for improvement #2
-```
+```text
 
 This creates a branch, applies changes, and submits a PR to `marcusquinn/aidevops`. The agent has restricted bash permissions - only `git *` and `gh pr *` commands are allowed (with confirmation).
 
@@ -570,9 +570,9 @@ This creates a branch, applies changes, and submits a PR to `marcusquinn/aidevop
 
 The `@code-standards` agent doesn't just fix issues - it learns from them:
 
-```
+```text
 Quality Issue → Fix Applied → Pattern Identified → Framework Updated → Issue Prevented
-```
+```text
 
 After fixing violations from SonarCloud, Codacy, ShellCheck, etc.:
 

@@ -20,7 +20,7 @@
 
 ### Timestamp-Based (Recommended)
 
-```
+```text
 {YYYYMMDDHHMMSS}_{action}_{target}_{details}.sql
 
 Examples:
@@ -29,7 +29,7 @@ Examples:
 20240503142030_drop_legacy_sessions_table.sql
 20240504083015_add_index_email_unique_to_users.sql
 20240505091200_rename_name_to_full_name_in_users.sql
-```
+```text
 
 ### Action Prefixes
 
@@ -45,12 +45,12 @@ Examples:
 
 ### Bad Names to Avoid
 
-```
+```text
 migration_1.sql          # Not descriptive
 fix_stuff.sql            # Vague
 20240502_changes.sql     # No specificity
 update_db.sql            # Meaningless
-```
+```text
 
 ## File Structure
 
@@ -75,7 +75,7 @@ CREATE INDEX idx_users_email ON users(email);
 -- ====== DOWN ======
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
-```
+```text
 
 ### Idempotent Migrations (Preferred)
 
@@ -100,11 +100,11 @@ END $$;
 -- MySQL
 CREATE TABLE IF NOT EXISTS users (...);
 -- MySQL doesn't support IF NOT EXISTS for indexes, use procedures
-```
+```text
 
 ## Directory Structure
 
-```
+```text
 project/
 ├── migrations/
 │   ├── 20240502100843_create_users_table.sql
@@ -116,7 +116,7 @@ project/
 └── scripts/
     ├── migrate.sh                   # Run pending migrations
     └── rollback.sh                  # Rollback last migration
-```
+```text
 
 ## Schema vs Data Migrations
 
@@ -129,7 +129,7 @@ ALTER TABLE orders ADD COLUMN status VARCHAR(20) DEFAULT 'pending';
 -- V7__backfill_order_status.sql (Data - slow, may be irreversible)
 UPDATE orders SET status = 'completed' WHERE shipped_at IS NOT NULL;
 UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
-```
+```text
 
 ## Rollback Strategies
 
@@ -160,7 +160,7 @@ UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 SELECT 'This migration is irreversible' AS warning;
 -- Or raise an error:
 -- RAISE EXCEPTION 'Cannot rollback: data was deleted';
-```
+```text
 
 ## Production Safety
 
@@ -181,7 +181,7 @@ UPDATE users SET email_new = email;
 -- 20240615_drop_old_email_from_users.sql
 ALTER TABLE users DROP COLUMN email;
 ALTER TABLE users RENAME COLUMN email_new TO email;
-```
+```text
 
 ### Safe Operations Checklist
 
@@ -202,7 +202,7 @@ CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
 
 -- ⚠️ Blocks writes during creation
 CREATE INDEX idx_users_email ON users(email);
-```
+```text
 
 ## Git Workflow Integration
 
@@ -219,7 +219,7 @@ git checkout -b bugfix/fix-orders-foreign-key
 
 # Data migrations
 git checkout -b chore/backfill-user-status
-```
+```text
 
 ### Commit Messages
 
@@ -233,7 +233,7 @@ git commit -m "chore(db): backfill user status from legacy field"
 
 # Fixes
 git commit -m "fix(db): correct foreign key constraint on orders"
-```
+```text
 
 ### Pre-Push Checklist
 
@@ -264,20 +264,20 @@ git rebase main
 # Rename migration file with new timestamp
 mv migrations/20240502100843_add_phone.sql \
    migrations/20240502101530_add_phone.sql
-```
+```text
 
 ### Never Modify Pushed Migrations
 
 Once a migration is pushed to a shared branch:
 
-```
+```text
 ❌ NEVER edit the migration file
 ❌ NEVER rename the migration file
 ❌ NEVER delete the migration file
 
 ✅ Create a NEW migration to fix issues
 ✅ Create a NEW migration to rollback changes
-```
+```text
 
 ## CI/CD Integration
 
@@ -316,19 +316,19 @@ jobs:
         run: |
           # Run a simple query to verify database is accessible
           psql $DATABASE_URL -c "SELECT 1"
-```
+```text
 
 ## Tool-Specific Patterns
 
 ### Flyway
 
-```
+```text
 migrations/
 ├── V1__create_users.sql
 ├── V2__add_email_to_users.sql
 ├── R__refresh_views.sql          # Repeatable
 └── U2__undo_add_email.sql        # Undo
-```
+```text
 
 ### Prisma
 
@@ -336,7 +336,7 @@ migrations/
 npx prisma migrate dev --name add_user_email    # Development
 npx prisma migrate deploy                        # Production
 npx prisma migrate reset                         # Reset (dev only)
-```
+```text
 
 ### Laravel
 
@@ -345,7 +345,7 @@ php artisan make:migration create_users_table
 php artisan migrate
 php artisan migrate:rollback
 php artisan migrate:fresh --seed    # Dev only
-```
+```text
 
 ### Rails
 
@@ -354,7 +354,7 @@ rails generate migration CreateUsers
 rails db:migrate
 rails db:rollback
 rails db:migrate:redo              # Rollback + migrate
-```
+```text
 
 ### Raw SQL (Framework-Agnostic)
 
@@ -365,7 +365,7 @@ for f in migrations/*.sql; do
     echo "Running $f..."
     psql $DATABASE_URL -f "$f"
 done
-```
+```text
 
 ## Rollback Procedures
 
@@ -378,7 +378,7 @@ flyway undo
 npx prisma migrate resolve --rolled-back 20240502100843_add_email
 rails db:rollback STEP=1
 php artisan migrate:rollback --step=1
-```
+```text
 
 ### Point-in-Time Recovery
 
@@ -390,7 +390,7 @@ pg_restore -d dbname backup_before_migration.dump
 
 # MySQL
 mysql dbname < backup_before_migration.sql
-```
+```text
 
 ## Migration Tracking Table
 
@@ -410,7 +410,7 @@ CREATE TABLE flyway_schema_history (
     execution_time INT,
     success BOOLEAN
 );
-```
+```text
 
 Query to see migration status:
 
@@ -418,4 +418,4 @@ Query to see migration status:
 SELECT version, description, installed_on, success
 FROM flyway_schema_history
 ORDER BY installed_rank;
-```
+```text

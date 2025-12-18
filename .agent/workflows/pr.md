@@ -24,13 +24,13 @@ tools:
 
 **Orchestration Flow**:
 
-```
+```text
 /pr [PR-URL or branch]
  ├── /linters-local      → ShellCheck, secretlint, pattern checks
  ├── /code-audit-remote  → CodeRabbit, Codacy, SonarCloud APIs
  ├── /code-standards     → Check against documented standards
  └── Summary: Intent vs Reality analysis
-```
+```text
 
 **Quick Commands**:
 
@@ -53,7 +53,7 @@ The `/pr` command is the unified entry point for PR review that:
 
 ## Workflow Position
 
-```
+```text
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
 │ branch.md   │────►│      pr.md       │────►│ release.md  │
 │             │     │                  │     │             │
@@ -64,7 +64,7 @@ The `/pr` command is the unified entry point for PR review that:
 │             │     │ - Intent vs Real │     │             │
 │             │     │ - Merge          │     │             │
 └─────────────┘     └──────────────────┘     └─────────────┘
-```
+```text
 
 ## Orchestrated Checks
 
@@ -75,7 +75,7 @@ Runs fast, offline checks using local tools:
 ```bash
 # Executed by /linters-local
 ~/.aidevops/agents/scripts/linters-local.sh
-```
+```text
 
 **Checks**:
 - ShellCheck for shell scripts
@@ -90,7 +90,7 @@ Calls remote quality services via APIs:
 ```bash
 # Executed by /code-audit-remote
 ~/.aidevops/agents/scripts/code-audit-helper.sh audit [repo]
-```
+```text
 
 **Services**:
 - CodeRabbit - AI-powered code review
@@ -122,7 +122,7 @@ Checks against our documented quality standards:
 
 # Review PR by URL
 /pr review https://github.com/user/repo/pull/123
-```
+```text
 
 ### Create a PR with Pre-checks
 
@@ -132,7 +132,7 @@ Checks against our documented quality standards:
 
 # Create draft PR
 /pr create --draft
-```
+```text
 
 ### Full Workflow
 
@@ -148,7 +148,7 @@ git push -u origin HEAD
 
 # 4. After approval, merge
 gh pr merge --squash --delete-branch
-```
+```text
 
 ## Output Format
 
@@ -199,7 +199,7 @@ The `/pr` command produces a structured report:
 - [ ] Justify lodash dependency addition
 
 **Overall**: CHANGES REQUESTED
-```
+```text
 
 ## Fork Workflow (Non-Owner Repositories)
 
@@ -219,7 +219,7 @@ CURRENT_USER=$(gh api user --jq '.login')
 if [[ "$REPO_OWNER" != "$CURRENT_USER" ]]; then
     echo "Fork workflow required"
 fi
-```
+```text
 
 ### Fork and Setup
 
@@ -236,7 +236,7 @@ git remote add fork git@github.com:{your-username}/{repo}.git
 git remote -v
 # origin    git@github.com:{owner}/{repo}.git (fetch/push) - upstream
 # fork      git@github.com:{your-username}/{repo}.git (fetch/push) - your fork
-```
+```text
 
 **GitLab:**
 
@@ -246,7 +246,7 @@ glab repo fork {owner}/{repo}
 
 # 2. Add fork as remote
 git remote add fork git@gitlab.com:{your-username}/{repo}.git
-```
+```text
 
 **Gitea:**
 
@@ -254,7 +254,7 @@ git remote add fork git@gitlab.com:{your-username}/{repo}.git
 # 1. Fork via web UI
 # 2. Add fork as remote
 git remote add fork git@{gitea-host}:{your-username}/{repo}.git
-```
+```text
 
 ### Push and Create PR to Upstream
 
@@ -267,7 +267,7 @@ gh pr create --repo {owner}/{repo} --head {your-username}:{branch-name}
 
 # GitLab equivalent
 glab mr create --target-project {owner}/{repo} --source-branch {branch-name}
-```
+```text
 
 ### Keeping Fork Updated
 
@@ -284,7 +284,7 @@ git push fork main
 git checkout {branch-name}
 git rebase main
 git push fork {branch-name} --force-with-lease
-```
+```text
 
 ### Fork Workflow Diagram
 
@@ -299,7 +299,7 @@ git push fork {branch-name} --force-with-lease
 │                 │     │  {branch} ◄─────┼─────┼─── your work    │
 │                 │     │                 │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-```
+```text
 
 ## Creating Pull Requests
 
@@ -326,7 +326,7 @@ gh pr create --fill --draft
 
 # Create PR and request reviewers
 gh pr create --fill --reviewer @username,@team
-```
+```text
 
 ### GitLab (`glab`)
 
@@ -342,7 +342,7 @@ glab mr create --fill --draft
 
 # Create MR and assign reviewers
 glab mr create --fill --reviewer @username
-```
+```text
 
 ### Gitea (`tea`)
 
@@ -354,7 +354,7 @@ git push -u origin HEAD
 tea pulls create \
   --title "feat: Add user authentication" \
   --description "Summary of changes"
-```
+```text
 
 ## Merging Pull Requests
 
@@ -379,7 +379,7 @@ gh pr merge 123 --squash --auto
 
 # Delete branch after merge
 gh pr merge 123 --squash --delete-branch
-```
+```text
 
 ### GitLab
 
@@ -389,7 +389,7 @@ glab mr merge 123 --squash
 
 # Merge when pipeline succeeds
 glab mr merge 123 --when-pipeline-succeeds
-```
+```text
 
 ## Post-Merge Actions
 
@@ -432,7 +432,7 @@ git merge main
 # Resolve conflicts in editor
 git add . && git commit -m "fix: Resolve merge conflicts"
 git push
-```
+```text
 
 ## Related Workflows
 

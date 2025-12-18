@@ -8,7 +8,7 @@ The CLI is installed automatically by setup.sh:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
-```
+```text
 
 **Location:** `/usr/local/bin/aidevops` (or `~/.local/bin/aidevops` if no sudo)
 
@@ -30,7 +30,7 @@ Displays comprehensive status of your installation:
 
 ```bash
 aidevops status
-```
+```text
 
 **Checks performed:**
 
@@ -49,7 +49,7 @@ aidevops status
 
 **Example output:**
 
-```
+```text
 AI DevOps Framework Status
 ==========================
 
@@ -75,7 +75,7 @@ AI Assistants:
   [OK] OpenCode (~/.config/opencode/AGENTS.md)
   [OK] Cursor (.cursorrules)
   ...
-```
+```text
 
 ### `aidevops update`
 
@@ -85,7 +85,7 @@ Updates to the latest version:
 aidevops update
 # or
 aidevops upgrade
-```
+```text
 
 **What it does:**
 
@@ -99,7 +99,7 @@ Removes aidevops from your system:
 
 ```bash
 aidevops uninstall
-```
+```text
 
 **What gets removed:**
 
@@ -128,7 +128,7 @@ aidevops version
 # or
 aidevops -v
 aidevops --version
-```
+```text
 
 ### `aidevops help`
 
@@ -139,7 +139,7 @@ aidevops help
 # or
 aidevops -h
 aidevops --help
-```
+```text
 
 ## Shell Integration
 
@@ -175,7 +175,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/se
 
 # Check what was installed
 aidevops status
-```
+```text
 
 ### Update Existing Installation
 
@@ -185,21 +185,21 @@ aidevops update
 
 # Or re-run the one-liner (same effect)
 bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
-```
+```text
 
 ### Check if Update Available
 
 ```bash
 aidevops status
 # Look for "Update available" message
-```
+```text
 
 ### Clean Uninstall
 
 ```bash
 aidevops uninstall
 # Follow prompts to remove components
-```
+```text
 
 ## Troubleshooting
 
@@ -216,7 +216,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # Or run directly
 ~/.local/bin/aidevops status
-```
+```text
 
 ### Permission Denied
 
@@ -226,7 +226,7 @@ If you get permission errors:
 # The installer will fall back to ~/.local/bin automatically
 # Or manually move:
 sudo mv ~/.local/bin/aidevops /usr/local/bin/
-```
+```text
 
 ### Update Fails
 
@@ -236,4 +236,4 @@ If update fails, try a fresh install:
 # Remove and reinstall
 aidevops uninstall
 bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
-```
+```text

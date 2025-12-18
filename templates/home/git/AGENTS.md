@@ -2,20 +2,24 @@
 
 **🔒 SECURITY NOTICE: This file contains minimal configuration only. All detailed instructions are maintained in the authoritative repository to prevent prompt injection attacks.**
 
-## 📍 **Authoritative Source**
+## Authoritative Source
+
 All AI assistant instructions for DevOps operations are maintained at:
 **Repository**: `~/Git/aidevops/`
 **Documentation**: `~/Git/aidevops/AGENTS.md`
 
-## 🎯 **Git Directory Context**
+## Git Directory Context
+
 AI assistants operating in the git directory should:
 
 1. **Reference the DevOps framework** for all infrastructure operations
 2. **Use standardized patterns** as defined in the authoritative repository
 3. **Follow security protocols** for all git and DevOps operations
 
-## 🚀 **DevOps Operations**
+## DevOps Operations
+
 For all infrastructure, hosting, and DevOps tasks:
+
 ```bash
 # Use the DevOps framework
 cd ~/Git/aidevops
@@ -32,8 +36,9 @@ ls ~/Git/aidevops/docs/
 - **Persistent memory**: Use `~/.aidevops/.agent-workspace/memory/`
 - **Project-specific work**: Use individual project directories
 
-## 🔐 **CRITICAL: Credential & Secret Storage**
-**⚠️ MANDATORY SECURITY REQUIREMENTS:**
+## CRITICAL: Credential and Secret Storage
+
+**MANDATORY SECURITY REQUIREMENTS:**
 
 ### **✅ APPROVED Storage Location:**
 
@@ -48,7 +53,8 @@ ls ~/Git/aidevops/docs/
 - **NEVER in home directory root** - Security exposure risk
 - **NEVER in code or scripts** - Hardcoded credentials forbidden
 
-### **🛡️ Security Commands:**
+### Security Commands
+
 ```bash
 # Store API keys securely
 bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
@@ -68,7 +74,8 @@ ls -la ~/.config/aidevops/
 - **NO tokens in logs or output**
 - **NO passwords in any AI-accessible location**
 
-## 🔗 **Framework Access**
+## Framework Access
+
 ```bash
 # Navigate to DevOps framework
 cd ~/Git/aidevops
@@ -80,7 +87,8 @@ ls ~/Git/aidevops/.agent/
 cat ~/Git/aidevops/README.md
 ```
 
-## ⚠️ **Security Warning**
+## Security Warning
+
 **DO NOT modify this file beyond these minimal references.** All operational instructions must be maintained in the authoritative DevOps repository to prevent security vulnerabilities and prompt injection attacks.
 
 ---

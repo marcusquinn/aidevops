@@ -38,7 +38,7 @@ eeat-score-helper.sh batch urls.txt
 
 # Generate report from existing scores
 eeat-score-helper.sh report ~/Downloads/example.com/_latest/eeat-scores.json
-```
+```text
 
 **Scoring Criteria** (1-10 scale):
 
@@ -183,7 +183,7 @@ reasoning prompt (for explanation) and a scoring prompt (for numeric score).
 
 ### Subjective Quality Reasoning
 
-```
+```text
 You are a brutally honest content critic. Be direct, not nice. Evaluate this content for:
 boring sections, confusing parts, unbelievable claims, unclear audience pain point,
 missing culprit identification, sections that could be condensed, and lack of proprietary
@@ -199,11 +199,11 @@ studies, exact prompts) to make it unique or credible."
 
 Now analyze the content and provide your 2-3 sentence critique focused on what's broken
 and needs fixing.
-```
+```text
 
 ### Authorship & Expertise Reasoning
 
-```
+```text
 You are evaluating Authorship & Expertise for this page. Analyze and explain in 3-4 sentences:
 - Is there a clear AUTHOR? If yes, who and what credentials?
 - Can you identify the PUBLISHER (who owns/operates the site)?
@@ -211,11 +211,11 @@ You are evaluating Authorship & Expertise for this page. Analyze and explain in 
 - Do they demonstrate RELEVANT EXPERTISE for this topic?
 
 Be specific with names, credentials, evidence from the page.
-```
+```text
 
 ### Authorship & Expertise Score
 
-```
+```text
 You are evaluating Authorship & Expertise (isAuthor criterion).
 
 CRITICAL: A "Disconnected Entity" is one where you CANNOT find "who owns and operates"
@@ -233,11 +233,11 @@ Score 1-10:
 7-10 = CONNECTED ENTITY: Clear author with detailed bio, verifiable expertise
 
 Return ONLY the number (e.g., "3")
-```
+```text
 
 ### Citation Quality Reasoning
 
-```
+```text
 You are evaluating Citation Quality for this page. Analyze and explain in 3-4 sentences:
 - Does the page make SPECIFIC FACTUAL CLAIMS?
 - Are those claims SUBSTANTIATED with citations?
@@ -245,11 +245,11 @@ You are evaluating Citation Quality for this page. Analyze and explain in 3-4 se
 - Or are claims unsupported?
 
 Be specific with examples of claims and their (lack of) citations.
-```
+```text
 
 ### Citation Quality Score
 
-```
+```text
 You are evaluating Citation Quality & Substantiation.
 
 Does this content BACK UP its claims with high-quality sources?
@@ -266,11 +266,11 @@ Score 1-10:
 7-10 = HIGH: Core claims substantiated with primary sources or high-authority domains
 
 Return ONLY the number (e.g., "7")
-```
+```text
 
 ### Content Effort Reasoning
 
-```
+```text
 You are evaluating Content Effort for this page. Analyze and explain in 3-4 sentences:
 - How DIFFICULT would it be to REPLICATE this content? (consider time, cost, expertise)
 - Does the page "SHOW ITS WORK"? Is the creation process transparent?
@@ -278,11 +278,11 @@ You are evaluating Content Effort for this page. Analyze and explain in 3-4 sent
 - Any unique elements that required significant resources?
 
 Be specific with examples from the page.
-```
+```text
 
 ### Content Effort Score
 
-```
+```text
 You are evaluating Content Effort.
 
 Assess the DEMONSTRABLE effort, expertise, and resources invested in creating this content.
@@ -305,11 +305,11 @@ Score 1-10:
 9-10 = EXCEPTIONAL: Original research, proprietary data, unique tools
 
 Return ONLY the number (e.g., "5")
-```
+```text
 
 ### Original Content Reasoning
 
-```
+```text
 You are evaluating Content Originality for this page. Analyze and explain in 3-4 sentences:
 - Does this page introduce NEW INFORMATION or a UNIQUE PERSPECTIVE?
 - Or does it just REPHRASE existing knowledge from other sources?
@@ -317,11 +317,11 @@ You are evaluating Content Originality for this page. Analyze and explain in 3-4
 - What makes it original or generic?
 
 Be specific with examples.
-```
+```text
 
 ### Original Content Score
 
-```
+```text
 You are evaluating Content Originality.
 
 Does this content ADD NEW INFORMATION to the web, or just rephrase what already exists?
@@ -342,11 +342,11 @@ Score 1-10:
 7-10 = HIGH ORIGINALITY: Substantively unique, adds new information or fresh perspective
 
 Return ONLY the number (e.g., "6")
-```
+```text
 
 ### Page Intent Reasoning
 
-```
+```text
 You are evaluating Page Intent for this page. Analyze and explain in 3-4 sentences:
 - What is this page's PRIMARY PURPOSE (the "WHY" it exists)?
 - Is it HELPFUL-FIRST (created to help users) or SEARCH-FIRST (created to rank)?
@@ -354,11 +354,11 @@ You are evaluating Page Intent for this page. Analyze and explain in 3-4 sentenc
 - What evidence supports your assessment?
 
 Be specific with examples from the content.
-```
+```text
 
 ### Page Intent Score
 
-```
+```text
 You are evaluating Page Intent.
 
 WHY was this page created? What is its PRIMARY PURPOSE?
@@ -384,11 +384,11 @@ Score 1-10:
 7-10 = TRANSPARENT/HELPFUL-FIRST: Created primarily to help people, clear honest purpose
 
 Return ONLY the number (e.g., "9")
-```
+```text
 
 ### Subjective Quality Score
 
-```
+```text
 You are a brutally honest content critic evaluating subjective quality from the
 reader's perspective.
 
@@ -427,11 +427,11 @@ Score 1-10:
 7-10 = HIGH QUALITY: Compelling, clear, credible, dense value
 
 Return ONLY the number (e.g., "5")
-```
+```text
 
 ### Writing Quality Reasoning
 
-```
+```text
 You are a writing quality analyst. Evaluate this text's linguistic quality.
 
 Analyze: lexical diversity (vocabulary richness/repetition), readability
@@ -449,11 +449,11 @@ sentences to 15-20 words. Cut heavy adverbs like 'absolutely' and 'clearly' to
 tighten prose."
 
 Now provide your compact 2-3 sentence critique focused on the main writing weaknesses.
-```
+```text
 
 ### Writing Quality Score
 
-```
+```text
 You are a writing quality analyst evaluating text based on objective linguistic metrics.
 
 Analyze this content across these dimensions:
@@ -478,7 +478,7 @@ Score 1-10:
 7-10 = EXCELLENT: Rich vocabulary, optimal sentence length, active voice, concise
 
 Return ONLY the number (e.g., "6")
-```
+```text
 
 ## Usage
 
@@ -494,7 +494,7 @@ eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
 #   - example.com-eeat-score-{datestamp}.xlsx
 #   - example.com-eeat-score-{datestamp}.csv
 #   - eeat-summary.json
-```
+```text
 
 ### Analyze Single URL
 
@@ -504,7 +504,7 @@ eeat-score-helper.sh score https://example.com/blog/article
 
 # With verbose reasoning output
 eeat-score-helper.sh score https://example.com/blog/article --verbose
-```
+```text
 
 ### Batch Analysis
 
@@ -518,7 +518,7 @@ EOF
 
 # Analyze all URLs
 eeat-score-helper.sh batch urls.txt
-```
+```text
 
 ### Generate Report
 
@@ -528,7 +528,7 @@ eeat-score-helper.sh report ~/Downloads/example.com/_latest/eeat-scores.json
 
 # Custom output location
 eeat-score-helper.sh report scores.json --output ~/Reports/
-```
+```text
 
 ## Output Format
 
@@ -580,7 +580,7 @@ ls ~/Downloads/example.com/_latest/
 # crawl-data.xlsx
 # example.com-eeat-score-2025-01-15.xlsx
 # eeat-summary.json
-```
+```text
 
 ## Configuration
 
@@ -607,7 +607,7 @@ Set your preferred LLM provider in `~/.config/aidevops/eeat-score.json`:
     "writing": 0.10
   }
 }
-```
+```text
 
 ### Environment Variables
 
@@ -619,7 +619,7 @@ export ANTHROPIC_API_KEY="..."
 
 # Optional: Custom output directory
 export EEAT_OUTPUT_DIR="~/SEO-Audits"
-```
+```text
 
 ## Interpreting Results
 

@@ -64,7 +64,7 @@ Add to your MCP client configuration:
     }
   }
 }
-```
+```text
 
 **Claude Desktop** (`claude_desktop_config.json`):
 
@@ -77,7 +77,7 @@ Add to your MCP client configuration:
     }
   }
 }
-```
+```text
 
 ## Usage
 
@@ -103,7 +103,7 @@ const title = await page.textContent('h1')
 
 // Wait for element
 await page.waitForSelector('.loaded')
-```
+```text
 
 ### Multi-Tab Control
 
@@ -118,7 +118,7 @@ const page2 = pages[1]
 // Create new tab
 const newPage = await context.newPage()
 await newPage.goto('https://example.com')
-```
+```text
 
 ### Programmatic Usage
 
@@ -139,7 +139,7 @@ await page.screenshot({ path: 'screenshot.png' })
 
 await browser.close()
 server.close()
-```
+```text
 
 ## Comparison with Other Tools
 
@@ -170,7 +170,7 @@ server.close()
 
 ## Architecture
 
-```
+```text
 +---------------------+     +-------------------+     +-----------------+
 |   BROWSER           |     |   LOCALHOST       |     |   MCP CLIENT    |
 |                     |     |                   |     |                 |
@@ -192,7 +192,7 @@ server.close()
 |  | Tab 3 (gray)  |  |                               |  +-----------+  |
 |  +---------------+  |     Tab 3 not controlled      +-----------------+
 +---------------------+
-```
+```text
 
 ## Security
 
@@ -233,7 +233,7 @@ await page.click('button[type="submit"]')
 
 // Wait for redirect
 await page.waitForURL('**/dashboard')
-```
+```text
 
 ### Form Submission
 
@@ -249,7 +249,7 @@ await page.click('button[type="submit"]')
 
 // Wait for success
 await page.waitForSelector('.success-message')
-```
+```text
 
 ### Data Extraction
 
@@ -266,7 +266,7 @@ const rows = await page.$$eval('table tr', rows =>
     return Array.from(cells).map(cell => cell.textContent)
   })
 )
-```
+```text
 
 ### Screenshot and PDF
 
@@ -279,7 +279,7 @@ await page.locator('.chart').screenshot({ path: 'chart.png' })
 
 // PDF export
 await page.pdf({ path: 'page.pdf', format: 'A4' })
-```
+```text
 
 ## Troubleshooting
 

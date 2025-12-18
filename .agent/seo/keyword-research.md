@@ -38,7 +38,7 @@ Basic keyword expansion from seed keywords.
 
 ```bash
 /keyword-research "best seo tools, keyword research"
-```
+```text
 
 **Output**: Volume, CPC, Keyword Difficulty, Search Intent
 
@@ -57,7 +57,7 @@ Basic keyword expansion from seed keywords.
 ```bash
 /keyword-research "best * for dogs"
 # Returns: best food for dogs, best toys for dogs, etc.
-```
+```text
 
 ### /autocomplete-research
 
@@ -65,7 +65,7 @@ Google autocomplete expansion for long-tail keywords.
 
 ```bash
 /autocomplete-research "how to lose weight"
-```
+```text
 
 **Output**: Long-tail variations from Google's autocomplete suggestions
 
@@ -75,7 +75,7 @@ Full SERP analysis with weakness detection and KeywordScore.
 
 ```bash
 /keyword-research-extended "best seo tools"
-```
+```text
 
 **Output**: All basic metrics + KeywordScore, Domain Score, Page Score, Weakness Count, Weakness Types
 
@@ -91,30 +91,30 @@ Full SERP analysis with weakness detection and KeywordScore.
 
 ### Research Results (Markdown Table)
 
-```
+```text
 | Keyword                  | Volume  | CPC    | KD  | Intent       |
 |--------------------------|---------|--------|-----|--------------|
 | best seo tools 2025      | 12,100  | $4.50  | 45  | Commercial   |
 | free seo tools           |  8,100  | $2.10  | 38  | Commercial   |
 | seo tools for beginners  |  2,400  | $3.20  | 28  | Informational|
-```
+```text
 
 ### Extended Results (Full Analysis)
 
-```
+```text
 | Keyword              | Vol    | KD  | KS  | Weaknesses | Weakness Types                        | DS  | PS  | DR  |
 |----------------------|--------|-----|-----|------------|---------------------------------------|-----|-----|-----|
 | best seo tools       | 12.1K  | 45  | 72  | 5          | Low DS, Old Content, Slow Page, ...   | 23  | 15  | 31  |
 | free seo tools       |  8.1K  | 38  | 68  | 4          | No Backlinks, Non-HTTPS, ...          | 18  | 12  | 24  |
-```
+```text
 
 ### Competitor/Gap Results (Additional Columns)
 
-```
+```text
 | Keyword              | Vol    | KD  | Position | Est Traffic | Ranking URL                    |
 |----------------------|--------|-----|----------|-------------|--------------------------------|
 | best seo tools       | 12.1K  | 45  | 3        | 2,450       | example.com/blog/seo-tools     |
-```
+```text
 
 ## KeywordScore Algorithm
 
@@ -225,7 +225,7 @@ Preferences saved to `~/.config/aidevops/keyword-research.json`:
   "include_ahrefs": false,
   "csv_directory": "~/Downloads"
 }
-```
+```text
 
 ## Provider Configuration
 
@@ -246,7 +246,7 @@ Full-featured provider with all capabilities.
 ```bash
 DATAFORSEO_USERNAME="your_username"
 DATAFORSEO_PASSWORD="your_password"
-```
+```text
 
 ### Serper (Alternative)
 
@@ -260,7 +260,7 @@ Faster, simpler API for basic research.
 
 ```bash
 SERPER_API_KEY="your_api_key"
-```
+```text
 
 ### Ahrefs (Optional)
 
@@ -274,7 +274,7 @@ Premium metrics for Domain Rating (DR) and URL Rating (UR).
 
 ```bash
 AHREFS_API_KEY="your_api_key"
-```
+```text
 
 ## Workflow Examples
 
@@ -289,7 +289,7 @@ AHREFS_API_KEY="your_api_key"
 
 # Export to CSV
 /keyword-research "dog training" --csv
-```
+```text
 
 ### Long-tail Discovery
 
@@ -299,7 +299,7 @@ AHREFS_API_KEY="your_api_key"
 
 # Wildcard patterns
 /keyword-research "best * for puppies"
-```
+```text
 
 ### Competitive Analysis
 
@@ -312,7 +312,7 @@ AHREFS_API_KEY="your_api_key"
 
 # Domain niche keywords
 /keyword-research-extended --domain chewy.com
-```
+```text
 
 ### Full SERP Analysis
 
@@ -325,7 +325,7 @@ AHREFS_API_KEY="your_api_key"
 
 # Include Ahrefs DR/UR
 /keyword-research-extended "dog training tips" --ahrefs
-```
+```text
 
 ## Result Limits & Pagination
 
@@ -356,21 +356,21 @@ Default: `~/Downloads/keyword-research-YYYYMMDD-HHMMSS.csv`
 
 **Basic Research**:
 
-```
+```text
 Keyword,Volume,CPC,Difficulty,Intent
-```
+```text
 
 **Extended Research**:
 
-```
+```text
 Keyword,Volume,CPC,Difficulty,Intent,KeywordScore,DomainScore,PageScore,WeaknessCount,Weaknesses,DR,UR
-```
+```text
 
 **Competitor/Gap Research**:
 
-```
+```text
 Keyword,Volume,CPC,Difficulty,Intent,Position,EstTraffic,RankingURL
-```
+```text
 
 ## Integration with SEO Workflow
 
@@ -394,7 +394,7 @@ Keyword,Volume,CPC,Difficulty,Intent,Position,EstTraffic,RankingURL
 # Research keywords, then create content brief
 /keyword-research-extended "target keyword"
 # Use results to inform content strategy
-```
+```text
 
 ## Troubleshooting
 
@@ -415,7 +415,7 @@ Check provider availability:
 /list-keys --service dataforseo
 /list-keys --service serper
 /list-keys --service ahrefs
-```
+```text
 
 ## Webmaster Tools Integration
 
@@ -438,7 +438,7 @@ keyword-research-helper.sh webmaster https://example.com --no-enrich
 
 # Export to CSV
 keyword-research-helper.sh webmaster https://example.com --csv
-```
+```text
 
 **Output**: Keyword, Clicks, Impressions, CTR, Position, Volume, KD, CPC, Sources (GSC/Bing/Both)
 
@@ -474,7 +474,7 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 
 # Option 2: Access token (for testing)
 export GSC_ACCESS_TOKEN="your_access_token"
-```
+```text
 
 ### Bing Webmaster Tools Setup
 
@@ -488,7 +488,7 @@ export GSC_ACCESS_TOKEN="your_access_token"
 
 ```bash
 export BING_WEBMASTER_API_KEY="your_api_key"
-```
+```text
 
 ### Workflow Example
 
@@ -507,7 +507,7 @@ keyword-research-helper.sh extended --competitor competitor.com
 
 # 5. Export for content planning
 keyword-research-helper.sh webmaster https://mysite.com --csv
-```
+```text
 
 ## Resources
 

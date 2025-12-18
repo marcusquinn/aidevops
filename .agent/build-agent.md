@@ -42,7 +42,7 @@
 
 ```bash
 opencode run "Test query" --agent Build+
-```
+```text
 
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
@@ -116,7 +116,7 @@ tools:
   webfetch: false # Fetch web content
   task: true      # Spawn subagents
 ---
-```
+```text
 
 **Tool permission options:**
 
@@ -138,7 +138,7 @@ tools:
   context7_*: true              # Context7 documentation tools
   augment-context-engine_*: true # Augment codebase search
   wordpress-mcp_*: true         # WordPress MCP tools
-```
+```text
 
 **Example: Read-only analysis agent**
 
@@ -156,7 +156,7 @@ tools:
   webfetch: false
   task: true
 ---
-```
+```text
 
 **Example: Write-capable task agent**
 
@@ -174,7 +174,7 @@ tools:
   webfetch: false
   task: true
 ---
-```
+```text
 
 **Example: Agent with MCP access**
 
@@ -195,7 +195,7 @@ tools:
   wordpress-mcp_*: true
   context7_*: true
 ---
-```
+```text
 
 **Note on permissions**: Path-based permissions (e.g., restricting which files can be edited) are configured in `opencode.json` for OpenCode, not in markdown frontmatter. The frontmatter defines which tools are available; the JSON config defines granular restrictions.
 
@@ -227,7 +227,7 @@ This repository has two agent directories with different purposes:
 
 #### Decision Framework
 
-```
+```text
 Is this a broad domain or strategic concern?
   YES → Main Agent at root
   NO  ↓
@@ -239,7 +239,7 @@ Can this run independently without needing other domain knowledge?
 Does this coordinate multiple tools/services?
   YES → Consider if it should be main agent or call existing subagents
   NO  → Subagent, or add to existing agent
-```
+```text
 
 #### Calling Other Agents
 
@@ -253,7 +253,7 @@ For code quality, invoke `@code-standards` subagent.
 # Bad: Duplicate instructions
 ## Git Operations
 [50 lines duplicating git-platforms.md content]
-```
+```text
 
 ### MCP Configuration Pattern
 
@@ -279,7 +279,7 @@ For code quality, invoke `@code-standards` subagent.
     }
   }
 }
-```
+```text
 
 **Why this matters:**
 - Reduces context window usage (MCP tools add tokens)
@@ -306,7 +306,7 @@ Search for `handle_api_error` in `.agent/scripts/hostinger-helper.sh`
 # Better (with fallback)
 Search for `handle_api_error` in hostinger-helper.sh.
 If not found, search for `api_error` or `error handling` patterns.
-```
+```text
 
 **Search pattern hierarchy:**
 1. Function/variable name (most specific)
@@ -344,7 +344,7 @@ Run ShellCheck before committing. Use `@code-standards` for comprehensive analys
 
 # Bad
 Ask the AI to check your code formatting and style.
-```
+```text
 
 **Consider bun for performance:**
 Where agents reference `npm` or `npx`, consider if `bun` would be faster:
@@ -446,7 +446,7 @@ Instead of putting everything in AGENTS.md:
 
 ## Testing Requirements
 [30 lines of testing rules...]
-```
+```text
 
 ```markdown
 # Good: Pointers in AGENTS.md, details in subagents
@@ -455,7 +455,7 @@ Instead of putting everything in AGENTS.md:
 - `aidevops/architecture.md` - Schema and API patterns
 
 Read subagents only when task requires them.
-```
+```text
 
 ### Code Examples: When to Use
 
@@ -579,7 +579,7 @@ When code examples are used during a task:
 
 5. **Request permission**:
 
-   ```
+   ```text
    > Agent Feedback: While [task], I noticed [issue] in 
    > `.agent/[file].md`. Related instructions also exist in 
    > `[other-files]`. Suggested improvement: [change]. 
@@ -619,7 +619,7 @@ All agent files should follow this structure:
 
 [Verbose human-readable content, examples, edge cases]
 [Read only when specific details needed]
-```
+```text
 
 **Subagents** (YAML frontmatter required):
 
@@ -641,7 +641,7 @@ tools:
 # Subagent Name - Brief Purpose
 
 [Subagent content...]
-```
+```text
 
 See "Subagent YAML Frontmatter" section for full permission options.
 
@@ -652,7 +652,7 @@ See "Subagent YAML Frontmatter" section for full permission options.
 
 ### Folder Organization
 
-```
+```text
 .agent/
 ├── AGENTS.md                 # Entry point (ALLCAPS - special root file)
 ├── {domain}.md               # Main agents at root (lowercase)
@@ -663,7 +663,7 @@ See "Subagent YAML Frontmatter" section for full permission options.
 ├── services/                 # External integrations
 │   ├── {category}/           # Grouped by type
 └── workflows/                # Process guides
-```
+```text
 
 **Naming conventions:**
 
@@ -696,7 +696,7 @@ Main agents provide overview and point to subagents for details (progressive dis
 |----------|--------------|
 | `deployment.md` | Adding MCP to AI assistants |
 | `server-patterns.md` | Registering tools, resources |
-```
+```text
 
 ### Deployment Sync
 
@@ -704,7 +704,7 @@ Agent changes in `.agent/` require `setup.sh` to deploy to `~/.aidevops/agents/`
 
 ```bash
 cd ~/Git/aidevops && ./setup.sh
-```
+```text
 
 **Offer to run setup.sh when:**
 - Creating new agents
@@ -736,7 +736,7 @@ When oh-my-opencode is installed, leverage these specialized agents for enhanced
 3. Examples → @librarian finds similar patterns
 4. Polish → @document-writer improves clarity
 5. Test → Deploy and validate
-```
+```text
 
 **Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
 See `tools/opencode/oh-my-opencode.md` for installation.

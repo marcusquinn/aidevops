@@ -4,7 +4,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 WORK_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 GSC_SCRIPT="${WORK_DIR}/gsc-add-user.js"
 

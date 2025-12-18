@@ -76,7 +76,7 @@ Preflight runs automatically during release:
 ```bash
 # Preflight runs before version bump
 .agent/scripts/version-manager.sh release minor
-```
+```text
 
 ### Manual
 
@@ -92,11 +92,11 @@ Run quality checks independently:
 # Specific checks
 shellcheck .agent/scripts/*.sh
 npx secretlint "**/*"
-```
+```text
 
 ## Integration with Release
 
-```
+```text
 release command
     │
     ▼
@@ -116,7 +116,7 @@ release command
     │
     ▼
    ... tag, release ...
-```
+```text
 
 ## Bypassing Preflight
 
@@ -128,7 +128,7 @@ For emergency hotfixes only:
 
 # Skip both preflight and changelog
 .agent/scripts/version-manager.sh release patch --skip-preflight --force
-```
+```text
 
 **When to skip:**
 - Critical security hotfix that can't wait
@@ -152,7 +152,7 @@ shellcheck .agent/scripts/*.sh
 
 # Check specific file
 shellcheck .agent/scripts/version-manager.sh
-```
+```text
 
 **Must pass**: Zero violations (errors are blocking)
 
@@ -166,7 +166,7 @@ npx secretlint "**/*"
 
 # With helper
 .agent/scripts/secretlint-helper.sh scan
-```
+```text
 
 **Detects**: AWS keys, GitHub tokens, OpenAI keys, private keys, database URLs
 
@@ -176,7 +176,7 @@ Ensures VERSION file matches all references:
 
 ```bash
 .agent/scripts/version-manager.sh validate
-```
+```text
 
 **Checks**: VERSION, README badge, sonar-project.properties, setup.sh
 
@@ -190,7 +190,7 @@ Checks current quality gate status:
 
 # Direct API (requires SONAR_TOKEN)
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"
-```
+```text
 
 ## Troubleshooting
 
@@ -202,19 +202,19 @@ shellcheck -f gcc .agent/scripts/problem-script.sh
 
 # Auto-fix some issues (with shellcheck-fix if available)
 # Or manually fix based on SC codes
-```
+```text
 
 ### Secretlint False Positives
 
 Add to `.secretlintignore`:
 
-```
+```text
 # Ignore test fixtures
 tests/fixtures/*
 
 # Ignore specific file
 path/to/false-positive.txt
-```
+```text
 
 ### Version Mismatch
 
@@ -224,7 +224,7 @@ path/to/false-positive.txt
 
 # Fix by re-running bump
 .agent/scripts/version-manager.sh bump patch
-```
+```text
 
 ## Related Workflows
 

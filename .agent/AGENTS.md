@@ -97,6 +97,7 @@ opencode mcp list
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (dev-browser, playwriter, playwright, stagehand, crawl4ai, pagespeed) |
+| `tools/ui/` | UI component libraries (shadcn) |
 | `tools/code-review/` | Quality tools (code-standards, codacy, coderabbit, qlty, snyk, auditing, automation) |
 | `tools/context/` | Context tools (osgrep, augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
 | `tools/conversion/` | Format conversion (pandoc) |
@@ -181,7 +182,7 @@ Never create files in `~/` root for files needed only with the current task.
 
 ## Quality Workflow
 
-```
+```text
 Development → @code-standards (reference)
      ↓
 Pre-commit → /linters-local (fast, offline)

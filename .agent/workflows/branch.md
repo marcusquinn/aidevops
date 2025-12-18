@@ -38,7 +38,7 @@ tools:
 
 ```bash
 git checkout main && git pull origin main && git checkout -b {type}/{description}
-```
+```text
 
 **Lifecycle**: Create → Develop → Preflight → Version → Push → PR → Review → Merge → Release → Postflight → Cleanup
 
@@ -60,7 +60,7 @@ git branch -a | grep -E "(feature|bugfix|hotfix|refactor|chore|experiment)/"
 
 # Check current branch
 git branch --show-current
-```
+```text
 
 If a relevant branch exists, continue on it rather than creating a new one.
 
@@ -72,7 +72,7 @@ If a relevant branch exists, continue on it rather than creating a new one.
 git checkout main
 git pull origin main
 git checkout -b {type}/{description}
-```
+```text
 
 ### Branch Type Selection
 
@@ -95,11 +95,11 @@ git checkout -b {type}/{description}
 
 ## Branch Lifecycle
 
-```
+```text
 main ─────────────────────────────────────────────────────────────► main
        \                                                          /
         └─► feature/xyz ─► preflight ─► PR ─► review ─► merge ─► release
-```
+```text
 
 ### 1. Create Branch
 
@@ -108,7 +108,7 @@ Start from updated `main`. Reference domain agents for implementation guidance.
 ```bash
 git checkout main && git pull origin main
 git checkout -b {type}/{description}
-```
+```text
 
 **Agents**: Domain agents (`wordpress.md`, `seo.md`, etc.) for implementation patterns
 
@@ -124,7 +124,7 @@ Run quality checks before pushing. Catches issues early.
 
 ```bash
 .agent/scripts/linters-local.sh --fast
-```
+```text
 
 **Agents**: `workflows/preflight.md`
 
@@ -134,7 +134,7 @@ Bump version for releases. Skip for WIP or intermediate commits.
 
 ```bash
 .agent/scripts/version-manager.sh bump [major|minor|patch]
-```
+```text
 
 **Agents**: `workflows/version-bump.md`, `workflows/changelog.md`
 
@@ -144,7 +144,7 @@ Push to remote for backup and collaboration.
 
 ```bash
 git push -u origin HEAD
-```
+```text
 
 ### 6. Pull Request
 
@@ -153,7 +153,7 @@ Create PR/MR. CI/CD runs automatically.
 ```bash
 gh pr create --fill        # GitHub
 glab mr create --fill      # GitLab
-```
+```text
 
 **Agents**: `workflows/pr.md`
 
@@ -164,7 +164,7 @@ Address reviewer comments. Re-request review when ready.
 ```bash
 git add . && git commit -m "fix: address review feedback"
 git push
-```
+```text
 
 **Agents**: `workflows/code-audit-remote.md`
 
@@ -174,7 +174,7 @@ Final CI/CD verification, then merge via PR.
 
 ```bash
 gh pr merge --squash --delete-branch
-```
+```text
 
 ### 9. Release (If Applicable)
 
@@ -182,7 +182,7 @@ Tag and publish for version releases.
 
 ```bash
 .agent/scripts/version-manager.sh release [major|minor|patch]
-```
+```text
 
 **Agents**: `workflows/release.md`
 
@@ -192,7 +192,7 @@ Verify CI/CD and quality tools after release.
 
 ```bash
 gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
-```
+```text
 
 **Agents**: `workflows/postflight.md`
 
@@ -203,18 +203,18 @@ Delete branch after merge (usually automatic).
 ```bash
 git branch -d {branch-name}           # Local
 git push origin --delete {branch-name} # Remote (if not auto-deleted)
-```
+```text
 
 ## Commit Message Standards
 
 Use conventional commit format:
 
-```
+```text
 type: brief description
 
 Detailed explanation if needed.
 Fixes #123
-```
+```text
 
 | Type | Usage |
 |------|-------|
@@ -235,7 +235,7 @@ git pull origin main
 git checkout your-branch
 git merge main
 # Resolve conflicts if any
-```
+```text
 
 ## Safety: Protecting Uncommitted Work
 
@@ -247,7 +247,7 @@ git stash --include-untracked -m "safety: before [operation]"
 
 # After operation, restore if needed
 git stash pop
-```
+```text
 
 **Why this matters**: `git restore` only recovers tracked files. Untracked new files are permanently lost without stash.
 
@@ -259,7 +259,7 @@ git stash pop
 
 ## Full Workflow Chain
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  1. Create    2. Develop    3. Preflight    4. Version    5. Push      │
 │  branch.md    branch/*.md   preflight.md    version-bump  (git push)   │
@@ -270,7 +270,7 @@ git stash pop
 ├─────────────────────────────────────────────────────────────────────────┤
 │  11. Cleanup - Delete branch after merge                               │
 └─────────────────────────────────────────────────────────────────────────┘
-```
+```text
 
 ### Lifecycle Summary
 

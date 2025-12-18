@@ -57,7 +57,7 @@ Field groups are stored as posts with `post_type = 'acf-field-group'`:
 SELECT ID, post_title, post_name, post_status 
 FROM wp_posts 
 WHERE post_type = 'acf-field-group';
-```
+```text
 
 | Column | Purpose |
 |--------|---------|
@@ -76,7 +76,7 @@ SELECT ID, post_title, post_name, post_excerpt, post_parent, menu_order
 FROM wp_posts 
 WHERE post_type = 'acf-field' AND post_parent = {group_id}
 ORDER BY menu_order;
-```
+```text
 
 | Column | Purpose |
 |--------|---------|
@@ -99,13 +99,13 @@ Field values are stored in `wp_postmeta`:
 
 **Example**:
 
-```
+```text
 meta_key: import_source
 meta_value: outscraper
 
 meta_key: _import_source  
 meta_value: field_import_source
-```
+```text
 
 ## Critical: Group Fields with Sub-Fields
 
@@ -123,7 +123,7 @@ $group_config = [
         ['key' => 'field_sub2', 'name' => 'sub2', 'type' => 'select'],
     ]
 ];
-```
+```text
 
 ### Correct Way (Works Properly)
 
@@ -167,7 +167,7 @@ $sub_field_data = [
     ])
 ];
 wp_insert_post($sub_field_data);
-```
+```text
 
 ## Field Type Configuration
 
@@ -192,7 +192,7 @@ $select_config = [
     'return_format' => 'value',  // CRITICAL
     'multiple' => 0
 ];
-```
+```text
 
 **Saving values**: Use the choice KEY, not the label:
 
@@ -202,7 +202,7 @@ update_field('my_select', 'option1', $post_id);
 
 // Wrong - will not match
 update_field('my_select', 'Option One', $post_id);
-```
+```text
 
 ### Checkbox Fields
 
@@ -222,13 +222,13 @@ $checkbox_config = [
     ],
     'return_format' => 'value'  // CRITICAL
 ];
-```
+```text
 
 **Saving values**: Use array of choice keys:
 
 ```php
 update_field('my_checkboxes', ['Google My Business', 'Facebook Page'], $post_id);
-```
+```text
 
 ### True/False Fields
 
@@ -241,14 +241,14 @@ $boolean_config = [
     'default_value' => 0,
     'ui' => 1  // Show as toggle switch
 ];
-```
+```text
 
 **Saving values**:
 
 ```php
 update_field('my_toggle', 1, $post_id);  // or true
 update_field('my_toggle', 0, $post_id);  // or false
-```
+```text
 
 ### Date/Time Picker Fields
 
@@ -261,7 +261,7 @@ $datetime_config = [
     'display_format' => 'd/m/Y H:i',
     'return_format' => 'Y-m-d H:i:s'
 ];
-```
+```text
 
 ## Programmatic Field Updates
 
@@ -274,7 +274,7 @@ update_field('field_name', 'value', $post_id);
 // With field key reference (recommended for imports)
 update_field('field_name', 'value', $post_id);
 update_post_meta($post_id, '_field_name', 'field_key_here');
-```
+```text
 
 ### Group Sub-Fields
 
@@ -293,7 +293,7 @@ update_field('import_metadata', [
     'import_source' => 'outscraper',
     'import_query' => 'test'
 ], $post_id);
-```
+```text
 
 ### Conditional Fields (Checkbox-Controlled)
 
@@ -307,7 +307,7 @@ update_post_meta($post_id, '_social_media_social_media_links', 'field_646a475722
 // 2. Then set the conditional fields
 update_field('social_media_google_my_business', 'maps.google.com/...', $post_id);
 update_post_meta($post_id, '_social_media_google_my_business', 'field_646a486822f14');
-```
+```text
 
 ## Troubleshooting
 
@@ -326,7 +326,7 @@ echo "Key ref: " . ($key_ref ?: 'MISSING');
 
 // Set the key reference
 update_post_meta($post_id, '_field_name', 'field_abc123');
-```
+```text
 
 ### Group Sub-Fields Not Saving
 
@@ -347,7 +347,7 @@ $sub_fields = $wpdb->get_results($wpdb->prepare(
 ));
 print_r($sub_fields);
 // Should return sub-field posts, not empty
-```
+```text
 
 **Fix**: Recreate the group with sub-fields as separate posts (see "Correct Way" above).
 
@@ -365,7 +365,7 @@ print_r($sub_fields);
 // Check field configuration
 $field = acf_get_field('field_key_here');
 echo "return_format: " . ($field['return_format'] ?? 'NOT SET');
-```
+```text
 
 **Fix via database**:
 
@@ -377,7 +377,7 @@ $config['return_format'] = 'value';
 $config['multiple'] = 0;
 $wpdb->update($wpdb->posts, ['post_content' => serialize($config)], ['ID' => $field_post->ID]);
 wp_cache_flush();
-```
+```text
 
 ### Duplicate Field Keys
 
@@ -395,7 +395,7 @@ $duplicates = $wpdb->get_results("
     HAVING count > 1
 ");
 print_r($duplicates);
-```
+```text
 
 **Fix**: Delete duplicate fields, keeping only the correct one.
 
@@ -413,7 +413,7 @@ $empty_names = $wpdb->get_results("
     WHERE post_type = 'acf-field' AND (post_excerpt = '' OR post_excerpt IS NULL)
 ");
 print_r($empty_names);
-```
+```text
 
 **Fix**: Update the `post_excerpt` (field name) and `post_content` config:
 
@@ -422,7 +422,7 @@ $wpdb->update($wpdb->posts, ['post_excerpt' => 'correct_name'], ['ID' => $field_
 $config = maybe_unserialize($field_post->post_content);
 $config['name'] = 'correct_name';
 $wpdb->update($wpdb->posts, ['post_content' => serialize($config)], ['ID' => $field_id]);
-```
+```text
 
 ## WP-CLI Commands
 
@@ -430,7 +430,7 @@ $wpdb->update($wpdb->posts, ['post_content' => serialize($config)], ['ID' => $fi
 
 ```bash
 wp post list --post_type=acf-field-group --fields=ID,post_title,post_name
-```
+```text
 
 ### List Fields in a Group
 
@@ -442,7 +442,7 @@ foreach ($fields as $f) {
     echo $f->ID . " | " . $f->post_name . " | " . $f->post_excerpt . "\n";
 }
 '
-```
+```text
 
 ### Check Field Configuration
 
@@ -451,13 +451,13 @@ wp eval '
 $field = acf_get_field("field_key_here");
 print_r($field);
 '
-```
+```text
 
 ### Check Post Meta Values
 
 ```bash
 wp post meta list {post_id} | grep field_name
-```
+```text
 
 ### Set Field Value with Key Reference
 
@@ -468,7 +468,7 @@ update_field("field_name", "value", $post_id);
 update_post_meta($post_id, "_field_name", "field_key_here");
 echo "Done";
 '
-```
+```text
 
 ## Import Script Best Practices
 
@@ -489,7 +489,7 @@ set_acf_field($post_id, 'social_media_links', ['Google My Business', 'Google Map
 
 // 4. For group sub-fields, use full prefixed name
 set_acf_field($post_id, 'group_name_sub_field', 'value', 'field_sub_field_key');
-```
+```text
 
 ## Field Key Discovery
 
@@ -515,7 +515,7 @@ foreach ($groups as $group) {
     }
 }
 '
-```
+```text
 
 ## Related Documentation
 
