@@ -30,6 +30,7 @@ tools:
 ## Setup Steps
 
 ### 1. Google Cloud Project Setup
+
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 2. Create or select a project
 3. Enable the **Google Search Console API**
@@ -40,6 +41,7 @@ tools:
 8. Set permissions: `chmod 600 ~/.config/aidevops/gsc-credentials.json`
 
 ### 2. Add Service Account to GSC Properties
+
 The service account email (e.g., `aidevops@project-id.iam.gserviceaccount.com`) must be added as a user to each GSC property.
 
 **Manual method**: GSC → Property → Settings → Users and permissions → Add user
@@ -47,6 +49,7 @@ The service account email (e.g., `aidevops@project-id.iam.gserviceaccount.com`) 
 **Automated method**: Use Playwright to bulk-add to all properties (see below)
 
 ### 3. Verify Access
+
 ```bash
 # Test GSC MCP connection
 opencode mcp list | grep -i search
@@ -315,15 +318,18 @@ await googleSearchConsole.compareWithCompetitors({
 ## Troubleshooting
 
 ### Empty Results from API
+
 If the API returns empty results `{}`:
 - Service account not added to any GSC properties
 - Use the Playwright script above to bulk-add access
 
 ### "No access to property" Error
+
 - The service account email must be added as a user (Full or Owner permission)
 - Domain must be verified in GSC first
 
 ### Connection Issues
+
 ```bash
 # Check credentials file exists and has correct permissions
 ls -la ~/.config/aidevops/gsc-credentials.json
@@ -336,6 +342,7 @@ opencode mcp list
 ```
 
 ### Chrome Profile Path (for Playwright)
+
 - **macOS**: `/Users/USERNAME/Library/Application Support/Google/Chrome/Default`
 - **Linux**: `~/.config/google-chrome/Default`
 - **Windows**: `%LOCALAPPDATA%\Google\Chrome\User Data\Default`
