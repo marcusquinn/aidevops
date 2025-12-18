@@ -319,6 +319,7 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 | [Playwright](https://playwright.dev/) | Cross-browser testing | No |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
+| [shadcn/ui](https://ui.shadcn.com/) | UI component library browsing & installation | No |
 | [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
 | [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
 | [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
@@ -350,6 +351,8 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
 - [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
 - **Keyword Research** - Strategic keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
+- **Site Crawler** - Screaming Frog-like SEO auditing: broken links, redirects, meta issues, structured data
+- **Domain Research** - DNS intelligence via THC (4.51B records) and Reconeer APIs: rDNS, subdomains, CNAMEs
 
 **Data Extraction:**
 
@@ -364,6 +367,10 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 
 - [LocalWP](https://localwp.com/) - Direct WordPress database access
 - [Next.js DevTools](https://nextjs.org/docs) - React/Next.js development assistance
+
+**UI Components:**
+
+- [shadcn/ui](https://ui.shadcn.com/) - Browse, search, and install shadcn/ui components directly via MCP
 
 ### **Quick Setup**
 
@@ -588,8 +595,9 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
-| `@seo` | Search Console, keyword research | gsc, ahrefs, dataforseo, serper, context7 |
+| `@seo` | Search Console, keyword research, domain intelligence | gsc, ahrefs, dataforseo, serper, context7 |
 | `@dataforseo` | SERP, keywords, backlinks, on-page analysis | dataforseo |
+| `@domain-research` | DNS intelligence: rDNS, subdomains, CNAMEs (THC + Reconeer) | (API-based) |
 | `@serper` | Google Search API (web, images, news, places) | serper |
 | `@list-keys` | List all configured API keys and storage locations | (read-only) |
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
@@ -663,6 +671,16 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 **Slash commands provide quick access to common workflows directly from the OpenCode prompt.** Type `/` to see available commands.
 
 ### **Available Commands**
+
+**Planning & Task Management**:
+
+| Command | Purpose |
+|---------|---------|
+| `/create-prd` | Create a Product Requirements Document for complex features |
+| `/generate-tasks` | Generate implementation tasks from a PRD |
+| `/plan-status` | Check status of plans in `TODO.md` and `todo/PLANS.md` |
+
+Plans are tracked in `TODO.md` (quick tasks) and `todo/PLANS.md` (complex execution plans with PRDs).
 
 **Development Workflow** (typical order):
 
