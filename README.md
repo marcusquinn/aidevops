@@ -122,6 +122,38 @@ opencode auth login
 
 **Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution and failover. See the [plugin documentation](https://github.com/NoeFabris/opencode-antigravity-auth) for model configuration.
 
+### Oh-My-OpenCode Plugin (Optional)
+
+The setup offers to install [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) - a complementary plugin that adds **coding productivity features**:
+
+| Feature | Description |
+|---------|-------------|
+| **Async Background Agents** | Run multiple agents in parallel (like Claude Code) |
+| **LSP Tools** | 11 tools: hover, goto definition, references, rename, code actions |
+| **AST-Grep** | Semantic code search and replace across 25 languages |
+| **Curated Agents** | OmO (Opus 4.5), Oracle (GPT 5.2), Librarian (Sonnet 4.5), Explore (Grok) |
+| **Claude Code Compatibility** | Full support for hooks, commands, skills from `.claude/` directories |
+| **21 Lifecycle Hooks** | Comment checker, todo enforcer, context window monitor, session recovery |
+
+**How they complement each other:**
+
+- **aidevops** provides DevOps infrastructure (30+ services: hosting, DNS, WordPress, SEO, code quality)
+- **oh-my-opencode** provides coding productivity (LSP, AST, background agents, hooks)
+
+**Usage after installation:**
+
+```bash
+# Trigger maximum performance mode
+> ultrawork implement the authentication system
+
+# Use curated agents
+> @oracle review this architecture
+> @librarian find examples of this pattern on GitHub
+> @explore search for authentication handling
+```
+
+See `.agent/tools/opencode/oh-my-opencode.md` for the full compatibility guide.
+
 **Supported AI Assistants:** (OpenCode & Zed are our daily drivers and preferred tools, so will have the most continual testing. All 18 assistants below have MCP configuration support.)
 
 **Preferred:**

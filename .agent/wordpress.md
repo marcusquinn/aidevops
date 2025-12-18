@@ -61,3 +61,28 @@ MainWP provides centralized WordPress management:
 - Backup, Staging, Development tools
 
 Always prefer curated plugins for reliability.
+
+## Oh-My-OpenCode Integration
+
+When oh-my-opencode is installed, leverage these specialized agents for enhanced WordPress development:
+
+| OmO Agent | When to Use | Example |
+|-----------|-------------|---------|
+| `@frontend-ui-ux-engineer` | Theme UI, Gutenberg blocks, custom components | "Ask @frontend-ui-ux-engineer to create a hero section block" |
+| `@oracle` | Architecture decisions, plugin structure, debugging | "Ask @oracle to review this plugin architecture" |
+| `@librarian` | WordPress coding standards, hook examples, API patterns | "Ask @librarian for WooCommerce hook examples" |
+| `@document-writer` | Plugin documentation, readme files, user guides | "Ask @document-writer to create plugin documentation" |
+
+**Theme Development Workflow**:
+
+```text
+1. Design → @frontend-ui-ux-engineer creates UI components
+2. Structure → @oracle reviews theme architecture
+3. Implement → WordPress agent builds with LocalWP
+4. Patterns → @librarian finds WordPress best practices
+5. Document → @document-writer creates theme docs
+6. Deploy → MainWP pushes to production
+```
+
+**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
+See `tools/opencode/oh-my-opencode.md` for installation.

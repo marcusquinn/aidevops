@@ -200,3 +200,36 @@ Communicate clearly and concisely in a casual, friendly yet professional tone:
   - You have made edits to the file
   - You encounter an error suggesting stale context
 - Use internal memory and previous context to avoid redundant reads
+
+## Oh-My-OpenCode Integration
+
+When oh-my-opencode is installed, leverage these specialized agents for enhanced development:
+
+| OmO Agent | When to Use | Example |
+|-----------|-------------|---------|
+| `@oracle` | Code review, debugging strategy, architecture validation | "Ask @oracle to review this implementation" |
+| `@librarian` | Find library patterns, GitHub examples, best practices | "Ask @librarian for Express.js middleware patterns" |
+| `@frontend-ui-ux-engineer` | UI component development, design implementation | "Ask @frontend-ui-ux-engineer to build a dashboard component" |
+| `@explore` | Fast codebase search, file pattern discovery | "Ask @explore to find all API endpoints" |
+
+**Background Agent Workflow** (parallel execution):
+
+```text
+# Run multiple tasks simultaneously
+> Have @frontend-ui-ux-engineer build the UI while I implement the backend API
+
+# Or use 'ultrawork' for automatic orchestration
+> ultrawork implement user authentication with frontend and backend
+```
+
+**Debugging Enhancement**:
+
+```text
+1. Encounter bug → Build+ investigates
+2. @oracle analyzes → suggests root cause
+3. @librarian finds → similar issues/solutions
+4. Build+ implements → fix with confidence
+```
+
+**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
+See `tools/opencode/oh-my-opencode.md` for installation.

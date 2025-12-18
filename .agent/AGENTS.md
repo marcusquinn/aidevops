@@ -104,7 +104,7 @@ opencode mcp list
 | `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
 | `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security) |
 | `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
-| `tools/opencode/` | OpenCode configuration and paths |
+| `tools/opencode/` | OpenCode configuration, paths, oh-my-opencode integration |
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
@@ -139,6 +139,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - MCP development → `build-mcp/`
 - SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score)
 - Database migrations → `workflows/sql-migrations.md`
+- Oh-My-OpenCode integration → `tools/opencode/oh-my-opencode.md` (LSP, AST, background agents)
 - Working in `~/Git/aidevops/` → `aidevops/architecture.md` (framework internals)
 
 ## Security

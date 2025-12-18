@@ -61,3 +61,34 @@ Structure findings as:
 - Next steps
 
 Research informs implementation but doesn't perform it.
+
+## Oh-My-OpenCode Integration
+
+When oh-my-opencode is installed, leverage these specialized agents for enhanced research:
+
+| OmO Agent | When to Use | Example |
+|-----------|-------------|---------|
+| `@librarian` | Deep documentation research, GitHub code examples, implementation patterns | "Ask @librarian how authentication is implemented in popular Express apps" |
+| `@oracle` | Strategic analysis, architecture evaluation, trade-off assessment | "Ask @oracle to evaluate these two database options" |
+| `@multimodal-looker` | Analyze diagrams, screenshots, PDFs, visual documentation | "Ask @multimodal-looker to extract information from this architecture diagram" |
+| `@explore` | Fast codebase search across multiple repositories | "Ask @explore to find rate limiting implementations" |
+
+**Enhanced Research Workflow**:
+
+```text
+1. Question → Research agent scopes the inquiry
+2. Documentation → @librarian finds official docs and examples
+3. Codebase → @explore searches for implementations
+4. Analysis → @oracle evaluates options and trade-offs
+5. Visual → @multimodal-looker analyzes diagrams/screenshots
+6. Synthesis → Research agent compiles findings
+```
+
+**Parallel Research** (with background agents):
+
+```text
+> Have @librarian research authentication patterns while @explore finds existing implementations in our codebase
+```
+
+**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
+See `tools/opencode/oh-my-opencode.md` for installation.

@@ -184,3 +184,26 @@ Focus on:
 - **Build+**: Execute plans with full file/bash permissions
 - **AI-DevOps**: Infrastructure and deployment planning
 - **Research**: Deep investigation and documentation
+
+## Oh-My-OpenCode Integration
+
+When oh-my-opencode is installed, leverage these specialized agents for enhanced planning:
+
+| OmO Agent | When to Use | Example |
+|-----------|-------------|---------|
+| `@oracle` | Architecture decisions, design review, debugging strategy | "Ask @oracle to review this proposed architecture" |
+| `@librarian` | Find implementation examples, library patterns, GitHub code | "Ask @librarian how rate limiting is typically implemented" |
+| `@explore` | Fast codebase search when osgrep is slow | "Ask @explore to find all authentication handlers" |
+
+**Workflow Enhancement**:
+
+```text
+1. User request → Plan+ analyzes
+2. @librarian finds examples → informs approach
+3. @oracle reviews design → validates architecture
+4. Plan+ synthesizes → final plan
+5. Tab to Build+ → execution
+```
+
+**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
+See `tools/opencode/oh-my-opencode.md` for installation.

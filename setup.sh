@@ -1239,6 +1239,114 @@ setup_opencode_plugins() {
     return 0
 }
 
+# Setup Oh-My-OpenCode Plugin (coding productivity features)
+setup_oh_my_opencode() {
+    print_info "Setting up Oh-My-OpenCode plugin..."
+    
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    # Check if OpenCode is installed
+    if ! command -v opencode &> /dev/null; then
+        print_warning "OpenCode not found - Oh-My-OpenCode setup skipped"
+        return 0
+    fi
+    
+    # Check if config exists
+    if [[ ! -f "$opencode_config" ]]; then
+        print_warning "OpenCode config not found - Oh-My-OpenCode setup skipped"
+        return 0
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        print_warning "jq not found - cannot update OpenCode config"
+        return 0
+    fi
+    
+    echo ""
+    print_info "Oh-My-OpenCode adds coding productivity features:"
+    echo "  • Async background agents (parallel task execution)"
+    echo "  • LSP tools (11 tools: hover, goto, references, rename, etc.)"
+    echo "  • AST-Grep (semantic code search/replace)"
+    echo "  • Curated agents (OmO, Oracle, Librarian, Explore, Frontend)"
+    echo "  • Claude Code compatibility (hooks, commands, skills)"
+    echo "  • Context window monitoring and session recovery"
+    echo ""
+    echo "  Note: aidevops provides DevOps infrastructure (hosting, DNS, WordPress, SEO)"
+    echo "        Oh-My-OpenCode provides coding productivity (LSP, AST, background agents)"
+    echo "        They are complementary and work well together."
+    echo ""
+    
+    read -r -p "Install Oh-My-OpenCode plugin? (y/n): " install_omo
+    
+    if [[ "$install_omo" != "y" ]]; then
+        print_info "Skipped Oh-My-OpenCode installation"
+        return 0
+    fi
+    
+    local plugin_name="oh-my-opencode"
+    
+    # Check if plugin array exists
+    local has_plugin_array
+    has_plugin_array=$(jq -e '.plugin' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+    
+    if [[ "$has_plugin_array" == "true" ]]; then
+        # Check if plugin is already in the array
+        local plugin_exists
+        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(. == $p or startswith($p + "@"))) | length > 0' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+        
+        if [[ "$plugin_exists" == "true" ]]; then
+            print_info "Oh-My-OpenCode already configured"
+        else
+            # Add plugin to existing array
+            local temp_file
+            temp_file=$(mktemp)
+            jq --arg p "$plugin_name" '.plugin += [$p]' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
+            print_success "Added Oh-My-OpenCode plugin to OpenCode config"
+        fi
+    else
+        # Create plugin array with the plugin
+        local temp_file
+        temp_file=$(mktemp)
+        jq --arg p "$plugin_name" '. + {plugin: [$p]}' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
+        print_success "Created plugin array with Oh-My-OpenCode"
+    fi
+    
+    # Create oh-my-opencode config if it doesn't exist
+    local omo_config="$HOME/.config/opencode/oh-my-opencode.json"
+    if [[ ! -f "$omo_config" ]]; then
+        print_info "Creating Oh-My-OpenCode configuration..."
+        cat > "$omo_config" << 'EOF'
+{
+  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json",
+  "google_auth": false,
+  "disabled_mcps": ["context7"],
+  "agents": {}
+}
+EOF
+        print_success "Created $omo_config"
+        print_info "Note: context7 MCP disabled in OmO (aidevops configures it separately)"
+    fi
+    
+    print_success "Oh-My-OpenCode plugin configured"
+    echo ""
+    print_info "Oh-My-OpenCode features now available:"
+    echo "  • Type 'ultrawork' or 'ulw' for maximum performance mode"
+    echo "  • Background agents run in parallel"
+    echo "  • LSP tools: lsp_hover, lsp_goto_definition, lsp_rename, etc."
+    echo "  • AST-Grep: ast_grep_search, ast_grep_replace"
+    echo ""
+    print_info "Curated agents (use @agent-name):"
+    echo "  • @oracle     - Architecture, code review (GPT 5.2)"
+    echo "  • @librarian  - Docs lookup, GitHub examples (Sonnet 4.5)"
+    echo "  • @explore    - Fast codebase exploration (Grok)"
+    echo "  • @frontend-ui-ux-engineer - UI development (Gemini 3 Pro)"
+    echo ""
+    print_info "Documentation: https://github.com/code-yeongyu/oh-my-opencode"
+    
+    return 0
+}
+
 setup_seo_mcps() {
     print_info "Setting up SEO MCP servers..."
 
@@ -1391,6 +1499,7 @@ main() {
     setup_seo_mcps
     setup_browser_tools
     setup_opencode_plugins
+    setup_oh_my_opencode
 
     echo ""
     print_success "🎉 Setup complete!"

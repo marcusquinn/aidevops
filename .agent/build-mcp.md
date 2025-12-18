@@ -201,3 +201,34 @@ Use Context7 MCP for current documentation:
 - MCP SDK: `resolve library-id for @modelcontextprotocol/sdk`
 - ElysiaJS: `resolve library-id for elysia`
 - Bun: `resolve library-id for bun`
+
+## Oh-My-OpenCode Integration
+
+When oh-my-opencode is installed, leverage these specialized agents for enhanced MCP development:
+
+| OmO Agent | When to Use | Example |
+|-----------|-------------|---------|
+| `@oracle` | MCP architecture, API design, debugging strategy | "Ask @oracle to review this MCP tool structure" |
+| `@librarian` | Find MCP examples, SDK patterns, similar implementations | "Ask @librarian for MCP tool registration examples" |
+| `@frontend-ui-ux-engineer` | If MCP has web UI components | "Ask @frontend-ui-ux-engineer to build the MCP dashboard" |
+
+**MCP Development Workflow Enhancement**:
+
+```text
+1. Design → @oracle reviews API structure
+2. Patterns → @librarian finds SDK examples
+3. Implement → Build-MCP creates server
+4. Test → MCP Inspector validates
+5. Deploy → Configure in AI assistants
+```
+
+**LSP Tools for TypeScript MCP Development**:
+
+When oh-my-opencode is installed, use LSP tools for better TypeScript development:
+- `lsp_goto_definition` - Navigate to MCP SDK types
+- `lsp_find_references` - Find all tool usages
+- `lsp_rename` - Safely rename tools across codebase
+- `lsp_diagnostics` - Catch TypeScript errors before runtime
+
+**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
+See `tools/opencode/oh-my-opencode.md` for installation.

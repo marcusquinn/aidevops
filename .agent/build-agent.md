@@ -717,3 +717,26 @@ See `aidevops/setup.md` for deployment details.
 ### Reviewing Existing Agents
 
 See `build-agent/agent-review.md` for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
+
+## Oh-My-OpenCode Integration
+
+When oh-my-opencode is installed, leverage these specialized agents for enhanced agent development:
+
+| OmO Agent | When to Use | Example |
+|-----------|-------------|---------|
+| `@oracle` | Agent architecture review, design decisions | "Ask @oracle to review this agent's instruction structure" |
+| `@librarian` | Find agent design patterns, AGENTS.md examples | "Ask @librarian for examples of well-structured AI agents" |
+| `@document-writer` | Agent documentation, clear instructions | "Ask @document-writer to improve this agent's clarity" |
+
+**Agent Design Workflow Enhancement**:
+
+```text
+1. Design → Build-Agent creates structure
+2. Review → @oracle validates architecture
+3. Examples → @librarian finds similar patterns
+4. Polish → @document-writer improves clarity
+5. Test → Deploy and validate
+```
+
+**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
+See `tools/opencode/oh-my-opencode.md` for installation.
