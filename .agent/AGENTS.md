@@ -128,7 +128,7 @@ opencode mcp list
 | `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |
 | `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp, wp-preferred) |
-| `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score) |
+| `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research) |
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (dev-browser, playwriter, playwright, stagehand, crawl4ai, pagespeed) |
@@ -175,7 +175,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Release/versioning → `workflows/`
 - Browser automation → `tools/browser/`
 - MCP development → `build-mcp/`
-- SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score)
+- SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research)
 - Database migrations → `workflows/sql-migrations.md`
 - Oh-My-OpenCode integration → `tools/opencode/oh-my-opencode.md` (LSP, AST, background agents)
 - Working in `~/Git/aidevops/` → `aidevops/architecture.md` (framework internals)
@@ -211,6 +211,7 @@ Never create files in `~/` root for files needed only with the current task.
 | `coolify-helper.sh` | Coolify deployment management |
 | `stagehand-helper.sh` | Browser automation with Stagehand |
 | `crawl4ai-helper.sh` | Web crawling and extraction |
+| `domain-research-helper.sh` | DNS intelligence (rDNS, subdomains, CNAMEs) |
 | `toon-helper.sh` | TOON format conversion |
 | `sonarcloud-cli.sh` | SonarCloud analysis |
 | `codacy-cli.sh` | Codacy code quality |
