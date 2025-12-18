@@ -3,6 +3,7 @@
 
 # Site Crawler Helper Script
 # SEO site auditing with Screaming Frog-like capabilities
+# Uses Crawl4AI when available, falls back to lightweight Python crawler
 #
 # Usage: ./site-crawler-helper.sh [command] [url] [options]
 # Commands:
@@ -10,15 +11,13 @@
 #   audit-links     - Check for broken links (4XX/5XX)
 #   audit-meta      - Audit page titles and meta descriptions
 #   audit-redirects - Analyze redirects and chains
-#   audit-duplicates - Find duplicate content
-#   audit-schema    - Validate structured data
 #   generate-sitemap - Generate XML sitemap from crawl
 #   compare         - Compare two crawls
 #   status          - Check crawler dependencies
 #   help            - Show this help message
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 2.0.0
 # License: MIT
 
 set -euo pipefail
@@ -38,97 +37,86 @@ readonly CONFIG_DIR="${HOME}/.config/aidevops"
 readonly CONFIG_FILE="${CONFIG_DIR}/site-crawler.json"
 readonly DEFAULT_OUTPUT_DIR="${HOME}/Downloads"
 readonly CRAWL4AI_PORT="11235"
+readonly CRAWL4AI_URL="http://localhost:${CRAWL4AI_PORT}"
 
 # Default configuration
-DEFAULT_DEPTH=10
-DEFAULT_MAX_URLS=10000
+DEFAULT_DEPTH=3
+DEFAULT_MAX_URLS=100
 DEFAULT_DELAY=100
-DEFAULT_CONCURRENT=5
-DEFAULT_TIMEOUT=30
 DEFAULT_FORMAT="xlsx"
 RESPECT_ROBOTS=true
-RENDER_JS=false
-USER_AGENT="AIDevOps-SiteCrawler/1.0 (+https://github.com/aidevops)"
+USE_CRAWL4AI=false
+
+# Detect Python with required packages
+PYTHON_CMD=""
 
 # Print functions
 print_success() {
-    local message="$1"
-    echo -e "${GREEN}[OK] $message${NC}"
+    echo -e "${GREEN}[OK] $1${NC}"
     return 0
 }
 
 print_info() {
-    local message="$1"
-    echo -e "${BLUE}[INFO] $message${NC}"
+    echo -e "${BLUE}[INFO] $1${NC}"
     return 0
 }
 
 print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[WARN] $message${NC}"
+    echo -e "${YELLOW}[WARN] $1${NC}"
     return 0
 }
 
 print_error() {
-    local message="$1"
-    echo -e "${RED}[ERROR] $message${NC}"
+    echo -e "${RED}[ERROR] $1${NC}"
     return 0
 }
 
 print_header() {
-    local message="$1"
-    echo -e "${PURPLE}=== $message ===${NC}"
-    return 0
-}
-
-# Load configuration
-load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        if command -v jq &> /dev/null; then
-            DEFAULT_DEPTH=$(jq -r '.default_depth // 10' "$CONFIG_FILE")
-            DEFAULT_MAX_URLS=$(jq -r '.max_urls // 10000' "$CONFIG_FILE")
-            DEFAULT_DELAY=$(jq -r '.request_delay // 100' "$CONFIG_FILE")
-            DEFAULT_CONCURRENT=$(jq -r '.concurrent_requests // 5' "$CONFIG_FILE")
-            DEFAULT_TIMEOUT=$(jq -r '.timeout // 30' "$CONFIG_FILE")
-            DEFAULT_FORMAT=$(jq -r '.output_format // "xlsx"' "$CONFIG_FILE")
-            RESPECT_ROBOTS=$(jq -r '.respect_robots // true' "$CONFIG_FILE")
-            RENDER_JS=$(jq -r '.render_js // false' "$CONFIG_FILE")
-            USER_AGENT=$(jq -r '.user_agent // "AIDevOps-SiteCrawler/1.0"' "$CONFIG_FILE")
-        fi
-    fi
-    return 0
-}
-
-# Check dependencies
-check_dependencies() {
-    local missing=()
-    
-    if ! command -v curl &> /dev/null; then
-        missing+=("curl")
-    fi
-    
-    if ! command -v jq &> /dev/null; then
-        missing+=("jq")
-    fi
-    
-    if ! command -v python3 &> /dev/null; then
-        missing+=("python3")
-    fi
-    
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        print_error "Missing dependencies: ${missing[*]}"
-        print_info "Install with: brew install ${missing[*]}"
-        return 1
-    fi
-    
+    echo -e "${PURPLE}=== $1 ===${NC}"
     return 0
 }
 
 # Check if Crawl4AI is available
 check_crawl4ai() {
-    if curl -s "http://localhost:${CRAWL4AI_PORT}/health" &> /dev/null; then
+    if curl -s --connect-timeout 2 "${CRAWL4AI_URL}/health" &> /dev/null; then
+        USE_CRAWL4AI=true
         return 0
     fi
+    return 1
+}
+
+# Find working Python with dependencies
+find_python() {
+    local pythons=("python3.11" "python3.12" "python3.10" "python3")
+    local user_site="${HOME}/Library/Python/3.11/lib/python/site-packages"
+    
+    for py in "${pythons[@]}"; do
+        if command -v "$py" &> /dev/null; then
+            # Test if it has the required modules
+            if PYTHONPATH="${user_site}:${PYTHONPATH:-}" "$py" -c "import aiohttp, bs4" 2>/dev/null; then
+                PYTHON_CMD="$py"
+                export PYTHONPATH="${user_site}:${PYTHONPATH:-}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# Install Python dependencies
+install_python_deps() {
+    local pythons=("python3.11" "python3.12" "python3.10" "python3")
+    
+    for py in "${pythons[@]}"; do
+        if command -v "$py" &> /dev/null; then
+            print_info "Installing dependencies with $py..."
+            "$py" -m pip install --user aiohttp beautifulsoup4 openpyxl 2>/dev/null && {
+                PYTHON_CMD="$py"
+                export PYTHONPATH="${HOME}/Library/Python/3.11/lib/python/site-packages:${PYTHONPATH:-}"
+                return 0
+            }
+        fi
+    done
     return 1
 }
 
@@ -157,469 +145,900 @@ create_output_dir() {
     return 0
 }
 
-# Generate Python crawler script
-generate_crawler_script() {
+# Save markdown with rich metadata frontmatter and download images
+save_markdown_with_metadata() {
+    local result="$1"
+    local full_page_dir="$2"
+    local body_only_dir="$3"
+    local images_dir="$4"
+    local base_domain="$5"
+    
+    # Extract basic info
+    local page_url status_code redirected_url success
+    page_url=$(printf '%s' "$result" | jq -r '.url // empty')
+    status_code=$(printf '%s' "$result" | jq -r '.status_code // 0')
+    redirected_url=$(printf '%s' "$result" | jq -r '.redirected_url // empty')
+    success=$(printf '%s' "$result" | jq -r '.success // false')
+    
+    # Fix status code: if success=true and we got content, report 200 (final status)
+    # Only show redirect status if there was an actual redirect to a different path
+    local original_status="$status_code"
+    if [[ "$success" == "true" && $status_code -ge 300 && $status_code -lt 400 ]]; then
+        # Check if redirect was just trailing slash normalization
+        local url_normalized redirect_normalized
+        url_normalized=$(echo "$page_url" | sed 's|/$||')
+        redirect_normalized=$(echo "$redirected_url" | sed 's|/$||')
+        if [[ "$url_normalized" == "$redirect_normalized" ]]; then
+            status_code=200  # Trailing slash redirect, content was fetched successfully
+        fi
+    fi
+    
+    # Extract metadata
+    local title meta_desc meta_keywords canonical og_title og_desc og_image
+    title=$(printf '%s' "$result" | jq -r '.metadata.title // empty')
+    meta_desc=$(printf '%s' "$result" | jq -r '.metadata.description // empty')
+    meta_keywords=$(printf '%s' "$result" | jq -r '.metadata.keywords // empty')
+    canonical=$(printf '%s' "$result" | jq -r '.metadata."og:url" // empty')
+    og_title=$(printf '%s' "$result" | jq -r '.metadata."og:title" // empty')
+    og_desc=$(printf '%s' "$result" | jq -r '.metadata."og:description" // empty')
+    og_image=$(printf '%s' "$result" | jq -r '.metadata."og:image" // empty')
+    
+    # Extract hreflang (from response headers or HTML - Crawl4AI may have this in metadata)
+    local hreflang_json
+    hreflang_json=$(printf '%s' "$result" | jq -c '[.metadata | to_entries[] | select(.key | startswith("hreflang")) | {lang: .key, url: .value}]' 2>/dev/null || echo "[]")
+    
+    # Extract JSON-LD schema from HTML
+    local schema_json=""
+    local html_content
+    html_content=$(printf '%s' "$result" | jq -r '.html // empty' 2>/dev/null)
+    if [[ -n "$html_content" ]]; then
+        # Extract all JSON-LD script blocks
+        schema_json=$(echo "$html_content" | grep -o '<script type="application/ld+json"[^>]*>[^<]*</script>' | \
+            sed 's/<script type="application\/ld+json"[^>]*>//g' | \
+            sed 's/<\/script>//g' | \
+            while read -r schema_block; do
+                # Pretty print each schema block
+                echo "$schema_block" | jq '.' 2>/dev/null
+            done)
+    fi
+    
+    # Get markdown content
+    local markdown_content
+    markdown_content=$(printf '%s' "$result" | jq -r '.markdown.raw_markdown // .markdown // empty' 2>/dev/null)
+    
+    [[ -z "$markdown_content" || "$markdown_content" == "null" || "$markdown_content" == "{" ]] && return 0
+    
+    # Generate slug for filename
+    local slug
+    slug=$(echo "$page_url" | sed -E 's|^https?://[^/]+||' | sed 's|^/||' | sed 's|/$||' | tr '/' '-' | tr '?' '-' | tr '&' '-')
+    [[ -z "$slug" ]] && slug="index"
+    slug="${slug:0:100}"
+    
+    # Extract and download body images
+    local images_json page_images_dir
+    images_json=$(printf '%s' "$result" | jq -c '.media.images // []' 2>/dev/null)
+    page_images_dir="${images_dir}/${slug}"
+    
+    local downloaded_images
+    downloaded_images=()
+    local image_count
+    image_count=$(echo "$images_json" | jq 'length' 2>/dev/null || echo "0")
+    
+    if [[ $image_count -gt 0 ]]; then
+        mkdir -p "$page_images_dir"
+        
+        # Download unique images (skip srcset variants by filtering unique base names)
+        local seen_images
+        seen_images=()
+        for ((j=0; j<image_count && j<20; j++)); do  # Limit to 20 images per page
+            local img_src img_alt img_filename
+            img_src=$(echo "$images_json" | jq -r ".[$j].src // empty")
+            img_alt=$(echo "$images_json" | jq -r ".[$j].alt // empty")
+            
+            [[ -z "$img_src" ]] && continue
+            
+            # Skip data URIs and tiny images (likely icons/tracking pixels)
+            [[ "$img_src" =~ ^data: ]] && continue
+            
+            # Extract filename from URL
+            img_filename=$(basename "$img_src" | sed 's|?.*||' | sed 's|#.*||')
+            
+            # Skip if we've already seen this base image (avoid srcset duplicates)
+            local base_img
+            base_img=$(echo "$img_filename" | sed -E 's/-[0-9]+x[0-9]+\./\./')
+            
+            local already_seen=false
+            if [[ ${#seen_images[@]} -gt 0 ]]; then
+                for seen in "${seen_images[@]}"; do
+                    if [[ "$seen" == "$base_img" ]]; then
+                        already_seen=true
+                        break
+                    fi
+                done
+            fi
+            if [[ "$already_seen" == "true" ]]; then
+                continue
+            fi
+            seen_images+=("$base_img")
+            
+            # Download image (quietly, with timeout)
+            if curl -sS -L --max-time 10 -o "${page_images_dir}/${img_filename}" "$img_src" 2>/dev/null; then
+                # Only keep if file is > 1KB (skip tracking pixels)
+                local file_size
+                file_size=$(stat -f%z "${page_images_dir}/${img_filename}" 2>/dev/null || echo "0")
+                if [[ $file_size -gt 1024 ]]; then
+                    downloaded_images+=("${img_filename}|${img_src}|${img_alt}")
+                else
+                    rm -f "${page_images_dir}/${img_filename}"
+                fi
+            fi
+        done
+        
+        # Remove empty directory if no images downloaded
+        rmdir "${page_images_dir}" 2>/dev/null || true
+    fi
+    
+    # Build YAML frontmatter
+    local frontmatter="---
+url: \"${page_url}\"
+status_code: ${status_code}"
+    
+    # Add redirect info only if it was a real redirect (not just trailing slash)
+    if [[ $original_status -ge 300 && $original_status -lt 400 && "$status_code" != "$original_status" ]]; then
+        frontmatter+="
+redirect_status: ${original_status}
+redirected_to: \"${redirected_url}\""
+    elif [[ -n "$redirected_url" && "$redirected_url" != "$page_url" && "$redirected_url" != "null" ]]; then
+        frontmatter+="
+redirected_to: \"${redirected_url}\""
+    fi
+    
+    # Add SEO metadata (use || true to prevent set -e exit on false conditions)
+    if [[ -n "$title" && "$title" != "null" ]]; then
+        frontmatter+="
+title: \"$(echo "$title" | sed 's/"/\\"/g')\""
+    fi
+    
+    if [[ -n "$meta_desc" && "$meta_desc" != "null" ]]; then
+        frontmatter+="
+description: \"$(echo "$meta_desc" | sed 's/"/\\"/g')\""
+    fi
+    
+    if [[ -n "$meta_keywords" && "$meta_keywords" != "null" ]]; then
+        frontmatter+="
+keywords: \"$(echo "$meta_keywords" | sed 's/"/\\"/g')\""
+    fi
+    
+    if [[ -n "$canonical" && "$canonical" != "null" ]]; then
+        frontmatter+="
+canonical: \"${canonical}\""
+    fi
+    
+    # Add Open Graph data
+    if [[ -n "$og_title" && "$og_title" != "null" && "$og_title" != "$title" ]]; then
+        frontmatter+="
+og_title: \"$(echo "$og_title" | sed 's/"/\\"/g')\""
+    fi
+    
+    if [[ -n "$og_image" && "$og_image" != "null" ]]; then
+        frontmatter+="
+og_image: \"${og_image}\""
+    fi
+    
+    # Add hreflang if present
+    if [[ "$hreflang_json" != "[]" && "$hreflang_json" != "null" ]]; then
+        local hreflang_yaml
+        hreflang_yaml=$(echo "$hreflang_json" | jq -r '.[] | "  - lang: \"\(.lang)\"\n    url: \"\(.url)\""' 2>/dev/null)
+        if [[ -n "$hreflang_yaml" ]]; then
+            frontmatter+="
+hreflang:
+${hreflang_yaml}"
+        fi
+    fi
+    
+    # Add downloaded images list
+    if [[ -n "${downloaded_images[*]:-}" ]]; then
+        frontmatter+="
+images:"
+        for img_info in "${downloaded_images[@]}"; do
+            local img_file img_url img_alt_text
+            img_file=$(echo "$img_info" | cut -d'|' -f1)
+            img_url=$(echo "$img_info" | cut -d'|' -f2)
+            img_alt_text=$(echo "$img_info" | cut -d'|' -f3 | sed 's/"/\\"/g')
+            frontmatter+="
+  - file: \"${img_file}\"
+    original_url: \"${img_url}\""
+            if [[ -n "$img_alt_text" ]]; then
+                frontmatter+="
+    alt: \"${img_alt_text}\""
+            fi
+        done
+    fi
+    
+    # Add crawl timestamp
+    frontmatter+="
+crawled_at: \"$(date -Iseconds)\"
+---"
+    
+    # Update markdown image references to point to local files
+    local updated_markdown="$markdown_content"
+    for img_info in "${downloaded_images[@]+"${downloaded_images[@]}"}"; do
+        [[ -z "$img_info" ]] && continue
+        local img_file img_url
+        img_file=$(echo "$img_info" | cut -d'|' -f1)
+        img_url=$(echo "$img_info" | cut -d'|' -f2)
+        # Replace remote URL with local path
+        updated_markdown=$(echo "$updated_markdown" | sed "s|${img_url}|../images/${slug}/${img_file}|g")
+    done
+    
+    # Extract body-only content (remove nav, header, footer, cookie notices)
+    local body_markdown
+    body_markdown=$(extract_body_content "$updated_markdown")
+    
+    # Write the FULL PAGE markdown file
+    {
+        echo "$frontmatter"
+        echo ""
+        echo "$updated_markdown"
+        
+        # Append schema markup if found
+        if [[ -n "$schema_json" ]]; then
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Structured Data (JSON-LD)"
+            echo ""
+            echo '```json'
+            echo "$schema_json"
+            echo '```'
+        fi
+    } > "${full_page_dir}/${slug}.md"
+    
+    # Write the BODY ONLY markdown file (no schema - just content)
+    {
+        echo "$frontmatter"
+        echo ""
+        echo "$body_markdown"
+    } > "${body_only_dir}/${slug}.md"
+    
+    return 0
+}
+
+# Extract body content from markdown (remove nav, header, footer, cookie notices)
+# Site-agnostic approach - optimized for performance
+extract_body_content() {
+    local markdown="$1"
+    
+    # Use awk for efficient single-pass extraction
+    # This is much faster than bash loops with regex
+    echo "$markdown" | awk '
+    BEGIN {
+        in_body = 0
+        footer_started = 0
+    }
+    
+    # Start at first H1 or H2 heading
+    /^#+ / && !in_body {
+        in_body = 1
+    }
+    
+    # Skip until we find a heading
+    !in_body { next }
+    
+    # Detect footer markers
+    /^##* *[Ff]ooter/ { footer_started = 1 }
+    /©|Copyright|\(c\) *20[0-9][0-9]/ { footer_started = 1 }
+    /All rights reserved|Alle Rechte vorbehalten|Tous droits/ { footer_started = 1 }
+    /^##* *(References|Références|Referenzen)$/ { footer_started = 1 }
+    
+    # Cookie/GDPR patterns
+    /[Cc]ookie.*(consent|settings|preferences|policy)/ { footer_started = 1 }
+    /GDPR|CCPA|LGPD/ { footer_started = 1 }
+    /[Pp]rivacy [Oo]verview/ { footer_started = 1 }
+    /[Ss]trictly [Nn]ecessary [Cc]ookie/ { footer_started = 1 }
+    
+    # Powered by patterns
+    /[Pp]owered by|[Bb]uilt with|[Mm]ade with/ { footer_started = 1 }
+    
+    # Skip footer content
+    footer_started { next }
+    
+    # Print body content
+    { print }
+    '
+}
+
+# Crawl using Crawl4AI API with multi-page discovery
+crawl_with_crawl4ai() {
     local url="$1"
     local output_dir="$2"
-    local depth="$3"
-    local max_urls="$4"
-    local render_js="$5"
-    local respect_robots="$6"
+    local max_urls="$3"
+    local depth="$4"
     
-    cat << 'PYTHON_SCRIPT'
+    print_info "Using Crawl4AI backend..."
+    
+    # Create content directories
+    local full_page_dir="${output_dir}/content-full-page-md"
+    local body_only_dir="${output_dir}/content-body-md"
+    local images_dir="${output_dir}/images"
+    mkdir -p "$full_page_dir" "$body_only_dir" "$images_dir"
+    
+    # Extract base domain for internal link filtering
+    local base_domain
+    base_domain=$(echo "$url" | sed -E 's|^https?://||' | sed -E 's|/.*||')
+    
+    # Initialize tracking arrays via temp files
+    local visited_file="${output_dir}/.visited_urls"
+    local queue_file="${output_dir}/.queue_urls"
+    local results_file="${output_dir}/.results.jsonl"
+    
+    echo "$url" > "$queue_file"
+    touch "$visited_file"
+    touch "$results_file"
+    
+    local crawled_count=0
+    local current_depth=0
+    
+    print_info "Starting multi-page crawl (max: $max_urls, depth: $depth)"
+    
+    while [[ $crawled_count -lt $max_urls ]] && [[ -s "$queue_file" ]]; do
+        # Get next batch of URLs (up to 5 at a time for efficiency)
+        local batch_size=5
+        local remaining=$((max_urls - crawled_count))
+        [[ $remaining -lt $batch_size ]] && batch_size=$remaining
+        
+        local batch_urls=()
+        local batch_count=0
+        
+        while IFS= read -r queue_url && [[ $batch_count -lt $batch_size ]]; do
+            # Skip if already visited
+            if grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
+                continue
+            fi
+            batch_urls+=("$queue_url")
+            echo "$queue_url" >> "$visited_file"
+            ((batch_count++))
+        done < "$queue_file"
+        
+        # Remove processed URLs from queue
+        if [[ ${#batch_urls[@]} -gt 0 ]]; then
+            local new_queue
+            new_queue=$(mktemp)
+            while IFS= read -r queue_url; do
+                if ! grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
+                    echo "$queue_url"
+                fi
+            done < "$queue_file" > "$new_queue"
+            mv "$new_queue" "$queue_file"
+        fi
+        
+        [[ ${#batch_urls[@]} -eq 0 ]] && break
+        
+        # Build JSON array of URLs
+        local urls_json="["
+        local first=true
+        for batch_url in "${batch_urls[@]}"; do
+            [[ "$first" != "true" ]] && urls_json+=","
+            urls_json+="\"$batch_url\""
+            first=false
+        done
+        urls_json+="]"
+        
+        print_info "[${crawled_count}/${max_urls}] Crawling batch of ${#batch_urls[@]} URLs..."
+        
+        # Submit crawl job to Crawl4AI
+        local response
+        response=$(curl -s -X POST "${CRAWL4AI_URL}/crawl" \
+            --max-time 120 \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"urls\": $urls_json,
+                \"crawler_config\": {
+                    \"type\": \"CrawlerRunConfig\",
+                    \"params\": {
+                        \"cache_mode\": \"bypass\",
+                        \"word_count_threshold\": 10,
+                        \"page_timeout\": 30000
+                    }
+                }
+            }" 2>/dev/null)
+        
+        if [[ -z "$response" ]]; then
+            print_warning "No response from Crawl4AI for batch, skipping..."
+            continue
+        fi
+        
+        # Process results
+        if command -v jq &> /dev/null; then
+            # Extract each result
+            local result_count
+            result_count=$(echo "$response" | jq -r '.results | length' 2>/dev/null || echo "0")
+            
+            for ((i=0; i<result_count; i++)); do
+                local result
+                result=$(echo "$response" | jq -c ".results[$i]" 2>/dev/null)
+                [[ -z "$result" || "$result" == "null" ]] && continue
+                
+                # Append to results file
+                echo "$result" >> "$results_file"
+                ((crawled_count++))
+                
+                local page_url status_code
+                page_url=$(printf '%s' "$result" | jq -r '.url // empty')
+                status_code=$(printf '%s' "$result" | jq -r '.status_code // 0')
+                
+                print_info "  [${crawled_count}] ${status_code} ${page_url:0:60}"
+                
+                # Save markdown content with rich metadata frontmatter (non-fatal if it fails)
+                save_markdown_with_metadata "$result" "$full_page_dir" "$body_only_dir" "$images_dir" "$base_domain" || true
+                
+                # Extract internal links for queue (if under depth limit)
+                if [[ $current_depth -lt $depth ]]; then
+                    local links
+                    links=$(printf '%s' "$result" | jq -r '.links.internal[]?.href // empty' 2>/dev/null | head -50)
+                    
+                    while IFS= read -r link; do
+                        [[ -z "$link" ]] && continue
+                        # Normalize URL
+                        if [[ "$link" =~ ^/ ]]; then
+                            link="https://${base_domain}${link}"
+                        elif [[ ! "$link" =~ ^https?:// ]]; then
+                            continue
+                        fi
+                        # Only add internal links
+                        if [[ "$link" =~ $base_domain ]]; then
+                            # Remove fragments and normalize
+                            link=$(echo "$link" | sed 's|#.*||' | sed 's|/$||')
+                            # Add to queue if not visited
+                            if ! grep -qxF "$link" "$visited_file" 2>/dev/null; then
+                                echo "$link" >> "$queue_file"
+                            fi
+                        fi
+                    done <<< "$links"
+                fi
+            done
+        fi
+        
+        ((current_depth++))
+    done
+    
+    print_info "Crawl complete. Processing results..."
+    
+    # Generate CSV and XLSX from results
+    crawl4ai_generate_reports "$output_dir" "$results_file" "$base_domain"
+    
+    # Cleanup temp files
+    rm -f "$visited_file" "$queue_file"
+    
+    # Count markdown files and images
+    local full_page_count body_count img_count
+    full_page_count=$(find "$full_page_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    body_count=$(find "$body_only_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    img_count=$(find "$images_dir" -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.svg" \) 2>/dev/null | wc -l | tr -d ' ')
+    
+    print_success "Crawl4AI results saved to ${output_dir}"
+    print_info "  Pages crawled: $crawled_count"
+    print_info "  Full page markdown: $full_page_count (in content-full-page-md/)"
+    print_info "  Body-only markdown: $body_count (in content-body-md/)"
+    print_info "  Images downloaded: $img_count (in images/)"
+    return 0
+}
+
+# Generate reports from Crawl4AI results
+crawl4ai_generate_reports() {
+    local output_dir="$1"
+    local results_file="$2"
+    local base_domain="$3"
+    
+    [[ ! -s "$results_file" ]] && return 0
+    
+    # Generate CSV
+    local csv_file="${output_dir}/crawl-data.csv"
+    echo "url,status_code,status,title,title_length,meta_description,description_length,h1,h1_count,canonical,meta_robots,word_count,response_time_ms,crawl_depth,internal_links,external_links,images,images_missing_alt" > "$csv_file"
+    
+    local broken_links=()
+    local redirects=()
+    local meta_issues=()
+    local status_codes=()
+    
+    while IFS= read -r result; do
+        [[ -z "$result" ]] && continue
+        
+        local url status_code title meta_desc h1 canonical word_count
+        url=$(printf '%s' "$result" | jq -r '.url // ""')
+        status_code=$(printf '%s' "$result" | jq -r '.status_code // 0')
+        title=$(printf '%s' "$result" | jq -r '.metadata.title // .title // ""' | tr ',' ';' | head -c 200)
+        meta_desc=$(printf '%s' "$result" | jq -r '.metadata.description // ""' | tr ',' ';' | head -c 300)
+        h1=$(printf '%s' "$result" | jq -r '.metadata.h1 // ""' | tr ',' ';' | head -c 200)
+        canonical=$(printf '%s' "$result" | jq -r '.metadata.canonical // ""')
+        word_count=$(printf '%s' "$result" | jq -r '.word_count // 0')
+        
+        local title_len=${#title}
+        local desc_len=${#meta_desc}
+        local status="OK"
+        [[ $status_code -ge 300 && $status_code -lt 400 ]] && status="Redirect"
+        [[ $status_code -ge 400 ]] && status="Error"
+        
+        # Count links
+        local internal_links external_links
+        internal_links=$(printf '%s' "$result" | jq -r '.links.internal | length // 0' 2>/dev/null || echo "0")
+        external_links=$(printf '%s' "$result" | jq -r '.links.external | length // 0' 2>/dev/null || echo "0")
+        
+        # Write CSV row
+        echo "\"$url\",$status_code,\"$status\",\"$title\",$title_len,\"$meta_desc\",$desc_len,\"$h1\",1,\"$canonical\",\"\",$word_count,0,0,$internal_links,$external_links,0,0" >> "$csv_file"
+        
+        # Track status codes
+        status_codes+=("$status_code")
+        
+        # Track broken links
+        if [[ $status_code -ge 400 ]]; then
+            broken_links+=("{\"url\":\"$url\",\"status_code\":$status_code,\"source\":\"direct\"}")
+        fi
+        
+        # Track meta issues
+        local issues=""
+        [[ -z "$title" ]] && issues+="Missing title; "
+        [[ $title_len -gt 60 ]] && issues+="Title too long; "
+        [[ -z "$meta_desc" ]] && issues+="Missing description; "
+        [[ $desc_len -gt 160 ]] && issues+="Description too long; "
+        [[ -z "$h1" ]] && issues+="Missing H1; "
+        
+        if [[ -n "$issues" ]]; then
+            meta_issues+=("{\"url\":\"$url\",\"title\":\"${title:0:50}\",\"h1\":\"${h1:0:50}\",\"issues\":\"${issues%%; }\"}")
+        fi
+    done < "$results_file"
+    
+    print_info "Generated: $csv_file"
+    
+    # Generate broken-links.csv
+    if [[ ${#broken_links[@]} -gt 0 ]]; then
+        local broken_file="${output_dir}/broken-links.csv"
+        echo "url,status_code,source" > "$broken_file"
+        for bl in "${broken_links[@]}"; do
+            local bl_url bl_code bl_src
+            bl_url=$(echo "$bl" | jq -r '.url')
+            bl_code=$(echo "$bl" | jq -r '.status_code')
+            bl_src=$(echo "$bl" | jq -r '.source')
+            echo "\"$bl_url\",$bl_code,\"$bl_src\"" >> "$broken_file"
+        done
+        print_info "Generated: $broken_file"
+    fi
+    
+    # Generate meta-issues.csv
+    if [[ ${#meta_issues[@]} -gt 0 ]]; then
+        local issues_file="${output_dir}/meta-issues.csv"
+        echo "url,title,h1,issues" > "$issues_file"
+        for mi in "${meta_issues[@]}"; do
+            local mi_url mi_title mi_h1 mi_issues
+            mi_url=$(echo "$mi" | jq -r '.url')
+            mi_title=$(echo "$mi" | jq -r '.title')
+            mi_h1=$(echo "$mi" | jq -r '.h1')
+            mi_issues=$(echo "$mi" | jq -r '.issues')
+            echo "\"$mi_url\",\"$mi_title\",\"$mi_h1\",\"$mi_issues\"" >> "$issues_file"
+        done
+        print_info "Generated: $issues_file"
+    fi
+    
+    # Generate summary.json
+    local total_pages=${#status_codes[@]}
+    local summary_file="${output_dir}/summary.json"
+    
+    # Count status codes
+    local code_200=0 code_301=0 code_302=0 code_404=0 code_500=0 code_other=0
+    for code in "${status_codes[@]}"; do
+        case "$code" in
+            200) ((code_200++)) ;;
+            301) ((code_301++)) ;;
+            302) ((code_302++)) ;;
+            404) ((code_404++)) ;;
+            500) ((code_500++)) ;;
+            *) ((code_other++)) ;;
+        esac
+    done
+    
+    cat > "$summary_file" << EOF
+{
+  "crawl_date": "$(date -Iseconds)",
+  "base_url": "https://${base_domain}",
+  "backend": "crawl4ai",
+  "pages_crawled": $total_pages,
+  "broken_links": ${#broken_links[@]},
+  "redirects": 0,
+  "meta_issues": ${#meta_issues[@]},
+  "status_codes": {
+    "200": $code_200,
+    "301": $code_301,
+    "302": $code_302,
+    "404": $code_404,
+    "500": $code_500,
+    "other": $code_other
+  }
+}
+EOF
+    print_info "Generated: $summary_file"
+    
+    # Generate XLSX if Python available
+    if find_python && "$PYTHON_CMD" -c "import openpyxl" 2>/dev/null; then
+        local xlsx_script
+        xlsx_script=$(mktemp /tmp/xlsx_gen_XXXXXX.py)
+        cat > "$xlsx_script" << 'PYXLSX'
+import sys
+import csv
+import openpyxl
+from openpyxl.styles import Font, PatternFill
+from pathlib import Path
+
+csv_file = Path(sys.argv[1])
+xlsx_file = csv_file.with_suffix('.xlsx')
+
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.title = "Crawl Data"
+
+with open(csv_file, 'r', encoding='utf-8') as f:
+    reader = csv.reader(f)
+    for row_num, row in enumerate(reader, 1):
+        for col_num, value in enumerate(row, 1):
+            cell = ws.cell(row=row_num, column=col_num, value=value)
+            if row_num == 1:
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="DAEEF3", end_color="DAEEF3", fill_type="solid")
+
+wb.save(xlsx_file)
+print(f"Generated: {xlsx_file}")
+PYXLSX
+        "$PYTHON_CMD" "$xlsx_script" "$csv_file" 2>/dev/null || true
+        rm -f "$xlsx_script"
+    fi
+    
+    return 0
+}
+
+# Lightweight Python crawler (fallback)
+generate_fallback_crawler() {
+    cat << 'PYTHON_CRAWLER'
 #!/usr/bin/env python3
 """
-Site Crawler - SEO Spider
-Crawls websites and extracts SEO-relevant data
+Lightweight SEO Site Crawler
+Fallback when Crawl4AI is not available
 """
 
 import asyncio
-import json
+import aiohttp
 import csv
+import json
 import hashlib
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
-from typing import Optional
-import aiohttp
+from dataclasses import dataclass, asdict
 from bs4 import BeautifulSoup
 
 try:
     import openpyxl
-    HAS_OPENPYXL = True
+    from openpyxl.styles import Font, PatternFill, Alignment
+    HAS_XLSX = True
 except ImportError:
-    HAS_OPENPYXL = False
+    HAS_XLSX = False
+
 
 @dataclass
 class PageData:
     url: str
     status_code: int = 0
     status: str = ""
-    content_type: str = ""
     title: str = ""
     title_length: int = 0
     meta_description: str = ""
     description_length: int = 0
     h1: str = ""
     h1_count: int = 0
-    h2: str = ""
-    h2_count: int = 0
     canonical: str = ""
     meta_robots: str = ""
     word_count: int = 0
-    response_time: float = 0.0
-    file_size: int = 0
+    response_time_ms: float = 0.0
     crawl_depth: int = 0
-    inlinks: int = 0
-    outlinks: int = 0
+    internal_links: int = 0
     external_links: int = 0
     images: int = 0
     images_missing_alt: int = 0
-    content_hash: str = ""
-    redirect_url: str = ""
-    redirect_chain: str = ""
 
-@dataclass
-class LinkData:
-    source_url: str
-    target_url: str
-    anchor_text: str
-    link_type: str  # internal/external
-    status_code: int = 0
-    is_broken: bool = False
-    rel: str = ""
-
-@dataclass
-class RedirectData:
-    original_url: str
-    status_code: int
-    redirect_url: str
-    final_url: str
-    chain_length: int
-    chain: str
 
 class SiteCrawler:
-    def __init__(self, base_url: str, output_dir: str, max_depth: int = 10,
-                 max_urls: int = 10000, render_js: bool = False,
-                 respect_robots: bool = True, delay: float = 0.1):
-        self.base_url = base_url
+    def __init__(self, base_url: str, max_urls: int = 100, max_depth: int = 3, delay_ms: int = 100):
+        self.base_url = base_url.rstrip('/')
         self.base_domain = urlparse(base_url).netloc
-        self.output_dir = Path(output_dir)
-        self.max_depth = max_depth
         self.max_urls = max_urls
-        self.render_js = render_js
-        self.respect_robots = respect_robots
-        self.delay = delay
+        self.max_depth = max_depth
+        self.delay = delay_ms / 1000.0
         
-        self.visited: set = set()
-        self.to_visit: list = [(base_url, 0)]  # (url, depth)
-        self.pages: list = []
-        self.links: list = []
-        self.redirects: list = []
-        self.broken_links: list = []
-        self.inlink_counts: dict = defaultdict(int)
-        
-        self.robots_disallowed: set = set()
-        self.session: Optional[aiohttp.ClientSession] = None
-        
-    async def fetch_robots_txt(self):
-        """Parse robots.txt for disallowed paths"""
-        if not self.respect_robots:
-            return
-            
-        robots_url = urljoin(self.base_url, "/robots.txt")
-        try:
-            async with self.session.get(robots_url, timeout=10) as response:
-                if response.status == 200:
-                    text = await response.text()
-                    current_ua = False
-                    for line in text.split('\n'):
-                        line = line.strip().lower()
-                        if line.startswith('user-agent:'):
-                            ua = line.split(':', 1)[1].strip()
-                            current_ua = ua == '*' or 'bot' in ua
-                        elif current_ua and line.startswith('disallow:'):
-                            path = line.split(':', 1)[1].strip()
-                            if path:
-                                self.robots_disallowed.add(path)
-        except Exception:
-            pass
-    
-    def is_allowed(self, url: str) -> bool:
-        """Check if URL is allowed by robots.txt"""
-        if not self.respect_robots:
-            return True
-        path = urlparse(url).path
-        for disallowed in self.robots_disallowed:
-            if path.startswith(disallowed):
-                return False
-        return True
-    
+        self.visited = set()
+        self.queue = [(self.base_url, 0)]
+        self.pages = []
+        self.broken_links = []
+        self.redirects = []
+
     def is_internal(self, url: str) -> bool:
-        """Check if URL is internal to the site"""
         parsed = urlparse(url)
         return parsed.netloc == self.base_domain or parsed.netloc == ""
-    
+
     def normalize_url(self, url: str, base: str) -> str:
-        """Normalize and resolve relative URLs"""
         url = urljoin(base, url)
         parsed = urlparse(url)
-        # Remove fragments
-        url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         if parsed.query:
-            url += f"?{parsed.query}"
-        # Remove trailing slash for consistency
-        return url.rstrip('/')
-    
-    async def fetch_page(self, url: str, depth: int) -> Optional[PageData]:
-        """Fetch and parse a single page"""
-        if url in self.visited:
-            return None
-        if len(self.visited) >= self.max_urls:
-            return None
-        if not self.is_allowed(url):
-            return None
-            
-        self.visited.add(url)
+            normalized += f"?{parsed.query}"
+        return normalized.rstrip('/')
+
+    async def fetch_page(self, session: aiohttp.ClientSession, url: str, depth: int) -> PageData:
         page = PageData(url=url, crawl_depth=depth)
         
         try:
-            start_time = datetime.now()
-            
-            # Follow redirects manually to track chain
-            redirect_chain = []
-            current_url = url
-            
-            async with self.session.get(
-                current_url,
-                allow_redirects=False,
-                timeout=30
-            ) as response:
+            start = datetime.now()
+            async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=15)) as response:
                 page.status_code = response.status
-                page.content_type = response.headers.get('Content-Type', '')
+                page.response_time_ms = (datetime.now() - start).total_seconds() * 1000
                 
-                # Handle redirects
-                while response.status in (301, 302, 303, 307, 308):
-                    redirect_url = response.headers.get('Location', '')
-                    if redirect_url:
-                        redirect_url = self.normalize_url(redirect_url, current_url)
-                        redirect_chain.append(f"{response.status}:{redirect_url}")
-                        
-                        self.redirects.append(RedirectData(
-                            original_url=url,
-                            status_code=response.status,
-                            redirect_url=redirect_url,
-                            final_url="",  # Will update after chain
-                            chain_length=len(redirect_chain),
-                            chain=" -> ".join([url] + redirect_chain)
-                        ))
-                        
-                        current_url = redirect_url
-                        async with self.session.get(
-                            current_url,
-                            allow_redirects=False,
-                            timeout=30
-                        ) as new_response:
-                            response = new_response
-                            page.status_code = response.status
+                # Track redirects
+                if response.history:
+                    for r in response.history:
+                        self.redirects.append({
+                            'original_url': str(r.url),
+                            'status_code': r.status,
+                            'redirect_url': str(response.url)
+                        })
+                
+                page.status = "OK" if response.status < 300 else ("Redirect" if response.status < 400 else "Error")
+                
+                if response.status >= 400:
+                    self.broken_links.append({'url': url, 'status_code': response.status, 'source': 'direct'})
+                    return page
+                
+                content_type = response.headers.get('Content-Type', '')
+                if 'text/html' not in content_type:
+                    return page
+                
+                html = await response.text()
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Title
+                if soup.title:
+                    page.title = soup.title.get_text(strip=True)[:200]
+                    page.title_length = len(page.title)
+                
+                # Meta description
+                meta_desc = soup.find('meta', attrs={'name': 'description'})
+                if meta_desc:
+                    page.meta_description = meta_desc.get('content', '')[:300]
+                    page.description_length = len(page.meta_description)
+                
+                # Meta robots
+                meta_robots = soup.find('meta', attrs={'name': 'robots'})
+                if meta_robots:
+                    page.meta_robots = meta_robots.get('content', '')
+                
+                # Canonical
+                canonical = soup.find('link', attrs={'rel': 'canonical'})
+                if canonical:
+                    page.canonical = canonical.get('href', '')
+                
+                # H1
+                h1_tags = soup.find_all('h1')
+                page.h1_count = len(h1_tags)
+                if h1_tags:
+                    page.h1 = h1_tags[0].get_text(strip=True)[:200]
+                
+                # Word count
+                text = soup.get_text(separator=' ', strip=True)
+                page.word_count = len(text.split())
+                
+                # Images
+                images = soup.find_all('img')
+                page.images = len(images)
+                page.images_missing_alt = sum(1 for img in images if not img.get('alt'))
+                
+                # Links
+                internal_count = 0
+                external_count = 0
+                
+                for link in soup.find_all('a', href=True):
+                    href = link.get('href', '')
+                    if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
+                        continue
+                    
+                    target_url = self.normalize_url(href, url)
+                    
+                    if self.is_internal(target_url):
+                        internal_count += 1
+                        if target_url not in self.visited and depth < self.max_depth:
+                            self.queue.append((target_url, depth + 1))
                     else:
-                        break
+                        external_count += 1
                 
-                if redirect_chain:
-                    page.redirect_url = redirect_chain[-1].split(':', 1)[1]
-                    page.redirect_chain = " -> ".join([url] + redirect_chain)
-                    # Update final URL in redirect records
-                    for r in self.redirects:
-                        if r.original_url == url:
-                            r.final_url = current_url
-                
-                # Set status text
-                if page.status_code < 300:
-                    page.status = "OK"
-                elif page.status_code < 400:
-                    page.status = "Redirect"
-                elif page.status_code < 500:
-                    page.status = "Client Error"
-                else:
-                    page.status = "Server Error"
-                
-                # Only parse HTML content
-                if 'text/html' in page.content_type and page.status_code == 200:
-                    html = await response.text()
-                    page.file_size = len(html.encode('utf-8'))
-                    page.content_hash = hashlib.md5(html.encode()).hexdigest()
-                    
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    # Title
-                    title_tag = soup.find('title')
-                    if title_tag:
-                        page.title = title_tag.get_text(strip=True)
-                        page.title_length = len(page.title)
-                    
-                    # Meta description
-                    meta_desc = soup.find('meta', attrs={'name': 'description'})
-                    if meta_desc:
-                        page.meta_description = meta_desc.get('content', '')
-                        page.description_length = len(page.meta_description)
-                    
-                    # Meta robots
-                    meta_robots = soup.find('meta', attrs={'name': 'robots'})
-                    if meta_robots:
-                        page.meta_robots = meta_robots.get('content', '')
-                    
-                    # Canonical
-                    canonical = soup.find('link', attrs={'rel': 'canonical'})
-                    if canonical:
-                        page.canonical = canonical.get('href', '')
-                    
-                    # Headings
-                    h1_tags = soup.find_all('h1')
-                    page.h1_count = len(h1_tags)
-                    if h1_tags:
-                        page.h1 = h1_tags[0].get_text(strip=True)[:200]
-                    
-                    h2_tags = soup.find_all('h2')
-                    page.h2_count = len(h2_tags)
-                    if h2_tags:
-                        page.h2 = h2_tags[0].get_text(strip=True)[:200]
-                    
-                    # Word count
-                    text = soup.get_text(separator=' ', strip=True)
-                    page.word_count = len(text.split())
-                    
-                    # Images
-                    images = soup.find_all('img')
-                    page.images = len(images)
-                    page.images_missing_alt = sum(1 for img in images if not img.get('alt'))
-                    
-                    # Links
-                    internal_count = 0
-                    external_count = 0
-                    
-                    for link in soup.find_all('a', href=True):
-                        href = link.get('href', '')
-                        if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
-                            continue
-                        
-                        target_url = self.normalize_url(href, url)
-                        anchor = link.get_text(strip=True)[:100]
-                        rel = link.get('rel', [])
-                        rel_str = ' '.join(rel) if isinstance(rel, list) else str(rel)
-                        
-                        is_internal = self.is_internal(target_url)
-                        
-                        link_data = LinkData(
-                            source_url=url,
-                            target_url=target_url,
-                            anchor_text=anchor,
-                            link_type="internal" if is_internal else "external",
-                            rel=rel_str
-                        )
-                        self.links.append(link_data)
-                        
-                        if is_internal:
-                            internal_count += 1
-                            self.inlink_counts[target_url] += 1
-                            # Add to crawl queue
-                            if target_url not in self.visited and depth < self.max_depth:
-                                self.to_visit.append((target_url, depth + 1))
-                        else:
-                            external_count += 1
-                    
-                    page.outlinks = internal_count + external_count
-                    page.external_links = external_count
-                
-                page.response_time = (datetime.now() - start_time).total_seconds() * 1000
+                page.internal_links = internal_count
+                page.external_links = external_count
                 
         except asyncio.TimeoutError:
-            page.status_code = 0
             page.status = "Timeout"
         except Exception as e:
-            page.status_code = 0
             page.status = f"Error: {str(e)[:50]}"
         
         return page
-    
-    async def check_external_links(self):
-        """Check status of external links"""
-        external_urls = set()
-        for link in self.links:
-            if link.link_type == "external":
-                external_urls.add(link.target_url)
-        
-        print(f"Checking {len(external_urls)} external links...")
-        
-        for url in external_urls:
-            try:
-                async with self.session.head(url, timeout=10, allow_redirects=True) as response:
-                    status = response.status
-                    for link in self.links:
-                        if link.target_url == url:
-                            link.status_code = status
-                            link.is_broken = status >= 400
-            except Exception:
-                for link in self.links:
-                    if link.target_url == url:
-                        link.status_code = 0
-                        link.is_broken = True
-            
-            await asyncio.sleep(0.1)  # Rate limit
-    
+
     async def crawl(self):
-        """Main crawl loop"""
-        headers = {
-            'User-Agent': 'AIDevOps-SiteCrawler/1.0 (+https://github.com/aidevops)'
-        }
-        
         connector = aiohttp.TCPConnector(limit=5)
-        timeout = aiohttp.ClientTimeout(total=60)
+        headers = {'User-Agent': 'AIDevOps-SiteCrawler/2.0'}
         
-        async with aiohttp.ClientSession(
-            headers=headers,
-            connector=connector,
-            timeout=timeout
-        ) as session:
-            self.session = session
-            
-            # Fetch robots.txt first
-            await self.fetch_robots_txt()
-            
-            print(f"Starting crawl of {self.base_url}")
-            print(f"Max depth: {self.max_depth}, Max URLs: {self.max_urls}")
-            
-            while self.to_visit and len(self.visited) < self.max_urls:
-                url, depth = self.to_visit.pop(0)
+        async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+            while self.queue and len(self.visited) < self.max_urls:
+                url, depth = self.queue.pop(0)
                 
                 if url in self.visited:
                     continue
                 
-                page = await self.fetch_page(url, depth)
-                if page:
-                    self.pages.append(page)
-                    print(f"[{len(self.pages)}/{self.max_urls}] {page.status_code} {url[:80]}")
+                self.visited.add(url)
+                page = await self.fetch_page(session, url, depth)
+                self.pages.append(page)
                 
-                await asyncio.sleep(self.delay / 1000)  # Convert ms to seconds
-            
-            # Update inlink counts
-            for page in self.pages:
-                page.inlinks = self.inlink_counts.get(page.url, 0)
-            
-            # Check external links
-            await self.check_external_links()
-            
-            # Identify broken links
-            for link in self.links:
-                if link.is_broken or link.status_code >= 400:
-                    self.broken_links.append(link)
+                print(f"[{len(self.pages)}/{self.max_urls}] {page.status_code or 'ERR'} {url[:70]}")
+                
+                await asyncio.sleep(self.delay)
         
-        print(f"\nCrawl complete: {len(self.pages)} pages crawled")
-    
-    def export_csv(self, data: list, filename: str, fieldnames: list):
-        """Export data to CSV"""
-        filepath = self.output_dir / filename
-        with open(filepath, 'w', newline='', encoding='utf-8') as f:
+        return self.pages
+
+    def export(self, output_dir: Path, domain: str, fmt: str = "xlsx"):
+        output_dir = Path(output_dir)
+        
+        # CSV export
+        csv_file = output_dir / "crawl-data.csv"
+        fieldnames = list(PageData.__dataclass_fields__.keys())
+        
+        with open(csv_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for item in data:
-                if hasattr(item, '__dict__'):
-                    writer.writerow(asdict(item))
-                else:
-                    writer.writerow(item)
-        print(f"Exported: {filepath}")
-    
-    def export_xlsx(self, data: list, filename: str, fieldnames: list):
-        """Export data to Excel"""
-        if not HAS_OPENPYXL:
-            print("openpyxl not installed, skipping XLSX export")
-            return
+            for page in self.pages:
+                writer.writerow(asdict(page))
+        print(f"Exported: {csv_file}")
         
-        filepath = self.output_dir / filename
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        
-        # Header row
-        for col, field in enumerate(fieldnames, 1):
-            ws.cell(row=1, column=col, value=field)
-        
-        # Data rows
-        for row_num, item in enumerate(data, 2):
-            item_dict = asdict(item) if hasattr(item, '__dict__') else item
+        # XLSX export
+        if fmt in ("xlsx", "all") and HAS_XLSX:
+            xlsx_file = output_dir / "crawl-data.xlsx"
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Crawl Data"
+            
+            # Headers
             for col, field in enumerate(fieldnames, 1):
-                ws.cell(row=row_num, column=col, value=item_dict.get(field, ''))
-        
-        wb.save(filepath)
-        print(f"Exported: {filepath}")
-    
-    def export_results(self, format: str = "xlsx"):
-        """Export all crawl results"""
-        # Main crawl data
-        page_fields = [
-            'url', 'status_code', 'status', 'content_type', 'title', 'title_length',
-            'meta_description', 'description_length', 'h1', 'h1_count', 'h2', 'h2_count',
-            'canonical', 'meta_robots', 'word_count', 'response_time', 'file_size',
-            'crawl_depth', 'inlinks', 'outlinks', 'external_links', 'images',
-            'images_missing_alt', 'content_hash', 'redirect_url', 'redirect_chain'
-        ]
-        
-        if format in ("xlsx", "all"):
-            self.export_xlsx(self.pages, "crawl-data.xlsx", page_fields)
-        if format in ("csv", "all"):
-            self.export_csv(self.pages, "crawl-data.csv", page_fields)
+                cell = ws.cell(row=1, column=col, value=field.replace('_', ' ').title())
+                cell.font = Font(bold=True)
+            
+            # Data
+            for row, page in enumerate(self.pages, 2):
+                for col, field in enumerate(fieldnames, 1):
+                    ws.cell(row=row, column=col, value=getattr(page, field))
+            
+            wb.save(xlsx_file)
+            print(f"Exported: {xlsx_file}")
         
         # Broken links
         if self.broken_links:
-            link_fields = ['source_url', 'target_url', 'anchor_text', 'link_type', 'status_code', 'rel']
-            self.export_csv(self.broken_links, "broken-links.csv", link_fields)
+            broken_file = output_dir / "broken-links.csv"
+            with open(broken_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['url', 'status_code', 'source'])
+                writer.writeheader()
+                writer.writerows(self.broken_links)
+            print(f"Exported: {broken_file}")
         
         # Redirects
         if self.redirects:
-            redirect_fields = ['original_url', 'status_code', 'redirect_url', 'final_url', 'chain_length', 'chain']
-            self.export_csv(self.redirects, "redirects.csv", redirect_fields)
+            redirects_file = output_dir / "redirects.csv"
+            with open(redirects_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['original_url', 'status_code', 'redirect_url'])
+                writer.writeheader()
+                writer.writerows(self.redirects)
+            print(f"Exported: {redirects_file}")
         
         # Meta issues
         meta_issues = []
@@ -629,16 +1048,10 @@ class SiteCrawler:
                 issues.append("Missing title")
             elif page.title_length > 60:
                 issues.append("Title too long")
-            elif page.title_length < 30:
-                issues.append("Title too short")
-            
             if not page.meta_description:
                 issues.append("Missing description")
             elif page.description_length > 160:
                 issues.append("Description too long")
-            elif page.description_length < 70:
-                issues.append("Description too short")
-            
             if page.h1_count == 0:
                 issues.append("Missing H1")
             elif page.h1_count > 1:
@@ -647,126 +1060,74 @@ class SiteCrawler:
             if issues:
                 meta_issues.append({
                     'url': page.url,
-                    'title': page.title,
-                    'title_length': page.title_length,
-                    'description': page.meta_description,
-                    'description_length': page.description_length,
-                    'h1': page.h1,
-                    'h1_count': page.h1_count,
+                    'title': page.title[:50],
+                    'h1': page.h1[:50],
                     'issues': '; '.join(issues)
                 })
         
         if meta_issues:
-            meta_fields = ['url', 'title', 'title_length', 'description', 'description_length', 'h1', 'h1_count', 'issues']
-            self.export_csv(meta_issues, "meta-issues.csv", meta_fields)
-        
-        # Duplicate content
-        hash_groups = defaultdict(list)
-        for page in self.pages:
-            if page.content_hash:
-                hash_groups[page.content_hash].append(page.url)
-        
-        duplicates = []
-        for hash_val, urls in hash_groups.items():
-            if len(urls) > 1:
-                for url in urls:
-                    duplicates.append({
-                        'url': url,
-                        'content_hash': hash_val,
-                        'duplicate_count': len(urls),
-                        'duplicate_urls': '; '.join(u for u in urls if u != url)
-                    })
-        
-        if duplicates:
-            dup_fields = ['url', 'content_hash', 'duplicate_count', 'duplicate_urls']
-            self.export_csv(duplicates, "duplicate-content.csv", dup_fields)
-        
-        # Internal links
-        internal_links = [l for l in self.links if l.link_type == "internal"]
-        if internal_links:
-            link_fields = ['source_url', 'target_url', 'anchor_text', 'rel']
-            self.export_csv(internal_links, "internal-links.csv", link_fields)
-        
-        # External links
-        external_links = [l for l in self.links if l.link_type == "external"]
-        if external_links:
-            link_fields = ['source_url', 'target_url', 'anchor_text', 'status_code', 'is_broken', 'rel']
-            self.export_csv(external_links, "external-links.csv", link_fields)
+            issues_file = output_dir / "meta-issues.csv"
+            with open(issues_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['url', 'title', 'h1', 'issues'])
+                writer.writeheader()
+                writer.writerows(meta_issues)
+            print(f"Exported: {issues_file}")
         
         # Summary
         summary = {
             'crawl_date': datetime.now().isoformat(),
             'base_url': self.base_url,
             'pages_crawled': len(self.pages),
-            'total_links': len(self.links),
-            'internal_links': len(internal_links),
-            'external_links': len(external_links),
             'broken_links': len(self.broken_links),
             'redirects': len(self.redirects),
-            'duplicate_pages': len(duplicates),
-            'pages_with_meta_issues': len(meta_issues),
-            'status_codes': {},
-            'avg_response_time': 0,
-            'avg_word_count': 0
+            'meta_issues': len(meta_issues),
+            'status_codes': {}
         }
         
-        # Status code distribution
         for page in self.pages:
             code = str(page.status_code)
             summary['status_codes'][code] = summary['status_codes'].get(code, 0) + 1
         
-        # Averages
-        if self.pages:
-            summary['avg_response_time'] = sum(p.response_time for p in self.pages) / len(self.pages)
-            summary['avg_word_count'] = sum(p.word_count for p in self.pages) / len(self.pages)
-        
-        with open(self.output_dir / "summary.json", 'w') as f:
+        with open(output_dir / "summary.json", 'w') as f:
             json.dump(summary, f, indent=2)
-        print(f"Exported: {self.output_dir / 'summary.json'}")
+        print(f"Exported: {output_dir / 'summary.json'}")
         
         return summary
 
 
 async def main():
-    import argparse
+    if len(sys.argv) < 4:
+        print("Usage: crawler.py <url> <output_dir> <max_urls> [depth] [format]")
+        sys.exit(1)
     
-    parser = argparse.ArgumentParser(description='SEO Site Crawler')
-    parser.add_argument('url', help='URL to crawl')
-    parser.add_argument('--output', '-o', required=True, help='Output directory')
-    parser.add_argument('--depth', '-d', type=int, default=10, help='Max crawl depth')
-    parser.add_argument('--max-urls', '-m', type=int, default=10000, help='Max URLs to crawl')
-    parser.add_argument('--render-js', action='store_true', help='Render JavaScript')
-    parser.add_argument('--ignore-robots', action='store_true', help='Ignore robots.txt')
-    parser.add_argument('--format', '-f', choices=['csv', 'xlsx', 'all'], default='xlsx', help='Output format')
-    parser.add_argument('--delay', type=int, default=100, help='Delay between requests (ms)')
+    url = sys.argv[1]
+    output_dir = sys.argv[2]
+    max_urls = int(sys.argv[3])
+    depth = int(sys.argv[4]) if len(sys.argv) > 4 else 3
+    fmt = sys.argv[5] if len(sys.argv) > 5 else "xlsx"
     
-    args = parser.parse_args()
+    domain = urlparse(url).netloc
     
-    crawler = SiteCrawler(
-        base_url=args.url,
-        output_dir=args.output,
-        max_depth=args.depth,
-        max_urls=args.max_urls,
-        render_js=args.render_js,
-        respect_robots=not args.ignore_robots,
-        delay=args.delay
-    )
+    print(f"Starting crawl: {url}")
+    print(f"Max URLs: {max_urls}, Max depth: {depth}")
+    print()
     
+    crawler = SiteCrawler(url, max_urls=max_urls, max_depth=depth)
     await crawler.crawl()
-    summary = crawler.export_results(args.format)
     
-    print(f"\n=== Crawl Summary ===")
+    summary = crawler.export(Path(output_dir), domain, fmt)
+    
+    print()
+    print("=== Crawl Summary ===")
     print(f"Pages crawled: {summary['pages_crawled']}")
     print(f"Broken links: {summary['broken_links']}")
     print(f"Redirects: {summary['redirects']}")
-    print(f"Duplicate pages: {summary['duplicate_pages']}")
-    print(f"Meta issues: {summary['pages_with_meta_issues']}")
-    print(f"\nResults saved to: {args.output}")
+    print(f"Meta issues: {summary['meta_issues']}")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-PYTHON_SCRIPT
+PYTHON_CRAWLER
 }
 
 # Run crawl
@@ -779,11 +1140,7 @@ do_crawl() {
     local max_urls="$DEFAULT_MAX_URLS"
     local format="$DEFAULT_FORMAT"
     local output_base="$DEFAULT_OUTPUT_DIR"
-    local render_js="$RENDER_JS"
-    local respect_robots="$RESPECT_ROBOTS"
-    local delay="$DEFAULT_DELAY"
-    local include_pattern=""
-    local exclude_pattern=""
+    local force_fallback=false
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -803,28 +1160,8 @@ do_crawl() {
                 output_base="$2"
                 shift 2
                 ;;
-            --render-js)
-                render_js="true"
-                shift
-                ;;
-            --ignore-robots)
-                respect_robots="false"
-                shift
-                ;;
-            --delay)
-                delay="$2"
-                shift 2
-                ;;
-            --include)
-                include_pattern="$2"
-                shift 2
-                ;;
-            --exclude)
-                exclude_pattern="$2"
-                shift 2
-                ;;
-            --verbose)
-                set -x
+            --fallback)
+                force_fallback=true
                 shift
                 ;;
             *)
@@ -844,49 +1181,58 @@ do_crawl() {
     print_info "Output: $output_dir"
     print_info "Depth: $depth, Max URLs: $max_urls"
     
-    # Check for Python dependencies
-    if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-        print_warning "Installing Python dependencies..."
-        pip3 install aiohttp beautifulsoup4 openpyxl --quiet
+    # Try Crawl4AI first (unless forced fallback)
+    if [[ "$force_fallback" != "true" ]] && check_crawl4ai; then
+        print_success "Crawl4AI detected at ${CRAWL4AI_URL}"
+        crawl_with_crawl4ai "$url" "$output_dir" "$max_urls" "$depth"
+        print_success "Crawl complete!"
+        print_info "Results: $output_dir"
+        print_info "Latest: ${output_base}/${domain}/_latest"
+        return 0
     fi
+    
+    # Fallback to Python crawler
+    print_info "Using lightweight Python crawler..."
+    
+    # Find or install Python
+    if ! find_python; then
+        print_warning "Installing Python dependencies..."
+        if ! install_python_deps; then
+            print_error "Could not find or install Python with required packages"
+            print_info "Install manually: pip3 install aiohttp beautifulsoup4 openpyxl"
+            return 1
+        fi
+    fi
+    
+    print_info "Using: $PYTHON_CMD"
     
     # Generate and run crawler
-    local crawler_script="/tmp/site_crawler_$$.py"
-    generate_crawler_script "$url" "$output_dir" "$depth" "$max_urls" "$render_js" "$respect_robots" > "$crawler_script"
+    local crawler_script
+    crawler_script=$(mktemp /tmp/site_crawler_XXXXXX.py)
+    generate_fallback_crawler > "$crawler_script"
     
-    local ignore_robots_flag=""
-    if [[ "$respect_robots" == "false" ]]; then
-        ignore_robots_flag="--ignore-robots"
-    fi
-    
-    local render_js_flag=""
-    if [[ "$render_js" == "true" ]]; then
-        render_js_flag="--render-js"
-    fi
-    
-    python3 "$crawler_script" "$url" \
-        --output "$output_dir" \
-        --depth "$depth" \
-        --max-urls "$max_urls" \
-        --format "$format" \
-        --delay "$delay" \
-        $ignore_robots_flag \
-        $render_js_flag
+    "$PYTHON_CMD" "$crawler_script" "$url" "$output_dir" "$max_urls" "$depth" "$format"
+    local exit_code=$?
     
     rm -f "$crawler_script"
     
-    print_success "Crawl complete!"
-    print_info "Results: $output_dir"
-    print_info "Latest: ${output_base}/${domain}/_latest"
+    if [[ $exit_code -eq 0 ]]; then
+        print_success "Crawl complete!"
+        print_info "Results: $output_dir"
+        print_info "Latest: ${output_base}/${domain}/_latest"
+    else
+        print_error "Crawl failed with exit code $exit_code"
+    fi
     
-    return 0
+    return $exit_code
 }
 
 # Audit broken links
 audit_links() {
     local url="$1"
     shift
-    do_crawl "$url" --max-urls 500 "$@"
+    print_info "Running broken link audit..."
+    do_crawl "$url" --max-urls 200 "$@"
     return 0
 }
 
@@ -894,7 +1240,8 @@ audit_links() {
 audit_meta() {
     local url="$1"
     shift
-    do_crawl "$url" --max-urls 500 "$@"
+    print_info "Running meta data audit..."
+    do_crawl "$url" --max-urls 200 "$@"
     return 0
 }
 
@@ -902,23 +1249,8 @@ audit_meta() {
 audit_redirects() {
     local url="$1"
     shift
-    do_crawl "$url" --max-urls 500 "$@"
-    return 0
-}
-
-# Audit duplicates
-audit_duplicates() {
-    local url="$1"
-    shift
-    do_crawl "$url" --max-urls 500 "$@"
-    return 0
-}
-
-# Audit structured data
-audit_schema() {
-    local url="$1"
-    print_info "Structured data audit - use Crawl4AI for advanced extraction"
-    print_info "See: ~/.aidevops/agents/tools/browser/crawl4ai.md"
+    print_info "Running redirect audit..."
+    do_crawl "$url" --max-urls 200 "$@"
     return 0
 }
 
@@ -948,10 +1280,8 @@ generate_sitemap() {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
         echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
         
-        # Skip header, filter 200 OK pages
         tail -n +2 "$crawl_data" | while IFS=, read -r page_url status_code rest; do
             if [[ "$status_code" == "200" ]]; then
-                # Clean URL (remove quotes if present)
                 page_url="${page_url//\"/}"
                 echo "  <url>"
                 echo "    <loc>$page_url</loc>"
@@ -970,13 +1300,14 @@ generate_sitemap() {
 
 # Compare crawls
 compare_crawls() {
-    local crawl1="$1"
-    local crawl2="$2"
+    local arg1="${1:-}"
+    local arg2="${2:-}"
     
-    if [[ -z "$crawl2" ]]; then
-        # Compare latest with previous
+    print_header "Comparing Crawls"
+    
+    if [[ -z "$arg2" ]] && [[ -n "$arg1" ]]; then
         local domain
-        domain=$(get_domain "$crawl1")
+        domain=$(get_domain "$arg1")
         local domain_dir="${DEFAULT_OUTPUT_DIR}/${domain}"
         
         if [[ ! -d "$domain_dir" ]]; then
@@ -984,36 +1315,31 @@ compare_crawls() {
             return 1
         fi
         
-        # Get two most recent crawls
         local crawls
-        crawls=$(ls -1d "${domain_dir}"/20* 2>/dev/null | sort -r | head -2)
+        crawls=$(find "$domain_dir" -maxdepth 1 -type d -name "20*" | sort -r | head -2)
         local count
-        count=$(echo "$crawls" | wc -l)
+        count=$(echo "$crawls" | wc -l | tr -d ' ')
         
         if [[ $count -lt 2 ]]; then
             print_error "Need at least 2 crawls to compare"
             return 1
         fi
         
-        crawl1=$(echo "$crawls" | head -1)
-        crawl2=$(echo "$crawls" | tail -1)
+        arg1=$(echo "$crawls" | head -1)
+        arg2=$(echo "$crawls" | tail -1)
     fi
     
-    print_header "Comparing Crawls"
-    print_info "Crawl 1: $crawl1"
-    print_info "Crawl 2: $crawl2"
+    print_info "Crawl 1: $arg1"
+    print_info "Crawl 2: $arg2"
     
-    # Simple comparison - count differences
-    local urls1 urls2
-    urls1=$(cut -d, -f1 "${crawl1}/crawl-data.csv" 2>/dev/null | tail -n +2 | sort)
-    urls2=$(cut -d, -f1 "${crawl2}/crawl-data.csv" 2>/dev/null | tail -n +2 | sort)
-    
-    local new_urls removed_urls
-    new_urls=$(comm -23 <(echo "$urls1") <(echo "$urls2") | wc -l)
-    removed_urls=$(comm -13 <(echo "$urls1") <(echo "$urls2") | wc -l)
-    
-    print_info "New URLs: $new_urls"
-    print_info "Removed URLs: $removed_urls"
+    if [[ -f "${arg1}/crawl-data.csv" ]] && [[ -f "${arg2}/crawl-data.csv" ]]; then
+        local urls1 urls2
+        urls1=$(cut -d, -f1 "${arg1}/crawl-data.csv" | tail -n +2 | sort -u | wc -l | tr -d ' ')
+        urls2=$(cut -d, -f1 "${arg2}/crawl-data.csv" | tail -n +2 | sort -u | wc -l | tr -d ' ')
+        
+        print_info "Crawl 1 URLs: $urls1"
+        print_info "Crawl 2 URLs: $urls2"
+    fi
     
     return 0
 }
@@ -1022,57 +1348,34 @@ compare_crawls() {
 check_status() {
     print_header "Site Crawler Status"
     
+    # Check Crawl4AI
+    print_info "Checking Crawl4AI..."
+    if check_crawl4ai; then
+        print_success "Crawl4AI: Running at ${CRAWL4AI_URL}"
+    else
+        print_warning "Crawl4AI: Not running (will use fallback crawler)"
+    fi
+    
+    # Check Python
+    print_info "Checking Python..."
+    if find_python; then
+        print_success "Python: $PYTHON_CMD with required packages"
+    else
+        print_warning "Python: Dependencies not installed"
+        print_info "  Install with: pip3 install aiohttp beautifulsoup4 openpyxl"
+    fi
+    
     # Check dependencies
-    print_info "Checking dependencies..."
+    if command -v jq &> /dev/null; then
+        print_success "jq: installed"
+    else
+        print_warning "jq: not installed (optional, for JSON processing)"
+    fi
     
     if command -v curl &> /dev/null; then
         print_success "curl: installed"
     else
-        print_error "curl: not installed"
-    fi
-    
-    if command -v jq &> /dev/null; then
-        print_success "jq: installed"
-    else
-        print_error "jq: not installed"
-    fi
-    
-    if command -v python3 &> /dev/null; then
-        print_success "python3: installed"
-        
-        if python3 -c "import aiohttp" 2>/dev/null; then
-            print_success "  aiohttp: installed"
-        else
-            print_warning "  aiohttp: not installed (pip3 install aiohttp)"
-        fi
-        
-        if python3 -c "import bs4" 2>/dev/null; then
-            print_success "  beautifulsoup4: installed"
-        else
-            print_warning "  beautifulsoup4: not installed (pip3 install beautifulsoup4)"
-        fi
-        
-        if python3 -c "import openpyxl" 2>/dev/null; then
-            print_success "  openpyxl: installed"
-        else
-            print_warning "  openpyxl: not installed (pip3 install openpyxl)"
-        fi
-    else
-        print_error "python3: not installed"
-    fi
-    
-    # Check Crawl4AI
-    if check_crawl4ai; then
-        print_success "Crawl4AI: running on port $CRAWL4AI_PORT"
-    else
-        print_warning "Crawl4AI: not running (optional, for JS rendering)"
-    fi
-    
-    # Check config
-    if [[ -f "$CONFIG_FILE" ]]; then
-        print_success "Config: $CONFIG_FILE"
-    else
-        print_info "Config: using defaults (create $CONFIG_FILE to customize)"
+        print_error "curl: not installed (required)"
     fi
     
     return 0
@@ -1090,40 +1393,33 @@ Commands:
   audit-links <url>     Check for broken links (4XX/5XX errors)
   audit-meta <url>      Audit page titles and meta descriptions
   audit-redirects <url> Analyze redirects and chains
-  audit-duplicates <url> Find duplicate content
-  audit-schema <url>    Validate structured data
   generate-sitemap <url> Generate XML sitemap from crawl
-  compare [dir1] [dir2] Compare two crawls
+  compare [url|dir1] [dir2] Compare two crawls
   status                Check crawler dependencies
   help                  Show this help message
 
 Options:
-  --depth <n>           Max crawl depth (default: 10)
-  --max-urls <n>        Max URLs to crawl (default: 10000)
+  --depth <n>           Max crawl depth (default: 3)
+  --max-urls <n>        Max URLs to crawl (default: 100)
   --format <fmt>        Output format: csv, xlsx, all (default: xlsx)
   --output <dir>        Output directory (default: ~/Downloads)
-  --render-js           Enable JavaScript rendering
-  --ignore-robots       Ignore robots.txt
-  --delay <ms>          Delay between requests in ms (default: 100)
-  --include <pattern>   Include URL patterns (comma-separated)
-  --exclude <pattern>   Exclude URL patterns (comma-separated)
-  --verbose             Enable verbose output
+  --fallback            Force use of fallback crawler (skip Crawl4AI)
 
 Examples:
   # Full site crawl
   site-crawler-helper.sh crawl https://example.com
 
-  # Limited crawl with Excel output
-  site-crawler-helper.sh crawl https://example.com --depth 3 --max-urls 500 --format xlsx
-
-  # Crawl JavaScript site
-  site-crawler-helper.sh crawl https://spa-site.com --render-js
+  # Limited crawl
+  site-crawler-helper.sh crawl https://example.com --depth 2 --max-urls 50
 
   # Quick broken link check
   site-crawler-helper.sh audit-links https://example.com
 
   # Generate sitemap from existing crawl
   site-crawler-helper.sh generate-sitemap https://example.com
+
+  # Check status
+  site-crawler-helper.sh status
 
 Output Structure:
   ~/Downloads/{domain}/{timestamp}/
@@ -1132,16 +1428,17 @@ Output Structure:
     - broken-links.csv     4XX/5XX errors
     - redirects.csv        Redirect chains
     - meta-issues.csv      Title/description issues
-    - duplicate-content.csv Duplicate pages
-    - internal-links.csv   Internal link structure
-    - external-links.csv   Outbound links
     - summary.json         Crawl statistics
 
   ~/Downloads/{domain}/_latest -> symlink to latest crawl
 
+Backends:
+  - Crawl4AI (preferred): Uses Docker-based Crawl4AI when available
+  - Fallback: Lightweight async Python crawler
+
 Related:
   - E-E-A-T scoring: eeat-score-helper.sh
-  - Crawl4AI: crawl4ai-helper.sh
+  - Crawl4AI setup: crawl4ai-helper.sh
   - PageSpeed: pagespeed-helper.sh
 EOF
     return 0
@@ -1149,34 +1446,21 @@ EOF
 
 # Main function
 main() {
-    load_config
-    
     local command="${1:-help}"
     shift || true
     
     case "$command" in
         crawl)
-            check_dependencies || exit 1
             do_crawl "$@"
             ;;
         audit-links)
-            check_dependencies || exit 1
             audit_links "$@"
             ;;
         audit-meta)
-            check_dependencies || exit 1
             audit_meta "$@"
             ;;
         audit-redirects)
-            check_dependencies || exit 1
             audit_redirects "$@"
-            ;;
-        audit-duplicates)
-            check_dependencies || exit 1
-            audit_duplicates "$@"
-            ;;
-        audit-schema)
-            audit_schema "$@"
             ;;
         generate-sitemap)
             generate_sitemap "$@"
@@ -1193,7 +1477,7 @@ main() {
         *)
             print_error "Unknown command: $command"
             show_help
-            exit 1
+            return 1
             ;;
     esac
     
