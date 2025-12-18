@@ -323,6 +323,7 @@ If implementing a feature inspired by another repository:
 If this feature was tracked in planning files:
 
 1. **TODO.md**: Move task to Done section with date
+
    ```markdown
    ## Done
    - [x] Add user dashboard #feature 2025-01-15
