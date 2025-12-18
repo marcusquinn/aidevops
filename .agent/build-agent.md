@@ -32,6 +32,7 @@
 **Related Agents**:
 - `@code-standards` for linting agent markdown
 - `aidevops/architecture.md` for framework structure
+- `tools/browser/browser-automation.md` for agents needing browser capabilities (tool hierarchy: Playwright → Playwriter → Stagehand → DevTools)
 
 **Git Workflow**:
 - Branch strategy: `workflows/branch.md`
