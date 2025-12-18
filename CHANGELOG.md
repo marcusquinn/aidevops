@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.33.0] - 2025-12-18
+
+### Added
+
+- add domain-research subagent with THC and Reconeer APIs
+- add TODO.md and planning workflow for task tracking
+- add shadcn/ui MCP support for component browsing and installation
 ## [2.32.0] - 2025-12-18
 
 ### Added
