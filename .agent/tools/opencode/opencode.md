@@ -52,6 +52,26 @@ tools:
 
 OpenCode is a CLI AI assistant that supports specialized agents and MCP (Model Context Protocol) servers. This integration configures OpenCode with aidevops-specific agents and MCPs.
 
+## Antigravity OAuth Plugin
+
+The aidevops setup automatically installs the [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) plugin, enabling Google OAuth authentication for premium model access.
+
+**Authenticate after setup:**
+
+```bash
+opencode auth login
+# Select: Google → OAuth with Google (Antigravity)
+# Press Enter to skip Project ID prompt
+```
+
+**Available models via Antigravity:**
+
+- `gemini-3-pro-high` / `gemini-3-pro-low` / `gemini-3-flash`
+- `claude-sonnet-4-5` / `claude-sonnet-4-5-thinking` / `claude-opus-4-5-thinking`
+- `gpt-oss-120b-medium`
+
+**Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution. Run `opencode auth login` again to add more accounts.
+
 ## Installation
 
 ### Prerequisites

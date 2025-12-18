@@ -1169,7 +1169,76 @@ setup_browser_tools() {
     print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Stagehand (AI)"
 }
 
-# Setup SEO MCP Servers (DataForSEO, Serper)
+# Setup OpenCode Plugins (Antigravity OAuth)
+setup_opencode_plugins() {
+    print_info "Setting up OpenCode plugins..."
+    
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    # Check if OpenCode is installed
+    if ! command -v opencode &> /dev/null; then
+        print_warning "OpenCode not found - plugin setup skipped"
+        print_info "Install OpenCode first: https://opencode.ai"
+        return 0
+    fi
+    
+    # Check if config exists
+    if [[ ! -f "$opencode_config" ]]; then
+        print_warning "OpenCode config not found at $opencode_config - plugin setup skipped"
+        return 0
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        print_warning "jq not found - cannot update OpenCode config"
+        return 0
+    fi
+    
+    # Plugin to install/update
+    local plugin_name="opencode-antigravity-auth"
+    local plugin_spec="opencode-antigravity-auth@latest"
+    
+    # Check if plugin array exists and if plugin is already configured
+    local has_plugin_array
+    has_plugin_array=$(jq -e '.plugin' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+    
+    if [[ "$has_plugin_array" == "true" ]]; then
+        # Check if plugin is already in the array
+        local plugin_exists
+        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+        
+        if [[ "$plugin_exists" == "true" ]]; then
+            # Update existing plugin to latest version
+            local temp_file
+            temp_file=$(mktemp)
+            jq --arg old "$plugin_name" --arg new "$plugin_spec" \
+                '.plugin = [.plugin[] | if startswith($old) then $new else . end]' \
+                "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
+            print_success "Updated $plugin_name to latest version"
+        else
+            # Add plugin to existing array
+            local temp_file
+            temp_file=$(mktemp)
+            jq --arg p "$plugin_spec" '.plugin += [$p]' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
+            print_success "Added $plugin_name plugin to OpenCode config"
+        fi
+    else
+        # Create plugin array with the plugin
+        local temp_file
+        temp_file=$(mktemp)
+        jq --arg p "$plugin_spec" '. + {plugin: [$p]}' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
+        print_success "Created plugin array with $plugin_name"
+    fi
+    
+    print_info "Antigravity OAuth plugin enables Google OAuth for OpenCode"
+    print_info "After setup, authenticate with: opencode auth login"
+    print_info "Then select 'Google' → 'OAuth with Google (Antigravity)'"
+    print_info "Models available: gemini-3-pro-high, claude-opus-4-5-thinking, etc."
+    print_info "See: https://github.com/NoeFabris/opencode-antigravity-auth"
+    
+    return 0
+}
+
 setup_seo_mcps() {
     print_info "Setting up SEO MCP servers..."
 
@@ -1321,6 +1390,7 @@ main() {
     setup_osgrep
     setup_seo_mcps
     setup_browser_tools
+    setup_opencode_plugins
 
     echo ""
     print_success "🎉 Setup complete!"

@@ -102,6 +102,26 @@ aidevops uninstall  # Remove aidevops
 
 **Your AI assistant now has agentic access to 30+ service integrations.**
 
+### OpenCode Antigravity OAuth Plugin
+
+The setup automatically installs the [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) plugin, enabling Google OAuth authentication for OpenCode. This gives you access to Antigravity rate limits and premium models.
+
+**After setup, authenticate:**
+
+```bash
+opencode auth login
+# Select: Google → OAuth with Google (Antigravity)
+# Press Enter to skip Project ID prompt
+```
+
+**Available models via Antigravity:**
+
+- `gemini-3-pro-high` / `gemini-3-pro-low` / `gemini-3-flash`
+- `claude-sonnet-4-5` / `claude-sonnet-4-5-thinking` / `claude-opus-4-5-thinking`
+- `gpt-oss-120b-medium`
+
+**Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution and failover. See the [plugin documentation](https://github.com/NoeFabris/opencode-antigravity-auth) for model configuration.
+
 **Supported AI Assistants:** (OpenCode & Zed are our daily drivers and preferred tools, so will have the most continual testing. All 18 assistants below have MCP configuration support.)
 
 **Preferred:**
