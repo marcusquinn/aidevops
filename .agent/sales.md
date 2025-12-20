@@ -1,3 +1,8 @@
+---
+name: sales
+description: Sales operations and CRM - lead management, pipeline tracking, sales automation
+---
+
 # Sales - Main Agent
 
 <!-- AI-CONTEXT-START -->

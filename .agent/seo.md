@@ -1,3 +1,8 @@
+---
+name: seo
+description: SEO optimization and analysis - keyword research, Search Console, DataForSEO, site crawling
+---
+
 # SEO - Main Agent
 
 <!-- AI-CONTEXT-START -->

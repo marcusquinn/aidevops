@@ -1,3 +1,8 @@
+---
+name: health
+description: Health and wellness domain - medical information, fitness, nutrition guidance
+---
+
 # Health - Main Agent
 
 <!-- AI-CONTEXT-START -->

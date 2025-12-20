@@ -1,3 +1,8 @@
+---
+name: marketing
+description: Marketing strategy and campaigns - digital marketing, analytics, brand management
+---
+
 # Marketing - Main Agent
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,8 @@
+---
+name: aidevops
+description: AI DevOps framework operations - setup, configuration, meta-agents, troubleshooting
+---
+
 # AI DevOps - Framework Main Agent
 
 <!-- AI-CONTEXT-START -->

@@ -778,6 +778,26 @@ deploy_aidevops_agents() {
     return 0
 }
 
+# Generate Agent Skills SKILL.md files for cross-tool compatibility
+generate_agent_skills() {
+    print_info "Generating Agent Skills SKILL.md files..."
+    
+    local skills_script="$HOME/.aidevops/agents/scripts/generate-skills.sh"
+    
+    if [[ -f "$skills_script" ]]; then
+        if bash "$skills_script" 2>/dev/null; then
+            print_success "Agent Skills SKILL.md files generated"
+            print_info "Skills compatible with: Cursor, Claude Code, VS Code, GitHub Copilot"
+        else
+            print_warning "Agent Skills generation encountered issues (non-critical)"
+        fi
+    else
+        print_warning "Agent Skills generator not found at $skills_script"
+    fi
+    
+    return 0
+}
+
 # Inject aidevops reference into AI assistant AGENTS.md files
 inject_agents_reference() {
     print_info "Adding aidevops reference to AI assistant configurations..."
@@ -1489,6 +1509,7 @@ main() {
     setup_aliases
     deploy_ai_templates
     deploy_aidevops_agents
+    generate_agent_skills
     inject_agents_reference
     update_opencode_config
     configure_ai_clis
