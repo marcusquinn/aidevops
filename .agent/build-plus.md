@@ -1,3 +1,8 @@
+---
+name: build-plus
+description: Enhanced build agent with semantic codebase search and context tools
+---
+
 # Build+ - Enhanced Build Agent
 
 <!-- AI-CONTEXT-START -->

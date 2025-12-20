@@ -1,3 +1,8 @@
+---
+name: build-agent
+description: Agent design and composition - creating efficient, token-optimized AI agents
+---
+
 # Build-Agent - Composing Efficient AI Agents
 
 <!-- AI-CONTEXT-START -->

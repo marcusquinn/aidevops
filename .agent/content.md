@@ -1,3 +1,8 @@
+---
+name: content
+description: Content creation and management - copywriting, guidelines, editorial workflows
+---
+
 # Content - Main Agent
 
 <!-- AI-CONTEXT-START -->

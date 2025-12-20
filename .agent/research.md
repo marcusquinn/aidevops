@@ -1,3 +1,8 @@
+---
+name: research
+description: Research and analysis - data gathering, competitive analysis, market research
+---
+
 # Research - Main Agent
 
 <!-- AI-CONTEXT-START -->

@@ -1,3 +1,8 @@
+---
+name: wordpress
+description: WordPress ecosystem management - local development, fleet management, plugin curation
+---
+
 # WordPress - Main Agent
 
 <!-- AI-CONTEXT-START -->

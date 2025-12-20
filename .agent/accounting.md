@@ -1,3 +1,8 @@
+---
+name: accounting
+description: Financial operations and accounting - QuickFile integration, invoicing, expense tracking
+---
+
 # Accounting - Main Agent
 
 <!-- AI-CONTEXT-START -->

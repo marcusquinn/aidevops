@@ -1,3 +1,8 @@
+---
+name: legal
+description: Legal compliance and documentation - contracts, policies, regulatory guidance
+---
+
 # Legal - Main Agent
 
 <!-- AI-CONTEXT-START -->

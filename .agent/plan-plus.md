@@ -1,3 +1,8 @@
+---
+name: plan-plus
+description: Read-only planning agent with semantic codebase search - analysis without modifications
+---
+
 # Plan+ - Enhanced Plan Agent
 
 <!-- AI-CONTEXT-START -->

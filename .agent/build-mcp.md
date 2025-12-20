@@ -1,3 +1,8 @@
+---
+name: build-mcp
+description: MCP server development - building Model Context Protocol servers and tools
+---
+
 # Build-MCP - MCP Server Development Agent
 
 <!-- AI-CONTEXT-START -->
