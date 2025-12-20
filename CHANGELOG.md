@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add aidevops init, time tracking, and /log-time-spent to README
+
 ## [2.35.1] - 2025-12-20
 
 ### Added
