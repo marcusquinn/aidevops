@@ -63,7 +63,96 @@ aidevops gives your AI assistant superpowers for DevOps and infrastructure manag
 All through natural conversation - just tell me what you need!
 ```
 
-### Step 2: Understand User's Work
+### Step 2: Check Concept Familiarity
+
+Before diving in, gauge what concepts the user is comfortable with:
+
+```text
+To tailor this onboarding, which of these concepts are you already familiar with?
+
+1. Git & version control (commits, branches, pull requests)
+2. Terminal/command line basics
+3. API keys and authentication
+4. Web hosting and servers
+5. AI assistants and prompting
+6. None of these / I'm new to all of this
+
+Reply with numbers (e.g., "1, 2, 5") or "all" if you're comfortable with everything.
+```
+
+**Based on their response, offer to explain unfamiliar concepts:**
+
+If they're unfamiliar with **Git**:
+
+```text
+Git is a version control system that tracks changes to your code. Think of it like 
+"save points" in a video game - you can always go back. Key concepts:
+- **Repository (repo)**: A project folder tracked by Git
+- **Commit**: A saved snapshot of your changes
+- **Branch**: A parallel version to experiment without affecting the main code
+- **Pull Request (PR)**: A proposal to merge your changes into the main branch
+
+aidevops uses Git workflows extensively - but I'll guide you through each step.
+```
+
+If they're unfamiliar with **Terminal**:
+
+```text
+The terminal (or command line) is a text-based way to control your computer.
+Instead of clicking, you type commands. Examples:
+- `cd ~/projects` - Go to your projects folder
+- `ls` - List files in current folder
+- `git status` - Check what's changed in your code
+
+Don't worry - I'll provide the exact commands to run, and explain what each does.
+```
+
+If they're unfamiliar with **API keys**:
+
+```text
+An API key is like a password that lets software talk to other software.
+When you sign up for services like OpenAI or GitHub, they give you a secret key.
+You store this key securely, and aidevops uses it to access those services on your behalf.
+
+I'll show you exactly where to get each key and how to store it safely.
+```
+
+If they're unfamiliar with **Hosting**:
+
+```text
+Hosting is where your website or application lives on the internet.
+- **Shared hosting**: Your site shares a server with others (cheap, simple)
+- **VPS**: Your own virtual server (more control, more responsibility)
+- **PaaS**: Platform that handles servers for you (Vercel, Coolify)
+
+aidevops can help manage servers across multiple providers from one conversation.
+```
+
+If they're unfamiliar with **AI assistants**:
+
+```text
+AI assistants (like me!) can help you code, manage infrastructure, and automate tasks.
+Key concepts:
+- **Prompt**: What you ask the AI to do
+- **Context**: Information the AI needs to help you effectively
+- **Agents**: Specialized AI personas for different tasks (SEO, WordPress, etc.)
+- **Commands**: Shortcuts that trigger specific workflows (/release, /feature)
+
+The more specific you are, the better I can help. Don't hesitate to ask questions!
+```
+
+If they're **new to everything**:
+
+```text
+No problem! Everyone starts somewhere. I'll explain each concept as we go.
+The key thing to know: aidevops lets you manage complex technical tasks through 
+natural conversation. You tell me what you want to accomplish, and I'll handle 
+the technical details - explaining each step along the way.
+
+Let's start simple and build up from there.
+```
+
+### Step 3: Understand User's Work
 
 Ask what they do or might work on:
 
@@ -80,12 +169,12 @@ For example:
 
 Based on their answer, highlight relevant services.
 
-### Step 3: Show Current Status
+### Step 4: Show Current Status
 
 Run the status check and display results:
 
 ```bash
-~/.aidevops/agents/scripts/setup-aidevops-helper.sh status
+~/.aidevops/agents/scripts/onboarding-helper.sh status
 ```
 
 Display in a clear format:
@@ -108,7 +197,7 @@ Display in a clear format:
 - Stagehand - for browser automation
 ```
 
-### Step 4: Guide Setup
+### Step 5: Guide Setup
 
 Ask which service to set up:
 
