@@ -25,7 +25,7 @@ tools:
 **TODO.md Format**:
 
 ```markdown
-- [ ] Task description @owner #tag ~estimate YYYY-MM-DD
+- [ ] Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -64,16 +64,22 @@ Add single line to appropriate section:
 | Description | Free text | `Add user dashboard` |
 | Owner | `@name` | `@marcus` |
 | Tag | `#category` | `#seo` `#security` |
-| Estimate | `~duration` | `~2h` `~1d` `~1w` |
+| Estimate | `~total (breakdown)` | `~4h (ai:2h test:1h read:30m)` |
+| Logged | `logged:YYYY-MM-DD` | Auto-added when created |
 | Due date | `YYYY-MM-DD` | `2025-01-20` |
+
+**Time breakdown** (optional but recommended):
+- `ai:` - AI implementation time
+- `test:` - Human testing time
+- `read:` - Time to review AI output
 
 ### Examples
 
 ```markdown
-- [ ] Fix login timeout bug #auth ~2h
-- [ ] Add export to CSV feature @marcus #feature ~4h
-- [ ] Update dependencies #chore ~1h 2025-01-20
-- [ ] Research Ahrefs API for MCP integration #seo ~3h
+- [ ] Fix login timeout bug #auth ~2h (ai:1.5h test:30m) logged:2025-01-15
+- [ ] Add export to CSV feature @marcus #feature ~4h (ai:2h test:1.5h read:30m) logged:2025-01-15
+- [ ] Update dependencies #chore ~1h (ai:45m test:15m) logged:2025-01-15
+- [ ] Research Ahrefs API for MCP integration #seo ~3h (ai:2h read:1h) logged:2025-01-15
 ```
 
 ## Starting Work from TODO.md
@@ -117,14 +123,32 @@ Create branch and proceed with implementation.
 
 ## Completing Tasks
 
+### Record Time at Commit
+
+At commit, prompt for actual time:
+
+```text
+Committing: "Add export to CSV feature"
+
+Session duration: 3h 15m
+Estimated: ~4h (ai:2h test:1.5h read:30m)
+
+1. Accept session duration (3h 15m)
+2. Enter different actual
+3. Add research time
+4. Skip time tracking
+
+Which option? (1-4)
+```
+
 ### Mark Done
 
-Move to Done section with completion date:
+Move to Done section with actual time and completion date:
 
 ```markdown
 ## Done
 
-- [x] Add export to CSV feature @marcus #feature 2025-01-15
+- [x] Add export to CSV feature @marcus #feature ~4h actual:3h15m logged:2025-01-10 completed:2025-01-15
 ```
 
 ### Update CHANGELOG.md

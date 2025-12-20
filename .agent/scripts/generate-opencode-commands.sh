@@ -367,6 +367,55 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /list-keys command"
 
 # =============================================================================
+# LOG-TIME-SPENT COMMAND
+# =============================================================================
+# Manual time logging for tasks
+
+cat > "$OPENCODE_COMMAND_DIR/log-time-spent.md" << 'EOF'
+---
+description: Log time spent on a task in TODO.md
+agent: Build+
+---
+
+Log time spent on a task.
+
+Arguments: $ARGUMENTS
+
+**Format:** `/log-time-spent [task-id-or-description] [duration]`
+
+**Examples:**
+- `/log-time-spent "Add user dashboard" 2h30m`
+- `/log-time-spent t001 45m`
+- `/log-time-spent` (prompts for task and duration)
+
+**Workflow:**
+1. If no arguments, show in-progress tasks from TODO.md and ask which one
+2. Parse duration (supports: 2h, 30m, 2h30m, 1.5h)
+3. Update the task's `logged:` field with current timestamp
+4. If task has `started:` but no `actual:`, calculate running total
+5. Show updated task with time summary
+
+**Duration formats:**
+- `2h` - 2 hours
+- `30m` - 30 minutes
+- `2h30m` - 2 hours 30 minutes
+- `1.5h` - 1.5 hours (converted to 1h30m)
+
+**Task update:**
+```markdown
+# Before
+- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+
+# After (adds logged: with cumulative time)
+- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z logged:2h30m
+```
+
+When task is completed, the `actual:` field is calculated from all logged time.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /log-time-spent command"
+
+# =============================================================================
 # CONTEXT BUILDER COMMAND
 # =============================================================================
 # Token-efficient context generation
@@ -783,6 +832,7 @@ echo "  Utilities:"
 echo "    /agent-review     - Review and improve agent instructions"
 echo "    /context          - Build AI context"
 echo "    /list-keys        - List API keys with storage locations"
+echo "    /log-time-spent   - Log time spent on a task"
 echo ""
 echo "Planning workflow: /create-prd -> /generate-tasks -> /feature -> implement -> /pr"
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"

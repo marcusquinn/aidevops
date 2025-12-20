@@ -1,6 +1,10 @@
 # Product Requirements Document: {Feature Name}
 
-Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) PRD format.
+Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) PRD format, with time tracking.
+
+<!--TOON:prd{id,feature,author,status,est,est_ai,est_test,est_read,logged}:
+prd-{slug},{Feature Name},{Author},draft,{est},{est_ai},{est_test},{est_read},{YYYY-MM-DDTHH:MMZ}
+-->
 
 ## Overview
 
@@ -8,6 +12,7 @@ Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) PRD format.
 **Author:** {Author}
 **Date:** {YYYY-MM-DD}
 **Status:** Draft | Review | Approved
+**Estimate:** ~{total} (ai:{ai_time} test:{test_time} read:{read_time})
 
 ### Problem Statement
 
@@ -77,6 +82,21 @@ As a {user type}, I want to {action} so that {benefit}.
 
 - {Security requirement 1}
 - {Security requirement 2}
+
+## Time Estimate Breakdown
+
+| Phase | AI Time | Test Time | Read Time | Total |
+|-------|---------|-----------|-----------|-------|
+| Research | {Xh} | - | {Xh} | {Xh} |
+| Implementation | {Xh} | {Xh} | {Xm} | {Xh} |
+| Documentation | {Xm} | {Xm} | {Xm} | {Xh} |
+| **Total** | **{Xh}** | **{Xh}** | **{Xh}** | **{Xh}** |
+
+<!--TOON:time_breakdown[3]{phase,ai,test,read,total}:
+research,{Xh},,{Xh},{Xh}
+implementation,{Xh},{Xh},{Xm},{Xh}
+documentation,{Xm},{Xm},{Xm},{Xh}
+-->
 
 ## Success Metrics
 

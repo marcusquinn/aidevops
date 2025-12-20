@@ -430,6 +430,231 @@ cmd_uninstall() {
     echo "  bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)"
 }
 
+# Init command - initialize aidevops in a project
+cmd_init() {
+    local features="${1:-all}"
+    
+    print_header "Initialize AI DevOps in Project"
+    echo ""
+    
+    # Check if we're in a git repo
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        print_error "Not in a git repository"
+        print_info "Run 'git init' first or navigate to a git repository"
+        return 1
+    fi
+    
+    local project_root
+    project_root=$(git rev-parse --show-toplevel)
+    print_info "Project root: $project_root"
+    echo ""
+    
+    # Parse features
+    local enable_planning=false
+    local enable_git_workflow=false
+    local enable_code_quality=false
+    local enable_time_tracking=false
+    
+    case "$features" in
+        all)
+            enable_planning=true
+            enable_git_workflow=true
+            enable_code_quality=true
+            enable_time_tracking=true
+            ;;
+        planning)
+            enable_planning=true
+            ;;
+        git-workflow)
+            enable_git_workflow=true
+            ;;
+        code-quality)
+            enable_code_quality=true
+            ;;
+        time-tracking)
+            enable_time_tracking=true
+            enable_planning=true  # time-tracking requires planning
+            ;;
+        *)
+            # Comma-separated list
+            IFS=',' read -ra FEATURE_LIST <<< "$features"
+            for feature in "${FEATURE_LIST[@]}"; do
+                case "$feature" in
+                    planning) enable_planning=true ;;
+                    git-workflow) enable_git_workflow=true ;;
+                    code-quality) enable_code_quality=true ;;
+                    time-tracking) 
+                        enable_time_tracking=true
+                        enable_planning=true
+                        ;;
+                esac
+            done
+            ;;
+    esac
+    
+    # Create .aidevops.json config
+    local config_file="$project_root/.aidevops.json"
+    local aidevops_version
+    aidevops_version=$(get_version)
+    
+    print_info "Creating .aidevops.json..."
+    cat > "$config_file" << EOF
+{
+  "version": "$aidevops_version",
+  "initialized": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "features": {
+    "planning": $enable_planning,
+    "git_workflow": $enable_git_workflow,
+    "code_quality": $enable_code_quality,
+    "time_tracking": $enable_time_tracking
+  },
+  "time_tracking": {
+    "enabled": $enable_time_tracking,
+    "prompt_on_commit": true,
+    "auto_record_branch_start": true
+  }
+}
+EOF
+    print_success "Created .aidevops.json"
+    
+    # Create .agent symlink
+    if [[ ! -e "$project_root/.agent" ]]; then
+        print_info "Creating .agent symlink..."
+        ln -s "$AGENTS_DIR" "$project_root/.agent"
+        print_success "Created .agent -> $AGENTS_DIR"
+    else
+        print_warning ".agent already exists, skipping symlink"
+    fi
+    
+    # Create planning files if enabled
+    if [[ "$enable_planning" == "true" ]]; then
+        print_info "Setting up planning files..."
+        
+        # Create TODO.md from template
+        if [[ ! -f "$project_root/TODO.md" ]]; then
+            if [[ -f "$AGENTS_DIR/templates/todo-template.md" ]]; then
+                cp "$AGENTS_DIR/templates/todo-template.md" "$project_root/TODO.md"
+                print_success "Created TODO.md"
+            else
+                # Fallback minimal template
+                cat > "$project_root/TODO.md" << 'EOF'
+# TODO
+
+## In Progress
+
+<!-- Tasks currently being worked on -->
+
+## Backlog
+
+<!-- Prioritized list of upcoming tasks -->
+
+---
+
+*Format: `- [ ] Task description @owner #tag ~estimate`*
+*Time tracking: `started:`, `completed:`, `actual:`*
+EOF
+                print_success "Created TODO.md (minimal template)"
+            fi
+        else
+            print_warning "TODO.md already exists, skipping"
+        fi
+        
+        # Create todo/ directory and PLANS.md
+        mkdir -p "$project_root/todo/tasks"
+        
+        if [[ ! -f "$project_root/todo/PLANS.md" ]]; then
+            if [[ -f "$AGENTS_DIR/templates/plans-template.md" ]]; then
+                cp "$AGENTS_DIR/templates/plans-template.md" "$project_root/todo/PLANS.md"
+                print_success "Created todo/PLANS.md"
+            else
+                # Fallback minimal template
+                cat > "$project_root/todo/PLANS.md" << 'EOF'
+# Execution Plans
+
+Complex, multi-session work that requires detailed planning.
+
+## Active Plans
+
+<!-- Plans currently in progress -->
+
+## Completed Plans
+
+<!-- Archived completed plans -->
+
+---
+
+*See `.agent/workflows/plans.md` for planning workflow*
+EOF
+                print_success "Created todo/PLANS.md (minimal template)"
+            fi
+        else
+            print_warning "todo/PLANS.md already exists, skipping"
+        fi
+        
+        # Create .gitkeep in tasks
+        touch "$project_root/todo/tasks/.gitkeep"
+    fi
+    
+    # Add to .gitignore if needed
+    local gitignore="$project_root/.gitignore"
+    if [[ -f "$gitignore" ]]; then
+        if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+            echo "" >> "$gitignore"
+            echo "# aidevops" >> "$gitignore"
+            echo ".agent" >> "$gitignore"
+            print_success "Added .agent to .gitignore"
+        fi
+    fi
+    
+    echo ""
+    print_success "AI DevOps initialized!"
+    echo ""
+    echo "Enabled features:"
+    [[ "$enable_planning" == "true" ]] && echo "  ✓ Planning (TODO.md, PLANS.md)"
+    [[ "$enable_git_workflow" == "true" ]] && echo "  ✓ Git workflow (branch management)"
+    [[ "$enable_code_quality" == "true" ]] && echo "  ✓ Code quality (linting, auditing)"
+    [[ "$enable_time_tracking" == "true" ]] && echo "  ✓ Time tracking (estimates, actuals)"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Add tasks to TODO.md"
+    echo "  2. Use /create-prd for complex features"
+    echo "  3. Use /feature to start development"
+}
+
+# Features command - list available features
+cmd_features() {
+    print_header "AI DevOps Features"
+    echo ""
+    
+    echo "Available features for 'aidevops init':"
+    echo ""
+    echo "  planning       TODO.md and PLANS.md task management"
+    echo "                 - Quick task tracking in TODO.md"
+    echo "                 - Complex execution plans in todo/PLANS.md"
+    echo "                 - PRD and task file generation"
+    echo ""
+    echo "  git-workflow   Branch management and PR workflows"
+    echo "                 - Automatic branch suggestions"
+    echo "                 - Preflight quality checks"
+    echo "                 - PR creation and review"
+    echo ""
+    echo "  code-quality   Linting and code auditing"
+    echo "                 - ShellCheck, secretlint, pattern checks"
+    echo "                 - Remote auditing (CodeRabbit, Codacy, SonarCloud)"
+    echo "                 - Code standards compliance"
+    echo ""
+    echo "  time-tracking  Time estimation and tracking"
+    echo "                 - Estimate format: ~4h (ai:2h test:1h)"
+    echo "                 - Automatic started:/completed: timestamps"
+    echo "                 - Release time summaries"
+    echo ""
+    echo "Usage:"
+    echo "  aidevops init                    # Enable all features"
+    echo "  aidevops init planning           # Enable only planning"
+    echo "  aidevops init planning,git-workflow  # Enable multiple"
+    echo ""
+}
+
 # Help command
 cmd_help() {
     local version
@@ -440,16 +665,21 @@ cmd_help() {
     echo "Usage: aidevops <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  status      Check installation status of all components"
-    echo "  update      Update to the latest version (alias: upgrade)"
-    echo "  uninstall   Remove aidevops from your system"
-    echo "  version     Show version information"
-    echo "  help        Show this help message"
+    echo "  init [features]  Initialize aidevops in current project"
+    echo "  features         List available features for init"
+    echo "  status           Check installation status of all components"
+    echo "  update           Update to the latest version (alias: upgrade)"
+    echo "  uninstall        Remove aidevops from your system"
+    echo "  version          Show version information"
+    echo "  help             Show this help message"
     echo ""
     echo "Examples:"
-    echo "  aidevops status      # Check what's installed"
-    echo "  aidevops update      # Update to latest version"
-    echo "  aidevops uninstall   # Remove aidevops"
+    echo "  aidevops init                # Initialize with all features"
+    echo "  aidevops init planning       # Initialize with planning only"
+    echo "  aidevops features            # List available features"
+    echo "  aidevops status              # Check what's installed"
+    echo "  aidevops update              # Update to latest version"
+    echo "  aidevops uninstall           # Remove aidevops"
     echo ""
     echo "Quick install:"
     echo "  bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)"
@@ -476,6 +706,13 @@ main() {
     local command="${1:-help}"
     
     case "$command" in
+        init|i)
+            shift
+            cmd_init "$@"
+            ;;
+        features|f)
+            cmd_features
+            ;;
         status|s)
             cmd_status
             ;;

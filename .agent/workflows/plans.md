@@ -86,8 +86,15 @@ Add a single-line task to `TODO.md`:
 **Format elements** (all optional except description):
 - `@owner` - Who should work on this
 - `#tag` - Category (seo, security, browser, etc.)
-- `~estimate` - Time estimate (1h, 2d, 1w)
+- `~estimate` - Time estimate with breakdown: `~4h (ai:2h test:1h read:30m)`
+- `logged:YYYY-MM-DD` - Auto-added when task created
 - `YYYY-MM-DD` - Due date or target date
+
+**Time breakdown components:**
+- `ai:` - AI implementation time
+- `test:` - Human testing/verification time
+- `read:` - Time to read/review AI output
+- `research:` - Additional research time (added at completion)
 
 Inform user: "Added to TODO.md. Start anytime with: 'Let's work on {task}'"
 
@@ -150,20 +157,33 @@ Create PRD in `todo/tasks/prd-{slug}.md` using template from `templates/prd-temp
 
 ### Step 3: Generate Tasks (if needed)
 
-**Phase 1: Parent Tasks**
+**Phase 1: Parent Tasks with Time Estimates**
 
-Generate high-level tasks and present to user:
+Generate high-level tasks with AI-estimated times:
 
 ```text
-I've generated the high-level tasks:
+I've generated the high-level tasks with time estimates:
 
-- [ ] 0.0 Create feature branch
-- [ ] 1.0 {First major task}
-- [ ] 2.0 {Second major task}
-- [ ] 3.0 {Third major task}
+- [ ] 0.0 Create feature branch ~5m (ai:5m)
+- [ ] 1.0 {First major task} ~2h (ai:1.5h test:30m)
+- [ ] 2.0 {Second major task} ~3h (ai:2h test:1h)
+- [ ] 3.0 {Third major task} ~1h (ai:45m test:15m)
+
+**Total estimate:** ~6h 5m (ai:4h 20m test:1h 45m)
 
 Ready to generate sub-tasks? Reply "Go" to proceed.
 ```
+
+**Time Estimation Heuristics:**
+
+| Task Type | AI Time | Test Time | Read Time |
+|-----------|---------|-----------|-----------|
+| Simple fix | 15-30m | 10-15m | 5m |
+| New function | 30m-1h | 15-30m | 10m |
+| New component | 1-2h | 30m-1h | 15m |
+| New feature | 2-4h | 1-2h | 30m |
+| Architecture change | 4-8h | 2-4h | 1h |
+| Research/spike | 1-2h | - | 30m |
 
 **Phase 2: Sub-Tasks**
 
@@ -308,9 +328,27 @@ Update `todo/tasks/tasks-{slug}.md` as work completes:
 
 Ensure all tasks in `todo/tasks/tasks-{slug}.md` are checked.
 
-### 2. Update PLANS.md Status
+### 2. Record Time at Commit
 
-Change status and add outcomes:
+At commit time, prompt for time tracking:
+
+```text
+Committing changes for: "{task/plan name}"
+
+Session duration: 2h 12m (since branch creation)
+Estimated: ~4h (ai:2h test:1.5h read:30m)
+
+1. Accept session duration as actual (2h 12m)
+2. Enter different actual time
+3. Add research time spent before this session
+4. Skip time tracking
+
+Which option? (1-4)
+```
+
+### 3. Update PLANS.md Status
+
+Change status and add outcomes with time summary:
 
 ```markdown
 **Status:** Completed
@@ -327,7 +365,11 @@ Change status and add outcomes:
 **What could improve:**
 - {Learning 1}
 
-**Time spent:** {actual} vs {estimated}
+**Time Summary:**
+- Estimated: 4h (ai:2h test:1.5h read:30m)
+- Actual: 3h 15m (ai:1h 45m test:1h read:30m research:0m)
+- Variance: -19%
+- Lead time: 3 days (logged to completed)
 ```
 
 ### 3. Move to Completed Section
@@ -348,15 +390,35 @@ If there was a corresponding TODO.md entry, mark it done:
 
 Add entry following `workflows/changelog.md` format.
 
+## Time Tracking Configuration
+
+Time tracking can be configured per-repo in `.aidevops.json`:
+
+```json
+{
+  "time_tracking": "prompt",  // "true" | "false" | "prompt"
+  "features": ["planning", "time-tracking"]
+}
+```
+
+| Setting | Behavior |
+|---------|----------|
+| `true` | Always prompt for time at commit |
+| `false` | Never prompt (disable time tracking) |
+| `prompt` | Ask once per session, remember preference |
+
+Use `/log-time-spent` command to manually log time anytime.
+
 ## Integration with Other Workflows
 
 | Workflow | Integration |
 |----------|-------------|
-| `git-workflow.md` | Branch names derived from tasks/plans |
-| `branch.md` | Task 0.0 always creates feature branch |
+| `git-workflow.md` | Branch names derived from tasks/plans, records `started:` |
+| `branch.md` | Task 0.0 creates branch, records start time |
 | `feature-development.md` | Auto-suggests `@plans` for complex work |
 | `preflight.md` | Run before marking plan complete |
 | `changelog.md` | Update on plan completion |
+| `release.md` | Time summary for all tasks in release |
 
 ## Related Subagents
 
@@ -367,5 +429,21 @@ Add entry following `workflows/changelog.md` format.
 
 ## Templates
 
-- `templates/prd-template.md` - PRD structure
-- `templates/tasks-template.md` - Task list structure
+- `templates/prd-template.md` - PRD structure with time estimates
+- `templates/tasks-template.md` - Task list with time tracking
+- `templates/todo-template.md` - TODO.md for new repos (via `aidevops init`)
+- `templates/plans-template.md` - PLANS.md for new repos (via `aidevops init`)
+
+## TOON Integration
+
+All planning files include TOON blocks in HTML comments for machine parsing:
+
+```html
+<!--TOON:tasks[3]{id,desc,est,actual,status}:
+t001,Create feature branch,5m,5m,done
+t002,Implement core logic,2h,1h45m,done
+t003,Write tests,1h,,pending
+-->
+```
+
+Extract with: `grep -oP '<!--TOON:\K[^>]+(?=-->)' TODO.md`

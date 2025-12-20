@@ -38,7 +38,9 @@ tools:
 
 ```bash
 git checkout main && git pull origin main && git checkout -b {type}/{description}
-```text
+```
+
+**Time tracking**: Record `started:` timestamp in TODO.md when branch is created.
 
 **Lifecycle**: Create → Develop → Preflight → Version → Push → PR → Review → Merge → Release → Postflight → Cleanup
 
@@ -123,7 +125,17 @@ Start from updated `main`. Reference domain agents for implementation guidance.
 ```bash
 git checkout main && git pull origin main
 git checkout -b {type}/{description}
-```text
+```
+
+**Time tracking**: After creating the branch, update the corresponding task in TODO.md with `started:` timestamp:
+
+```markdown
+# Before
+- [ ] Add user dashboard #feature ~4h
+
+# After
+- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+```
 
 **Agents**: Domain agents (`wordpress.md`, `seo.md`, etc.) for implementation patterns
 

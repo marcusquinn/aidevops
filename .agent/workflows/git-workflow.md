@@ -47,6 +47,40 @@ git status --short
 
 <!-- AI-CONTEXT-END -->
 
+## Time Tracking Integration
+
+When creating branches, record the `started:` timestamp in TODO.md or PLANS.md:
+
+### Recording Start Time
+
+After creating a branch, update the corresponding task in TODO.md:
+
+```bash
+# Find the task and add started: timestamp
+# Before: - [ ] Add Ahrefs MCP server #seo ~4h
+# After:  - [ ] Add Ahrefs MCP server #seo ~4h started:2025-01-15T10:30Z
+```
+
+For PLANS.md entries, update the plan's status section:
+
+```markdown
+### [2025-01-15] User Authentication Overhaul
+**Status:** In Progress
+**Started:** 2025-01-15T10:30Z
+**Branch:** feature/user-auth-overhaul
+```
+
+### Time Tracking Workflow
+
+| Event | Action | Field Updated |
+|-------|--------|---------------|
+| Branch created | Record start time | `started:` |
+| Work session ends | Log time spent | `logged:` (cumulative) |
+| PR merged | Record completion | `completed:` |
+| Release published | Calculate actual | `actual:` |
+
+See `workflows/plans.md` for full time tracking format.
+
 ## Branch Naming from TODO.md and PLANS.md
 
 When creating branches, derive names from planning files when available:

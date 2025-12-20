@@ -278,6 +278,32 @@ jobs:
 
 ## Post-Release Tasks
 
+### Time Summary
+
+After release, update TODO.md and PLANS.md with actual time spent:
+
+```markdown
+# Update completed tasks with actual: field
+# Before: - [x] Add user dashboard #feature ~4h started:2025-01-15T10:30Z completed:2025-01-16T14:00Z
+# After:  - [x] Add user dashboard #feature ~4h actual:5h30m started:2025-01-15T10:30Z completed:2025-01-16T14:00Z
+```
+
+**Time summary report** (generated at release):
+
+```markdown
+## Release v1.2.0 Time Summary
+
+| Task | Estimated | Actual | Variance |
+|------|-----------|--------|----------|
+| Add user dashboard | 4h | 5h30m | +1h30m |
+| Fix login timeout | 2h | 1h45m | -15m |
+| **Total** | **6h** | **7h15m** | **+1h15m** |
+
+Estimation accuracy: 83%
+```
+
+The release script can optionally generate this summary from TODO.md TOON blocks.
+
 ### Postflight Verification
 
 After release publication, run postflight checks to verify release health:

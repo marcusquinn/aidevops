@@ -52,7 +52,24 @@
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/create-prd`, `/generate-tasks`, `/plan-status`
+**Slash commands:** `/create-prd`, `/generate-tasks`, `/plan-status`, `/log-time-spent`
+
+**Time tracking format:**
+
+```markdown
+- [ ] Task description @owner #tag ~4h (ai:2h test:1h) started:2025-01-15T10:30Z
+```
+
+| Field | Purpose | Example |
+|-------|---------|---------|
+| `~estimate` | Total time estimate | `~4h`, `~30m`, `~2h30m` |
+| `(breakdown)` | AI/test/read time | `(ai:2h test:1h read:30m)` |
+| `started:` | Branch creation time | `started:2025-01-15T10:30Z` |
+| `completed:` | Task completion time | `completed:2025-01-16T14:00Z` |
+| `actual:` | Actual time spent | `actual:5h30m` |
+| `logged:` | Cumulative logged time | `logged:3h` |
+
+**Configure per-repo:** `.aidevops.json` with `"time_tracking": true|false|"prompt"`
 
 **Full workflow:** See `workflows/plans.md` (full) or `workflows/plans-quick.md` (quick)
 
@@ -160,6 +177,25 @@ cd ~/Git/aidevops
 ```
 
 This copies agents to `~/.aidevops/agents/` and configures AI assistants.
+
+**Initialize aidevops in any project:**
+
+```bash
+aidevops init                    # Enable all features
+aidevops init planning           # Enable only planning
+aidevops init planning,git-workflow  # Enable multiple features
+aidevops features                # List available features
+```
+
+**CLI commands:**
+
+| Command | Purpose |
+|---------|---------|
+| `aidevops init [features]` | Initialize aidevops in current project |
+| `aidevops features` | List available features |
+| `aidevops status` | Check installation status |
+| `aidevops update` | Update to latest version |
+| `aidevops uninstall` | Remove aidevops |
 
 For AI-assisted setup guidance, see `aidevops/setup.md`.
 
