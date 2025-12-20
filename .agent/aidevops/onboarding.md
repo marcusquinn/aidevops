@@ -74,8 +74,9 @@ To tailor this onboarding, which of these concepts are you already familiar with
 2. Terminal/command line basics
 3. API keys and authentication
 4. Web hosting and servers
-5. AI assistants and prompting
-6. None of these / I'm new to all of this
+5. SEO (Search Engine Optimization)
+6. AI assistants and prompting
+7. None of these / I'm new to all of this
 
 Reply with numbers (e.g., "1, 2, 5") or "all" if you're comfortable with everything.
 ```
@@ -126,6 +127,28 @@ Hosting is where your website or application lives on the internet.
 - **PaaS**: Platform that handles servers for you (Vercel, Coolify)
 
 aidevops can help manage servers across multiple providers from one conversation.
+```
+
+If they're unfamiliar with **SEO**:
+
+```text
+SEO (Search Engine Optimization) is how you help people find your website through 
+search engines like Google. Key concepts:
+- **Keywords**: Words people type when searching (e.g., "best coffee shops near me")
+- **SERP**: Search Engine Results Page - what Google shows for a search
+- **Ranking**: Your position in search results (higher = more traffic)
+- **Backlinks**: Links from other websites to yours (builds authority)
+- **Search Console**: Google's tool showing how your site performs in search
+
+aidevops has powerful SEO capabilities:
+- Research keywords with volume, difficulty, and competition data
+- Analyze SERPs to find ranking opportunities
+- Track your site's performance in Google Search Console
+- Discover what keywords competitors rank for
+- Automate SEO audits and reporting
+
+Even if you're not an SEO expert, I can help you understand and improve your 
+site's search visibility through natural conversation.
 ```
 
 If they're unfamiliar with **AI assistants**:
@@ -286,18 +309,62 @@ chmod 600 ~/.config/coderabbit/api_key
 
 ### SEO & Research
 
+aidevops provides comprehensive SEO capabilities through multiple integrated services:
+
 | Service | Env Var(s) | Setup Link | Purpose |
 |---------|------------|------------|---------|
-| DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access | SERP, keywords, backlinks |
-| Serper | `SERPER_API_KEY` | https://serper.dev/api-key | Google Search API |
-| Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard | Business data extraction |
-| Google Search Console | OAuth via MCP | https://search.google.com/search-console | Search performance |
+| DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access | SERP, keywords, backlinks, on-page analysis |
+| Serper | `SERPER_API_KEY` | https://serper.dev/api-key | Google Search API (web, images, news) |
+| Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard | Business data, Google Maps extraction |
+| Google Search Console | OAuth via MCP | https://search.google.com/search-console | Your site's search performance |
 
-**DataForSEO setup**:
+**What you can do with SEO tools:**
+
+- **Keyword Research**: Find keywords with volume, CPC, difficulty, and search intent
+- **SERP Analysis**: Analyze top 10 results for any keyword, find weaknesses to exploit
+- **Competitor Research**: See what keywords competitors rank for
+- **Keyword Gap Analysis**: Find keywords they have that you don't
+- **Autocomplete Mining**: Discover long-tail keywords from Google suggestions
+- **Site Auditing**: Crawl sites for SEO issues (broken links, missing meta, etc.)
+- **Rank Tracking**: Monitor your positions in search results
+- **Backlink Analysis**: Research link profiles and find opportunities
+
+**DataForSEO setup** (recommended - most comprehensive):
 
 ```bash
 ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME "your-email"
 ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD "your-password"
+```
+
+**Serper setup** (simpler, good for basic searches):
+
+```bash
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY "your-key"
+```
+
+**SEO Commands available:**
+
+| Command | Purpose |
+|---------|---------|
+| `/keyword-research` | Expand seed keywords with volume, CPC, difficulty |
+| `/autocomplete-research` | Mine Google autocomplete for long-tail keywords |
+| `/keyword-research-extended` | Full SERP analysis with 17 weakness indicators |
+| `/webmaster-keywords` | Get keywords from your Google Search Console |
+
+**Example workflow:**
+
+```text
+# Switch to SEO agent
+Tab → SEO
+
+# Research keywords
+/keyword-research "best project management tools"
+
+# Deep dive on promising keywords
+/keyword-research-extended "project management software for small teams"
+
+# Check your own site's performance
+/webmaster-keywords https://yoursite.com
 ```
 
 ### Context & Semantic Search
