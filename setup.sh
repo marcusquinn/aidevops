@@ -935,23 +935,7 @@ verify_location() {
     return 0
 }
 
-# Configure AI CLI tools to read AGENTS.md automatically
-configure_ai_clis() {
-    print_info "Configuring AI CLI tools to read AGENTS.md automatically..."
 
-    local ai_config_script=".agent/scripts/ai-cli-config.sh"
-
-    if [[ -f "$ai_config_script" ]]; then
-        if bash "$ai_config_script"; then
-            print_success "AI CLI tools configured successfully"
-        else
-            print_warning "AI CLI configuration encountered some issues (non-critical)"
-        fi
-    else
-        print_warning "AI CLI configuration script not found at $ai_config_script"
-    fi
-    return 0
-}
 
 # Setup Python environment for DSPy
 setup_python_env() {
@@ -1074,12 +1058,11 @@ setup_augment_context_engine() {
 
     print_success "Auggie CLI found and authenticated"
 
-    # The actual MCP configuration is handled by ai-cli-config.sh
-    # which is called via configure_ai_clis
-    # This function just validates prerequisites
+    # MCP configuration is handled by generate-opencode-agents.sh for OpenCode
+    # Other tools (Cursor, Claude Code, etc.) discover skills via SKILL.md files
 
-    print_info "Augment Context Engine will be configured by ai-cli-config.sh"
-    print_info "Supported tools: OpenCode, Cursor, Gemini CLI, Claude Code, Droid"
+    print_info "Augment Context Engine available for tools supporting Agent Skills"
+    print_info "Supported tools: OpenCode, Cursor, Claude Code, VS Code, GitHub Copilot"
     print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
 }
 
@@ -1512,7 +1495,6 @@ main() {
     generate_agent_skills
     inject_agents_reference
     update_opencode_config
-    configure_ai_clis
     setup_python_env
     setup_nodejs_env
     setup_augment_context_engine
@@ -1552,35 +1534,17 @@ echo "  aidevops uninstall  - Remove aidevops"
     echo "• Accounting, AI-DevOps, Content, Health, Legal, Marketing,"
     echo "  Research, Sales, SEO, WordPress"
     echo ""
-    echo "AI CLI Tools (configured to read AGENTS.md automatically):"
-    echo "• aider-guided    - Aider with AGENTS.md context"
-    echo "• claude-guided   - Claude CLI with AGENTS.md context"
-    echo "• qwen-guided     - Qwen CLI with AGENTS.md context"
-    echo "• windsurf-guided - Windsurf IDE with AGENTS.md context"
-    echo "• ai-with-context - Universal wrapper for any AI tool"
-    echo "• agents          - View repository AGENTS.md"
-    echo "• cdai            - Navigate to AI framework"
+    echo "Agent Skills (SKILL.md) - Cross-tool compatibility:"
+    echo "• Cursor, Claude Code, VS Code, GitHub Copilot auto-discover skills"
+    echo "• 21 SKILL.md files generated in ~/.aidevops/agents/"
+    echo "• Skills include: wordpress, seo, aidevops, build-mcp, and more"
     echo ""
-    echo "MCP Integrations:"
+    echo "MCP Integrations (OpenCode):"
     echo "• Augment Context Engine - Cloud semantic codebase retrieval"
     echo "• Context7               - Real-time library documentation"
-    echo "• Repomix                - Token-efficient codebase packing"
+    echo "• osgrep                 - Local semantic search (100% private)"
     echo "• DataForSEO             - Comprehensive SEO data APIs"
     echo "• Serper                 - Google Search API"
-    echo ""
-    echo "CLI Tools (use via bash):"
-    echo "• osgrep                 - Local semantic search (100% private)"
-    echo "                           Usage: osgrep \"search query\""
-    echo ""
-    echo "AI Memory Files (created for comprehensive tool support):"
-    echo "• ~/CLAUDE.md     - Claude CLI memory file"
-    echo "• ~/GEMINI.md     - Gemini CLI memory file"
-    echo "• ~/.qwen/QWEN.md - Qwen CLI memory file"
-    echo "• ~/WINDSURF.md   - Windsurf IDE memory file"
-    echo "• ~/.cursorrules  - Cursor AI rules file"
-    echo "• ~/.github/copilot-instructions.md - GitHub Copilot instructions"
-    echo "• ~/.factory/DROID.md   - Factory.ai Droid memory file"
-    echo "• ~/.codeium/windsurf/memories/global_rules.md - Windsurf global rules"
     echo ""
     echo "DSPy & DSPyGround Integration:"
     echo "• ./.agent/scripts/dspy-helper.sh        - DSPy prompt optimization toolkit"
