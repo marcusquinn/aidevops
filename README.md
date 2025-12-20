@@ -97,8 +97,29 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 ```bash
 aidevops status     # Check what's installed
 aidevops update     # Update to latest version
+aidevops init       # Initialize aidevops in any project
+aidevops features   # List available features
 aidevops uninstall  # Remove aidevops
 ```
+
+### **Use aidevops in Any Project**
+
+Initialize aidevops features in any git repository:
+
+```bash
+cd ~/your-project
+aidevops init                         # Enable all features
+aidevops init planning                # Enable only planning
+aidevops init planning,time-tracking  # Enable specific features
+```
+
+This creates:
+- `.aidevops.json` - Configuration with enabled features
+- `.agent` symlink → `~/.aidevops/agents/`
+- `TODO.md` - Quick task tracking with time estimates
+- `todo/PLANS.md` - Complex execution plans
+
+**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`
 
 **Your AI assistant now has agentic access to 30+ service integrations.**
 
@@ -679,8 +700,11 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/create-prd` | Create a Product Requirements Document for complex features |
 | `/generate-tasks` | Generate implementation tasks from a PRD |
 | `/plan-status` | Check status of plans in `TODO.md` and `todo/PLANS.md` |
+| `/log-time-spent` | Log time spent on a task for tracking |
 
 Plans are tracked in `TODO.md` (quick tasks) and `todo/PLANS.md` (complex execution plans with PRDs).
+
+**Time Tracking**: Tasks support time estimates and actuals with the format `~4h (ai:2h test:1h) started:2025-01-15T10:30Z`. Configure per-repo via `.aidevops.json`.
 
 **Development Workflow** (typical order):
 
