@@ -1,10 +1,13 @@
 # AI DevOps Framework - User Guide
 
+**New to aidevops?** Type `/onboarding` to get started with an interactive setup wizard.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: DevOps automation across multiple services
+- **Getting Started**: `/onboarding` - Interactive setup wizard for new users
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
 - **Configs**: `configs/[service]-config.json` (gitignored, use `.json.txt` templates)
 - **Credentials**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
@@ -140,7 +143,7 @@ opencode mcp list
 
 | Folder | Contents |
 |--------|----------|
-| `aidevops/` | Framework meta-agents (add-new-mcp, setup, troubleshooting, architecture, security) |
+| `aidevops/` | Framework meta-agents (onboarding, add-new-mcp, setup, troubleshooting, architecture, security) |
 | `build-agent/` | Agent design subagents (agent-review) |
 | `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |

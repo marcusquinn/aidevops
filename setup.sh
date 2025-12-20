@@ -1574,6 +1574,30 @@ echo "  aidevops uninstall  - Remove aidevops"
     echo "- Regularly rotate API tokens and SSH keys"
     echo ""
     echo "Happy server managing! 🚀"
+    echo ""
+    
+    # Offer to launch onboarding for new users (only if not running inside OpenCode)
+    if [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "🎯 Ready to configure your services?"
+        echo ""
+        echo "Launch OpenCode with the onboarding wizard to:"
+        echo "  • See which services are already configured"
+        echo "  • Get personalized recommendations based on your work"
+        echo "  • Set up API keys and credentials interactively"
+        echo ""
+        read -r -p "Launch OpenCode with /onboarding now? (y/n): " launch_onboarding
+        if [[ "$launch_onboarding" == "y" || "$launch_onboarding" == "Y" ]]; then
+            echo ""
+            echo "Starting OpenCode..."
+            opencode --prompt "/onboarding"
+        else
+            echo ""
+            echo "You can run /onboarding anytime in OpenCode to configure services."
+        fi
+    fi
+    
     return 0
 }
 
