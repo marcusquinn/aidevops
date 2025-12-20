@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - change onboarding.md mode from 'agent' to 'subagent'
+
 ## [2.35.2] - 2025-12-20
 
 ### Added
