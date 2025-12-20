@@ -695,6 +695,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 ### **Setup for Other AI Assistants**
 
 **Claude Code** (recommended):
+
 ```bash
 /plugin marketplace add marcusquinn/aidevops
 /plugin install aidevops-all@aidevops
