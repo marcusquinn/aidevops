@@ -396,11 +396,147 @@ chmod 600 ~/.config/aidevops/mcp-env.sh
 chmod 700 ~/.config/aidevops
 ```
 
+## Workflow Features
+
+aidevops isn't just about API integrations - it provides powerful workflow enhancements for any project.
+
+### Enable Features in Any Project
+
+```bash
+cd ~/your-project
+aidevops init                         # Enable all features
+aidevops init planning                # Enable only planning
+aidevops init planning,git-workflow   # Enable specific features
+aidevops features                     # List available features
+```
+
+**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`
+
+This creates:
+
+- `.aidevops.json` - Configuration with enabled features
+- `.agent` symlink → `~/.aidevops/agents/`
+- `TODO.md` - Quick task tracking
+- `todo/PLANS.md` - Complex execution plans
+
+### Slash Commands
+
+Once aidevops is configured, these commands are available in OpenCode:
+
+**Planning & Tasks:**
+
+| Command | Purpose |
+|---------|---------|
+| `/create-prd` | Create Product Requirements Document for complex features |
+| `/generate-tasks` | Generate implementation tasks from a PRD |
+| `/plan-status` | Check status of plans and TODO.md |
+| `/log-time-spent` | Log time spent on a task |
+
+**Development Workflow:**
+
+| Command | Purpose |
+|---------|---------|
+| `/feature` | Create and develop a feature branch |
+| `/bugfix` | Create and resolve a bugfix branch |
+| `/hotfix` | Urgent hotfix for critical issues |
+| `/context` | Build AI context for complex tasks |
+
+**Quality & Release:**
+
+| Command | Purpose |
+|---------|---------|
+| `/linters-local` | Run local linting (ShellCheck, secretlint) |
+| `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
+| `/pr` | Unified PR workflow (orchestrates all checks) |
+| `/preflight` | Quality checks before release |
+| `/release` | Full release workflow (bump, tag, GitHub release) |
+| `/changelog` | Update CHANGELOG.md |
+
+**SEO (if configured):**
+
+| Command | Purpose |
+|---------|---------|
+| `/keyword-research` | Seed keyword expansion |
+| `/keyword-research-extended` | Full SERP analysis with weakness detection |
+
+### Time Tracking
+
+Tasks support time estimates and actuals:
+
+```markdown
+- [ ] Add user dashboard @marcus #feature ~4h (ai:2h test:1h) started:2025-01-15T10:30Z
+```
+
+| Field | Purpose | Example |
+|-------|---------|---------|
+| `~estimate` | Total time estimate | `~4h`, `~30m` |
+| `(breakdown)` | AI/test/read time | `(ai:2h test:1h)` |
+| `started:` | When work began | ISO timestamp |
+| `actual:` | Actual time spent | `actual:5h30m` |
+
+## Hands-On Playground
+
+The best way to learn aidevops is by doing. Let's create a playground project to experiment with.
+
+### Step 1: Create Playground Repository
+
+```bash
+mkdir -p ~/Git/aidevops-playground
+cd ~/Git/aidevops-playground
+git init
+aidevops init
+```
+
+### Step 2: Explore What's Possible
+
+Based on your interests (from earlier in onboarding), here are some ideas:
+
+**For Web Developers:**
+- "Create a simple landing page with a contact form"
+- "Build a REST API with authentication"
+- "Set up a React component library"
+
+**For DevOps Engineers:**
+- "Create a deployment script for my servers"
+- "Build a monitoring dashboard"
+- "Automate SSL certificate renewal"
+
+**For SEO Professionals:**
+- "Build a keyword tracking spreadsheet"
+- "Create a site audit report generator"
+- "Automate competitor analysis"
+
+**For WordPress Developers:**
+- "Create a custom plugin skeleton"
+- "Build a theme starter template"
+- "Automate plugin updates across sites"
+
+### Step 3: Try the Full Workflow
+
+Pick a simple idea and experience the complete workflow:
+
+1. **Plan it**: `/create-prd my-first-feature`
+2. **Generate tasks**: `/generate-tasks`
+3. **Start development**: `/feature my-first-feature`
+4. **Build it**: Work with the AI to implement
+5. **Quality check**: `/linters-local` then `/pr`
+6. **Release it**: `/release patch`
+
+### Step 4: Personalized Project Ideas
+
+If you're not sure what to build, tell me:
+- What problems do you face regularly?
+- What repetitive tasks do you wish were automated?
+- What tools do you wish existed?
+
+I'll suggest a small project tailored to your needs that we can build together in the playground.
+
 ## Next Steps After Setup
 
 Once services are configured:
 
-1. **Test with a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
-2. **Explore agents**: Type `@` to see available agents
-3. **Try workflows**: `/feature`, `/bugfix`, `/release`
-4. **Read the docs**: `@aidevops` for framework guidance
+1. **Create your playground**: `mkdir ~/Git/aidevops-playground && cd ~/Git/aidevops-playground && git init && aidevops init`
+2. **Test a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
+3. **Explore agents**: Type `@` to see available agents
+4. **Try a workflow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
+5. **Read the docs**: `@aidevops` for framework guidance
