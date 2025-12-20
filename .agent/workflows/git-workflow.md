@@ -542,16 +542,31 @@ Proceeding with changes on main..."
 
 **Never block** the user - these are guidelines, not restrictions.
 
-## SQL Migrations
+## Database Schema Changes
 
 When changes include database schema modifications:
 
 ### Detection
 
 Look for:
+- Files in `schemas/` (declarative schema files)
 - Files in `migrations/`, `database/migrations/`, or similar
 - SQL files with schema changes (`CREATE TABLE`, `ALTER TABLE`, etc.)
-- ORM migration files (Prisma, Laravel, Rails, etc.)
+- ORM schema files (Drizzle `.ts`, Prisma `.prisma`, etc.)
+
+### Declarative Schema Workflow (Recommended)
+
+When `schemas/` directory exists (created by `aidevops init database`):
+
+1. **Edit schema files** in `schemas/`
+2. **Generate migration** via diff command:
+   - Supabase: `supabase db diff -f description`
+   - Drizzle: `npx drizzle-kit generate`
+   - Atlas: `atlas migrate diff description`
+   - Prisma: `npx prisma migrate dev --name description`
+3. **Review generated migration** in `migrations/`
+4. **Apply migration** locally
+5. **Commit both** schema and migration files together
 
 ### Branch Naming for Migrations
 
@@ -565,15 +580,18 @@ Look for:
 
 Before pushing migration files:
 
-1. ✅ Migration has both UP and DOWN sections
-2. ✅ DOWN section actually reverses the UP changes
-3. ✅ Tested locally (run up, run down, run up again)
-4. ✅ No modifications to already-pushed migrations
-5. ✅ Timestamp is current (regenerate if rebasing)
+1. ✅ Schema file updated (if using declarative approach)
+2. ✅ Migration generated via diff (not written manually)
+3. ✅ Migration reviewed for unexpected changes
+4. ✅ Tested locally (apply, rollback, apply again)
+5. ✅ No modifications to already-pushed migrations
+6. ✅ Timestamp is current (regenerate if rebasing)
 
-### Critical Rule
+### Critical Rules
 
-**NEVER modify migrations that have been pushed/deployed.** Create a new migration to fix issues.
+- **NEVER modify migrations that have been pushed/deployed.** Create a new migration to fix issues.
+- **ALWAYS commit schema and migration files together** to keep them in sync.
+- **ALWAYS review generated migrations** before committing.
 
 See `workflows/sql-migrations.md` for full migration workflow.
 

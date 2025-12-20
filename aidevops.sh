@@ -454,6 +454,7 @@ cmd_init() {
     local enable_git_workflow=false
     local enable_code_quality=false
     local enable_time_tracking=false
+    local enable_database=false
     
     case "$features" in
         all)
@@ -461,6 +462,7 @@ cmd_init() {
             enable_git_workflow=true
             enable_code_quality=true
             enable_time_tracking=true
+            enable_database=true
             ;;
         planning)
             enable_planning=true
@@ -475,6 +477,9 @@ cmd_init() {
             enable_time_tracking=true
             enable_planning=true  # time-tracking requires planning
             ;;
+        database)
+            enable_database=true
+            ;;
         *)
             # Comma-separated list
             IFS=',' read -ra FEATURE_LIST <<< "$features"
@@ -487,6 +492,7 @@ cmd_init() {
                         enable_time_tracking=true
                         enable_planning=true
                         ;;
+                    database) enable_database=true ;;
                 esac
             done
             ;;
@@ -506,12 +512,20 @@ cmd_init() {
     "planning": $enable_planning,
     "git_workflow": $enable_git_workflow,
     "code_quality": $enable_code_quality,
-    "time_tracking": $enable_time_tracking
+    "time_tracking": $enable_time_tracking,
+    "database": $enable_database
   },
   "time_tracking": {
     "enabled": $enable_time_tracking,
     "prompt_on_commit": true,
     "auto_record_branch_start": true
+  },
+  "database": {
+    "enabled": $enable_database,
+    "schema_path": "schemas",
+    "migrations_path": "migrations",
+    "seeds_path": "seeds",
+    "auto_generate_migration": true
   }
 }
 EOF
@@ -595,6 +609,64 @@ EOF
         touch "$project_root/todo/tasks/.gitkeep"
     fi
     
+    # Create database directories if enabled
+    if [[ "$enable_database" == "true" ]]; then
+        print_info "Setting up database schema directories..."
+        
+        # Create schemas directory with README
+        if [[ ! -d "$project_root/schemas" ]]; then
+            mkdir -p "$project_root/schemas"
+            cat > "$project_root/schemas/README.md" << 'EOF'
+# Database Schemas
+
+Declarative schema files - the source of truth for your database structure.
+
+## File Organization
+
+Prefix files with numbers to control execution order:
+
+```text
+00_extensions.sql    # PostgreSQL extensions
+01_types.sql         # Custom types and enums
+10_users.sql         # Core tables
+20_products.sql      # Domain tables
+90_views.sql         # Views (depend on tables)
+```
+
+## Workflow
+
+1. Edit schema files here
+2. Run diff to generate migration: `supabase db diff -f name` or equivalent
+3. Review generated migration in `migrations/`
+4. Apply migration locally
+5. Commit both schema and migration files
+
+See `.agent/workflows/sql-migrations.md` for full documentation.
+EOF
+            print_success "Created schemas/ directory"
+        else
+            print_warning "schemas/ already exists, skipping"
+        fi
+        
+        # Create migrations directory
+        if [[ ! -d "$project_root/migrations" ]]; then
+            mkdir -p "$project_root/migrations"
+            touch "$project_root/migrations/.gitkeep"
+            print_success "Created migrations/ directory"
+        else
+            print_warning "migrations/ already exists, skipping"
+        fi
+        
+        # Create seeds directory
+        if [[ ! -d "$project_root/seeds" ]]; then
+            mkdir -p "$project_root/seeds"
+            touch "$project_root/seeds/.gitkeep"
+            print_success "Created seeds/ directory"
+        else
+            print_warning "seeds/ already exists, skipping"
+        fi
+    fi
+    
     # Add to .gitignore if needed
     local gitignore="$project_root/.gitignore"
     if [[ -f "$gitignore" ]]; then
@@ -614,11 +686,18 @@ EOF
     [[ "$enable_git_workflow" == "true" ]] && echo "  ✓ Git workflow (branch management)"
     [[ "$enable_code_quality" == "true" ]] && echo "  ✓ Code quality (linting, auditing)"
     [[ "$enable_time_tracking" == "true" ]] && echo "  ✓ Time tracking (estimates, actuals)"
+    [[ "$enable_database" == "true" ]] && echo "  ✓ Database (schemas/, migrations/, seeds/)"
     echo ""
     echo "Next steps:"
-    echo "  1. Add tasks to TODO.md"
-    echo "  2. Use /create-prd for complex features"
-    echo "  3. Use /feature to start development"
+    if [[ "$enable_database" == "true" ]]; then
+        echo "  1. Add schema files to schemas/"
+        echo "  2. Run diff to generate migrations"
+        echo "  3. See .agent/workflows/sql-migrations.md"
+    else
+        echo "  1. Add tasks to TODO.md"
+        echo "  2. Use /create-prd for complex features"
+        echo "  3. Use /feature to start development"
+    fi
 }
 
 # Features command - list available features
@@ -648,10 +727,17 @@ cmd_features() {
     echo "                 - Automatic started:/completed: timestamps"
     echo "                 - Release time summaries"
     echo ""
+    echo "  database       Declarative database schema management"
+    echo "                 - schemas/ for declarative SQL/TypeScript"
+    echo "                 - migrations/ for versioned changes"
+    echo "                 - seeds/ for initial/test data"
+    echo "                 - Auto-generate migrations on schema diff"
+    echo ""
     echo "Usage:"
     echo "  aidevops init                    # Enable all features"
     echo "  aidevops init planning           # Enable only planning"
-    echo "  aidevops init planning,git-workflow  # Enable multiple"
+    echo "  aidevops init database           # Enable only database"
+    echo "  aidevops init planning,database  # Enable multiple"
     echo ""
 }
 
