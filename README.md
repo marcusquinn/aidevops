@@ -578,6 +578,56 @@ osgrep "where is authentication handled?"
 
 See `.agent/tools/context/osgrep.md` for complete documentation and AI tool configurations.
 
+## **Cross-Tool Compatibility**
+
+### Agent Skills Standard
+
+aidevops implements the [Agent Skills](https://agentskills.io/) standard for cross-tool compatibility. Skills are auto-discovered by compatible AI assistants.
+
+**Generated SKILL.md files** in `~/.aidevops/agents/` provide skill metadata for:
+- Cursor
+- Claude Code
+- VS Code (GitHub Copilot)
+- Other Agent Skills-compatible tools
+
+### Claude Code Plugin Marketplace
+
+aidevops is registered as a **Claude Code plugin marketplace**. Install skills directly:
+
+```bash
+# Add the aidevops marketplace
+/plugin marketplace add marcusquinn/aidevops
+
+# Install all skills
+/plugin install aidevops-all@aidevops
+
+# Or install specific skills
+/plugin install wordpress@aidevops
+/plugin install seo@aidevops
+/plugin install tools-browser@aidevops
+```
+
+**Available plugins** (17 total):
+
+| Plugin | Description |
+|--------|-------------|
+| `aidevops-all` | Complete framework with all agents and scripts |
+| `wordpress` | WordPress ecosystem management |
+| `seo` | SEO optimization and analysis |
+| `build-agent` | Agent design and composition |
+| `build-mcp` | MCP server development |
+| `content` | Content creation workflows |
+| `workflows` | Git, releases, version management |
+| `tools-browser` | Playwright, Stagehand, Crawl4AI |
+| `tools-code-review` | Codacy, CodeRabbit, SonarCloud, Snyk |
+| `tools-context` | osgrep, Augment, Context7, DSPy |
+| `tools-deployment` | Coolify, Vercel |
+| `tools-git` | GitHub/GitLab/Gitea CLI |
+| `tools-credentials` | API key management |
+| `services-hosting` | Hetzner, Cloudflare, Hostinger |
+| `services-email` | Amazon SES |
+| `services-accounting` | QuickFile |
+
 ## **AI Agents & Subagents**
 
 **Agents are specialized AI personas with focused knowledge and tool access.** Instead of giving your AI assistant access to everything at once (which wastes context tokens), agents provide targeted capabilities for specific tasks.
@@ -644,6 +694,16 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 
 ### **Setup for Other AI Assistants**
 
+**Claude Code** (recommended):
+```bash
+/plugin marketplace add marcusquinn/aidevops
+/plugin install aidevops-all@aidevops
+```
+
+**Agent Skills-compatible tools** (Cursor, VS Code, etc.):
+Skills are auto-discovered from `~/.aidevops/agents/` via SKILL.md files after running `setup.sh`.
+
+**Manual configuration** (other tools):
 Add to your AI assistant's system prompt:
 
 ```text
