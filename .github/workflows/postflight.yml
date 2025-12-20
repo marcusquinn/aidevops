@@ -35,19 +35,24 @@ jobs:
     - name: Wait for CI/CD Pipelines
       run: |
         echo "Waiting for all check runs to complete..."
+        echo "Note: Excluding this workflow (Verify Release Health) to avoid circular dependency"
         sleep 60  # Initial wait for workflows to start
         
-        # Poll for completion
+        # Poll for completion, excluding this workflow to avoid circular dependency
+        SELF_NAME="Verify Release Health"
         for i in {1..20}; do
           PENDING=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-            --jq '[.check_runs[] | select(.status != "completed")] | length')
+            --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length")
           
           if [[ "$PENDING" == "0" ]]; then
-            echo "All check runs completed"
+            echo "All check runs completed (excluding self)"
             break
           fi
           
+          # Show which workflows are still pending
           echo "Waiting for $PENDING check runs... (attempt $i/20)"
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq ".check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\") | \"  - \(.name): \(.status)\"" || true
           sleep 30
         done
       env:
@@ -59,11 +64,12 @@ jobs:
         echo "## CI/CD Pipeline Status" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Get all check runs
+        # Get all check runs, excluding self to avoid counting our own status
+        SELF_NAME="Verify Release Health"
         CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-          --jq '.check_runs[] | {name, status, conclusion}')
+          --jq ".check_runs[] | select(.name != \"$SELF_NAME\") | {name, status, conclusion}")
         
-        # Count results
+        # Count results (excluding self)
         TOTAL=$(echo "$CHECK_RUNS" | jq -s 'length')
         PASSED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "success")] | length')
         FAILED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "failure")] | length')
@@ -71,8 +77,12 @@ jobs:
         echo "| Check | Status | Conclusion |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|------------|" >> $GITHUB_STEP_SUMMARY
         
+        # Show all check runs including self for transparency
         gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
           --jq '.check_runs[] | "| \(.name) | \(.status) | \(.conclusion // "pending") |"' >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "*Note: 'Verify Release Health' (this workflow) is excluded from pass/fail counts*" >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Total**: $TOTAL | **Passed**: $PASSED | **Failed**: $FAILED" >> $GITHUB_STEP_SUMMARY
