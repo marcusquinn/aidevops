@@ -592,41 +592,14 @@ aidevops implements the [Agent Skills](https://agentskills.io/) standard for cro
 
 ### Claude Code Plugin Marketplace
 
-aidevops is registered as a **Claude Code plugin marketplace**. Install skills directly:
+aidevops is registered as a **Claude Code plugin marketplace**. Install with two commands:
 
 ```bash
-# Add the aidevops marketplace
 /plugin marketplace add marcusquinn/aidevops
-
-# Install all skills
-/plugin install aidevops-all@aidevops
-
-# Or install specific skills
-/plugin install wordpress@aidevops
-/plugin install seo@aidevops
-/plugin install tools-browser@aidevops
+/plugin install aidevops@aidevops
 ```
 
-**Available plugins** (17 total):
-
-| Plugin | Description |
-|--------|-------------|
-| `aidevops-all` | Complete framework with all agents and scripts |
-| `wordpress` | WordPress ecosystem management |
-| `seo` | SEO optimization and analysis |
-| `build-agent` | Agent design and composition |
-| `build-mcp` | MCP server development |
-| `content` | Content creation workflows |
-| `workflows` | Git, releases, version management |
-| `tools-browser` | Playwright, Stagehand, Crawl4AI |
-| `tools-code-review` | Codacy, CodeRabbit, SonarCloud, Snyk |
-| `tools-context` | osgrep, Augment, Context7, DSPy |
-| `tools-deployment` | Coolify, Vercel |
-| `tools-git` | GitHub/GitLab/Gitea CLI |
-| `tools-credentials` | API key management |
-| `services-hosting` | Hetzner, Cloudflare, Hostinger |
-| `services-email` | Amazon SES |
-| `services-accounting` | QuickFile |
+This installs the complete framework: 14 domain agents, 80+ subagents, and 100+ helper scripts.
 
 ## **AI Agents & Subagents**
 

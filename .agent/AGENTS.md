@@ -300,7 +300,7 @@ aidevops supports multiple discovery methods:
 
 | Tool | Configuration |
 |------|---------------|
-| **Claude Code** | `/plugin marketplace add marcusquinn/aidevops` then `/plugin install aidevops-all@aidevops` |
+| **Claude Code** | `/plugin marketplace add marcusquinn/aidevops` then `/plugin install aidevops@aidevops` |
 | **OpenCode** | Automatic via `setup.sh` → `generate-opencode-agents.sh` |
 | **Cursor** | Auto-discovers SKILL.md files from configured paths |
 | **VS Code** | GitHub Copilot discovers SKILL.md via Agent Skills |
