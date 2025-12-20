@@ -215,7 +215,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Browser automation → `tools/browser/`
 - MCP development → `build-mcp/`
 - SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research)
-- Database migrations → `workflows/sql-migrations.md`
+- Database schemas/migrations → `workflows/sql-migrations.md` (declarative schemas, auto-generated migrations)
 - Oh-My-OpenCode integration → `tools/opencode/oh-my-opencode.md` (LSP, AST, background agents)
 - Working in `~/Git/aidevops/` → `aidevops/architecture.md` (framework internals)
 
