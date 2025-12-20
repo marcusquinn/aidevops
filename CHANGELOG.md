@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.36.1] - 2025-12-20
+
+### Added
+
+- add declarative database schema workflow with aidevops init database
+
+### Fixed
+
+- prevent postflight workflow circular dependency
 ## [2.36.0] - 2025-12-20
 
 ### Added
