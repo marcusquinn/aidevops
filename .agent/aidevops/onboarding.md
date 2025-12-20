@@ -396,6 +396,113 @@ chmod 600 ~/.config/aidevops/mcp-env.sh
 chmod 700 ~/.config/aidevops
 ```
 
+## Understanding Agents, Subagents, and Commands
+
+aidevops uses a layered system to give your AI assistant the right context at the right time, without wasting tokens on irrelevant information.
+
+### The Three Layers
+
+| Layer | How to Use | Purpose | Example |
+|-------|------------|---------|---------|
+| **Main Agents** | Tab key in OpenCode | Switch AI persona with focused capabilities | `Build+`, `SEO`, `WordPress` |
+| **Subagents** | `@name` mention | Pull in specialized knowledge on demand | `@hetzner`, `@dataforseo`, `@code-standards` |
+| **Commands** | `/name` | Execute specific workflows | `/release`, `/feature`, `/keyword-research` |
+
+### Main Agents (Tab to Switch)
+
+Main agents are complete AI personas with their own tools and focus areas. In OpenCode, press **Tab** to switch between them:
+
+| Agent | Focus | Best For |
+|-------|-------|----------|
+| `Plan+` | Read-only planning | Architecture decisions, research, analysis |
+| `Build+` | Full development | Coding, debugging, file changes |
+| `SEO` | Search optimization | Keyword research, SERP analysis, GSC |
+| `WordPress` | WordPress ecosystem | Theme/plugin dev, MainWP, LocalWP |
+| `AI-DevOps` | Framework operations | Setup, troubleshooting, meta-tasks |
+
+**When to switch agents:** Switch when your task changes focus. Planning? Use `Plan+`. Ready to code? Switch to `Build+`. Need SEO analysis? Switch to `SEO`.
+
+### Subagents (@mention)
+
+Subagents provide specialized knowledge without switching your main agent. Use `@name` to pull in context:
+
+```text
+@hetzner list all my servers
+@code-standards check this function
+@dataforseo research keywords for "ai tools"
+```
+
+**How it works:** When you mention a subagent, the AI reads that agent's instructions and gains its specialized knowledge - but stays in your current main agent context.
+
+**Common subagents:**
+
+| Category | Subagents |
+|----------|-----------|
+| Hosting | `@hetzner`, `@cloudflare`, `@coolify`, `@vercel` |
+| Git | `@github-cli`, `@gitlab-cli`, `@gitea-cli` |
+| Quality | `@code-standards`, `@codacy`, `@coderabbit`, `@snyk` |
+| SEO | `@dataforseo`, `@serper`, `@keyword-research` |
+| Context | `@augment-context-engine`, `@osgrep`, `@context7` |
+| WordPress | `@wp-dev`, `@wp-admin`, `@localwp`, `@mainwp` |
+
+### Commands (/slash)
+
+Commands execute specific workflows with predefined steps:
+
+```text
+/feature add-user-auth
+/release minor
+/keyword-research "best ai tools"
+```
+
+**How it works:** Commands invoke a workflow that may use multiple tools and follow a specific process. They're action-oriented.
+
+**When to use what:**
+
+| Situation | Use | Example |
+|-----------|-----|---------|
+| Need to switch focus entirely | Main agent (Tab) | Tab → `SEO` |
+| Need specialized knowledge | Subagent (@) | `@hetzner help me configure` |
+| Need to execute a workflow | Command (/) | `/release minor` |
+| General conversation | Just talk | "How do I deploy this?" |
+
+### Progressive Context Loading
+
+aidevops uses **progressive disclosure** - agents only load the context they need:
+
+1. **Root AGENTS.md** loads first (minimal, universal rules)
+2. **Main agent** loads when selected (focused capabilities)
+3. **Subagents** load on @mention (specialized knowledge)
+4. **Commands** load workflow steps (action sequences)
+
+This keeps token usage efficient while giving you access to deep expertise when needed.
+
+### Example Session
+
+```text
+# Start in Build+ agent (Tab to select)
+
+> I need to add a new API endpoint for user profiles
+
+# AI helps you plan and code...
+
+> @code-standards check my implementation
+
+# AI reads code-standards subagent, reviews your code
+
+> /pr
+
+# AI runs the PR workflow: linting, auditing, standards check
+
+# Later, need to research keywords for the feature...
+
+# Tab → SEO agent
+
+> /keyword-research "user profile api"
+
+# AI runs keyword research with SEO context
+```
+
 ## Workflow Features
 
 aidevops isn't just about API integrations - it provides powerful workflow enhancements for any project.
