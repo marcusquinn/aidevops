@@ -791,6 +791,60 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
 
 # =============================================================================
+# ONBOARDING COMMAND
+# =============================================================================
+# Interactive setup wizard for new users
+
+cat > "$OPENCODE_COMMAND_DIR/onboarding.md" << 'EOF'
+---
+description: Interactive onboarding wizard - discover services, configure integrations
+agent: AI-DevOps
+---
+
+Read ~/.aidevops/agents/aidevops/onboarding.md and follow its instructions.
+
+This is the recommended starting point for new aidevops users.
+
+**Workflow:**
+
+1. **Welcome**: Ask if user wants an explanation of aidevops capabilities
+
+2. **Understand needs**: Ask what kind of work they do:
+   - Web development (WordPress, React, Node.js)
+   - DevOps & infrastructure management
+   - SEO & content marketing
+   - Multiple client/site management
+   - Something else
+
+3. **Show status**: Run the status check and display results:
+   ```bash
+   ~/.aidevops/agents/scripts/onboarding-helper.sh status
+   ```
+
+4. **Personalized recommendations**: Based on their work type:
+   ```bash
+   ~/.aidevops/agents/scripts/onboarding-helper.sh recommend [type]
+   ```
+
+5. **Guide setup**: For each service they want to configure:
+   - Explain what it does
+   - Provide signup/API key link
+   - Show the setup command
+   - Verify it works
+
+6. **Next steps**: Suggest trying a simple task to verify everything works
+
+**Quick status check only:**
+```bash
+~/.aidevops/agents/scripts/onboarding-helper.sh status
+```
+
+Arguments: $ARGUMENTS
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /onboarding command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -829,10 +883,13 @@ echo "    /keyword-research-extended - Full SERP analysis with weakness detectio
 echo "    /webmaster-keywords - Keywords from GSC + Bing for your sites"
 echo ""
 echo "  Utilities:"
+echo "    /onboarding       - Interactive setup wizard (START HERE for new users)"
 echo "    /agent-review     - Review and improve agent instructions"
 echo "    /context          - Build AI context"
 echo "    /list-keys        - List API keys with storage locations"
 echo "    /log-time-spent   - Log time spent on a task"
+echo ""
+echo "New users: Start with /onboarding to configure your services"
 echo ""
 echo "Planning workflow: /create-prd -> /generate-tasks -> /feature -> implement -> /pr"
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"

@@ -1,0 +1,406 @@
+---
+description: Interactive onboarding wizard - discover services, check credentials, configure integrations
+mode: agent
+temperature: 0.3
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  webfetch: true
+  task: true
+---
+
+# Onboarding Wizard - aidevops Configuration
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Command**: `/onboarding` or `@onboarding`
+- **Script**: `~/.aidevops/agents/scripts/onboarding-helper.sh`
+- **Purpose**: Interactive wizard to discover, configure, and verify aidevops integrations
+
+**Workflow**:
+1. Welcome & explain aidevops capabilities
+2. Ask about user's work/interests for personalized suggestions
+3. Show current setup status (configured vs needs setup)
+4. Guide through setting up selected services
+5. Verify configurations work
+
+<!-- AI-CONTEXT-END -->
+
+## Welcome Flow
+
+When invoked, follow this conversation flow:
+
+### Step 1: Introduction (if new user)
+
+Ask if the user would like an explanation of what aidevops does:
+
+```text
+Welcome to aidevops setup!
+
+Would you like me to explain what aidevops can help you with? (yes/no)
+```
+
+If yes, provide a brief overview:
+
+```text
+aidevops gives your AI assistant superpowers for DevOps and infrastructure management:
+
+- **Infrastructure**: Manage servers across Hetzner, Hostinger, Cloudron, Coolify
+- **Domains & DNS**: Purchase domains, manage DNS via Cloudflare, Spaceship, 101domains
+- **Git Platforms**: GitHub, GitLab, Gitea with full CLI integration
+- **Code Quality**: SonarCloud, Codacy, CodeRabbit, Snyk, Qlty analysis
+- **WordPress**: LocalWP development, MainWP fleet management
+- **SEO**: Keyword research, SERP analysis, Google Search Console
+- **Browser Automation**: Playwright, Stagehand, Chrome DevTools
+- **Context Tools**: Augment, osgrep, Context7, Repomix for AI context
+
+All through natural conversation - just tell me what you need!
+```
+
+### Step 2: Understand User's Work
+
+Ask what they do or might work on:
+
+```text
+What kind of work do you do, or what would you like aidevops to help with?
+
+For example:
+1. Web development (WordPress, React, Node.js)
+2. DevOps & infrastructure management
+3. SEO & content marketing
+4. Multiple client/site management
+5. Something else (describe it)
+```
+
+Based on their answer, highlight relevant services.
+
+### Step 3: Show Current Status
+
+Run the status check and display results:
+
+```bash
+~/.aidevops/agents/scripts/setup-aidevops-helper.sh status
+```
+
+Display in a clear format:
+
+```text
+## Your aidevops Setup Status
+
+### Configured & Ready
+- GitHub CLI (gh) - authenticated
+- OpenAI API - key loaded
+- Cloudflare - API token configured
+
+### Needs Setup
+- Hetzner Cloud - no API token found
+- DataForSEO - credentials not configured
+- Google Search Console - not connected
+
+### Optional (based on your interests)
+- MainWP - for WordPress fleet management
+- Stagehand - for browser automation
+```
+
+### Step 4: Guide Setup
+
+Ask which service to set up:
+
+```text
+Which service would you like to set up next?
+
+1. Hetzner Cloud (VPS servers)
+2. DataForSEO (keyword research)
+3. Google Search Console (search analytics)
+4. Skip for now
+
+Enter a number or service name:
+```
+
+For each service, provide:
+1. What it does and why it's useful
+2. Link to create account/get API key
+3. Step-by-step instructions
+4. Command to store the credential
+5. Verification that it works
+
+## Service Catalog
+
+### AI Providers (Core)
+
+| Service | Env Var | Setup Link | Purpose |
+|---------|---------|------------|---------|
+| OpenAI | `OPENAI_API_KEY` | https://platform.openai.com/api-keys | GPT models, Stagehand |
+| Anthropic | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys | Claude models |
+
+**Setup command**:
+
+```bash
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set OPENAI_API_KEY "sk-..."
+```
+
+### Git Platforms
+
+| Service | Auth Method | Setup Command | Purpose |
+|---------|-------------|---------------|---------|
+| GitHub | `gh auth login` | Opens browser OAuth | Repos, PRs, Actions |
+| GitLab | `glab auth login` | Opens browser OAuth | Repos, MRs, Pipelines |
+| Gitea | `tea login add` | Token-based | Self-hosted Git |
+
+**Verification**:
+
+```bash
+gh auth status
+glab auth status
+tea login list
+```
+
+### Hosting Providers
+
+| Service | Env Var(s) | Setup Link | Purpose |
+|---------|------------|------------|---------|
+| Hetzner Cloud | `HCLOUD_TOKEN_*` | https://console.hetzner.cloud/ -> Security -> API Tokens | VPS, networking |
+| Cloudflare | `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | DNS, CDN, security |
+| Coolify | `COOLIFY_API_TOKEN` | Your Coolify instance -> Settings -> API | Self-hosted PaaS |
+| Vercel | `VERCEL_TOKEN` | https://vercel.com/account/tokens | Serverless deployment |
+
+**Hetzner multi-account setup**:
+
+```bash
+# For each project/account
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set HCLOUD_TOKEN_MAIN "your-token"
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set HCLOUD_TOKEN_CLIENT1 "client-token"
+```
+
+### Code Quality
+
+| Service | Env Var | Setup Link | Purpose |
+|---------|---------|------------|---------|
+| SonarCloud | `SONAR_TOKEN` | https://sonarcloud.io/account/security | Security analysis |
+| Codacy | `CODACY_PROJECT_TOKEN` | https://app.codacy.com -> Project -> Settings -> Integrations | Code quality |
+| CodeRabbit | `CODERABBIT_API_KEY` | https://app.coderabbit.ai/settings | AI code review |
+| Snyk | `SNYK_TOKEN` | https://app.snyk.io/account | Vulnerability scanning |
+
+**CodeRabbit special storage**:
+
+```bash
+mkdir -p ~/.config/coderabbit
+echo "your-api-key" > ~/.config/coderabbit/api_key
+chmod 600 ~/.config/coderabbit/api_key
+```
+
+### SEO & Research
+
+| Service | Env Var(s) | Setup Link | Purpose |
+|---------|------------|------------|---------|
+| DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access | SERP, keywords, backlinks |
+| Serper | `SERPER_API_KEY` | https://serper.dev/api-key | Google Search API |
+| Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard | Business data extraction |
+| Google Search Console | OAuth via MCP | https://search.google.com/search-console | Search performance |
+
+**DataForSEO setup**:
+
+```bash
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME "your-email"
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD "your-password"
+```
+
+### Context & Semantic Search
+
+| Service | Auth Method | Setup Command | Purpose |
+|---------|-------------|---------------|---------|
+| Augment Context Engine | `auggie login` | Opens browser OAuth | Semantic codebase search |
+| osgrep | None (local) | `npm i -g osgrep && osgrep setup` | Local semantic search |
+| Context7 | None | MCP config only | Library documentation |
+
+**Augment setup**:
+
+```bash
+npm install -g @augmentcode/auggie@prerelease
+auggie login  # Opens browser
+auggie token print  # Verify
+```
+
+### Browser Automation
+
+| Service | Requirements | Setup | Purpose |
+|---------|--------------|-------|---------|
+| Playwright | Node.js | `npx playwright install` | Cross-browser testing |
+| Stagehand | OpenAI/Anthropic key | Key already configured | AI browser automation |
+| Chrome DevTools | Chrome running | `--remote-debugging-port=9222` | Browser debugging |
+| Playwriter | Browser extension | Install from Chrome Web Store | Extension-based automation |
+
+### WordPress
+
+| Service | Requirements | Setup Link | Purpose |
+|---------|--------------|------------|---------|
+| LocalWP | LocalWP installed | https://localwp.com/releases | Local WordPress dev |
+| MainWP | MainWP Dashboard plugin | https://mainwp.com/ | WordPress fleet management |
+
+**MainWP config** (`configs/mainwp-config.json`):
+
+```json
+{
+  "dashboard_url": "https://your-mainwp-dashboard.com",
+  "api_key": "your-api-key"
+}
+```
+
+### AWS Services
+
+| Service | Env Var(s) | Setup Link | Purpose |
+|---------|------------|------------|---------|
+| AWS General | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` | https://console.aws.amazon.com/iam | AWS services |
+| Amazon SES | Same as above + SES permissions | IAM with SES permissions | Email sending |
+
+### Domain Registrars
+
+| Service | Config File | Setup Link | Purpose |
+|---------|-------------|------------|---------|
+| Spaceship | `configs/spaceship-config.json` | https://www.spaceship.com/ | Domain registration |
+| 101domains | `configs/101domains-config.json` | https://www.101domain.com/ | Domain purchasing |
+
+### Password Management
+
+| Service | Config | Setup | Purpose |
+|---------|--------|-------|---------|
+| Vaultwarden | `configs/vaultwarden-config.json` | Self-hosted Bitwarden | Secrets management |
+
+## Verification Commands
+
+After setting up each service, verify it works:
+
+```bash
+# Git platforms
+gh auth status
+glab auth status
+
+# Hetzner
+hcloud server list
+
+# Cloudflare
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/user/tokens/verify" | jq .success
+
+# DataForSEO
+curl -s -u "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" \
+  "https://api.dataforseo.com/v3/appendix/user_data" | jq .status_message
+
+# Augment
+auggie token print
+
+# All keys overview
+~/.aidevops/agents/scripts/list-keys-helper.sh
+```
+
+## Credential Storage
+
+All credentials are stored securely:
+
+| Location | Purpose | Permissions |
+|----------|---------|-------------|
+| `~/.config/aidevops/mcp-env.sh` | Primary credential store | 600 |
+| `~/.config/coderabbit/api_key` | CodeRabbit token | 600 |
+| `configs/*-config.json` | Service-specific configs | 600, gitignored |
+
+**Add a new credential**:
+
+```bash
+~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERVICE_NAME "value"
+```
+
+**List all credentials** (names only, never values):
+
+```bash
+~/.aidevops/agents/scripts/list-keys-helper.sh
+```
+
+## Recommended Setup Order
+
+For new users, suggest this order based on their interests:
+
+### Web Developer
+
+1. GitHub CLI (`gh auth login`)
+2. OpenAI API (for AI features)
+3. Augment Context Engine (semantic search)
+4. Playwright (browser testing)
+
+### DevOps Engineer
+
+1. GitHub/GitLab CLI
+2. Hetzner Cloud or preferred hosting
+3. Cloudflare (DNS)
+4. Coolify or Vercel (deployment)
+5. SonarCloud + Codacy (code quality)
+
+### SEO Professional
+
+1. DataForSEO (keyword research)
+2. Serper (Google Search API)
+3. Google Search Console
+4. Outscraper (business data)
+
+### WordPress Developer
+
+1. LocalWP (local development)
+2. MainWP (if managing multiple sites)
+3. GitHub CLI
+4. Hostinger or preferred hosting
+
+### Full Stack
+
+1. All Git CLIs
+2. OpenAI + Anthropic
+3. Augment Context Engine
+4. Hetzner + Cloudflare
+5. All code quality tools
+6. DataForSEO + Serper
+
+## Troubleshooting
+
+### Key not loading
+
+```bash
+# Check if mcp-env.sh is sourced
+grep "mcp-env.sh" ~/.zshrc ~/.bashrc
+
+# Source manually
+source ~/.config/aidevops/mcp-env.sh
+
+# Verify
+echo "${OPENAI_API_KEY:0:10}..."
+```
+
+### MCP not connecting
+
+```bash
+# Check MCP status
+opencode mcp list
+
+# Diagnose specific MCP
+~/.aidevops/agents/scripts/mcp-diagnose.sh <name>
+```
+
+### Permission denied
+
+```bash
+# Fix permissions
+chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 700 ~/.config/aidevops
+```
+
+## Next Steps After Setup
+
+Once services are configured:
+
+1. **Test with a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
+2. **Explore agents**: Type `@` to see available agents
+3. **Try workflows**: `/feature`, `/bugfix`, `/release`
+4. **Read the docs**: `@aidevops` for framework guidance

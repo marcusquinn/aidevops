@@ -92,6 +92,12 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 - Configure your AI assistants automatically
 - Guide you through recommended tools (Tabby, Zed, Git CLIs)
 
+**New users: Start OpenCode and type `/onboarding`** to configure your services interactively. The onboarding wizard will:
+- Explain what aidevops can do
+- Ask about your work to give personalized recommendations
+- Show which services are configured vs need setup
+- Guide you through setting up each service with links and commands
+
 **After installation, use the CLI:**
 
 ```bash
