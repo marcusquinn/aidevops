@@ -41,6 +41,40 @@ Postflight verification is the final gate after release. While pre-release check
 - Security vulnerabilities detected post-merge
 - Integration issues only visible in production-like environments
 
+## Critical: Avoiding Circular Dependencies
+
+When checking CI/CD status, **always exclude the postflight workflow itself** to avoid circular dependencies:
+
+```bash
+# WRONG - includes postflight workflow, causes infinite wait
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq '[.check_runs[] | select(.status != "completed")] | length'
+
+# CORRECT - excludes postflight workflow
+SELF_NAME="Verify Release Health"
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length"
+```
+
+## Checking Both Main and Tag Workflows
+
+After a release, workflows run on **two different refs**:
+1. **Main branch workflows** - triggered by the merge commit
+2. **Tag workflows** - triggered by the release/tag creation
+
+When running local postflight, check BOTH:
+
+```bash
+# Check main branch workflows
+gh run list --branch=main --limit=5
+
+# Check tag-triggered workflows (including postflight.yml)
+gh run list --branch=v{VERSION} --limit=5
+
+# Or check all recent runs
+gh run list --limit=10 --json name,status,conclusion,headBranch
+```
+
 ## Postflight Checklist
 
 ### 1. CI/CD Pipeline Status
@@ -74,21 +108,31 @@ Postflight verification is the final gate after release. While pre-release check
 ### Check GitHub Actions Status
 
 ```bash
-# List recent workflow runs
+# List recent workflow runs (includes both main and tag branches)
 gh run list --limit=10
 
 # Check specific workflow
 gh run list --workflow=code-quality.yml --limit=5
 
+# IMPORTANT: Check tag-triggered workflows separately
+gh run list --branch=v{VERSION} --limit=5
+
 # Get detailed status for latest run
 gh run view $(gh run list --limit=1 --json databaseId -q '.[0].databaseId')
 
-# Check all workflows for a specific commit/tag
-gh api repos/{owner}/{repo}/commits/{sha}/check-runs --jq '.check_runs[] | {name, status, conclusion}'
+# Check all workflows for a specific commit/tag (excluding postflight to avoid circular check)
+SELF_NAME="Verify Release Health"
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq ".check_runs[] | select(.name != \"$SELF_NAME\") | {name, status, conclusion}"
 
 # Wait for workflows to complete (with timeout)
 gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
 ```
+
+**Important**: When running postflight locally after a release:
+1. Wait for the GH Actions postflight.yml workflow to complete first
+2. Check its status explicitly: `gh run list --workflow=postflight.yml --limit=1`
+3. Only declare success if ALL workflows (including postflight.yml) passed
 
 ### Check SonarCloud Status
 
@@ -519,11 +563,23 @@ snyk test --all-projects=false
 
 Postflight verification is successful when:
 
-1. All CI/CD workflows show `success` conclusion
+1. All CI/CD workflows show `success` conclusion (including postflight.yml itself)
 2. SonarCloud quality gate status is `OK`
 3. No new high/critical security vulnerabilities
 4. No exposed secrets detected
 5. Code review tools show no blocking issues
+
+**Critical**: When running local postflight, explicitly verify the GH Actions postflight.yml workflow completed successfully:
+
+```bash
+# Check postflight.yml workflow status
+gh run list --workflow=postflight.yml --limit=1 --json conclusion,status -q '.[0]'
+
+# Expected output for success:
+# {"conclusion":"success","status":"completed"}
+```
+
+If the postflight.yml workflow is still running or failed, the local postflight should NOT report success.
 
 ## Related Workflows
 
