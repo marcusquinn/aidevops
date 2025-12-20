@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.34.0] - 2025-12-20
+
+### Added
+
+- add TODO.md planning system with time tracking
+- add domain-research subagent with THC and Reconeer APIs
+- add TODO.md and planning workflow for task tracking
+- add shadcn/ui MCP support for component browsing and installation
+
+### Changed
+
+- Documentation: update README with recent features
 ## [2.33.0] - 2025-12-18
 
 ### Added
