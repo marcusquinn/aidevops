@@ -1,0 +1,115 @@
+{
+  "name": "aidevops",
+  "owner": {
+    "name": "Marcus Quinn",
+    "email": "marcus@aidevops.sh"
+  },
+  "metadata": {
+    "description": "AI DevOps Framework - comprehensive DevOps automation with 25+ service integrations",
+    "version": "2.37.0"
+  },
+  "plugins": [
+    {
+      "name": "aidevops-all",
+      "source": "./.agent",
+      "description": "Complete AI DevOps framework with all agents, skills, and scripts",
+      "strict": false
+    },
+    {
+      "name": "wordpress",
+      "source": "./.agent/wordpress",
+      "description": "WordPress ecosystem management - local development, fleet management, plugin curation",
+      "strict": false
+    },
+    {
+      "name": "seo",
+      "source": "./.agent/seo",
+      "description": "SEO optimization and analysis - keyword research, Search Console, DataForSEO, site crawling",
+      "strict": false
+    },
+    {
+      "name": "aidevops",
+      "source": "./.agent/aidevops",
+      "description": "AI DevOps framework operations - setup, configuration, troubleshooting",
+      "strict": false
+    },
+    {
+      "name": "build-agent",
+      "source": "./.agent/build-agent",
+      "description": "Agent design and composition - creating efficient, token-optimized AI agents",
+      "strict": false
+    },
+    {
+      "name": "build-mcp",
+      "source": "./.agent/build-mcp",
+      "description": "MCP server development - building Model Context Protocol servers and tools",
+      "strict": false
+    },
+    {
+      "name": "content",
+      "source": "./.agent/content",
+      "description": "Content creation and management - copywriting, guidelines, editorial workflows",
+      "strict": false
+    },
+    {
+      "name": "workflows",
+      "source": "./.agent/workflows",
+      "description": "Development workflows - git branching, releases, version management, PR reviews",
+      "strict": false
+    },
+    {
+      "name": "tools-browser",
+      "source": "./.agent/tools/browser",
+      "description": "Browser automation tools - Playwright, Stagehand, Crawl4AI, PageSpeed",
+      "strict": false
+    },
+    {
+      "name": "tools-code-review",
+      "source": "./.agent/tools/code-review",
+      "description": "Code quality tools - Codacy, CodeRabbit, SonarCloud, Snyk, Qlty",
+      "strict": false
+    },
+    {
+      "name": "tools-context",
+      "source": "./.agent/tools/context",
+      "description": "Context and search tools - osgrep, Augment, Context7, DSPy",
+      "strict": false
+    },
+    {
+      "name": "tools-deployment",
+      "source": "./.agent/tools/deployment",
+      "description": "Deployment tools - Coolify, Vercel, self-hosted PaaS",
+      "strict": false
+    },
+    {
+      "name": "tools-git",
+      "source": "./.agent/tools/git",
+      "description": "Git platform tools - GitHub CLI, GitLab CLI, Gitea CLI, GitHub Actions",
+      "strict": false
+    },
+    {
+      "name": "tools-credentials",
+      "source": "./.agent/tools/credentials",
+      "description": "Credential management - API keys, Vaultwarden, secure storage",
+      "strict": false
+    },
+    {
+      "name": "services-hosting",
+      "source": "./.agent/services/hosting",
+      "description": "Hosting providers - Hetzner, Cloudflare, Hostinger, Cloudron, DNS management",
+      "strict": false
+    },
+    {
+      "name": "services-email",
+      "source": "./.agent/services/email",
+      "description": "Email services - Amazon SES integration",
+      "strict": false
+    },
+    {
+      "name": "services-accounting",
+      "source": "./.agent/services/accounting",
+      "description": "Accounting services - QuickFile API integration",
+      "strict": false
+    }
+  ]
+}
