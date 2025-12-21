@@ -51,6 +51,7 @@ readonly DEV_BROWSER_SKILL_DIR="${DEV_BROWSER_DIR}/skills/dev-browser"
 readonly DEV_BROWSER_REPO="https://github.com/SawyerHood/dev-browser.git"
 readonly SERVER_PORT=9222
 readonly PID_FILE="${DEV_BROWSER_DIR}/.server.pid"
+readonly PROFILE_DIR="${DEV_BROWSER_SKILL_DIR}/profiles/browser-data"
 
 # Check if Bun is installed
 check_bun() {
@@ -269,9 +270,76 @@ show_status() {
         print_warning "Port ${SERVER_PORT}: not responding"
     fi
     
+    # Profile (persistent browser data)
+    if [[ -d "${PROFILE_DIR}" ]]; then
+        local profile_size
+        profile_size=$(du -sh "${PROFILE_DIR}" 2>/dev/null | cut -f1)
+        print_success "Profile: ${PROFILE_DIR} (${profile_size})"
+        print_info "  Cookies, localStorage, extensions persist across restarts"
+    else
+        print_info "Profile: not yet created (will be created on first start)"
+    fi
+    
     # Logs
     if [[ -f "${DEV_BROWSER_DIR}/server.log" ]]; then
         print_info "Logs: ${DEV_BROWSER_DIR}/server.log"
+    fi
+    
+    echo ""
+    return 0
+}
+
+# Reset browser profile (clean start)
+reset_profile() {
+    if is_server_running; then
+        print_error "Server is running. Stop it first with: $0 stop"
+        return 1
+    fi
+    
+    if [[ -d "${PROFILE_DIR}" ]]; then
+        print_warning "This will delete all browser data including:"
+        print_info "  - Cookies and login sessions"
+        print_info "  - localStorage and sessionStorage"
+        print_info "  - Browser cache"
+        print_info "  - Extension data"
+        echo ""
+        read -p "Are you sure? (y/N): " confirm
+        if [[ "${confirm}" =~ ^[Yy]$ ]]; then
+            rm -rf "${PROFILE_DIR}"
+            print_success "Profile reset. Next start will use a fresh browser."
+        else
+            print_info "Cancelled."
+        fi
+    else
+        print_info "No profile exists yet."
+    fi
+    return 0
+}
+
+# Show profile info
+show_profile() {
+    echo "=== Browser Profile ==="
+    echo ""
+    print_info "Location: ${PROFILE_DIR}"
+    echo ""
+    
+    if [[ -d "${PROFILE_DIR}" ]]; then
+        local profile_size
+        profile_size=$(du -sh "${PROFILE_DIR}" 2>/dev/null | cut -f1)
+        print_success "Profile exists (${profile_size})"
+        echo ""
+        print_info "Contents:"
+        ls -la "${PROFILE_DIR}" 2>/dev/null | head -20
+        echo ""
+        print_info "This profile persists:"
+        print_info "  - Cookies (stay logged into sites)"
+        print_info "  - localStorage/sessionStorage"
+        print_info "  - Browser cache"
+        print_info "  - Extension data"
+        echo ""
+        print_info "To reset: $0 reset-profile"
+    else
+        print_warning "No profile yet. Will be created on first server start."
     fi
     
     echo ""
