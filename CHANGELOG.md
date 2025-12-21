@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.37.3] - 2025-12-21
+
+### Added
+
+- add Oh-My-OpenCode Sisyphus agents after WordPress in Tab order
+
+### Changed
+
+- Refactor: use minimal AGENTS.md files in database directories
+- Documentation: add critical rule to re-read files before editing
+
+### Fixed
+
+- add language specifiers to code blocks (MD040) and blank lines around fences (MD031)
+- add missing return statements to 3 scripts
+- swap Build+ before Plan+ in Tab order
+- add mode: subagent to all agent files for OpenCode compatibility
 ## [2.37.2] - 2025-12-21
 
 ### Changed
