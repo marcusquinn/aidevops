@@ -497,8 +497,8 @@ commit_version_changes() {
     
     print_info "Committing version changes..."
     
-    # Stage all version-related files (including CHANGELOG.md)
-    git add VERSION package.json README.md setup.sh sonar-project.properties CHANGELOG.md 2>/dev/null
+    # Stage all version-related files (including CHANGELOG.md and Claude plugin)
+    git add VERSION package.json README.md setup.sh sonar-project.properties CHANGELOG.md .claude-plugin/marketplace.json 2>/dev/null
     
     # Check if there are changes to commit
     if git diff --cached --quiet; then

@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
-- **CRITICAL**: Always use the script above - it updates all 5 version files atomically
+- **CRITICAL**: Always use the script above - it updates all 6 version files atomically
 - **NEVER** manually edit VERSION, bump versions yourself, or use separate commands
 
 **Before releasing**: Check for uncommitted changes and commit them first:
@@ -59,7 +59,7 @@ This prevents accidentally releasing without your session's work.
 The release script handles everything automatically:
 
 1. **Check for uncommitted changes** (fails if dirty, use `--allow-dirty` to bypass)
-2. Bump version in all files (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
+2. Bump version in all files (VERSION, README.md, setup.sh, sonar-project.properties, package.json, .claude-plugin/marketplace.json)
 3. **Auto-generate CHANGELOG.md** from conventional commits
 4. Validate version consistency
 5. Commit all changes
@@ -83,7 +83,7 @@ The release script handles everything automatically:
 
 This command:
 1. Checks for uncommitted changes (fails if dirty)
-2. Bumps version in all 5 files atomically (VERSION, README.md, setup.sh, sonar-project.properties, package.json)
+2. Bumps version in all 6 files atomically (VERSION, README.md, setup.sh, sonar-project.properties, package.json, .claude-plugin/marketplace.json)
 3. **Auto-generates CHANGELOG.md** from conventional commits (feat:, fix:, docs:, etc.)
 4. Validates consistency
 5. Commits version bump + changelog

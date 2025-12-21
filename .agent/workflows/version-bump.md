@@ -21,7 +21,7 @@ tools:
 - **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
 - **CRITICAL**: This single command does everything - bump, commit, tag, push, GitHub release
 - **NEVER** run separate commands, manually edit VERSION, or bump versions yourself
-- **Files updated atomically**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties
+- **Files updated atomically**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties, .claude-plugin/marketplace.json
 - **Manual step**: Update CHANGELOG.md `[Unreleased]` to `[X.X.X] - YYYY-MM-DD` BEFORE running release
 - **Preflight**: Quality checks run automatically (bypass with `--skip-preflight`)
 
@@ -33,14 +33,15 @@ This is the authoritative guide for AI agents performing version bumps in the ai
 
 **DO NOT** manually edit the VERSION file. This causes version inconsistencies and CI failures.
 
-The script updates 5 files atomically:
+The script updates 6 files atomically:
 1. VERSION
 2. README.md (badge)
 3. sonar-project.properties
 4. setup.sh (header comment)
 5. package.json
+6. .claude-plugin/marketplace.json
 
-If you edit VERSION directly, the other 4 files become stale.
+If you edit VERSION directly, the other 5 files become stale.
 
 **Always use**:
 
@@ -57,7 +58,7 @@ If you edit VERSION directly, the other 4 files become stale.
 This script handles all version management tasks:
 
 - Bumps semantic versions (major/minor/patch)
-- Updates version references across 5 files
+- Updates version references across 6 files
 - Validates version consistency
 - Creates git tags
 - Creates GitHub releases (via `gh` CLI)
@@ -94,7 +95,7 @@ This script handles all version management tasks:
 
 ## Files Updated Automatically
 
-The script updates these 5 files:
+The script updates these 6 files:
 
 | File | What's Updated |
 |------|----------------|
@@ -103,6 +104,7 @@ The script updates these 5 files:
 | `README.md` | Version badge: `Version-X.X.X-blue` |
 | `setup.sh` | Header comment: `# Version: X.X.X` |
 | `sonar-project.properties` | `sonar.projectVersion=X.X.X` |
+| `.claude-plugin/marketplace.json` | `"version": "X.X.X"` field |
 
 ## The CHANGELOG.md Gap
 
