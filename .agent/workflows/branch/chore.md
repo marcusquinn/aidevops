@@ -57,6 +57,7 @@ Use specific prefixes when applicable:
 ### Common Chore Tasks
 
 **Dependency Updates:**
+
 ```bash
 npm outdated          # Check for updates
 npm update            # Update and test
@@ -64,6 +65,7 @@ git commit -m "chore: update dependencies"
 ```
 
 **CI/CD Changes:**
+
 ```bash
 git commit -m "ci: optimize GitHub Actions workflow
 
@@ -73,6 +75,7 @@ git commit -m "ci: optimize GitHub Actions workflow
 ```
 
 **Documentation:**
+
 ```bash
 git commit -m "docs: improve installation instructions
 

@@ -50,11 +50,13 @@ Saving to TODO.md: "{title}" ~{estimate}
 ```
 
 After confirmation, add to TODO.md Backlog:
+
 ```markdown
 - [ ] {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}
 ```
 
 Respond:
+
 ```
 Saved: "{title}" to TODO.md (~{estimate})
 Start anytime with: "Let's work on {title}"
@@ -77,6 +79,7 @@ Phases: {count} identified
 After confirmation:
 
 1. Create entry in `todo/PLANS.md`:
+
 ```markdown
 ### [{YYYY-MM-DD}] {Title}
 
@@ -108,6 +111,7 @@ After confirmation:
 ```
 
 2. Add reference to TODO.md Backlog:
+
 ```markdown
 - [ ] {title} #plan → [todo/PLANS.md#{slug}] ~{estimate} logged:{YYYY-MM-DD}
 ```
@@ -115,6 +119,7 @@ After confirmation:
 3. Optionally create PRD/tasks files if scope warrants
 
 Respond:
+
 ```
 Saved: "{title}"
 - Plan: todo/PLANS.md
@@ -139,6 +144,7 @@ This context goes into the PLANS.md entry under "Context from Discussion" so fut
 ## Examples
 
 **Simple task:**
+
 ```
 User: We discussed adding a CSV export button
 AI: Saving to TODO.md: "Add CSV export button" ~2h (ai:1.5h test:30m)
@@ -149,6 +155,7 @@ AI: Saved: "Add CSV export button" to TODO.md (~2h)
 ```
 
 **Complex work:**
+
 ```
 User: We discussed the authentication overhaul with OAuth, session management, and migration
 AI: This looks like complex work. Creating execution plan.
