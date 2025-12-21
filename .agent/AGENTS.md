@@ -20,6 +20,7 @@ mode: subagent
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
 - Store secrets ONLY in `~/.config/aidevops/mcp-env.sh`
+- Re-read files immediately before editing (stale reads cause "file modified" errors)
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
