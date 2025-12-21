@@ -124,8 +124,45 @@ This creates:
 - `.agent` symlink → `~/.aidevops/agents/`
 - `TODO.md` - Quick task tracking with time estimates
 - `todo/PLANS.md` - Complex execution plans
+- `.beads/` - Task graph database (if beads enabled)
 
-**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`
+**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `beads`
+
+### Task Graph Visualization with Beads
+
+[Beads](https://github.com/steveyegge/beads) provides task dependency tracking and graph visualization:
+
+```bash
+aidevops init beads              # Enable beads (includes planning)
+```
+
+**Task Dependencies:**
+
+```markdown
+- [ ] t001 First task
+- [ ] t002 Second task blocked-by:t001
+- [ ] t001.1 Subtask of t001
+```
+
+| Syntax | Meaning |
+|--------|---------|
+| `blocked-by:t001` | Task waits for t001 to complete |
+| `blocks:t002` | This task blocks t002 |
+| `t001.1` | Subtask of t001 (hierarchical) |
+
+**Commands:**
+
+| Command | Purpose |
+|---------|---------|
+| `/ready` | Show tasks with no open blockers |
+| `/sync-beads` | Sync TODO.md/PLANS.md with Beads graph |
+| `bd list` | List all tasks in Beads |
+| `bd ready` | Show ready tasks (Beads CLI) |
+| `bd graph <id>` | Show dependency graph for an issue |
+
+**Architecture:** aidevops markdown files (TODO.md, PLANS.md) are the source of truth. Beads syncs from them for visualization.
+
+See `.agent/tools/task-management/beads.md` for complete documentation.
 
 **Your AI assistant now has agentic access to 30+ service integrations.**
 
@@ -743,8 +780,10 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/create-prd` | Create a Product Requirements Document for complex features |
 | `/generate-tasks` | Generate implementation tasks from a PRD |
 | `/log-time-spent` | Log time spent on a task for tracking |
+| `/ready` | Show tasks with no open blockers (Beads integration) |
+| `/sync-beads` | Sync TODO.md/PLANS.md with Beads task graph |
 
-Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex execution plans).
+Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex execution plans). Task dependencies are visualized with [Beads](https://github.com/steveyegge/beads).
 
 **`/list-todo` options:**
 

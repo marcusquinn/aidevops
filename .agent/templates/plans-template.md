@@ -5,7 +5,7 @@ mode: subagent
 
 Complex, multi-session work requiring research, design decisions, and detailed tracking.
 
-Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_plans) with TOON-enhanced parsing.
+Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_plans) with TOON-enhanced parsing and [Beads](https://github.com/steveyegge/beads) integration for dependency visualization.
 
 <!--TOON:meta{version,format,updated}:
 1.0,plans-md+toon,{{DATE}}
@@ -14,9 +14,11 @@ Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_pla
 ## Format
 
 Each plan includes:
+- **Plan ID**: `p001`, `p002`, etc. (for cross-referencing)
 - **Status**: Planning / In Progress (Phase X/Y) / Blocked / Completed
 - **Time Estimate**: `~2w (ai:1w test:0.5w read:0.5w)`
 - **Timestamps**: `logged:`, `started:`, `completed:`
+- **Dependencies**: `blocked-by:p001` or `blocks:p003`
 - **Progress**: Timestamped checkboxes with estimates and actuals
 - **Decision Log**: Key decisions with rationale
 - **Surprises & Discoveries**: Unexpected findings
@@ -48,14 +50,16 @@ Each plan includes:
 ## Plan Template
 
 ```markdown
-### [YYYY-MM-DD] Plan Title
+### p00X: Plan Title
 
 **Status:** Planning
 **Owner:** @username
 **Tags:** #tag1 #tag2
 **Estimate:** ~Xd (ai:Xd test:Xd read:Xd)
+**Dependencies:** blocked-by:p001 (if any)
 **PRD:** [todo/tasks/prd-{slug}.md](tasks/prd-{slug}.md)
 **Tasks:** [todo/tasks/tasks-{slug}.md](tasks/tasks-{slug}.md)
+**Logged:** YYYY-MM-DD
 
 #### Purpose
 
@@ -78,6 +82,10 @@ Brief description of why this work matters.
 ---
 
 ## Analytics
+
+<!--TOON:dependencies-->
+<!-- Format: child_id|relation|parent_id -->
+<!--/TOON:dependencies-->
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
 0,0,0,0,,
