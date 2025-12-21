@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add missing return statements to 3 scripts
 - swap Build+ before Plan+ in Tab order
 - add mode: subagent to all agent files for OpenCode compatibility
+
 ## [2.37.2] - 2025-12-21
 
 ### Changed
