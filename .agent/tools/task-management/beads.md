@@ -8,12 +8,15 @@ Task dependency tracking and graph visualization for TODO.md and PLANS.md.
 |---------|---------|
 | `bd` | Beads CLI |
 | `bd init` | Initialize Beads in project |
-| `bd add "task"` | Add a task |
+| `bd create "task"` | Create a task |
 | `bd list` | List all tasks |
-| `bd graph` | Show dependency graph |
+| `bd ready` | Show tasks with no blockers |
+| `bd graph <id>` | Show dependency graph for issue |
+| `bd dep add <id2> <id1>` | Make id2 depend on id1 |
+| `bd close <id>` | Close a task |
 | `beads-sync-helper.sh push` | Sync TODO.md → Beads |
 | `beads-sync-helper.sh pull` | Sync Beads → TODO.md |
-| `todo-ready.sh` | Show unblocked tasks |
+| `todo-ready.sh` | Show unblocked tasks (from TODO.md) |
 
 ## Architecture
 
@@ -95,21 +98,27 @@ Show tasks with no open blockers:
 # Initialize
 bd init
 
-# Add task
-bd add "Implement login"
+# Create task
+bd create "Implement login"
 
-# Add with dependency
-bd add "Deploy" --after "Test"
+# Create with description
+bd create "Deploy" --description="Deploy to production"
+
+# Add dependency (issue2 depends on issue1)
+bd dep add <issue2-id> <issue1-id>
 
 # List tasks
 bd list
 bd list --status open
 
-# Show graph
-bd graph
+# Show graph for an issue
+bd graph <issue-id>
 
-# Complete task
-bd done <id>
+# Show ready tasks (no blockers)
+bd ready
+
+# Close task
+bd close <id>
 
 # MCP server (for AI tools)
 bd mcp
