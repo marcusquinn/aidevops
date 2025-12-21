@@ -737,12 +737,13 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 
 | Command | Purpose |
 |---------|---------|
+| `/save-todo` | Save discussion as task or plan (auto-detects complexity) |
+| `/plan-status` | Check status of plans in `TODO.md` and `todo/PLANS.md` |
 | `/create-prd` | Create a Product Requirements Document for complex features |
 | `/generate-tasks` | Generate implementation tasks from a PRD |
-| `/plan-status` | Check status of plans in `TODO.md` and `todo/PLANS.md` |
 | `/log-time-spent` | Log time spent on a task for tracking |
 
-Plans are tracked in `TODO.md` (quick tasks) and `todo/PLANS.md` (complex execution plans with PRDs).
+Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex execution plans). The `/save-todo` command auto-detects whether work is simple (TODO.md only) or complex (PLANS.md + TODO.md reference).
 
 **Time Tracking**: Tasks support time estimates and actuals with the format `~4h (ai:2h test:1h) started:2025-01-15T10:30Z`. Configure per-repo via `.aidevops.json`.
 
