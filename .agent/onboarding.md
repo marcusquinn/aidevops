@@ -1,16 +1,7 @@
 ---
+name: onboarding
 description: Interactive onboarding wizard - discover services, check credentials, configure integrations
-mode: primary
-temperature: 0.3
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
-  grep: true
-  webfetch: true
-  task: true
+mode: subagent
 ---
 
 # Onboarding Wizard - aidevops Configuration

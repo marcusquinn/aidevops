@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # Conversation Starter Prompts
 
 Shared prompts for Plan+ and Build+ agents to ensure consistent UX.

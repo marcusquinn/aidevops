@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # Execution Plans
 
 Complex, multi-session work requiring research, design decisions, and detailed tracking.

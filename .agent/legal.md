@@ -1,6 +1,7 @@
 ---
 name: legal
 description: Legal compliance and documentation - contracts, policies, regulatory guidance
+mode: subagent
 ---
 
 # Legal - Main Agent

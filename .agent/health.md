@@ -1,6 +1,7 @@
 ---
 name: health
 description: Health and wellness domain - medical information, fitness, nutrition guidance
+mode: subagent
 ---
 
 # Health - Main Agent

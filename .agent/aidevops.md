@@ -1,6 +1,7 @@
 ---
 name: aidevops
 description: AI DevOps framework operations - setup, configuration, meta-agents, troubleshooting
+mode: subagent
 ---
 
 # AI DevOps - Framework Main Agent

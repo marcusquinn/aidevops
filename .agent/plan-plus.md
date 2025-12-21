@@ -1,6 +1,7 @@
 ---
 name: plan-plus
 description: Read-only planning agent with semantic codebase search - analysis without modifications
+mode: subagent
 ---
 
 # Plan+ - Enhanced Plan Agent

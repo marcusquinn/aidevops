@@ -1,6 +1,7 @@
 ---
 name: accounting
 description: Financial operations and accounting - QuickFile integration, invoicing, expense tracking
+mode: subagent
 ---
 
 # Accounting - Main Agent

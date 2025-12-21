@@ -1,6 +1,7 @@
 ---
 name: marketing
 description: Marketing strategy and campaigns - digital marketing, analytics, brand management
+mode: subagent
 ---
 
 # Marketing - Main Agent

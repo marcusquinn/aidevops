@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # TODO
 
 Project task tracking with time estimates and TOON-enhanced parsing.

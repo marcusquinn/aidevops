@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # Keyword Research
 
 <!-- AI-CONTEXT-START -->

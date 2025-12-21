@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # Tasks: {Feature Name}
 
 Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) task format, with time tracking.

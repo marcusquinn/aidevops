@@ -1,6 +1,7 @@
 ---
 name: seo
 description: SEO optimization and analysis - keyword research, Search Console, DataForSEO, site crawling
+mode: subagent
 ---
 
 # SEO - Main Agent

@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # SQL Migrations Workflow
 
 <!-- AI-CONTEXT-START -->

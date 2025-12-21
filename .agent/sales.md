@@ -1,6 +1,7 @@
 ---
 name: sales
 description: Sales operations and CRM - lead management, pipeline tracking, sales automation
+mode: subagent
 ---
 
 # Sales - Main Agent

@@ -1,6 +1,7 @@
 ---
 name: build-mcp
 description: MCP server development - building Model Context Protocol servers and tools
+mode: subagent
 ---
 
 # Build-MCP - MCP Server Development Agent

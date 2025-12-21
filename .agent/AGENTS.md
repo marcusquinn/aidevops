@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # AI DevOps Framework - User Guide
 
 **New to aidevops?** Type `/onboarding` to get started with an interactive setup wizard.

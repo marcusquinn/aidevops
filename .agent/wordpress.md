@@ -1,6 +1,7 @@
 ---
 name: wordpress
 description: WordPress ecosystem management - local development, fleet management, plugin curation
+mode: subagent
 ---
 
 # WordPress - Main Agent

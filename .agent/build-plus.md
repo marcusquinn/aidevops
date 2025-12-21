@@ -1,6 +1,7 @@
 ---
 name: build-plus
 description: Enhanced build agent with semantic codebase search and context tools
+mode: subagent
 ---
 
 # Build+ - Enhanced Build Agent

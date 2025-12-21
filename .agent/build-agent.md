@@ -1,6 +1,7 @@
 ---
 name: build-agent
 description: Agent design and composition - creating efficient, token-optimized AI agents
+mode: subagent
 ---
 
 # Build-Agent - Composing Efficient AI Agents

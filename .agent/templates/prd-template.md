@@ -1,3 +1,6 @@
+---
+mode: subagent
+---
 # Product Requirements Document: {Feature Name}
 
 Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) PRD format, with time tracking.

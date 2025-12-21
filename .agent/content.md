@@ -1,6 +1,7 @@
 ---
 name: content
 description: Content creation and management - copywriting, guidelines, editorial workflows
+mode: subagent
 ---
 
 # Content - Main Agent

@@ -1,6 +1,7 @@
 ---
 description: Save current discussion as task or plan (auto-detects complexity)
 agent: Plan+
+mode: subagent
 ---
 
 Analyze the current conversation and save appropriately based on complexity.
