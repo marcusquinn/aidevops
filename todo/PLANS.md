@@ -221,10 +221,425 @@ m011,p003,Phase 3: Implement chosen approach and test,1.5h,,2025-12-21T14:00Z,,p
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
-<!--TOON:active_plans[3]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+### [2025-12-21] OCR Invoice/Receipt Extraction Pipeline
+
+**Status:** Planning
+**Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
+**Source:** [pontusab's X post](https://x.com/pontusab/status/2002345525174284449)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p004,OCR Invoice/Receipt Extraction Pipeline,planning,0,5,,accounting|ocr|automation,3d,1.5d,1d,0.5d,2025-12-21T22:00Z,
+-->
+
+#### Purpose
+
+Add OCR extraction capabilities to the accounting agent for automated invoice and receipt processing. This enables:
+- Scanning/photographing paper receipts and invoices
+- Automatic extraction of vendor, amount, date, VAT, line items
+- Integration with QuickFile for expense recording and purchase invoice creation
+- Reducing manual data entry for accounting workflows
+
+#### Context from Discussion
+
+**Reference:** @pontusab's OCR extraction pipeline approach (X post - details to be added when available)
+
+**Integration points:**
+- `accounting.md` - Main agent, add OCR as new capability
+- `services/accounting/quickfile.md` - Target for extracted data (purchases, expenses)
+- `tools/browser/` - Potential for receipt image capture workflows
+
+**Key considerations:**
+- OCR accuracy requirements for financial data
+- Multi-currency and VAT handling
+- Receipt image storage and retention
+- Privacy/security of financial documents
+- Batch processing vs real-time extraction
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Research OCR approaches and @pontusab's implementation ~4h
+- [ ] (2025-12-21) Phase 2: Design extraction schema (vendor, amount, date, VAT, items) ~4h
+- [ ] (2025-12-21) Phase 3: Implement OCR extraction pipeline ~8h
+- [ ] (2025-12-21) Phase 4: QuickFile integration (purchases/expenses) ~4h
+- [ ] (2025-12-21) Phase 5: Testing with various invoice/receipt formats ~4h
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m012,p004,Phase 1: Research OCR approaches and @pontusab's implementation,4h,,2025-12-21T22:00Z,,pending
+m013,p004,Phase 2: Design extraction schema (vendor; amount; date; VAT; items),4h,,2025-12-21T22:00Z,,pending
+m014,p004,Phase 3: Implement OCR extraction pipeline,8h,,2025-12-21T22:00Z,,pending
+m015,p004,Phase 4: QuickFile integration (purchases/expenses),4h,,2025-12-21T22:00Z,,pending
+m016,p004,Phase 5: Testing with various invoice/receipt formats,4h,,2025-12-21T22:00Z,,pending
+-->
+
+#### Decision Log
+
+(To be populated during implementation)
+
+<!--TOON:decisions[0]{id,plan_id,decision,rationale,date,impact}:
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+### [2025-12-21] Image SEO Enhancement with AI Vision
+
+**Status:** Planning
+**Estimate:** ~6h (ai:3h test:2h read:1h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,
+-->
+
+### [2025-12-21] Uncloud Integration for aidevops
+
+**Status:** Planning
+**Estimate:** ~1d (ai:4h test:4h read:2h)
+**Source:** [psviderski/uncloud](https://github.com/psviderski/uncloud)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
+-->
+
+#### Purpose
+
+Add Uncloud as a deployment provider option in aidevops. Uncloud is a lightweight container orchestration tool that enables multi-machine Docker deployments without complex Kubernetes infrastructure. It aligns with aidevops philosophy of simplicity and developer experience.
+
+**Why Uncloud:**
+- Docker Compose format (familiar, no new DSL)
+- WireGuard mesh networking (zero-config, secure)
+- No control plane (decentralized, fewer failure points)
+- CLI-based with Docker-like commands (`uc run`, `uc deploy`, `uc ls`)
+- Self-hosted, Apache 2.0 licensed
+- Complements Coolify (PaaS) and Vercel (serverless) as infrastructure-level orchestration
+
+#### Context from Discussion
+
+**Key capabilities identified:**
+- Deploy anywhere: cloud VMs, bare metal, hybrid
+- Zero-downtime rolling deployments
+- Built-in Caddy reverse proxy with auto HTTPS
+- Service discovery via internal DNS
+- Managed DNS subdomain (*.uncld.dev) for quick access
+- Direct image push to machines without registry (Unregistry)
+
+**Integration architecture:**
+- `tools/deployment/uncloud.md` - Main subagent (alongside coolify.md, vercel.md)
+- `tools/deployment/uncloud-setup.md` - Installation and machine setup
+- `scripts/uncloud-helper.sh` - CLI wrapper for common operations
+- `configs/uncloud-config.json.txt` - Configuration template
+
+**Comparison with existing providers:**
+| Provider | Type | Best For |
+|----------|------|----------|
+| Coolify | Self-hosted PaaS | Single-server apps, managed experience |
+| Vercel | Serverless | Static sites, JAMstack, Next.js |
+| Uncloud | Multi-machine orchestration | Cross-server deployments, Docker clusters |
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Create uncloud.md subagent with Quick Reference ~2h
+- [ ] (2025-12-21) Phase 2: Create uncloud-helper.sh script ~2h
+- [ ] (2025-12-21) Phase 3: Create uncloud-config.json.txt template ~1h
+- [ ] (2025-12-21) Phase 4: Update deployment docs and test workflows ~3h
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m021,p006,Phase 1: Create uncloud.md subagent with Quick Reference,2h,,2025-12-21T04:00Z,,pending
+m022,p006,Phase 2: Create uncloud-helper.sh script,2h,,2025-12-21T04:00Z,,pending
+m023,p006,Phase 3: Create uncloud-config.json.txt template,1h,,2025-12-21T04:00Z,,pending
+m024,p006,Phase 4: Update deployment docs and test workflows,3h,,2025-12-21T04:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Place in tools/deployment/ alongside Coolify and Vercel
+  **Rationale:** Uncloud is a deployment tool, not a hosting provider (like Hetzner/Hostinger)
+  **Date:** 2025-12-21
+
+- **Decision:** Focus on CLI integration, not MCP server initially
+  **Rationale:** Uncloud is pre-production; CLI wrapper provides immediate value without MCP complexity
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d006,p006,Place in tools/deployment/ alongside Coolify and Vercel,Uncloud is a deployment tool not a hosting provider,2025-12-21,None
+d007,p006,Focus on CLI integration not MCP server initially,Uncloud is pre-production; CLI wrapper provides immediate value,2025-12-21,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+#### Purpose
+
+Add AI-powered image SEO capabilities to the SEO agent. Use Moondream.ai vision model to analyze images and generate SEO-optimized filenames, alt text, and tags for better search visibility and accessibility. Include image upscaling for quality enhancement when needed.
+
+#### Context from Discussion
+
+**Architecture:**
+- `seo/moondream.md` - Moondream.ai vision API integration subagent
+- `seo/image-seo.md` - Image SEO orchestrator (coordinates moondream + upscale)
+- `seo/upscale.md` - Image upscaling services (API provider TBD after research)
+
+**Integration points:**
+- Update `seo.md` main agent to reference image-seo capabilities
+- `image-seo.md` can call both `moondream.md` and `upscale.md` as needed
+- Workflow: analyze image → generate names/tags → optionally upscale
+
+**Key capabilities:**
+- SEO-friendly filename generation from image content
+- Alt text generation for accessibility (WCAG compliance)
+- Tag/keyword extraction for image metadata
+- Quality upscaling before publishing (optional)
+
+**Research needed:**
+- Moondream.ai API documentation and integration patterns
+- Best upscaling API services (candidates: Replicate, DeepAI, Let's Enhance, etc.)
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Research Moondream.ai API and create moondream.md subagent ~1.5h
+- [ ] (2025-12-21) Phase 2: Create image-seo.md orchestrator subagent ~1.5h
+- [ ] (2025-12-21) Phase 3: Research upscaling APIs and create upscale.md subagent ~1.5h
+- [ ] (2025-12-21) Phase 4: Update seo.md and test integration ~1.5h
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m017,p005,Phase 1: Research Moondream.ai API and create moondream.md subagent,1.5h,,2025-12-21T23:30Z,,pending
+m018,p005,Phase 2: Create image-seo.md orchestrator subagent,1.5h,,2025-12-21T23:30Z,,pending
+m019,p005,Phase 3: Research upscaling APIs and create upscale.md subagent,1.5h,,2025-12-21T23:30Z,,pending
+m020,p005,Phase 4: Update seo.md and test integration,1.5h,,2025-12-21T23:30Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Create three separate subagents (moondream, image-seo, upscale)
+  **Rationale:** Separation of concerns - moondream for vision, upscale for quality, image-seo as orchestrator
+  **Date:** 2025-12-21
+
+- **Decision:** image-seo.md orchestrates moondream and upscale
+  **Rationale:** Single entry point for image optimization, can selectively call subagents as needed
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d004,p005,Create three separate subagents (moondream; image-seo; upscale),Separation of concerns - moondream for vision; upscale for quality; image-seo as orchestrator,2025-12-21,None
+d005,p005,image-seo.md orchestrates moondream and upscale,Single entry point for image optimization; can selectively call subagents,2025-12-21,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+### [2025-12-21] SEO Machine Integration for aidevops
+
+**Status:** Planning
+**Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
+**Source:** [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,
+-->
+
+#### Purpose
+
+Fork and adapt SEO Machine capabilities into aidevops to add comprehensive SEO content creation workflows. SEO Machine is a Claude Code workspace with specialized agents and Python analysis modules that fill significant gaps in aidevops content capabilities.
+
+**What SEO Machine provides:**
+- 6 custom commands (`/research`, `/write`, `/rewrite`, `/analyze-existing`, `/optimize`, `/performance-review`)
+- 7 specialized agents (content-analyzer, seo-optimizer, meta-creator, internal-linker, keyword-mapper, editor, performance)
+- 5 Python analysis modules (search intent, keyword density, readability, content length, SEO quality rating)
+- Context-driven system (brand voice, style guide, examples, internal links map)
+
+**Why fork vs integrate:**
+- SEO Machine is Claude Code-specific (`.claude/` structure)
+- aidevops needs multi-tool compatibility (OpenCode, Cursor, Windsurf, etc.)
+- Can leverage existing aidevops SEO tools (DataForSEO, GSC, E-E-A-T, site-crawler)
+- Opportunity to improve with aidevops patterns (subagent architecture, TOON, scripts)
+
+#### Context from Discussion
+
+**Gap analysis - what aidevops gains:**
+
+| Capability | SEO Machine | aidevops Current | Action |
+|------------|-------------|------------------|--------|
+| Content Writing | `/write` command | Basic `content.md` | Add writing workflow |
+| Content Optimization | `/optimize` with scoring | Missing | Add optimization agents |
+| Readability Scoring | Python (Flesch, etc.) | Missing | Port to scripts/ |
+| Keyword Density | Python analyzer | Missing | Port to scripts/ |
+| Search Intent | Python classifier | Missing | Port to scripts/ |
+| Content Length Comparison | SERP competitor analysis | Missing | Port to scripts/ |
+| SEO Quality Rating | 0-100 scoring | Missing | Port to scripts/ |
+| Brand Voice/Context | Context files system | Missing | Add context management |
+| Internal Linking | Agent + map file | Missing | Add linking strategy |
+| Meta Creator | Dedicated agent | Missing | Add meta generation |
+| Editor (Human Voice) | Dedicated agent | Missing | Add humanization |
+| E-E-A-T Analysis | Not mentioned | ✅ `eeat-score.md` | Keep existing |
+| Site Crawling | Not mentioned | ✅ `site-crawler.md` | Keep existing |
+| Keyword Research | DataForSEO | ✅ DataForSEO, Serper, GSC | Keep existing |
+
+**Architecture decisions:**
+- Adapt agents to aidevops subagent pattern under `seo/` and `content/`
+- Port Python modules to `~/.aidevops/agents/scripts/seo-*.py`
+- Create context system compatible with multi-project use
+- Integrate with existing `content.md` main agent
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Port Python analysis modules to scripts/ ~4h
+  - `seo-readability.py` - Flesch scores, sentence analysis
+  - `seo-keyword-density.py` - Keyword analysis, clustering
+  - `seo-search-intent.py` - Intent classification
+  - `seo-content-length.py` - SERP competitor comparison
+  - `seo-quality-rater.py` - 0-100 SEO scoring
+- [ ] (2025-12-21) Phase 2: Create content writing subagents ~4h
+  - `content/seo-writer.md` - SEO-optimized content creation
+  - `content/meta-creator.md` - Meta title/description generation
+  - `content/editor.md` - Human voice optimization
+  - `content/internal-linker.md` - Internal linking strategy
+- [ ] (2025-12-21) Phase 3: Create SEO analysis subagents ~3h
+  - `seo/content-analyzer.md` - Comprehensive content analysis
+  - `seo/seo-optimizer.md` - On-page SEO recommendations
+  - `seo/keyword-mapper.md` - Keyword placement analysis
+- [ ] (2025-12-21) Phase 4: Add context management system ~3h
+  - Context file templates (brand-voice, style-guide, internal-links-map)
+  - Per-project context in `.aidevops/context/`
+  - Integration with content agents
+- [ ] (2025-12-21) Phase 5: Update main agents and test ~2h
+  - Update `content.md` with new capabilities
+  - Update `seo.md` with content analysis
+  - Integration testing
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m025,p007,Phase 1: Port Python analysis modules to scripts/,4h,,2025-12-21T15:00Z,,pending
+m026,p007,Phase 2: Create content writing subagents,4h,,2025-12-21T15:00Z,,pending
+m027,p007,Phase 3: Create SEO analysis subagents,3h,,2025-12-21T15:00Z,,pending
+m028,p007,Phase 4: Add context management system,3h,,2025-12-21T15:00Z,,pending
+m029,p007,Phase 5: Update main agents and test,2h,,2025-12-21T15:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Fork and adapt rather than integrate directly
+  **Rationale:** SEO Machine is Claude Code-specific; aidevops needs multi-tool compatibility
+  **Date:** 2025-12-21
+
+- **Decision:** Port Python modules to scripts/ rather than keeping as separate package
+  **Rationale:** Consistent with aidevops pattern; scripts are self-contained and portable
+  **Date:** 2025-12-21
+
+- **Decision:** Split agents between content/ and seo/ folders
+  **Rationale:** Writing/editing belongs in content domain; analysis belongs in SEO domain
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[3]{id,plan_id,decision,rationale,date,impact}:
+d008,p007,Fork and adapt rather than integrate directly,SEO Machine is Claude Code-specific; aidevops needs multi-tool compatibility,2025-12-21,None
+d009,p007,Port Python modules to scripts/,Consistent with aidevops pattern; scripts are self-contained and portable,2025-12-21,None
+d010,p007,Split agents between content/ and seo/ folders,Writing/editing belongs in content domain; analysis belongs in SEO domain,2025-12-21,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+### [2025-12-21] Enhance Plan+ and Build+ with OpenCode's Latest Features
+
+**Status:** Planning
+**Estimate:** ~3h (ai:1.5h test:1h read:30m)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
+-->
+
+#### Purpose
+
+Apply OpenCode's latest agent configuration features to our Build+ and Plan+ agents, and configure agent ordering so our enhanced agents appear first in the Tab-cycled list (displacing OpenCode's default build/plan agents).
+
+#### Context from Discussion
+
+**Research findings from OpenCode docs (2025-12-21):**
+
+| Feature | OpenCode Latest | Our Current State | Action |
+|---------|-----------------|-------------------|--------|
+| `disable` option | Supports `"disable": true` per agent | Not using | Disable built-in `build` and `plan` |
+| `default_agent` | Supports `"default_agent": "Build+"` | Not set | Set Build+ as default |
+| `maxSteps` | Cost control for expensive ops | Not configured | Consider adding for subagents |
+| Granular bash permissions | `"git status": "allow"` patterns | Plan+ denies all bash | Allow read-only git commands |
+| Agent ordering | JSON key order determines Tab order | Build+ first | Already correct |
+
+**Key decisions:**
+- Disable OpenCode's default `build` and `plan` agents so only our Build+ and Plan+ appear
+- Set `default_agent` to `Build+` for consistent startup behavior
+- Add granular bash permissions to Plan+ allowing read-only git commands (`git status`, `git log*`, `git diff`, `git branch`)
+- Update `generate-opencode-agents.sh` to apply these settings automatically
+
+**Granular bash permissions for Plan+ (read-only git):**
+```json
+"permission": {
+  "edit": "deny",
+  "write": "deny",
+  "bash": {
+    "git status": "allow",
+    "git log*": "allow",
+    "git diff*": "allow",
+    "git branch*": "allow",
+    "git show*": "allow",
+    "*": "deny"
+  }
+}
+```
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Add `disable: true` for built-in build/plan agents ~30m
+- [ ] (2025-12-21) Phase 2: Set `default_agent` to Build+ ~15m
+- [ ] (2025-12-21) Phase 3: Add granular bash permissions to Plan+ ~45m
+- [ ] (2025-12-21) Phase 4: Update generate-opencode-agents.sh and test ~1.5h
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m030,p008,Phase 1: Add disable:true for built-in build/plan agents,30m,,2025-12-21T04:30Z,,pending
+m031,p008,Phase 2: Set default_agent to Build+,15m,,2025-12-21T04:30Z,,pending
+m032,p008,Phase 3: Add granular bash permissions to Plan+,45m,,2025-12-21T04:30Z,,pending
+m033,p008,Phase 4: Update generate-opencode-agents.sh and test,1.5h,,2025-12-21T04:30Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Disable OpenCode's default build/plan rather than rename our agents
+  **Rationale:** Keeps our naming (Build+, Plan+) which indicates enhanced versions; cleaner than competing names
+  **Date:** 2025-12-21
+
+- **Decision:** Allow read-only git commands in Plan+ via granular bash permissions
+  **Rationale:** Plan+ needs to inspect git state (status, log, diff) for planning without modification risk
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d011,p008,Disable OpenCode's default build/plan rather than rename our agents,Keeps our naming (Build+ Plan+) which indicates enhanced versions,2025-12-21,None
+d012,p008,Allow read-only git commands in Plan+ via granular bash permissions,Plan+ needs to inspect git state for planning without modification risk,2025-12-21,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+<!--TOON:active_plans[8]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
 p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
+p004,OCR Invoice/Receipt Extraction Pipeline,planning,0,5,,accounting|ocr|automation,3d,1.5d,1d,0.5d,2025-12-21T22:00Z,
+p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,
+p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
+p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,
+p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
 -->
 
 ## Completed Plans
@@ -341,5 +756,5 @@ p00X,Deliverable 1; Deliverable 2,Success 1; Success 2,Learning 1; Learning 2,Xd
 ## Analytics
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
-3,3,0,0,,
+8,8,0,0,,
 -->
