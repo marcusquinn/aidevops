@@ -42,7 +42,7 @@ Based on signals above, classify as Simple or Complex.
 
 **For Simple tasks** (TODO.md only):
 
-```
+```text
 Saving to TODO.md: "{title}" ~{estimate}
 
 1. Confirm
@@ -58,14 +58,14 @@ After confirmation, add to TODO.md Backlog:
 
 Respond:
 
-```
+```text
 Saved: "{title}" to TODO.md (~{estimate})
 Start anytime with: "Let's work on {title}"
 ```
 
 **For Complex work** (PLANS.md + TODO.md):
 
-```
+```text
 This looks like complex work. Creating execution plan.
 
 Title: {title}
@@ -121,7 +121,7 @@ After confirmation:
 
 Respond:
 
-```
+```text
 Saved: "{title}"
 - Plan: todo/PLANS.md
 - Reference: TODO.md
@@ -146,7 +146,7 @@ This context goes into the PLANS.md entry under "Context from Discussion" so fut
 
 **Simple task:**
 
-```
+```text
 User: We discussed adding a CSV export button
 AI: Saving to TODO.md: "Add CSV export button" ~2h (ai:1.5h test:30m)
     1. Confirm  2. More details  3. Full plan
@@ -157,7 +157,7 @@ AI: Saved: "Add CSV export button" to TODO.md (~2h)
 
 **Complex work:**
 
-```
+```text
 User: We discussed the authentication overhaul with OAuth, session management, and migration
 AI: This looks like complex work. Creating execution plan.
     Title: Authentication Overhaul

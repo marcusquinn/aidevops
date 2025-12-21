@@ -10,6 +10,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 ## Format
 
 **Human-readable:**
+
 ```markdown
 - [ ] Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
 - [x] Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
