@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - correct Beads CLI command names in documentation
+
 ## [2.39.0] - 2025-12-21
 
 ### Added
