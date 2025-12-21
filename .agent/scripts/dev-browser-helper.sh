@@ -386,7 +386,7 @@ EOF
 # Show help
 show_help() {
     cat << 'EOF'
-Dev-Browser Helper - Stateful Browser Automation
+Dev-Browser Helper - Stateful Browser Automation with Persistent Profile
 
 USAGE:
     dev-browser-helper.sh [COMMAND] [OPTIONS]
@@ -394,28 +394,40 @@ USAGE:
 COMMANDS:
     help            Show this help message
     setup           Install dev-browser and dependencies
-    start           Start the dev-browser server (visible browser)
+    start           Start server (reuses existing browser profile)
     start-headless  Start server in headless mode
+    start-clean     Start with a fresh browser profile (no cookies/data)
     stop            Stop the dev-browser server
-    restart         Restart the server
-    status          Check installation and server status
+    restart         Restart the server (keeps profile)
+    status          Check installation, server, and profile status
+    profile         Show browser profile details
+    reset-profile   Delete browser profile for clean start
     test            Run a test script to verify setup
     update          Update dev-browser to latest version
     logs            Show server logs
-    clean           Remove temporary files
+    clean           Remove temporary files (keeps profile)
+
+BROWSER PROFILE:
+    The browser profile persists across restarts, preserving:
+    - Cookies (stay logged into sites)
+    - localStorage and sessionStorage
+    - Browser cache
+    - Extension data (if installed manually in the browser)
+
+    Location: ~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/
 
 EXAMPLES:
     dev-browser-helper.sh setup            # Install dev-browser
-    dev-browser-helper.sh start            # Start server (visible browser)
-    dev-browser-helper.sh start-headless   # Start server (headless)
-    dev-browser-helper.sh status           # Check status
-    dev-browser-helper.sh test             # Run test script
+    dev-browser-helper.sh start            # Start (keeps logins)
+    dev-browser-helper.sh start-clean      # Start fresh (no logins)
+    dev-browser-helper.sh profile          # Show profile info
+    dev-browser-helper.sh reset-profile    # Delete all browser data
 
 USAGE WITH OPENCODE:
     1. Setup: dev-browser-helper.sh setup
     2. Start: dev-browser-helper.sh start
     3. Use @dev-browser subagent in OpenCode
-    4. The agent executes scripts via bash
+    4. Browser stays logged in between sessions!
 
 DOCUMENTATION:
     See: ~/.aidevops/agents/tools/browser/dev-browser.md
@@ -441,6 +453,18 @@ main() {
         start-headless|headless)
             start_server true
             ;;
+        start-clean)
+            # Start with fresh profile
+            if is_server_running; then
+                print_error "Server is running. Stop it first with: $0 stop"
+                return 1
+            fi
+            if [[ -d "${PROFILE_DIR}" ]]; then
+                print_info "Removing existing browser profile for clean start..."
+                rm -rf "${PROFILE_DIR}"
+            fi
+            start_server false
+            ;;
         stop)
             stop_server
             ;;
@@ -451,6 +475,12 @@ main() {
             ;;
         status)
             show_status
+            ;;
+        profile)
+            show_profile
+            ;;
+        reset-profile)
+            reset_profile
             ;;
         test)
             run_test
@@ -468,7 +498,7 @@ main() {
             ;;
         clean)
             rm -rf "${DEV_BROWSER_SKILL_DIR}/tmp"/*
-            print_success "Cleaned temporary files"
+            print_success "Cleaned temporary files (profile preserved)"
             ;;
         *)
             print_error "Unknown command: ${command}"

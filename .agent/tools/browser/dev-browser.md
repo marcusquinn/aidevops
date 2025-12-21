@@ -18,28 +18,36 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Stateful browser automation with persistent page state
+- **Purpose**: Stateful browser automation with persistent page state AND browser profile
 - **Runtime**: Bun + Playwright (pages survive script executions)
 - **Server**: `~/.aidevops/dev-browser/server.sh` (port 9222)
+- **Profile**: `~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/`
 - **Scripts**: Execute via `bun x tsx` inline scripts
 - **Install**: `bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup`
 
 **Key Advantages**:
 - **14% faster, 39% cheaper** than Playwright MCP (fewer round-trips)
-- **Stateful**: Pages persist across script executions
+- **Persistent profile**: Cookies, localStorage, extensions survive server restarts
+- **Stateful pages**: Pages persist across script executions within a session
 - **Codebase-aware**: Read source code to write selectors directly
 - **LLM-friendly**: ARIA snapshots for element discovery
+
+**Profile Persistence** (survives server restarts):
+- Cookies (stay logged into sites)
+- localStorage and sessionStorage
+- Browser cache
+- Extension data (install extensions manually in the browser window)
 
 **When to Use**:
 - Testing local dev servers (localhost:3000, etc.)
 - Multi-step workflows (login -> navigate -> action)
 - Iterative debugging with visual feedback
+- When you need to stay logged into sites across sessions
 - When you have source code access for selectors
 
 **When NOT to Use**:
-- Simple one-off screenshots -> use Playwriter
+- Need to use YOUR existing Chrome profile -> use Playwriter
 - Natural language automation -> use Stagehand
-- Existing browser sessions/cookies -> use Playwriter
 
 <!-- AI-CONTEXT-END -->
 
@@ -49,11 +57,20 @@ tools:
 # Complete setup (installs Bun if needed, clones repo, installs deps)
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup
 
-# Start server (required before scripts)
+# Start server (reuses existing browser profile - stays logged in!)
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# Check status
+# Start with fresh profile (no cookies, clean slate)
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-clean
+
+# Check status (shows profile info)
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh status
+
+# View profile details
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh profile
+
+# Reset profile (delete all browser data)
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh reset-profile
 
 # Stop server
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh stop
