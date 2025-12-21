@@ -613,54 +613,46 @@ EOF
     if [[ "$enable_database" == "true" ]]; then
         print_info "Setting up database schema directories..."
         
-        # Create schemas directory with README
+        # Create schemas directory with AGENTS.md
         if [[ ! -d "$project_root/schemas" ]]; then
             mkdir -p "$project_root/schemas"
-            cat > "$project_root/schemas/README.md" << 'EOF'
+            cat > "$project_root/schemas/AGENTS.md" << 'EOF'
 # Database Schemas
 
-Declarative schema files - the source of truth for your database structure.
+Declarative schema files - source of truth for database structure.
 
-## File Organization
-
-Prefix files with numbers to control execution order:
-
-```text
-00_extensions.sql    # PostgreSQL extensions
-01_types.sql         # Custom types and enums
-10_users.sql         # Core tables
-20_products.sql      # Domain tables
-90_views.sql         # Views (depend on tables)
-```
-
-## Workflow
-
-1. Edit schema files here
-2. Run diff to generate migration: `supabase db diff -f name` or equivalent
-3. Review generated migration in `migrations/`
-4. Apply migration locally
-5. Commit both schema and migration files
-
-See `.agent/workflows/sql-migrations.md` for full documentation.
+See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
 EOF
             print_success "Created schemas/ directory"
         else
             print_warning "schemas/ already exists, skipping"
         fi
         
-        # Create migrations directory
+        # Create migrations directory with AGENTS.md
         if [[ ! -d "$project_root/migrations" ]]; then
             mkdir -p "$project_root/migrations"
-            touch "$project_root/migrations/.gitkeep"
+            cat > "$project_root/migrations/AGENTS.md" << 'EOF'
+# Database Migrations
+
+Auto-generated versioned migration files. Do not edit manually.
+
+See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+EOF
             print_success "Created migrations/ directory"
         else
             print_warning "migrations/ already exists, skipping"
         fi
         
-        # Create seeds directory
+        # Create seeds directory with AGENTS.md
         if [[ ! -d "$project_root/seeds" ]]; then
             mkdir -p "$project_root/seeds"
-            touch "$project_root/seeds/.gitkeep"
+            cat > "$project_root/seeds/AGENTS.md" << 'EOF'
+# Database Seeds
+
+Initial and reference data (roles, statuses, test accounts).
+
+See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+EOF
             print_success "Created seeds/ directory"
         else
             print_warning "seeds/ already exists, skipping"
