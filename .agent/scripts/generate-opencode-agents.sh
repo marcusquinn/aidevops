@@ -104,7 +104,7 @@ DISPLAY_NAMES = {
 }
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
-AGENT_ORDER = ["Plan+", "Build+", "Build-Agent", "Build-MCP", "AI-DevOps"]
+AGENT_ORDER = ["Build+", "Plan+", "Build-Agent", "Build-MCP", "AI-DevOps"]
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
