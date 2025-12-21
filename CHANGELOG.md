@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Refactor: simplify planning UX with auto-detection
+
 ## [2.37.0] - 2025-12-20
 
 ### Added
