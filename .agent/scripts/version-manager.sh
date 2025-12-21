@@ -395,6 +395,16 @@ validate_version_consistency() {
         fi
     fi
 
+    # Check Claude Code plugin marketplace.json
+    if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
+        if grep -q "\"version\": \"$expected_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
+            print_success ".claude-plugin/marketplace.json: $expected_version ✓"
+        else
+            print_error ".claude-plugin/marketplace.json does not contain version $expected_version"
+            errors=$((errors + 1))
+        fi
+    fi
+
     if [[ $errors -eq 0 ]]; then
         print_success "All version references are consistent: $expected_version"
         return 0
@@ -451,6 +461,12 @@ update_version_in_files() {
         fi
     else
         print_warning "README.md not found, skipping version badge update"
+    fi
+    
+    # Update Claude Code plugin marketplace.json
+    if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
+        sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
+        print_success "Updated .claude-plugin/marketplace.json"
     fi
     return 0
 }
