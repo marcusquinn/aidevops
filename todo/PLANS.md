@@ -679,6 +679,7 @@ Integrate Beads task management concepts and bi-directional sync into aidevops T
 - Multi-tool compatibility
 
 **Sync architecture:**
+
 ```
 TODO.md ←→ beads-sync-helper.sh ←→ .beads/beads.db
 PLANS.md ←→ (command-led sync) ←→ .beads/issues.jsonl
