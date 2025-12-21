@@ -547,6 +547,94 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
 
 # =============================================================================
+# LIST-TODO COMMAND
+# =============================================================================
+# List tasks and plans with sorting, filtering, and grouping
+
+cat > "$OPENCODE_COMMAND_DIR/list-todo.md" << 'EOF'
+---
+description: List tasks and plans with sorting, filtering, and grouping
+agent: Plan+
+---
+
+Read TODO.md and todo/PLANS.md and display tasks based on arguments.
+
+Arguments: $ARGUMENTS
+
+**Default (no args):** Show all pending tasks grouped by status (In Progress → Backlog)
+
+**Sorting options:**
+- `--priority` or `-p` - Sort by priority (high → medium → low)
+- `--estimate` or `-e` - Sort by time estimate (shortest first)
+- `--date` or `-d` - Sort by logged date (newest first)
+- `--alpha` or `-a` - Sort alphabetically
+
+**Filtering options:**
+- `--tag <tag>` or `-t <tag>` - Filter by tag (#seo, #security, etc.)
+- `--owner <name>` or `-o <name>` - Filter by assignee (@marcus, etc.)
+- `--status <status>` - Filter by status (pending, in-progress, done, plan)
+- `--estimate <range>` - Filter by estimate (e.g., "<2h", ">1d", "1h-4h")
+
+**Grouping options:**
+- `--group-by tag` or `-g tag` - Group by tag
+- `--group-by owner` or `-g owner` - Group by assignee
+- `--group-by status` or `-g status` - Group by status (default)
+- `--group-by estimate` or `-g estimate` - Group by size (small/medium/large)
+
+**Display options:**
+- `--plans` - Include full plan details from PLANS.md
+- `--done` - Include completed tasks
+- `--all` - Show everything (pending + done + plans)
+- `--compact` - One-line per task (no details)
+- `--limit <n>` - Limit results
+
+**Examples:**
+
+```bash
+/list-todo                           # All pending, grouped by status
+/list-todo --priority                # Sorted by priority
+/list-todo -t seo                    # Only #seo tasks
+/list-todo -o marcus -e              # Marcus's tasks, shortest first
+/list-todo -g tag                    # Grouped by tag
+/list-todo --estimate "<2h"          # Quick wins under 2 hours
+/list-todo --plans                   # Include plan details
+/list-todo --all --compact           # Everything, one line each
+```
+
+**Output format:**
+
+```markdown
+## In Progress (2)
+
+| Task | Est | Tags | Owner |
+|------|-----|------|-------|
+| Add CSV export | ~2h | #feature | @marcus |
+| Fix login bug | ~1h | #bugfix | - |
+
+## Backlog (5)
+
+| Task | Est | Tags | Owner |
+|------|-----|------|-------|
+| Ahrefs MCP integration | ~2d | #seo | - |
+| ...
+
+## Plans (1)
+
+### aidevops-opencode Plugin
+**Status:** Planning (Phase 0/4)
+**Estimate:** ~2d
+**Next:** Phase 1: Core plugin structure
+```
+
+After displaying, offer:
+1. Work on a specific task (enter number or name)
+2. Filter/sort differently
+3. Done browsing
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /list-todo command"
+
+# =============================================================================
 # SAVE-TODO COMMAND
 # =============================================================================
 # Save current discussion as task or plan (auto-detects complexity)
@@ -922,6 +1010,7 @@ echo ""
 echo "Available commands:"
 echo ""
 echo "  Planning:"
+echo "    /list-todo        - List tasks with sorting, filtering, grouping"
 echo "    /save-todo        - Save discussion as task/plan (auto-detects complexity)"
 echo "    /plan-status      - Show active plans and TODO.md status"
 echo "    /create-prd       - Generate Product Requirements Document"
@@ -958,7 +1047,8 @@ echo "    /log-time-spent   - Log time spent on a task"
 echo ""
 echo "New users: Start with /onboarding to configure your services"
 echo ""
-echo "Planning workflow: discuss -> /save-todo -> /feature -> implement -> /pr"
+echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /pr"
+echo "New work: discuss -> /save-todo -> later: /list-todo -> pick -> implement"
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
 echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 echo ""

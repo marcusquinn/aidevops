@@ -85,8 +85,87 @@ d001,p001,Keep as optional plugin,aidevops must remain multi-tool compatible,202
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
-<!--TOON:active_plans[1]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+### [2025-12-21] Claude Code Destructive Command Hooks
+
+**Status:** Planning
+**Estimate:** ~4h (ai:2h test:1h read:1h)
+**Source:** [Dicklesworthstone's guide](https://github.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/blob/main/DESTRUCTIVE_GIT_COMMAND_CLAUDE_HOOKS_SETUP.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
+-->
+
+#### Purpose
+
+Implement Claude Code PreToolUse hooks to mechanically block destructive git and filesystem commands. Instructions in AGENTS.md don't prevent execution - this provides enforcement at the tool level.
+
+**Problem:** On Dec 17, 2025, an AI agent ran `git checkout --` on files with hours of uncommitted work, destroying it instantly. AGENTS.md forbade this, but instructions alone don't prevent accidents.
+
+**Solution:** Python hook script that intercepts Bash commands before execution and blocks dangerous patterns.
+
+#### Context from Discussion
+
+**Commands to block:**
+- `git checkout -- <files>` - discards uncommitted changes
+- `git restore <files>` - same as checkout (newer syntax)
+- `git reset --hard` - destroys all uncommitted changes
+- `git clean -f` - removes untracked files permanently
+- `git push --force` / `-f` - destroys remote history
+- `git branch -D` - force-deletes without merge check
+- `rm -rf` (non-temp paths) - recursive deletion
+- `git stash drop/clear` - permanently deletes stashes
+
+**Safe patterns (allowlisted):**
+- `git checkout -b <branch>` - creates new branch
+- `git restore --staged` - only unstages, doesn't discard
+- `git clean -n` / `--dry-run` - preview only
+- `rm -rf /tmp/...`, `/var/tmp/...`, `$TMPDIR/...` - temp dirs
+
+**Key decisions:**
+- Adapt for aidevops: install to `~/.aidevops/hooks/` not `.claude/hooks/`
+- Support both Claude Code and OpenCode (if hooks compatible)
+- Add installer to `setup.sh` for automatic deployment
+- Document in `workflows/git-workflow.md`
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Create git_safety_guard.py adapted for aidevops ~1h
+- [ ] (2025-12-21) Phase 2: Create installer script with global/project options ~1h
+- [ ] (2025-12-21) Phase 3: Integrate into setup.sh ~30m
+- [ ] (2025-12-21) Phase 4: Document in workflows and test ~1.5h
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m005,p002,Phase 1: Create git_safety_guard.py adapted for aidevops,1h,,2025-12-21T12:00Z,,pending
+m006,p002,Phase 2: Create installer script with global/project options,1h,,2025-12-21T12:00Z,,pending
+m007,p002,Phase 3: Integrate into setup.sh,30m,,2025-12-21T12:00Z,,pending
+m008,p002,Phase 4: Document in workflows and test,1.5h,,2025-12-21T12:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Install hooks to `~/.aidevops/hooks/` by default
+  **Rationale:** Consistent with aidevops directory structure, global protection
+  **Date:** 2025-12-21
+
+- **Decision:** Keep original Python implementation (not Bash)
+  **Rationale:** JSON parsing is cleaner in Python, original is well-tested
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d002,p002,Install hooks to ~/.aidevops/hooks/,Consistent with aidevops directory structure,2025-12-21,None
+d003,p002,Keep original Python implementation,JSON parsing cleaner in Python - original well-tested,2025-12-21,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+<!--TOON:active_plans[2]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
+p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
 -->
 
 ## Completed Plans
@@ -203,5 +282,5 @@ p00X,Deliverable 1; Deliverable 2,Success 1; Success 2,Learning 1; Learning 2,Xd
 ## Analytics
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
-0,0,0,0,,
+2,2,0,0,,
 -->
