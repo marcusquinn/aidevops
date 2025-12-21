@@ -16,6 +16,7 @@ mode: subagent
 - **Credentials**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
 
 **Critical Rules**:
+- BEFORE modifying files in a git repo: check branch with `git branch --show-current`. If on `main`, offer to create a feature/bugfix branch first.
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
@@ -72,14 +73,24 @@ User confirms with numbered options to override if needed.
 
 ## Git Workflow (File Changes)
 
-**When conversation indicates file creation/modification in a git repo**:
+**BEFORE making any file changes** (see Critical Rules above):
 
-1. Check current branch: `git branch --show-current`
-2. Check `TODO.md` and `todo/PLANS.md` for matching tasks
-3. Check for existing branches that might match the task
-4. If on `main`: Present numbered options (tasks from TODO.md, existing branches, create new, or continue on main)
-5. Derive branch name from task/plan when available
-6. Read `workflows/git-workflow.md` for full workflow guidance
+```bash
+git branch --show-current
+```
+
+If on `main`, present options:
+
+> On `main`. Creating `feature/{suggested-name}` for this work.
+>
+> [Enter] to confirm, or:
+> 1. Use different branch name
+> 2. Continue on `main` (not recommended)
+
+Then:
+1. Check `TODO.md` and `todo/PLANS.md` for matching tasks
+2. Derive branch name from task/plan when available
+3. Read `workflows/git-workflow.md` for full workflow guidance
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
