@@ -234,6 +234,48 @@ def sort_key(name):
 
 sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])))
 
+# =============================================================================
+# OH-MY-OPENCODE AGENTS - Added after WordPress (end of alphabetical list)
+# These are OmO's agents, disabled from replacing build/plan via omo_agent.disabled
+# We re-add them here with controlled ordering
+# =============================================================================
+
+# Check if oh-my-opencode is installed
+omo_config_path = os.path.expanduser("~/.config/opencode/oh-my-opencode.json")
+if os.path.exists(omo_config_path):
+    try:
+        with open(omo_config_path, 'r') as f:
+            omo_config = json.load(f)
+        
+        # Only add if omo_agent is disabled (we're taking control of ordering)
+        if omo_config.get('omo_agent', {}).get('disabled', False):
+            # Add Sisyphus after all other agents
+            sorted_agents["Sisyphus"] = {
+                "description": "OmO orchestrator - aggressive parallel execution with background agents (Claude Opus 4.5)",
+                "mode": "primary",
+                "temperature": 0.2,
+                "permission": {"external_directory": "allow"},
+                "tools": {
+                    "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+                    "webfetch": True, "task": True, "todoread": True, "todowrite": True,
+                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+                }
+            }
+            sorted_agents["Planner-Sisyphus"] = {
+                "description": "OmO planning agent - analysis and architecture without modifications",
+                "mode": "primary",
+                "temperature": 0.2,
+                "permission": {"edit": "deny", "write": "deny", "bash": "deny"},
+                "tools": {
+                    "write": False, "edit": False, "bash": False,
+                    "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
+                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+                }
+            }
+            print("  Added OmO agents: Sisyphus, Planner-Sisyphus (after WordPress)")
+    except:
+        pass  # OmO config not readable, skip
+
 config['agent'] = sorted_agents
 
 print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
