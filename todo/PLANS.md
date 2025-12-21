@@ -333,6 +333,7 @@ Add Uncloud as a deployment provider option in aidevops. Uncloud is a lightweigh
 - `configs/uncloud-config.json.txt` - Configuration template
 
 **Comparison with existing providers:**
+
 | Provider | Type | Best For |
 |----------|------|----------|
 | Coolify | Self-hosted PaaS | Single-server apps, managed experience |
@@ -580,6 +581,7 @@ Apply OpenCode's latest agent configuration features to our Build+ and Plan+ age
 - Update `generate-opencode-agents.sh` to apply these settings automatically
 
 **Granular bash permissions for Plan+ (read-only git):**
+
 ```json
 "permission": {
   "edit": "deny",
