@@ -744,7 +744,20 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/generate-tasks` | Generate implementation tasks from a PRD |
 | `/log-time-spent` | Log time spent on a task for tracking |
 
-Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex execution plans). Use `/list-todo` to browse tasks with options like `--priority`, `--tag seo`, `--owner marcus`, or `--group-by tag`.
+Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex execution plans).
+
+**`/list-todo` options:**
+
+| Option | Example | Purpose |
+|--------|---------|---------|
+| `--priority` | `/list-todo -p` | Sort by priority (high → low) |
+| `--estimate` | `/list-todo -e` | Sort by time estimate (shortest first) |
+| `--tag` | `/list-todo -t seo` | Filter by tag |
+| `--owner` | `/list-todo -o marcus` | Filter by assignee |
+| `--estimate` | `/list-todo --estimate "<2h"` | Filter by estimate range |
+| `--group-by` | `/list-todo -g tag` | Group by tag, owner, status, or estimate |
+| `--plans` | `/list-todo --plans` | Include full plan details |
+| `--compact` | `/list-todo --compact` | One-line per task |
 
 **Time Tracking**: Tasks support time estimates and actuals with the format `~4h (ai:2h test:1h) started:2025-01-15T10:30Z`. Configure per-repo via `.aidevops.json`.
 
