@@ -216,6 +216,12 @@ cmd_status() {
     else
         print_warning "osgrep - not installed"
     fi
+    
+    if check_cmd bd; then
+        print_success "Beads CLI (task graph)"
+    else
+        print_warning "Beads CLI (bd) - not installed"
+    fi
     echo ""
     
     # Python/Node environments
@@ -455,6 +461,7 @@ cmd_init() {
     local enable_code_quality=false
     local enable_time_tracking=false
     local enable_database=false
+    local enable_beads=false
     
     case "$features" in
         all)
@@ -463,6 +470,7 @@ cmd_init() {
             enable_code_quality=true
             enable_time_tracking=true
             enable_database=true
+            enable_beads=true
             ;;
         planning)
             enable_planning=true
@@ -480,6 +488,10 @@ cmd_init() {
         database)
             enable_database=true
             ;;
+        beads)
+            enable_beads=true
+            enable_planning=true  # beads requires planning
+            ;;
         *)
             # Comma-separated list
             IFS=',' read -ra FEATURE_LIST <<< "$features"
@@ -493,6 +505,10 @@ cmd_init() {
                         enable_planning=true
                         ;;
                     database) enable_database=true ;;
+                    beads)
+                        enable_beads=true
+                        enable_planning=true
+                        ;;
                 esac
             done
             ;;
@@ -513,7 +529,8 @@ cmd_init() {
     "git_workflow": $enable_git_workflow,
     "code_quality": $enable_code_quality,
     "time_tracking": $enable_time_tracking,
-    "database": $enable_database
+    "database": $enable_database,
+    "beads": $enable_beads
   },
   "time_tracking": {
     "enabled": $enable_time_tracking,
@@ -526,6 +543,11 @@ cmd_init() {
     "migrations_path": "migrations",
     "seeds_path": "seeds",
     "auto_generate_migration": true
+  },
+  "beads": {
+    "enabled": $enable_beads,
+    "sync_on_commit": false,
+    "auto_ready_check": true
   }
 }
 EOF
@@ -659,6 +681,40 @@ EOF
         fi
     fi
     
+    # Initialize Beads if enabled
+    if [[ "$enable_beads" == "true" ]]; then
+        print_info "Setting up Beads task graph..."
+        
+        # Check if Beads CLI is installed
+        if ! command -v bd &> /dev/null; then
+            print_warning "Beads CLI (bd) not installed"
+            echo "  Install with: brew install steveyegge/beads/bd"
+            echo "  Or: go install github.com/steveyegge/beads/cmd/bd@latest"
+        else
+            # Initialize Beads in the project
+            if [[ ! -d "$project_root/.beads" ]]; then
+                print_info "Initializing Beads database..."
+                if (cd "$project_root" && bd init 2>/dev/null); then
+                    print_success "Beads initialized"
+                else
+                    print_warning "Beads init failed - run manually: bd init"
+                fi
+            else
+                print_info "Beads already initialized"
+            fi
+            
+            # Run initial sync from TODO.md/PLANS.md
+            if [[ -f "$AGENTS_DIR/scripts/beads-sync-helper.sh" ]]; then
+                print_info "Syncing tasks to Beads..."
+                if bash "$AGENTS_DIR/scripts/beads-sync-helper.sh" push "$project_root" 2>/dev/null; then
+                    print_success "Tasks synced to Beads"
+                else
+                    print_warning "Beads sync failed - run manually: beads-sync-helper.sh push"
+                fi
+            fi
+        fi
+    fi
+    
     # Add to .gitignore if needed
     local gitignore="$project_root/.gitignore"
     if [[ -f "$gitignore" ]]; then
@@ -667,6 +723,13 @@ EOF
             echo "# aidevops" >> "$gitignore"
             echo ".agent" >> "$gitignore"
             print_success "Added .agent to .gitignore"
+        fi
+        # Add .beads if beads is enabled
+        if [[ "$enable_beads" == "true" ]]; then
+            if ! grep -q "^\.beads$" "$gitignore" 2>/dev/null; then
+                echo ".beads" >> "$gitignore"
+                print_success "Added .beads to .gitignore"
+            fi
         fi
     fi
     
@@ -679,9 +742,15 @@ EOF
     [[ "$enable_code_quality" == "true" ]] && echo "  ✓ Code quality (linting, auditing)"
     [[ "$enable_time_tracking" == "true" ]] && echo "  ✓ Time tracking (estimates, actuals)"
     [[ "$enable_database" == "true" ]] && echo "  ✓ Database (schemas/, migrations/, seeds/)"
+    [[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
     echo ""
     echo "Next steps:"
-    if [[ "$enable_database" == "true" ]]; then
+    if [[ "$enable_beads" == "true" ]]; then
+        echo "  1. Add tasks to TODO.md with dependencies (blocked-by:t001)"
+        echo "  2. Run /ready to see unblocked tasks"
+        echo "  3. Run /sync-beads to sync with Beads graph"
+        echo "  4. Use 'bd' CLI for graph visualization"
+    elif [[ "$enable_database" == "true" ]]; then
         echo "  1. Add schema files to schemas/"
         echo "  2. Run diff to generate migrations"
         echo "  3. See .agent/workflows/sql-migrations.md"
@@ -725,9 +794,16 @@ cmd_features() {
     echo "                 - seeds/ for initial/test data"
     echo "                 - Auto-generate migrations on schema diff"
     echo ""
+    echo "  beads          Task graph visualization with Beads"
+    echo "                 - Dependency tracking (blocked-by:, blocks:)"
+    echo "                 - Graph visualization with bd CLI"
+    echo "                 - Ready task detection (/ready)"
+    echo "                 - Bi-directional sync with TODO.md/PLANS.md"
+    echo ""
     echo "Usage:"
     echo "  aidevops init                    # Enable all features"
     echo "  aidevops init planning           # Enable only planning"
+    echo "  aidevops init beads              # Enable beads (includes planning)"
     echo "  aidevops init database           # Enable only database"
     echo "  aidevops init planning,database  # Enable multiple"
     echo ""

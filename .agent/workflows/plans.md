@@ -19,17 +19,34 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Save planning discussions as actionable tasks or plans
-- **Command**: `/save-todo` - auto-detects complexity
+- **Commands**: `/save-todo` (auto-detects), `/ready` (show unblocked), `/sync-beads` (sync to Beads)
 - **Principle**: Don't make user think about where to save
 
 **Files**:
 
 | File | Purpose |
 |------|---------|
-| `TODO.md` | All tasks (simple + plan references) |
+| `TODO.md` | All tasks (simple + plan references) with dependencies |
 | `todo/PLANS.md` | Complex execution plans with context |
 | `todo/tasks/prd-{name}.md` | Product requirement documents |
 | `todo/tasks/tasks-{name}.md` | Implementation task lists |
+| `.beads/` | Beads database (synced from TODO.md) |
+
+**Task ID Format**:
+
+| Pattern | Example | Meaning |
+|---------|---------|---------|
+| `tNNN` | `t001` | Top-level task |
+| `tNNN.N` | `t001.1` | Subtask |
+| `tNNN.N.N` | `t001.1.1` | Sub-subtask |
+
+**Dependency Syntax**:
+
+| Field | Example | Meaning |
+|-------|---------|---------|
+| `blocked-by:` | `blocked-by:t001,t002` | Cannot start until these are done |
+| `blocks:` | `blocks:t003` | Completing this unblocks these |
+| Indentation | 2 spaces | Parent-child relationship |
 
 **Workflow**:
 
@@ -37,6 +54,10 @@ tools:
 Planning Conversation → /save-todo → Auto-detect → Save appropriately
                                                          ↓
 Future Session → "Work on X" → Load context → git-workflow.md
+                                                         ↓
+                              /ready → Show unblocked tasks
+                                                         ↓
+                              /sync-beads → Sync to Beads for graph view
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -101,14 +122,17 @@ Add to TODO.md Backlog:
 ```markdown
 ## Backlog
 
-- [ ] {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}
+- [ ] t{NNN} {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}
 ```
 
-**Format elements** (all optional except description):
+**Format elements** (all optional except id and description):
+- `t{NNN}` - Unique task ID (auto-generated, never reused)
 - `@owner` - Who should work on this
 - `#tag` - Category (seo, security, browser, etc.)
 - `~estimate` - Time estimate with breakdown: `~4h (ai:2h test:1h read:30m)`
 - `logged:YYYY-MM-DD` - Auto-added when task created
+- `blocked-by:t001,t002` - Dependencies (cannot start until these done)
+- `blocks:t003` - What this unblocks when complete
 
 Respond:
 
@@ -377,6 +401,122 @@ Create in `todo/tasks/tasks-{slug}.md` using `templates/tasks-template.md`.
 | Architecture change | 4-8h | 2-4h | 1h |
 | Research/spike | 1-2h | - | 30m |
 
+## Dependencies and Blocking
+
+### Dependency Syntax
+
+Tasks can declare dependencies using these fields:
+
+```markdown
+- [ ] t001 Parent task ~4h
+  - [ ] t001.1 Subtask ~2h blocked-by:t002
+    - [ ] t001.1.1 Sub-subtask ~1h
+  - [ ] t001.2 Another subtask ~1h blocks:t003
+```
+
+| Field | Syntax | Meaning |
+|-------|--------|---------|
+| `blocked-by:` | `blocked-by:t001,t002` | Cannot start until t001 AND t002 are done |
+| `blocks:` | `blocks:t003,t004` | Completing this task unblocks t003 and t004 |
+| Indentation | 2 spaces per level | Implicit parent-child relationship |
+
+### TOON Dependencies Block
+
+Dependencies are also stored in machine-readable TOON format:
+
+```markdown
+<!--TOON:dependencies[N]{from_id,to_id,type}:
+t019.2,t019.1,blocked-by
+t019.3,t019.2,blocked-by
+t020,t019,blocked-by
+-->
+```
+
+### /ready Command
+
+Show tasks with no open blockers (ready to work on):
+
+```bash
+# Invoked via AI assistant
+/ready
+
+# Or via script
+~/.aidevops/agents/scripts/todo-ready.sh
+```
+
+Output:
+
+```text
+Ready to work (no blockers):
+
+1. t011 Demote wordpress.md from main agent to subagent ~1h
+2. t014 Document RapidFuzz library ~30m
+3. t004 Add Ahrefs MCP server integration ~2d
+
+Blocked (waiting on dependencies):
+
+- t019.2 Phase 2: Bi-directional sync (blocked-by: t019.1)
+- t020 Git Issues Sync (blocked-by: t019)
+```
+
+### Hierarchical Task IDs
+
+Tasks use stable, hierarchical IDs that are never reused:
+
+| Level | Pattern | Example | Use Case |
+|-------|---------|---------|----------|
+| Top-level | `tNNN` | `t001` | Independent tasks |
+| Subtask | `tNNN.N` | `t001.1` | Phases, components |
+| Sub-subtask | `tNNN.N.N` | `t001.1.1` | Detailed steps |
+
+**Rules:**
+- IDs are assigned sequentially and never reused
+- Subtasks inherit parent's ID as prefix
+- Maximum depth: 3 levels (t001.1.1)
+- IDs are stable across syncs with Beads
+
+## Beads Integration
+
+### Sync with Beads
+
+aidevops Tasks & Plans syncs bi-directionally with [Beads](https://github.com/steveyegge/beads) for graph visualization and analytics.
+
+```bash
+# Sync TODO.md → Beads
+/sync-beads push
+
+# Sync Beads → TODO.md
+/sync-beads pull
+
+# Two-way sync with conflict detection
+/sync-beads
+
+# Or via script
+~/.aidevops/agents/scripts/beads-sync-helper.sh [push|pull|sync]
+```
+
+### Sync Guarantees
+
+| Guarantee | Implementation |
+|-----------|----------------|
+| No race conditions | Lock file during sync |
+| Data integrity | Checksum verification before/after |
+| Conflict detection | Warns if both sides changed |
+| Audit trail | All syncs logged to `.beads/sync.log` |
+| Command-led only | No automatic sync (user controls timing) |
+
+### Beads UIs
+
+After syncing, use Beads ecosystem for visualization:
+
+| UI | Command | Best For |
+|----|---------|----------|
+| beads_viewer | `bv` | Graph analytics, PageRank, critical path |
+| beads-ui | `npx beads-ui start` | Web dashboard, kanban |
+| bdui | `bdui` | Quick terminal view |
+| perles | `perles` | BQL queries |
+| beads.el | `M-x beads-list` | Emacs users |
+
 ## Time Tracking Configuration
 
 Configure per-repo in `.aidevops.json`:
@@ -384,7 +524,7 @@ Configure per-repo in `.aidevops.json`:
 ```json
 {
   "time_tracking": "prompt",
-  "features": ["planning", "time-tracking"]
+  "features": ["planning", "time-tracking", "beads"]
 }
 ```
 

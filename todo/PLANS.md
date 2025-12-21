@@ -633,7 +633,136 @@ d012,p008,Allow read-only git commands in Plan+ via granular bash permissions,Pl
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
-<!--TOON:active_plans[8]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+### [2025-12-21] Beads Integration for aidevops Tasks & Plans
+
+**Status:** In Progress (Phase 1/3)
+**Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
+**Source:** [steveyegge/beads](https://github.com/steveyegge/beads)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p009,Beads Integration for aidevops Tasks & Plans,in_progress,1,3,,beads|tasks|sync|planning,2d,1d,0.5d,0.5d,2025-12-21T16:00Z,2025-12-21T16:00Z
+-->
+
+#### Purpose
+
+Integrate Beads task management concepts and bi-directional sync into aidevops Tasks & Plans system. This provides:
+- Dependency graph awareness (blocked-by, blocks, parent-child)
+- Hierarchical task IDs with sub-sub-task support (t001.1.1)
+- Automatic "ready" detection for unblocked tasks
+- Rich UI ecosystem (beads_viewer, beads-ui, bdui, perles, beads.el)
+- Graph analytics (PageRank, betweenness, critical path)
+
+**Key decision:** Keep aidevops markdown as source of truth, sync bi-directionally to Beads for visualization and graph features. Include Beads as default with aidevops (not optional).
+
+#### Context from Discussion
+
+**Ecosystem reviewed:**
+- `steveyegge/beads` - Core CLI, Go, SQLite + JSONL, MCP server
+- `Dicklesworthstone/beads_viewer` - Advanced TUI with graph analytics
+- `mantoni/beads-ui` - Web UI with live updates
+- `ctietze/beads.el` - Emacs client
+- `assimelha/bdui` - React/Ink TUI
+- `zjrosen/perles` - BQL query language TUI
+
+**What aidevops gains:**
+- Dependency graph (blocks, parent-child, discovered-from)
+- Hash-based IDs for conflict-free merging
+- `bd ready` for unblocked task detection
+- Graph visualization via beads_viewer
+- MCP server for Claude Desktop
+
+**What aidevops keeps:**
+- Time tracking with breakdown (`~4h (ai:2h test:1h)`)
+- Decision logs and retrospectives
+- TOON machine-readable blocks
+- Human-readable markdown
+- Multi-tool compatibility
+
+**Sync architecture:**
+```
+TODO.md ←→ beads-sync-helper.sh ←→ .beads/beads.db
+PLANS.md ←→ (command-led sync) ←→ .beads/issues.jsonl
+```
+
+**Sync guarantees:**
+- Command-led only (no automatic sync to prevent race conditions)
+- Lock file during sync operations
+- Checksum verification before/after
+- Conflict detection with manual resolution
+- Audit log of all sync operations
+
+#### Progress
+
+- [ ] (2025-12-21 16:00Z) Phase 1: Enhanced TODO.md format ~4h
+  - [ ] 1.1 Add `blocked-by:` and `blocks:` syntax
+  - [ ] 1.2 Add hierarchical IDs (t001.1.1 for sub-sub-tasks)
+  - [ ] 1.3 Update TOON dependencies block schema
+  - [ ] 1.4 Add `/ready` command to show unblocked tasks
+  - [ ] 1.5 Update workflows/plans.md documentation
+- [ ] (2025-12-21) Phase 2: Bi-directional sync script ~8h
+  - [ ] 2.1 Create beads-sync-helper.sh with lock file
+  - [ ] 2.2 Implement TODO.md → Beads sync
+  - [ ] 2.3 Implement Beads → TODO.md sync
+  - [ ] 2.4 Add checksum verification
+  - [ ] 2.5 Add conflict detection and resolution
+  - [ ] 2.6 Add audit logging
+  - [ ] 2.7 Comprehensive testing (race conditions, edge cases)
+- [ ] (2025-12-21) Phase 3: Default installation ~4h
+  - [ ] 3.1 Add Beads installation to setup.sh
+  - [ ] 3.2 Add `aidevops init beads` feature
+  - [ ] 3.3 Create tools/task-management/beads.md subagent
+  - [ ] 3.4 Update AGENTS.md with Beads integration docs
+
+<!--TOON:milestones[14]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m034,p009,Phase 1: Enhanced TODO.md format,4h,,2025-12-21T16:00Z,,in_progress
+m035,p009,1.1 Add blocked-by and blocks syntax,1h,,2025-12-21T16:00Z,,pending
+m036,p009,1.2 Add hierarchical IDs (t001.1.1),1h,,2025-12-21T16:00Z,,pending
+m037,p009,1.3 Update TOON dependencies block schema,30m,,2025-12-21T16:00Z,,pending
+m038,p009,1.4 Add /ready command,1h,,2025-12-21T16:00Z,,pending
+m039,p009,1.5 Update workflows/plans.md documentation,30m,,2025-12-21T16:00Z,,pending
+m040,p009,Phase 2: Bi-directional sync script,8h,,2025-12-21T16:00Z,,pending
+m041,p009,2.1-2.6 Sync implementation,6h,,2025-12-21T16:00Z,,pending
+m042,p009,2.7 Comprehensive testing,2h,,2025-12-21T16:00Z,,pending
+m043,p009,Phase 3: Default installation,4h,,2025-12-21T16:00Z,,pending
+m044,p009,3.1 Add Beads to setup.sh,1h,,2025-12-21T16:00Z,,pending
+m045,p009,3.2 Add aidevops init beads,1h,,2025-12-21T16:00Z,,pending
+m046,p009,3.3 Create beads.md subagent,1h,,2025-12-21T16:00Z,,pending
+m047,p009,3.4 Update AGENTS.md,1h,,2025-12-21T16:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Keep aidevops markdown as source of truth, Beads as sync target
+  **Rationale:** Markdown is portable, human-readable, works without CLI; Beads provides graph features
+  **Date:** 2025-12-21
+
+- **Decision:** Command-led sync only (no automatic)
+  **Rationale:** Prevents race conditions, ensures data integrity, user controls when sync happens
+  **Date:** 2025-12-21
+
+- **Decision:** Include Beads as default with aidevops (not optional)
+  **Rationale:** Graph features are valuable enough to justify default installation
+  **Date:** 2025-12-21
+
+- **Decision:** Support sub-sub-tasks (t001.1.1)
+  **Rationale:** Complex projects need deeper hierarchy than just parent-child
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d013,p009,Keep aidevops markdown as source of truth,Markdown is portable and human-readable; Beads provides graph features,2025-12-21,None
+d014,p009,Command-led sync only (no automatic),Prevents race conditions and ensures data integrity,2025-12-21,None
+d015,p009,Include Beads as default with aidevops,Graph features valuable enough to justify default installation,2025-12-21,None
+d016,p009,Support sub-sub-tasks (t001.1.1),Complex projects need deeper hierarchy than just parent-child,2025-12-21,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+<!--TOON:active_plans[9]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
 p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
@@ -642,6 +771,7 @@ p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibil
 p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
 p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,
 p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
+p009,Beads Integration for aidevops Tasks & Plans,in_progress,1,3,,beads|tasks|sync|planning,2d,1d,0.5d,0.5d,2025-12-21T16:00Z,2025-12-21T16:00Z
 -->
 
 ## Completed Plans

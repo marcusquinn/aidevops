@@ -1109,6 +1109,55 @@ setup_osgrep() {
     print_info "Verification: 'Search for authentication handling in this codebase'"
 }
 
+# Setup Beads - Task Graph Visualization
+setup_beads() {
+    print_info "Setting up Beads (task graph visualization)..."
+    
+    # Check if Beads CLI (bd) is already installed
+    if command -v bd &> /dev/null; then
+        local bd_version
+        bd_version=$(bd --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "Beads CLI (bd) already installed: $bd_version"
+        return 0
+    fi
+    
+    # Try to install via Homebrew first (macOS/Linux with Homebrew)
+    if command -v brew &> /dev/null; then
+        print_info "Installing Beads via Homebrew..."
+        if brew install steveyegge/beads/bd 2>/dev/null; then
+            print_success "Beads CLI installed via Homebrew"
+            return 0
+        else
+            print_warning "Homebrew tap installation failed, trying alternative..."
+        fi
+    fi
+    
+    # Try Go install if Go is available
+    if command -v go &> /dev/null; then
+        print_info "Installing Beads via Go..."
+        if go install github.com/steveyegge/beads/cmd/bd@latest 2>/dev/null; then
+            print_success "Beads CLI installed via Go"
+            print_info "Ensure \$GOPATH/bin is in your PATH"
+            return 0
+        else
+            print_warning "Go installation failed"
+        fi
+    fi
+    
+    # Provide manual installation instructions
+    print_warning "Beads CLI (bd) not installed"
+    echo ""
+    echo "  Install options:"
+    echo "    macOS/Linux (Homebrew): brew install steveyegge/beads/bd"
+    echo "    Go:                     go install github.com/steveyegge/beads/cmd/bd@latest"
+    echo "    Manual:                 https://github.com/steveyegge/beads/releases"
+    echo ""
+    print_info "Beads provides task graph visualization for TODO.md and PLANS.md"
+    print_info "After installation, run: aidevops init beads"
+    
+    return 0
+}
+
 # Setup Browser Automation Tools (Bun, dev-browser, Playwriter)
 setup_browser_tools() {
     print_info "Setting up browser automation tools..."
@@ -1499,6 +1548,7 @@ main() {
     setup_nodejs_env
     setup_augment_context_engine
     setup_osgrep
+    setup_beads
     setup_seo_mcps
     setup_browser_tools
     setup_opencode_plugins
@@ -1552,6 +1602,12 @@ echo "  aidevops uninstall  - Remove aidevops"
     echo "• python-env/dspy-env/              - Python virtual environment for DSPy"
     echo "• data/dspy/                        - DSPy projects and datasets"
     echo "• data/dspyground/                  - DSPyGround projects and configurations"
+    echo ""
+    echo "Task Management:"
+    echo "• Beads CLI (bd)                    - Task graph visualization"
+    echo "• beads-sync-helper.sh              - Sync TODO.md/PLANS.md with Beads"
+    echo "• todo-ready.sh                     - Show tasks with no open blockers"
+    echo "• Run: aidevops init beads          - Initialize Beads in a project"
     echo ""
     echo "Security reminders:"
     echo "- Never commit configuration files with real credentials"

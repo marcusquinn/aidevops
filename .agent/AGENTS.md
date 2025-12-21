@@ -50,7 +50,7 @@ User confirms with numbered options to override if needed.
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`
+**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`
 
 **Time tracking format:**
 
@@ -68,6 +68,22 @@ User confirms with numbered options to override if needed.
 | `logged:` | Cumulative logged time | `logged:3h` |
 
 **Configure per-repo:** `.aidevops.json` with `"time_tracking": true|false|"prompt"`
+
+**Task Dependencies (Beads integration):**
+
+```markdown
+- [ ] t001 First task
+- [ ] t002 Second task blocked-by:t001
+- [ ] t001.1 Subtask of t001
+```
+
+| Syntax | Meaning |
+|--------|---------|
+| `blocked-by:t001` | Task waits for t001 |
+| `blocks:t002` | Task blocks t002 |
+| `t001.1` | Subtask of t001 |
+
+**Beads commands:** `/ready` (show unblocked tasks), `/sync-beads` (sync with graph)
 
 **Full workflow:** See `workflows/plans.md` for details
 
@@ -167,6 +183,7 @@ opencode mcp list
 | `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security) |
 | `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
 | `tools/opencode/` | OpenCode configuration, paths, oh-my-opencode integration |
+| `tools/task-management/` | Task tracking (beads - graph visualization, dependencies) |
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
@@ -192,6 +209,7 @@ This copies agents to `~/.aidevops/agents/` and configures AI assistants.
 ```bash
 aidevops init                    # Enable all features
 aidevops init planning           # Enable only planning
+aidevops init beads              # Enable beads (includes planning)
 aidevops init planning,git-workflow  # Enable multiple features
 aidevops features                # List available features
 ```
@@ -214,6 +232,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 
 **When to read more:**
 - Planning complex work → `workflows/plans.md`
+- Task dependencies/graphs → `tools/task-management/beads.md` (Beads integration)
 - Specific service operations → `services/[type]/[provider].md`
 - Code quality tasks → `tools/code-review/`
 - WordPress work → `wordpress/`
@@ -262,6 +281,8 @@ Never create files in `~/` root for files needed only with the current task.
 | `codacy-cli.sh` | Codacy code quality |
 | `secretlint-helper.sh` | Secret detection |
 | `opencode-test-helper.sh` | Test OpenCode config changes via CLI |
+| `beads-sync-helper.sh` | Sync TODO.md/PLANS.md with Beads graph |
+| `todo-ready.sh` | Show tasks with no open blockers |
 
 ## Quality Workflow
 
