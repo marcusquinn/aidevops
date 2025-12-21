@@ -163,9 +163,68 @@ d003,p002,Keep original Python implementation,JSON parsing cleaner in Python - o
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
-<!--TOON:active_plans[2]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+### [2025-12-21] Evaluate Merging build-agent and build-mcp into aidevops
+
+**Status:** Planning
+**Estimate:** ~4h (ai:2h test:1h read:1h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
+-->
+
+#### Purpose
+
+Evaluate whether `build-agent.md` and `build-mcp.md` should be merged into `aidevops.md`. When enhancing aidevops, we often build agents and MCPs - these are tightly coupled activities that may benefit from consolidation.
+
+#### Context from Discussion
+
+**Current structure:**
+- `build-agent.md` - Agent design, ~50-100 instruction budget, subagent: `agent-review.md`
+- `build-mcp.md` - MCP development (TypeScript/Bun/Elysia), subagents: server-patterns, transports, deployment, api-wrapper
+- `aidevops.md` - Framework operations, already references build-agent as "Related Main Agent"
+- All three are `mode: subagent` - called from aidevops context
+
+**Options to evaluate:**
+1. **Merge fully** - Combine into aidevops.md with expanded subagent folders
+2. **Keep separate but link better** - Improve cross-references, keep modularity
+3. **Hybrid** - Move build-agent into aidevops/, keep build-mcp separate (MCP is more specialized)
+
+**Key considerations:**
+- Token efficiency: Fewer main agents = less context switching
+- Modularity: build-mcp has specialized TypeScript/Bun stack knowledge
+- User mental model: Are these distinct domains or one "framework development" domain?
+- Progressive disclosure: Current structure already uses subagent pattern
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Analyze usage patterns and cross-references ~1h
+- [ ] (2025-12-21) Phase 2: Design merged/improved structure ~1.5h
+- [ ] (2025-12-21) Phase 3: Implement chosen approach and test ~1.5h
+
+<!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m009,p003,Phase 1: Analyze usage patterns and cross-references,1h,,2025-12-21T14:00Z,,pending
+m010,p003,Phase 2: Design merged/improved structure,1.5h,,2025-12-21T14:00Z,,pending
+m011,p003,Phase 3: Implement chosen approach and test,1.5h,,2025-12-21T14:00Z,,pending
+-->
+
+#### Decision Log
+
+(To be populated during analysis)
+
+<!--TOON:decisions[0]{id,plan_id,decision,rationale,date,impact}:
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+<!--TOON:active_plans[3]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
+p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
 -->
 
 ## Completed Plans
@@ -282,5 +341,5 @@ p00X,Deliverable 1; Deliverable 2,Success 1; Success 2,Learning 1; Learning 2,Xd
 ## Analytics
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
-2,2,0,0,,
+3,3,0,0,,
 -->

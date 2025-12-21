@@ -29,6 +29,8 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 ## Backlog
 
+- [ ] Demote wordpress.md from main agent to subagent #architecture ~1h (ai:30m test:30m) logged:2025-12-21
+- [ ] Evaluate Merging build-agent and build-mcp into aidevops #plan → [todo/PLANS.md#evaluate-merging-build-agent-and-build-mcp-into-aidevops] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
@@ -36,7 +38,9 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [ ] Add Playwright MCP auto-setup to setup.sh #browser ~1d (ai:0.5d test:0.5d) logged:2025-12-20
 - [ ] Create MCP server for QuickFile accounting API #accounting ~3d (ai:2d test:1d) logged:2025-12-20
 
-<!--TOON:backlog[6]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status}:
+<!--TOON:backlog[8]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status}:
+t011,Demote wordpress.md from main agent to subagent,,architecture,1h,30m,30m,,2025-12-21T14:30Z,pending
+t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending
 t004,Add Ahrefs MCP server integration,,seo,2d,1d,0.5d,0.5d,2025-12-20T00:00Z,pending
@@ -70,5 +74,5 @@ t003,Add oh-my-opencode integration,,tools,30m,25m,2025-12-18T00:00Z,2025-12-18T
 -->
 
 <!--TOON:summary{total,pending,in_progress,done,declined,total_est,total_actual}:
-9,6,0,3,0,13d7h30m,2h40m
+11,8,0,3,0,13d12h30m,2h40m
 -->
