@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.38.0] - 2025-12-21
+
+### Added
+
+- add persistent browser profile support
+
+### Changed
+
+- Documentation: add agent architecture evaluation tasks
+
+### Fixed
+
+- add branch check to Critical Rules for enforcement
 ## [2.37.3] - 2025-12-21
 
 ### Added
