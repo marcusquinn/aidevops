@@ -1,6 +1,6 @@
 ---
 description: Interactive onboarding wizard - discover services, check credentials, configure integrations
-mode: subagent
+mode: primary
 temperature: 0.3
 tools:
   read: true

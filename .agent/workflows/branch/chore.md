@@ -1,5 +1,5 @@
 ---
-description: Chore branch for maintenance and non-code changes
+description: Chore branch - maintenance, docs, deps, config
 mode: subagent
 tools:
   read: true
@@ -8,35 +8,28 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: false
-  task: true
 ---
 
-# Chore Branch Workflow
+# Chore Branch
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Prefix**: `chore/`
-- **Example**: `chore/update-dependencies`, `chore/fix-ci-config`
-- **Version bump**: Usually none
-- **Scope**: Non-code changes, maintenance tasks
-
-**Create**:
+| Aspect | Value |
+|--------|-------|
+| **Prefix** | `chore/` |
+| **Commit** | `chore:`, `docs:`, `ci:`, or `build:` |
+| **Version** | Usually none |
+| **Create from** | `main` |
 
 ```bash
 git checkout main && git pull origin main
 git checkout -b chore/{description}
 ```
 
-**Commit pattern**: `chore: description` or `docs:`, `ci:`, `build:`
-
 <!-- AI-CONTEXT-END -->
 
 ## When to Use
 
-Use `chore/` branches for:
 - Dependency updates
 - CI/CD configuration changes
 - Documentation updates
@@ -48,85 +41,29 @@ Use `chore/` branches for:
 
 **Not for**: Code changes that affect behavior (use `feature/`, `bugfix/`, or `refactor/`).
 
-## Branch Naming
+## Unique Guidance
 
-```bash
-# Dependency updates
-chore/update-dependencies
-chore/bump-node-version
-
-# CI/CD
-chore/fix-github-actions
-chore/add-codecov
-
-# Documentation
-chore/update-readme
-chore/add-contributing-guide
-
-# Tooling
-chore/configure-eslint
-chore/add-prettier
-```
-
-## Workflow
-
-1. Create branch from updated `main`
-2. Make maintenance changes
-3. Verify nothing is broken (run tests, build)
-4. Commit with appropriate prefix
-5. Push and create PR
-6. Usually quick review/merge
-
-## Commit Messages
+### Multiple Commit Prefixes
 
 Use specific prefixes when applicable:
 
+| Prefix | Use For |
+|--------|---------|
+| `chore:` | General maintenance |
+| `docs:` | Documentation |
+| `ci:` | CI/CD changes |
+| `build:` | Build system |
+
+### Common Chore Tasks
+
+**Dependency Updates:**
 ```bash
-# General maintenance
-chore: update dependencies to latest versions
-
-# Documentation
-docs: add API usage examples to README
-
-# CI/CD
-ci: add caching to GitHub Actions workflow
-
-# Build system
-build: upgrade webpack to v5
+npm outdated          # Check for updates
+npm update            # Update and test
+git commit -m "chore: update dependencies"
 ```
 
-## Version Impact
-
-Chores typically have **no version bump**:
-- No user-facing changes
-- No behavior changes
-- Internal maintenance only
-
-Exception: Major dependency updates that users need to know about might warrant a patch bump.
-
-## Common Chore Tasks
-
-### Dependency Updates
-
-```bash
-# Check for updates
-npm outdated
-pip list --outdated
-
-# Update and test
-npm update
-pip install --upgrade -r requirements.txt
-
-# Commit
-git commit -m "chore: update dependencies
-
-- Updated package-a to 2.0.0
-- Updated package-b to 1.5.0
-- All tests pass"
-```
-
-### CI/CD Changes
-
+**CI/CD Changes:**
 ```bash
 git commit -m "ci: optimize GitHub Actions workflow
 
@@ -135,8 +72,7 @@ git commit -m "ci: optimize GitHub Actions workflow
 - Reduce build time by 40%"
 ```
 
-### Documentation
-
+**Documentation:**
 ```bash
 git commit -m "docs: improve installation instructions
 
@@ -145,7 +81,12 @@ git commit -m "docs: improve installation instructions
 - Fix broken links"
 ```
 
-## Related
+## Examples
 
-- **Version bumping**: `workflows/version-bump.md` (usually not needed)
-- **Code review**: `workflows/code-audit-remote.md`
+```bash
+chore/update-dependencies
+chore/fix-github-actions
+chore/add-codecov
+chore/update-readme
+chore/configure-eslint
+```

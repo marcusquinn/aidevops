@@ -29,12 +29,14 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 ## Backlog
 
+- [ ] aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
 - [ ] Implement multi-tenant credential storage #security ~5d (ai:3d test:1.5d read:0.5d) logged:2025-12-20
 - [ ] Add Playwright MCP auto-setup to setup.sh #browser ~1d (ai:0.5d test:0.5d) logged:2025-12-20
 - [ ] Create MCP server for QuickFile accounting API #accounting ~3d (ai:2d test:1d) logged:2025-12-20
 
-<!--TOON:backlog[4]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status}:
+<!--TOON:backlog[5]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status}:
+t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending
 t004,Add Ahrefs MCP server integration,,seo,2d,1d,0.5d,0.5d,2025-12-20T00:00Z,pending
 t005,Implement multi-tenant credential storage,,security,5d,3d,1.5d,0.5d,2025-12-20T00:00Z,pending
 t006,Add Playwright MCP auto-setup to setup.sh,,browser,1d,0.5d,0.5d,,2025-12-20T00:00Z,pending
@@ -66,5 +68,5 @@ t003,Add oh-my-opencode integration,,tools,30m,25m,2025-12-18T00:00Z,2025-12-18T
 -->
 
 <!--TOON:summary{total,pending,in_progress,done,declined,total_est,total_actual}:
-7,4,0,3,0,11d3h30m,2h40m
+8,5,0,3,0,13d3h30m,2h40m
 -->

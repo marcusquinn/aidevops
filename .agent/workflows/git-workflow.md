@@ -178,48 +178,32 @@ grep -i "{user_request_keywords}" TODO.md
 grep -A 5 "^### \[" todo/PLANS.md | grep -i "{user_request_keywords}"
 ```
 
-### Step 4: Present Options to User
+### Step 4: Auto-Select with Override Options
 
-**If on `main` branch**, present numbered options:
+**If on `main` branch**, auto-select best match and offer override:
 
-> I notice we're on `main`. For file changes, I recommend using a branch.
+> On `main`. Creating `feature/{best-match-name}` (from {source}).
 >
-> **From TODO.md (matching your request):**
-> 1. `- [ ] Add Ahrefs MCP server integration #seo` → `feature/add-ahrefs-mcp-server`
->
-> **From todo/PLANS.md:**
-> 2. `User Authentication Overhaul` (In Progress) → `feature/user-authentication-overhaul`
->
-> **Existing branches:**
-> 3. `feature/user-auth` (3 days old, 5 commits ahead)
->
-> **Or create new:**
-> 4. Create `feature/{suggested-name}` (recommended)
-> 5. Continue on `main` (not recommended - harder to rollback)
->
-> Which option? (1-5)
+> [Enter] to confirm, or:
+> 1. Use different name
+> 2. Continue on `main` (not recommended)
 
-**If no existing branches match**, simpler prompt:
+Where `{source}` is one of:
+- "TODO.md" - matched a task
+- "PLANS.md" - matched an active plan
+- "your request" - derived from conversation
 
-> I notice we're on `main`. For this work, I suggest creating:
->
-> `feature/{suggested-name}`
->
-> 1. Yes, create this branch
-> 2. Use different name (specify)
-> 3. Continue on `main` (not recommended)
->
-> Which option? (1-3)
+**If existing branch matches**, auto-select it:
 
-**If already on a work branch**, confirm and continue:
+> Found existing branch: `feature/user-auth` (3 days old, 5 commits ahead)
+>
+> [Enter] to continue on this branch, or:
+> 1. Create new branch instead
+> 2. Use different existing branch
 
-> You're on `feature/user-auth`. Continue working on this branch?
->
-> 1. Yes, continue here
-> 2. Switch to different branch
-> 3. Create new branch from main
->
-> Which option? (1-3)
+**If already on a work branch**, just continue:
+
+> Continuing on `feature/user-auth`.
 
 ### User Response Handling
 
@@ -428,47 +412,35 @@ See `workflows/branch.md` for naming conventions.
 
 ## Post-Change Workflow
 
-After completing file changes, always offer preflight before commit:
+After completing file changes, run preflight automatically:
 
-> I've completed the changes. Before committing:
+> Running preflight checks...
+
+**If preflight passes**, auto-commit with suggested message:
+
+> Preflight passed. Committing: "{suggested message}"
 >
-> 1. Run preflight checks (recommended)
-> 2. Skip preflight and commit directly
-> 3. Continue making more changes
->
-> Which option? (1-3)
+> [Enter] to confirm, or:
+> 1. Use different message
+> 2. Make more changes first
 
-**If preflight passes**, then offer commit:
+**If preflight fails**, show issues and offer fixes:
 
-> Preflight passed. Ready to commit:
->
-> 1. Commit with message: "{suggested message}"
-> 2. Commit with different message
-> 3. Make more changes first
->
-> Which option? (1-3)
-
-**If preflight fails**, do NOT offer commit directly:
-
-> Preflight found issues:
+> Preflight found {N} issues:
 > - {issue 1}
 > - {issue 2}
 >
-> 1. Fix these issues
+> 1. Fix automatically (if possible)
 > 2. View detailed report
-> 3. Skip preflight and commit anyway (not recommended)
->
-> Which option? (1-3)
+> 3. Skip and commit anyway (not recommended)
 
-**After successful commit**, offer push if on a branch:
+**After successful commit**, auto-push if on a branch:
 
-> Committed. Next steps:
+> Committed and pushed to `{branch}`.
 >
-> 1. Push to remote
-> 2. Make more changes first
+> 1. Create PR
+> 2. Continue working
 > 3. Done for now
->
-> Which option? (1-3)
 
 ## Branch Cleanup
 

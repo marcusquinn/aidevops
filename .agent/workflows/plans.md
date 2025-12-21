@@ -1,5 +1,5 @@
 ---
-description: Full planning workflow with PRD and task generation for complex features
+description: Planning workflow with auto-complexity detection
 mode: subagent
 tools:
   read: true
@@ -12,75 +12,96 @@ tools:
   task: true
 ---
 
-# Plans Workflow (Full)
+# Plans Workflow
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Purpose**: Structured planning for complex, multi-session work
-- **When to use**: Features requiring 1+ days, research, or design decisions
-- **Quick version**: Use `plans-quick.md` for simpler task recording
+- **Purpose**: Save planning discussions as actionable tasks or plans
+- **Command**: `/save-todo` - auto-detects complexity
+- **Principle**: Don't make user think about where to save
 
 **Files**:
 
 | File | Purpose |
 |------|---------|
-| `TODO.md` | Quick tasks, backlog (root level) |
-| `todo/PLANS.md` | Complex execution plans |
+| `TODO.md` | All tasks (simple + plan references) |
+| `todo/PLANS.md` | Complex execution plans with context |
 | `todo/tasks/prd-{name}.md` | Product requirement documents |
 | `todo/tasks/tasks-{name}.md` | Implementation task lists |
 
 **Workflow**:
 
 ```text
-Planning Conversation → Decision Point → Execute/TODO.md/PLANS.md
-                                              ↓
+Planning Conversation → /save-todo → Auto-detect → Save appropriately
+                                                         ↓
 Future Session → "Work on X" → Load context → git-workflow.md
 ```
 
 <!-- AI-CONTEXT-END -->
 
-## Planning Conversation Completion
+## Auto-Detection Logic
 
-After completing planning/research in a conversation, present this choice:
+When `/save-todo` is invoked, analyze the conversation for complexity signals:
+
+| Signal | Indicates | Action |
+|--------|-----------|--------|
+| Single action item | Simple | TODO.md only |
+| < 2 hour estimate | Simple | TODO.md only |
+| User says "quick" or "simple" | Simple | TODO.md only |
+| Multiple distinct steps | Complex | PLANS.md + TODO.md |
+| Research/design needed | Complex | PLANS.md + TODO.md |
+| > 2 hour estimate | Complex | PLANS.md + TODO.md |
+| Multi-session work | Complex | PLANS.md + TODO.md |
+| PRD mentioned or needed | Complex | PLANS.md + TODO.md + PRD |
+
+## Saving Work
+
+### Step 1: Extract from Conversation
+
+- **Title**: Concise task/plan name
+- **Description**: What needs to be done
+- **Estimate**: Time estimate with breakdown `~Xh (ai:Xh test:Xh read:Xm)`
+- **Tags**: Relevant categories (#seo, #security, #feature, etc.)
+- **Context**: Key decisions, research findings, constraints discussed
+
+### Step 2: Present with Auto-Detection
+
+**For Simple tasks:**
 
 ```text
-We've planned [summary]. How would you like to proceed?
+Saving to TODO.md: "{title}" ~{estimate}
 
-1. Execute now - Start implementation immediately
-2. Add to TODO.md - Record as quick task for later
-3. Create execution plan - Add to todo/PLANS.md with full PRD/tasks
-
-Which option? (1-3)
+1. Confirm
+2. Add more details first
+3. Create full plan instead (PLANS.md)
 ```
 
-### Decision Criteria
+**For Complex work:**
 
-| Scope | Time Estimate | Recommendation |
-|-------|---------------|----------------|
-| Trivial | < 30 mins | Execute now |
-| Small | 30 mins - 2 hours | TODO.md |
-| Medium | 2 hours - 1 day | TODO.md + notes |
-| Large | 1+ days | todo/PLANS.md |
-| Complex | Multi-session | todo/PLANS.md + PRD + tasks |
+```text
+This looks like complex work. Creating execution plan.
 
-## Option 1: Execute Now
+Title: {title}
+Estimate: ~{estimate}
+Phases: {count} identified
 
-Continue in current conversation:
+1. Confirm and create plan
+2. Simplify to TODO.md only
+3. Add more context first
+```
 
-1. Follow `git-workflow.md` for branch creation
-2. Derive branch name from planned work
-3. Implement immediately
+### Step 3: Save Appropriately
 
-## Option 2: Add to TODO.md
+#### Simple Save (TODO.md only)
 
-Add a single-line task to `TODO.md`:
+Add to TODO.md Backlog:
 
 ```markdown
 ## Backlog
 
-- [ ] {task description} @{user} #{tag} ~{estimate}
+- [ ] {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}
 ```
 
 **Format elements** (all optional except description):
@@ -88,189 +109,108 @@ Add a single-line task to `TODO.md`:
 - `#tag` - Category (seo, security, browser, etc.)
 - `~estimate` - Time estimate with breakdown: `~4h (ai:2h test:1h read:30m)`
 - `logged:YYYY-MM-DD` - Auto-added when task created
-- `YYYY-MM-DD` - Due date or target date
 
-**Time breakdown components:**
-- `ai:` - AI implementation time
-- `test:` - Human testing/verification time
-- `read:` - Time to read/review AI output
-- `research:` - Additional research time (added at completion)
+Respond:
 
-Inform user: "Added to TODO.md. Start anytime with: 'Let's work on {task}'"
+```text
+Saved: "{title}" to TODO.md (~{estimate})
+Start anytime with: "Let's work on {title}"
+```
 
-## Option 3: Create Execution Plan
+#### Complex Save (PLANS.md + TODO.md)
 
-### Step 1: Create PLANS.md Entry
-
-Add to `todo/PLANS.md` under "Active Plans":
+1. **Create PLANS.md entry**:
 
 ```markdown
-### [YYYY-MM-DD] {Plan Title}
+### [{YYYY-MM-DD}] {Title}
 
 **Status:** Planning
-**PRD:** [todo/tasks/prd-{slug}.md](tasks/prd-{slug}.md)
-**Tasks:** [todo/tasks/tasks-{slug}.md](tasks/tasks-{slug}.md)
+**Estimate:** ~{estimate}
+**PRD:** [todo/tasks/prd-{slug}.md](tasks/prd-{slug}.md) (if needed)
+**Tasks:** [todo/tasks/tasks-{slug}.md](tasks/tasks-{slug}.md) (if needed)
 
 #### Purpose
 
-{Why this work matters - 2-3 sentences}
+{Why this work matters - from conversation context}
 
 #### Progress
 
-- [ ] (YYYY-MM-DD HH:MMZ) {First milestone}
-- [ ] (YYYY-MM-DD HH:MMZ) {Second milestone}
+- [ ] ({timestamp}) Phase 1: {description} ~{est}
+- [ ] ({timestamp}) Phase 2: {description} ~{est}
+
+#### Context from Discussion
+
+{Key decisions, research findings, constraints from conversation}
 
 #### Decision Log
 
-{Empty initially - populated during work}
+(To be populated during implementation)
 
 #### Surprises & Discoveries
 
-{Empty initially - populated during work}
+(To be populated during implementation)
 ```
 
-### Step 2: Generate PRD (if needed)
-
-Ask clarifying questions using numbered options:
-
-```text
-To create the PRD, I need to clarify a few things:
-
-1. What is the primary goal?
-   A. {option}
-   B. {option}
-   C. {option}
-
-2. Who is the target user?
-   A. {option}
-   B. {option}
-
-3. What is the expected scope?
-   A. Minimal viable (1-2 days)
-   B. Standard (3-5 days)
-   C. Comprehensive (1+ weeks)
-
-Reply with selections like "1A, 2B, 3A" or provide details.
-```
-
-Create PRD in `todo/tasks/prd-{slug}.md` using template from `templates/prd-template.md`.
-
-### Step 3: Generate Tasks (if needed)
-
-**Phase 1: Parent Tasks with Time Estimates**
-
-Generate high-level tasks with AI-estimated times:
-
-```text
-I've generated the high-level tasks with time estimates:
-
-- [ ] 0.0 Create feature branch ~5m (ai:5m)
-- [ ] 1.0 {First major task} ~2h (ai:1.5h test:30m)
-- [ ] 2.0 {Second major task} ~3h (ai:2h test:1h)
-- [ ] 3.0 {Third major task} ~1h (ai:45m test:15m)
-
-**Total estimate:** ~6h 5m (ai:4h 20m test:1h 45m)
-
-Ready to generate sub-tasks? Reply "Go" to proceed.
-```
-
-**Time Estimation Heuristics:**
-
-| Task Type | AI Time | Test Time | Read Time |
-|-----------|---------|-----------|-----------|
-| Simple fix | 15-30m | 10-15m | 5m |
-| New function | 30m-1h | 15-30m | 10m |
-| New component | 1-2h | 30m-1h | 15m |
-| New feature | 2-4h | 1-2h | 30m |
-| Architecture change | 4-8h | 2-4h | 1h |
-| Research/spike | 1-2h | - | 30m |
-
-**Phase 2: Sub-Tasks**
-
-After user confirms, break down into actionable sub-tasks:
+2. **Add reference to TODO.md** (bidirectional linking):
 
 ```markdown
-## Tasks
-
-- [ ] 0.0 Create feature branch
-  - [ ] 0.1 Create and checkout branch: `git checkout -b feature/{slug}`
-
-- [ ] 1.0 {First major task}
-  - [ ] 1.1 {Sub-task}
-  - [ ] 1.2 {Sub-task}
+- [ ] {title} #plan → [todo/PLANS.md#{slug}] ~{estimate} logged:{YYYY-MM-DD}
 ```
 
-Create in `todo/tasks/tasks-{slug}.md` using template from `templates/tasks-template.md`.
+3. **Optionally create PRD/tasks** if scope warrants (use `/create-prd`, `/generate-tasks`)
 
-### Step 4: Inform User
+Respond:
 
 ```text
-Created execution plan:
-- Plan entry: todo/PLANS.md
-- PRD: todo/tasks/prd-{slug}.md
-- Tasks: todo/tasks/tasks-{slug}.md
+Saved: "{title}"
+- Plan: todo/PLANS.md
+- Reference: TODO.md
+{- PRD: todo/tasks/prd-{slug}.md (if created)}
+{- Tasks: todo/tasks/tasks-{slug}.md (if created)}
 
-Start anytime with: "Let's work on the {plan title} plan"
+Start anytime with: "Let's work on {title}"
 ```
+
+## Context Preservation
+
+Always capture from the conversation:
+- Decisions made and their rationale
+- Research findings
+- Constraints identified
+- Open questions
+- Related links or references mentioned
+
+This context goes into the PLANS.md entry under "Context from Discussion" so future sessions have full context.
 
 ## Starting Work from Plans
 
 When user says "Let's work on X" or references a task/plan:
 
-### 1. Check TODO.md
+### 1. Find Matching Work
 
 ```bash
 grep -i "{keyword}" TODO.md
-```
-
-### 2. Check todo/PLANS.md
-
-```bash
 grep -i "{keyword}" todo/PLANS.md
-```
-
-### 3. Load Context
-
-If PRD/tasks exist, read them:
-
-```bash
 ls todo/tasks/*{keyword}* 2>/dev/null
 ```
 
-### 4. Derive Branch Name
+### 2. Load Context
 
-| Source | Branch Name |
-|--------|-------------|
-| TODO.md task | `{type}/{slugified-description}` |
-| PLANS.md entry | `{type}/{plan-slug}` |
-| PRD file | `{type}/{prd-feature-name}` |
+If PRD/tasks exist, read them for full context.
 
-**Examples**:
-
-| Task/Plan | Generated Branch |
-|-----------|------------------|
-| `- [ ] Add Ahrefs MCP server #seo` | `feature/add-ahrefs-mcp-server` |
-| `### [2025-01-15] User Authentication Overhaul` | `feature/user-authentication-overhaul` |
-| `prd-export-csv.md` | `feature/export-csv` |
-
-### 5. Present to User
+### 3. Present with Auto-Selection
 
 ```text
-Found matching work:
+Found: "{title}" (~{estimate})
 
-**From TODO.md:**
-- [ ] Add Ahrefs MCP server integration #seo ~2d
+1. Start working (creates branch: {suggested-branch})
+2. View full details first
+3. Different task
 
-**Suggested branch:** feature/add-ahrefs-mcp-server
-
-1. Create this branch and start
-2. Use different branch name
-3. View full task/plan details first
-
-Which option? (1-3)
+[Enter] or 1 to start
 ```
 
-### 6. Follow git-workflow.md
+### 4. Follow git-workflow.md
 
 After branch creation, follow standard git workflow.
 
@@ -328,27 +268,21 @@ Update `todo/tasks/tasks-{slug}.md` as work completes:
 
 Ensure all tasks in `todo/tasks/tasks-{slug}.md` are checked.
 
-### 2. Record Time at Commit
+### 2. Record Time
 
-At commit time, prompt for time tracking:
+At commit time, offer time tracking:
 
 ```text
-Committing changes for: "{task/plan name}"
+Committing: "{title}"
+Session duration: 2h 12m
+Estimated: ~4h
 
-Session duration: 2h 12m (since branch creation)
-Estimated: ~4h (ai:2h test:1.5h read:30m)
-
-1. Accept session duration as actual (2h 12m)
-2. Enter different actual time
-3. Add research time spent before this session
-4. Skip time tracking
-
-Which option? (1-4)
+1. Accept 2h 12m as actual
+2. Enter different time
+3. Skip time tracking
 ```
 
 ### 3. Update PLANS.md Status
-
-Change status and add outcomes with time summary:
 
 ```markdown
 **Status:** Completed
@@ -359,44 +293,97 @@ Change status and add outcomes with time summary:
 - {Deliverable 1}
 - {Deliverable 2}
 
-**What went well:**
-- {Success 1}
-
-**What could improve:**
-- {Learning 1}
-
 **Time Summary:**
-- Estimated: 4h (ai:2h test:1.5h read:30m)
-- Actual: 3h 15m (ai:1h 45m test:1h read:30m research:0m)
+- Estimated: 4h
+- Actual: 3h 15m
 - Variance: -19%
-- Lead time: 3 days (logged to completed)
 ```
-
-### 3. Move to Completed Section
-
-Move the entire plan entry from "Active Plans" to "Completed Plans".
 
 ### 4. Update TODO.md
 
-If there was a corresponding TODO.md entry, mark it done:
+Mark the reference task done:
 
 ```markdown
 ## Done
 
-- [x] Add Ahrefs MCP server integration #seo 2025-01-15
+- [x] {title} #plan → [todo/PLANS.md#{slug}] ~4h actual:3h15m completed:2025-01-15
 ```
 
 ### 5. Update CHANGELOG.md
 
 Add entry following `workflows/changelog.md` format.
 
+## PRD and Task Generation
+
+For complex work that needs detailed planning:
+
+### Generate PRD (`/create-prd`)
+
+Ask clarifying questions using numbered options:
+
+```text
+To create the PRD, I need to clarify:
+
+1. What is the primary goal?
+   A. {option}
+   B. {option}
+
+2. Who is the target user?
+   A. {option}
+   B. {option}
+
+Reply with "1A, 2B" or provide details.
+```
+
+Create PRD in `todo/tasks/prd-{slug}.md` using `templates/prd-template.md`.
+
+### Generate Tasks (`/generate-tasks`)
+
+**Phase 1: Parent Tasks**
+
+```text
+High-level tasks with estimates:
+
+- [ ] 0.0 Create feature branch ~5m
+- [ ] 1.0 {First major task} ~2h
+- [ ] 2.0 {Second major task} ~3h
+
+Total: ~5h 5m
+
+Reply "Go" to generate sub-tasks.
+```
+
+**Phase 2: Sub-Tasks**
+
+```markdown
+- [ ] 0.0 Create feature branch
+  - [ ] 0.1 Create and checkout: `git checkout -b feature/{slug}`
+
+- [ ] 1.0 {First major task}
+  - [ ] 1.1 {Sub-task}
+  - [ ] 1.2 {Sub-task}
+```
+
+Create in `todo/tasks/tasks-{slug}.md` using `templates/tasks-template.md`.
+
+## Time Estimation Heuristics
+
+| Task Type | AI Time | Test Time | Read Time |
+|-----------|---------|-----------|-----------|
+| Simple fix | 15-30m | 10-15m | 5m |
+| New function | 30m-1h | 15-30m | 10m |
+| New component | 1-2h | 30m-1h | 15m |
+| New feature | 2-4h | 1-2h | 30m |
+| Architecture change | 4-8h | 2-4h | 1h |
+| Research/spike | 1-2h | - | 30m |
+
 ## Time Tracking Configuration
 
-Time tracking can be configured per-repo in `.aidevops.json`:
+Configure per-repo in `.aidevops.json`:
 
 ```json
 {
-  "time_tracking": "prompt",  // "true" | "false" | "prompt"
+  "time_tracking": "prompt",
   "features": ["planning", "time-tracking"]
 }
 ```
@@ -413,37 +400,21 @@ Use `/log-time-spent` command to manually log time anytime.
 
 | Workflow | Integration |
 |----------|-------------|
-| `git-workflow.md` | Branch names derived from tasks/plans, records `started:` |
-| `branch.md` | Task 0.0 creates branch, records start time |
-| `feature-development.md` | Auto-suggests `@plans` for complex work |
+| `git-workflow.md` | Branch names derived from tasks/plans |
+| `branch.md` | Task 0.0 creates branch |
+| `feature-development.md` | Auto-suggests planning for complex work |
 | `preflight.md` | Run before marking plan complete |
 | `changelog.md` | Update on plan completion |
-| `release.md` | Time summary for all tasks in release |
 
-## Related Subagents
+## Related
 
-- `plans-quick.md` - Simplified version for quick task recording
 - `feature-development.md` - Feature implementation patterns
 - `git-workflow.md` - Branch creation and management
 - `branch.md` - Branch naming conventions
 
 ## Templates
 
-- `templates/prd-template.md` - PRD structure with time estimates
-- `templates/tasks-template.md` - Task list with time tracking
-- `templates/todo-template.md` - TODO.md for new repos (via `aidevops init`)
-- `templates/plans-template.md` - PLANS.md for new repos (via `aidevops init`)
-
-## TOON Integration
-
-All planning files include TOON blocks in HTML comments for machine parsing:
-
-```html
-<!--TOON:tasks[3]{id,desc,est,actual,status}:
-t001,Create feature branch,5m,5m,done
-t002,Implement core logic,2h,1h45m,done
-t003,Write tests,1h,,pending
--->
-```
-
-Extract with: `grep -oP '<!--TOON:\K[^>]+(?=-->)' TODO.md`
+- `templates/prd-template.md` - PRD structure
+- `templates/tasks-template.md` - Task list format
+- `templates/todo-template.md` - TODO.md for new repos
+- `templates/plans-template.md` - PLANS.md for new repos

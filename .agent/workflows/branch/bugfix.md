@@ -1,5 +1,5 @@
 ---
-description: Bugfix branch creation and resolution workflow
+description: Bugfix branch - non-urgent bug fixes
 mode: subagent
 tools:
   read: true
@@ -8,62 +8,49 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: false
-  task: true
 ---
 
-# Bugfix Branch Workflow
+# Bugfix Branch
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Prefix**: `bugfix/`
-- **Example**: `bugfix/login-timeout`, `bugfix/123-null-pointer`
-- **Version bump**: Patch (1.0.0 → 1.0.1)
-- **Detailed guide**: `workflows/bug-fixing.md`
-
-**Create**:
+| Aspect | Value |
+|--------|-------|
+| **Prefix** | `bugfix/` |
+| **Commit** | `fix: description` |
+| **Version** | Patch bump (1.0.0 → 1.0.1) |
+| **Create from** | `main` |
 
 ```bash
 git checkout main && git pull origin main
 git checkout -b bugfix/{description}
 ```
 
-**Commit pattern**: `fix: description`
-
 <!-- AI-CONTEXT-END -->
 
 ## When to Use
 
-Use `bugfix/` branches for:
 - Non-urgent bug fixes
 - Issues that can wait for normal release cycle
 - Bugs found in development/staging
 
-For urgent production issues, use `hotfix/` instead.
+**For urgent production issues**, use `hotfix/` instead.
 
-## Branch Naming
+## Unique Guidance
+
+**Always add a regression test** to prevent the bug from recurring.
+
+For detailed bug investigation patterns, see `workflows/bug-fixing.md`.
+
+## Examples
 
 ```bash
-# With issue number
-bugfix/123-login-timeout
-
-# Descriptive
-bugfix/null-pointer-in-checkout
+bugfix/login-timeout
+bugfix/123-null-pointer
 bugfix/api-response-parsing
 ```
 
-## Workflow
-
-1. Create branch from updated `main`
-2. Fix bug (see `workflows/bug-fixing.md`)
-3. Add regression test
-4. Commit with `fix:` prefix
-5. Push and create PR
-6. After merge, bump patch version
-
-## Commit Messages
+## Commit Example
 
 ```bash
 fix: resolve login timeout on slow connections
@@ -74,17 +61,3 @@ fix: resolve login timeout on slow connections
 
 Fixes #123
 ```
-
-## Version Impact
-
-Bug fixes trigger **patch** version bump:
-- `1.0.0` → `1.0.1`
-- `2.3.1` → `2.3.2`
-
-See `workflows/version-bump.md` for version management.
-
-## Related
-
-- **Detailed workflow**: `workflows/bug-fixing.md`
-- **Urgent fixes**: `branch/hotfix.md`
-- **Version bumping**: `workflows/version-bump.md`

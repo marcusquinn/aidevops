@@ -1,5 +1,5 @@
 ---
-description: Experiment branch for exploratory work that may not merge
+description: Experiment branch - spike, POC, may not merge
 mode: subagent
 tools:
   read: true
@@ -8,35 +8,29 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: false
-  task: true
 ---
 
-# Experiment Branch Workflow
+# Experiment Branch
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Prefix**: `experiment/`
-- **Example**: `experiment/new-auth-approach`, `experiment/performance-spike`
-- **Version bump**: None (experiments don't get released)
-- **Key rule**: May never merge - that's okay
-
-**Create**:
+| Aspect | Value |
+|--------|-------|
+| **Prefix** | `experiment/` |
+| **Commit** | `experiment:` or `spike:` |
+| **Version** | None (experiments don't get released) |
+| **Create from** | `main` |
+| **Key rule** | May never merge - that's okay |
 
 ```bash
 git checkout main && git pull origin main
 git checkout -b experiment/{description}
 ```
 
-**Commit pattern**: `experiment: description` or `spike: description`
-
 <!-- AI-CONTEXT-END -->
 
 ## When to Use
 
-Use `experiment/` branches for:
 - Proof of concept (POC)
 - Technical spikes
 - Exploring new approaches
@@ -45,32 +39,7 @@ Use `experiment/` branches for:
 - Architecture exploration
 - "What if we tried..." investigations
 
-**Key difference from other branches**: Experiments may never merge, and that's a valid outcome.
-
-## Branch Naming
-
-```bash
-# Technical exploration
-experiment/graphql-migration
-experiment/redis-caching
-experiment/serverless-functions
-
-# Performance
-experiment/lazy-loading-images
-experiment/database-query-optimization
-
-# Architecture
-experiment/microservices-split
-experiment/event-driven-architecture
-```
-
-## Workflow
-
-1. Create branch from updated `main`
-2. **Document the hypothesis** (what are you testing?)
-3. Implement minimal viable experiment
-4. **Document findings** (success or failure)
-5. Decide: merge, adapt, or abandon
+**Key difference**: Experiments may never merge, and that's a valid outcome.
 
 ## The Experiment Mindset
 
@@ -80,7 +49,11 @@ Experiments are about **learning**, not shipping:
 - **Failure** = You learned what doesn't work (also valuable)
 - **Abandoned** = Priorities changed (document why)
 
-## Commit Messages
+## Unique Guidance
+
+### Document the Hypothesis
+
+Before starting, document what you're testing:
 
 ```bash
 experiment: test GraphQL for API layer
@@ -91,13 +64,11 @@ Testing:
 - Set up Apollo Server
 - Migrate 3 endpoints
 - Measure performance
-
-Results will be documented in PR description.
 ```
 
-## Documenting Results
+### Document Results (Even If Not Merging)
 
-When experiment concludes, document in PR (even if not merging):
+When experiment concludes, document in PR:
 
 ```markdown
 ## Experiment: GraphQL Migration
@@ -115,7 +86,7 @@ GraphQL could reduce API calls by 60%
 - Team learning curve is steep
 
 ### Conclusion
-**Not proceeding** - benefits don't outweigh costs for our use case.
+**Not proceeding** - benefits don't outweigh costs.
 
 ### Learnings
 - GraphQL works well for complex nested data
@@ -123,13 +94,7 @@ GraphQL could reduce API calls by 60%
 - Consider for future mobile app API
 ```
 
-## Version Impact
-
-Experiments have **no version bump**:
-- They don't get released
-- If successful, create a proper `feature/` branch for the real implementation
-
-## Transitioning to Feature
+### Transitioning to Feature
 
 If experiment succeeds and should be productionized:
 
@@ -139,7 +104,12 @@ If experiment succeeds and should be productionized:
 4. Follow normal feature workflow
 5. Reference experiment branch in PR for context
 
-## Related
+## Examples
 
-- **If experiment succeeds**: `branch/feature.md`
-- **Code review**: `workflows/code-audit-remote.md` (experiments benefit from early feedback)
+```bash
+experiment/graphql-migration
+experiment/redis-caching
+experiment/serverless-functions
+experiment/lazy-loading-images
+experiment/microservices-split
+```

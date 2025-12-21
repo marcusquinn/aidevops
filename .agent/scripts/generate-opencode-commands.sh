@@ -547,6 +547,72 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
 
 # =============================================================================
+# SAVE-TODO COMMAND
+# =============================================================================
+# Save current discussion as task or plan (auto-detects complexity)
+
+cat > "$OPENCODE_COMMAND_DIR/save-todo.md" << 'EOF'
+---
+description: Save current discussion as task or plan (auto-detects complexity)
+agent: Plan+
+---
+
+Analyze the current conversation and save appropriately based on complexity.
+
+Topic/context: $ARGUMENTS
+
+## Auto-Detection
+
+| Signal | Action |
+|--------|--------|
+| Single action, < 2h | TODO.md only |
+| User says "quick/simple" | TODO.md only |
+| Multiple steps, > 2h | PLANS.md + TODO.md |
+| Research/design needed | PLANS.md + TODO.md |
+
+## Workflow
+
+1. Extract from conversation: title, description, estimate, tags, context
+2. Classify as Simple or Complex
+3. Save with confirmation (numbered options for override)
+
+**Simple (TODO.md):**
+```
+Saving to TODO.md: "{title}" ~{estimate}
+1. Confirm
+2. Add more details
+3. Create full plan instead
+```
+
+**Complex (PLANS.md + TODO.md):**
+```
+Creating execution plan: "{title}" ~{estimate}
+1. Confirm and create
+2. Simplify to TODO.md only
+3. Add more context first
+```
+
+After save, respond:
+```
+Saved: "{title}" to {location} (~{estimate})
+Start anytime with: "Let's work on {title}"
+```
+
+## Context Preservation
+
+Capture from conversation:
+- Decisions and rationale
+- Research findings
+- Constraints identified
+- Open questions
+- Related links
+
+This goes into PLANS.md "Context from Discussion" section.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /save-todo command"
+
+# =============================================================================
 # PLAN-STATUS COMMAND
 # =============================================================================
 # Show active plans and TODO.md status
@@ -856,9 +922,10 @@ echo ""
 echo "Available commands:"
 echo ""
 echo "  Planning:"
+echo "    /save-todo        - Save discussion as task/plan (auto-detects complexity)"
+echo "    /plan-status      - Show active plans and TODO.md status"
 echo "    /create-prd       - Generate Product Requirements Document"
 echo "    /generate-tasks   - Generate implementation tasks from PRD"
-echo "    /plan-status      - Show active plans and TODO.md status"
 echo ""
 echo "  Quality:"
 echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
@@ -891,7 +958,7 @@ echo "    /log-time-spent   - Log time spent on a task"
 echo ""
 echo "New users: Start with /onboarding to configure your services"
 echo ""
-echo "Planning workflow: /create-prd -> /generate-tasks -> /feature -> implement -> /pr"
+echo "Planning workflow: discuss -> /save-todo -> /feature -> implement -> /pr"
 echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
 echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 echo ""

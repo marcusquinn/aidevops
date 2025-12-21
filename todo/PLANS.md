@@ -21,9 +21,72 @@ Each plan includes:
 
 ## Active Plans
 
-<!-- Add active plans here using the template below -->
+### [2025-12-21] aidevops-opencode Plugin
 
-<!--TOON:active_plans[0]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+**Status:** Planning
+**Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
+**Architecture:** [.agent/build-mcp/aidevops-plugin.md](../.agent/build-mcp/aidevops-plugin.md)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
+-->
+
+#### Purpose
+
+Create an optional OpenCode plugin that provides native integration for aidevops. This enables lifecycle hooks (pre-commit quality checks), dynamic agent loading, and cleaner npm-based installation for OpenCode users who want tighter integration.
+
+#### Context from Discussion
+
+**Key decisions:**
+- Plugin is **optional enhancement**, not replacement for current multi-tool approach
+- aidevops remains compatible with Claude, Cursor, Windsurf, etc.
+- Plugin loads agents from `~/.aidevops/agents/` at runtime
+- Should detect and complement oh-my-opencode if both installed
+
+**Architecture (from aidevops-plugin.md):**
+- Agent loader from `~/.aidevops/agents/`
+- MCP registration programmatically
+- Pre-commit quality hooks (ShellCheck)
+- aidevops CLI exposed as tool
+
+**When to build:**
+- When OpenCode becomes dominant enough
+- When users request native plugin experience
+- When hooks become essential (quality gates)
+
+#### Progress
+
+- [ ] (2025-12-21) Phase 1: Core plugin structure + agent loader ~4h
+- [ ] (2025-12-21) Phase 2: MCP registration ~2h
+- [ ] (2025-12-21) Phase 3: Quality hooks (pre-commit) ~3h
+- [ ] (2025-12-21) Phase 4: oh-my-opencode compatibility ~2h
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m001,p001,Phase 1: Core plugin structure + agent loader,4h,,2025-12-21T00:00Z,,pending
+m002,p001,Phase 2: MCP registration,2h,,2025-12-21T00:00Z,,pending
+m003,p001,Phase 3: Quality hooks (pre-commit),3h,,2025-12-21T00:00Z,,pending
+m004,p001,Phase 4: oh-my-opencode compatibility,2h,,2025-12-21T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Keep as optional plugin, not replace current approach
+  **Rationale:** aidevops must remain multi-tool compatible (Claude, Cursor, etc.)
+  **Date:** 2025-12-21
+
+<!--TOON:decisions[1]{id,plan_id,decision,rationale,date,impact}:
+d001,p001,Keep as optional plugin,aidevops must remain multi-tool compatible,2025-12-21,None - additive feature
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+<!--TOON:active_plans[1]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 -->
 
 ## Completed Plans

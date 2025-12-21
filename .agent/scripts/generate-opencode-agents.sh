@@ -104,7 +104,7 @@ DISPLAY_NAMES = {
 }
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
-AGENT_ORDER = ["Plan+", "Build+", "Build-Agent", "Build-MCP", "AI-DevOps"]
+AGENT_ORDER = ["Plan+", "Build+", "Build-Agent", "Build-MCP", "AI-DevOps", "Onboarding"]
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
@@ -134,6 +134,11 @@ AGENT_TOOLS = {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+    },
+    "Onboarding": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True,
+        "osgrep_*": True, "augment-context-engine_*": True
     },
     "Accounting": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
@@ -434,7 +439,7 @@ echo "  Primary agents: Auto-discovered from ~/.aidevops/agents/*.md (Tab-switch
 echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable)"
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
 echo ""
-echo "Tab order: Plan+ → Build+ → Build-Agent → Build-MCP → AI-DevOps → (alphabetical)"
+echo "Tab order: Plan+ → Build+ → Build-Agent → Build-MCP → AI-DevOps → Onboarding → (alphabetical)"
 echo ""
 echo "To add a new primary agent: Create ~/.aidevops/agents/{name}.md"
 echo "To add a new subagent: Create ~/.aidevops/agents/{folder}/{name}.md"
