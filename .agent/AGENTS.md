@@ -183,8 +183,6 @@ opencode mcp list
 | `plan-plus.md` | Read-only planning with semantic codebase search |
 | `build-plus.md` | Enhanced Build with context tools |
 | `aidevops.md` | Framework operations, meta-agents, setup |
-| `build-agent.md` | Agent design and composition |
-| `build-mcp.md` | MCP server development |
 | `onboarding.md` | Interactive setup wizard for new users |
 | `seo.md` | SEO optimization and analysis |
 | `content.md` | Content creation workflows |
@@ -200,11 +198,11 @@ opencode mcp list
 | Folder | Contents |
 |--------|----------|
 | `aidevops/` | Framework meta-agents (add-new-mcp, setup, troubleshooting, architecture, security) |
-| `build-agent/` | Agent design subagents (agent-review) |
-| `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |
 | `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research) |
 | `content/` | Content subagents (guidelines) |
+| `tools/build-agent/` | Agent design and composition (build-agent, agent-review) |
+| `tools/build-mcp/` | MCP server development (build-mcp, api-wrapper, deployment, server-patterns, transports) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
 | `tools/browser/` | Browser automation (dev-browser, playwriter, playwright, stagehand, crawl4ai, pagespeed) |
 | `tools/ui/` | UI component libraries (shadcn) |
@@ -272,7 +270,8 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - WordPress work → `tools/wordpress/`
 - Release/versioning → `workflows/`
 - Browser automation → `tools/browser/`
-- MCP development → `build-mcp/`
+- Agent design → `tools/build-agent/` (agent composition, review)
+- MCP development → `tools/build-mcp/` (TypeScript/Bun/ElysiaJS servers)
 - SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research)
 - Database schemas/migrations → `workflows/sql-migrations.md` (declarative schemas, auto-generated migrations)
 - Oh-My-OpenCode integration → `tools/opencode/oh-my-opencode.md` (LSP, AST, background agents)

@@ -25,8 +25,9 @@ mode: subagent
 - `troubleshooting.md` - Service status, debugging
 - `architecture.md` - Framework structure
 
-**Related Main Agents**:
-- `Build-Agent` - Composing efficient agents (see `build-agent.md`)
+**Related Subagents** (in `tools/`):
+- `tools/build-agent/` - Agent design and composition
+- `tools/build-mcp/` - MCP server development
 
 **Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP,
 Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations

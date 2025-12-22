@@ -56,7 +56,8 @@ echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
 # Remove old primary agent markdown files (they're now in JSON, auto-discovered)
 # This cleans up any legacy files from before auto-discovery
-for f in Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md; do
+# Also removes demoted agents that are now subagents in tools/
+for f in Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md; do
     rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
@@ -98,13 +99,12 @@ except:
 DISPLAY_NAMES = {
     "plan-plus": "Plan+",
     "build-plus": "Build+",
-    "build-agent": "Build-Agent",
-    "build-mcp": "Build-MCP",
     "aidevops": "AI-DevOps",
 }
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
-AGENT_ORDER = ["Plan+", "Build+", "Build-Agent", "Build-MCP", "AI-DevOps"]
+# Note: Build-Agent and Build-MCP demoted to subagents in tools/ as of v2.41.0
+AGENT_ORDER = ["Build+", "Plan+", "AI-DevOps"]
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
@@ -116,16 +116,6 @@ AGENT_TOOLS = {
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
     },
     "Build+": {
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
-    },
-    "Build-Agent": {
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
-    },
-    "Build-MCP": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
@@ -491,7 +481,7 @@ echo "  Primary agents: Auto-discovered from ~/.aidevops/agents/*.md (Tab-switch
 echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable)"
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
 echo ""
-echo "Tab order: Plan+ → Build+ → Build-Agent → Build-MCP → AI-DevOps → (alphabetical)"
+echo "Tab order: Build+ → Plan+ → AI-DevOps → (alphabetical)"
 echo ""
 echo "To add a new primary agent: Create ~/.aidevops/agents/{name}.md"
 echo "To add a new subagent: Create ~/.aidevops/agents/{folder}/{name}.md"

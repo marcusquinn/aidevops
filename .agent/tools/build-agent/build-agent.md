@@ -29,7 +29,7 @@ mode: subagent
 - **Main Agents**: Orchestration, call subagents when needed
 - **Subagents**: Focused execution, minimal context, specific tools
 
-**Subagents** (`build-agent/`):
+**Subagents** (in this folder):
 
 | Subagent | When to Read |
 |----------|--------------|

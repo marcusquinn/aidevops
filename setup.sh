@@ -83,6 +83,11 @@ cleanup_deprecated_paths() {
         # v2.40.7: wordpress moved from root to tools/wordpress
         "$agents_dir/wordpress.md"
         "$agents_dir/wordpress"
+        # v2.41.0: build-agent and build-mcp moved from root to tools/
+        "$agents_dir/build-agent.md"
+        "$agents_dir/build-agent"
+        "$agents_dir/build-mcp.md"
+        "$agents_dir/build-mcp"
     )
     
     for path in "${deprecated_paths[@]}"; do

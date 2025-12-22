@@ -23,7 +23,7 @@ cd my-mcp && bun install && bun run dev
 npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 ```
 
-**Subagents** (`build-mcp/`):
+**Subagents** (in this folder):
 
 | Subagent | When to Read |
 |----------|--------------|
