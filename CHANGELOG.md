@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Refactor: demote wordpress.md from main agent to subagent
+
 ## [2.40.5] - 2025-12-22
 
 ### Changed
