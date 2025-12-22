@@ -1,99 +1,70 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 # CodeRabbit Pro Configuration for AI-Assisted DevOps Framework
 # https://docs.coderabbit.ai/guides/review-instructions
-#
-# This configuration leverages CodeRabbit Pro features for comprehensive
-# analysis of our zero-technical-debt DevOps framework (18,000+ lines)
 
-# Review Instructions
+language: "en-US"
+early_access: false
+
+tone_instructions: |
+  This is an AI-Assisted DevOps Framework with comprehensive automation tools.
+  Focus on shell script quality, security best practices, and DevOps automation patterns.
+  Zero Technical Debt achieved - maintain A-grade ratings across all quality tools.
+
 reviews:
-  # High-level review focus areas
+  profile: "chill"
   high_level_summary: true
+  poem: true
+  review_status: true
+  collapse_walkthrough: false
+  sequence_diagrams: true
   
-  # Specific areas of focus for this DevOps framework
-  review_instructions: |
-    This is an AI-Assisted DevOps Framework with comprehensive automation tools.
-
-    🏆 FRAMEWORK ACHIEVEMENTS (Verified: November 2024):
-    - Zero Technical Debt: 349 → 0 issues (100% resolution)
-      • SonarCloud: https://sonarcloud.io/project/overview?id=marcusquinn_ai-assisted-dev-ops
-      • CodeFactor: https://www.codefactor.io/repository/github/marcusquinn/ai-assisted-dev-ops
-      • Codacy: https://app.codacy.com/gh/marcusquinn/ai-assisted-dev-ops
-    - 18,000+ lines of production-ready code
-    - 25+ service provider integrations
-    - A-grade ratings across SonarCloud, CodeFactor, Codacy
-    - Multi-platform quality excellence
-
-    🎯 CODERABBIT PRO ANALYSIS FOCUS:
-    
-    **Shell Script Quality:**
-    - Proper error handling and return statements
-    - Consistent variable naming and local variable usage
-    - Security best practices (no hardcoded credentials)
-    - Proper quoting and parameter expansion
-    - ShellCheck compliance
-    
-    **Architecture & Design:**
-    - Modular design and separation of concerns
-    - Consistent patterns across provider helpers
-    - Clear function responsibilities
-    - Proper abstraction levels
-    
-    **Documentation & Maintainability:**
-    - Clear function and script documentation
-    - Consistent coding style
-    - Meaningful variable and function names
-    - Proper commenting for complex logic
-    
-    **Security & Best Practices:**
-    - No sensitive data in code
-    - Proper input validation
-    - Safe file operations
-    - Secure API interactions
-    
-    **DevOps Automation:**
-    - Quality assurance automation
-    - CI/CD pipeline effectiveness
-    - Multi-platform compatibility
-    - Error handling in automation scripts
-
   # Auto-approve simple changes
-  auto_approve: false  # Keep manual review for this critical framework
+  auto_review:
+    enabled: true
+    drafts: false
     
   # Request changes for critical issues
   request_changes_workflow: true
-    
-# Path-specific instructions
-path_instructions:
-  - path: "providers/*.sh"
-    instructions: |
-      Provider helper scripts - focus on:
-      - Consistent API patterns
-      - Proper error handling
-      - Security of credential handling
-      - Input validation
-      
-  - path: ".agent/scripts/*.sh"
-    instructions: |
-      Automation scripts - focus on:
-      - Reliability and robustness
-      - Clear logging and feedback
-      - Proper exit codes
-      - Error recovery mechanisms
-      
-  - path: "templates/*.sh"
-    instructions: |
-      Template scripts - focus on:
-      - Security (prompt injection protection)
-      - Flexibility and reusability
-      - Clear documentation
-      - Safe defaults
+  
+  # Exclude certain files from review
+  path_filters:
+    - "!.agent/tmp/*"
+    - "!.agent/memory/*"
+    - "!*.log"
+    - "!*.tmp"
+  
+  # Path-specific instructions
+  path_instructions:
+    - path: "providers/*.sh"
+      instructions: |
+        Provider helper scripts - focus on:
+        - Consistent API patterns
+        - Proper error handling
+        - Security of credential handling
+        - Input validation
+        
+    - path: ".agent/scripts/*.sh"
+      instructions: |
+        Automation scripts - focus on:
+        - Reliability and robustness
+        - Clear logging and feedback
+        - Proper exit codes
+        - Error recovery mechanisms
+        
+    - path: "templates/*.sh"
+      instructions: |
+        Template scripts - focus on:
+        - Security (prompt injection protection)
+        - Flexibility and reusability
+        - Clear documentation
+        - Safe defaults
+        
+    - path: "**/*.ts"
+      instructions: |
+        TypeScript files - focus on:
+        - Type safety and proper typing
+        - Error handling patterns
+        - Clean code principles
 
-# Exclude certain files from review
-path_filters:
-  exclude:
-    - ".agent/tmp/*"
-    - ".agent/memory/*"
-    - "*.log"
-    - "*.tmp"
-
-# Trigger for comprehensive codebase review
+chat:
+  auto_reply: true
