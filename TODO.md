@@ -67,8 +67,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t018 Enhance Plan+ and Build+ with OpenCode's Latest Features #plan → [todo/PLANS.md#enhance-plan-and-build-with-opencodes-latest-features] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21
+- [ ] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~2h (ai:1h test:30m read:30m) logged:2025-12-22
 
-<!--TOON:backlog[15]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[16]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
@@ -84,6 +85,7 @@ t016,Uncloud Integration for aidevops,,plan|deployment|docker|orchestration,1d,4
 t017,SEO Machine Integration for aidevops,,plan|seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,pending,,,
 t018,Enhance Plan+ and Build+ with OpenCode's Latest Features,,plan|opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,pending,,,
 t020,Git Issues Bi-directional Sync (GitHub GitLab Gitea),,plan|git|sync,3d,1.5d,1d,0.5d,2025-12-21T16:30Z,pending,,,
+t021,Auto-mark tasks complete from commit messages in release,,workflow|automation,2h,1h,30m,30m,2025-12-22T05:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -168,5 +170,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-23,15,0,0,23,0,22d6h,15h25m,0,15
+24,16,0,0,23,0,22d8h,15h25m,0,16
 -->
