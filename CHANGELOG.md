@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.4] - 2025-12-22
+
+### Changed
+
+- Documentation: clarify setup.sh step applies only to aidevops repo
+- Documentation: add mandatory setup.sh step to release workflow
+
+### Fixed
+
+- auto-add ~/.local/bin to PATH during installation
 ## [2.40.3] - 2025-12-22
 
 ### Changed
