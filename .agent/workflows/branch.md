@@ -40,9 +40,16 @@ tools:
 git checkout main && git pull origin main && git checkout -b {type}/{description}
 ```
 
-**Time tracking**: Record `started:` timestamp in TODO.md when branch is created.
+**Task status**: Move task to `## In Progress` and add `started:` timestamp when branch is created.
 
 **Lifecycle**: Create → Develop → Preflight → Version → Push → PR → Review → Merge → Release → Postflight → Cleanup
+
+**Task lifecycle**:
+
+```text
+Ready/Backlog → In Progress → In Review → Done
+   (branch)       (develop)      (PR)     (merge/release)
+```
 
 <!-- AI-CONTEXT-END -->
 
@@ -132,14 +139,23 @@ git checkout main && git pull origin main
 git checkout -b {type}/{description}
 ```
 
-**Time tracking**: After creating the branch, update the corresponding task in TODO.md with `started:` timestamp:
+**Task status update**: After creating the branch, update the corresponding task in TODO.md:
+
+1. Move task from `## Ready` or `## Backlog` to `## In Progress`
+2. Add `started:` timestamp
+3. Sync with Beads
 
 ```markdown
-# Before
-- [ ] Add user dashboard #feature ~4h
+# Before (in ## Ready or ## Backlog)
+- [ ] t001 Add user dashboard #feature ~4h
 
-# After
-- [ ] Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+# After (move to ## In Progress)
+- [ ] t001 Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+```
+
+```bash
+# Sync with Beads after updating TODO.md
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
 ```
 
 **Agents**: Domain agents (`wordpress.md`, `seo.md`, etc.) for implementation patterns

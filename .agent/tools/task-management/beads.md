@@ -221,14 +221,46 @@ aidevops init beads
 
 ## Integration with Workflows
 
+### Task Lifecycle
+
+Workflow commands automatically update task status:
+
+```text
+Ready/Backlog → In Progress → In Review → Done
+   (branch)       (develop)      (PR)     (merge/release)
+```
+
+| Workflow | Task Status Change | TODO.md Section | Beads Action |
+|----------|-------------------|-----------------|--------------|
+| `/branch create` | → In Progress | Move to `## In Progress` | `beads-sync-helper.sh push` |
+| `/pr create` | → In Review | Move to `## In Review` | `beads-sync-helper.sh push` |
+| `/pr merge` | → Done | Move to `## Done` | `beads-sync-helper.sh push` |
+| `/release` | → Done (all) | Move remaining to `## Done` | `beads-sync-helper.sh push` |
+
+### Task Attributes by Stage
+
+| Stage | Attributes Added |
+|-------|------------------|
+| In Progress | `started:2025-01-15T10:30Z` |
+| In Review | `pr:123` or `pr_url:https://...` |
+| Done | `completed:2025-01-16T14:00Z`, `actual:5h` |
+
 ### Git Workflow
 
 ```bash
 # Before starting work
 ~/.aidevops/agents/scripts/todo-ready.sh  # See what's ready
 
-# After completing task
-# Mark complete in TODO.md, then:
+# After creating branch
+# Move task to ## In Progress, add started:, then:
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
+
+# After creating PR
+# Move task to ## In Review, add pr:, then:
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
+
+# After merge/release
+# Move task to ## Done, add completed: and actual:, then:
 ~/.aidevops/agents/scripts/beads-sync-helper.sh push
 ```
 
@@ -238,6 +270,16 @@ aidevops init beads
 2. Run `/sync-beads` to update graph
 3. Use `bd graph` to visualize
 4. Run `/ready` to see unblocked tasks
+
+### Slash Commands
+
+| Command | Action |
+|---------|--------|
+| `/ready` | Show tasks with no blockers (Ready section) |
+| `/sync-beads` | Sync TODO.md ↔ Beads |
+| `/branch` | Create branch, move task to In Progress |
+| `/pr` | Create PR, move task to In Review |
+| `/release` | Release version, move tasks to Done |
 
 ## TOON Blocks
 

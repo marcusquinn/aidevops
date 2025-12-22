@@ -23,11 +23,20 @@ tools:
 - **Principle**: Every change on a branch, never directly on main
 - **CRITICAL**: With parallel sessions, ALWAYS verify branch state before ANY file operation
 
+**Pre-Edit Gate** (MANDATORY before ANY file edit/write/create):
+
+```bash
+git branch --show-current  # If result is `main` → STOP
+```
+
+If on `main`: STOP. Present branch options before proceeding with any file changes.
+
 **First Actions** (before any code changes):
 
 ```bash
-# 1. Check current branch
+# 1. Check current branch (PRE-EDIT GATE)
 git branch --show-current
+# If on main → STOP and create branch first
 
 # 2. Check repo ownership
 git remote -v | head -1
@@ -55,20 +64,22 @@ When running multiple OpenCode sessions on the same repo:
 
 OpenCode auto-generates session titles from the first prompt. To sync session names with branches:
 
-| Command | Purpose |
-|---------|---------|
-| `/sync-branch` | Rename session to match current git branch |
-| `/rename feature/xyz` | Rename session to any title |
+| Tool/Command | Purpose |
+|--------------|---------|
+| `session-rename_sync_branch` | **AI tool**: Auto-sync session name with current git branch |
+| `session-rename` | **AI tool**: Set custom session title |
+| `/sync-branch` | **Slash command**: Rename session to match current git branch |
+| `/rename feature/xyz` | **Slash command**: Rename session to any title |
 | `/sessions` (Ctrl+x l) | List all sessions by name |
 
 | Workflow | How to Track |
 |----------|--------------|
 | **New session, known work** | Start with: `opencode --title "feature/my-feature"` |
-| **Existing session, new branch** | Run `/sync-branch` after creating branch |
+| **Existing session, new branch** | Call `session-rename_sync_branch` tool after creating branch |
 | **Multiple sessions** | Each session named after its branch |
 | **Resume work** | `opencode -c` continues last session, or `-s <id>` for specific |
 
-**Best Practice**: After creating a branch, run `/sync-branch` to rename the session to match.
+**Best Practice**: After creating a branch, call `session-rename_sync_branch` tool to sync session name.
 
 **Decision Tree**:
 
@@ -476,6 +487,16 @@ After completing file changes, run preflight automatically:
 > 1. Create PR
 > 2. Continue working
 > 3. Done for now
+
+**If changes include `.agent/` files** (in aidevops repo or repos with local agents):
+
+> Agent files modified. Run `./setup.sh` to deploy to `~/.aidevops/agents/`?
+>
+> 1. Run setup.sh now (recommended)
+> 2. Remind me after merge
+> 3. Skip (I'll do it manually)
+
+This ensures the deployed agents at `~/.aidevops/agents/` stay in sync with source.
 
 ## Branch Cleanup
 

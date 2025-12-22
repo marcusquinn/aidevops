@@ -57,6 +57,13 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 <!--TOON:in_progress[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
 -->
 
+## In Review
+
+<!-- Tasks with open PRs awaiting merge -->
+
+<!--TOON:in_review[0]{id,desc,owner,tags,est,pr_url,started,pr_created,status}:
+-->
+
 ## Done
 
 <!--TOON:done[0]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
@@ -77,6 +84,6 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 <!-- Format: parent_id|child_ids (comma-separated) -->
 <!--/TOON:subtasks-->
 
-<!--TOON:summary{total,ready,pending,in_progress,done,declined,total_est,total_actual}:
-0,0,0,0,0,0,,
+<!--TOON:summary{total,ready,pending,in_progress,in_review,done,declined,total_est,total_actual}:
+0,0,0,0,0,0,0,,
 -->

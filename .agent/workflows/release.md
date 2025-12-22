@@ -33,6 +33,7 @@ git add -A && git commit -m "feat: description of changes"  # Commit if needed
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
 - **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)
+- **Deploy locally**: `./setup.sh` (aidevops repo only - deploys to ~/.aidevops/agents/)
 - **Validator**: `.agent/scripts/validate-version-consistency.sh`
 - **GitHub Actions**: `.github/workflows/version-validation.yml`
 - **Version bump only**: See `workflows/version-bump.md`
@@ -318,6 +319,44 @@ jobs:
 ```
 
 ## Post-Release Tasks
+
+### Deploy Updated Agents (aidevops repo only)
+
+> **Skip this section** if releasing any repo other than `~/Git/aidevops`.
+
+After releasing the aidevops framework itself, re-run setup.sh to deploy locally:
+
+```bash
+cd ~/Git/aidevops && ./setup.sh
+```
+
+This ensures `~/.aidevops/agents/` has the latest release with updated version references.
+
+### Task Completion
+
+Mark all tasks included in this release as completed:
+
+1. **Move tasks** from `## In Progress` or `## In Review` to `## Done`
+2. **Add timestamps**: `completed:` with current date
+3. **Add actual time**: `actual:` if known (calculate from `started:`)
+4. **Sync with Beads**
+
+```markdown
+# Before (in ## In Progress or ## In Review)
+- [ ] t001 Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+
+# After (move to ## Done)
+- [x] t001 Add user dashboard #feature ~4h actual:5h30m started:2025-01-15T10:30Z completed:2025-01-16T14:00Z
+```
+
+```bash
+# Sync with Beads after updating TODO.md
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
+```
+
+**Task identification**: The release script can parse commit messages for task IDs:
+- Conventional commits: `feat(t001): add user dashboard`
+- Issue references: `Closes #123` (if linked to task)
 
 ### Time Summary
 

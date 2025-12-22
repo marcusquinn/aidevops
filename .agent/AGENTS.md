@@ -16,7 +16,10 @@ mode: subagent
 - **Credentials**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
 
 **Critical Rules**:
-- BEFORE modifying files in a git repo: check branch with `git branch --show-current`. If on `main`, offer to create a feature/bugfix branch first.
+- **MANDATORY BEFORE ANY FILE CHANGES**: Run `git branch --show-current`. If on `main`:
+  1. STOP - do not proceed with file changes
+  2. Present branch creation prompt (see Git Workflow section)
+  3. Only proceed after user confirms branch OR explicitly chooses to stay on main
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
@@ -106,7 +109,13 @@ If on `main`, present options:
 Then:
 1. Check `TODO.md` and `todo/PLANS.md` for matching tasks
 2. Derive branch name from task/plan when available
-3. Read `workflows/git-workflow.md` for full workflow guidance
+3. Create branch and call `session-rename_sync_branch` tool to sync session name
+4. Record `started:` timestamp in TODO.md if matching task exists
+5. Read `workflows/git-workflow.md` for full workflow guidance
+
+**Session tools** (OpenCode):
+- `session-rename_sync_branch` - Auto-sync session name with current git branch (preferred)
+- `session-rename` - Set custom session title
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
@@ -136,6 +145,12 @@ See `tools/git/opencode-github.md` and `tools/git/opencode-gitlab.md` for detail
 3. Continue making more changes
 
 Only offer to commit after preflight passes or user explicitly skips.
+
+**Special handling for `.agent/` files** (in aidevops repo or repos with local agents):
+When modifying files in `.agent/` directory:
+1. After commit, prompt: "Agent files changed. Run `./setup.sh` to deploy locally? [Y/n]"
+2. In aidevops repo: `cd ~/Git/aidevops && ./setup.sh`
+3. This ensures `~/.aidevops/agents/` stays in sync with source
 
 **Testing Config Changes**: Use CLI to test without TUI restart:
 
