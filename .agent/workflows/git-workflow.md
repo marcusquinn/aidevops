@@ -21,6 +21,7 @@ tools:
 - **Purpose**: Ensure safe, traceable git workflow for all file changes
 - **Trigger**: Read this when conversation indicates file creation/modification in a git repo
 - **Principle**: Every change on a branch, never directly on main
+- **CRITICAL**: With parallel sessions, ALWAYS verify branch state before ANY file operation
 
 **First Actions** (before any code changes):
 
@@ -33,7 +34,41 @@ git remote -v | head -1
 
 # 3. Check for uncommitted work
 git status --short
+
+# 4. Check for remote updates (parallel session safety)
+git fetch origin
+git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 ```
+
+**Parallel Session Safety**:
+
+When running multiple OpenCode sessions on the same repo:
+
+| Situation | Action |
+|-----------|--------|
+| Remote has new commits | Pull/rebase before continuing |
+| Uncommitted local changes | Stash or commit before switching |
+| Different session on same branch | Coordinate or use separate branches |
+| Starting new work | Always create a new branch first |
+
+**Session-Branch Tracking**:
+
+OpenCode auto-generates session titles from the first prompt. To sync session names with branches:
+
+| Command | Purpose |
+|---------|---------|
+| `/sync-branch` | Rename session to match current git branch |
+| `/rename feature/xyz` | Rename session to any title |
+| `/sessions` (Ctrl+x l) | List all sessions by name |
+
+| Workflow | How to Track |
+|----------|--------------|
+| **New session, known work** | Start with: `opencode --title "feature/my-feature"` |
+| **Existing session, new branch** | Run `/sync-branch` after creating branch |
+| **Multiple sessions** | Each session named after its branch |
+| **Resume work** | `opencode -c` continues last session, or `-s <id>` for specific |
+
+**Best Practice**: After creating a branch, run `/sync-branch` to rename the session to match.
 
 **Decision Tree**:
 

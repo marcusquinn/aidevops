@@ -92,6 +92,11 @@ git checkout -b {type}/{description}
 
 - Use lowercase with hyphens: `feature/user-authentication`
 - Be descriptive but concise: `bugfix/login-timeout` not `bugfix/fix`
+- Start with an action verb for clarity:
+  - New functionality: `feature/add-user-dashboard`
+  - Enhancing existing: `feature/improve-search-filters`
+  - Fixing: `bugfix/fix-login-timeout`
+  - Removing: `feature/remove-legacy-api`
 - Include issue number if applicable: `bugfix/123-login-timeout`
 - Release branches use version: `release/1.2.0` (semver format)
 
