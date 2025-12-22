@@ -78,7 +78,7 @@ Main agents are for high-level project orchestration:
 - **Role**: Coordinates subagents, makes strategic decisions
 - **Context**: Needs awareness of multiple related concerns
 - **Location**: Root of `.agent/` folder
-- **Examples**: `wordpress.md`, `seo.md`, `aidevops.md`, `build-plus.md`
+- **Examples**: `seo.md`, `aidevops.md`, `build-plus.md`
 
 **Main agent characteristics:**
 - Calls subagents when specialized work needed
@@ -673,7 +673,7 @@ See "Subagent YAML Frontmatter" section for full permission options.
 
 **Naming conventions:**
 
-- **Main agents**: Lowercase with hyphens at root (`build-mcp.md`, `wordpress.md`)
+- **Main agents**: Lowercase with hyphens at root (`build-mcp.md`, `seo.md`)
 - **Subagents**: Lowercase with hyphens in folders (`build-mcp/deployment.md`)
 - **Special files**: ALLCAPS for entry points only (`AGENTS.md`, `README.md`)
 - **Pattern**: Main agent matches folder name: `{domain}.md` + `{domain}/`

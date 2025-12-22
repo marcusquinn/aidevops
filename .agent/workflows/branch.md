@@ -158,7 +158,7 @@ git checkout -b {type}/{description}
 ~/.aidevops/agents/scripts/beads-sync-helper.sh push
 ```
 
-**Agents**: Domain agents (`wordpress.md`, `seo.md`, etc.) for implementation patterns
+**Agents**: Domain agents (`wordpress/`, `seo.md`, etc.) for implementation patterns
 
 ### 2. Develop
 

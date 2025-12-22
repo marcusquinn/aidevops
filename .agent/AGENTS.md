@@ -186,7 +186,6 @@ opencode mcp list
 | `build-agent.md` | Agent design and composition |
 | `build-mcp.md` | MCP server development |
 | `onboarding.md` | Interactive setup wizard for new users |
-| `wordpress.md` | WordPress ecosystem management |
 | `seo.md` | SEO optimization and analysis |
 | `content.md` | Content creation workflows |
 | `research.md` | Research and analysis tasks |
@@ -204,7 +203,7 @@ opencode mcp list
 | `build-agent/` | Agent design subagents (agent-review) |
 | `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |
-| `wordpress/` | WordPress subagents (wp-dev, wp-admin, localwp, mainwp, wp-preferred) |
+| `wordpress/` | WordPress ecosystem (wordpress, wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf) |
 | `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research) |
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
