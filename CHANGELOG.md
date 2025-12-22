@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add parallel session workflow with branch-synced session naming (#6)
+- add OpenCode GitHub/GitLab integration support (#5)
+
+### Changed
+
+- Documentation: update changelog for v2.40.2
+## [2.40.2] - 2025-12-22
+
+### Added
+
 - Parallel session workflow with branch-synced session naming
 - `/sync-branch` and `/rename` commands for OpenCode session management
 - `session-rename` custom tool to update session titles via API
