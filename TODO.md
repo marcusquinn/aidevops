@@ -67,29 +67,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~1d (ai:4h test:4h read:2h) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t018 Enhance Plan+ and Build+ with OpenCode's Latest Features #plan → [todo/PLANS.md#enhance-plan-and-build-with-opencodes-latest-features] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
-- [ ] t019 Beads Integration for aidevops #plan → [todo/PLANS.md#beads-integration-for-aidevops-tasks--plans] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21 started:2025-12-21T16:00Z
-  - [ ] t019.1 Phase 1: Enhanced TODO.md format ~4h started:2025-12-21T16:00Z
-    - [ ] t019.1.1 Add blocked-by and blocks syntax ~1h
-    - [ ] t019.1.2 Add hierarchical IDs (t001.1.1) ~1h
-    - [ ] t019.1.3 Update TOON dependencies block schema ~30m
-    - [ ] t019.1.4 Add /ready command ~1h
-    - [ ] t019.1.5 Update workflows/plans.md documentation ~30m
-  - [ ] t019.2 Phase 2: Bi-directional sync script ~8h blocked-by:t019.1
-    - [ ] t019.2.1 Create beads-sync-helper.sh with lock file ~1h
-    - [ ] t019.2.2 Implement TODO.md → Beads sync ~2h
-    - [ ] t019.2.3 Implement Beads → TODO.md sync ~2h
-    - [ ] t019.2.4 Add checksum verification ~1h
-    - [ ] t019.2.5 Add conflict detection and resolution ~1h
-    - [ ] t019.2.6 Add audit logging ~30m
-    - [ ] t019.2.7 Comprehensive testing ~30m
-  - [ ] t019.3 Phase 3: Default installation ~4h blocked-by:t019.2
-    - [ ] t019.3.1 Add Beads installation to setup.sh ~1h
-    - [ ] t019.3.2 Add aidevops init beads feature ~1h
-    - [ ] t019.3.3 Create tools/task-management/beads.md subagent ~1h
-    - [ ] t019.3.4 Update AGENTS.md with Beads integration docs ~1h
-- [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21 blocked-by:t019
+- [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21
 
-<!--TOON:backlog[17]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[16]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t011,Demote wordpress.md from main agent to subagent,,architecture,1h,30m,30m,,2025-12-21T14:30Z,pending,,,
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
@@ -105,46 +85,27 @@ t015,Add MinerU subagent as alternative to Pandoc for PDF conversion,,tools|conv
 t016,Uncloud Integration for aidevops,,plan|deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,pending,,,
 t017,SEO Machine Integration for aidevops,,plan|seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,pending,,,
 t018,Enhance Plan+ and Build+ with OpenCode's Latest Features,,plan|opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,pending,,,
-t019,Beads Integration for aidevops,,plan|beads|tasks|sync,2d,1d,0.5d,0.5d,2025-12-21T16:00Z,in_progress,,t020,
-t020,Git Issues Bi-directional Sync (GitHub GitLab Gitea),,plan|git|sync,3d,1.5d,1d,0.5d,2025-12-21T16:30Z,pending,t019,,
+t020,Git Issues Bi-directional Sync (GitHub GitLab Gitea),,plan|git|sync,3d,1.5d,1d,0.5d,2025-12-21T16:30Z,pending,,,
 -->
 
-<!--TOON:subtasks[18]{id,desc,est,status,blocked_by,parent}:
-t019.1,Phase 1: Enhanced TODO.md format,4h,in_progress,,t019
-t019.1.1,Add blocked-by and blocks syntax,1h,pending,,t019.1
-t019.1.2,Add hierarchical IDs (t001.1.1),1h,pending,,t019.1
-t019.1.3,Update TOON dependencies block schema,30m,pending,,t019.1
-t019.1.4,Add /ready command,1h,pending,,t019.1
-t019.1.5,Update workflows/plans.md documentation,30m,pending,,t019.1
-t019.2,Phase 2: Bi-directional sync script,8h,pending,t019.1,t019
-t019.2.1,Create beads-sync-helper.sh with lock file,1h,pending,,t019.2
-t019.2.2,Implement TODO.md to Beads sync,2h,pending,,t019.2
-t019.2.3,Implement Beads to TODO.md sync,2h,pending,,t019.2
-t019.2.4,Add checksum verification,1h,pending,,t019.2
-t019.2.5,Add conflict detection and resolution,1h,pending,,t019.2
-t019.2.6,Add audit logging,30m,pending,,t019.2
-t019.2.7,Comprehensive testing,30m,pending,,t019.2
-t019.3,Phase 3: Default installation,4h,pending,t019.2,t019
-t019.3.1,Add Beads installation to setup.sh,1h,pending,,t019.3
-t019.3.2,Add aidevops init beads feature,1h,pending,,t019.3
-t019.3.3,Create tools/task-management/beads.md subagent,1h,pending,,t019.3
-t019.3.4,Update AGENTS.md with Beads integration docs,1h,pending,,t019.3
+<!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
 -->
 
-<!--TOON:dependencies[2]{from_id,to_id,type}:
-t019.2,t019.1,blocked-by
-t019.3,t019.2,blocked-by
-t020,t019,blocked-by
+<!--TOON:dependencies[0]{from_id,to_id,type}:
 -->
 
 ## In Progress
 
-- [>] t019 Beads Integration for aidevops #plan → [todo/PLANS.md#beads-integration-for-aidevops-tasks--plans] ~2d started:2025-12-21T16:00Z
-  - [>] t019.1 Phase 1: Enhanced TODO.md format ~4h
+<!-- No tasks currently in progress -->
 
-<!--TOON:in_progress[2]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
-t019,Beads Integration for aidevops,,plan|beads|tasks|sync,2d,1d,0.5d,0.5d,2025-12-21T16:00Z,2025-12-21T16:00Z,in_progress
-t019.1,Phase 1: Enhanced TODO.md format,,beads,4h,2h,1h,1h,2025-12-21T16:00Z,2025-12-21T16:00Z,in_progress
+<!--TOON:in_progress[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
+-->
+
+## In Review
+
+<!-- Tasks with open PRs awaiting merge -->
+
+<!--TOON:in_review[0]{id,desc,owner,tags,est,pr_url,started,pr_created,status}:
 -->
 
 ## Done
@@ -152,11 +113,51 @@ t019.1,Phase 1: Enhanced TODO.md format,,beads,4h,2h,1h,1h,2025-12-21T16:00Z,202
 - [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h logged:2025-12-18 completed:2025-12-20
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18
+- [x] t019 Beads Integration for aidevops #plan #beads ~2d actual:1.5d logged:2025-12-21 started:2025-12-21T16:00Z completed:2025-12-22
+  - [x] t019.1 Phase 1: Enhanced TODO.md format ~4h actual:3h
+    - [x] t019.1.1 Add blocked-by and blocks syntax ~1h
+    - [x] t019.1.2 Add hierarchical IDs (t001.1.1) ~1h
+    - [x] t019.1.3 Update TOON dependencies block schema ~30m
+    - [x] t019.1.4 Add /ready command ~1h
+    - [x] t019.1.5 Update workflows/plans.md documentation ~30m
+  - [x] t019.2 Phase 2: Bi-directional sync script ~8h actual:6h
+    - [x] t019.2.1 Create beads-sync-helper.sh with lock file ~1h
+    - [x] t019.2.2 Implement TODO.md → Beads sync ~2h
+    - [x] t019.2.3 Implement Beads → TODO.md sync ~2h
+    - [x] t019.2.4 Add checksum verification ~1h
+    - [x] t019.2.5 Add conflict detection and resolution ~1h
+    - [x] t019.2.6 Add audit logging ~30m
+    - [x] t019.2.7 Comprehensive testing ~30m
+  - [x] t019.3 Phase 3: Default installation ~4h actual:3h
+    - [x] t019.3.1 Add Beads installation to setup.sh ~1h
+    - [x] t019.3.2 Add aidevops init beads feature ~1h
+    - [x] t019.3.3 Create tools/task-management/beads.md subagent ~1h
+    - [x] t019.3.4 Update AGENTS.md with Beads integration docs ~1h
 
-<!--TOON:done[3]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
+<!--TOON:done[22]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
 t001,Add TODO.md and planning workflow,,workflow,2h,1.5h,2025-12-18T00:00Z,2025-12-18T10:00Z,2025-12-20T00:00Z,done
 t002,Add shadcn/ui MCP support,,tools,1h,45m,2025-12-18T00:00Z,2025-12-18T08:00Z,2025-12-18T09:00Z,done
 t003,Add oh-my-opencode integration,,tools,30m,25m,2025-12-18T00:00Z,2025-12-18T09:00Z,2025-12-18T10:00Z,done
+t019,Beads Integration for aidevops,,plan|beads|tasks|sync,2d,1.5d,2025-12-21T16:00Z,2025-12-21T16:00Z,2025-12-22T00:00Z,done
+t019.1,Phase 1: Enhanced TODO.md format,,beads,4h,3h,2025-12-21T16:00Z,2025-12-21T16:00Z,2025-12-22T00:00Z,done
+t019.1.1,Add blocked-by and blocks syntax,,beads,1h,1h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.1.2,Add hierarchical IDs (t001.1.1),,beads,1h,1h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.1.3,Update TOON dependencies block schema,,beads,30m,30m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.1.4,Add /ready command,,beads,1h,1h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.1.5,Update workflows/plans.md documentation,,beads,30m,30m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2,Phase 2: Bi-directional sync script,,beads,8h,6h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.1,Create beads-sync-helper.sh with lock file,,beads,1h,1h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.2,Implement TODO.md to Beads sync,,beads,2h,1.5h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.3,Implement Beads to TODO.md sync,,beads,2h,1.5h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.4,Add checksum verification,,beads,1h,45m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.5,Add conflict detection and resolution,,beads,1h,45m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.6,Add audit logging,,beads,30m,30m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.2.7,Comprehensive testing,,beads,30m,30m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.3,Phase 3: Default installation,,beads,4h,3h,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.3.1,Add Beads installation to setup.sh,,beads,1h,45m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.3.2,Add aidevops init beads feature,,beads,1h,45m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.3.3,Create tools/task-management/beads.md subagent,,beads,1h,45m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
+t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T16:00Z,,2025-12-22T00:00Z,done
 -->
 
 ## Declined
@@ -166,6 +167,6 @@ t003,Add oh-my-opencode integration,,tools,30m,25m,2025-12-18T00:00Z,2025-12-18T
 <!--TOON:declined[0]{id,desc,reason,logged,status}:
 -->
 
-<!--TOON:summary{total,pending,in_progress,done,declined,total_est,total_actual,blocked_count,ready_count}:
-22,17,2,3,0,22d7h,2h40m,2,15
+<!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
+22,16,0,0,22,0,22d7h,14h40m,0,16
 -->

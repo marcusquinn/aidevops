@@ -391,25 +391,76 @@ glab mr merge 123 --squash
 glab mr merge 123 --when-pipeline-succeeds
 ```text
 
+## Task Status Updates
+
+Workflow commands automatically update task status in TODO.md:
+
+### Task Lifecycle
+
+```text
+Ready/Backlog → In Progress → In Review → Done
+   (branch)       (develop)      (PR)     (merge/release)
+```
+
+### On PR Creation
+
+Move task from `## In Progress` to `## In Review`:
+
+```markdown
+# Before (in ## In Progress)
+- [ ] t001 Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+
+# After (move to ## In Review)
+- [ ] t001 Add user dashboard #feature ~4h started:2025-01-15T10:30Z pr:123
+```
+
+```bash
+# Sync with Beads after updating TODO.md
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
+```
+
+### On PR Merge
+
+Move task from `## In Review` to `## Done`:
+
+```markdown
+# Before (in ## In Review)
+- [ ] t001 Add user dashboard #feature ~4h started:2025-01-15T10:30Z pr:123
+
+# After (move to ## Done)
+- [x] t001 Add user dashboard #feature ~4h actual:5h started:2025-01-15T10:30Z completed:2025-01-16T14:00Z
+```
+
+```bash
+# Sync with Beads after updating TODO.md
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
+```
+
 ## Post-Merge Actions
 
 After merging:
 
-1. **Delete branch** (if not auto-deleted):
+1. **Update task status** (see above):
+   - Move task to `## Done`
+   - Add `completed:` timestamp
+   - Add `actual:` time if known
+   - Sync with Beads
+
+2. **Delete branch** (if not auto-deleted):
 
    ```bash
    git branch -d feature/xyz           # Local
    git push origin --delete feature/xyz # Remote
    ```
 
-2. **Update local main**:
+3. **Update local main**:
 
    ```bash
    git checkout main
    git pull origin main
    ```
 
-3. **Create release** (if applicable):
+4. **Create release** (if applicable):
    See `workflows/release.md`
 
 ## Troubleshooting

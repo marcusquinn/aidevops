@@ -319,6 +319,32 @@ jobs:
 
 ## Post-Release Tasks
 
+### Task Completion
+
+Mark all tasks included in this release as completed:
+
+1. **Move tasks** from `## In Progress` or `## In Review` to `## Done`
+2. **Add timestamps**: `completed:` with current date
+3. **Add actual time**: `actual:` if known (calculate from `started:`)
+4. **Sync with Beads**
+
+```markdown
+# Before (in ## In Progress or ## In Review)
+- [ ] t001 Add user dashboard #feature ~4h started:2025-01-15T10:30Z
+
+# After (move to ## Done)
+- [x] t001 Add user dashboard #feature ~4h actual:5h30m started:2025-01-15T10:30Z completed:2025-01-16T14:00Z
+```
+
+```bash
+# Sync with Beads after updating TODO.md
+~/.aidevops/agents/scripts/beads-sync-helper.sh push
+```
+
+**Task identification**: The release script can parse commit messages for task IDs:
+- Conventional commits: `feat(t001): add user dashboard`
+- Issue references: `Closes #123` (if linked to task)
+
 ### Time Summary
 
 After release, update TODO.md and PLANS.md with actual time spent:

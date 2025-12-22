@@ -1212,42 +1212,134 @@ setup_beads() {
         local bd_version
         bd_version=$(bd --version 2>/dev/null | head -1 || echo "unknown")
         print_success "Beads CLI (bd) already installed: $bd_version"
+    else
+        # Try to install via Homebrew first (macOS/Linux with Homebrew)
+        if command -v brew &> /dev/null; then
+            print_info "Installing Beads via Homebrew..."
+            if brew install steveyegge/beads/bd 2>/dev/null; then
+                print_success "Beads CLI installed via Homebrew"
+            else
+                print_warning "Homebrew tap installation failed, trying alternative..."
+                # Try Go install if Go is available
+                if command -v go &> /dev/null; then
+                    print_info "Installing Beads via Go..."
+                    if go install github.com/steveyegge/beads/cmd/bd@latest 2>/dev/null; then
+                        print_success "Beads CLI installed via Go"
+                        print_info "Ensure \$GOPATH/bin is in your PATH"
+                    else
+                        print_warning "Go installation failed"
+                    fi
+                fi
+            fi
+        elif command -v go &> /dev/null; then
+            print_info "Installing Beads via Go..."
+            if go install github.com/steveyegge/beads/cmd/bd@latest 2>/dev/null; then
+                print_success "Beads CLI installed via Go"
+                print_info "Ensure \$GOPATH/bin is in your PATH"
+            else
+                print_warning "Go installation failed"
+            fi
+        else
+            # Provide manual installation instructions
+            print_warning "Beads CLI (bd) not installed"
+            echo ""
+            echo "  Install options:"
+            echo "    macOS/Linux (Homebrew): brew install steveyegge/beads/bd"
+            echo "    Go:                     go install github.com/steveyegge/beads/cmd/bd@latest"
+            echo "    Manual:                 https://github.com/steveyegge/beads/releases"
+            echo ""
+        fi
+    fi
+    
+    print_info "Beads provides task graph visualization for TODO.md and PLANS.md"
+    print_info "After installation, run: aidevops init beads"
+    
+    # Offer to install optional Beads UI tools
+    setup_beads_ui
+    
+    return 0
+}
+
+# Setup Beads UI Tools (optional visualization tools)
+setup_beads_ui() {
+    echo ""
+    print_info "Beads UI tools provide enhanced visualization:"
+    echo "  • beads_viewer (Python) - PageRank, critical path, graph analytics"
+    echo "  • beads-ui (Node.js)    - Web dashboard with live updates"
+    echo "  • bdui (Node.js)        - React/Ink terminal UI"
+    echo "  • perles (Rust)         - BQL query language TUI"
+    echo ""
+    
+    read -r -p "Install optional Beads UI tools? (y/n): " install_beads_ui
+    
+    if [[ "$install_beads_ui" != "y" ]]; then
+        print_info "Skipped Beads UI tools (can install later from beads.md docs)"
         return 0
     fi
     
-    # Try to install via Homebrew first (macOS/Linux with Homebrew)
-    if command -v brew &> /dev/null; then
-        print_info "Installing Beads via Homebrew..."
-        if brew install steveyegge/beads/bd 2>/dev/null; then
-            print_success "Beads CLI installed via Homebrew"
-            return 0
-        else
-            print_warning "Homebrew tap installation failed, trying alternative..."
+    local installed_count=0
+    
+    # beads_viewer (Python)
+    if command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
+        read -r -p "  Install beads_viewer (Python TUI with graph analytics)? (y/n): " install_viewer
+        if [[ "$install_viewer" == "y" ]]; then
+            print_info "Installing beads_viewer..."
+            if pip3 install beads-viewer 2>/dev/null || pip install beads-viewer 2>/dev/null; then
+                print_success "beads_viewer installed"
+                ((installed_count++))
+            else
+                print_warning "Failed to install beads_viewer"
+            fi
         fi
     fi
     
-    # Try Go install if Go is available
-    if command -v go &> /dev/null; then
-        print_info "Installing Beads via Go..."
-        if go install github.com/steveyegge/beads/cmd/bd@latest 2>/dev/null; then
-            print_success "Beads CLI installed via Go"
-            print_info "Ensure \$GOPATH/bin is in your PATH"
-            return 0
-        else
-            print_warning "Go installation failed"
+    # beads-ui (Node.js)
+    if command -v npm &> /dev/null; then
+        read -r -p "  Install beads-ui (Web dashboard)? (y/n): " install_web
+        if [[ "$install_web" == "y" ]]; then
+            print_info "Installing beads-ui..."
+            if npm install -g beads-ui 2>/dev/null; then
+                print_success "beads-ui installed (run: beads-ui)"
+                ((installed_count++))
+            else
+                print_warning "Failed to install beads-ui"
+            fi
+        fi
+        
+        read -r -p "  Install bdui (React/Ink TUI)? (y/n): " install_bdui
+        if [[ "$install_bdui" == "y" ]]; then
+            print_info "Installing bdui..."
+            if npm install -g bdui 2>/dev/null; then
+                print_success "bdui installed (run: bdui)"
+                ((installed_count++))
+            else
+                print_warning "Failed to install bdui"
+            fi
         fi
     fi
     
-    # Provide manual installation instructions
-    print_warning "Beads CLI (bd) not installed"
+    # perles (Rust)
+    if command -v cargo &> /dev/null; then
+        read -r -p "  Install perles (BQL query language TUI)? (y/n): " install_perles
+        if [[ "$install_perles" == "y" ]]; then
+            print_info "Installing perles (this may take a few minutes)..."
+            if cargo install perles 2>/dev/null; then
+                print_success "perles installed (run: perles)"
+                ((installed_count++))
+            else
+                print_warning "Failed to install perles"
+            fi
+        fi
+    fi
+    
+    if [[ $installed_count -gt 0 ]]; then
+        print_success "Installed $installed_count Beads UI tool(s)"
+    else
+        print_info "No Beads UI tools installed"
+    fi
+    
     echo ""
-    echo "  Install options:"
-    echo "    macOS/Linux (Homebrew): brew install steveyegge/beads/bd"
-    echo "    Go:                     go install github.com/steveyegge/beads/cmd/bd@latest"
-    echo "    Manual:                 https://github.com/steveyegge/beads/releases"
-    echo ""
-    print_info "Beads provides task graph visualization for TODO.md and PLANS.md"
-    print_info "After installation, run: aidevops init beads"
+    print_info "Beads UI documentation: ~/.aidevops/agents/tools/task-management/beads.md"
     
     return 0
 }
