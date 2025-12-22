@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.0] - 2025-12-22
+
+### Added
+
+- add backup rotation with per-type organization
+
+### Fixed
+
+- include marketplace.json in version commit staging
 ## [2.39.1] - 2025-12-21
 
 ### Added
