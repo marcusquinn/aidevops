@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.0] - 2025-12-22
+
+### Added
+
+- inherit OpenCode prompts for Build+ and Plan+ agents (#7)
+
+### Changed
+
+- Refactor: demote build-agent and build-mcp to tools/ subagents
 ## [2.40.10] - 2025-12-22
 
 ### Changed
