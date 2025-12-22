@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.5] - 2025-12-22
+
+### Changed
+
+- Documentation: strengthen git workflow instructions with numbered options
 ## [2.40.4] - 2025-12-22
 
 ### Changed
