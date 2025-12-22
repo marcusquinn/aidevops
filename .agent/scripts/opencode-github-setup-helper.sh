@@ -1,9 +1,34 @@
 #!/bin/bash
 # shellcheck disable=SC2034
-
+#
 # OpenCode GitHub/GitLab Setup Helper
-# Detects git remote type and checks OpenCode integration status
-# Managed by AI DevOps Framework
+#
+# DESCRIPTION:
+#   Detects git remote type (GitHub, GitLab, Gitea, Bitbucket) and checks
+#   OpenCode integration status. Provides setup instructions and can create
+#   GitHub Actions workflow files for OpenCode automation.
+#
+# USAGE:
+#   opencode-github-setup-helper.sh <command>
+#
+# COMMANDS:
+#   check           - Check OpenCode integration status for current repo
+#   setup           - Show setup instructions for detected platform
+#   create-workflow - Create GitHub Actions workflow file (GitHub only)
+#   help            - Show help message
+#
+# EXAMPLES:
+#   opencode-github-setup-helper.sh check
+#   opencode-github-setup-helper.sh setup
+#   opencode-github-setup-helper.sh create-workflow
+#
+# DEPENDENCIES:
+#   - git (required)
+#   - gh (GitHub CLI, optional but recommended)
+#
+# AUTHOR: AI DevOps Framework
+# VERSION: 1.0.0
+# LICENSE: MIT
 
 set -euo pipefail
 
@@ -25,24 +50,40 @@ readonly OPENCODE_GITLAB_DOCS="https://opencode.ai/docs/gitlab/"
 # UTILITY FUNCTIONS
 # ------------------------------------------------------------------------------
 
+# Print an informational message in blue
+# Arguments:
+#   $1 - Message to print
+# Returns: 0
 print_info() {
     local msg="$1"
     echo -e "${BLUE}[INFO]${NC} $msg"
     return 0
 }
 
+# Print a success message in green
+# Arguments:
+#   $1 - Message to print
+# Returns: 0
 print_success() {
     local msg="$1"
     echo -e "${GREEN}[OK]${NC} $msg"
     return 0
 }
 
+# Print a warning message in yellow
+# Arguments:
+#   $1 - Message to print
+# Returns: 0
 print_warning() {
     local msg="$1"
     echo -e "${YELLOW}[WARN]${NC} $msg"
     return 0
 }
 
+# Print an error/missing message in red
+# Arguments:
+#   $1 - Message to print
+# Returns: 0
 print_error() {
     local msg="$1"
     echo -e "${RED}[MISSING]${NC} $msg"
@@ -53,6 +94,10 @@ print_error() {
 # DETECTION FUNCTIONS
 # ------------------------------------------------------------------------------
 
+# Detect the type of git remote (github, gitlab, gitea, bitbucket, or unknown)
+# Arguments: None
+# Outputs: Writes remote type to stdout (github|gitlab|gitea|bitbucket|unknown|none)
+# Returns: 0
 detect_remote_type() {
     local remote_url
     remote_url=$(git remote get-url origin 2>/dev/null) || {
@@ -74,11 +119,23 @@ detect_remote_type() {
     return 0
 }
 
+# Get the origin remote URL
+# Arguments: None
+# Outputs: Writes remote URL to stdout (empty string if not found)
+# Returns: 0
 get_remote_url() {
     git remote get-url origin 2>/dev/null || echo ""
     return 0
 }
 
+# Extract owner/repo from git remote URL
+# Handles both SSH and HTTPS URL formats:
+#   - git@github.com:owner/repo.git
+#   - https://github.com/owner/repo.git
+#   - https://github.com/owner/repo
+# Arguments: None
+# Outputs: Writes "owner/repo" to stdout (empty string if not found)
+# Returns: 0
 get_repo_owner_name() {
     local remote_url
     remote_url=$(get_remote_url)
@@ -89,10 +146,6 @@ get_repo_owner_name() {
     fi
     
     # Extract owner/repo from various URL formats
-    # git@github.com:owner/repo.git
-    # https://github.com/owner/repo.git
-    # https://github.com/owner/repo
-    
     local repo_path
     repo_path=$(echo "$remote_url" | sed -E 's#.*[:/]([^/]+/[^/]+)(\.git)?$#\1#')
     echo "$repo_path"
@@ -103,6 +156,11 @@ get_repo_owner_name() {
 # GITHUB CHECKS
 # ------------------------------------------------------------------------------
 
+# Check if OpenCode GitHub App is installed on the repository
+# Requires GitHub CLI (gh) to be installed and authenticated
+# Arguments:
+#   $1 - Repository path in "owner/repo" format
+# Returns: 0 if app is installed, 1 otherwise
 check_github_app() {
     local repo_path="$1"
     
@@ -117,7 +175,6 @@ check_github_app() {
     fi
     
     # Check if OpenCode app is installed on the repo
-    # This checks for any app installations on the repo
     local installations
     installations=$(gh api "repos/$repo_path/installation" 2>/dev/null) || {
         return 1
@@ -129,6 +186,9 @@ check_github_app() {
     return 1
 }
 
+# Check if OpenCode GitHub Actions workflow file exists
+# Arguments: None
+# Returns: 0 if workflow exists, 1 otherwise
 check_github_workflow() {
     if [[ -f ".github/workflows/opencode.yml" ]]; then
         return 0
@@ -136,6 +196,11 @@ check_github_workflow() {
     return 1
 }
 
+# Check if AI provider API key is configured in repository secrets
+# Looks for ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY
+# Arguments:
+#   $1 - Repository path in "owner/repo" format
+# Returns: 0 if at least one AI key is configured, 1 otherwise
 check_github_secrets() {
     local repo_path="$1"
     
@@ -143,7 +208,7 @@ check_github_secrets() {
         return 1
     fi
     
-    # Check if ANTHROPIC_API_KEY secret exists
+    # Check if any AI provider API key secret exists
     local secrets
     secrets=$(gh secret list 2>/dev/null) || return 1
     
@@ -157,6 +222,10 @@ check_github_secrets() {
 # GITLAB CHECKS
 # ------------------------------------------------------------------------------
 
+# Check if GitLab CI is configured with OpenCode
+# Looks for .gitlab-ci.yml containing "opencode" reference
+# Arguments: None
+# Returns: 0 if OpenCode is configured in GitLab CI, 1 otherwise
 check_gitlab_ci() {
     if [[ -f ".gitlab-ci.yml" ]]; then
         # Check if it contains opencode configuration
@@ -171,6 +240,10 @@ check_gitlab_ci() {
 # MAIN COMMANDS
 # ------------------------------------------------------------------------------
 
+# Command: Check OpenCode integration status for the current repository
+# Detects platform type and runs appropriate checks
+# Arguments: None
+# Returns: 0 on success, 1 if no git remote found
 cmd_check() {
     print_info "Checking OpenCode integration status..."
     echo ""
@@ -219,6 +292,11 @@ cmd_check() {
     return 0
 }
 
+# Display GitHub-specific integration status
+# Shows app installation, workflow, and secrets status
+# Arguments:
+#   $1 - Repository path in "owner/repo" format
+# Returns: 0
 check_github_status() {
     local repo_path="$1"
     
@@ -263,6 +341,10 @@ check_github_status() {
     return 0
 }
 
+# Display GitLab-specific integration status
+# Shows CI/CD configuration status and required variables
+# Arguments: None
+# Returns: 0
 check_gitlab_status() {
     echo "=== GitLab Integration Status ==="
     echo ""
@@ -291,6 +373,10 @@ check_gitlab_status() {
     return 0
 }
 
+# Command: Show setup instructions for detected platform
+# Provides step-by-step guidance for GitHub or GitLab integration
+# Arguments: None
+# Returns: 0
 cmd_setup() {
     local remote_type
     remote_type=$(detect_remote_type)
@@ -326,6 +412,10 @@ cmd_setup() {
     return 0
 }
 
+# Command: Create GitHub Actions workflow file for OpenCode
+# Creates .github/workflows/opencode.yml with proper permissions and triggers
+# Arguments: None
+# Returns: 0 on success, 1 if not GitHub or workflow exists
 cmd_create_workflow() {
     local remote_type
     remote_type=$(detect_remote_type)
@@ -385,6 +475,9 @@ EOF
     return 0
 }
 
+# Display help message with usage examples
+# Arguments: None
+# Returns: 0
 show_help() {
     cat << 'EOF'
 OpenCode GitHub/GitLab Setup Helper
@@ -418,6 +511,10 @@ EOF
 # MAIN
 # ------------------------------------------------------------------------------
 
+# Main entry point - routes to appropriate command handler
+# Arguments:
+#   $1 - Command to run (default: check)
+# Returns: Exit code from command handler
 main() {
     local command="${1:-check}"
     
