@@ -23,7 +23,7 @@ cd my-mcp && bun install && bun run dev
 npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 ```
 
-**Subagents** (`build-mcp/`):
+**Subagents** (`aidevops/build-mcp/`):
 
 | Subagent | When to Read |
 |----------|--------------|
@@ -31,6 +31,7 @@ npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 | `transports.md` | Configuring stdio, HTTP, SSE |
 | `deployment.md` | Adding MCP to AI assistants |
 | `api-wrapper.md` | Wrapping REST APIs as MCP |
+| `aidevops-plugin.md` | Architecture for aidevops-opencode plugin |
 
 **Related Agents**:
 - `@code-standards` for linting TypeScript

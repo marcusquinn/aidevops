@@ -52,7 +52,6 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t010 Evaluate Merging build-agent and build-mcp into aidevops #plan → [todo/PLANS.md#evaluate-merging-build-agent-and-build-mcp-into-aidevops] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t004 Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
@@ -69,8 +68,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21
 - [ ] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~2h (ai:1h test:30m read:30m) logged:2025-12-22
 
-<!--TOON:backlog[16]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
-t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
+<!--TOON:backlog[15]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
 t004,Add Ahrefs MCP server integration,,seo,2d,1d,0.5d,0.5d,2025-12-20T00:00Z,pending,,,
@@ -110,6 +108,7 @@ t021,Auto-mark tasks complete from commit messages in release,,workflow|automati
 
 ## Done
 
+- [x] t010 Demote build-agent and build-mcp to aidevops subagents #refactor ~1h actual:30m logged:2025-12-21 started:2025-12-22T06:00Z completed:2025-12-22
 - [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h logged:2025-12-18 completed:2025-12-20
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18
@@ -136,7 +135,8 @@ t021,Auto-mark tasks complete from commit messages in release,,workflow|automati
     - [x] t019.3.3 Create tools/task-management/beads.md subagent ~1h
     - [x] t019.3.4 Update AGENTS.md with Beads integration docs ~1h
 
-<!--TOON:done[24]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
+<!--TOON:done[25]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
+t010,Demote build-agent and build-mcp to aidevops subagents,,refactor,1h,30m,2025-12-21T14:00Z,2025-12-22T06:00Z,2025-12-22T06:30Z,done
 t022,Move wordpress from root to tools/wordpress,,refactor,30m,25m,2025-12-22T05:15Z,2025-12-22T05:15Z,2025-12-22T05:40Z,done
 t011,Demote wordpress.md from main agent to subagent,,architecture,1h,45m,2025-12-21T14:30Z,2025-12-22T04:10Z,2025-12-22T04:45Z,done
 t001,Add TODO.md and planning workflow,,workflow,2h,1.5h,2025-12-18T00:00Z,2025-12-18T10:00Z,2025-12-20T00:00Z,done
@@ -172,5 +172,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-25,16,0,0,24,0,22d8h30m,15h50m,0,16
+25,15,0,0,25,0,22d4h30m,16h20m,0,15
 -->

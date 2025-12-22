@@ -165,11 +165,13 @@ d003,p002,Keep original Python implementation,JSON parsing cleaner in Python - o
 
 ### [2025-12-21] Evaluate Merging build-agent and build-mcp into aidevops
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~4h (ai:2h test:1h read:1h)
+**Actual:** ~30m
+**Completed:** 2025-12-22
 
-<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started,completed}:
+p003,Demote build-agent and build-mcp to aidevops subagents,completed,3,3,,architecture|agents|refactor,1h,20m,10m,,2025-12-21T14:00Z,2025-12-22T06:00Z,2025-12-22T06:30Z
 -->
 
 #### Purpose
@@ -178,45 +180,81 @@ Evaluate whether `build-agent.md` and `build-mcp.md` should be merged into `aide
 
 #### Context from Discussion
 
-**Current structure:**
+**Original structure:**
 - `build-agent.md` - Agent design, ~50-100 instruction budget, subagent: `agent-review.md`
 - `build-mcp.md` - MCP development (TypeScript/Bun/Elysia), subagents: server-patterns, transports, deployment, api-wrapper
 - `aidevops.md` - Framework operations, already references build-agent as "Related Main Agent"
 - All three are `mode: subagent` - called from aidevops context
 
-**Options to evaluate:**
+**Options evaluated:**
 1. **Merge fully** - Combine into aidevops.md with expanded subagent folders
 2. **Keep separate but link better** - Improve cross-references, keep modularity
 3. **Hybrid** - Move build-agent into aidevops/, keep build-mcp separate (MCP is more specialized)
 
-**Key considerations:**
-- Token efficiency: Fewer main agents = less context switching
-- Modularity: build-mcp has specialized TypeScript/Bun stack knowledge
-- User mental model: Are these distinct domains or one "framework development" domain?
-- Progressive disclosure: Current structure already uses subagent pattern
+**Decision:** Option 3 (Hybrid) - Demote both to subagents under `aidevops/`
+
+This follows the same pattern as the recent WordPress agent refactor (t011, t022) where `wordpress.md` was demoted from main agent to subagent at `tools/wordpress/`.
 
 #### Progress
 
-- [ ] (2025-12-21) Phase 1: Analyze usage patterns and cross-references ~1h
-- [ ] (2025-12-21) Phase 2: Design merged/improved structure ~1.5h
-- [ ] (2025-12-21) Phase 3: Implement chosen approach and test ~1.5h
+- [x] (2025-12-22) Phase 1: Move files to aidevops/ ~10m actual:10m
+- [x] (2025-12-22) Phase 2: Update cross-references ~10m actual:10m
+- [x] (2025-12-22) Phase 3: Update AGENTS.md and documentation ~10m actual:10m
 
 <!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m009,p003,Phase 1: Analyze usage patterns and cross-references,1h,,2025-12-21T14:00Z,,pending
-m010,p003,Phase 2: Design merged/improved structure,1.5h,,2025-12-21T14:00Z,,pending
-m011,p003,Phase 3: Implement chosen approach and test,1.5h,,2025-12-21T14:00Z,,pending
+m009,p003,Phase 1: Move files to aidevops/,10m,10m,2025-12-22T06:00Z,2025-12-22T06:10Z,done
+m010,p003,Phase 2: Update cross-references,10m,10m,2025-12-22T06:10Z,2025-12-22T06:20Z,done
+m011,p003,Phase 3: Update AGENTS.md and documentation,10m,10m,2025-12-22T06:20Z,2025-12-22T06:30Z,done
 -->
 
 #### Decision Log
 
-(To be populated during analysis)
+- **Decision:** Demote both build-agent.md and build-mcp.md to subagents under aidevops/
+  **Rationale:** Follows WordPress refactor pattern; they are framework development tools that belong under aidevops domain; reduces main agent count while maintaining modularity
+  **Date:** 2025-12-22
+  **Impact:** None - paths updated, progressive disclosure maintained
 
-<!--TOON:decisions[0]{id,plan_id,decision,rationale,date,impact}:
+<!--TOON:decisions[1]{id,plan_id,decision,rationale,date,impact}:
+d017,p003,Demote both to subagents under aidevops/,Follows WordPress refactor pattern; reduces main agents while maintaining modularity,2025-12-22,None - paths updated
 -->
 
 #### Surprises & Discoveries
 
-(To be populated during implementation)
+- **Observation:** Task was much simpler than estimated (30m vs 4h)
+  **Evidence:** Similar to WordPress refactor, just file moves and cross-reference updates
+  **Impact:** Positive - quick win, cleaner structure
+  **Date:** 2025-12-22
+
+<!--TOON:discoveries[1]{id,plan_id,observation,evidence,impact,date}:
+disc002,p003,Task simpler than estimated (30m vs 4h),Similar to WordPress refactor pattern,Positive - quick win,2025-12-22
+-->
+
+#### Outcomes & Retrospective
+
+**What was delivered:**
+- `build-agent.md` moved to `aidevops/build-agent.md`
+- `build-mcp.md` moved to `aidevops/build-mcp.md`
+- `build-agent/` folder moved to `aidevops/build-agent/`
+- `build-mcp/` folder moved to `aidevops/build-mcp/`
+- All cross-references updated in AGENTS.md, aidevops.md, add-new-mcp-to-aidevops.md
+- Main agent list reduced by 2
+
+**What went well:**
+- Followed established pattern from WordPress refactor
+- git mv preserved history
+- Clean separation maintained
+
+**What could improve:**
+- Original estimate was too high (4h vs 30m actual)
+
+**Time Summary:**
+- Estimated: 4h
+- Actual: 30m
+- Variance: -87.5%
+
+<!--TOON:retrospective{plan_id,delivered,went_well,improve,est,actual,variance_pct,lead_time_days}:
+p003,build-agent.md and build-mcp.md demoted to aidevops subagents; cross-references updated,Followed WordPress pattern; git mv preserved history,Original estimate too high,4h,30m,-87.5,1
+-->
 
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
@@ -800,10 +838,9 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 p009,beads-sync-helper.sh; todo-ready.sh; beads.md subagent; blocked-by/blocks syntax; hierarchical IDs; TOON schema; setup.sh integration; AGENTS.md docs,Robust sync script; comprehensive docs; seamless integration,Add optional UI installation to setup.sh,2d,1.5d,-25,1
 -->
 
-<!--TOON:active_plans[8]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+<!--TOON:active_plans[7]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
-p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
 p004,OCR Invoice/Receipt Extraction Pipeline,planning,0,5,,accounting|ocr|automation,3d,1.5d,1d,0.5d,2025-12-21T22:00Z,
 p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,
 p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
@@ -813,6 +850,13 @@ p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,open
 
 ## Completed Plans
 
+### [2025-12-22] Demote build-agent and build-mcp to aidevops subagents ✓
+
+See [Active Plans > Evaluate Merging](#2025-12-21-evaluate-merging-build-agent-and-build-mcp-into-aidevops) for full details.
+
+**Summary:** Demoted `build-agent.md` and `build-mcp.md` from main agents to subagents under `aidevops/`, following the WordPress refactor pattern.
+**Estimate:** 4h | **Actual:** 30m | **Variance:** -87.5%
+
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
 
 See [Active Plans > Beads Integration](#2025-12-21-beads-integration-for-aidevops-tasks--plans) for full details.
@@ -820,7 +864,8 @@ See [Active Plans > Beads Integration](#2025-12-21-beads-integration-for-aidevop
 **Summary:** Integrated Beads task management with bi-directional sync, dependency tracking, and graph visualization.
 **Estimate:** 2d | **Actual:** 1.5d | **Variance:** -25%
 
-<!--TOON:completed_plans[1]{id,title,owner,tags,est,actual,logged,started,completed,lead_time_days}:
+<!--TOON:completed_plans[2]{id,title,owner,tags,est,actual,logged,started,completed,lead_time_days}:
+p003,Demote build-agent and build-mcp to aidevops subagents,,architecture|agents|refactor,1h,30m,2025-12-21T14:00Z,2025-12-22T06:00Z,2025-12-22T06:30Z,1
 p009,Beads Integration for aidevops Tasks & Plans,,beads|tasks|sync|planning,2d,1.5d,2025-12-21T16:00Z,2025-12-21T16:00Z,2025-12-22T00:00Z,1
 -->
 
@@ -931,5 +976,5 @@ p00X,Deliverable 1; Deliverable 2,Success 1; Success 2,Learning 1; Learning 2,Xd
 ## Analytics
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
-8,8,0,0,,
+9,7,2,0,1,-56.25
 -->

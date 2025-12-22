@@ -48,7 +48,7 @@ tools:
 
 **Related Agents to Call**:
 
-- `@Build-Agent` - Design guidance for agent/subagent structure
+- `@build-agent` - Design guidance for agent/subagent structure (see `aidevops/build-agent.md`)
 - `@agent-review` - Review new documentation quality
 - `@best-practices` - Code quality standards
 - `@secretlint` - Check for credential leaks before commit
@@ -66,7 +66,7 @@ coverage across all supported AI assistants.
 Before starting, consider calling these agents:
 
 ```text
-@Build-Agent - Should this MCP have its own subagent? Which agents need it?
+@build-agent - Should this MCP have its own subagent? Which agents need it?
 @architecture - Does this fit the current framework structure?
 ```
 

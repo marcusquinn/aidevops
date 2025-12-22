@@ -21,12 +21,21 @@ mode: subagent
 - Release: `.agent/scripts/version-manager.sh release [major|minor|patch]`
 
 **Subagents** (`aidevops/`):
-- `setup.md` - AI guide to setup.sh
-- `troubleshooting.md` - Service status, debugging
-- `architecture.md` - Framework structure
 
-**Related Main Agents**:
-- `Build-Agent` - Composing efficient agents (see `build-agent.md`)
+| Subagent | When to Read |
+|----------|--------------|
+| `build-agent.md` | Creating or improving AI agents |
+| `build-mcp.md` | Building MCP servers (TypeScript/Bun/ElysiaJS) |
+| `setup.md` | AI guide to setup.sh |
+| `troubleshooting.md` | Service status, debugging |
+| `architecture.md` | Framework structure |
+
+**Nested subagents**:
+- `build-agent/agent-review.md` - Reviewing and improving existing agents
+- `build-mcp/server-patterns.md` - MCP tool, resource, prompt registration
+- `build-mcp/transports.md` - stdio, HTTP, SSE configuration
+- `build-mcp/deployment.md` - Adding MCP to AI assistants
+- `build-mcp/api-wrapper.md` - Wrapping REST APIs as MCP
 
 **Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP,
 Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations

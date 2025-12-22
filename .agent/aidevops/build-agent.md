@@ -29,7 +29,7 @@ mode: subagent
 - **Main Agents**: Orchestration, call subagents when needed
 - **Subagents**: Focused execution, minimal context, specific tools
 
-**Subagents** (`build-agent/`):
+**Subagents** (`aidevops/build-agent/`):
 
 | Subagent | When to Read |
 |----------|--------------|
@@ -37,7 +37,7 @@ mode: subagent
 
 **Related Agents**:
 - `@code-standards` for linting agent markdown
-- `aidevops/architecture.md` for framework structure
+- `architecture.md` for framework structure (same folder)
 - `tools/browser/browser-automation.md` for agents needing browser capabilities (tool hierarchy: Playwright → Playwriter → Stagehand → DevTools)
 
 **Git Workflow**:
