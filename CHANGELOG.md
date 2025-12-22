@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.8] - 2025-12-22
+
+### Changed
+
+- Refactor: demote build-agent and build-mcp to aidevops subagents
+- Documentation: add t022 to Done with time logged
 ## [2.40.7] - 2025-12-22
 
 ### Changed
