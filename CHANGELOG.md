@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - include marketplace.json in version commit staging
+
 ## [2.39.1] - 2025-12-21
 
 ### Added
