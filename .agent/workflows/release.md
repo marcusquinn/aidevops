@@ -33,7 +33,7 @@ git add -A && git commit -m "feat: description of changes"  # Commit if needed
 - **Create tag**: `.agent/scripts/version-manager.sh tag`
 - **GitHub release**: `.agent/scripts/version-manager.sh github-release`
 - **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)
-- **Deploy locally**: `cd ~/Git/aidevops && ./setup.sh` (MANDATORY after aidevops release)
+- **Deploy locally**: `./setup.sh` (aidevops repo only - deploys to ~/.aidevops/agents/)
 - **Validator**: `.agent/scripts/validate-version-consistency.sh`
 - **GitHub Actions**: `.github/workflows/version-validation.yml`
 - **Version bump only**: See `workflows/version-bump.md`
@@ -320,17 +320,17 @@ jobs:
 
 ## Post-Release Tasks
 
-### Deploy Updated Agents (aidevops repo)
+### Deploy Updated Agents (aidevops repo only)
 
-**MANDATORY after releasing aidevops**: Re-run setup.sh to deploy the new version locally:
+> **Skip this section** if releasing any repo other than `~/Git/aidevops`.
+
+After releasing the aidevops framework itself, re-run setup.sh to deploy locally:
 
 ```bash
 cd ~/Git/aidevops && ./setup.sh
 ```
 
 This ensures `~/.aidevops/agents/` has the latest release with updated version references.
-
-**Why this matters**: The release updates version numbers in setup.sh and other files. Without re-running setup.sh, your local OpenCode instance will have stale agent files.
 
 ### Task Completion
 
