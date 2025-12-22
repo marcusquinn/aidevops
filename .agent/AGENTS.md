@@ -203,7 +203,6 @@ opencode mcp list
 | `build-agent/` | Agent design subagents (agent-review) |
 | `build-mcp/` | MCP development (api-wrapper, deployment, server-patterns, transports) |
 | `memory/` | Cross-session memory patterns |
-| `wordpress/` | WordPress ecosystem (wordpress, wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf) |
 | `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research) |
 | `content/` | Content subagents (guidelines) |
 | `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
@@ -218,6 +217,7 @@ opencode mcp list
 | `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
 | `tools/opencode/` | OpenCode configuration, paths, oh-my-opencode integration |
 | `tools/task-management/` | Task tracking (beads - graph visualization, dependencies) |
+| `tools/wordpress/` | WordPress CMS (wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf) |
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
@@ -269,7 +269,7 @@ Read subagents only when task requires them. The AI-CONTEXT section above contai
 - Task dependencies/graphs → `tools/task-management/beads.md` (Beads integration)
 - Specific service operations → `services/[type]/[provider].md`
 - Code quality tasks → `tools/code-review/`
-- WordPress work → `wordpress/`
+- WordPress work → `tools/wordpress/`
 - Release/versioning → `workflows/`
 - Browser automation → `tools/browser/`
 - MCP development → `build-mcp/`

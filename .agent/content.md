@@ -18,7 +18,7 @@ mode: subagent
 
 **Integrations**:
 - `seo.md` - Keyword optimization
-- `wordpress/` - Publishing workflow
+- `tools/wordpress/` - Publishing workflow
 - `tools/context/` - Research tools
 
 **Workflow**:

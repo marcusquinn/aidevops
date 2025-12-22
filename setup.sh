@@ -72,6 +72,33 @@ create_backup_with_rotation() {
     return 0
 }
 
+# Remove deprecated agent paths that have been moved
+# This ensures clean upgrades when agents are reorganized
+cleanup_deprecated_paths() {
+    local agents_dir="$HOME/.aidevops/agents"
+    local cleaned=0
+    
+    # List of deprecated paths (add new ones here when reorganizing)
+    local deprecated_paths=(
+        # v2.40.7: wordpress moved from root to tools/wordpress
+        "$agents_dir/wordpress.md"
+        "$agents_dir/wordpress"
+    )
+    
+    for path in "${deprecated_paths[@]}"; do
+        if [[ -e "$path" ]]; then
+            rm -rf "$path"
+            ((cleaned++))
+        fi
+    done
+    
+    if [[ $cleaned -gt 0 ]]; then
+        print_info "Cleaned up $cleaned deprecated agent path(s)"
+    fi
+    
+    return 0
+}
+
 # Migrate old config-backups to new per-type backup structure
 # This runs once to clean up the legacy backup directory
 migrate_old_backups() {
@@ -1779,6 +1806,7 @@ main() {
     setup_aliases
     deploy_ai_templates
     migrate_old_backups
+    cleanup_deprecated_paths
     deploy_aidevops_agents
     generate_agent_skills
     inject_agents_reference
