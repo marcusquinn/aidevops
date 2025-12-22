@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactor: move wordpress from root to tools/wordpress
 - Documentation: add t021 for auto-marking tasks complete in release workflow
 - Documentation: mark t011 as completed in TODO.md
+
 ## [2.40.6] - 2025-12-22
 
 ### Changed
