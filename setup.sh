@@ -668,14 +668,6 @@ setup_configs() {
         fi
     done
     
-    # Copy AI context template
-    if [[ ! -f "ai-context.md" ]]; then
-        cp "ai-context.md.txt" "ai-context.md"
-        print_success "Created ai-context.md"
-        print_warning "Please customize ai-context.md with your infrastructure details"
-    else
-        print_info "Found existing ai-context.md - Skipping"
-    fi
     return 0
 }
 

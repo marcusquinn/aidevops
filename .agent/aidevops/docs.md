@@ -167,7 +167,7 @@ Each service guide follows this consistent format:
 ### **Information Hierarchy**
 
 1. **Service-specific guides** - Primary source for service details
-2. **Framework context** (`../ai-context.md`) - Overall framework understanding
+2. **Framework context** (`AGENTS.md`) - Overall framework understanding
 3. **Best practices guide** - Provider selection and optimization
 4. **Setup guides** - Complex integration procedures
 5. **Context7 MCP** - Latest external documentation
@@ -222,10 +222,10 @@ Each service guide includes:
 .agent/[SERVICE-NAME].md
 
 # Framework overview
-../ai-context.md
+.agent/AGENTS.md
 
 # Provider selection guidance
-.agent/recommendations-opinionated.md
+.agent/recommendations.md
 
 # Setup procedures
 .agent/[SERVICE]-SETUP.md

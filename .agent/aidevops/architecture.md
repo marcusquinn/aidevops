@@ -129,9 +129,9 @@ configs/[service]-config.json      # Working config (gitignored)
 ### **Documentation Structure**
 
 ```bash
+.agent/AGENTS.md                      # AI assistant framework context
 .agent/[SERVICE].md                   # Complete service guide
-.agent/recommendations-opinionated.md  # Provider selection guide
-ai-context.md                       # AI assistant framework context (this file)
+.agent/recommendations.md             # Provider selection guide
 ```
 
 ## 🚀 **Framework Usage Examples**
