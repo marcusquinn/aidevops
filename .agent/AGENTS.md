@@ -5,6 +5,26 @@ mode: subagent
 
 **New to aidevops?** Type `/onboarding` to get started with an interactive setup wizard.
 
+## 🛑 MANDATORY: Pre-Edit Git Check
+
+**BEFORE reading any file with intent to edit, or calling any edit/write tool:**
+
+1. Run `git branch --show-current`
+2. If on `main`, present this prompt and WAIT for user response:
+
+> On `main`. Suggested branch: `{type}/{suggested-name}`
+>
+> 1. Create suggested branch (recommended)
+> 2. Use different branch name
+> 3. Stay on `main` (not recommended)
+
+3. **Do NOT proceed until user replies with 1, 2, or 3**
+4. After creating branch, call `session-rename_sync_branch` tool
+
+**Why this matters**: Skipping this check causes direct commits to `main`, bypassing PR review.
+
+---
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -16,10 +36,7 @@ mode: subagent
 - **Credentials**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
 
 **Critical Rules**:
-- **MANDATORY BEFORE ANY FILE CHANGES**: Run `git branch --show-current`. If on `main`:
-  1. STOP - do not proceed with file changes
-  2. Present branch creation prompt (see Git Workflow section)
-  3. Only proceed after user confirms branch OR explicitly chooses to stay on main
+- **Git check before edits**: See "MANDATORY: Pre-Edit Git Check" section above
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
@@ -92,21 +109,9 @@ User confirms with numbered options to override if needed.
 
 ## Git Workflow (File Changes)
 
-**BEFORE making any file changes** (see Critical Rules above):
+**BEFORE making any file changes**: Follow the "MANDATORY: Pre-Edit Git Check" at the top of this file.
 
-```bash
-git branch --show-current
-```
-
-If on `main`, present options:
-
-> On `main`. Creating `feature/{suggested-name}` for this work.
->
-> [Enter] to confirm, or:
-> 1. Use different branch name
-> 2. Continue on `main` (not recommended)
-
-Then:
+**After user confirms branch choice**:
 1. Check `TODO.md` and `todo/PLANS.md` for matching tasks
 2. Derive branch name from task/plan when available
 3. Create branch and call `session-rename_sync_branch` tool to sync session name
@@ -119,7 +124,7 @@ Then:
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
-**User prompts**: Always offer numbered options. User can reply with number or "yes" for default.
+**User prompts**: Always use numbered options (1, 2, 3...). Never use "[Enter] to confirm" - OpenCode requires typed input.
 
 **Issue URLs**: Paste any GitHub/GitLab/Gitea issue URL to auto-setup branch.
 
