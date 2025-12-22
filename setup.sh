@@ -26,6 +26,108 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Backup rotation settings
+BACKUP_KEEP_COUNT=10
+
+# Create a backup with rotation (keeps last N backups)
+# Usage: create_backup_with_rotation <source_path> <backup_name>
+# Example: create_backup_with_rotation "$target_dir" "agents"
+# Creates: ~/.aidevops/agents-backups/20251221_123456/
+create_backup_with_rotation() {
+    local source_path="$1"
+    local backup_name="$2"
+    local backup_base="$HOME/.aidevops/${backup_name}-backups"
+    local backup_dir
+    backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
+    
+    # Create backup directory
+    mkdir -p "$backup_dir"
+    
+    # Copy source to backup
+    if [[ -d "$source_path" ]]; then
+        cp -R "$source_path" "$backup_dir/"
+    elif [[ -f "$source_path" ]]; then
+        cp "$source_path" "$backup_dir/"
+    else
+        print_warning "Source path does not exist: $source_path"
+        return 1
+    fi
+    
+    print_info "Backed up to $backup_dir"
+    
+    # Rotate old backups (keep last N)
+    local backup_count
+    backup_count=$(find "$backup_base" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
+    
+    if [[ $backup_count -gt $BACKUP_KEEP_COUNT ]]; then
+        local to_delete=$((backup_count - BACKUP_KEEP_COUNT))
+        print_info "Rotating backups: removing $to_delete old backup(s), keeping last $BACKUP_KEEP_COUNT"
+        
+        # Delete oldest backups (sorted by name = sorted by date)
+        find "$backup_base" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do
+            rm -rf "$old_backup"
+        done
+    fi
+    
+    return 0
+}
+
+# Migrate old config-backups to new per-type backup structure
+# This runs once to clean up the legacy backup directory
+migrate_old_backups() {
+    local old_backup_dir="$HOME/.aidevops/config-backups"
+    
+    # Skip if old directory doesn't exist
+    if [[ ! -d "$old_backup_dir" ]]; then
+        return 0
+    fi
+    
+    # Count old backups
+    local old_count
+    old_count=$(find "$old_backup_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
+    
+    if [[ $old_count -eq 0 ]]; then
+        # Empty directory, just remove it
+        rm -rf "$old_backup_dir"
+        return 0
+    fi
+    
+    print_info "Migrating $old_count old backups to new structure..."
+    
+    # Create new backup directories
+    mkdir -p "$HOME/.aidevops/agents-backups"
+    mkdir -p "$HOME/.aidevops/opencode-backups"
+    
+    # Move the most recent backups (up to BACKUP_KEEP_COUNT) to new locations
+    # Old backups contained mixed content, so we'll just keep the newest ones as agents backups
+    local migrated=0
+    for backup in $(find "$old_backup_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort -r | head -n "$BACKUP_KEEP_COUNT"); do
+        local backup_name
+        backup_name=$(basename "$backup")
+        
+        # Check if it contains agents folder (most common)
+        if [[ -d "$backup/agents" ]]; then
+            mv "$backup" "$HOME/.aidevops/agents-backups/$backup_name"
+            ((migrated++))
+        # Check if it contains opencode.json
+        elif [[ -f "$backup/opencode.json" ]]; then
+            mv "$backup" "$HOME/.aidevops/opencode-backups/$backup_name"
+            ((migrated++))
+        fi
+    done
+    
+    # Remove remaining old backups and the old directory
+    rm -rf "$old_backup_dir"
+    
+    if [[ $migrated -gt 0 ]]; then
+        print_success "Migrated $migrated recent backups, removed $((old_count - migrated)) old backups"
+    else
+        print_info "Cleaned up $old_count old backups"
+    fi
+    
+    return 0
+}
+
 # Bootstrap: Clone or update repo if running remotely (via curl)
 bootstrap_repo() {
     # Detect if running from curl (no script directory context)
@@ -734,14 +836,10 @@ deploy_aidevops_agents() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local source_dir="$script_dir/.agent"
     local target_dir="$HOME/.aidevops/agents"
-    local backup_base="$HOME/.aidevops/config-backups"
-    local backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
     
-    # Create backup if target exists
+    # Create backup if target exists (with rotation)
     if [[ -d "$target_dir" ]]; then
-        mkdir -p "$backup_dir"
-        cp -R "$target_dir" "$backup_dir/"
-        print_info "Backed up existing agents to $backup_dir"
+        create_backup_with_rotation "$target_dir" "agents"
     fi
     
     # Create target directory and copy agents
@@ -869,18 +967,14 @@ update_opencode_config() {
     print_info "Updating OpenCode configuration..."
     
     local opencode_config="$HOME/.config/opencode/opencode.json"
-    local backup_base="$HOME/.aidevops/config-backups"
-    local backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
     
     if [[ ! -f "$opencode_config" ]]; then
         print_info "OpenCode config not found at $opencode_config - skipping"
         return 0
     fi
     
-    # Create backup
-    mkdir -p "$backup_dir"
-    cp "$opencode_config" "$backup_dir/opencode.json"
-    print_info "Backed up opencode.json to $backup_dir"
+    # Create backup (with rotation)
+    create_backup_with_rotation "$opencode_config" "opencode"
     
     # Generate OpenCode agent configuration
     # - Primary agents: Added to opencode.json (for Tab order & MCP control)
@@ -1540,6 +1634,7 @@ main() {
     install_aidevops_cli
     setup_aliases
     deploy_ai_templates
+    migrate_old_backups
     deploy_aidevops_agents
     generate_agent_skills
     inject_agents_reference
@@ -1566,7 +1661,7 @@ echo "  aidevops uninstall  - Remove aidevops"
     echo ""
     echo "Deployed to:"
     echo "  ~/.aidevops/agents/     - Agent files (main agents, subagents, scripts)"
-    echo "  ~/.aidevops/config-backups/ - Backups of previous configurations"
+    echo "  ~/.aidevops/*-backups/  - Backups with rotation (keeps last $BACKUP_KEEP_COUNT)"
     echo ""
     echo "Next steps:"
     echo "1. Edit configuration files in configs/ with your actual credentials"
