@@ -6,6 +6,9 @@ mode: subagent
 
 # Build+ - Enhanced Build Agent
 
+<!-- Note: OpenCode automatically injects the model-specific base prompt (anthropic.txt,
+beast.txt, etc.) for all agents. This file only contains Build+ enhancements. -->
+
 <!-- AI-CONTEXT-START -->
 
 ## Core Responsibility
