@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - update .coderabbit.yaml to match v2 schema
 - handle git command exceptions in session-rename tool
+
 ## [2.40.7] - 2025-12-22
 
 ### Changed
