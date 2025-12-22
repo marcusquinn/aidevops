@@ -54,6 +54,58 @@ Before running the release command:
 The release script will **refuse to release** if there are uncommitted changes.
 This prevents accidentally releasing without your session's work.
 
+## Merging Work Branch to Main
+
+Before releasing, merge your work branch to main (or create PR/MR if collaborating):
+
+### Direct Merge (Solo Work)
+
+```bash
+# 1. Ensure branch is up to date
+git checkout {your-branch}
+git fetch origin
+git rebase origin/main  # or merge
+
+# 2. Switch to main and merge
+git checkout main
+git pull origin main
+git merge --no-ff {your-branch} -m "Merge {your-branch} into main"
+
+# 3. Push merged main
+git push origin main
+
+# 4. Delete branch after merge
+git branch -d {your-branch}
+git push origin --delete {your-branch}
+```
+
+### PR/MR Workflow (Collaborative)
+
+When working with others or requiring review:
+
+```bash
+# 1. Push branch
+git push -u origin {your-branch}
+
+# 2. Create PR/MR
+gh pr create --fill --base main  # GitHub
+glab mr create --fill --target-branch main  # GitLab
+
+# 3. After approval and merge, continue with release
+git checkout main
+git pull origin main
+```
+
+### Decision Tree
+
+| Situation | Action |
+|-----------|--------|
+| Solo work, simple changes | Direct merge to main |
+| Team collaboration | Create PR/MR for review |
+| Multiple branches to release | Merge each to main, then release |
+| Hotfix on production | Use `hotfix/` branch, merge to main + release |
+| Parallel sessions, same feature | Coordinate via PR to avoid conflicts |
+
 ## Release Workflow Overview
 
 The release script handles everything automatically:
