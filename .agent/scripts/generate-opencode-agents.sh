@@ -104,7 +104,7 @@ DISPLAY_NAMES = {
 }
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
-AGENT_ORDER = ["Build+", "Plan+", "Build-Agent", "Build-MCP", "AI-DevOps"]
+AGENT_ORDER = ["Plan+", "Build+", "Build-Agent", "Build-MCP", "AI-DevOps"]
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
@@ -275,6 +275,16 @@ if os.path.exists(omo_config_path):
             print("  Added OmO agents: Sisyphus, Planner-Sisyphus (after WordPress)")
     except:
         pass  # OmO config not readable, skip
+
+# =============================================================================
+# DISABLE DEFAULT BUILD/PLAN AGENTS
+# Build+ and Plan+ inherit and enhance the default agents, so we disable the
+# originals to avoid confusion in the Tab cycle
+# =============================================================================
+
+sorted_agents["build"] = {"disable": True}
+sorted_agents["plan"] = {"disable": True}
+print("  Disabled default 'build' and 'plan' agents (replaced by Build+ and Plan+)")
 
 config['agent'] = sorted_agents
 

@@ -907,6 +907,20 @@ deploy_ai_templates() {
     return 0
 }
 
+# Extract OpenCode prompts from binary (for Plan+ system-reminder)
+# Must run before deploy_aidevops_agents so the cache exists for injection
+extract_opencode_prompts() {
+    local extract_script=".agent/scripts/extract-opencode-prompts.sh"
+    if [[ -f "$extract_script" ]]; then
+        if bash "$extract_script"; then
+            print_success "OpenCode prompts extracted"
+        else
+            print_warning "OpenCode prompt extraction encountered issues (non-critical)"
+        fi
+    fi
+    return 0
+}
+
 # Deploy aidevops agents to user location
 deploy_aidevops_agents() {
     print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
@@ -947,6 +961,25 @@ deploy_aidevops_agents() {
         script_count=$(find "$target_dir/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
         
         print_info "Deployed $agent_count agent files and $script_count scripts"
+        
+        # Inject extracted OpenCode plan-reminder into Plan+ if available
+        local plan_reminder="$HOME/.aidevops/cache/opencode-prompts/plan-reminder.txt"
+        local plan_plus="$target_dir/plan-plus.md"
+        if [[ -f "$plan_reminder" && -f "$plan_plus" ]]; then
+            # Check if plan-plus.md has the placeholder marker
+            if grep -q "OPENCODE-PLAN-REMINDER-INJECT" "$plan_plus"; then
+                # Replace placeholder with extracted content
+                local reminder_content
+                reminder_content=$(cat "$plan_reminder")
+                # Use awk to replace the placeholder section
+                awk -v content="$reminder_content" '
+                    /<!-- OPENCODE-PLAN-REMINDER-INJECT-START -->/ { print; print content; skip=1; next }
+                    /<!-- OPENCODE-PLAN-REMINDER-INJECT-END -->/ { skip=0 }
+                    !skip { print }
+                ' "$plan_plus" > "$plan_plus.tmp" && mv "$plan_plus.tmp" "$plan_plus"
+                print_info "Injected OpenCode plan-reminder into Plan+"
+            fi
+        fi
     else
         print_error "Failed to deploy agents"
         return 1
@@ -1807,6 +1840,7 @@ main() {
     deploy_ai_templates
     migrate_old_backups
     cleanup_deprecated_paths
+    extract_opencode_prompts
     deploy_aidevops_agents
     generate_agent_skills
     inject_agents_reference
