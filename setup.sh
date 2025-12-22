@@ -663,6 +663,59 @@ set_permissions() {
     return 0
 }
 
+# Add ~/.local/bin to PATH in shell config
+add_local_bin_to_path() {
+    local shell_rc=""
+    local path_line='export PATH="$HOME/.local/bin:$PATH"'
+    
+    # Detect shell config file
+    if [[ "$SHELL" == *"zsh"* ]] || [[ -n "$ZSH_VERSION" ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]] || [[ -n "$BASH_VERSION" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            shell_rc="$HOME/.bash_profile"
+        else
+            shell_rc="$HOME/.bashrc"
+        fi
+    elif [[ -f "$HOME/.zshrc" ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ -f "$HOME/.bashrc" ]]; then
+        shell_rc="$HOME/.bashrc"
+    elif [[ -f "$HOME/.bash_profile" ]]; then
+        shell_rc="$HOME/.bash_profile"
+    fi
+    
+    if [[ -z "$shell_rc" ]]; then
+        print_warning "Could not detect shell config file"
+        print_info "Add this to your shell config: $path_line"
+        return 0
+    fi
+    
+    # Create the rc file if it doesn't exist
+    if [[ ! -f "$shell_rc" ]]; then
+        touch "$shell_rc"
+    fi
+    
+    # Check if already added
+    if grep -q '\.local/bin' "$shell_rc" 2>/dev/null; then
+        print_info "~/.local/bin already in PATH (found in $shell_rc)"
+        return 0
+    fi
+    
+    # Add to shell config
+    echo "" >> "$shell_rc"
+    echo "# Added by aidevops setup" >> "$shell_rc"
+    echo "$path_line" >> "$shell_rc"
+    
+    print_success "Added ~/.local/bin to PATH in $shell_rc"
+    print_info "Run 'source $shell_rc' or restart your terminal to use 'aidevops' command"
+    
+    # Also export for current session
+    export PATH="$HOME/.local/bin:$PATH"
+    
+    return 0
+}
+
 # Install aidevops CLI command
 install_aidevops_cli() {
     print_info "Installing aidevops CLI command..."
@@ -688,10 +741,9 @@ install_aidevops_cli() {
         ln -sf "$cli_source" "$cli_target"
         print_success "Installed aidevops command to $cli_target"
         
-        # Check if ~/.local/bin is in PATH
+        # Check if ~/.local/bin is in PATH and add it if not
         if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-            print_warning "Add ~/.local/bin to your PATH for the 'aidevops' command"
-            print_info "Add this to your shell config: export PATH=\"\$HOME/.local/bin:\$PATH\""
+            add_local_bin_to_path
         fi
     else
         # Need sudo
