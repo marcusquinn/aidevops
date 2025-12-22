@@ -162,7 +162,13 @@ aidevops init beads              # Enable beads (includes planning)
 
 **Architecture:** aidevops markdown files (TODO.md, PLANS.md) are the source of truth. Beads syncs from them for visualization.
 
-See `.agent/tools/task-management/beads.md` for complete documentation.
+**Optional Viewers:** Beyond the `bd` CLI, there are community viewers for richer visualization:
+- `beads_viewer` (Python TUI) - PageRank, critical path analysis
+- `beads-ui` (Web) - Live updates in browser
+- `bdui` (React/Ink TUI) - Modern terminal UI
+- `perles` (Rust TUI) - BQL query language
+
+See `.agent/tools/task-management/beads.md` for complete documentation and installation commands.
 
 **Your AI assistant now has agentic access to 30+ service integrations.**
 

@@ -135,13 +135,63 @@ When both TODO.md and Beads have changes:
 
 ## Viewers
 
-| Tool | Type | Features |
-|------|------|----------|
-| `bd` | CLI | Core commands, MCP server |
-| `beads_viewer` | TUI | PageRank, critical path, graph analytics |
-| `beads-ui` | Web | Live updates, browser-based |
-| `bdui` | TUI | React/Ink interface |
-| `perles` | TUI | BQL query language |
+| Tool | Type | Features | Install |
+|------|------|----------|---------|
+| `bd` | CLI | Core commands, MCP server | `brew install steveyegge/beads/bd` |
+| `beads_viewer` | TUI | PageRank, critical path, graph analytics | `pip install beads-viewer` |
+| `beads-ui` | Web | Live updates, browser-based | `npm install -g beads-ui` |
+| `bdui` | TUI | React/Ink interface | `npm install -g bdui` |
+| `perles` | TUI | BQL query language | `cargo install perles` |
+
+### Viewer Installation
+
+```bash
+# Core CLI (required)
+brew install steveyegge/beads/bd
+# Or: go install github.com/steveyegge/beads/cmd/bd@latest
+
+# Advanced TUI with graph analytics (Python)
+pip install beads-viewer
+# Repository: https://github.com/Dicklesworthstone/beads_viewer
+
+# Web UI with live updates (Node.js)
+npm install -g beads-ui
+# Or run locally: npx beads-ui
+# Repository: https://github.com/mantoni/beads-ui
+
+# React/Ink TUI (Node.js)
+npm install -g bdui
+# Repository: https://github.com/assimelha/bdui
+
+# BQL query language TUI (Rust)
+cargo install perles
+# Repository: https://github.com/zjrosen/perles
+```
+
+### Running Viewers
+
+```bash
+# Core CLI
+bd list
+bd ready
+bd graph <issue-id>
+
+# beads_viewer - Advanced TUI
+beads-viewer              # Interactive mode
+beads-viewer --pagerank   # Show PageRank scores
+beads-viewer --critical   # Show critical path
+
+# beads-ui - Web interface
+beads-ui                  # Starts on http://localhost:3000
+beads-ui --port 8080      # Custom port
+
+# bdui - React/Ink TUI
+bdui                      # Interactive mode
+
+# perles - BQL queries
+perles                    # Interactive REPL
+perles "SELECT * FROM issues WHERE status = 'open'"
+```
 
 ## Installation
 
@@ -153,7 +203,7 @@ brew install steveyegge/beads/bd
 go install github.com/steveyegge/beads/cmd/bd@latest
 
 # Or via aidevops setup
-./setup.sh  # Installs automatically
+./setup.sh  # Installs bd automatically
 ```
 
 ## Project Initialization
