@@ -660,16 +660,14 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Ordered as they appear in OpenCode Tab selector and other AI assistants (14 total):
+Ordered as they appear in OpenCode Tab selector and other AI assistants (12 total):
 
 | Name | File | Purpose | MCPs Enabled |
 |------|------|---------|--------------|
 | Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search | context7, augment, repomix |
 | Build+ | `build-plus.md` | Enhanced Build with context tools | context7, augment, repomix |
-| Build-Agent | `build-agent.md` | Design and improve AI agents | context7, augment, repomix |
-| Build-MCP | `build-mcp.md` | Build MCP servers with TS+Bun+ElysiaJS | context7, augment, repomix |
 | Accounting | `accounting.md` | Financial operations | quickfile, augment |
-| AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup | context7, augment, repomix |
+| AI-DevOps | `aidevops.md` | Framework operations, agent/MCP development | context7, augment, repomix |
 | Content | `content.md` | Content creation workflows | augment |
 | Health | `health.md` | Health and wellness guidance | augment |
 | Legal | `legal.md` | Legal compliance and documentation | augment |
@@ -677,7 +675,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 | Research | `research.md` | Research and analysis tasks | context7, augment |
 | Sales | `sales.md` | Sales operations and CRM | augment |
 | SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, dataforseo, serper, context7, augment |
-| WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
+| Onboarding | `onboarding.md` | Interactive setup wizard for new users | augment |
 
 ### **Example Subagents with MCP Integration**
 
@@ -685,9 +683,12 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
+| `@build-agent` | Design and improve AI agents (under aidevops/) | context7, augment, repomix |
+| `@build-mcp` | Build MCP servers with TS+Bun+ElysiaJS (under aidevops/) | context7, augment, repomix |
+| `@wordpress` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
-| `@wordpress` | Local dev, MainWP management | localwp, context7 |
+| `@wordpress` | WordPress ecosystem (under tools/wordpress/) | localwp, context7 |
 | `@seo` | Search Console, keyword research, domain intelligence | gsc, ahrefs, dataforseo, serper, context7 |
 | `@dataforseo` | SERP, keywords, backlinks, on-page analysis | dataforseo |
 | `@domain-research` | DNS intelligence: rDNS, subdomains, CNAMEs (THC + Reconeer) | (API-based) |
@@ -696,7 +697,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
-| `@agent-review` | Session analysis, agent improvement (under build-agent/) | (read/write only) |
+| `@agent-review` | Session analysis, agent improvement (under aidevops/build-agent/) | (read/write only) |
 
 ### **Setup for OpenCode**
 
