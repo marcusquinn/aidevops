@@ -114,6 +114,7 @@ t021,Auto-mark tasks complete from commit messages in release,,workflow|automati
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18
 - [x] t011 Demote wordpress.md from main agent to subagent #architecture ~1h actual:45m logged:2025-12-21 started:2025-12-22T04:10Z completed:2025-12-22
+- [x] t022 Move wordpress from root to tools/wordpress #refactor ~30m actual:25m logged:2025-12-22 started:2025-12-22T05:15Z completed:2025-12-22
 - [x] t019 Beads Integration for aidevops #plan #beads ~2d actual:1.5d logged:2025-12-21 started:2025-12-21T16:00Z completed:2025-12-22
   - [x] t019.1 Phase 1: Enhanced TODO.md format ~4h actual:3h
     - [x] t019.1.1 Add blocked-by and blocks syntax ~1h
@@ -135,7 +136,8 @@ t021,Auto-mark tasks complete from commit messages in release,,workflow|automati
     - [x] t019.3.3 Create tools/task-management/beads.md subagent ~1h
     - [x] t019.3.4 Update AGENTS.md with Beads integration docs ~1h
 
-<!--TOON:done[23]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
+<!--TOON:done[24]{id,desc,owner,tags,est,actual,logged,started,completed,status}:
+t022,Move wordpress from root to tools/wordpress,,refactor,30m,25m,2025-12-22T05:15Z,2025-12-22T05:15Z,2025-12-22T05:40Z,done
 t011,Demote wordpress.md from main agent to subagent,,architecture,1h,45m,2025-12-21T14:30Z,2025-12-22T04:10Z,2025-12-22T04:45Z,done
 t001,Add TODO.md and planning workflow,,workflow,2h,1.5h,2025-12-18T00:00Z,2025-12-18T10:00Z,2025-12-20T00:00Z,done
 t002,Add shadcn/ui MCP support,,tools,1h,45m,2025-12-18T00:00Z,2025-12-18T08:00Z,2025-12-18T09:00Z,done
@@ -170,5 +172,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-24,16,0,0,23,0,22d8h,15h25m,0,16
+25,16,0,0,24,0,22d8h30m,15h50m,0,16
 -->
