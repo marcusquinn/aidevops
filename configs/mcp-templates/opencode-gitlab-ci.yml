@@ -1,0 +1,114 @@
+# OpenCode GitLab Integration
+# Add to your .gitlab-ci.yml or include as a separate file
+#
+# Usage: Comment @opencode on any issue or MR
+#   @opencode explain this issue
+#   @opencode fix this
+#   @opencode review this MR
+#
+# Required CI/CD Variables (Settings → CI/CD → Variables):
+#   ANTHROPIC_API_KEY     - AI provider API key (masked)
+#   GITLAB_TOKEN_OPENCODE - GitLab access token (masked)
+#   GITLAB_HOST           - gitlab.com or your instance URL
+#
+# Docs: https://opencode.ai/docs/gitlab/
+
+stages:
+  - opencode
+
+opencode:
+  stage: opencode
+  image: node:22-slim
+  
+  # Trigger conditions - adjust based on your webhook setup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+      when: always
+    - if: '$AI_FLOW_EVENT == "note"'
+      when: always
+    - when: never
+  
+  before_script:
+    # Install OpenCode CLI
+    - npm install --global opencode-ai
+    
+    # Install system dependencies
+    - apt-get update && apt-get install -y git curl
+    
+    # Install glab CLI for GitLab operations
+    - |
+      GLAB_VERSION=$(curl -s https://api.github.com/repos/profclems/glab/releases/latest | grep tag_name | cut -d '"' -f 4)
+      curl -sL "https://github.com/profclems/glab/releases/download/${GLAB_VERSION}/glab_${GLAB_VERSION#v}_Linux_x86_64.tar.gz" | tar xz
+      mv glab /usr/local/bin/
+    
+    # Configure git identity
+    - git config --global user.email "opencode@gitlab.com"
+    - git config --global user.name "OpenCode"
+    
+    # Setup OpenCode authentication
+    - mkdir -p ~/.local/share/opencode
+    - |
+      cat > ~/.local/share/opencode/auth.json << EOF
+      {
+        "anthropic": { "apiKey": "$ANTHROPIC_API_KEY" }
+      }
+      EOF
+    
+    # Configure glab authentication
+    - |
+      mkdir -p ~/.config/glab-cli
+      cat > ~/.config/glab-cli/config.yml << EOF
+      hosts:
+        ${GITLAB_HOST:-gitlab.com}:
+          token: $GITLAB_TOKEN_OPENCODE
+          api_host: ${GITLAB_HOST:-gitlab.com}
+          git_protocol: https
+      EOF
+  
+  script:
+    # Run OpenCode with the trigger context
+    - |
+      if [ -n "$AI_FLOW_INPUT" ]; then
+        opencode run "$AI_FLOW_INPUT"
+      else
+        echo "No AI_FLOW_INPUT provided - skipping"
+        exit 0
+      fi
+    
+    # Commit and push any changes made by OpenCode
+    - |
+      if [ -n "$(git status --porcelain)" ]; then
+        echo "Changes detected, committing..."
+        git add -A
+        git commit -m "OpenCode: automated changes"
+        
+        # Push to the workload branch or current branch
+        TARGET_BRANCH="${CI_WORKLOAD_REF:-$CI_COMMIT_REF_NAME}"
+        git push origin "HEAD:$TARGET_BRANCH"
+        
+        echo "Changes pushed to $TARGET_BRANCH"
+      else
+        echo "No changes to commit"
+      fi
+  
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 1
+  
+  # Cache npm packages for faster runs
+  cache:
+    key: opencode-npm
+    paths:
+      - /root/.npm
+
+# Alternative: Minimal configuration for simple use cases
+.opencode-minimal:
+  stage: opencode
+  image: node:22-slim
+  script:
+    - npm install --global opencode-ai
+    - mkdir -p ~/.local/share/opencode
+    - echo '{"anthropic":{"apiKey":"'$ANTHROPIC_API_KEY'"}}' > ~/.local/share/opencode/auth.json
+    - opencode run "$AI_FLOW_INPUT"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'

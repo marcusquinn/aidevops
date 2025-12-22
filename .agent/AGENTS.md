@@ -114,6 +114,21 @@ Then:
 
 **Issue URLs**: Paste any GitHub/GitLab/Gitea issue URL to auto-setup branch.
 
+**OpenCode GitHub/GitLab Integration**: Enable AI-powered issue/PR automation:
+
+```bash
+# Check setup status
+~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check
+
+# GitHub: Install app + workflow
+opencode github install
+
+# Then use /oc in any issue/PR comment:
+# /oc fix this bug → creates branch + PR automatically
+```
+
+See `tools/git/opencode-github.md` and `tools/git/opencode-gitlab.md` for details.
+
 **After completing file changes**, offer numbered options:
 
 1. Run preflight checks (`workflows/preflight.md`)
@@ -180,7 +195,7 @@ opencode mcp list
 | `tools/conversion/` | Format conversion (pandoc) |
 | `tools/data-extraction/` | Data extraction (outscraper) |
 | `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
-| `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security) |
+| `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security, opencode-github, opencode-gitlab) |
 | `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
 | `tools/opencode/` | OpenCode configuration, paths, oh-my-opencode integration |
 | `tools/task-management/` | Task tracking (beads - graph visualization, dependencies) |

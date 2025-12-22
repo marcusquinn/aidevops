@@ -1,0 +1,68 @@
+# OpenCode GitHub Integration Workflow
+# Copy to: .github/workflows/opencode.yml
+#
+# Usage: Comment /oc or /opencode on any issue or PR
+#   /oc explain this issue
+#   /oc fix this bug
+#   /opencode review this PR
+#
+# Requirements:
+#   1. Install GitHub App: https://github.com/apps/opencode-agent
+#   2. Add secret: ANTHROPIC_API_KEY (or OPENAI_API_KEY)
+#
+# Docs: https://opencode.ai/docs/github/
+
+name: opencode
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  opencode:
+    # Only run if comment contains /oc or /opencode
+    if: |
+      contains(github.event.comment.body, '/oc') ||
+      contains(github.event.comment.body, '/opencode')
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write      # Required for OpenCode
+      contents: write      # For committing changes
+      pull-requests: write # For creating/updating PRs
+      issues: write        # For commenting on issues
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run OpenCode
+        uses: sst/opencode/github@latest
+        env:
+          # Use your preferred AI provider
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        with:
+          # Required: AI model to use
+          model: anthropic/claude-sonnet-4-20250514
+          
+          # Optional: Specify agent (defaults to "build")
+          # agent: build
+          
+          # Optional: Share session (default: true for public repos)
+          # share: true
+          
+          # Optional: Custom GitHub token (default: OpenCode App token)
+          # token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Optional: Custom prompt to override default behavior
+          # prompt: |
+          #   Follow aidevops conventions:
+          #   - Use conventional commit messages
+          #   - Create feature/ or bugfix/ branches
+          #   - Include ## Summary in PR descriptions

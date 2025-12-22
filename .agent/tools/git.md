@@ -35,6 +35,8 @@ tools:
 - `git/github-actions.md` - CI/CD workflows
 - `git/authentication.md` - Token setup
 - `git/security.md` - Security practices
+- `git/opencode-github.md` - OpenCode GitHub App integration
+- `git/opencode-gitlab.md` - OpenCode GitLab CI integration
 
 <!-- AI-CONTEXT-END -->
 
@@ -164,6 +166,35 @@ gh release list
 glab release list
 ```
 
+## OpenCode Integration
+
+Enable AI-powered issue/PR automation directly from GitHub or GitLab.
+
+### GitHub
+
+```bash
+# Check setup status
+~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check
+
+# Automated setup
+opencode github install
+```
+
+Then use `/oc` or `/opencode` in any issue/PR comment:
+- `/oc explain this issue`
+- `/oc fix this bug`
+- `/opencode review this PR`
+
+See `git/opencode-github.md` for full details.
+
+### GitLab
+
+Add OpenCode to your `.gitlab-ci.yml` and use `@opencode` in comments:
+- `@opencode explain this issue`
+- `@opencode fix this`
+
+See `git/opencode-gitlab.md` for full details.
+
 ## Related
 
 - **Branching workflows**: `workflows/branch.md`
@@ -172,3 +203,5 @@ glab release list
 - **Releases**: `workflows/release.md`
 - **CI/CD**: `git/github-actions.md`
 - **Security**: `git/security.md`
+- **OpenCode GitHub**: `git/opencode-github.md`
+- **OpenCode GitLab**: `git/opencode-gitlab.md`
