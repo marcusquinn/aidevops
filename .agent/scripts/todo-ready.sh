@@ -94,6 +94,9 @@ output_text() {
             IN_PROGRESS)
                 ((in_progress_count++))
                 ;;
+            *)
+                # Ignore unknown status
+                ;;
         esac
     done
     
@@ -117,6 +120,9 @@ output_verbose() {
             READY)
                 echo -e "${GREEN}READY${NC} $id: $desc ${est:+($est)}"
                 ;;
+            *)
+                # Only processing READY in this loop
+                ;;
         esac
     done
     
@@ -130,6 +136,9 @@ output_verbose() {
             BLOCKED)
                 echo -e "${YELLOW}BLOCKED${NC} $id: $desc (waiting on: $blocker)"
                 ;;
+            *)
+                # Only processing BLOCKED in this loop
+                ;;
         esac
     done
     
@@ -142,6 +151,9 @@ output_verbose() {
         case "$status" in
             IN_PROGRESS)
                 echo -e "${BLUE}IN PROGRESS${NC} $id: $desc ${est:+($est)}"
+                ;;
+            *)
+                # Only processing IN_PROGRESS in this loop
                 ;;
         esac
     done
@@ -172,6 +184,9 @@ output_json() {
                 [[ $in_progress_count -gt 0 ]] && in_progress_json+=","
                 in_progress_json+="{\"id\":\"$id\",\"desc\":\"$desc\",\"est\":\"$est\"}"
                 ((in_progress_count++))
+                ;;
+            *)
+                # Ignore unknown status
                 ;;
         esac
     done
