@@ -11,6 +11,7 @@ mode: subagent
 Failure to follow this workflow is a bug in the AI assistant's behavior.
 
 **Self-check before editing**: Say "Checking git branch..." and run:
+
 ```bash
 ~/.aidevops/agents/scripts/pre-edit-check.sh
 ```
