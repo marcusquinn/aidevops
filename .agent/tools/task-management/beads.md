@@ -1,3 +1,9 @@
+---
+name: beads
+description: This subagent should only be called manually by the user.
+mode: subagent
+---
+
 # Beads - Task Graph Visualization
 
 Task dependency tracking and graph visualization for TODO.md and PLANS.md.
