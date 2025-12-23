@@ -121,7 +121,7 @@
     "_strategy": "Enable only for the outscraper subagent to reduce MCP tool loading overhead",
     "_opencode_access": "@outscraper subagent only",
     "enabled_agents": [],
-    "disabled_agents": ["Plan+", "Build+", "AI-DevOps", "WordPress", "Accounting", "Health", "Legal", "Research", "Sales", "Marketing", "SEO", "Content"]
+    "disabled_agents": ["Plan+", "Build+", "AI-DevOps", "WordPress", "Accounts", "Health", "Legal", "Research", "Sales", "Marketing", "SEO", "Content"]
   },
 
   "verification": {

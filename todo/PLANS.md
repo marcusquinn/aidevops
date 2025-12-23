@@ -244,7 +244,7 @@ Add OCR extraction capabilities to the accounting agent for automated invoice an
 **Reference:** @pontusab's OCR extraction pipeline approach (X post - details to be added when available)
 
 **Integration points:**
-- `accounting.md` - Main agent, add OCR as new capability
+- `accounts.md` - Main agent, add OCR as new capability
 - `services/accounting/quickfile.md` - Target for extracted data (purchases, expenses)
 - `tools/browser/` - Potential for receipt image capture workflows
 

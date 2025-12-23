@@ -57,7 +57,7 @@ echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 # Remove old primary agent markdown files (they're now in JSON, auto-discovered)
 # This cleans up any legacy files from before auto-discovery
 # Also removes demoted agents that are now subagents in tools/
-for f in Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md; do
+for f in Accounts.md Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md; do
     rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
@@ -100,6 +100,8 @@ DISPLAY_NAMES = {
     "plan-plus": "Plan+",
     "build-plus": "Build+",
     "aidevops": "AI-DevOps",
+    "seo": "SEO",
+    "social-media": "Social-Media",
 }
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
@@ -130,9 +132,14 @@ AGENT_TOOLS = {
         "webfetch": True, "task": True,
         "osgrep_*": True, "augment-context-engine_*": True
     },
-    "Accounting": {
+    "Accounts": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "quickfile_*": True,
+        "osgrep_*": True, "augment-context-engine_*": True
+    },
+    "Social-Media": {
+        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True,
         "osgrep_*": True, "augment-context-engine_*": True
     },
     "SEO": {
@@ -164,7 +171,7 @@ DEFAULT_TOOLS = {
 # Temperature settings (by display name, default 0.2)
 AGENT_TEMPS = {
     "Plan+": 0.2,
-    "Accounting": 0.1,
+    "Accounts": 0.1,
     "Legal": 0.1,
     "Content": 0.3,
     "Marketing": 0.3,

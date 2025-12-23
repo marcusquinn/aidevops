@@ -190,8 +190,9 @@ opencode mcp list
 | `marketing.md` | Marketing strategy |
 | `sales.md` | Sales operations |
 | `legal.md` | Legal compliance |
-| `accounting.md` | Financial operations |
+| `accounts.md` | Financial operations |
 | `health.md` | Health and wellness |
+| `social-media.md` | Social media management |
 
 ## Subagent Folders
 

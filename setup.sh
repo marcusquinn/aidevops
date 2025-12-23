@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.41.0
+# Version: 2.41.1
 #
 # Quick Install (one-liner):
 #   bash <(curl -fsSL https://aidevops.dev/install)
@@ -1879,7 +1879,7 @@ echo "  aidevops uninstall  - Remove aidevops"
     echo "OpenCode Primary Agents (12 total, Tab to switch):"
     echo "• Plan+      - Enhanced planning with context tools (read-only)"
     echo "• Build+     - Enhanced build with context tools (full access)"
-    echo "• Accounting, AI-DevOps, Content, Health, Legal, Marketing,"
+    echo "• Accounts, AI-DevOps, Content, Health, Legal, Marketing,"
     echo "  Research, Sales, SEO, WordPress"
     echo ""
     echo "Agent Skills (SKILL.md) - Cross-tool compatibility:"
