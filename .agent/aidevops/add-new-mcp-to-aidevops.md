@@ -134,7 +134,7 @@ Before proceeding, ask:
 > "Which main agents and subagents should have this MCP enabled?
 >
 > **Main Agents Available**:
-> Plan+, Build+, Accounting, AI-DevOps, Content, Health, Legal, Marketing,
+> Plan+, Build+, Accounts, AI-DevOps, Content, Health, Legal, Marketing,
 > Research, Sales, SEO, WordPress
 >
 > **Recommendation**: Enable globally disabled, then enable per-agent only

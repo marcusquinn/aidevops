@@ -1,10 +1,10 @@
 ---
-name: accounting
+name: accounts
 description: Financial operations and accounting - QuickFile integration, invoicing, expense tracking
 mode: subagent
 ---
 
-# Accounting - Main Agent
+# Accounts - Main Agent
 
 <!-- AI-CONTEXT-START -->
 
