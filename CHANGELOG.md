@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.2] - 2025-12-23
+
+### Fixed
+
+- enforce git workflow with pre-edit-check script
 ## [2.41.1] - 2025-12-23
 
 ### Changed
