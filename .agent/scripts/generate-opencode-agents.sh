@@ -51,13 +51,27 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
    What would you like to work on?"
 
 If the output contains `UPDATE_AVAILABLE|current|latest`, inform the user: "An aidevops update is available (current → latest). Run `aidevops update` to update, then restart OpenCode."
+
+## MANDATORY: Pre-Edit Git Check
+
+**BEFORE any Edit/Write tool call**, run:
+```bash
+~/.aidevops/agents/scripts/pre-edit-check.sh
+```
+
+If output shows "STOP - ON PROTECTED BRANCH": Do NOT proceed. Ask user to choose:
+1. Create suggested branch (recommended)
+2. Use different branch name  
+3. Stay on main (not recommended)
+
+After creating branch, call `session-rename_sync_branch` tool.
 EOF
 echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
 # Remove old primary agent markdown files (they're now in JSON, auto-discovered)
 # This cleans up any legacy files from before auto-discovery
 # Also removes demoted agents that are now subagents in tools/
-for f in Accounts.md Accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md; do
+for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md; do
     rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
@@ -106,7 +120,7 @@ DISPLAY_NAMES = {
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
 # Note: Build-Agent and Build-MCP demoted to subagents in tools/ as of v2.41.0
-AGENT_ORDER = ["Build+", "Plan+", "AI-DevOps"]
+AGENT_ORDER = ["Plan+", "Build+", "AI-DevOps"]
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
@@ -488,7 +502,7 @@ echo "  Primary agents: Auto-discovered from ~/.aidevops/agents/*.md (Tab-switch
 echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable)"
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
 echo ""
-echo "Tab order: Build+ → Plan+ → AI-DevOps → (alphabetical)"
+echo "Tab order: Plan+ → Build+ → AI-DevOps → (alphabetical)"
 echo ""
 echo "To add a new primary agent: Create ~/.aidevops/agents/{name}.md"
 echo "To add a new subagent: Create ~/.aidevops/agents/{folder}/{name}.md"

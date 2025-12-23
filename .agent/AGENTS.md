@@ -7,7 +7,17 @@ mode: subagent
 
 ## 🛑 MANDATORY: Pre-Edit Git Check
 
-**BEFORE reading any file with intent to edit, or calling any edit/write tool:**
+**CRITICAL**: This check MUST be performed BEFORE any edit/write tool call.
+Failure to follow this workflow is a bug in the AI assistant's behavior.
+
+**Self-check before editing**: Say "Checking git branch..." and run:
+```bash
+~/.aidevops/agents/scripts/pre-edit-check.sh
+```
+
+If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with edits.
+
+**Manual check if script unavailable:**
 
 1. Run `git branch --show-current`
 2. If on `main`, present this prompt and WAIT for user response:
