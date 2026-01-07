@@ -85,24 +85,38 @@ echo -e "  ${GREEN}✓${NC} Created /preflight command"
 # =============================================================================
 # POSTFLIGHT COMMAND
 # =============================================================================
-# Verify release health after tag and GitHub release
+# Check code audit feedback on latest push to branch or PR
 
 cat > "$OPENCODE_COMMAND_DIR/postflight.md" << 'EOF'
 ---
-description: Verify release health after tag and GitHub release
+description: Check code audit feedback on latest push (branch or PR)
 agent: Build+
 subtask: true
 ---
 
-Read ~/.aidevops/agents/workflows/postflight.md and follow its instructions.
+Check code audit tool feedback on the latest push.
 
-Verify release: $ARGUMENTS
+Target: $ARGUMENTS
 
-This includes:
-1. Tag exists and matches VERSION file
-2. GitHub release created successfully
-3. CHANGELOG.md updated
-4. No uncommitted changes
+**Auto-detection:**
+1. If on a feature branch with open PR → check that PR's feedback
+2. If on a feature branch without PR → check branch CI status
+3. If on main → check latest commit's CI/audit status
+4. If no git context or ambiguous → ask user which branch/PR to check
+
+**Checks performed:**
+1. GitHub Actions workflow status (pass/fail/pending)
+2. CodeRabbit comments and suggestions
+3. Codacy analysis results
+4. SonarCloud quality gate status
+5. Any blocking issues that need resolution
+
+**Commands used:**
+- `gh pr view --json reviews,comments` (if PR exists)
+- `gh run list --branch=<branch>` (CI status)
+- `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` (detailed checks)
+
+Report findings and recommend next actions (fix issues, merge, etc.)
 EOF
 ((command_count++))
 echo -e "  ${GREEN}✓${NC} Created /postflight command"
@@ -440,33 +454,55 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /context command"
 
 # =============================================================================
-# PR COMMAND (UNIFIED ORCHESTRATOR)
+# CREATE-PR COMMAND
 # =============================================================================
-# Unified PR workflow - orchestrates all quality checks
+# Create a PR from current branch with auto-generated title and description
 
-cat > "$OPENCODE_COMMAND_DIR/pr.md" << 'EOF'
+cat > "$OPENCODE_COMMAND_DIR/create-pr.md" << 'EOF'
 ---
-description: Unified PR workflow - orchestrates linting, auditing, standards, and intent vs reality
+description: Create PR from current branch with title and description
 agent: Build+
 ---
 
-Read ~/.aidevops/agents/workflows/pr.md and follow its instructions.
+Create a pull request from the current branch.
 
-Action: $ARGUMENTS
+Additional context: $ARGUMENTS
 
-This orchestrates all quality checks:
-1. /linters-local - ShellCheck, secretlint, pattern checks
-2. /code-audit-remote - CodeRabbit, Codacy, SonarCloud
-3. /code-standards - Documented standards compliance
-4. Intent vs Reality - Compare PR description to actual changes
+**Steps:**
+1. Check current branch (must not be main/master)
+2. Check for uncommitted changes (warn if present)
+3. Push branch to remote if not already pushed
+4. Generate PR title from branch name (e.g., `feature/add-login` → "Add login")
+5. Generate PR description from:
+   - Commit messages on this branch
+   - Changed files summary
+   - Any TODO.md/PLANS.md task references
+   - User-provided context (if any)
+6. Create PR using `gh pr create`
+7. Return PR URL
 
-Supports:
-- review: Run all checks and analyze PR
-- create: Create new PR after checks pass
-- merge: Merge a PR after approval
+**Example:**
+- `/create-pr` → Creates PR with auto-generated title/description
+- `/create-pr fixes authentication bug` → Adds context to description
 EOF
 ((command_count++))
-echo -e "  ${GREEN}✓${NC} Created /pr command"
+echo -e "  ${GREEN}✓${NC} Created /create-pr command"
+
+# Keep /pr as alias pointing to /create-pr for discoverability
+cat > "$OPENCODE_COMMAND_DIR/pr.md" << 'EOF'
+---
+description: Alias for /create-pr - Create PR from current branch
+agent: Build+
+---
+
+This is an alias for /create-pr. Creating PR from current branch.
+
+Context: $ARGUMENTS
+
+Run /create-pr with the same arguments.
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /pr command (alias for /create-pr)"
 
 # =============================================================================
 # CREATE-PRD COMMAND
@@ -1017,17 +1053,17 @@ echo "    /create-prd       - Generate Product Requirements Document"
 echo "    /generate-tasks   - Generate implementation tasks from PRD"
 echo ""
 echo "  Quality:"
+echo "    /preflight        - Quality checks before commit"
+echo "    /postflight       - Check code audit feedback on latest push"
 echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
 echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
 echo "    /code-standards   - Check against documented standards"
-echo "    /pr               - Unified PR workflow (orchestrates all checks)"
-echo "    /preflight        - Quality checks before release"
-echo "    /postflight       - Verify release health"
 echo ""
 echo "  Git & Release:"
 echo "    /feature          - Create feature branch"
 echo "    /bugfix           - Create bugfix branch"
 echo "    /hotfix           - Create hotfix branch"
+echo "    /create-pr        - Create PR from current branch"
 echo "    /release          - Full release workflow"
 echo "    /version-bump     - Bump project version"
 echo "    /changelog        - Update CHANGELOG.md"
@@ -1047,9 +1083,9 @@ echo "    /log-time-spent   - Log time spent on a task"
 echo ""
 echo "New users: Start with /onboarding to configure your services"
 echo ""
-echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /pr"
+echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /create-pr"
 echo "New work: discuss -> /save-todo -> later: /list-todo -> pick -> implement"
-echo "Quality workflow: /linters-local -> /code-audit-remote -> /pr"
+echo "Quality workflow: /preflight -> /create-pr -> /postflight"
 echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 echo ""
 echo "Restart OpenCode to load new commands."

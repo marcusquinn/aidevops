@@ -81,6 +81,36 @@ OpenCode auto-generates session titles from the first prompt. To sync session na
 
 **Best Practice**: After creating a branch, call `session-rename_sync_branch` tool to sync session name.
 
+**Scope Monitoring** (during session):
+
+When work evolves significantly from the branch name/purpose:
+
+| Signal | Example | Action |
+|--------|---------|--------|
+| Different feature area | Branch is `chore/update-deps`, now adding new API endpoint | Suggest new branch |
+| Unrelated bug fix | Branch is `feature/user-auth`, found unrelated CSS bug | Suggest separate branch |
+| Scope expansion | Branch is `bugfix/login-timeout`, now refactoring entire auth system | Suggest `refactor/` branch |
+| Command/API rename | Branch is `chore/optimize-X`, now renaming unrelated commands | Suggest new branch |
+
+**When detected**, proactively offer:
+
+> This work (`{description}`) seems outside the scope of `{current-branch}` ({original-purpose}).
+>
+> 1. Create new branch `{suggested-type}/{suggested-name}` (recommended)
+> 2. Continue on current branch (if intentionally expanding scope)
+> 3. Stash changes and switch to existing branch
+
+**Stash workflow** (if user chooses option 1 or 3):
+
+```bash
+git stash --include-untracked -m "WIP: {description}"
+git checkout main && git pull origin main
+git checkout -b {type}/{description}
+git stash pop
+```
+
+**Self-check trigger**: Before each file edit, briefly consider: "Does this change align with `{branch-name}`?"
+
 **Decision Tree**:
 
 | Situation | Action |
