@@ -41,30 +41,17 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 ## aidevops Framework Status
 
-**CRITICAL - DO THIS FIRST**: Before responding to ANY user message in a new conversation:
-1. Run this command using the Bash tool: `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh`
-2. Greet with exactly this format (with line breaks):
-   "Hi!
-   
-   We're running https://aidevops.sh v{version}.
-   
-   What would you like to work on?"
+**On conversation start**:
+1. If Bash tool available: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh`
+2. If Bash unavailable: Use Read tool on `~/.aidevops/agents/VERSION` to get version
+3. Greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
+4. Then respond to the user's actual message
 
-If the output contains `UPDATE_AVAILABLE|current|latest`, inform the user: "An aidevops update is available (current → latest). Run `aidevops update` to update, then restart OpenCode."
+If update check output contains `UPDATE_AVAILABLE|current|latest`, inform user to run `aidevops update`.
 
-## MANDATORY: Pre-Edit Git Check
+## Pre-Edit Git Check
 
-**BEFORE any Edit/Write tool call**, run:
-```bash
-~/.aidevops/agents/scripts/pre-edit-check.sh
-```
-
-If output shows "STOP - ON PROTECTED BRANCH": Do NOT proceed. Ask user to choose:
-1. Create suggested branch (recommended)
-2. Use different branch name  
-3. Stay on main (not recommended)
-
-After creating branch, call `session-rename_sync_branch` tool.
+Only for agents with Edit/Write/Bash tools. See ~/.aidevops/agents/AGENTS.md for workflow.
 EOF
 echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
