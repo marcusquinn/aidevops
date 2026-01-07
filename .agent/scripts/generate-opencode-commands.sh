@@ -1049,7 +1049,7 @@ Run the aidevops setup script to deploy the latest changes.
 
 **Command:**
 ```bash
-cd ~/Git/aidevops && ./setup.sh
+cd ~/Git/aidevops && ./setup.sh || exit
 ```
 
 **What this does:**
