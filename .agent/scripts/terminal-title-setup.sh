@@ -65,6 +65,81 @@ has_powerlevel10k() {
 }
 
 # =============================================================================
+# Tabby Terminal Detection and Configuration
+# =============================================================================
+
+TABBY_CONFIG_FILE="$HOME/Library/Application Support/tabby/config.yaml"
+
+has_tabby() {
+    [[ -f "$TABBY_CONFIG_FILE" ]]
+}
+
+# Check if Tabby has disableDynamicTitle: true (blocks OSC title changes)
+tabby_has_dynamic_title_disabled() {
+    if [[ ! -f "$TABBY_CONFIG_FILE" ]]; then
+        return 1
+    fi
+    grep -q "disableDynamicTitle: true" "$TABBY_CONFIG_FILE" 2>/dev/null
+}
+
+# Count how many profiles have dynamic title disabled
+tabby_count_disabled_profiles() {
+    if [[ ! -f "$TABBY_CONFIG_FILE" ]]; then
+        echo "0"
+        return
+    fi
+    grep -c "disableDynamicTitle: true" "$TABBY_CONFIG_FILE" 2>/dev/null || echo "0"
+}
+
+# Fix Tabby config to allow dynamic titles
+tabby_enable_dynamic_titles() {
+    if [[ ! -f "$TABBY_CONFIG_FILE" ]]; then
+        log_error "Tabby config not found: $TABBY_CONFIG_FILE"
+        return 1
+    fi
+    
+    # Create backup
+    cp "$TABBY_CONFIG_FILE" "${TABBY_CONFIG_FILE}.aidevops-backup"
+    
+    # Replace all instances
+    sed -i '' 's/disableDynamicTitle: true/disableDynamicTitle: false/g' "$TABBY_CONFIG_FILE"
+    
+    local count
+    count=$(grep -c "disableDynamicTitle: false" "$TABBY_CONFIG_FILE" 2>/dev/null || echo "0")
+    log_success "Updated $count Tabby profile(s) to allow dynamic titles"
+    log_info "Backup saved to: ${TABBY_CONFIG_FILE}.aidevops-backup"
+    log_info "Restart Tabby for changes to take effect"
+}
+
+# Check and offer to fix Tabby configuration
+check_and_fix_tabby() {
+    if ! has_tabby; then
+        return 0
+    fi
+    
+    if ! tabby_has_dynamic_title_disabled; then
+        log_success "Tabby is configured to allow dynamic tab titles"
+        return 0
+    fi
+    
+    local count
+    count=$(tabby_count_disabled_profiles)
+    
+    echo ""
+    log_warn "Tabby has 'disableDynamicTitle: true' in $count profile(s)"
+    log_info "This prevents terminal title sync from working"
+    echo ""
+    read -r -p "Fix Tabby config to allow dynamic titles? (y/n): " fix_tabby
+    
+    if [[ "$fix_tabby" == "y" ]]; then
+        tabby_enable_dynamic_titles
+    else
+        log_info "Skipped Tabby config fix"
+        log_info "You can fix manually: Settings → Profiles → Uncheck 'Disable dynamic title'"
+    fi
+}
+
+# =============================================================================
 # Integration Code Generators
 # =============================================================================
 
@@ -310,6 +385,9 @@ cmd_install() {
     # Install new integration
     install_integration "$shell_name" "$rc_file"
     
+    # Check and fix Tabby configuration if needed
+    check_and_fix_tabby
+    
     echo ""
     log_success "Terminal title integration installed!"
     echo ""
@@ -358,6 +436,20 @@ cmd_status() {
         echo "Powerlevel10k: $(has_powerlevel10k && echo "yes" || echo "no")"
     fi
     echo "Starship: $(has_starship && echo "yes" || echo "no")"
+    
+    # Tabby status
+    if has_tabby; then
+        echo ""
+        echo "Tabby terminal: yes"
+        if tabby_has_dynamic_title_disabled; then
+            local count
+            count=$(tabby_count_disabled_profiles)
+            log_warn "Tabby has dynamic titles DISABLED in $count profile(s)"
+            echo "  Run 'terminal-title-setup.sh install' to fix"
+        else
+            echo "Tabby dynamic titles: enabled"
+        fi
+    fi
     echo ""
     
     if [[ -n "$rc_file" ]] && is_installed "$rc_file"; then
