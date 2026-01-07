@@ -1035,6 +1035,39 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /onboarding command"
 
 # =============================================================================
+# SETUP-AIDEVOPS COMMAND
+# =============================================================================
+# Run setup.sh to deploy latest agent changes locally
+
+cat > "$OPENCODE_COMMAND_DIR/setup-aidevops.md" << 'EOF'
+---
+description: Deploy latest aidevops agent changes locally
+agent: Build+
+---
+
+Run the aidevops setup script to deploy the latest changes.
+
+**Command:**
+```bash
+cd ~/Git/aidevops && ./setup.sh
+```
+
+**What this does:**
+1. Deploys agents to ~/.aidevops/agents/
+2. Updates OpenCode commands in ~/.config/opencode/command/
+3. Regenerates agent configurations
+4. Copies VERSION file for version checks
+
+**After setup completes:**
+- Restart OpenCode to load new commands and config
+- New/updated commands will be available
+
+Arguments: $ARGUMENTS
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /setup-aidevops command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -1076,6 +1109,7 @@ echo "    /webmaster-keywords - Keywords from GSC + Bing for your sites"
 echo ""
 echo "  Utilities:"
 echo "    /onboarding       - Interactive setup wizard (START HERE for new users)"
+echo "    /setup-aidevops   - Deploy latest agent changes locally"
 echo "    /agent-review     - Review and improve agent instructions"
 echo "    /context          - Build AI context"
 echo "    /list-keys        - List API keys with storage locations"
