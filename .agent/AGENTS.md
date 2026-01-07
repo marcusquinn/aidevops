@@ -7,6 +7,9 @@ mode: subagent
 
 ## 🛑 MANDATORY: Pre-Edit Git Check
 
+> **Skip this section if you don't have Edit/Write/Bash tools** (e.g., Plan+ agent).
+> Read-only agents should proceed directly to responding to the user.
+
 **CRITICAL**: This check MUST be performed BEFORE any edit/write tool call.
 Failure to follow this workflow is a bug in the AI assistant's behavior.
 
