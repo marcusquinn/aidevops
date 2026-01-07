@@ -381,6 +381,8 @@ aidevops supports multiple discovery methods:
 
 **Note**: Tool-specific files (`.cursorrules`, `.windsurfrules`, etc.) are not tracked in git. Create symlinks locally if needed.
 
+**MCP Token Optimization**: Disable heavy MCPs globally, enable per-agent. See `tools/build-agent/build-agent.md` for patterns.
+
 ## Development Workflows
 
 For versioning, releases, and git operations:

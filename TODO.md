@@ -68,8 +68,32 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t018 Enhance Plan+ and Build+ with OpenCode's Latest Features #plan → [todo/PLANS.md#enhance-plan-and-build-with-opencodes-latest-features] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21
 - [ ] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~2h (ai:1h test:30m read:30m) logged:2025-12-22
+- [ ] t023 Evaluate Shannon AI pentester for security testing integration #security #tools ~2h (ai:1h test:30m read:30m) logged:2025-01-03
+- [ ] t024 Evaluate Dexter autonomous financial research agent #research #finance #agents ~2h (ai:1h test:30m read:30m) logged:2025-01-03
+- [ ] t025 Create terminal optimization /command and @subagent using Claude #tools #terminal #productivity ~4h (ai:2h test:1h read:1h) logged:2025-01-03 ref:https://x.com/deedydas/status/2007342412335927400
+- [ ] t026 Create subscription audit /command and @subagent for accounts agent #accounts #subscriptions #automation ~6h (ai:3h test:2h read:1h) logged:2025-01-03 ref:https://x.com/frankdegods/status/2007199488776253597
+- [ ] t027 Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only) #tools #accessibility #linux ~3h (ai:1.5h test:1h read:30m) logged:2025-01-03
+- [ ] t028 Setup sisyphus-dev-ai style GitHub collaborator for autonomous issue resolution #git #automation #agents ~1d (ai:4h test:4h read:2h) logged:2025-01-03 ref:https://github.com/code-yeongyu/oh-my-opencode/issues/425
+- [ ] t029 Review @penberg post for aidevops inclusion or similar approach #research #tools ~1h (ai:30m read:30m) logged:2025-01-03 ref:https://x.com/penberg/status/2007533204622770214
+- [ ] t030 Evaluate @irl_danB post for useful advantages #research #tools ~1h (ai:30m read:30m) logged:2025-01-03 ref:https://x.com/irl_danB/status/2007259356103094523
+- [ ] t031 Company orchestration agent/workflow inspired by @DanielleMorrill #plan #agents #business ~4h (ai:2h test:1h read:1h) logged:2025-01-03 ref:https://x.com/DanielleMorrill/status/2007508036584341899
+- [ ] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~3h (ai:1.5h test:1h read:30m) logged:2025-01-03 ref:https://x.com/elithrar/status/2007455910218871067
+- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~2h (ai:1h test:30m read:30m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
+- [ ] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03
+- [ ] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03
+- [ ] t036 Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain) #tools #code-review ~1h (ai:30m test:15m read:15m) logged:2025-01-03
+- [ ] t037 Review ALwrity for SEO/marketing capabilities or inspiration #research #seo #marketing ~3h (ai:1.5h test:30m read:1h) logged:2025-01-03
+- [ ] t038 Add CDN origin IP leak detection subagent (Cloudmare-inspired) #security #dns #hosting ~4h (ai:2h test:1h read:1h) logged:2025-01-03
+- [ ] t039 Add anti-detect browser subagent for multi-account automation #tools #browser #privacy ~8h (ai:4h test:2h read:2h) logged:2025-01-03 ref:https://github.com/daijro/camoufox
+  - Notes: Camoufox (4.6k stars) - FOSS Firefox anti-detect with Playwright, fingerprint rotation, WebRTC spoofing, passes DataDome/Cloudflare/Imperva. See also: https://github.com/TheGP/untidetect-tools (comprehensive list). Needs residential proxy integration for multi-account (DataImpulse $1/GB, WebShare $6/GB).
+- [ ] t040 Add Reddit CLI/API integration for reading and posting #tools #social-media ~4h (ai:2h test:1h read:1h) logged:2025-01-05 ref:https://github.com/praw-dev/praw
+  - Notes: PRAW (Python Reddit API Wrapper) 4k stars. JSON endpoints (.json suffix) still work but rate-limited: 96 calls/10min unauthenticated (per IP), 996/10min authenticated (per account). CORS now enforced so web frontends blocked. For heavy scraping: use OAuth + rotating residential proxies, or anti-detect browser with account rotation.
+- [ ] t041 Document curl-copy authenticated scraping workflow #tools #browser #scraping ~1h (ai:30m test:15m read:15m) logged:2025-01-05
+  - Notes: Quick method for scraping authenticated pages: DevTools → Network → Copy as cURL → paste to Claude. Copies session cookies with request. Works on dashboards, gated content, private APIs. Caveat: tokens expire, need to recopy for short sessions. Add to tools/browser/ or workflows/.
+- [ ] t042 Create email-health-check /command and @subagent #services #email #deliverability ~4h (ai:2h test:1h read:1h) logged:2025-01-05
+  - Notes: Check SPF/DKIM/DMARC/MX/blacklist status. Tools: checkdmarc (299 stars, Python CLI - pip install checkdmarc), mail-tester.com (send test email, get score), mxtoolbox.com/emailhealth (100+ blacklists, MX/DNS checks). Could wrap checkdmarc CLI + scrape mail-tester results. Add to services/email/.
 
-<!--TOON:backlog[16]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[35]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
@@ -86,6 +110,26 @@ t017,SEO Machine Integration for aidevops,,plan|seo|content|agents,2d,1d,0.5d,0.
 t018,Enhance Plan+ and Build+ with OpenCode's Latest Features,,plan|opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,pending,,,
 t020,Git Issues Bi-directional Sync (GitHub GitLab Gitea),,plan|git|sync,3d,1.5d,1d,0.5d,2025-12-21T16:30Z,pending,,,
 t021,Auto-mark tasks complete from commit messages in release,,workflow|automation,2h,1h,30m,30m,2025-12-22T05:00Z,pending,,,
+t023,Evaluate Shannon AI pentester for security testing integration,,security|tools,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
+t024,Evaluate Dexter autonomous financial research agent,,research|finance|agents,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
+t025,Create terminal optimization /command and @subagent using Claude,,tools|terminal|productivity,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
+t026,Create subscription audit /command and @subagent for accounts agent,,accounts|subscriptions|automation,6h,3h,2h,1h,2025-01-03T00:00Z,pending,,,
+t027,Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only),,tools|accessibility|linux,3h,1.5h,1h,30m,2025-01-03T00:00Z,pending,,,
+t028,Setup sisyphus-dev-ai style GitHub collaborator for autonomous issue resolution,,git|automation|agents,1d,4h,4h,2h,2025-01-03T00:00Z,pending,,,
+t029,Review @penberg post for aidevops inclusion or similar approach,,research|tools,1h,30m,,30m,2025-01-03T00:00Z,pending,,,
+t030,Evaluate @irl_danB post for useful advantages,,research|tools,1h,30m,,30m,2025-01-03T00:00Z,pending,,,
+t031,Company orchestration agent/workflow inspired by @DanielleMorrill,,plan|agents|business,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
+t032,Create performance skill/subagent/command inspired by @elithrar,,tools|performance,3h,1.5h,1h,30m,2025-01-03T00:00Z,pending,,,
+t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
+t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
+t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
+t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,pending,,,
+t037,Review ALwrity for SEO/marketing capabilities or inspiration,,research|seo|marketing,3h,1.5h,30m,1h,2025-01-03T00:00Z,pending,,,
+t038,Add CDN origin IP leak detection subagent (Cloudmare-inspired),,security|dns|hosting,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
+t039,Add anti-detect browser subagent for multi-account automation,,tools|browser|privacy,8h,4h,2h,2h,2025-01-03T00:00Z,pending,,,
+t040,Add Reddit CLI/API integration for reading and posting,,tools|social-media,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
+t041,Document curl-copy authenticated scraping workflow,,tools|browser|scraping,1h,30m,15m,15m,2025-01-05T00:00Z,pending,,,
+t042,Create email-health-check /command and @subagent,,services|email|deliverability,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -172,5 +216,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-25,16,0,0,24,0,22d8h30m,15h50m,0,16
+44,35,0,0,24,0,26d3h30m,15h50m,0,35
 -->
