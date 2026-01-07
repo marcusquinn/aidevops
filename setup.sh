@@ -912,10 +912,32 @@ setup_terminal_title() {
         return 0
     fi
     
-    # Ask user if they want to install
+    # Show current status before asking
     echo ""
     print_info "Terminal title integration syncs your terminal tab with git repo/branch"
     print_info "Example: Tab shows 'aidevops/feature/xyz' when in that branch"
+    echo ""
+    echo "Current status:"
+    
+    # Shell info
+    local shell_info="$shell_name"
+    if [[ "$shell_name" == "zsh" ]] && [[ -d "$HOME/.oh-my-zsh" ]]; then
+        shell_info="$shell_name (Oh-My-Zsh)"
+    fi
+    echo "  Shell: $shell_info"
+    
+    # Tabby info
+    local tabby_config="$HOME/Library/Application Support/tabby/config.yaml"
+    if [[ -f "$tabby_config" ]]; then
+        local disabled_count
+        disabled_count=$(grep -c "disableDynamicTitle: true" "$tabby_config" 2>/dev/null || echo "0")
+        if [[ "$disabled_count" -gt 0 ]]; then
+            echo "  Tabby: detected, dynamic titles disabled in $disabled_count profile(s) (will fix)"
+        else
+            echo "  Tabby: detected, dynamic titles enabled"
+        fi
+    fi
+    
     echo ""
     read -r -p "Install terminal title integration? (y/n): " install_title
     
