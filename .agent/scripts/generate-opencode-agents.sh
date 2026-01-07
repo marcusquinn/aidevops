@@ -47,7 +47,7 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 3. Greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
 4. Then respond to the user's actual message
 
-If update check output contains `UPDATE_AVAILABLE|current|latest`, inform user to run `aidevops update`.
+If update check output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|2.41.1|2.41.2`), inform user: "Update available (current → latest). Run `aidevops update` to update."
 
 ## Pre-Edit Git Check
 

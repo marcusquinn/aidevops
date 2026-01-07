@@ -961,7 +961,13 @@ deploy_aidevops_agents() {
         
         # Copy VERSION file from repo root to deployed agents
         if [[ -f "$script_dir/VERSION" ]]; then
-            cp "$script_dir/VERSION" "$target_dir/VERSION"
+            if cp "$script_dir/VERSION" "$target_dir/VERSION"; then
+                print_info "Copied VERSION file to deployed agents"
+            else
+                print_warning "Failed to copy VERSION file (Plan+ may not read version correctly)"
+            fi
+        else
+            print_warning "VERSION file not found in repo root"
         fi
         
         # Inject extracted OpenCode plan-reminder into Plan+ if available
