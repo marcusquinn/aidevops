@@ -959,6 +959,11 @@ deploy_aidevops_agents() {
         
         print_info "Deployed $agent_count agent files and $script_count scripts"
         
+        # Copy VERSION file from repo root to deployed agents
+        if [[ -f "$script_dir/VERSION" ]]; then
+            cp "$script_dir/VERSION" "$target_dir/VERSION"
+        fi
+        
         # Inject extracted OpenCode plan-reminder into Plan+ if available
         local plan_reminder="$HOME/.aidevops/cache/opencode-prompts/plan-reminder.txt"
         local plan_plus="$target_dir/plan-plus.md"
