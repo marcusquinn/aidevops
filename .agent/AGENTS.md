@@ -128,6 +128,7 @@ User confirms with numbered options to override if needed.
 3. Create branch and call `session-rename_sync_branch` tool to sync session name
 4. Record `started:` timestamp in TODO.md if matching task exists
 5. Read `workflows/git-workflow.md` for full workflow guidance
+6. **Monitor scope**: If work diverges from branch purpose, suggest new branch
 
 **Session tools** (OpenCode):
 - `session-rename_sync_branch` - Auto-sync session name with current git branch (preferred)
