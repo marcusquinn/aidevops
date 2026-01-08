@@ -139,14 +139,17 @@ get_repo_name() {
     # even when in a linked worktree
     git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
     
+    # Convert to absolute path to handle subdirectories correctly
+    # realpath may not exist on all systems, use cd/pwd as fallback
+    if command -v realpath &>/dev/null; then
+        git_common_dir=$(realpath "$git_common_dir" 2>/dev/null) || git_common_dir=$(cd "$git_common_dir" 2>/dev/null && pwd)
+    else
+        git_common_dir=$(cd "$git_common_dir" 2>/dev/null && pwd) || return 1
+    fi
+    
     # The common dir is the .git folder of the main repo
     # Get its parent to find the main repo root
     repo_path=$(dirname "$git_common_dir")
-    
-    # Handle case where .git is the common dir (main worktree)
-    if [[ "$repo_path" == "." ]]; then
-        repo_path=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
-    fi
     
     basename "$repo_path"
 }

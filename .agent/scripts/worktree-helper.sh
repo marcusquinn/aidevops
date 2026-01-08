@@ -55,6 +55,28 @@ get_current_branch() {
     git branch --show-current 2>/dev/null || echo ""
 }
 
+# Get the default branch (main or master)
+get_default_branch() {
+    # Try to get from remote HEAD
+    local default_branch
+    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    
+    if [[ -n "$default_branch" ]]; then
+        echo "$default_branch"
+        return 0
+    fi
+    
+    # Fallback: check if main or master exists
+    if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+        echo "main"
+    elif git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+        echo "master"
+    else
+        # Last resort default
+        echo "main"
+    fi
+}
+
 is_main_worktree() {
     local git_dir
     git_dir=$(git rev-parse --git-dir 2>/dev/null)
@@ -199,9 +221,11 @@ cmd_list() {
                 if [[ "$is_bare" == "true" ]]; then
                     echo -e "  ${YELLOW}(bare)${NC} $worktree_path"
                 else
-                    # Check if branch is merged
+                    # Check if branch is merged into default branch
                     local merged_marker=""
-                    if [[ -n "$worktree_branch" ]] && git branch --merged main 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+                    local default_branch
+                    default_branch=$(get_default_branch)
+                    if [[ -n "$worktree_branch" ]] && git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
                         merged_marker=" ${YELLOW}(merged)${NC}"
                     fi
                     
@@ -339,15 +363,18 @@ cmd_clean() {
     local worktree_path=""
     local worktree_branch=""
     
+    local default_branch
+    default_branch=$(get_default_branch)
+    
     while IFS= read -r line; do
         if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
             worktree_path="${BASH_REMATCH[1]}"
         elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
             worktree_branch="${BASH_REMATCH[1]}"
         elif [[ -z "$line" ]]; then
-            # End of entry, check if merged
-            if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "main" ]] && [[ "$worktree_branch" != "master" ]]; then
-                if git branch --merged main 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+            # End of entry, check if merged (skip default branch)
+            if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
+                if git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
                     found_any=true
                     echo -e "  ${YELLOW}$worktree_branch${NC} (merged)"
                     echo "    $worktree_path"
@@ -376,8 +403,8 @@ cmd_clean() {
             elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
                 worktree_branch="${BASH_REMATCH[1]}"
             elif [[ -z "$line" ]]; then
-                if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "main" ]] && [[ "$worktree_branch" != "master" ]]; then
-                    if git branch --merged main 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+                if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
+                    if git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
                         echo -e "${BLUE}Removing $worktree_branch...${NC}"
                         git worktree remove "$worktree_path" 2>/dev/null || true
                     fi

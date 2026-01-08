@@ -483,6 +483,13 @@ run_external_loop() {
         return 1
     fi
 
+    # Validate tool availability before starting loop
+    if ! command -v "$tool" &>/dev/null; then
+        print_error "Tool '$tool' not found. Please install it or use --tool to specify a different tool."
+        print_info "Available tools: opencode, claude, aider"
+        return 1
+    fi
+
     print_info "Starting external Ralph loop with $tool"
     echo "Prompt: $prompt"
     echo "Max iterations: $(if [[ $max_iterations -gt 0 ]]; then echo "$max_iterations"; else echo "unlimited"; fi)"
@@ -515,23 +522,29 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
             full_prompt="[Ralph iteration $iteration] $prompt"
         fi
 
-        # Run the AI tool
+        # Run the AI tool (capture exit code, log failures but continue loop)
+        local tool_exit_code=0
         case "$tool" in
             opencode)
-                echo "$full_prompt" | opencode --print > "$output_file" 2>&1 || true
+                echo "$full_prompt" | opencode --print > "$output_file" 2>&1 || tool_exit_code=$?
                 ;;
             claude)
-                echo "$full_prompt" | claude --print > "$output_file" 2>&1 || true
+                echo "$full_prompt" | claude --print > "$output_file" 2>&1 || tool_exit_code=$?
                 ;;
             aider)
                 # Aider uses --message flag only (not stdin) to avoid duplicate prompts
-                aider --yes --message "$full_prompt" > "$output_file" 2>&1 || true
+                aider --yes --message "$full_prompt" > "$output_file" 2>&1 || tool_exit_code=$?
                 ;;
             *)
                 print_error "Unknown tool: $tool"
                 return 1
                 ;;
         esac
+
+        # Log tool failures but continue (AI tools may exit non-zero for various reasons)
+        if [[ $tool_exit_code -ne 0 ]]; then
+            print_warning "Tool '$tool' exited with code $tool_exit_code (continuing loop)"
+        fi
 
         # Check for completion
         if [[ "$completion_promise" != "null" ]]; then
