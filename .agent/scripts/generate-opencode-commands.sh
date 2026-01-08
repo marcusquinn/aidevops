@@ -1068,6 +1068,109 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /setup-aidevops command"
 
 # =============================================================================
+# RALPH-LOOP COMMAND
+# =============================================================================
+# Start iterative AI development loop (Ralph Wiggum technique)
+
+cat > "$OPENCODE_COMMAND_DIR/ralph-loop.md" << 'EOF'
+---
+description: Start iterative AI development loop (Ralph Wiggum technique)
+agent: Build+
+---
+
+Read ~/.aidevops/agents/workflows/ralph-loop.md and follow its instructions.
+
+Start a Ralph loop for iterative development.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/ralph-loop "<prompt>" --max-iterations <n> --completion-promise "<text>"
+```
+
+**Options:**
+- `--max-iterations <n>` - Stop after N iterations (default: unlimited)
+- `--completion-promise <text>` - Phrase that signals completion
+
+**Setup the loop:**
+```bash
+~/.aidevops/agents/scripts/ralph-loop-helper.sh setup $ARGUMENTS
+```
+
+**How it works:**
+1. You work on the task
+2. When you try to exit, the SAME prompt is fed back
+3. You see your previous work in files and git history
+4. Iterate until completion or max iterations
+
+**Completion:**
+To signal completion, output: `<promise>YOUR_PHRASE</promise>`
+The promise must be TRUE - do not output false promises to escape.
+
+**Examples:**
+```bash
+/ralph-loop "Build a REST API for todos" --max-iterations 20 --completion-promise "DONE"
+/ralph-loop "Fix all TypeScript errors" --completion-promise "ALL_FIXED" --max-iterations 10
+```
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /ralph-loop command"
+
+# =============================================================================
+# CANCEL-RALPH COMMAND
+# =============================================================================
+# Cancel active Ralph loop
+
+cat > "$OPENCODE_COMMAND_DIR/cancel-ralph.md" << 'EOF'
+---
+description: Cancel active Ralph Wiggum loop
+agent: Build+
+---
+
+Cancel the active Ralph loop.
+
+**Check and cancel:**
+```bash
+~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
+```
+
+This removes the state file at `.claude/ralph-loop.local.md` and stops the loop.
+
+If no loop is active, it will report "No active Ralph loop found."
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /cancel-ralph command"
+
+# =============================================================================
+# RALPH-STATUS COMMAND
+# =============================================================================
+# Show Ralph loop status
+
+cat > "$OPENCODE_COMMAND_DIR/ralph-status.md" << 'EOF'
+---
+description: Show current Ralph loop status
+agent: Build+
+---
+
+Show the current Ralph loop status.
+
+**Check status:**
+```bash
+~/.aidevops/agents/scripts/ralph-loop-helper.sh status
+```
+
+This shows:
+- Whether a loop is active
+- Current iteration number
+- Max iterations setting
+- Completion promise (if set)
+- When the loop started
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /ralph-status command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -1114,6 +1217,11 @@ echo "    /agent-review     - Review and improve agent instructions"
 echo "    /context          - Build AI context"
 echo "    /list-keys        - List API keys with storage locations"
 echo "    /log-time-spent   - Log time spent on a task"
+echo ""
+echo "  Automation:"
+echo "    /ralph-loop       - Start iterative AI development loop"
+echo "    /cancel-ralph     - Cancel active Ralph loop"
+echo "    /ralph-status     - Show Ralph loop status"
 echo ""
 echo "New users: Start with /onboarding to configure your services"
 echo ""

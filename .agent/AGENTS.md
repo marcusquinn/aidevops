@@ -240,7 +240,7 @@ opencode mcp list
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (git-workflow, branch, plans, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace) |
+| `workflows/` | Process guides (git-workflow, branch, plans, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace, ralph-loop) |
 | `templates/` | PRD and task templates (prd-template, tasks-template) |
 | `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment, release) |
 
@@ -337,6 +337,7 @@ Never create files in `~/` root for files needed only with the current task.
 | `opencode-test-helper.sh` | Test OpenCode config changes via CLI |
 | `beads-sync-helper.sh` | Sync TODO.md/PLANS.md with Beads graph |
 | `todo-ready.sh` | Show tasks with no open blockers |
+| `ralph-loop-helper.sh` | Iterative AI development loops (Ralph technique) |
 
 ## Quality Workflow
 
@@ -407,6 +408,7 @@ For versioning, releases, and git operations:
 | PR review | `workflows/pr.md` |
 | Remote auditing | `workflows/code-audit-remote.md` |
 | Multi-repo work | `workflows/multi-repo-workspace.md` |
+| Iterative AI loops | `workflows/ralph-loop.md` |
 
 **Quick commands:**
 
