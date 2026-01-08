@@ -327,6 +327,13 @@ check_completion() {
         return 0
     fi
 
+    # Check for Perl dependency (required for multiline promise extraction)
+    if ! command -v perl &>/dev/null; then
+        print_warning "Perl not found - promise extraction may fail. Install perl for reliable completion detection."
+        echo "NOT_COMPLETE"
+        return 0
+    fi
+
     # Extract text from <promise> tags using Perl for multiline support
     local promise_text
     promise_text=$(echo "$output" | perl -0777 -pe 's/.*?<promise>(.*?)<\/promise>.*/$1/s; s/^\s+|\s+$//g; s/\s+/ /g' 2>/dev/null || echo "")
@@ -363,7 +370,8 @@ increment_iteration() {
     local next_iteration=$((current_iteration + 1))
 
     # Update iteration in frontmatter (portable across macOS and Linux)
-    local temp_file="${RALPH_STATE_FILE}.tmp.$$"
+    local temp_file
+    temp_file=$(mktemp) || { print_error "Failed to create temp file"; return 1; }
     sed "s/^iteration: .*/iteration: $next_iteration/" "$RALPH_STATE_FILE" > "$temp_file"
     mv "$temp_file" "$RALPH_STATE_FILE"
 
@@ -516,8 +524,8 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
                 echo "$full_prompt" | claude --print > "$output_file" 2>&1 || true
                 ;;
             aider)
-                # Aider uses --message flag, not stdin
-                aider --message "$full_prompt" > "$output_file" 2>&1 || true
+                # Aider uses --message flag only (not stdin) to avoid duplicate prompts
+                aider --yes --message "$full_prompt" > "$output_file" 2>&1 || true
                 ;;
             *)
                 print_error "Unknown tool: $tool"
