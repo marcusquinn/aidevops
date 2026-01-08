@@ -37,24 +37,40 @@ readonly NC='\033[0m' # No Color
 # Helper Functions
 # =============================================================================
 
+# Print error message to stderr
+# Arguments:
+#   $1 - Error message to display
+# Returns: 0
 print_error() {
     local message="$1"
     echo -e "${RED}Error:${NC} ${message}" >&2
     return 0
 }
 
+# Print success message in green
+# Arguments:
+#   $1 - Success message to display
+# Returns: 0
 print_success() {
     local message="$1"
     echo -e "${GREEN}${message}${NC}"
     return 0
 }
 
+# Print warning message in yellow
+# Arguments:
+#   $1 - Warning message to display
+# Returns: 0
 print_warning() {
     local message="$1"
     echo -e "${YELLOW}${message}${NC}"
     return 0
 }
 
+# Print info message in blue
+# Arguments:
+#   $1 - Info message to display
+# Returns: 0
 print_info() {
     local message="$1"
     echo -e "${BLUE}${message}${NC}"
@@ -129,6 +145,11 @@ EOF
 # Core Functions
 # =============================================================================
 
+# Setup a new Ralph loop by creating state file
+# Arguments:
+#   $@ - Prompt text and options (--max-iterations N, --completion-promise "TEXT")
+# Returns: 0 on success, 1 on error
+# Side effects: Creates .claude/ralph-loop.local.md state file
 setup_loop() {
     local prompt=""
     local max_iterations=0
@@ -232,6 +253,10 @@ EOF
     return 0
 }
 
+# Cancel the active Ralph loop
+# Arguments: none
+# Returns: 0 (always succeeds)
+# Side effects: Removes state file if it exists
 cancel_loop() {
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
         print_warning "No active Ralph loop found."
@@ -247,6 +272,10 @@ cancel_loop() {
     return 0
 }
 
+# Display current Ralph loop status
+# Arguments: none
+# Returns: 0 (always succeeds)
+# Output: Status information to stdout
 show_status() {
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
         echo "No active Ralph loop."
@@ -282,6 +311,12 @@ show_status() {
     return 0
 }
 
+# Check if output contains the completion promise
+# Arguments:
+#   $1 - Output text to check
+#   $2 - Completion promise phrase to look for
+# Returns: 0 (always succeeds)
+# Output: "COMPLETE", "NOT_COMPLETE", or "NO_PROMISE" to stdout
 check_completion() {
     local output="$1"
     local completion_promise="${2:-}"
@@ -306,6 +341,10 @@ check_completion() {
     return 0
 }
 
+# Increment the iteration counter in state file
+# Arguments: none
+# Returns: 0 on success, 1 if no active loop or corrupted state
+# Output: New iteration number to stdout
 increment_iteration() {
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
         print_error "No active Ralph loop to increment"
@@ -332,6 +371,10 @@ increment_iteration() {
     return 0
 }
 
+# Get the prompt from the state file
+# Arguments: none
+# Returns: 0 on success, 1 if no active loop
+# Output: Prompt text to stdout
 get_prompt() {
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
         print_error "No active Ralph loop"
@@ -343,6 +386,10 @@ get_prompt() {
     return 0
 }
 
+# Get max iterations setting from state file
+# Arguments: none
+# Returns: 0 (always succeeds)
+# Output: Max iterations number to stdout (0 if no active loop)
 get_max_iterations() {
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
         echo "0"
@@ -355,6 +402,10 @@ get_max_iterations() {
     return 0
 }
 
+# Get completion promise from state file
+# Arguments: none
+# Returns: 0 (always succeeds)
+# Output: Completion promise to stdout ("null" if no active loop or not set)
 get_completion_promise() {
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
         echo "null"
@@ -367,6 +418,11 @@ get_completion_promise() {
     return 0
 }
 
+# Run an external Ralph loop for tools without hook support
+# Arguments:
+#   $@ - Prompt and options (--tool NAME, --max-iterations N, --completion-promise "TEXT")
+# Returns: 0 on completion, 1 on error
+# Side effects: Runs AI tool repeatedly until completion or max iterations
 run_external_loop() {
     local prompt=""
     local max_iterations=0
@@ -378,14 +434,30 @@ run_external_loop() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --max-iterations)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--max-iterations requires a number argument"
+                    return 1
+                fi
+                if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                    print_error "--max-iterations must be a positive integer, got: $2"
+                    return 1
+                fi
                 max_iterations="$2"
                 shift 2
                 ;;
             --completion-promise)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--completion-promise requires a text argument"
+                    return 1
+                fi
                 completion_promise="$2"
                 shift 2
                 ;;
             --tool)
+                if [[ -z "${2:-}" ]]; then
+                    print_error "--tool requires a tool name argument"
+                    return 1
+                fi
                 tool="$2"
                 shift 2
                 ;;
@@ -444,7 +516,8 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
                 echo "$full_prompt" | claude --print > "$output_file" 2>&1 || true
                 ;;
             aider)
-                echo "$full_prompt" | aider --message "$full_prompt" > "$output_file" 2>&1 || true
+                # Aider uses --message flag, not stdin
+                aider --message "$full_prompt" > "$output_file" 2>&1 || true
                 ;;
             *)
                 print_error "Unknown tool: $tool"

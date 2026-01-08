@@ -42,30 +42,45 @@ readonly NC='\033[0m'
 # Helper Functions
 # =============================================================================
 
+# Print error message to stderr with prefix
+# Arguments: $1 - Error message
+# Returns: 0
 print_error() {
     local message="$1"
     echo -e "${RED}[quality-loop] Error:${NC} ${message}" >&2
     return 0
 }
 
+# Print success message in green with prefix
+# Arguments: $1 - Success message
+# Returns: 0
 print_success() {
     local message="$1"
     echo -e "${GREEN}[quality-loop]${NC} ${message}"
     return 0
 }
 
+# Print warning message in yellow with prefix
+# Arguments: $1 - Warning message
+# Returns: 0
 print_warning() {
     local message="$1"
     echo -e "${YELLOW}[quality-loop]${NC} ${message}"
     return 0
 }
 
+# Print info message in blue with prefix
+# Arguments: $1 - Info message
+# Returns: 0
 print_info() {
     local message="$1"
     echo -e "${BLUE}[quality-loop]${NC} ${message}"
     return 0
 }
 
+# Print step message in cyan with prefix
+# Arguments: $1 - Step message
+# Returns: 0
 print_step() {
     local message="$1"
     echo -e "${CYAN}[quality-loop]${NC} ${message}"
@@ -76,6 +91,13 @@ print_step() {
 # State Management
 # =============================================================================
 
+# Create state file for a new quality loop
+# Arguments:
+#   $1 - Loop type (preflight, pr-review, postflight)
+#   $2 - Max iterations
+#   $3 - Options string
+# Returns: 0
+# Side effects: Creates .claude/quality-loop.local.md
 create_state() {
     local loop_type="$1"
     local max_iterations="$2"
@@ -99,6 +121,11 @@ EOF
     return 0
 }
 
+# Update a field in the state file
+# Arguments:
+#   $1 - Field name
+#   $2 - New value
+# Returns: 0 on success, 1 if no state file
 update_state() {
     local field="$1"
     local value="$2"
@@ -113,6 +140,10 @@ update_state() {
     return 0
 }
 
+# Get a field value from the state file
+# Arguments: $1 - Field name
+# Returns: 0
+# Output: Field value to stdout (empty if not found)
 get_state_field() {
     local field="$1"
     
@@ -127,6 +158,10 @@ get_state_field() {
     return 0
 }
 
+# Increment iteration counter in state file
+# Arguments: none
+# Returns: 0
+# Output: New iteration number to stdout
 increment_iteration() {
     local current
     current=$(get_state_field "iteration")
@@ -141,6 +176,10 @@ increment_iteration() {
     return 0
 }
 
+# Increment fixes applied counter in state file
+# Arguments: none
+# Returns: 0
+# Output: New fixes count to stdout
 increment_fixes() {
     local current
     current=$(get_state_field "fixes_applied")
@@ -155,6 +194,10 @@ increment_fixes() {
     return 0
 }
 
+# Cancel the active quality loop
+# Arguments: none
+# Returns: 0
+# Side effects: Removes state file if exists
 cancel_loop() {
     if [[ ! -f "$STATE_FILE" ]]; then
         print_warning "No active quality loop found."
@@ -171,6 +214,10 @@ cancel_loop() {
     return 0
 }
 
+# Display current quality loop status
+# Arguments: none
+# Returns: 0
+# Output: Status information to stdout
 show_status() {
     if [[ ! -f "$STATE_FILE" ]]; then
         echo "No active quality loop."
@@ -203,6 +250,10 @@ show_status() {
 # Preflight Loop
 # =============================================================================
 
+# Run all preflight checks and optionally auto-fix issues
+# Arguments: $1 - "true" to enable auto-fix, "false" otherwise
+# Returns: 0
+# Output: "PASS" or "FAIL" to stdout
 run_preflight_checks() {
     local auto_fix="$1"
     local results=""
@@ -291,6 +342,10 @@ run_preflight_checks() {
     return 0
 }
 
+# Run preflight checks in a loop until all pass or max iterations
+# Arguments: --auto-fix (optional), --max-iterations N (optional)
+# Returns: 0 on success, 1 if max iterations reached
+# Output: <promise>PREFLIGHT_PASS</promise> on success
 preflight_loop() {
     local auto_fix=false
     local max_iterations=$DEFAULT_MAX_ITERATIONS
@@ -361,6 +416,12 @@ preflight_loop() {
 # PR Review Loop
 # =============================================================================
 
+# Check PR status including CI, reviews, and mergeability
+# Arguments:
+#   $1 - PR number
+#   $2 - "true" to wait for CI, "false" otherwise
+# Returns: 0 on success, 1 on error
+# Output: Status string (MERGED, READY, PENDING, CI_FAILED, CHANGES_REQUESTED, WAITING)
 check_pr_status() {
     local pr_number="$1"
     local wait_for_ci="$2"
@@ -418,6 +479,10 @@ check_pr_status() {
     return 0
 }
 
+# Get feedback from PR reviews and CI annotations
+# Arguments: $1 - PR number
+# Returns: 0
+# Output: Feedback text to stdout
 get_pr_feedback() {
     local pr_number="$1"
     
@@ -449,6 +514,10 @@ get_pr_feedback() {
     return 0
 }
 
+# Monitor PR until approved or merged
+# Arguments: --pr NUMBER, --wait-for-ci, --max-iterations N
+# Returns: 0 on approval/merge, 1 if max iterations reached
+# Output: <promise>PR_APPROVED</promise> or <promise>PR_MERGED</promise>
 pr_review_loop() {
     local wait_for_ci=false
     local max_iterations=$DEFAULT_MAX_ITERATIONS
@@ -551,6 +620,10 @@ pr_review_loop() {
 # Postflight Loop
 # =============================================================================
 
+# Check release health (CI status, release exists, version consistency)
+# Arguments: none
+# Returns: 0
+# Output: "HEALTHY" or "UNHEALTHY" to stdout
 check_release_health() {
     print_step "Checking release health..."
     
@@ -606,6 +679,10 @@ check_release_health() {
     return 0
 }
 
+# Monitor release health for a specified duration
+# Arguments: --monitor-duration Nm/Nh/Ns, --max-iterations N
+# Returns: 0 on healthy, 0 on timeout (with warning)
+# Output: <promise>RELEASE_HEALTHY</promise> on success
 postflight_loop() {
     local monitor_duration=$DEFAULT_MONITOR_DURATION
     local max_iterations=5
@@ -614,14 +691,18 @@ postflight_loop() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --monitor-duration)
-                # Parse duration (e.g., 5m, 10m, 1h)
+                # Parse duration (e.g., 5m, 10m, 1h, or raw seconds)
                 local duration_str="$2"
                 if [[ "$duration_str" =~ ^([0-9]+)m$ ]]; then
                     monitor_duration=$((BASH_REMATCH[1] * 60))
                 elif [[ "$duration_str" =~ ^([0-9]+)h$ ]]; then
                     monitor_duration=$((BASH_REMATCH[1] * 3600))
+                elif [[ "$duration_str" =~ ^([0-9]+)s$ ]]; then
+                    monitor_duration="${BASH_REMATCH[1]}"
                 elif [[ "$duration_str" =~ ^([0-9]+)$ ]]; then
                     monitor_duration="$duration_str"
+                else
+                    print_warning "Unrecognized duration format: '$duration_str'. Expected: Nm (minutes), Nh (hours), Ns (seconds), or N (seconds). Using default: ${DEFAULT_MONITOR_DURATION}s"
                 fi
                 shift 2
                 ;;
