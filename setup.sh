@@ -885,6 +885,76 @@ EOF
     return 0
 }
 
+# Setup terminal title integration (syncs tab title with git repo/branch)
+setup_terminal_title() {
+    print_info "Setting up terminal title integration..."
+    
+    local setup_script=".agent/scripts/terminal-title-setup.sh"
+    
+    if [[ ! -f "$setup_script" ]]; then
+        print_warning "Terminal title setup script not found - skipping"
+        return 0
+    fi
+    
+    # Check if already installed
+    local shell_name
+    shell_name=$(basename "${SHELL:-/bin/bash}")
+    local rc_file=""
+    
+    case "$shell_name" in
+        zsh)  rc_file="$HOME/.zshrc" ;;
+        bash) rc_file="$HOME/.bashrc" ;;
+        fish) rc_file="$HOME/.config/fish/config.fish" ;;
+    esac
+    
+    if [[ -n "$rc_file" ]] && [[ -f "$rc_file" ]] && grep -q "aidevops terminal-title" "$rc_file" 2>/dev/null; then
+        print_info "Terminal title integration already configured in $rc_file - Skipping"
+        return 0
+    fi
+    
+    # Show current status before asking
+    echo ""
+    print_info "Terminal title integration syncs your terminal tab with git repo/branch"
+    print_info "Example: Tab shows 'aidevops/feature/xyz' when in that branch"
+    echo ""
+    echo "Current status:"
+    
+    # Shell info
+    local shell_info="$shell_name"
+    if [[ "$shell_name" == "zsh" ]] && [[ -d "$HOME/.oh-my-zsh" ]]; then
+        shell_info="$shell_name (Oh-My-Zsh)"
+    fi
+    echo "  Shell: $shell_info"
+    
+    # Tabby info
+    local tabby_config="$HOME/Library/Application Support/tabby/config.yaml"
+    if [[ -f "$tabby_config" ]]; then
+        local disabled_count
+        disabled_count=$(grep -c "disableDynamicTitle: true" "$tabby_config" 2>/dev/null || echo "0")
+        if [[ "$disabled_count" -gt 0 ]]; then
+            echo "  Tabby: detected, dynamic titles disabled in $disabled_count profile(s) (will fix)"
+        else
+            echo "  Tabby: detected, dynamic titles enabled"
+        fi
+    fi
+    
+    echo ""
+    read -r -p "Install terminal title integration? (y/n): " install_title
+    
+    if [[ "$install_title" == "y" ]]; then
+        if bash "$setup_script" install; then
+            print_success "Terminal title integration installed"
+        else
+            print_warning "Terminal title setup encountered issues (non-critical)"
+        fi
+    else
+        print_info "Skipped terminal title setup by user request"
+        print_info "You can install later with: ~/.aidevops/agents/scripts/terminal-title-setup.sh install"
+    fi
+    
+    return 0
+}
+
 # Deploy AI assistant templates
 deploy_ai_templates() {
     print_info "Deploying AI assistant templates..."
@@ -1845,6 +1915,7 @@ main() {
     set_permissions
     install_aidevops_cli
     setup_aliases
+    setup_terminal_title
     deploy_ai_templates
     migrate_old_backups
     cleanup_deprecated_paths

@@ -119,6 +119,8 @@ User confirms with numbered options to override if needed.
 
 **Beads commands:** `/ready` (show unblocked tasks), `/sync-beads` (sync with graph)
 
+**TODO.md branch strategy**: Stay on current branch for related work (discovered tasks, status updates). For unrelated backlog additions, offer branch choice if no uncommitted changes.
+
 **Full workflow:** See `workflows/plans.md` for details
 
 ## Git Workflow (File Changes)
@@ -136,6 +138,8 @@ User confirms with numbered options to override if needed.
 **Session tools** (OpenCode):
 - `session-rename_sync_branch` - Auto-sync session name with current git branch (preferred)
 - `session-rename` - Set custom session title
+
+**Terminal tab title**: Auto-syncs with `repo/branch` via `pre-edit-check.sh`. Works with Tabby, iTerm2, Windows Terminal, Kitty, and most modern terminals. See `tools/terminal/terminal-title.md`.
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
@@ -231,6 +235,7 @@ opencode mcp list
 | `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
 | `tools/opencode/` | OpenCode configuration, paths, oh-my-opencode integration |
 | `tools/task-management/` | Task tracking (beads - graph visualization, dependencies) |
+| `tools/terminal/` | Terminal integration (terminal-title - tab/window title sync with git) |
 | `tools/wordpress/` | WordPress CMS (wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf) |
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
