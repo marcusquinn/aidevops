@@ -77,6 +77,106 @@ When `/save-todo` is invoked, analyze the conversation for complexity signals:
 | Multi-session work | Complex | PLANS.md + TODO.md |
 | PRD mentioned or needed | Complex | PLANS.md + TODO.md + PRD |
 
+## Ralph Classification
+
+Tasks can be classified as "Ralph-able" - suitable for autonomous iterative AI loops.
+
+### Ralph Criteria
+
+A task is Ralph-able when it has:
+
+| Criterion | Required | Example |
+|-----------|----------|---------|
+| **Clear success criteria** | Yes | "All tests pass", "Zero linting errors" |
+| **Automated verification** | Yes | Tests, linters, type checkers |
+| **Bounded scope** | Yes | Single feature, specific bug fix |
+| **No human judgment needed** | Yes | No design decisions, no UX choices |
+| **Deterministic outcome** | Preferred | Same input → same expected output |
+
+### Ralph Signals in Conversation
+
+| Signal | Ralph-able? | Why |
+|--------|-------------|-----|
+| "Make all tests pass" | Yes | Clear, verifiable |
+| "Fix linting errors" | Yes | Automated verification |
+| "Implement feature X with tests" | Yes | Tests provide verification |
+| "Refactor until clean" | Maybe | Needs specific criteria |
+| "Make it look better" | No | Subjective, needs human judgment |
+| "Design the API" | No | Requires design decisions |
+| "Debug production issue" | No | Unpredictable, needs investigation |
+
+### Tagging Ralph-able Tasks
+
+When a task meets Ralph criteria, add the `#ralph` tag:
+
+```markdown
+- [ ] t042 Fix all ShellCheck violations in scripts/ #ralph ~2h
+- [ ] t043 Implement user auth with tests #ralph #feature ~4h
+- [ ] t044 Design new dashboard layout #feature ~3h  (NOT ralph-able)
+```
+
+### Ralph Task Requirements
+
+When tagging a task as `#ralph`, ensure it includes:
+
+1. **Completion promise**: What phrase signals success
+2. **Verification command**: How to check if done
+3. **Max iterations**: Safety limit (default: 20)
+
+**Full format:**
+
+```markdown
+- [ ] t042 Fix all ShellCheck violations #ralph ~2h
+  ralph-promise: "SHELLCHECK_CLEAN"
+  ralph-verify: "shellcheck .agent/scripts/*.sh"
+  ralph-max: 10
+```
+
+**Shorthand** (for simple cases):
+
+```markdown
+- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~2h
+```
+
+### Running Ralph Tasks
+
+```bash
+# Start a Ralph loop for a tagged task
+/ralph-loop "$(grep 't042' TODO.md)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10
+
+# Or use the task ID directly
+/ralph-task t042
+```
+
+### Ralph in PLANS.md
+
+For complex plans, mark Ralph-able phases:
+
+```markdown
+#### Progress
+
+- [ ] Phase 1: Research API endpoints ~1h
+- [ ] Phase 2: Implement core logic #ralph ~2h
+  ralph-promise: "ALL_TESTS_PASS"
+  ralph-verify: "npm test"
+- [ ] Phase 3: Design UI components ~2h (requires human review)
+- [ ] Phase 4: Integration tests #ralph ~1h
+  ralph-promise: "INTEGRATION_PASS"
+  ralph-verify: "npm run test:integration"
+```
+
+### Quality Loop Integration
+
+Built-in Ralph-able workflows:
+
+| Workflow | Command | Promise |
+|----------|---------|---------|
+| Preflight | `/preflight-loop` | `PREFLIGHT_PASS` |
+| PR Review | `/pr-loop` | `PR_APPROVED` |
+| Postflight | `/postflight-loop` | `RELEASE_HEALTHY` |
+
+These use `quality-loop-helper.sh` which applies Ralph patterns to quality workflows.
+
 ## Saving Work
 
 ### Step 1: Extract from Conversation

@@ -1171,6 +1171,197 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /ralph-status command"
 
 # =============================================================================
+# PREFLIGHT-LOOP COMMAND
+# =============================================================================
+# Iterative preflight checks until all pass
+
+cat > "$OPENCODE_COMMAND_DIR/preflight-loop.md" << 'EOF'
+---
+description: Run preflight checks in a loop until all pass (Ralph pattern)
+agent: Build+
+---
+
+Run preflight checks iteratively until all pass or max iterations reached.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/preflight-loop [--auto-fix] [--max-iterations N]
+```
+
+**Options:**
+- `--auto-fix` - Attempt to automatically fix issues
+- `--max-iterations N` - Max iterations (default: 10)
+
+**Run the loop:**
+```bash
+~/.aidevops/agents/scripts/quality-loop-helper.sh preflight $ARGUMENTS
+```
+
+**Completion promise:** `<promise>PREFLIGHT_PASS</promise>`
+
+This applies the Ralph Wiggum technique to quality checks:
+1. Run all preflight checks
+2. If failures and --auto-fix: attempt fixes
+3. Re-run checks
+4. Repeat until all pass or max iterations
+
+**Examples:**
+```bash
+/preflight-loop --auto-fix --max-iterations 5
+/preflight-loop  # Manual fixes between iterations
+```
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /preflight-loop command"
+
+# =============================================================================
+# PR-LOOP COMMAND
+# =============================================================================
+# Iterative PR review monitoring
+
+cat > "$OPENCODE_COMMAND_DIR/pr-loop.md" << 'EOF'
+---
+description: Monitor PR until approved or merged (Ralph pattern)
+agent: Build+
+---
+
+Monitor a PR iteratively until approved, merged, or max iterations reached.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/pr-loop [--pr NUMBER] [--wait-for-ci] [--max-iterations N]
+```
+
+**Options:**
+- `--pr NUMBER` - PR number (auto-detected if not provided)
+- `--wait-for-ci` - Wait for CI checks to complete
+- `--max-iterations N` - Max iterations (default: 10)
+
+**Run the loop:**
+```bash
+~/.aidevops/agents/scripts/quality-loop-helper.sh pr-review $ARGUMENTS
+```
+
+**Completion promises:**
+- `<promise>PR_APPROVED</promise>` - PR approved and ready to merge
+- `<promise>PR_MERGED</promise>` - PR has been merged
+
+**Workflow:**
+1. Check PR status (CI, reviews, mergeable)
+2. If changes requested: get feedback, apply fixes, push
+3. If CI failed: get annotations, fix issues, push
+4. If pending: wait and re-check
+5. Repeat until approved/merged or max iterations
+
+**Examples:**
+```bash
+/pr-loop --wait-for-ci
+/pr-loop --pr 123 --max-iterations 20
+```
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /pr-loop command"
+
+# =============================================================================
+# POSTFLIGHT-LOOP COMMAND
+# =============================================================================
+# Release health monitoring
+
+cat > "$OPENCODE_COMMAND_DIR/postflight-loop.md" << 'EOF'
+---
+description: Monitor release health after deployment (Ralph pattern)
+agent: Build+
+---
+
+Monitor release health for a specified duration.
+
+Arguments: $ARGUMENTS
+
+**Usage:**
+```bash
+/postflight-loop [--monitor-duration Nm] [--max-iterations N]
+```
+
+**Options:**
+- `--monitor-duration Nm` - How long to monitor (e.g., 5m, 10m, 1h)
+- `--max-iterations N` - Max checks during monitoring (default: 5)
+
+**Run the loop:**
+```bash
+~/.aidevops/agents/scripts/quality-loop-helper.sh postflight $ARGUMENTS
+```
+
+**Completion promise:** `<promise>RELEASE_HEALTHY</promise>`
+
+**Checks performed:**
+1. Latest CI workflow status
+2. Release tag exists
+3. Version consistency (VERSION file matches release)
+
+**Examples:**
+```bash
+/postflight-loop --monitor-duration 10m
+/postflight-loop --monitor-duration 1h --max-iterations 10
+```
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /postflight-loop command"
+
+# =============================================================================
+# RALPH-TASK COMMAND
+# =============================================================================
+# Run a Ralph loop for a specific task ID
+
+cat > "$OPENCODE_COMMAND_DIR/ralph-task.md" << 'EOF'
+---
+description: Run Ralph loop for a task from TODO.md by ID
+agent: Build+
+---
+
+Run a Ralph loop for a specific task from TODO.md.
+
+Task ID: $ARGUMENTS
+
+**Workflow:**
+1. Find task in TODO.md by ID (e.g., t042)
+2. Extract ralph metadata (promise, verify command, max iterations)
+3. Start Ralph loop with extracted parameters
+
+**Task format in TODO.md:**
+```markdown
+- [ ] t042 Fix all ShellCheck violations #ralph ~2h
+  ralph-promise: "SHELLCHECK_CLEAN"
+  ralph-verify: "shellcheck .agent/scripts/*.sh"
+  ralph-max: 10
+```
+
+**Or shorthand:**
+```markdown
+- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~2h
+```
+
+**Usage:**
+```bash
+/ralph-task t042
+```
+
+This will:
+1. Read TODO.md and find task t042
+2. Extract the ralph-promise, ralph-verify, ralph-max values
+3. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
+
+**Requirements:**
+- Task must have `#ralph` tag
+- Task should have completion criteria defined
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /ralph-task command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -1218,16 +1409,21 @@ echo "    /context          - Build AI context"
 echo "    /list-keys        - List API keys with storage locations"
 echo "    /log-time-spent   - Log time spent on a task"
 echo ""
-echo "  Automation:"
+echo "  Automation (Ralph Loops):"
 echo "    /ralph-loop       - Start iterative AI development loop"
+echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
 echo "    /cancel-ralph     - Cancel active Ralph loop"
 echo "    /ralph-status     - Show Ralph loop status"
+echo "    /preflight-loop   - Iterative preflight until all pass"
+echo "    /pr-loop          - Monitor PR until approved/merged"
+echo "    /postflight-loop  - Monitor release health"
 echo ""
 echo "New users: Start with /onboarding to configure your services"
 echo ""
 echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /create-pr"
 echo "New work: discuss -> /save-todo -> later: /list-todo -> pick -> implement"
-echo "Quality workflow: /preflight -> /create-pr -> /postflight"
+echo "Quality workflow: /preflight-loop -> /create-pr -> /pr-loop -> /postflight-loop"
+echo "Ralph workflow: tag task #ralph -> /ralph-task t042 -> autonomous completion"
 echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 echo ""
 echo "Restart OpenCode to load new commands."
