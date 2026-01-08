@@ -536,6 +536,55 @@ Configure per-repo in `.aidevops.json`:
 
 Use `/log-time-spent` command to manually log time anytime.
 
+## Git Branch Strategy for TODO.md Changes
+
+TODO.md changes fall into two categories with different branch strategies:
+
+### Stay on Current Branch (Default)
+
+Most TODO.md changes should stay on the current branch:
+
+| Change Type | Example | Why Stay? |
+|-------------|---------|-----------|
+| Task discovered during work | "Found we need rate limiting while building auth" | Related context |
+| Subtask additions | Adding t019.2.1 while working on t019 | Must stay together |
+| Status updates | Moving task to In Progress, marking Done | Part of workflow |
+| Dependency updates | Adding `blocked-by:` when discovering blockers | Discovered in context |
+| Context notes | Adding notes to tasks you're actively working on | Preserves context |
+
+### Consider Dedicated Branch
+
+When adding **unrelated backlog items** (new ideas, tools to evaluate, future work):
+
+| Condition | Recommendation |
+|-----------|----------------|
+| No uncommitted changes | Offer branch choice |
+| Has uncommitted changes | Stay on current branch (lower friction) |
+| Adding 3+ unrelated items | Suggest batching on dedicated branch |
+
+**Prompt pattern** (when adding unrelated backlog items):
+
+```text
+Adding {N} backlog items unrelated to `{current-branch}`:
+- {item 1}
+- {item 2}
+
+1. Add to current branch (quick, may create PR noise)
+2. Create `chore/backlog-updates` branch (cleaner history)
+3. Add to main directly (TODO.md only, skip PR)
+```
+
+### Why Not Always Switch?
+
+A "always switch branches for TODO.md" rule fails the 80% universal applicability test:
+
+- ~45% of todo additions ARE related to current work
+- Branch switching adds 2-5 minutes overhead per switch
+- Uncommitted changes make switching complex (stash/pop)
+- Context is lost when separating related discoveries
+
+**Bottom line**: Use judgment. Related work stays together; unrelated backlog can optionally go to a dedicated branch.
+
 ## Integration with Other Workflows
 
 | Workflow | Integration |

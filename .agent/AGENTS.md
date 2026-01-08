@@ -119,6 +119,8 @@ User confirms with numbered options to override if needed.
 
 **Beads commands:** `/ready` (show unblocked tasks), `/sync-beads` (sync with graph)
 
+**TODO.md branch strategy**: Stay on current branch for related work (discovered tasks, status updates). For unrelated backlog additions, offer branch choice if no uncommitted changes.
+
 **Full workflow:** See `workflows/plans.md` for details
 
 ## Git Workflow (File Changes)

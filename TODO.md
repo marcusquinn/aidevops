@@ -92,8 +92,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Quick method for scraping authenticated pages: DevTools → Network → Copy as cURL → paste to Claude. Copies session cookies with request. Works on dashboards, gated content, private APIs. Caveat: tokens expire, need to recopy for short sessions. Add to tools/browser/ or workflows/.
 - [ ] t042 Create email-health-check /command and @subagent #services #email #deliverability ~4h (ai:2h test:1h read:1h) logged:2025-01-05
   - Notes: Check SPF/DKIM/DMARC/MX/blacklist status. Tools: checkdmarc (299 stars, Python CLI - pip install checkdmarc), mail-tester.com (send test email, get score), mxtoolbox.com/emailhealth (100+ blacklists, MX/DNS checks). Could wrap checkdmarc CLI + scrape mail-tester results. Add to services/email/.
+- [ ] t043 Create Bitwarden agent using official Bitwarden CLI #tools #credentials #security ~3h (ai:1.5h test:1h read:30m) logged:2025-01-08
+  - Notes: Official Bitwarden CLI (`bw`) for cloud Bitwarden accounts. Separate from Vaultwarden (self-hosted). Commands: login, unlock, list, get, create, edit, delete, generate, export, import. Install: `npm install -g @bitwarden/cli`. Add to tools/credentials/bitwarden.md.
+- [ ] t044 Enhance Vaultwarden agent with bitwarden-cli MCP integration #tools #credentials #security ~2h (ai:1h test:30m read:30m) logged:2025-01-08
+  - Notes: Existing vaultwarden.md uses Bitwarden CLI but could be enhanced with official bitwarden-cli MCP server. Review https://github.com/bitwarden/cli for latest features. Consider bitwarden-sdk-server for programmatic access.
+- [ ] t045 Create Enpass agent using enpass-cli #tools #credentials #security ~4h (ai:2h test:1h read:1h) logged:2025-01-08
+  - Notes: Use https://github.com/hazcod/enpass-cli (156 stars, Go). BLOCKER: Issue #151 - SQLCipher v4 incompatibility with Enpass v6.8+. May need to fork and PR fix for SQLCipher v4 support. Install: `brew install enpass-cli` or `go install github.com/hazcod/enpass-cli@latest`. Commands: list, show, copy, pass. Add to tools/credentials/enpass.md.
 
-<!--TOON:backlog[35]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[38]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
@@ -130,6 +136,9 @@ t039,Add anti-detect browser subagent for multi-account automation,,tools|browse
 t040,Add Reddit CLI/API integration for reading and posting,,tools|social-media,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
 t041,Document curl-copy authenticated scraping workflow,,tools|browser|scraping,1h,30m,15m,15m,2025-01-05T00:00Z,pending,,,
 t042,Create email-health-check /command and @subagent,,services|email|deliverability,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
+t043,Create Bitwarden agent using official Bitwarden CLI,,tools|credentials|security,3h,1.5h,1h,30m,2025-01-08T00:00Z,pending,,,
+t044,Enhance Vaultwarden agent with bitwarden-cli MCP integration,,tools|credentials|security,2h,1h,30m,30m,2025-01-08T00:00Z,pending,,,
+t045,Create Enpass agent using enpass-cli,,tools|credentials|security,4h,2h,1h,1h,2025-01-08T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -216,5 +225,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-44,35,0,0,24,0,26d3h30m,15h50m,0,35
+47,38,0,0,24,0,26d12h30m,15h50m,0,38
 -->
