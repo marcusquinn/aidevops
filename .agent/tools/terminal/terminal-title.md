@@ -200,16 +200,19 @@ Both happen automatically when you create a branch and pass the pre-edit check.
 ### Tab Title Not Updating
 
 1. Check terminal compatibility:
+
    ```bash
    ~/.aidevops/agents/scripts/terminal-title-helper.sh detect
    ```
 
 2. Verify you're in a git repo:
+
    ```bash
    git rev-parse --is-inside-work-tree
    ```
 
 3. Check if disabled:
+
    ```bash
    echo $TERMINAL_TITLE_ENABLED
    ```
@@ -217,6 +220,7 @@ Both happen automatically when you create a branch and pass the pre-edit check.
 ### Title Shows Wrong Format
 
 Check your format setting:
+
 ```bash
 echo $TERMINAL_TITLE_FORMAT
 ```
@@ -226,12 +230,14 @@ echo $TERMINAL_TITLE_FORMAT
 Some terminals require additional settings:
 
 **tmux** (`~/.tmux.conf`):
+
 ```bash
 set -g set-titles on
 set -g set-titles-string "#T"
 ```
 
 **screen** (`~/.screenrc`):
+
 ```bash
 termcapinfo xterm* ti@:te@
 ```

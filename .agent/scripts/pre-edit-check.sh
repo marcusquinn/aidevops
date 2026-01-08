@@ -61,7 +61,7 @@ else
     echo -e "${GREEN}OK${NC} - On branch: ${BOLD}$current_branch${NC}"
     
     # Sync terminal tab title with repo/branch (silent, non-blocking)
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
     if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
         "$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
     fi
