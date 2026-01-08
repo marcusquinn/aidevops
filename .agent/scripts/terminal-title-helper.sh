@@ -141,11 +141,17 @@ get_repo_name() {
     
     # Convert to absolute path to handle subdirectories correctly
     # realpath may not exist on all systems, use cd/pwd as fallback
+    local abs_path=""
     if command -v realpath &>/dev/null; then
-        git_common_dir=$(realpath "$git_common_dir" 2>/dev/null) || git_common_dir=$(cd "$git_common_dir" 2>/dev/null && pwd)
-    else
-        git_common_dir=$(cd "$git_common_dir" 2>/dev/null && pwd) || return 1
+        abs_path=$(realpath "$git_common_dir" 2>/dev/null)
     fi
+    
+    # Fallback to cd/pwd if realpath failed or doesn't exist
+    if [[ -z "$abs_path" ]]; then
+        abs_path=$(cd "$git_common_dir" 2>/dev/null && pwd) || return 1
+    fi
+    
+    git_common_dir="$abs_path"
     
     # The common dir is the .git folder of the main repo
     # Get its parent to find the main repo root
