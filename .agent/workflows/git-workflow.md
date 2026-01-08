@@ -59,6 +59,25 @@ When running multiple OpenCode sessions on the same repo:
 | Uncommitted local changes | Stash or commit before switching |
 | Different session on same branch | Coordinate or use separate branches |
 | Starting new work | Always create a new branch first |
+| **Multiple parallel sessions** | **Use git worktrees** (see below) |
+
+**Git Worktrees for Parallel Work** (RECOMMENDED):
+
+For true parallel development without branch conflicts, use git worktrees:
+
+```bash
+# Create separate working directory for a branch
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
+# Creates: ~/Git/{repo}-feature-my-feature/
+
+# List all worktrees
+~/.aidevops/agents/scripts/worktree-helper.sh list
+
+# Each terminal/session works in its own directory
+# No branch switching affects other sessions
+```
+
+See `workflows/worktree.md` for full worktree workflow.
 
 **Session-Branch Tracking**:
 

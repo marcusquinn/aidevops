@@ -141,6 +141,22 @@ User confirms with numbered options to override if needed.
 
 **Terminal tab title**: Auto-syncs with `repo/branch` via `pre-edit-check.sh`. Works with Tabby, iTerm2, Windows Terminal, Kitty, and most modern terminals. See `tools/terminal/terminal-title.md`.
 
+**Parallel branch work** (git worktrees): For multiple terminals/sessions on different branches:
+
+```bash
+# Create worktree for a branch (separate directory)
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
+# Creates: ~/Git/{repo}-feature-my-feature/
+
+# List all worktrees
+~/.aidevops/agents/scripts/worktree-helper.sh list
+
+# Clean up after merge
+~/.aidevops/agents/scripts/worktree-helper.sh clean
+```
+
+See `workflows/worktree.md` for full workflow.
+
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
 **User prompts**: Always use numbered options (1, 2, 3...). Never use "[Enter] to confirm" - OpenCode requires typed input.
@@ -240,7 +256,7 @@ opencode mcp list
 | `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
 | `services/email/` | Email services (ses) |
 | `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (git-workflow, branch, plans, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace, ralph-loop) |
+| `workflows/` | Process guides (git-workflow, branch, plans, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace, ralph-loop, worktree) |
 | `templates/` | PRD and task templates (prd-template, tasks-template) |
 | `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment, release) |
 
