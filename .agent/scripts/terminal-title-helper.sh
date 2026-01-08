@@ -131,10 +131,23 @@ detect_terminal() {
     return 1
 }
 
-# Get current git repository name
+# Get current git repository name (resolves to main repo name even in worktrees)
 get_repo_name() {
-    local repo_path
-    repo_path=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+    local git_common_dir repo_path
+    
+    # git rev-parse --git-common-dir returns the main .git directory
+    # even when in a linked worktree
+    git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+    
+    # The common dir is the .git folder of the main repo
+    # Get its parent to find the main repo root
+    repo_path=$(dirname "$git_common_dir")
+    
+    # Handle case where .git is the common dir (main worktree)
+    if [[ "$repo_path" == "." ]]; then
+        repo_path=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+    fi
+    
     basename "$repo_path"
 }
 
