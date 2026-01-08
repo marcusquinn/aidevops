@@ -280,6 +280,20 @@ From the original Ralph technique:
 - One $50k contract completed for $297 in API costs
 - Created entire programming language ("cursed") over 3 months using this approach
 
+## Upstream Sync
+
+This is an **independent implementation** inspired by the Claude Code ralph-wiggum plugin, not a mirror. We maintain our own codebase for cross-tool compatibility.
+
+**Check for upstream changes:**
+
+```bash
+~/.aidevops/agents/scripts/ralph-upstream-check.sh
+```
+
+This compares our implementation against the Claude plugin and reports any significant differences or new features we might want to incorporate.
+
+The check runs automatically when starting an OpenCode session in the aidevops repository.
+
 ## Learn More
 
 - Original technique: <https://ghuntley.com/ralph/>
