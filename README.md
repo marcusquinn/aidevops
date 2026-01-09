@@ -192,6 +192,37 @@ opencode auth login
 
 **Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution and failover. See the [plugin documentation](https://github.com/NoeFabris/opencode-antigravity-auth) for model configuration.
 
+### OpenCode Anthropic OAuth Plugin
+
+The setup automatically installs the [opencode-anthropic-auth](https://github.com/anomalyco/opencode-anthropic-auth) plugin, enabling OAuth authentication for Claude Pro/Max accounts. This allows Claude subscribers to use OpenCode with zero API costs.
+
+**After setup, authenticate:**
+
+```bash
+opencode auth login
+# Select: Anthropic → Claude Pro/Max
+# Follow OAuth flow in browser
+```
+
+**Benefits:**
+
+- **Zero cost** for Claude Pro/Max subscribers (covered by subscription)
+- **Automatic token refresh** - No manual re-authentication needed
+- **Beta features enabled** - Extended thinking modes and latest features
+- **Three authentication methods:**
+  - Claude Pro/Max OAuth (recommended for subscribers)
+  - Create API Key via OAuth
+  - Manual API key entry
+
+**Available models:**
+
+All Anthropic models available to Pro/Max subscribers, including:
+- `claude-sonnet-4-20250514`
+- `claude-opus-4-5`
+- Extended thinking modes
+
+See the [plugin documentation](https://github.com/anomalyco/opencode-anthropic-auth) and `.agent/tools/opencode/opencode-anthropic-auth.md` for complete setup and troubleshooting.
+
 ### Oh-My-OpenCode Plugin (Optional)
 
 The setup offers to install [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) - a complementary plugin that adds **coding productivity features**:
