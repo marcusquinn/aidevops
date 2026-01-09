@@ -144,7 +144,26 @@ tools:
   context7_*: true              # Context7 documentation tools
   augment-context-engine_*: true # Augment codebase search
   wordpress-mcp_*: true         # WordPress MCP tools
-```text
+```
+
+**MCP requirements with tool filtering** (documents intent for future `includeTools` support):
+
+```yaml
+---
+description: Preview and screenshot local dev servers
+mcp_requirements:
+  chrome-devtools:
+    tools: [navigate_page, take_screenshot, new_page, list_pages]
+---
+```
+
+This convention documents which specific tools an agent needs from an MCP server. Currently informational only - OpenCode doesn't yet support `includeTools` filtering (see [OpenCode #7399](https://github.com/anomalyco/opencode/issues/7399)). When supported, our agent generator can use this to configure filtered MCP access.
+
+**Why document MCP requirements?**
+- Prepares agents for future `includeTools` support
+- Documents intent for humans reviewing agent design
+- Enables token savings when OpenCode implements filtering (e.g., 17k → 1.5k tokens for chrome-devtools)
+- Prior art: [Amp's lazy-load MCP with skills](https://ampcode.com/news/lazy-load-mcp-with-skills)
 
 **Example: Read-only analysis agent**
 
