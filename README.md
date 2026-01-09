@@ -6,14 +6,14 @@
 
 ## **The Philosophy**
 
-**Sane vibe-coding through git workflow best practices.** aidevops brings structure to AI-assisted development:
+**Sane vibe-coding through git workflow best practices.** **[aidevops](https://aidevops.sh)** brings structure to AI-assisted development:
 
 - **Git-first workflow** - Protected branches, PR reviews, quality gates before merge
 - **Parallel agents** - Multiple AI sessions running full [Ralph loops](#ralph-loop---iterative-ai-development) on separate branches via [git worktrees](#git-worktrees---parallel-branch-development)
 - **Progressive discovery** - `/slash` commands and `@subagent` mentions load knowledge into context only when needed
 - **Guided development** - Build your AI team incrementally, with specialists for every online need
 
-The result: AI agents that work *with* your development process, not around it. **aidevops** knows what you need to know.
+The result: AI agents that work *with* your development process, not around it. **[aidevops](https://aidevops.sh)** knows what you need to know.
 
 ## **Why This Framework?**
 
@@ -104,7 +104,7 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 - Guide you through recommended tools (Tabby, Zed, Git CLIs)
 
 **New users: Start OpenCode and type `/onboarding`** to configure your services interactively. The onboarding wizard will:
-- Explain what aidevops can do
+- Explain what **[aidevops](https://aidevops.sh)** can do
 - Ask about your work to give personalized recommendations
 - Show which services are configured vs need setup
 - Guide you through setting up each service with links and commands
@@ -121,7 +121,7 @@ aidevops uninstall  # Remove aidevops
 
 ### **Use aidevops in Any Project**
 
-Initialize aidevops features in any git repository:
+Initialize **[aidevops](https://aidevops.sh)** features in any git repository:
 
 ```bash
 cd ~/your-project
@@ -171,7 +171,7 @@ aidevops init beads              # Enable beads (includes planning)
 | `bd ready` | Show ready tasks (Beads CLI) |
 | `bd graph <id>` | Show dependency graph for an issue |
 
-**Architecture:** aidevops markdown files (TODO.md, PLANS.md) are the source of truth. Beads syncs from them for visualization.
+**Architecture:** **[aidevops](https://aidevops.sh)** markdown files (TODO.md, PLANS.md) are the source of truth. Beads syncs from them for visualization.
 
 **Optional Viewers:** Beyond the `bd` CLI, there are community viewers for richer visualization:
 - `beads_viewer` (Python TUI) - PageRank, critical path analysis
