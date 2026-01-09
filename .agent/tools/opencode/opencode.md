@@ -41,6 +41,11 @@ tools:
 # Check status
 .agent/scripts/generate-opencode-agents.sh
 
+# Authenticate (OAuth plugins)
+opencode auth login
+# - Google → Antigravity (Gemini/Claude via Google)
+# - Anthropic → Claude Pro/Max (direct Claude access)
+
 # In OpenCode:
 # - Tab to switch primary agents
 # - @agent-name to invoke subagents
@@ -71,6 +76,35 @@ opencode auth login
 - `gpt-oss-120b-medium`
 
 **Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution. Run `opencode auth login` again to add more accounts.
+
+## Anthropic OAuth Plugin
+
+The aidevops setup automatically installs the [opencode-anthropic-auth](https://github.com/anomalyco/opencode-anthropic-auth) plugin, enabling OAuth authentication for Claude Pro/Max accounts.
+
+**Authenticate after setup:**
+
+```bash
+opencode auth login
+# Select: Anthropic → Claude Pro/Max (or Create an API Key)
+# Complete OAuth flow in browser
+# Paste authorization code when prompted
+```
+
+**Authentication methods:**
+
+| Method | Use Case | Cost |
+|--------|----------|------|
+| **Claude Pro/Max** | Active subscription holders | $0 (subscription covers usage) |
+| **Create API Key** | OAuth-based key creation | Standard API rates |
+| **Manual API Key** | Existing API keys | Standard API rates |
+
+**Benefits of OAuth:**
+- Automatic token refresh (no re-authentication)
+- Beta features auto-enabled (extended thinking, etc.)
+- Zero cost for Pro/Max subscribers
+- No manual API key management
+
+**See also:** `tools/opencode/opencode-anthropic-auth.md` for detailed setup and troubleshooting.
 
 ## Installation
 

@@ -1598,33 +1598,11 @@ setup_browser_tools() {
 }
 
 # Setup OpenCode Plugins (Antigravity OAuth)
-setup_opencode_plugins() {
-    print_info "Setting up OpenCode plugins..."
-    
-    local opencode_config="$HOME/.config/opencode/opencode.json"
-    
-    # Check if OpenCode is installed
-    if ! command -v opencode &> /dev/null; then
-        print_warning "OpenCode not found - plugin setup skipped"
-        print_info "Install OpenCode first: https://opencode.ai"
-        return 0
-    fi
-    
-    # Check if config exists
-    if [[ ! -f "$opencode_config" ]]; then
-        print_warning "OpenCode config not found at $opencode_config - plugin setup skipped"
-        return 0
-    fi
-    
-    # Check if jq is available
-    if ! command -v jq &> /dev/null; then
-        print_warning "jq not found - cannot update OpenCode config"
-        return 0
-    fi
-    
-    # Plugin to install/update
-    local plugin_name="opencode-antigravity-auth"
-    local plugin_spec="opencode-antigravity-auth@latest"
+# Helper function to add/update a single plugin in OpenCode config
+add_opencode_plugin() {
+    local plugin_name="$1"
+    local plugin_spec="$2"
+    local opencode_config="$3"
     
     # Check if plugin array exists and if plugin is already configured
     local has_plugin_array
@@ -1657,12 +1635,53 @@ setup_opencode_plugins() {
         jq --arg p "$plugin_spec" '. + {plugin: [$p]}' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
         print_success "Created plugin array with $plugin_name"
     fi
+}
+
+setup_opencode_plugins() {
+    print_info "Setting up OpenCode plugins..."
+    
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    # Check if OpenCode is installed
+    if ! command -v opencode &> /dev/null; then
+        print_warning "OpenCode not found - plugin setup skipped"
+        print_info "Install OpenCode first: https://opencode.ai"
+        return 0
+    fi
+    
+    # Check if config exists
+    if [[ ! -f "$opencode_config" ]]; then
+        print_warning "OpenCode config not found at $opencode_config - plugin setup skipped"
+        return 0
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        print_warning "jq not found - cannot update OpenCode config"
+        return 0
+    fi
+    
+    # Setup Antigravity OAuth plugin (Google OAuth)
+    print_info "Setting up Antigravity OAuth plugin..."
+    add_opencode_plugin "opencode-antigravity-auth" "opencode-antigravity-auth@latest" "$opencode_config"
     
     print_info "Antigravity OAuth plugin enables Google OAuth for OpenCode"
-    print_info "After setup, authenticate with: opencode auth login"
-    print_info "Then select 'Google' → 'OAuth with Google (Antigravity)'"
     print_info "Models available: gemini-3-pro-high, claude-opus-4-5-thinking, etc."
     print_info "See: https://github.com/NoeFabris/opencode-antigravity-auth"
+    echo ""
+    
+    # Setup Anthropic OAuth plugin (Claude OAuth)
+    print_info "Setting up Anthropic OAuth plugin..."
+    add_opencode_plugin "opencode-anthropic-auth" "opencode-anthropic-auth@latest" "$opencode_config"
+    
+    print_info "Anthropic OAuth plugin enables Claude Pro/Max authentication"
+    print_info "Zero cost for Claude subscribers, auto token refresh, beta features"
+    print_info "See: https://github.com/anomalyco/opencode-anthropic-auth"
+    echo ""
+    
+    print_info "After setup, authenticate with: opencode auth login"
+    print_info "  • For Google OAuth: Select 'Google' → 'OAuth with Google (Antigravity)'"
+    print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max'"
     
     return 0
 }
