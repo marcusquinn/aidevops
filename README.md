@@ -13,7 +13,7 @@
 - **Progressive discovery** - `/slash` commands and `@subagent` mentions load knowledge into context only when needed
 - **Guided development** - Build your AI team incrementally, with specialists for every online need
 
-The result: AI agents that work *with* your development process, not around it.
+The result: AI agents that work *with* your development process, not around it. **aidevops** knows what you need to know.
 
 ## **Why This Framework?**
 
