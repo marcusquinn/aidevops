@@ -101,6 +101,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Use https://github.com/hazcod/enpass-cli (156 stars, Go). BLOCKER: Issue #151 - SQLCipher v4 incompatibility with Enpass v6.8+. May need to fork and PR fix for SQLCipher v4 support. Install: `brew install enpass-cli` or `go install github.com/hazcod/enpass-cli@latest`. Commands: list, show, copy, pass. Add to tools/credentials/enpass.md.
 - [ ] t046 Review Clawdbot for inspiration and incorporation into aidevops #research #agents #messaging ~4h (ai:2h test:1h read:1h) logged:2025-01-09 ref:https://github.com/clawdbot/clawdbot
   - Notes: Clawdbot (2.6k stars) is a personal AI assistant with multi-platform messaging (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, WebChat). Key features to evaluate: Gateway WS control plane, multi-agent routing, Voice Wake + Talk Mode, Live Canvas with A2UI, skills platform, Docker sandboxing for non-main sessions. Could inspire: messaging integrations for aidevops, voice control, canvas UI, agent-to-agent communication (sessions_* tools). MIT licensed.
+- [ ] t047 TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research #git #sync #planning ~4h (ai:2h test:1h read:1h) logged:2025-01-09
+  - Notes: Evaluate bi-directional sync between TODO.md/PLANS.md and git platform issues. Research tools for syncing issues/PRs across multiple git platforms (GitHub, GitLab, Gitea). Related to t020 (Git Issues Bi-directional Sync). Consider: gitea-github-migrator, gitlab-github-sync, issue-sync tools, Allspice Hub, Linear/Jira integrations. Key questions: 1) Should tasks auto-create issues? 2) Should issue updates sync back to TODO.md? 3) How to handle cross-platform mirroring for multi-platform projects?
 
 <!--TOON:backlog[38]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -142,6 +144,8 @@ t042,Create email-health-check /command and @subagent,,services|email|deliverabi
 t043,Create Bitwarden agent using official Bitwarden CLI,,tools|credentials|security,3h,1.5h,1h,30m,2025-01-08T00:00Z,pending,,,
 t044,Enhance Vaultwarden agent with bitwarden-cli MCP integration,,tools|credentials|security,2h,1h,30m,30m,2025-01-08T00:00Z,pending,,,
 t045,Create Enpass agent using enpass-cli,,tools|credentials|security,4h,2h,1h,1h,2025-01-08T00:00Z,pending,,,
+t046,Review Clawdbot for inspiration and incorporation into aidevops,,research|agents|messaging,4h,2h,1h,1h,2025-01-09T00:00Z,pending,,,
+t047,TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research,,git|sync|planning,4h,2h,1h,1h,2025-01-09T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -228,5 +232,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-47,38,0,0,24,0,26d12h30m,15h50m,0,38
+48,39,0,0,24,0,26d16h30m,15h50m,0,39
 -->
