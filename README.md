@@ -4,6 +4,17 @@
 
 *"List all my servers and websites, and check each for theme and plugin update needs, SEO and page loading performance scores, and give me a list of recommended priorities"* - **One conversation, complete infrastructure management.**
 
+## **The Philosophy**
+
+**Sane vibe-coding through git workflow best practices.** aidevops brings structure to AI-assisted development:
+
+- **Git-first workflow** - Protected branches, PR reviews, quality gates before merge
+- **Parallel agents** - Multiple AI sessions running full [Ralph loops](#ralph-loop---iterative-ai-development) on separate branches via [git worktrees](#git-worktrees---parallel-branch-development)
+- **Progressive discovery** - `/slash` commands and `@subagent` mentions load knowledge into context only when needed
+- **Guided development** - Build your AI team incrementally, with specialists for every online need
+
+The result: AI agents that work *with* your development process, not around it.
+
 ## **Why This Framework?**
 
 **Beyond Single-Repo Limitations:** VS Code and Web UIs work on one repo at a time. CLI AI assistants can manage your entire infrastructure when given the right tools, access, and guidance.
