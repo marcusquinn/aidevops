@@ -224,13 +224,63 @@ The setup offers to install [oh-my-opencode](https://github.com/code-yeongyu/oh-
 
 See `.agent/tools/opencode/oh-my-opencode.md` for the full compatibility guide.
 
+### GitHub AI Agent Integration
+
+Enable AI-powered issue resolution directly from GitHub. Comment `/oc fix this` on any issue and the AI creates a branch, implements the fix, and opens a PR.
+
+**Security-first design** - The workflow includes:
+- Trusted users only (OWNER/MEMBER/COLLABORATOR)
+- `ai-approved` label required on issues before AI processing
+- Prompt injection pattern detection
+- Audit logging of all invocations
+- 15-minute timeout and rate limiting
+
+**Quick setup:**
+
+```bash
+# 1. Install the OpenCode GitHub App
+# Visit: https://github.com/apps/opencode-agent
+
+# 2. Add API key secret
+# Repository → Settings → Secrets → ANTHROPIC_API_KEY
+
+# 3. Create required labels
+gh label create "ai-approved" --color "0E8A16" --description "Issue approved for AI agent"
+gh label create "security-review" --color "D93F0B" --description "Requires security review"
+```
+
+The secure workflow is included at `.github/workflows/opencode-agent.yml`.
+
+**Usage:**
+
+| Context | Command | Result |
+|---------|---------|--------|
+| Issue (with `ai-approved` label) | `/oc fix this` | Creates branch + PR |
+| Issue | `/oc explain this` | AI analyzes and replies |
+| PR | `/oc review this PR` | Code review feedback |
+| PR Files tab | `/oc add error handling here` | Line-specific fix |
+
+See `.agent/tools/git/opencode-github-security.md` for the full security documentation.
+
 **Supported AI Assistants:** (OpenCode & Zed are our daily drivers and preferred tools, so will have the most continual testing. All 18 assistants below have MCP configuration support.)
 
 **Preferred:**
 
-- **[Tabby](https://tabby.sh/)** - Modern terminal with colour-coded Profiles. Use different profile colours per project/repo to visually distinguish which codebase you're working in.
+- **[Tabby](https://tabby.sh/)** - Modern terminal with colour-coded Profiles. Use different profile colours per project/repo to visually distinguish which codebase you're working in. **Auto-syncs tab title with git repo/branch.**
 - **[OpenCode](https://opencode.ai/)** - Primary choice. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, and excellent DX.
 - **[Zed](https://zed.dev/)** - High-performance editor with AI (Preferred, with the OpenCode Agent Extension)
+
+### Terminal Tab Title Sync
+
+Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. This helps identify which codebase and branch you're working on across multiple terminal sessions.
+
+**Supported terminals:** Tabby, iTerm2, Windows Terminal, Kitty, Alacritty, WezTerm, Hyper, and most xterm-compatible terminals.
+
+**How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. No configuration needed - it's automatic.
+
+**Example format:** `{repo}/{branch-type}/{description}`
+
+See `.agent/tools/terminal/terminal-title.md` for customization options.
 
 **IDE-Based:**
 
@@ -844,6 +894,67 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 | Command | Purpose |
 |---------|---------|
 | `/agent-review` | Analyze session and suggest agent improvements |
+| `/preflight-loop` | Run preflight checks iteratively until all pass |
+
+### Ralph Loop - Iterative AI Development
+
+The **Ralph Loop** (named after Ralph Wiggum's persistent optimism) enables autonomous iterative development. The AI keeps working on a task until it's complete, automatically resolving issues that arise.
+
+**How it works:**
+
+```text
+Task → Implement → Check → Fix Issues → Re-check → ... → Complete
+         ↑                    ↓
+         └────────────────────┘ (loop until done)
+```
+
+**Usage:**
+
+```bash
+# Run quality checks iteratively until all pass
+.agent/scripts/quality-loop-helper.sh preflight --auto-fix --max-iterations <MAX_ITERATIONS>
+
+# Or use the slash command
+/preflight-loop --auto-fix --max-iterations <MAX_ITERATIONS>
+```
+
+**Note:** Store any API credentials securely via environment variables or `.env` files (never commit credentials to version control).
+
+**Key features:**
+- Automatic issue detection and resolution
+- Configurable max iterations (prevents infinite loops)
+- Works with any quality check (linting, tests, builds)
+- Detailed logging of each iteration
+
+See `.agent/workflows/ralph-loop.md` for the full workflow guide.
+
+### Git Worktrees - Parallel Branch Development
+
+Work on multiple branches simultaneously without stashing or switching. Each branch gets its own directory.
+
+**Quick usage:**
+
+```bash
+# Create worktree for a new branch
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
+# Creates: ~/Git/aidevops-feature-my-feature/
+
+# List all worktrees
+~/.aidevops/agents/scripts/worktree-helper.sh list
+
+# Clean up after merge
+~/.aidevops/agents/scripts/worktree-helper.sh clean
+```
+
+**Benefits:**
+- Run tests on one branch while coding on another
+- Compare implementations side-by-side
+- No context switching or stash management
+- Each OpenCode session can work on a different branch
+
+The pre-edit check now recommends worktrees when creating branches, keeping your main directory on `main`.
+
+See `.agent/workflows/worktree.md` for the complete guide.
 
 ### **Installation**
 
