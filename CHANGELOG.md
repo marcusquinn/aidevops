@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.42.2] - 2026-01-09
+
+### Added
+
+- add opencode-anthropic-auth plugin integration
+
+### Changed
+
+- Documentation: improve AGENTS.md progressive disclosure with descriptive hints (#22)
 ## [2.42.1] - 2026-01-09
 
 ### Changed
