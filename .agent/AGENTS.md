@@ -252,7 +252,7 @@ opencode mcp list
 | `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
 | `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security, opencode-github, opencode-gitlab) |
 | `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
-| `tools/opencode/` | OpenCode configuration, paths, oh-my-opencode integration |
+| `tools/opencode/` | OpenCode configuration, paths, plugins (opencode, opencode-anthropic-auth, oh-my-opencode) |
 | `tools/task-management/` | Task tracking (beads - graph visualization, dependencies) |
 | `tools/terminal/` | Terminal integration (terminal-title - tab/window title sync with git) |
 | `tools/wordpress/` | WordPress CMS (wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf) |
