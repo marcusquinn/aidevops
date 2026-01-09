@@ -427,7 +427,7 @@ aidevops follows OpenCode's credential storage:
 
 ## Version History
 
-- **0.0.7** (latest): Current version in repository
+- **0.0.8** (latest): Current version in repository
 - Maintained by Anomaly (anomalyco)
 - Dependencies: `@opencode-ai/plugin`, `@openauthjs/openauth`
 
