@@ -28,12 +28,15 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 
 > On `main`. Suggested branch: `{type}/{suggested-name}`
 >
-> 1. Create suggested branch (recommended)
-> 2. Use different branch name
-> 3. Stay on `main` (not recommended)
+> 1. Create worktree for suggested branch (recommended for parallel sessions)
+> 2. Create branch with checkout (switches current directory's branch)
+> 3. Use different branch name
+> 4. Stay on `main` (not recommended)
 
-3. **Do NOT proceed until user replies with 1, 2, or 3**
-4. After creating branch, call `session-rename_sync_branch` tool
+3. **Do NOT proceed until user replies with 1, 2, 3, or 4**
+4. If worktree (option 1): `~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}`
+5. If checkout (option 2): `git checkout -b {type}/{name}`
+6. After creating branch, call `session-rename_sync_branch` tool
 
 **Why this matters**: Skipping this check causes direct commits to `main`, bypassing PR review.
 
