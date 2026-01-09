@@ -7,10 +7,18 @@
 #
 # Usage:
 #   quality-loop-helper.sh preflight [--auto-fix] [--max-iterations N]
-#   quality-loop-helper.sh pr-review [--wait-for-ci] [--max-iterations N]
+#   quality-loop-helper.sh pr-review [--pr N] [--wait-for-ci] [--max-iterations N] [--no-auto-trigger]
 #   quality-loop-helper.sh postflight [--monitor-duration Nm]
 #   quality-loop-helper.sh status
 #   quality-loop-helper.sh cancel
+#
+# PR Review Options:
+#   --pr N              PR number (auto-detects from current branch if omitted)
+#   --wait-for-ci       Wait for CI checks to complete before checking review status
+#   --max-iterations N  Maximum check iterations (default: 10)
+#   --no-auto-trigger   Disable automatic re-review trigger for stale reviews
+#   --auto-trigger-review  Enable auto re-review (default, triggers @coderabbitai review
+#                          if no review received within 5 minutes of last push)
 #
 # Author: AI DevOps Framework
 # =============================================================================
@@ -29,6 +37,7 @@ readonly STATE_FILE="${STATE_DIR}/quality-loop.local.md"
 # Default settings
 readonly DEFAULT_MAX_ITERATIONS=10
 readonly DEFAULT_MONITOR_DURATION=300  # 5 minutes in seconds
+readonly DEFAULT_REVIEW_STALE_THRESHOLD=300  # 5 minutes - trigger re-review if no activity
 
 # Colors
 readonly RED='\033[0;31m'
@@ -514,12 +523,75 @@ get_pr_feedback() {
     return 0
 }
 
+# Check if review is stale and trigger re-review if needed
+# Arguments:
+#   $1 - PR number
+#   $2 - Stale threshold in seconds (default: 300)
+# Returns: 0 if re-review triggered, 1 if not needed
+# Side effects: Posts @coderabbitai review comment if stale
+check_and_trigger_review() {
+    local pr_number="$1"
+    local stale_threshold="${2:-$DEFAULT_REVIEW_STALE_THRESHOLD}"
+    
+    # Get last push time
+    local last_push_time
+    last_push_time=$(gh pr view "$pr_number" --json commits --jq '.commits[-1].committedDate' 2>/dev/null || echo "")
+    
+    if [[ -z "$last_push_time" ]]; then
+        print_warning "Could not determine last push time"
+        return 1
+    fi
+    
+    # Get last CodeRabbit review time
+    local last_review_time
+    last_review_time=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" \
+        --jq '[.[] | select(.user.login | contains("coderabbit"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null || echo "")
+    
+    # Convert times to epoch for comparison
+    local now_epoch last_push_epoch last_review_epoch
+    now_epoch=$(date +%s)
+    
+    # Parse ISO 8601 dates (works on macOS and Linux)
+    if [[ -n "$last_push_time" ]]; then
+        last_push_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_push_time" +%s 2>/dev/null || \
+                         date -d "$last_push_time" +%s 2>/dev/null || echo "0")
+    else
+        last_push_epoch=0
+    fi
+    
+    if [[ -n "$last_review_time" ]]; then
+        last_review_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_review_time" +%s 2>/dev/null || \
+                          date -d "$last_review_time" +%s 2>/dev/null || echo "0")
+    else
+        last_review_epoch=0
+    fi
+    
+    # Check if review is stale (push happened after last review, and threshold exceeded)
+    local time_since_push=$((now_epoch - last_push_epoch))
+    
+    if [[ $last_push_epoch -gt $last_review_epoch ]] && [[ $time_since_push -ge $stale_threshold ]]; then
+        print_info "Review appears stale (${time_since_push}s since push, no review since)"
+        print_info "Triggering CodeRabbit re-review..."
+        
+        if gh pr comment "$pr_number" --body "@coderabbitai review" 2>/dev/null; then
+            print_success "Re-review triggered for PR #${pr_number}"
+            return 0
+        else
+            print_warning "Failed to trigger re-review"
+            return 1
+        fi
+    fi
+    
+    return 1
+}
+
 # Monitor PR until approved or merged
-# Arguments: --pr NUMBER, --wait-for-ci, --max-iterations N
+# Arguments: --pr NUMBER, --wait-for-ci, --max-iterations N, --auto-trigger-review
 # Returns: 0 on approval/merge, 1 if max iterations reached
 # Output: <promise>PR_APPROVED</promise> or <promise>PR_MERGED</promise>
 pr_review_loop() {
     local wait_for_ci=false
+    local auto_trigger_review=true
     local max_iterations=$DEFAULT_MAX_ITERATIONS
     local pr_number=""
     
@@ -538,6 +610,14 @@ pr_review_loop() {
                 pr_number="$2"
                 shift 2
                 ;;
+            --no-auto-trigger)
+                auto_trigger_review=false
+                shift
+                ;;
+            --auto-trigger-review)
+                auto_trigger_review=true
+                shift
+                ;;
             *)
                 # Assume it's the PR number
                 if [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -554,14 +634,14 @@ pr_review_loop() {
         
         if [[ -z "$pr_number" ]]; then
             print_error "No PR number provided and no PR found for current branch"
-            echo "Usage: quality-loop-helper.sh pr-review [--pr NUMBER] [--wait-for-ci] [--max-iterations N]"
+            echo "Usage: quality-loop-helper.sh pr-review [--pr NUMBER] [--wait-for-ci] [--max-iterations N] [--no-auto-trigger]"
             return 1
         fi
     fi
     
-    print_info "Starting PR review loop for PR #${pr_number} (max iterations: $max_iterations)"
+    print_info "Starting PR review loop for PR #${pr_number} (max iterations: $max_iterations, auto-trigger: $auto_trigger_review)"
     
-    create_state "pr-review" "$max_iterations" "pr=$pr_number,wait_for_ci=$wait_for_ci"
+    create_state "pr-review" "$max_iterations" "pr=$pr_number,wait_for_ci=$wait_for_ci,auto_trigger=$auto_trigger_review"
     
     local iteration=1
     while [[ $iteration -le $max_iterations ]]; do
@@ -600,6 +680,12 @@ pr_review_loop() {
                 ;;
             WAITING)
                 print_info "Waiting for review..."
+                # Check if review is stale and trigger re-review if enabled
+                if [[ "$auto_trigger_review" == "true" ]]; then
+                    if check_and_trigger_review "$pr_number"; then
+                        print_info "Re-review triggered, waiting for response..."
+                    fi
+                fi
                 ;;
         esac
         
