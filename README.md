@@ -276,9 +276,9 @@ Your terminal tab/window title automatically shows `repo/branch` context when wo
 
 **Supported terminals:** Tabby, iTerm2, Windows Terminal, Kitty, Alacritty, WezTerm, Hyper, and most xterm-compatible terminals.
 
-**How it works:** The `pre-edit-check.sh` script (run before any file edits) updates the terminal title via escape sequences. No configuration needed - it's automatic.
+**How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. No configuration needed - it's automatic.
 
-**Example:** Working in aidevops on feature branch shows: `aidevops/feature/new-feature`
+**Example format:** `{repo}/{branch-type}/{description}`
 
 See `.agent/tools/terminal/terminal-title.md` for customization options.
 
@@ -898,7 +898,7 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 
 ### Ralph Loop - Iterative AI Development
 
-The **Ralph Loop** (named after Ralph Wiggum's persistent optimism) enables autonomous iterative development. The AI keeps working on a task until it's complete, automatically fixing issues that arise.
+The **Ralph Loop** (named after Ralph Wiggum's persistent optimism) enables autonomous iterative development. The AI keeps working on a task until it's complete, automatically resolving issues that arise.
 
 **How it works:**
 
@@ -912,14 +912,16 @@ Task → Implement → Check → Fix Issues → Re-check → ... → Complete
 
 ```bash
 # Run quality checks iteratively until all pass
-~/.aidevops/agents/scripts/quality-loop-helper.sh preflight --auto-fix --max-iterations 10
+.agent/scripts/quality-loop-helper.sh preflight --auto-fix --max-iterations <MAX_ITERATIONS>
 
 # Or use the slash command
-/preflight-loop --auto-fix --max-iterations 5
+/preflight-loop --auto-fix --max-iterations <MAX_ITERATIONS>
 ```
 
+**Note:** Store any API credentials securely via environment variables or `.env` files (never commit credentials to version control).
+
 **Key features:**
-- Automatic issue detection and fixing
+- Automatic issue detection and resolution
 - Configurable max iterations (prevents infinite loops)
 - Works with any quality check (linting, tests, builds)
 - Detailed logging of each iteration
