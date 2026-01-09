@@ -272,6 +272,56 @@ head -10 .claude/ralph-loop.local.md
 test -f .claude/ralph-loop.local.md && echo "Active" || echo "Not active"
 ```
 
+## CI/CD Wait Time Optimization
+
+When using Ralph loops with PR review workflows, the loop uses adaptive timing based on observed CI/CD service completion times.
+
+### Evidence-Based Timing (from PR #19 analysis)
+
+| Service Category | Services | Typical Time | Initial Wait | Poll Interval |
+|------------------|----------|--------------|--------------|---------------|
+| **Fast** | CodeFactor, Version, Framework | 1-5s | 10s | 5s |
+| **Medium** | SonarCloud, Codacy, Qlty | 43-62s | 60s | 15s |
+| **Slow** | CodeRabbit | 120-180s | 120s | 30s |
+
+### Adaptive Waiting Strategy
+
+The `quality-loop-helper.sh` uses three strategies:
+
+1. **Service-aware initial wait**: Waits based on the slowest pending check
+2. **Exponential backoff**: Increases wait time between iterations (15s → 30s → 60s → 120s max)
+3. **Hybrid approach**: Uses the larger of backoff or adaptive wait
+
+### Customizing Timing
+
+Edit `.agent/scripts/shared-constants.sh` to adjust timing constants:
+
+```bash
+# Fast checks
+readonly CI_WAIT_FAST=10
+readonly CI_POLL_FAST=5
+
+# Medium checks
+readonly CI_WAIT_MEDIUM=60
+readonly CI_POLL_MEDIUM=15
+
+# Slow checks (CodeRabbit)
+readonly CI_WAIT_SLOW=120
+readonly CI_POLL_SLOW=30
+
+# Backoff settings
+readonly CI_BACKOFF_BASE=15
+readonly CI_BACKOFF_MAX=120
+```
+
+### Gathering Your Own Timing Data
+
+To optimize for your specific CI/CD setup:
+
+1. Run `gh run list --limit 10 --json name,updatedAt,createdAt` to see workflow durations
+2. Check PR check completion times in GitHub UI
+3. Update constants in `shared-constants.sh` based on your observations
+
 ## Real-World Results
 
 From the original Ralph technique:

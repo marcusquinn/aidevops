@@ -39,6 +39,32 @@ readonly DEFAULT_MAX_ITERATIONS=10
 readonly DEFAULT_MONITOR_DURATION=300  # 5 minutes in seconds
 readonly DEFAULT_REVIEW_STALE_THRESHOLD=300  # 5 minutes - trigger re-review if no activity
 
+# =============================================================================
+# CI/CD Service Timing Constants (Evidence-Based from PR #19 Analysis)
+# =============================================================================
+# These timings are based on observed completion times:
+# - Fast (CodeFactor, Version): ~1-5s → wait 10s, poll every 5s
+# - Medium (SonarCloud, Codacy, Qlty): ~43-62s → wait 60s, poll every 15s
+# - Slow (CodeRabbit): ~120-180s → wait 120s, poll every 30s
+
+# Service categories for intelligent polling
+readonly FAST_SERVICES="codefactor|version|framework"
+readonly MEDIUM_SERVICES="sonarcloud|codacy|qlty|code-review-monitoring"
+readonly SLOW_SERVICES="coderabbit|coderabbitai"
+
+# Timing constants (seconds)
+readonly WAIT_FAST=10
+readonly WAIT_MEDIUM=60
+readonly WAIT_SLOW=120
+readonly POLL_FAST=5
+readonly POLL_MEDIUM=15
+readonly POLL_SLOW=30
+
+# Exponential backoff settings
+readonly BACKOFF_BASE=15
+readonly BACKOFF_MAX=120
+readonly BACKOFF_MULTIPLIER=2
+
 # Colors
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -93,6 +119,98 @@ print_info() {
 print_step() {
     local message="$1"
     echo -e "${CYAN}[quality-loop]${NC} ${message}"
+    return 0
+}
+
+# =============================================================================
+# Adaptive Wait Time Functions
+# =============================================================================
+
+# Calculate wait time based on pending services
+# Arguments:
+#   $1 - Comma-separated list of pending service names (e.g., "coderabbit,sonarcloud")
+# Returns: 0
+# Output: Recommended wait time in seconds
+calculate_adaptive_wait() {
+    local pending_services="$1"
+    local max_wait=0
+    
+    # Check for slow services first (they dominate wait time)
+    if echo "$pending_services" | grep -qiE "$SLOW_SERVICES"; then
+        max_wait=$WAIT_SLOW
+    elif echo "$pending_services" | grep -qiE "$MEDIUM_SERVICES"; then
+        max_wait=$WAIT_MEDIUM
+    elif echo "$pending_services" | grep -qiE "$FAST_SERVICES"; then
+        max_wait=$WAIT_FAST
+    else
+        # Unknown service, use medium as default
+        max_wait=$WAIT_MEDIUM
+    fi
+    
+    echo "$max_wait"
+    return 0
+}
+
+# Calculate poll interval based on pending services
+# Arguments:
+#   $1 - Comma-separated list of pending service names
+# Returns: 0
+# Output: Recommended poll interval in seconds
+calculate_poll_interval() {
+    local pending_services="$1"
+    local poll_interval=$POLL_MEDIUM
+    
+    if echo "$pending_services" | grep -qiE "$SLOW_SERVICES"; then
+        poll_interval=$POLL_SLOW
+    elif echo "$pending_services" | grep -qiE "$MEDIUM_SERVICES"; then
+        poll_interval=$POLL_MEDIUM
+    elif echo "$pending_services" | grep -qiE "$FAST_SERVICES"; then
+        poll_interval=$POLL_FAST
+    fi
+    
+    echo "$poll_interval"
+    return 0
+}
+
+# Calculate exponential backoff wait time
+# Arguments:
+#   $1 - Current iteration number (1-based)
+# Returns: 0
+# Output: Wait time in seconds (capped at BACKOFF_MAX)
+calculate_backoff_wait() {
+    local iteration="$1"
+    local wait_time=$BACKOFF_BASE
+    
+    # Calculate: base * multiplier^(iteration-1), capped at max
+    local i=1
+    while [[ $i -lt $iteration ]]; do
+        wait_time=$((wait_time * BACKOFF_MULTIPLIER))
+        if [[ $wait_time -ge $BACKOFF_MAX ]]; then
+            wait_time=$BACKOFF_MAX
+            break
+        fi
+        ((i++))
+    done
+    
+    echo "$wait_time"
+    return 0
+}
+
+# Get list of pending CI check names from PR
+# Arguments:
+#   $1 - PR number
+# Returns: 0
+# Output: Comma-separated list of pending check names (lowercase)
+get_pending_checks() {
+    local pr_number="$1"
+    
+    local pr_info
+    pr_info=$(gh pr view "$pr_number" --json statusCheckRollup 2>/dev/null || echo '{"statusCheckRollup":[]}')
+    
+    local pending
+    pending=$(echo "$pr_info" | jq -r '[.statusCheckRollup[] | select(.status == "PENDING" or .status == "IN_PROGRESS") | .name] | join(",")' 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    
+    echo "$pending"
     return 0
 }
 
@@ -665,8 +783,19 @@ pr_review_loop() {
                 return 0
                 ;;
             PENDING)
-                print_info "CI checks still running, waiting..."
-                sleep 30
+                # Get pending checks and calculate adaptive wait
+                local pending_checks
+                pending_checks=$(get_pending_checks "$pr_number")
+                local wait_time
+                wait_time=$(calculate_adaptive_wait "$pending_checks")
+                
+                if [[ -n "$pending_checks" ]]; then
+                    print_info "CI checks still running: $pending_checks"
+                    print_info "Waiting ${wait_time}s (adaptive based on slowest pending check)..."
+                else
+                    print_info "CI checks still running, waiting ${wait_time}s..."
+                fi
+                sleep "$wait_time"
                 ;;
             CI_FAILED)
                 print_warning "CI checks failed. Getting feedback..."
@@ -692,8 +821,24 @@ pr_review_loop() {
         iteration=$(increment_iteration)
         
         if [[ $iteration -le $max_iterations ]]; then
-            print_info "Waiting before next check..."
-            sleep 60
+            # Use exponential backoff for general waiting
+            local backoff_wait
+            backoff_wait=$(calculate_backoff_wait "$iteration")
+            
+            # But also consider pending checks for smarter waiting
+            local pending_checks
+            pending_checks=$(get_pending_checks "$pr_number")
+            local adaptive_wait
+            adaptive_wait=$(calculate_adaptive_wait "$pending_checks")
+            
+            # Use the larger of backoff or adaptive wait
+            local final_wait=$backoff_wait
+            if [[ $adaptive_wait -gt $backoff_wait ]]; then
+                final_wait=$adaptive_wait
+            fi
+            
+            print_info "Waiting ${final_wait}s before next check (iteration $iteration, backoff: ${backoff_wait}s, adaptive: ${adaptive_wait}s)..."
+            sleep "$final_wait"
         fi
     done
     
@@ -896,6 +1041,23 @@ COMPLETION PROMISES:
   postflight: <promise>RELEASE_HEALTHY</promise>
 
 These can be used with Ralph loops for fully autonomous workflows.
+
+ADAPTIVE TIMING (PR Review):
+  The pr-review command uses intelligent timing based on pending CI checks:
+  
+  Service Category    Typical Time    Initial Wait    Poll Interval
+  ─────────────────────────────────────────────────────────────────
+  Fast (CodeFactor)   1-5s            10s             5s
+  Medium (SonarCloud) 43-62s          60s             15s
+  Slow (CodeRabbit)   120-180s        120s            30s
+  
+  Additionally, exponential backoff is applied:
+  - Base wait: 15s, doubles each iteration, max 120s
+  - Final wait = max(backoff_wait, adaptive_wait)
+  
+  This prevents:
+  - Waiting too long for fast checks
+  - Polling too frequently for slow checks (wastes API calls)
 EOF
     return 0
 }

@@ -106,6 +106,43 @@ readonly DEFAULT_PORT=80
 readonly SECURE_PORT=443
 
 # =============================================================================
+# CI/CD Service Timing Constants (Evidence-Based from PR #19 Analysis)
+# =============================================================================
+# These timings are based on observed completion times across multiple PRs.
+# Update these values as you gather more data from your CI/CD runs.
+
+# Fast checks (typically complete in <10s)
+# - CodeFactor: ~1s
+# - Framework Validation: ~4s
+# - Version Consistency: ~4s
+readonly CI_WAIT_FAST=10
+readonly CI_POLL_FAST=5
+
+# Medium checks (typically complete in 30-90s)
+# - Codacy: ~43s
+# - SonarCloud: ~44s
+# - Qlty: ~57s
+# - Code Review Monitoring: ~62s
+readonly CI_WAIT_MEDIUM=60
+readonly CI_POLL_MEDIUM=15
+
+# Slow checks (typically complete in 120-180s)
+# - CodeRabbit initial review: ~120-180s
+# - CodeRabbit re-review: ~120-180s
+readonly CI_WAIT_SLOW=120
+readonly CI_POLL_SLOW=30
+
+# Exponential backoff settings
+readonly CI_BACKOFF_BASE=15      # Initial wait (seconds)
+readonly CI_BACKOFF_MAX=120      # Maximum wait between polls
+readonly CI_BACKOFF_MULTIPLIER=2 # Multiply wait by this each iteration
+
+# Service-specific timeouts (max time to wait before giving up)
+readonly CI_TIMEOUT_FAST=60      # 1 minute for fast checks
+readonly CI_TIMEOUT_MEDIUM=180   # 3 minutes for medium checks
+readonly CI_TIMEOUT_SLOW=600     # 10 minutes for slow checks (CodeRabbit)
+
+# =============================================================================
 # Color Constants (for consistent output formatting)
 # =============================================================================
 
@@ -203,4 +240,7 @@ export ERROR_REPO_NAME_REQUIRED ERROR_DOMAIN_NAME_REQUIRED ERROR_ACCOUNT_NAME_RE
 export SUCCESS_REPO_CREATED SUCCESS_DEPLOYMENT_COMPLETE SUCCESS_CONFIG_UPDATED
 export USAGE_PATTERN HELP_PATTERN CONFIG_PATTERN
 export DEFAULT_TIMEOUT LONG_TIMEOUT SHORT_TIMEOUT MAX_RETRIES
+export CI_WAIT_FAST CI_POLL_FAST CI_WAIT_MEDIUM CI_POLL_MEDIUM CI_WAIT_SLOW CI_POLL_SLOW
+export CI_BACKOFF_BASE CI_BACKOFF_MAX CI_BACKOFF_MULTIPLIER
+export CI_TIMEOUT_FAST CI_TIMEOUT_MEDIUM CI_TIMEOUT_SLOW
 export COLOR_RED COLOR_GREEN COLOR_YELLOW COLOR_BLUE COLOR_PURPLE COLOR_CYAN COLOR_WHITE COLOR_RESET

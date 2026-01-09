@@ -26,6 +26,12 @@ readonly RALPH_STATE_DIR=".claude"
 readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.md"
 readonly SCRIPT_NAME="ralph-loop-helper.sh"
 
+# Adaptive timing constants (evidence-based from PR #19 analysis)
+# These can be overridden by environment variables
+readonly RALPH_DELAY_BASE="${RALPH_DELAY_BASE:-2}"      # Initial delay between iterations
+readonly RALPH_DELAY_MAX="${RALPH_DELAY_MAX:-30}"       # Maximum delay between iterations
+readonly RALPH_DELAY_MULTIPLIER="${RALPH_DELAY_MULTIPLIER:-1.5}"  # Backoff multiplier
+
 # Colors
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -133,6 +139,11 @@ MONITORING:
 
   # View full state
   head -10 .claude/ralph-loop.local.md
+
+ENVIRONMENT VARIABLES:
+  RALPH_DELAY_BASE        Initial delay between iterations (default: 2s)
+  RALPH_DELAY_MAX         Maximum delay between iterations (default: 30s)
+  RALPH_DELAY_MULTIPLIER  Backoff multiplier (default: 1.5)
 
 LEARN MORE:
   Original technique: https://ghuntley.com/ralph/
@@ -558,8 +569,30 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
 
         iteration=$((iteration + 1))
 
-        # Small delay between iterations
-        sleep 2
+        # Adaptive delay with exponential backoff
+        # Starts at RALPH_DELAY_BASE, increases by RALPH_DELAY_MULTIPLIER each iteration
+        # Capped at RALPH_DELAY_MAX
+        local delay
+        # Calculate: base * multiplier^(iteration-1), using bc for floating point
+        if command -v bc &>/dev/null; then
+            delay=$(echo "scale=0; $RALPH_DELAY_BASE * ($RALPH_DELAY_MULTIPLIER ^ ($iteration - 1))" | bc 2>/dev/null || echo "$RALPH_DELAY_BASE")
+            # Cap at max
+            if [[ $(echo "$delay > $RALPH_DELAY_MAX" | bc 2>/dev/null || echo "0") -eq 1 ]]; then
+                delay=$RALPH_DELAY_MAX
+            fi
+        else
+            # Fallback: simple doubling without bc
+            delay=$RALPH_DELAY_BASE
+            local i=1
+            while [[ $i -lt $iteration ]] && [[ $delay -lt $RALPH_DELAY_MAX ]]; do
+                delay=$((delay * 2))
+                ((i++))
+            done
+            [[ $delay -gt $RALPH_DELAY_MAX ]] && delay=$RALPH_DELAY_MAX
+        fi
+        
+        print_info "Waiting ${delay}s before next iteration (backoff: iteration $iteration)"
+        sleep "$delay"
     done
 
     print_success "Ralph loop completed after $iteration iterations"
