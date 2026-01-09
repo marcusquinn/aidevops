@@ -268,6 +268,38 @@ token: ${{ secrets.GITHUB_TOKEN }}
 - **Scoped permissions**: Only accesses what the workflow allows
 - **Audit trail**: All actions visible in Actions tab
 
+### Security Hardening (Recommended)
+
+The basic workflow above allows ANY user to trigger AI commands. For production use, implement security hardening:
+
+```yaml
+# Add to your workflow job
+if: |
+  (contains(github.event.comment.body, '/oc') ||
+   contains(github.event.comment.body, '/opencode')) &&
+  (github.event.comment.author_association == 'OWNER' ||
+   github.event.comment.author_association == 'MEMBER' ||
+   github.event.comment.author_association == 'COLLABORATOR')
+```
+
+**Full security implementation**: See `git/opencode-github-security.md` for:
+- Trusted user validation
+- `ai-approved` label requirement for issues
+- Prompt injection pattern detection
+- Audit logging
+- Security-focused system prompts
+
+**Quick setup with max security**:
+
+```bash
+# Copy the secure workflow
+cp .github/workflows/opencode-agent.yml .github/workflows/opencode.yml
+
+# Create required labels
+gh label create "ai-approved" --color "0E8A16" --description "Issue approved for AI agent"
+gh label create "security-review" --color "D93F0B" --description "Requires security review"
+```
+
 ## Integration with aidevops
 
 When using aidevops workflows:
@@ -289,6 +321,7 @@ prompt: |
 
 ## Related
 
+- **Security hardening**: `git/opencode-github-security.md` - Full security guide
 - **GitLab integration**: `git/opencode-gitlab.md`
 - **GitHub CLI**: `git/github-cli.md`
 - **GitHub Actions**: `git/github-actions.md`
