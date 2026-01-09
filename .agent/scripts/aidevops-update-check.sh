@@ -32,6 +32,21 @@ get_remote_version() {
     curl --proto '=https' -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" 2>/dev/null || echo "unknown"
 }
 
+check_ralph_upstream() {
+    # Only check if we're in the aidevops repo
+    local current_repo
+    current_repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "")
+    
+    if [[ "$current_repo" == "aidevops" ]]; then
+        local script_dir
+        script_dir="$(dirname "$0")"
+        if [[ -x "${script_dir}/ralph-upstream-check.sh" ]]; then
+            "${script_dir}/ralph-upstream-check.sh" 2>/dev/null || true
+        fi
+    fi
+    return 0
+}
+
 main() {
     local current remote
     current=$(get_version)
@@ -46,6 +61,10 @@ main() {
     else
         echo "aidevops v$current"
     fi
+    
+    # Check ralph upstream when in aidevops repo
+    check_ralph_upstream
+    
     return 0
 }
 
