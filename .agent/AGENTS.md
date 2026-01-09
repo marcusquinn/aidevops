@@ -234,34 +234,37 @@ opencode mcp list
 
 ## Subagent Folders
 
-| Folder | Contents |
-|--------|----------|
-| `aidevops/` | Framework meta-agents (add-new-mcp, setup, troubleshooting, architecture, security) |
-| `memory/` | Cross-session memory patterns |
-| `seo/` | SEO subagents (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research) |
-| `content/` | Content subagents (guidelines) |
-| `tools/build-agent/` | Agent design and composition (build-agent, agent-review) |
-| `tools/build-mcp/` | MCP server development (build-mcp, api-wrapper, deployment, server-patterns, transports) |
-| `tools/ai-assistants/` | AI tools (agno, capsolver, windsurf, configuration) |
-| `tools/browser/` | Browser automation (dev-browser, playwriter, playwright, stagehand, crawl4ai, pagespeed) |
-| `tools/ui/` | UI component libraries (shadcn) |
-| `tools/code-review/` | Quality tools (code-standards, codacy, coderabbit, qlty, snyk, auditing, automation) |
-| `tools/context/` | Context tools (osgrep, augment-context-engine, context-builder, context7, toon, dspy, dspyground) |
-| `tools/conversion/` | Format conversion (pandoc) |
-| `tools/data-extraction/` | Data extraction (outscraper) |
-| `tools/deployment/` | Deployment tools (coolify, coolify-cli, coolify-setup, vercel) |
-| `tools/git/` | Git platforms (github-cli, gitlab-cli, gitea-cli, github-actions, authentication, security, opencode-github, opencode-gitlab) |
-| `tools/credentials/` | Credential management (list-keys, api-key-management, api-key-setup, vaultwarden) |
-| `tools/opencode/` | OpenCode configuration, paths, plugins (opencode, opencode-anthropic-auth, oh-my-opencode) |
-| `tools/task-management/` | Task tracking (beads - graph visualization, dependencies) |
-| `tools/terminal/` | Terminal integration (terminal-title - tab/window title sync with git) |
-| `tools/wordpress/` | WordPress CMS (wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf) |
-| `services/hosting/` | Hosting providers (hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship, localhost, dns-providers, domain-purchasing) |
-| `services/email/` | Email services (ses) |
-| `services/accounting/` | Accounting services (quickfile) |
-| `workflows/` | Process guides (git-workflow, branch, plans, release, version-bump, bug-fixing, feature-development, pr, code-audit-remote, error-feedback, multi-repo-workspace, ralph-loop, worktree) |
-| `templates/` | PRD and task templates (prd-template, tasks-template) |
-| `workflows/branch/` | Branch type workflows (feature, bugfix, hotfix, refactor, chore, experiment, release) |
+Subagents provide specialized capabilities. Read them when tasks require domain expertise.
+
+| Folder | Purpose | Key Subagents |
+|--------|---------|---------------|
+| `aidevops/` | Framework internals - extending aidevops, adding MCPs, architecture decisions | setup, architecture, add-new-mcp-to-aidevops, troubleshooting, mcp-integrations |
+| `memory/` | Cross-session patterns - learning from past interactions, user preferences | (templates for memory files) |
+| `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring | dataforseo, serper, google-search-console, site-crawler, eeat-score, domain-research |
+| `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice | guidelines |
+| `tools/build-agent/` | Agent design - composing efficient agents, reviewing agent instructions | build-agent, agent-review |
+| `tools/build-mcp/` | MCP development - creating Model Context Protocol servers and tools | build-mcp, api-wrapper, server-patterns, transports, deployment |
+| `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
+| `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling | stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools |
+| `tools/ui/` | UI components - component libraries, design systems | shadcn |
+| `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, codacy, coderabbit, qlty, snyk, secretlint, auditing |
+| `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy |
+| `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
+| `tools/data-extraction/` | Data extraction - scraping business data, Google Maps, reviews | outscraper |
+| `tools/deployment/` | Deployment automation - self-hosted PaaS, serverless, CI/CD | coolify, coolify-cli, vercel |
+| `tools/git/` | Git operations - GitHub/GitLab/Gitea CLIs, Actions, authentication, AI PR automation | github-cli, gitlab-cli, gitea-cli, github-actions, opencode-github, opencode-gitlab |
+| `tools/credentials/` | Secret management - API keys, password vaults, environment variables | api-key-setup, api-key-management, vaultwarden, environment-variables |
+| `tools/opencode/` | OpenCode config - CLI setup, plugins, authentication, Oh-My-OpenCode extensions | opencode, opencode-anthropic-auth, oh-my-opencode |
+| `tools/task-management/` | Task tracking - dependency graphs, blocking relationships, visual planning | beads |
+| `tools/terminal/` | Terminal integration - tab titles, git context display | terminal-title |
+| `tools/wordpress/` | WordPress ecosystem - local dev, fleet management, plugin curation, custom fields | wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf |
+| `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
+| `services/email/` | Email services - transactional email, deliverability | ses |
+| `services/accounting/` | Accounting integration - invoicing, expenses, financial reports | quickfile |
+| `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop |
+| `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
+| `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
+| `scripts/commands/` | Slash commands - save-todo and other interactive commands | save-todo |
 
 <!-- AI-CONTEXT-END -->
 
@@ -300,22 +303,28 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 
 ## Progressive Disclosure
 
-Read subagents only when task requires them. The AI-CONTEXT section above contains essential information for most tasks.
+**Strategy**: The AI-CONTEXT section above contains essential information for most tasks. Read subagents only when tasks require domain expertise - this keeps context focused and reduces token usage.
 
-**When to read more:**
-- Planning complex work → `workflows/plans.md`
-- Task dependencies/graphs → `tools/task-management/beads.md` (Beads integration)
-- Specific service operations → `services/[type]/[provider].md`
-- Code quality tasks → `tools/code-review/`
-- WordPress work → `tools/wordpress/`
-- Release/versioning → `workflows/`
-- Browser automation → `tools/browser/`
-- Agent design → `tools/build-agent/` (agent composition, review)
-- MCP development → `tools/build-mcp/` (TypeScript/Bun/ElysiaJS servers)
-- SEO analysis → `seo/` (keyword-research, google-search-console, dataforseo, serper, site-crawler, eeat-score, domain-research)
-- Database schemas/migrations → `workflows/sql-migrations.md` (declarative schemas, auto-generated migrations)
-- Oh-My-OpenCode integration → `tools/opencode/oh-my-opencode.md` (LSP, AST, background agents)
-- Working in `~/Git/aidevops/` → `aidevops/architecture.md` (framework internals)
+**How to use subagents**:
+1. Check the "Subagent Folders" table above for the relevant domain
+2. Read the specific subagent file when you need detailed guidance
+3. Subagents are also available via Task tool for delegation (filtered per-agent to reduce overhead)
+
+**When to read subagents:**
+
+| Task Domain | Read These |
+|-------------|------------|
+| Planning complex work | `workflows/plans.md`, `tools/task-management/beads.md` |
+| Code quality/reviews | `tools/code-review/code-standards.md`, then specific tools as needed |
+| Git operations | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
+| Release/versioning | `workflows/release.md`, `workflows/version-bump.md` |
+| Browser automation | `tools/browser/stagehand.md` or `tools/browser/playwright.md` |
+| WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
+| SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
+| MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` |
+| Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |
+| Database migrations | `workflows/sql-migrations.md` |
+| Framework internals | `aidevops/architecture.md` (when working in `~/Git/aidevops/`) |
 
 ## Security
 
