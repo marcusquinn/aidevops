@@ -21,7 +21,7 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly STATE_DIR=".claude"
 readonly STATE_FILE="${STATE_DIR}/quality-loop.local.md"

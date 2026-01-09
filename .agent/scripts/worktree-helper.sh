@@ -148,7 +148,7 @@ cmd_add() {
         echo -e "Path: ${BOLD}$existing_path${NC}"
         echo ""
         echo "To use it:"
-        echo "  cd $existing_path"
+        echo "  cd $existing_path" || exit
         return 0
     fi
     
@@ -181,7 +181,7 @@ cmd_add() {
     echo -e "Branch: ${BOLD}$branch${NC}"
     echo ""
     echo "To start working:"
-    echo "  cd $path"
+    echo "  cd $path" || exit
     echo ""
     echo "Or open in a new terminal/editor:"
     echo "  code $path        # VS Code"
@@ -278,7 +278,7 @@ cmd_remove() {
     # Check if we're currently in the worktree to remove
     if [[ "$(pwd)" == "$path_to_remove"* ]]; then
         echo -e "${RED}Error: Cannot remove worktree while inside it${NC}"
-        echo "First: cd $(get_repo_root)"
+        echo "First: cd $(get_repo_root)" || exit
         return 1
     fi
     
@@ -345,7 +345,7 @@ cmd_switch() {
         echo "Path: $path"
         echo ""
         echo "To switch:"
-        echo "  cd $path"
+        echo "  cd $path" || exit
         return 0
     fi
     
@@ -452,11 +452,11 @@ COMMANDS
 EXAMPLES
   # Start work on a feature (creates worktree)
   worktree-helper.sh add feature/user-auth
-  cd ~/Git/myrepo-feature-user-auth
+  cd ~/Git/myrepo-feature-user-auth || exit
   
   # Open another terminal for a bugfix
   worktree-helper.sh add bugfix/login-timeout
-  cd ~/Git/myrepo-bugfix-login-timeout
+  cd ~/Git/myrepo-bugfix-login-timeout || exit
   
   # List all worktrees
   worktree-helper.sh list
