@@ -367,35 +367,16 @@ Suggestions:
 
 ### Spawning New Sessions from Loops
 
-Loops can spawn new OpenCode sessions for parallel work:
+Loops can spawn new OpenCode sessions for parallel work. See `workflows/session-manager.md` for full spawning patterns (background sessions, terminal tabs, worktrees).
 
-**Background Session (Same Terminal):**
+**Quick reference:**
 
 ```bash
-# Start new session in background
+# Background session
 opencode run "Continue with next task" --agent Build+ &
 
-# Or use serve mode for persistent background
-opencode serve --port 4097 &
-opencode run --attach http://localhost:4097 "Task X" --agent Build+
-```
-
-**New Terminal Tab (macOS):**
-
-```bash
-# Spawn in new tab
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/project && opencode"'
-```
-
-**With Worktrees (Recommended for Parallel Branches):**
-
-```bash
-# Create worktree for parallel work
+# With worktree (recommended for parallel branches)
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
-# Output: ~/Git/project-feature-parallel-task/
-
-# Spawn session in new worktree
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/project-feature-parallel-task && opencode"'
 ```
 
 ### Integration with quality-loop-helper.sh
@@ -406,8 +387,6 @@ The `quality-loop-helper.sh` script can spawn new sessions on loop completion:
 # After successful loop, offer to spawn next task
 ~/.aidevops/agents/scripts/quality-loop-helper.sh preflight --on-complete spawn
 ```
-
-See `workflows/session-manager.md` for full session lifecycle guidance.
 
 ## Learn More
 

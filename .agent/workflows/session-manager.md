@@ -134,11 +134,11 @@ spawn_terminal_tab() {
     osascript -e "tell application \"Terminal\" to do script \"cd '$dir' && $cmd\""
 }
 
-# iTerm2
+# iTerm
 spawn_iterm_tab() {
     local dir="${1:-$(pwd)}"
     local cmd="${2:-opencode}"
-    osascript -e "tell application \"iTerm2\" to tell current window to create tab with default profile command \"cd '$dir' && $cmd\""
+    osascript -e "tell application \"iTerm\" to tell current window to create tab with default profile command \"cd '$dir' && $cmd\""
 }
 
 # Usage
@@ -214,7 +214,7 @@ opencode run "Read .session-handoff.md and continue the work" --agent Build+
 Agents should suggest `@agent-review` at these points:
 
 1. **After PR merge** - Capture what worked in the PR process
-2. **After release** - Document release learnings
+2. **After release** - Capture release learnings
 3. **After fixing multiple issues** - Pattern recognition opportunity
 4. **After user correction** - Immediate improvement opportunity
 5. **Before starting unrelated work** - Clean context boundary
@@ -245,7 +245,9 @@ Suggestions:
 
 ## Related
 
-- `AGENTS.md` - Root agent instructions with session guidance
+**AGENTS.md is the single source of truth for agent behavior.** This document is supplementary and defers to AGENTS.md where they differ.
+
+- `AGENTS.md` - Root agent instructions (authoritative)
 - `workflows/worktree.md` - Parallel branch development
 - `workflows/ralph-loop.md` - Iterative development loops
 - `tools/build-agent/agent-review.md` - Session review process

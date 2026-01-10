@@ -621,77 +621,28 @@ Example: Finding 15 SC2162 violations (read without -r) leads to adding clear ex
 
 OpenCode supports multiple session patterns for parallel work.
 
-### Non-Interactive Execution
+### Quick Reference
 
 ```bash
-# Run a task without TUI
+# Non-interactive execution
 opencode run "Task description" --agent Build+ --title "Task Name"
 
 # Background execution
 opencode run "Long running task" --agent Build+ &
-```
 
-### Persistent Server Mode
-
-For multiple sessions sharing MCP connections:
-
-```bash
-# Terminal 1: Start headless server
+# Persistent server (reuses MCP connections)
 opencode serve --port 4097
+opencode run --attach http://localhost:4097 "Task" --agent Build+
 
-# Terminal 2+: Run against server (fast, reuses MCPs)
-opencode run --attach http://localhost:4097 "Task 1" --agent Build+
-opencode run --attach http://localhost:4097 "Task 2" --agent SEO
-```
-
-### Terminal Tab Spawning
-
-```bash
-# macOS Terminal.app
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/project && opencode"'
-
-# iTerm2
-osascript -e 'tell application "iTerm2" to tell current window to create tab with default profile command "cd ~/Git/project && opencode"'
-
-# Linux GNOME Terminal
-gnome-terminal --tab -- bash -c "cd ~/Git/project && opencode; exec bash"
-
-# Kitty
-kitty @ launch --type=tab --cwd=~/Git/project opencode
-```
-
-### Worktree + New Session (Recommended)
-
-Best pattern for parallel branch work:
-
-```bash
-# Create worktree for parallel branch
+# With worktree (recommended for parallel branches)
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
-# Output: ~/Git/project-feature-parallel-task/
-
-# Spawn session in worktree (macOS)
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/project-feature-parallel-task && opencode"'
 ```
 
-### Session Handoff
-
-When spawning a continuation session:
-
-```bash
-# Export context for new session
-cat > .session-handoff.md << EOF
-# Session Handoff
-**Branch**: $(git branch --show-current)
-**Last commit**: $(git log -1 --oneline)
-## Continue With
-- {next task description}
-EOF
-
-# Spawn with handoff
-opencode run "Read .session-handoff.md and continue" --agent Build+
-```
-
-See `workflows/session-manager.md` for full session lifecycle guidance.
+See `workflows/session-manager.md` for full session lifecycle guidance including:
+- Terminal tab spawning (macOS, Linux)
+- Session handoff patterns
+- Worktree integration
+- Loop completion detection
 
 ## References
 
