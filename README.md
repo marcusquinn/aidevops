@@ -1000,6 +1000,44 @@ The pre-edit check now recommends worktrees when creating branches, keeping your
 
 See `.agent/workflows/worktree.md` for the complete guide.
 
+### Session Management - Parallel AI Sessions
+
+Spawn new AI sessions for parallel work or fresh context. The framework detects natural session completion points and suggests next steps.
+
+**Completion signals:**
+
+| Signal | Meaning |
+|--------|---------|
+| PR merged | Branch work complete |
+| Release published | Version shipped |
+| All tests passing | Quality gates satisfied |
+| User says "done" | Explicit completion |
+
+**Spawning options:**
+
+```bash
+# Background session (same terminal)
+opencode --non-interactive --prompt "Continue with feature X" &
+
+# New terminal tab (macOS)
+osascript -e 'tell application "Terminal" to do script "cd ~/Git/project && opencode"'
+
+# Worktree-based (isolated branch)
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/next-feature
+cd ../project-feature-next-feature && opencode
+```
+
+**Session handoff pattern:**
+
+When ending a session, the AI provides a continuation prompt for the next session:
+
+```markdown
+## Continuation Prompt
+[Copy this to start a new session with full context]
+```
+
+See `.agent/workflows/session-manager.md` for the complete guide.
+
 ### **Installation**
 
 Slash commands are automatically installed by `setup.sh`:
