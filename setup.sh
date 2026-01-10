@@ -18,6 +18,7 @@ NC='\033[0m' # No Color
 
 # Global flags
 CLEAN_MODE=false
+INTERACTIVE_MODE=false
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 INSTALL_DIR="$HOME/Git/aidevops"
 
@@ -25,6 +26,47 @@ print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Confirm step in interactive mode
+# Usage: confirm_step "Step description" && function_to_run
+# Returns: 0 if confirmed or not interactive, 1 if skipped
+confirm_step() {
+    local step_name="$1"
+    
+    # Skip confirmation in non-interactive mode
+    if [[ "$INTERACTIVE_MODE" != "true" ]]; then
+        return 0
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}Step:${NC} $step_name"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    while true; do
+        echo -n -e "${GREEN}Run this step? [Y]es / [n]o / [q]uit: ${NC}"
+        read -r response
+        # Convert to lowercase (bash 3.2 compatible)
+        response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+        case "$response" in
+            y|yes|"")
+                return 0
+                ;;
+            n|no|s|skip)
+                print_warning "Skipped: $step_name"
+                return 1
+                ;;
+            q|quit|exit)
+                echo ""
+                print_info "Setup cancelled by user"
+                exit 0
+                ;;
+            *)
+                echo "Please answer: y (yes), n (no), or q (quit)"
+                ;;
+        esac
+    done
+}
 
 # Backup rotation settings
 BACKUP_KEEP_COUNT=10
@@ -1890,15 +1932,22 @@ parse_args() {
                 CLEAN_MODE=true
                 shift
                 ;;
+            --interactive|-i)
+                INTERACTIVE_MODE=true
+                shift
+                ;;
             --help|-h)
                 echo "Usage: ./setup.sh [OPTIONS]"
                 echo ""
                 echo "Options:"
-                echo "  --clean    Remove stale files before deploying (cleans ~/.aidevops/agents/)"
-                echo "  --help     Show this help message"
+                echo "  --clean        Remove stale files before deploying (cleans ~/.aidevops/agents/)"
+                echo "  --interactive  Ask confirmation before each step"
+                echo "  -i             Short for --interactive"
+                echo "  --help         Show this help message"
                 echo ""
                 echo "Default behavior adds/overwrites files without removing deleted agents."
                 echo "Use --clean after removing or renaming agents to sync deletions."
+                echo "Use --interactive to control each step individually."
                 exit 0
                 ;;
             *)
@@ -1922,36 +1971,44 @@ main() {
     if [[ "$CLEAN_MODE" == "true" ]]; then
         echo "Mode: Clean (removing stale files)"
     fi
+    if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+        echo "Mode: Interactive (confirm each step)"
+        echo ""
+        echo "Controls: [Y]es (default) / [n]o skip / [q]uit"
+    fi
     echo ""
 
+    # Required steps (always run)
     verify_location
     check_requirements
-    check_optional_deps
-    setup_recommended_tools
-    setup_git_clis
-    setup_ssh_key
-    setup_configs
-    set_permissions
-    install_aidevops_cli
-    setup_aliases
-    setup_terminal_title
-    deploy_ai_templates
-    migrate_old_backups
-    cleanup_deprecated_paths
-    extract_opencode_prompts
-    deploy_aidevops_agents
-    generate_agent_skills
-    inject_agents_reference
-    update_opencode_config
-    setup_python_env
-    setup_nodejs_env
-    setup_augment_context_engine
-    setup_osgrep
-    setup_beads
-    setup_seo_mcps
-    setup_browser_tools
-    setup_opencode_plugins
-    setup_oh_my_opencode
+    
+    # Optional steps with confirmation in interactive mode
+    confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
+    confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
+    confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
+    confirm_step "Setup SSH key" && setup_ssh_key
+    confirm_step "Setup configuration files" && setup_configs
+    confirm_step "Set secure permissions on config files" && set_permissions
+    confirm_step "Install aidevops CLI command" && install_aidevops_cli
+    confirm_step "Setup shell aliases" && setup_aliases
+    confirm_step "Setup terminal title integration" && setup_terminal_title
+    confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
+    confirm_step "Migrate old backups to new structure" && migrate_old_backups
+    confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
+    confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
+    confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+    confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
+    confirm_step "Inject agents reference into AI configs" && inject_agents_reference
+    confirm_step "Update OpenCode configuration" && update_opencode_config
+    confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
+    confirm_step "Setup Node.js environment" && setup_nodejs_env
+    confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
+    confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
+    confirm_step "Setup Beads task management" && setup_beads
+    confirm_step "Setup SEO MCP servers (DataForSEO, Serper)" && setup_seo_mcps
+    confirm_step "Setup browser automation tools" && setup_browser_tools
+    confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
+    confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
 
     echo ""
     print_success "🎉 Setup complete!"
