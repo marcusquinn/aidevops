@@ -103,6 +103,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Clawdbot (2.6k stars) is a personal AI assistant with multi-platform messaging (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, WebChat). Key features to evaluate: Gateway WS control plane, multi-agent routing, Voice Wake + Talk Mode, Live Canvas with A2UI, skills platform, Docker sandboxing for non-main sessions. Could inspire: messaging integrations for aidevops, voice control, canvas UI, agent-to-agent communication (sessions_* tools). MIT licensed.
 - [ ] t047 TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research #git #sync #planning ~4h (ai:2h test:1h read:1h) logged:2025-01-09
   - Notes: Evaluate bi-directional sync between TODO.md/PLANS.md and git platform issues. Research tools for syncing issues/PRs across multiple git platforms (GitHub, GitLab, Gitea). Related to t020 (Git Issues Bi-directional Sync). Consider: gitea-github-migrator, gitlab-github-sync, issue-sync tools, Allspice Hub, Linear/Jira integrations. Key questions: 1) Should tasks auto-create issues? 2) Should issue updates sync back to TODO.md? 3) How to handle cross-platform mirroring for multi-platform projects?
+- [ ] t048 Add worktree cleanup reminder to postflight workflow #workflow #git ~30m (ai:15m test:10m read:5m) logged:2025-01-10
+  - Notes: After PR merge, postflight.md should remind to clean up worktrees for merged branches. Add section with `worktree-helper.sh list` and `worktree-helper.sh clean` commands.
+- [ ] t049 Add timing analysis commands to ralph-loop workflow #workflow #automation ~30m (ai:15m test:10m read:5m) logged:2025-01-10
+  - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
 
 <!--TOON:backlog[38]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -146,6 +150,8 @@ t044,Enhance Vaultwarden agent with bitwarden-cli MCP integration,,tools|credent
 t045,Create Enpass agent using enpass-cli,,tools|credentials|security,4h,2h,1h,1h,2025-01-08T00:00Z,pending,,,
 t046,Review Clawdbot for inspiration and incorporation into aidevops,,research|agents|messaging,4h,2h,1h,1h,2025-01-09T00:00Z,pending,,,
 t047,TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research,,git|sync|planning,4h,2h,1h,1h,2025-01-09T00:00Z,pending,,,
+t048,Add worktree cleanup reminder to postflight workflow,,workflow|git,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
+t049,Add timing analysis commands to ralph-loop workflow,,workflow|automation,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -232,5 +238,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-48,39,0,0,24,0,26d16h30m,15h50m,0,39
+50,41,0,0,24,0,26d17h30m,15h50m,0,41
 -->
