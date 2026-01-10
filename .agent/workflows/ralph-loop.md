@@ -344,6 +344,71 @@ This compares our implementation against the Claude plugin and reports any signi
 
 The check runs automatically when starting an OpenCode session in the aidevops repository.
 
+## Session Completion & Spawning
+
+Loop agents should detect completion and suggest next steps.
+
+### Loop Completion Detection
+
+When a loop completes successfully (promise fulfilled), suggest:
+
+```text
+<promise>PR_MERGED</promise>
+
+---
+Loop complete. PR #123 merged successfully.
+
+Suggestions:
+1. Run @agent-review to capture learnings
+2. Start new session for next task
+3. Spawn parallel session for related work
+---
+```
+
+### Spawning New Sessions from Loops
+
+Loops can spawn new OpenCode sessions for parallel work:
+
+**Background Session (Same Terminal):**
+
+```bash
+# Start new session in background
+opencode run "Continue with next task" --agent Build+ &
+
+# Or use serve mode for persistent background
+opencode serve --port 4097 &
+opencode run --attach http://localhost:4097 "Task X" --agent Build+
+```
+
+**New Terminal Tab (macOS):**
+
+```bash
+# Spawn in new tab
+osascript -e 'tell application "Terminal" to do script "cd ~/Git/project && opencode"'
+```
+
+**With Worktrees (Recommended for Parallel Branches):**
+
+```bash
+# Create worktree for parallel work
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
+# Output: ~/Git/project-feature-parallel-task/
+
+# Spawn session in new worktree
+osascript -e 'tell application "Terminal" to do script "cd ~/Git/project-feature-parallel-task && opencode"'
+```
+
+### Integration with quality-loop-helper.sh
+
+The `quality-loop-helper.sh` script can spawn new sessions on loop completion:
+
+```bash
+# After successful loop, offer to spawn next task
+~/.aidevops/agents/scripts/quality-loop-helper.sh preflight --on-complete spawn
+```
+
+See `workflows/session-manager.md` for full session lifecycle guidance.
+
 ## Learn More
 
 - Original technique: <https://ghuntley.com/ralph/>

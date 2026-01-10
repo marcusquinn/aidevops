@@ -214,6 +214,48 @@ opencode mcp list
 ~/.aidevops/agents/scripts/tool-version-check.sh
 ```
 
+## Session Completion & Parallel Work
+
+**Recognize session completion signals:**
+- All session tasks marked `[x]` in TODO.md
+- PR merged and release published
+- User expresses gratitude ("thanks", "done", "that's all")
+- Significant topic shift to unrelated work
+
+**At natural completion points, suggest:**
+
+```text
+---
+Session goals achieved:
+- [x] {completed task 1}
+- [x] {completed task 2}
+
+Suggestions:
+1. Run @agent-review to capture learnings
+2. Start new session for clean context
+3. For parallel work: worktree-helper.sh add {type}/{name}
+---
+```
+
+**When to suggest new sessions:**
+- After PR merge + release
+- When switching to unrelated domain
+- After 3+ hours of continuous work
+- When user requests unrelated task
+
+**Spawning parallel sessions** (for related but separate work):
+
+```bash
+# Create worktree + spawn new terminal (macOS)
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
+osascript -e 'tell application "Terminal" to do script "cd ~/Git/{repo}-feature-parallel-task && opencode"'
+
+# Or background session
+opencode run "Continue with task X" --agent Build+ &
+```
+
+See `workflows/session-manager.md` for full session lifecycle guidance.
+
 ## Main Agents
 
 | Agent | Purpose |
