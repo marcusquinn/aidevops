@@ -246,7 +246,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/build-mcp/` | MCP development - creating Model Context Protocol servers and tools | build-mcp, api-wrapper, server-patterns, transports, deployment |
 | `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
 | `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling | stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools |
-| `tools/ui/` | UI components - component libraries, design systems | shadcn |
+| `tools/ui/` | UI components - component libraries, design systems, interface constraints | shadcn, ui-skills |
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, codacy, coderabbit, qlty, snyk, secretlint, auditing |
 | `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy |
 | `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
