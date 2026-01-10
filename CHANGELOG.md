@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.43.0] - 2026-01-10
+
+### Added
+
+- add session management and parallel work spawning (#26)
+- add interactive mode with step-by-step confirmation (#23)
+
+### Changed
+
+- Documentation: add session management section to README
+- Documentation: add line break before tagline
+- Documentation: make aidevops bold links to aidevops.sh in prose
+- Documentation: add tagline to philosophy section
+- Documentation: add philosophy section explaining git-first workflow approach
+- Documentation: add OpenCode Anthropic OAuth plugin section to README (#24)
 ## [2.42.2] - 2026-01-09
 
 ### Added
