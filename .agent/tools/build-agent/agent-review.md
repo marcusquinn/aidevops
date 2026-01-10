@@ -56,6 +56,35 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 3. **Observable failure** - Commands fail, paths don't exist
 4. **Periodic maintenance** - Scheduled review cycles
 
+### When Agents Should Suggest @agent-review
+
+All agents should suggest calling `@agent-review` at these points:
+
+1. **After PR merge** - Capture what worked in the PR process
+2. **After release** - Document release learnings
+3. **After fixing multiple issues** - Pattern recognition opportunity
+4. **After user correction** - Immediate improvement opportunity
+5. **Before starting unrelated work** - Clean context boundary
+6. **After long session** - Capture accumulated learnings
+
+**Suggestion format:**
+
+```text
+---
+Session complete. Consider running @agent-review to:
+- Capture patterns from {specific accomplishment}
+- Identify improvements to {agents used}
+- Document {any corrections or failures}
+
+Options:
+1. Run @agent-review now
+2. Start new session (clean context)
+3. Continue in current session
+---
+```
+
+See `workflows/session-manager.md` for full session lifecycle guidance.
+
 ### Review Checklist
 
 For each agent file under review:

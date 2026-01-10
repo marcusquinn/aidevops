@@ -617,6 +617,33 @@ After fixing violations from SonarCloud, Codacy, ShellCheck, etc.:
 
 Example: Finding 15 SC2162 violations (read without -r) leads to adding clear examples in AGENTS.md's shell best practices section.
 
+## Spawning Parallel Sessions
+
+OpenCode supports multiple session patterns for parallel work.
+
+### Quick Reference
+
+```bash
+# Non-interactive execution
+opencode run "Task description" --agent Build+ --title "Task Name"
+
+# Background execution
+opencode run "Long running task" --agent Build+ &
+
+# Persistent server (reuses MCP connections)
+opencode serve --port 4097
+opencode run --attach http://localhost:4097 "Task" --agent Build+
+
+# With worktree (recommended for parallel branches)
+~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
+```
+
+See `workflows/session-manager.md` for full session lifecycle guidance including:
+- Terminal tab spawning (macOS, Linux)
+- Session handoff patterns
+- Worktree integration
+- Loop completion detection
+
 ## References
 
 - [OpenCode Agents Documentation](https://opencode.ai/docs/agents)
