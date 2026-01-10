@@ -26,6 +26,8 @@ readonly NC='\033[0m'
 # Repository info
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
 readonly SONAR_PROJECT_KEY="marcusquinn_aidevops"
+# Save the original working directory for git operations (supports worktrees)
+readonly ORIGINAL_PWD="$PWD"
 
 # Counters
 PASSED=0
@@ -98,20 +100,37 @@ check_gh_cli() {
     return 0
 }
 
-# Get repository owner and name
+# Get repository owner and name from original directory (works with worktrees)
 get_repo_info() {
     local remote_url
-    remote_url=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || echo "")
+    # Use original working directory's git context (saved before cd to REPO_ROOT)
+    remote_url=$(git -C "$ORIGINAL_PWD" remote get-url origin 2>/dev/null || echo "")
     
     if [[ -z "$remote_url" ]]; then
         echo ""
         return 1
     fi
     
-    # Extract owner/repo from various URL formats
-    if [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+) ]]; then
-        echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-        return 0
+    # Extract owner/repo from various URL formats using parameter expansion
+    # (bash 3.2 compatible - regex capture groups don't work reliably on macOS)
+    local repo_path
+    if [[ "$remote_url" == *"github.com"* ]]; then
+        # Handle HTTPS: https://github.com/owner/repo.git
+        if [[ "$remote_url" == *"github.com/"* ]]; then
+            repo_path="${remote_url#*github.com/}"
+        # Handle SSH: git@github.com:owner/repo.git
+        elif [[ "$remote_url" == *"github.com:"* ]]; then
+            repo_path="${remote_url#*github.com:}"
+        else
+            echo ""
+            return 1
+        fi
+        # Remove .git suffix if present
+        repo_path="${repo_path%.git}"
+        if [[ -n "$repo_path" && "$repo_path" == *"/"* ]]; then
+            echo "$repo_path"
+            return 0
+        fi
     fi
     
     echo ""
