@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.44.0] - 2026-01-11
+
+### Added
+
+- add session mapping script and improve pre-edit check (#29)
+
+### Fixed
+
+- resolve postflight ShellCheck and return statement issues (#30)
 ## [2.43.0] - 2026-01-10
 
 ### Added
