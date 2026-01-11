@@ -33,9 +33,77 @@ tools:
 **MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
 
 **Extension**: Follow standard patterns in `.agent/spec/extension.md`
+
+**Design Patterns**: aidevops implements industry-standard agent design patterns (see below)
 <!-- AI-CONTEXT-END -->
 
 This file provides comprehensive context for AI assistants to understand, manage, and extend the AI DevOps Framework.
+
+## Agent Design Patterns
+
+aidevops implements proven agent design patterns identified by Lance Martin (LangChain) and validated across successful agents like Claude Code, Manus, and Cursor. These patterns optimize for context efficiency and long-running autonomous operation.
+
+### Pattern Alignment
+
+| Pattern | Description | aidevops Implementation |
+|---------|-------------|------------------------|
+| **Give Agents a Computer** | Filesystem + shell access for persistent context | `~/.aidevops/.agent-workspace/`, helper scripts in `scripts/`, bash tools |
+| **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering in `generate-opencode-agents.sh`, ~12-20 tools per agent |
+| **Progressive Disclosure** | Load context on-demand, not upfront | Subagent tables in AGENTS.md, read-on-demand pattern, YAML frontmatter |
+| **Offload Context** | Write intermediate results to filesystem | `.agent-workspace/work/[project]/` for persistent files, session trajectories |
+| **Cache Context** | Prompt caching for cost efficiency | Stable instruction prefixes, avoid reordering between calls |
+| **Isolate Context** | Sub-agents with separate context windows | Subagent markdown files with specific tool permissions |
+| **Ralph Loop** | Iterative agent execution until task complete | `workflows/ralph-loop.md`, `ralph-loop-helper.sh`, `full-loop-helper.sh` |
+| **Evolve Context** | Learn from sessions, update memories | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
+
+### Key Implementation Details
+
+**Multi-Layer Action Space** (lines 114-170 of `generate-opencode-agents.sh`):
+
+```python
+# Tools disabled globally, enabled per-agent
+AGENT_TOOLS = {
+    "Plan+": {"write": False, "edit": False, "bash": False, ...},
+    "Build+": {"write": True, "context7_*": True, "osgrep_*": True, ...},
+    "SEO": {"gsc_*": True, "dataforseo_*": True, "serper_*": True, ...},
+}
+```
+
+**Progressive Disclosure** (AGENTS.md structure):
+
+```markdown
+## Subagent Folders
+| Folder | Purpose | Key Subagents |
+|--------|---------|---------------|
+| `tools/browser/` | Browser automation | stagehand, playwright, crawl4ai |
+```
+
+Agents read full subagent content only when tasks require domain expertise.
+
+**Ralph Loop** (iterative development):
+
+```text
+Task -> Implement -> Check -> Fix Issues -> Re-check -> ... -> Complete
+         ^                      |
+         +----------------------+ (loop until done)
+```
+
+**Memory System** (continual learning):
+
+```bash
+# Store learnings
+/remember "Fixed CORS with nginx proxy_set_header"
+
+# Recall across sessions
+/recall "cors nginx"
+```
+
+### References
+
+- [Lance Martin's "Effective Agent Design" (Jan 2025)](https://x.com/RLanceMartin/status/2009683038272401719)
+- [Anthropic's Claude Code architecture](https://www.anthropic.com/research/claude-code)
+- [Manus agent design](https://manus.im/)
+- [CodeAct paper on code execution](https://arxiv.org/abs/2402.01030)
 
 ## 🎯 **Framework Overview**
 

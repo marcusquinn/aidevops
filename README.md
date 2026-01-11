@@ -15,6 +15,8 @@
 
 The result: AI agents that work *with* your development process, not around it.
 
+**Built on proven patterns**: aidevops implements [industry-standard agent design patterns](#agent-design-patterns) validated across Claude Code, Manus, and Cursor - including multi-layer action spaces, context isolation, and iterative execution loops.
+
 **[aidevops](https://aidevops.sh)** knows what you need to know.
 
 ## **Why This Framework?**
@@ -377,6 +379,25 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 - **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Gemini Code Assist, Snyk
 - **Performance Auditing**: PageSpeed Insights and Lighthouse integration
 - **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
+
+## **Agent Design Patterns**
+
+aidevops implements proven agent design patterns identified by [Lance Martin (LangChain)](https://x.com/RLanceMartin/status/2009683038272401719) and validated across successful agents like Claude Code, Manus, and Cursor.
+
+| Pattern | Description | aidevops Implementation |
+|---------|-------------|------------------------|
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 100+ helper scripts |
+| **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
+| **Progressive Disclosure** | Load context on-demand | Subagent tables, YAML frontmatter, read-on-demand |
+| **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
+| **Cache Context** | Prompt caching for cost | Stable instruction prefixes |
+| **Isolate Context** | Sub-agents with separate windows | Subagent files with specific tool permissions |
+| **Ralph Loop** | Iterative execution until complete | `ralph-loop-helper.sh`, `full-loop-helper.sh` |
+| **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 |
+
+**Key insight**: Context is a finite resource with diminishing returns. aidevops treats every token as precious - loading only what's needed, when it's needed.
+
+See `.agent/aidevops/architecture.md` for detailed implementation notes and references.
 
 ## **Requirements**
 

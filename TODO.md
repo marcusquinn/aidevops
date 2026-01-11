@@ -111,6 +111,18 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
 - [ ] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~30m (ai:15m test:10m read:5m) logged:2025-01-11
   - Notes: AGENTS.md lines 85-89 contain SonarCloud hotspot patterns (S5332, S6506 exclusions). Move to tools/code-review/ subagent to reduce root AGENTS.md size. Low priority - patterns work fine where they are.
+- [ ] t052 Agent Design Pattern Improvements #plan → [todo/PLANS.md#agent-design-pattern-improvements] ~1d (ai:6h test:4h read:2h) logged:2025-01-11
+  - Notes: Implement remaining improvements from Lance Martin's agent design patterns analysis. Includes: YAML frontmatter for subagents, automatic session reflection, cache-aware prompts, tool description indexing, memory consolidation.
+- [ ] t053 Add YAML frontmatter to source subagents #architecture #agents ~2h (ai:1.5h test:30m) logged:2025-01-11 blocked-by:t052
+  - Notes: Add description, triggers, tools fields to all .agent/**/*.md files. Update generate-opencode-agents.sh to parse frontmatter for better progressive disclosure.
+- [ ] t054 Automatic session reflection to memory #workflow #memory ~4h (ai:2.5h test:1h read:30m) logged:2025-01-11 blocked-by:t052
+  - Notes: Create session-distill-helper.sh to extract learnings. Integrate with /session-review. Auto-call /remember with distilled insights.
+- [ ] t055 Document cache-aware prompt patterns #docs #optimization ~1h (ai:30m test:15m read:15m) logged:2025-01-11 blocked-by:t052
+  - Notes: Add guidance to build-agent.md for stable-prefix patterns and avoiding instruction reordering for better prompt cache hits.
+- [ ] t056 Tool description indexing for on-demand MCP discovery #tools #context ~3h (ai:2h test:45m read:15m) logged:2025-01-11 blocked-by:t052
+  - Notes: Cursor-style MCP description sync to .agent-workspace/mcp-descriptions/. Add search tool for on-demand discovery instead of loading all tool definitions upfront.
+- [ ] t057 Memory consolidation and pruning #memory #optimization ~2h (ai:1h test:45m read:15m) logged:2025-01-11 blocked-by:t052
+  - Notes: Add memory-helper.sh consolidate command. Periodic reflection to merge similar memories and prune stale/superseded entries.
 
 <!--TOON:backlog[38]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -157,6 +169,12 @@ t047,TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools rese
 t048,Add worktree cleanup reminder to postflight workflow,,workflow|git,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
 t049,Add timing analysis commands to ralph-loop workflow,,workflow|automation,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
 t050,Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent,,refactor|docs,30m,15m,10m,5m,2025-01-11T00:00Z,pending,,,
+t052,Agent Design Pattern Improvements,,plan|architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,pending,,,
+t053,Add YAML frontmatter to source subagents,,architecture|agents,2h,1.5h,30m,,2025-01-11T00:00Z,pending,t052,,
+t054,Automatic session reflection to memory,,workflow|memory,4h,2.5h,1h,30m,2025-01-11T00:00Z,pending,t052,,
+t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025-01-11T00:00Z,pending,t052,,
+t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,pending,t052,,
+t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,pending,t052,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
