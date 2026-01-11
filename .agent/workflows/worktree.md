@@ -287,6 +287,35 @@ Tab 2: myrepo/feature/auth
 Tab 3: myrepo/bugfix/login
 ```
 
+### Session Recovery
+
+Find OpenCode sessions associated with worktrees:
+
+```bash
+# List worktrees with likely matching sessions
+~/.aidevops/agents/scripts/worktree-sessions.sh list
+
+# Interactive: select worktree and open in OpenCode
+~/.aidevops/agents/scripts/worktree-sessions.sh open
+```
+
+**How session matching works**:
+
+Sessions are scored based on:
+- **+100 pts**: Exact branch name in session title
+- **+80 pts**: Branch slug (e.g., `feature-auth`) in title
+- **+60 pts**: Branch name without type prefix in title
+- **+20 pts**: Each key term from branch name found in title
+- **+40 pts**: Session created within 1 hour of branch creation
+- **+20 pts**: Session created within 4 hours of branch creation
+
+**Confidence levels**:
+- **High (80+)**: Very likely the correct session
+- **Medium (40-79)**: Probably related
+- **Low (<40)**: Possible match
+
+**Best practice**: Always use `session-rename_sync_branch` tool after creating branches. This syncs the session name with the branch name, making future lookups reliable.
+
 ## Best Practices
 
 ### 1. Keep Main Worktree on Main
