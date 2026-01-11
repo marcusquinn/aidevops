@@ -1,0 +1,115 @@
+{
+  "langflow_config": {
+    "description": "Langflow configuration for AI DevOps Framework",
+    "version": "1.0.0",
+    "framework_integration": true,
+    "setup": {
+      "langflow_directory": "~/.aidevops/langflow",
+      "flows_directory": "~/.aidevops/langflow/flows",
+      "scripts_directory": "~/.aidevops/scripts",
+      "default_port": 7860
+    },
+    "server": {
+      "host": "0.0.0.0",
+      "port": 7860,
+      "workers": 1,
+      "log_level": "INFO",
+      "database_url": "sqlite:///./langflow.db"
+    },
+    "features": {
+      "mcp_server": {
+        "enabled": false,
+        "description": "Expose flows as MCP tools for AI assistants"
+      },
+      "custom_components": {
+        "enabled": true,
+        "path": "~/.aidevops/langflow/components/"
+      },
+      "flow_export": {
+        "format": "json",
+        "include_credentials": false
+      }
+    },
+    "model_providers": {
+      "openai": {
+        "enabled": true,
+        "api_key_env": "OPENAI_API_KEY",
+        "default_model": "gpt-4o-mini"
+      },
+      "anthropic": {
+        "enabled": true,
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "default_model": "claude-3-5-sonnet-20241022"
+      },
+      "ollama": {
+        "enabled": true,
+        "base_url": "http://localhost:11434",
+        "default_model": "llama3.2"
+      },
+      "google": {
+        "enabled": false,
+        "api_key_env": "GOOGLE_API_KEY"
+      }
+    },
+    "security": {
+      "authentication": false,
+      "api_key_storage": "environment_variables",
+      "cors_origins": ["http://localhost:*"],
+      "rate_limiting": false
+    },
+    "integration": {
+      "git_version_control": {
+        "enabled": true,
+        "export_format": "json",
+        "auto_export": false,
+        "flows_directory": "flows/"
+      },
+      "aidevops_workflows": {
+        "enabled": true,
+        "helper_script": ".agent/scripts/langflow-helper.sh"
+      }
+    },
+    "deployment": {
+      "environment": "local",
+      "docker": {
+        "image": "langflowai/langflow:latest",
+        "port_mapping": "7860:7860"
+      },
+      "production": {
+        "database": "postgresql",
+        "workers": 4,
+        "reverse_proxy": true
+      }
+    }
+  },
+  "setup_requirements": {
+    "python": {
+      "version": "3.10+",
+      "packages": ["langflow"],
+      "virtual_environment": "required"
+    },
+    "system": {
+      "memory": "4GB minimum, 8GB recommended",
+      "disk": "2GB for installation",
+      "network": "Internet for initial setup and cloud LLM APIs"
+    }
+  },
+  "usage_examples": {
+    "setup": "bash .agent/scripts/langflow-helper.sh setup",
+    "start": "~/.aidevops/scripts/start-langflow.sh",
+    "stop": "~/.aidevops/scripts/stop-langflow.sh",
+    "status": "~/.aidevops/scripts/langflow-status.sh",
+    "export_flows": "bash .agent/scripts/langflow-helper.sh export ./flows",
+    "import_flows": "bash .agent/scripts/langflow-helper.sh import ./flows",
+    "access_ui": "http://localhost:7860",
+    "access_api": "http://localhost:7860/docs"
+  },
+  "ai_devops_benefits": {
+    "visual_development": "Drag-and-drop interface for rapid prototyping",
+    "code_export": "Export flows to Python for production deployment",
+    "mcp_integration": "Expose flows as tools for AI assistants",
+    "version_control": "JSON export for Git-based workflow management",
+    "local_llm": "Full support for Ollama and local models",
+    "extensibility": "Custom Python components for specialized tasks"
+  }
+}

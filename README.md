@@ -439,6 +439,12 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[Agno](https://agno.com/)**: Local AI agent operating system for DevOps automation
 - **[Pandoc](https://pandoc.org/)**: Document conversion to markdown for AI processing
 
+### **AI Orchestration Frameworks**
+
+- **[Langflow](https://langflow.org/)**: Visual drag-and-drop builder for AI workflows (MIT, localhost:7860)
+- **[CrewAI](https://crewai.com/)**: Multi-agent teams with role-based orchestration (MIT, localhost:8501)
+- **[AutoGen](https://microsoft.github.io/autogen/)**: Microsoft's agentic AI framework with MCP support (MIT, localhost:8081)
+
 ### **WordPress Development**
 
 - **[LocalWP](https://localwp.com)**: WordPress development environment with MCP database access
