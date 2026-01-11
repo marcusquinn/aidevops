@@ -210,7 +210,30 @@ tools:
 - **Use Cases**: Transactional emails, marketing emails, email monitoring
 - **Helper**: `ses-helper.sh`
 - **Config**: `ses-config.json`
-- **Docs**: `.agent/ses.md`
+- **Docs**: `.agent/services/email/ses.md`
+
+## Communications Services (2 Services)
+
+### Twilio
+
+- **Type**: Cloud communications platform (CPaaS)
+- **Strengths**: Global coverage, comprehensive APIs, multi-channel (SMS, Voice, WhatsApp)
+- **API**: REST API for messaging, voice, verify, lookup
+- **Use Cases**: SMS notifications, voice calls, 2FA/OTP, WhatsApp Business, call recording
+- **Helper**: `twilio-helper.sh`
+- **Config**: `twilio-config.json`
+- **Docs**: `.agent/services/communications/twilio.md`
+- **AUP**: Must comply with Twilio Acceptable Use Policy
+
+### Telfon
+
+- **Type**: Twilio-powered cloud phone system with mobile/desktop apps
+- **Strengths**: User-friendly interface, mobile apps, WhatsApp integration, call recording
+- **Website**: https://mytelfon.com/
+- **Use Cases**: Sales teams, customer support, remote teams needing softphone
+- **Apps**: iOS, Android, Chrome Extension, Edge Add-on
+- **Docs**: `.agent/services/communications/telfon.md`
+- **Note**: Recommended for end users who need a calling/SMS interface
 
 ## Domain & DNS (5 Services)
 

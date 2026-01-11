@@ -1,0 +1,61 @@
+{
+  "_comment": "Twilio MCP Configuration Templates for AI Assistants",
+  "_docs": "https://www.twilio.com/docs",
+  "_note": "Twilio does not have an official MCP server. Use the helper script via Bash tool.",
+  
+  "opencode": {
+    "_comment": "OpenCode uses helper script via Bash - no MCP server needed",
+    "_usage": "Agents with Bash tool access can use: ~/.aidevops/agents/scripts/twilio-helper.sh",
+    "_enabled_agents": ["Build+", "AI-DevOps", "Marketing", "Sales"]
+  },
+  
+  "claude_code": {
+    "_comment": "Claude Code uses helper script via Bash - no MCP server needed",
+    "_usage": "Use Bash tool to call: ~/.aidevops/agents/scripts/twilio-helper.sh"
+  },
+  
+  "cursor": {
+    "_comment": "Cursor uses helper script via terminal - no MCP server needed",
+    "_usage": "Run in terminal: ~/.aidevops/agents/scripts/twilio-helper.sh"
+  },
+  
+  "environment_variables": {
+    "_comment": "Store in ~/.config/aidevops/mcp-env.sh",
+    "TWILIO_ACCOUNT_SID_PRODUCTION": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "TWILIO_AUTH_TOKEN_PRODUCTION": "your_auth_token_here",
+    "TWILIO_ACCOUNT_SID_STAGING": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "TWILIO_AUTH_TOKEN_STAGING": "your_auth_token_here"
+  },
+  
+  "helper_script_commands": {
+    "list_accounts": "twilio-helper.sh accounts",
+    "send_sms": "twilio-helper.sh sms <account> <to> <body>",
+    "make_call": "twilio-helper.sh call <account> <to> [--record]",
+    "list_numbers": "twilio-helper.sh numbers <account>",
+    "search_numbers": "twilio-helper.sh search-numbers <account> <country> [--area-code X]",
+    "verify_send": "twilio-helper.sh verify-send <account> <to> [sms|call]",
+    "verify_check": "twilio-helper.sh verify-check <account> <to> <code>",
+    "whatsapp": "twilio-helper.sh whatsapp <account> <to> <body>",
+    "recordings": "twilio-helper.sh recordings <account>",
+    "transcription": "twilio-helper.sh transcription <account> <sid>",
+    "audit": "twilio-helper.sh audit <account>"
+  },
+  
+  "ai_orchestration_patterns": {
+    "appointment_reminder": {
+      "description": "Send SMS reminder before appointment",
+      "command": "twilio-helper.sh sms production \"+1234567890\" \"Reminder: Your appointment is tomorrow at 3pm\"",
+      "trigger": "cron or workflow event"
+    },
+    "otp_verification": {
+      "description": "Send and verify OTP code",
+      "send": "twilio-helper.sh verify-send production \"+1234567890\" sms",
+      "check": "twilio-helper.sh verify-check production \"+1234567890\" \"123456\""
+    },
+    "call_with_recording": {
+      "description": "Make call and record for CRM",
+      "command": "twilio-helper.sh call production \"+1234567890\" --record",
+      "post_action": "Download recording and transcription for CRM logging"
+    }
+  }
+}

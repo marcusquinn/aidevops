@@ -1,0 +1,71 @@
+{
+  "accounts": {
+    "production": {
+      "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "auth_token": "YOUR_PRODUCTION_AUTH_TOKEN_HERE",
+      "description": "Production Twilio account",
+      "phone_numbers": [
+        "+1234567890"
+      ],
+      "default_from": "+1234567890",
+      "messaging_service_sid": "MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "verify_service_sid": "VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "whatsapp_from": "+14155238886",
+      "webhooks": {
+        "sms_status": "https://your-server.com/webhooks/twilio/sms-status",
+        "voice_status": "https://your-server.com/webhooks/twilio/voice-status",
+        "recording_callback": "https://your-server.com/webhooks/twilio/recording",
+        "transcription_callback": "https://your-server.com/webhooks/twilio/transcription"
+      }
+    },
+    "staging": {
+      "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "auth_token": "YOUR_STAGING_AUTH_TOKEN_HERE",
+      "description": "Staging/Test Twilio account",
+      "phone_numbers": [
+        "+1987654321"
+      ],
+      "default_from": "+1987654321",
+      "verify_service_sid": "VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "client-project": {
+      "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "auth_token": "YOUR_CLIENT_AUTH_TOKEN_HERE",
+      "description": "Client project Twilio account",
+      "phone_numbers": [
+        "+1555123456"
+      ],
+      "default_from": "+1555123456"
+    }
+  },
+  "defaults": {
+    "sms_status_callback": true,
+    "voice_record": false,
+    "voice_transcribe": false,
+    "verify_channel": "sms"
+  },
+  "compliance": {
+    "require_consent_confirmation": true,
+    "block_bulk_without_messaging_service": true,
+    "max_bulk_recipients": 100,
+    "rate_limit_per_second": 10
+  },
+  "telfon": {
+    "recommended": true,
+    "website": "https://mytelfon.com/",
+    "ios_app": "https://apps.apple.com/in/app/telfon-twilio-calls-chats/id6443471885",
+    "android_app": "https://play.google.com/store/apps/details?id=com.wmt.cloud_telephony.android",
+    "chrome_extension": "https://chromewebstore.google.com/detail/telfon-twilio-calls/bgkbahmggkomlcagkagcmiggkmcjmgdi"
+  },
+  "aup_reference": {
+    "url": "https://www.twilio.com/en-us/legal/aup",
+    "last_reviewed": "2025-01-11",
+    "key_prohibitions": [
+      "Spam and unsolicited bulk messages",
+      "Phishing and deceptive content",
+      "Identity spoofing",
+      "Bypassing service limitations",
+      "Illegal activities"
+    ]
+  }
+}

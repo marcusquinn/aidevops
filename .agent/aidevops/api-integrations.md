@@ -127,6 +127,16 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Helper Script**: `.agent/scripts/ses-helper.sh`
 - **Key Features**: Email sending, bounce tracking, reputation monitoring
 
+### **Twilio API**
+
+- **Purpose**: SMS, voice calls, WhatsApp, phone verification, call recording
+- **Authentication**: Account SID + Auth Token
+- **Configuration**: `configs/twilio-config.json`
+- **Helper Script**: `.agent/scripts/twilio-helper.sh`
+- **Key Features**: SMS/MMS, voice calls, WhatsApp Business, Verify (2FA), Lookup, recordings, transcriptions
+- **AUP Compliance**: Must follow Twilio Acceptable Use Policy
+- **Recommended Client**: Telfon app for end-user interface (https://mytelfon.com/)
+
 ### **MainWP API**
 
 - **Purpose**: WordPress site management, updates, monitoring
