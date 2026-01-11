@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - add missing default cases to case statements (#35)
+
 ## [2.45.0] - 2026-01-11
 
 ### Added
