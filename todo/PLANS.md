@@ -809,6 +809,91 @@ p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibil
 p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
 p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,
 p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
+p010,Agent Design Pattern Improvements,planning,0,5,,architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,
+-->
+
+### [2025-01-11] Agent Design Pattern Improvements
+
+**Status:** Planning
+**Estimate:** ~1d (ai:6h test:4h read:2h)
+**Source:** [Lance Martin's "Effective Agent Design" (Jan 2025)](https://x.com/RLanceMartin/status/2009683038272401719)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p010,Agent Design Pattern Improvements,planning,0,5,,architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,
+-->
+
+#### Purpose
+
+Implement remaining agent design pattern improvements identified from Lance Martin's analysis of successful agents (Claude Code, Manus, Cursor). While aidevops already implements most patterns, these enhancements will further optimize context efficiency and enable automatic learning.
+
+#### Context from Discussion
+
+**What aidevops already does well:**
+- Give agents a computer (filesystem + shell)
+- Multi-layer action space (per-agent MCP filtering)
+- Progressive disclosure (subagent tables, read-on-demand)
+- Offload context to filesystem
+- Ralph Loop (iterative execution)
+- Memory system (/remember, /recall)
+
+**Remaining opportunities:**
+
+| Priority | Improvement | Estimate | Description |
+|----------|-------------|----------|-------------|
+| Medium | YAML frontmatter in source subagents | ~2h | Add frontmatter to all `.agent/**/*.md` for better progressive disclosure |
+| Medium | Automatic session reflection | ~4h | Auto-distill sessions to memory on completion |
+| Low | Cache-aware prompt structure | ~1h | Document stable-prefix patterns for better cache hits |
+| Low | Tool description indexing | ~3h | Cursor-style MCP description sync for on-demand retrieval |
+| Low | Memory consolidation | ~2h | Periodic reflection over memories to merge/prune |
+
+#### Progress
+
+- [ ] (2025-01-11) Phase 1: Add YAML frontmatter to source subagents ~2h
+  - Add `description`, `triggers`, `tools` to all `.agent/**/*.md` files
+  - Update `generate-opencode-agents.sh` to parse frontmatter
+- [ ] (2025-01-11) Phase 2: Automatic session reflection ~4h
+  - Create `session-distill-helper.sh` to extract learnings
+  - Integrate with `/session-review` command
+  - Auto-call `/remember` with distilled insights
+- [ ] (2025-01-11) Phase 3: Cache-aware prompt documentation ~1h
+  - Document stable-prefix patterns in `build-agent.md`
+  - Add guidance for avoiding instruction reordering
+- [ ] (2025-01-11) Phase 4: Tool description indexing ~3h
+  - Create MCP description sync to `.agent-workspace/mcp-descriptions/`
+  - Add search tool for on-demand MCP discovery
+- [ ] (2025-01-11) Phase 5: Memory consolidation ~2h
+  - Add `memory-helper.sh consolidate` command
+  - Periodic reflection to merge similar memories
+  - Prune stale or superseded entries
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m048,p010,Phase 1: Add YAML frontmatter to source subagents,2h,,2025-01-11T00:00Z,,pending
+m049,p010,Phase 2: Automatic session reflection,4h,,2025-01-11T00:00Z,,pending
+m050,p010,Phase 3: Cache-aware prompt documentation,1h,,2025-01-11T00:00Z,,pending
+m051,p010,Phase 4: Tool description indexing,3h,,2025-01-11T00:00Z,,pending
+m052,p010,Phase 5: Memory consolidation,2h,,2025-01-11T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Document patterns before implementing improvements
+  **Rationale:** Establishes baseline, validates alignment, provides reference for future work
+  **Date:** 2025-01-11
+
+- **Decision:** Prioritize automatic session reflection over other improvements
+  **Rationale:** Highest impact for continual learning; other patterns already well-implemented
+  **Date:** 2025-01-11
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d017,p010,Document patterns before implementing improvements,Establishes baseline and validates alignment,2025-01-11,None
+d018,p010,Prioritize automatic session reflection,Highest impact for continual learning,2025-01-11,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
 ## Completed Plans
