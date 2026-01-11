@@ -75,6 +75,29 @@ The loop creates a **self-referential feedback loop** where:
 ~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
 ```
 
+### Auto-Branch Handling (Loop Mode)
+
+When running in loop mode on main/master, Ralph automatically handles branch decisions:
+
+```bash
+# The helper script checks branch and auto-decides
+~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "Build a REST API for todos"
+```
+
+**Auto-decision rules:**
+
+| Task Type | Detection Keywords | Action |
+|-----------|-------------------|--------|
+| Docs-only | readme, changelog, docs/, documentation, typo, spelling | Stay on main (exit 0) |
+| Code | feature, fix, bug, implement, refactor, add, update, enhance | Create worktree (exit 2) |
+
+**Exit codes:**
+- `0` - Proceed (on feature branch or docs-only on main)
+- `2` - Create worktree (code task detected on main)
+- `1` - Error (shouldn't occur in loop mode)
+
+This eliminates the interactive prompt that previously stalled loop agents.
+
 ### Legacy: Same Session
 
 ```bash

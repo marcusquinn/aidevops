@@ -15,9 +15,13 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-# Error message constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
-readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
+# Error message constants (use shared-constants.sh if available, otherwise define locally)
+if [[ -z "${ERROR_UNKNOWN_COMMAND:-}" ]]; then
+    readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
+fi
+if [[ -z "${HELP_USAGE_INFO:-}" ]]; then
+    readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
+fi
 
 print_info() {
     local msg="$1"
@@ -45,6 +49,142 @@ print_error() {
 
 # Configuration file
 CONFIG_FILE="../configs/localhost-config.json"
+
+# =============================================================================
+# Port Management Functions
+# =============================================================================
+# These functions ensure port conflicts are avoided and services use available ports.
+# This is critical for:
+# 1. Avoiding "port already in use" errors
+# 2. Enabling SSL via reverse proxy (password managers require HTTPS)
+# 3. Consistent .local domain access across all local services
+
+# Default port range for auto-assignment
+readonly PORT_RANGE_START=3000
+readonly PORT_RANGE_END=9999
+
+# Check if a port is in use
+# Returns 0 if port is FREE, 1 if port is IN USE
+is_port_free() {
+    local port="$1"
+    if [[ -z "$port" ]]; then
+        print_error "Port number required"
+        return 1
+    fi
+    
+    # Check using lsof (works on macOS and Linux)
+    if lsof -i :"$port" >/dev/null 2>&1; then
+        return 1  # Port is in use
+    fi
+    
+    # Double-check with nc if available
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+            return 1  # Port is in use
+        fi
+    fi
+    
+    return 0  # Port is free
+}
+
+# Find the next available port starting from a given port
+# Usage: find_available_port [start_port]
+# Returns: Prints the first available port
+find_available_port() {
+    local start_port="${1:-$PORT_RANGE_START}"
+    local port="$start_port"
+    
+    while [[ $port -le $PORT_RANGE_END ]]; do
+        if is_port_free "$port"; then
+            echo "$port"
+            return 0
+        fi
+        ((port++))
+    done
+    
+    print_error "No available ports found in range $start_port-$PORT_RANGE_END"
+    return 1
+}
+
+# Check port and suggest alternative if in use
+# Usage: check_port_or_suggest [port]
+# Returns: 0 if port is free, 1 if in use (prints suggestion)
+check_port_or_suggest() {
+    local port="$1"
+    
+    if [[ -z "$port" ]]; then
+        print_error "Port number required"
+        return 1
+    fi
+    
+    if is_port_free "$port"; then
+        print_success "Port $port is available"
+        return 0
+    else
+        local process_info
+        process_info=$(lsof -i :"$port" 2>/dev/null | tail -1 | awk '{print $1, $2}')
+        print_warning "Port $port is in use by: $process_info"
+        
+        local suggested_port
+        suggested_port=$(find_available_port "$((port + 1))")
+        if [[ -n "$suggested_port" ]]; then
+            print_info "Suggested alternative: $suggested_port"
+            echo "SUGGESTED_PORT=$suggested_port"
+        fi
+        return 1
+    fi
+}
+
+# List all ports currently in use by local development services
+list_dev_ports() {
+    print_info "Ports in use by local development services:"
+    echo ""
+    
+    # Common development port ranges
+    local dev_ports="3000 3001 3002 3003 4000 5000 5173 5174 8000 8080 8085 8888 9000 9222 11235"
+    
+    for port in $dev_ports; do
+        if ! is_port_free "$port"; then
+            local process_info
+            process_info=$(lsof -i :"$port" 2>/dev/null | tail -1 | awk '{print $1}')
+            echo "  :$port - $process_info"
+        fi
+    done
+    
+    echo ""
+    print_info "Use 'lsof -i :<port>' for detailed process info"
+    return 0
+}
+
+# Kill process on a specific port
+kill_port() {
+    local port="$1"
+    
+    if [[ -z "$port" ]]; then
+        print_error "Port number required"
+        return 1
+    fi
+    
+    local pids
+    pids=$(lsof -ti :"$port" 2>/dev/null)
+    
+    if [[ -z "$pids" ]]; then
+        print_info "No process found on port $port"
+        return 0
+    fi
+    
+    print_warning "Killing process(es) on port $port: $pids"
+    echo "$pids" | xargs kill -9 2>/dev/null
+    
+    sleep 1
+    if is_port_free "$port"; then
+        print_success "Port $port is now free"
+        return 0
+    else
+        print_error "Failed to free port $port"
+        return 1
+    fi
+}
 
 # Check if config file exists
 check_config() {
@@ -534,6 +674,18 @@ main() {
     "stop-mcp")
         stop_localwp_mcp
         ;;
+    "check-port")
+        check_port_or_suggest "$param2"
+        ;;
+    "find-port")
+        find_available_port "$param2"
+        ;;
+    "list-ports")
+        list_dev_ports
+        ;;
+    "kill-port")
+        kill_port "$param2"
+        ;;
     "help"|"-h"|"--help"|"")
         echo "Localhost Development Helper Script"
         echo "Usage: $0 [command] [options]"
@@ -552,6 +704,12 @@ main() {
         echo "  setup-localwp-domain [site] [domain] - Setup .local domain for LocalWP site"
         echo "  start-mcp                           - Start LocalWP MCP server for AI database access"
         echo "  stop-mcp                            - Stop LocalWP MCP server"
+        echo ""
+        echo "Port Management Commands:"
+        echo "  check-port [port]                   - Check if port is available, suggest alternative"
+        echo "  find-port [start]                   - Find next available port from start (default: 3000)"
+        echo "  list-ports                          - List common dev ports in use"
+        echo "  kill-port [port]                    - Kill process using specified port"
         echo ""
         echo "Examples:"
         echo "  $0 setup-dns"

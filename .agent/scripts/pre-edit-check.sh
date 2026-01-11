@@ -7,12 +7,71 @@
 #
 # Usage:
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh
+#   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "description"
+#
+# Exit codes:
+#   0 - OK to proceed (on feature branch, or docs-only on main in loop mode)
+#   1 - STOP (on protected branch, interactive mode)
+#   2 - Create worktree (loop mode detected code task on main)
 #
 # AI assistants should call this before any Edit/Write tool and STOP if it
 # returns a warning about being on main branch.
 # =============================================================================
 
 set -euo pipefail
+
+# =============================================================================
+# Loop Mode Support
+# =============================================================================
+# When --loop-mode is passed, the script auto-decides based on task description:
+# - Docs-only tasks (README, CHANGELOG, docs/) -> stay on main (exit 0)
+# - Code tasks (feature, fix, implement, etc.) -> signal worktree needed (exit 2)
+
+LOOP_MODE=false
+TASK_DESC=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --loop-mode)
+            LOOP_MODE=true
+            shift
+            ;;
+        --task)
+            TASK_DESC="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Function to detect if task is docs-only
+is_docs_only() {
+    local task="$1"
+    local task_lower
+    task_lower=$(echo "$task" | tr '[:upper:]' '[:lower:]')
+    
+    # Code change indicators (negative match - if present, NOT docs-only)
+    # These take precedence over docs patterns
+    local code_patterns="feature|fix|bug|implement|refactor|add.*function|update.*code|create.*script|modify.*config|change.*logic|new.*api|endpoint|enhance|port|ssl|helper"
+    
+    # Docs-only indicators (positive match)
+    local docs_patterns="^readme|^changelog|^documentation|docs/|typo|spelling|comment only|license only|^update readme|^update changelog|^update docs"
+    
+    # Check for code patterns first (takes precedence)
+    if echo "$task_lower" | grep -qE "$code_patterns"; then
+        return 1  # Not docs-only
+    fi
+    
+    # Check for docs patterns
+    if echo "$task_lower" | grep -qE "$docs_patterns"; then
+        return 0  # Is docs-only
+    fi
+    
+    # Default: not docs-only (safer to create branch)
+    return 1
+}
 
 # Colors
 RED='\033[0;31m'
@@ -37,6 +96,21 @@ fi
 
 # Check if on main or master
 if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
+    # Loop mode: auto-decide based on task description
+    if [[ "$LOOP_MODE" == "true" ]]; then
+        if is_docs_only "$TASK_DESC"; then
+            echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task detected, staying on $current_branch"
+            echo "LOOP_DECISION=stay"
+            exit 0
+        else
+            # Auto-create worktree for code changes
+            echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
+            echo "LOOP_DECISION=worktree"
+            exit 2  # Special exit code for "create worktree"
+        fi
+    fi
+    
+    # Interactive mode: show warning and exit
     echo ""
     echo -e "${RED}${BOLD}======================================================${NC}"
     echo -e "${RED}${BOLD}  STOP - ON PROTECTED BRANCH: $current_branch${NC}"

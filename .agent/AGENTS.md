@@ -42,6 +42,22 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 
 3. **Do NOT proceed until user replies with 1, 2, or 3**
 
+**Loop mode (autonomous agents)**: Loop agents (`/full-loop`, `/ralph-loop`) use auto-decision to avoid stalling:
+
+```bash
+~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "task description"
+```
+
+Auto-decision rules:
+- **Docs-only tasks** (README, CHANGELOG, docs/, typos) -> Option 3 (stay on main)
+- **Code tasks** (feature, fix, implement, refactor, enhance) -> Option 1 (create worktree automatically)
+
+Exit codes: `0` = proceed, `1` = interactive stop, `2` = create worktree needed
+
+Detection keywords:
+- Docs-only: `readme`, `changelog`, `documentation`, `docs/`, `typo`, `spelling`
+- Code (overrides docs): `feature`, `fix`, `bug`, `implement`, `refactor`, `add`, `update`, `enhance`, `port`, `ssl`, `helper`
+
 **Why worktrees are the default**: The main repo directory (`~/Git/{repo}/`) should ALWAYS stay on `main`. This prevents:
 - Uncommitted changes blocking branch switches
 - Parallel sessions inheriting wrong branch state
@@ -92,6 +108,13 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 - Re-read files immediately before editing (stale reads cause "file modified" errors)
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
+
+**Localhost Standards** (for any local service setup):
+- **Always check port first**: `localhost-helper.sh check-port <port>` before starting services
+- **Use .local domains**: `myapp.local` not `localhost:3000` (enables password manager autofill)
+- **Always use SSL**: Via Traefik proxy with mkcert certificates
+- **Auto-find ports**: `localhost-helper.sh find-port <start>` if preferred port is taken
+- See `services/hosting/localhost.md` for full setup guide
 
 **SonarCloud Hotspot Patterns** (auto-excluded via `sonar-project.properties`):
 - Scripts matching `*-helper.sh`, `*-setup.sh`, `*-cli.sh`, `*-verify.sh` are excluded from:
