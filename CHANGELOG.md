@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.0] - 2026-01-11
+
+### Added
+
+- add summarize and bird CLI subagents (t034, t035) (#40)
+
+### Changed
+
+- Documentation: add agent design patterns documentation and improvement plan (#39)
+
+### Fixed
+
+- prevent removal of unpushed branches and uncommitted changes (#42)
 ## [2.46.0] - 2026-01-11
 
 ### Added
