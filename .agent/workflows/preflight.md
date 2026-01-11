@@ -226,6 +226,49 @@ path/to/false-positive.txt
 .agent/scripts/version-manager.sh bump patch
 ```text
 
+## Worktree Awareness
+
+When running preflight in a worktree, checks run against the **worktree's files**, not the deployed `~/.aidevops/agents/` version. This means:
+
+- Pre-existing issues in the deployed version won't be fixed by worktree changes
+- Issues will only be resolved after merge and redeployment (`./setup.sh`)
+- Focus on issues introduced by your changes, not inherited technical debt
+
+## Pre-existing vs New Issues
+
+Preflight checks report ALL issues, including pre-existing ones. When the loop hits max iterations or you see many violations:
+
+### Identifying New vs Pre-existing Issues
+
+```bash
+# See what files you changed
+git diff main --name-only
+
+# Check issues only in your changed files
+shellcheck $(git diff main --name-only -- '*.sh')
+```
+
+### When to Proceed Despite Issues
+
+If all remaining issues are **pre-existing** (not introduced by your PR):
+
+1. Verify your changes don't add new violations
+2. Document pre-existing issues for future cleanup
+3. Proceed with PR creation
+4. Note in PR description: "Pre-existing issues not addressed in this PR"
+
+### When to Fix Issues
+
+Fix issues that are:
+- Introduced by your changes
+- In files you're already modifying
+- Quick wins (< 5 minutes to fix)
+
+Defer issues that are:
+- Pre-existing in untouched files
+- Require significant refactoring
+- Outside the scope of your PR
+
 ## Related Workflows
 
 - **Version bumping**: `workflows/version-bump.md`
