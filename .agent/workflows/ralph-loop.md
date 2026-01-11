@@ -388,6 +388,131 @@ The `quality-loop-helper.sh` script can spawn new sessions on loop completion:
 ~/.aidevops/agents/scripts/quality-loop-helper.sh preflight --on-complete spawn
 ```
 
+## Full Development Loop
+
+For end-to-end automation from task conception to deployment, use the Full Development Loop orchestrator. This chains all phases together for maximum AI utility.
+
+### Quick Start
+
+```bash
+# Start full loop
+~/.aidevops/agents/scripts/full-loop-helper.sh start "Implement feature X with tests"
+
+# Check status
+~/.aidevops/agents/scripts/full-loop-helper.sh status
+
+# Resume after manual intervention
+~/.aidevops/agents/scripts/full-loop-helper.sh resume
+
+# Cancel if needed
+~/.aidevops/agents/scripts/full-loop-helper.sh cancel
+```
+
+### Loop Phases
+
+```text
+┌─────────────────┐
+│  1. TASK LOOP   │  Ralph loop for implementation
+│  (Development)  │  Promise: TASK_COMPLETE
+└────────┬────────┘
+         │ auto
+         ▼
+┌─────────────────┐
+│  2. PREFLIGHT   │  Quality checks before commit
+│  (Quality Gate) │  Promise: PREFLIGHT_PASS
+└────────┬────────┘
+         │ auto
+         ▼
+┌─────────────────┐
+│  3. PR CREATE   │  Auto-create pull request
+│  (Auto-create)  │  Output: PR URL
+└────────┬────────┘
+         │ auto
+         ▼
+┌─────────────────┐
+│  4. PR LOOP     │  Monitor CI and approval
+│  (Review/CI)    │  Promise: PR_MERGED
+└────────┬────────┘
+         │ auto
+         ▼
+┌─────────────────┐
+│  5. POSTFLIGHT  │  Verify release health
+│  (Verify)       │  Promise: RELEASE_HEALTHY
+└────────┬────────┘
+         │ conditional (aidevops repo only)
+         ▼
+┌─────────────────┐
+│  6. DEPLOY      │  Run setup.sh
+│  (Local Setup)  │  Promise: DEPLOYED
+└─────────────────┘
+```
+
+| Phase | Script | Promise | Auto-Trigger |
+|-------|--------|---------|--------------|
+| Task Development | `ralph-loop-helper.sh` | `TASK_COMPLETE` | Manual start |
+| Preflight | `quality-loop-helper.sh preflight` | `PREFLIGHT_PASS` | After task |
+| PR Creation | `gh pr create` | (PR URL) | After preflight |
+| PR Review | `quality-loop-helper.sh pr-review` | `PR_MERGED` | After PR create |
+| Postflight | `quality-loop-helper.sh postflight` | `RELEASE_HEALTHY` | After merge |
+| Deploy | `./setup.sh` (aidevops only) | `DEPLOYED` | After postflight |
+
+### Human Decision Points
+
+The loop is designed for maximum AI autonomy while preserving human control at strategic points:
+
+| Phase | AI Autonomous | Human Required |
+|-------|---------------|----------------|
+| Task Development | Code changes, iterations, fixes | Initial task definition, scope decisions |
+| Preflight | Auto-fix, re-run checks | Override to skip (emergency only) |
+| PR Creation | Auto-create with `--fill` | Custom title/description if needed |
+| PR Review | Address feedback, push fixes | Approve/merge (if required by repo) |
+| Postflight | Monitor, report issues | Rollback decision if issues found |
+| Deploy | Run `setup.sh` | None (fully autonomous) |
+
+### Options
+
+```bash
+full-loop-helper.sh start "<prompt>" [options]
+
+Options:
+  --max-task-iterations N       Max iterations for task (default: 50)
+  --max-preflight-iterations N  Max iterations for preflight (default: 5)
+  --max-pr-iterations N         Max iterations for PR review (default: 20)
+  --skip-preflight              Skip preflight checks (not recommended)
+  --skip-postflight             Skip postflight monitoring
+  --no-auto-pr                  Don't auto-create PR, pause for human
+  --no-auto-deploy              Don't auto-run setup.sh (aidevops only)
+  --dry-run                     Show what would happen without executing
+```
+
+### aidevops-Specific Behavior
+
+When working in the aidevops repository (detected by repo name or `.aidevops-repo` marker), the full loop automatically runs `setup.sh` after successful postflight to deploy changes locally.
+
+```bash
+# In aidevops repo, this will auto-deploy
+full-loop-helper.sh start "Add new helper script"
+
+# Disable auto-deploy if needed
+full-loop-helper.sh start "Add new helper script" --no-auto-deploy
+```
+
+### State Management
+
+The full loop maintains state in `.claude/full-loop.local.md` (gitignored), allowing:
+
+- Resume after interruption
+- Track current phase
+- Preserve PR number across phases
+
+```bash
+# Check current state
+cat .claude/full-loop.local.md
+
+# Resume from where you left off
+full-loop-helper.sh resume
+```
+
 ## Learn More
 
 - Original technique: <https://ghuntley.com/ralph/>

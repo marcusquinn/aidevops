@@ -111,7 +111,7 @@ User confirms with numbered options to override if needed.
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/session-review`
+**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/session-review`, `/full-loop`
 
 **Time tracking format:**
 
@@ -441,6 +441,7 @@ Never create files in `~/` root for files needed only with the current task.
 | `beads-sync-helper.sh` | Sync TODO.md/PLANS.md with Beads graph |
 | `todo-ready.sh` | Show tasks with no open blockers |
 | `ralph-loop-helper.sh` | Iterative AI development loops (Ralph technique) |
+| `full-loop-helper.sh` | End-to-end development loop (task → PR → deploy) |
 | `session-review-helper.sh` | Gather session context for completeness review |
 
 ## Quality Workflow
