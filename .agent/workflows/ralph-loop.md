@@ -272,6 +272,46 @@ head -10 .claude/ralph-loop.local.md
 test -f .claude/ralph-loop.local.md && echo "Active" || echo "Not active"
 ```
 
+## Multi-Worktree Awareness
+
+When working with git worktrees, Ralph loops are aware of parallel sessions.
+
+### Check All Worktrees
+
+```bash
+# Show loops across all worktrees
+~/.aidevops/agents/scripts/ralph-loop-helper.sh status --all
+```
+
+Output shows:
+- Branch name for each active loop
+- Current iteration and max
+- Which worktree is current
+
+### Parallel Loop Warnings
+
+When starting a new loop, the helper automatically checks for other active loops:
+
+```text
+Other active Ralph loops detected:
+  - feature/other-task (iteration 5)
+
+Use 'ralph-loop-helper.sh status --all' to see details
+```
+
+This helps prevent confusion when multiple AI sessions are running in parallel.
+
+### Integration with worktree-sessions.sh
+
+The worktree session mapper shows Ralph loop status:
+
+```bash
+# List all worktrees with their sessions and loop status
+~/.aidevops/agents/scripts/worktree-sessions.sh list
+```
+
+Output includes a "Ralph loop: iteration X/Y" line for worktrees with active loops.
+
 ## CI/CD Wait Time Optimization
 
 When using Ralph loops with PR review workflows, the loop uses adaptive timing based on observed CI/CD service completion times.

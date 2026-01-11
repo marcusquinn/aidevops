@@ -1525,6 +1525,36 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /recall command"
 
 # =============================================================================
+# AUTO-DISCOVERED COMMANDS FROM scripts/commands/
+# =============================================================================
+# Commands in .agent/scripts/commands/*.md are auto-generated
+# Each file should have frontmatter with description and agent
+# This prevents needing to manually add new commands to this script
+
+COMMANDS_DIR="$HOME/.aidevops/agents/scripts/commands"
+
+if [[ -d "$COMMANDS_DIR" ]]; then
+    for cmd_file in "$COMMANDS_DIR"/*.md; do
+        [[ -f "$cmd_file" ]] || continue
+        
+        cmd_name=$(basename "$cmd_file" .md)
+        
+        # Skip SKILL.md (not a command)
+        [[ "$cmd_name" == "SKILL" ]] && continue
+        
+        # Skip if already manually defined (avoid duplicates)
+        if [[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]]; then
+            continue
+        fi
+        
+        # Copy command file directly (it already has proper frontmatter)
+        cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
+        ((command_count++))
+        echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+    done
+fi
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
