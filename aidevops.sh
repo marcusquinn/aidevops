@@ -809,6 +809,28 @@ cmd_features() {
     echo ""
 }
 
+# Update tools command - check and update installed tools
+cmd_update_tools() {
+    local auto_update="${1:-}"
+    
+    print_header "Tool Version Check"
+    echo ""
+    
+    local tool_check_script="$AGENTS_DIR/scripts/tool-version-check.sh"
+    
+    if [[ ! -f "$tool_check_script" ]]; then
+        print_error "Tool version check script not found"
+        print_info "Run 'aidevops update' first to get the latest scripts"
+        return 1
+    fi
+    
+    if [[ "$auto_update" == "--update" || "$auto_update" == "-u" ]]; then
+        bash "$tool_check_script" --update
+    else
+        bash "$tool_check_script"
+    fi
+}
+
 # Help command
 cmd_help() {
     local version
@@ -822,7 +844,8 @@ cmd_help() {
     echo "  init [features]  Initialize aidevops in current project"
     echo "  features         List available features for init"
     echo "  status           Check installation status of all components"
-    echo "  update           Update to the latest version (alias: upgrade)"
+    echo "  update           Update aidevops to the latest version"
+    echo "  update-tools     Check for outdated tools (--update to auto-update)"
     echo "  uninstall        Remove aidevops from your system"
     echo "  version          Show version information"
     echo "  help             Show this help message"
@@ -832,7 +855,9 @@ cmd_help() {
     echo "  aidevops init planning       # Initialize with planning only"
     echo "  aidevops features            # List available features"
     echo "  aidevops status              # Check what's installed"
-    echo "  aidevops update              # Update to latest version"
+    echo "  aidevops update              # Update aidevops to latest version"
+    echo "  aidevops update-tools        # Check for outdated tools"
+    echo "  aidevops update-tools -u     # Update all outdated tools"
     echo "  aidevops uninstall           # Remove aidevops"
     echo ""
     echo "Quick install:"
@@ -872,6 +897,10 @@ main() {
             ;;
         update|upgrade|u)
             cmd_update
+            ;;
+        update-tools|tools)
+            shift
+            cmd_update_tools "$@"
             ;;
         uninstall|remove)
             cmd_uninstall
