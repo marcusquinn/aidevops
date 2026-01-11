@@ -11,11 +11,23 @@ tools:
   task: true
 ---
 
-# Ralph Loop - Iterative AI Development
+# Ralph Loop v2 - Iterative AI Development
 
 Implementation of the Ralph Wiggum technique for iterative, self-referential AI development loops.
 
-Based on [Geoffrey Huntley's Ralph technique](https://ghuntley.com/ralph/) and the [Claude Code ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum).
+Based on [Geoffrey Huntley's Ralph technique](https://ghuntley.com/ralph/), enhanced with [flow-next architecture](https://github.com/gmickel/gmickel-claude-marketplace/tree/main/plugins/flow-next) for fresh context per iteration.
+
+## v2 Architecture
+
+The v2 implementation addresses context drift by using:
+
+- **Fresh context per iteration** - External bash loop spawns new AI sessions
+- **File I/O as state** - JSON state files, not conversation transcript
+- **Re-anchor every iteration** - Re-read TODO.md, git state, memories
+- **Receipt-based verification** - Proof of work for each iteration
+- **Memory integration** - SQLite FTS5 for cross-session learning
+
+This follows Anthropic's own guidance: "agents must re-anchor from sources of truth to prevent drift."
 
 ## What is Ralph?
 
@@ -46,30 +58,58 @@ The loop creates a **self-referential feedback loop** where:
 
 ## Quick Start
 
-### Starting a Loop
+### v2: Fresh Sessions (Recommended)
 
 ```bash
-# Basic usage
-/ralph-loop "Build a REST API for todos. Requirements: CRUD operations, input validation, tests. Output <promise>COMPLETE</promise> when done." --max-iterations 50
+# External loop with fresh sessions per iteration
+~/.aidevops/agents/scripts/ralph-loop-helper.sh run \
+  "Build a REST API for todos" \
+  --tool opencode \
+  --max-iterations 20 \
+  --completion-promise "TASK_COMPLETE"
 
-# With completion promise
-/ralph-loop "Fix all TypeScript errors in src/" --completion-promise "ALL_ERRORS_FIXED" --max-iterations 20
+# Check status
+~/.aidevops/agents/scripts/ralph-loop-helper.sh status
 
-# Unlimited iterations (use with caution)
-/ralph-loop "Refactor the auth module until all tests pass"
+# Cancel
+~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
 ```
 
-### Canceling a Loop
+### Legacy: Same Session
 
 ```bash
+# For tools with hook support (Claude Code)
+/ralph-loop "Build a REST API" --max-iterations 50 --completion-promise "COMPLETE"
+
+# Cancel
 /cancel-ralph
 ```
 
 ## Commands
 
-### /ralph-loop
+### ralph-loop-helper.sh run (v2)
 
-Start a Ralph loop in your current session.
+Run external loop with fresh AI sessions per iteration.
+
+**Usage:**
+
+```bash
+ralph-loop-helper.sh run "<prompt>" --tool <tool> [options]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--tool <name>` | AI CLI tool (opencode, claude, aider) | opencode |
+| `--max-iterations <n>` | Stop after N iterations | 50 |
+| `--completion-promise <text>` | Phrase that signals completion | TASK_COMPLETE |
+| `--max-attempts <n>` | Block task after N failures | 5 |
+| `--task-id <id>` | Task ID for tracking | auto-generated |
+
+### /ralph-loop (Legacy)
+
+Start a Ralph loop in same session (for tools with hook support).
 
 **Usage:**
 
