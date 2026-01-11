@@ -107,7 +107,7 @@ User confirms with numbered options to override if needed.
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`
+**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`
 
 **Time tracking format:**
 
@@ -145,6 +145,27 @@ User confirms with numbered options to override if needed.
 **TODO.md branch strategy**: Stay on current branch for related work (discovered tasks, status updates). For unrelated backlog additions, offer branch choice if no uncommitted changes.
 
 **Full workflow:** See `workflows/plans.md` for details
+
+## Memory System
+
+Cross-session memory using SQLite FTS5 for fast full-text search.
+
+**Commands:**
+
+| Command | Purpose |
+|---------|---------|
+| `/remember {content}` | Store a memory with AI-assisted categorization |
+| `/recall {query}` | Search memories by keyword |
+| `/recall --recent` | Show 10 most recent memories |
+| `/recall --stats` | Show memory statistics |
+
+**Memory types:** `WORKING_SOLUTION`, `FAILED_APPROACH`, `CODEBASE_PATTERN`, `USER_PREFERENCE`, `TOOL_CONFIG`, `DECISION`, `CONTEXT`
+
+**CLI:** `~/.aidevops/agents/scripts/memory-helper.sh [store|recall|stats|validate|prune|export]`
+
+**Storage:** `~/.aidevops/.agent-workspace/memory/memory.db`
+
+**Full docs:** See `memory/README.md` and `scripts/commands/remember.md`
 
 ## Git Workflow (File Changes)
 
@@ -304,7 +325,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | Folder | Purpose | Key Subagents |
 |--------|---------|---------------|
 | `aidevops/` | Framework internals - extending aidevops, adding MCPs, architecture decisions | setup, architecture, add-new-mcp-to-aidevops, troubleshooting, mcp-integrations |
-| `memory/` | Cross-session patterns - learning from past interactions, user preferences | (templates for memory files) |
+| `memory/` | Cross-session memory - SQLite FTS5 storage, /remember and /recall commands | README (system docs) |
 | `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring | dataforseo, serper, google-search-console, site-crawler, eeat-score, domain-research |
 | `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice | guidelines |
 | `tools/build-agent/` | Agent design - composing efficient agents, reviewing agent instructions | build-agent, agent-review |
@@ -329,7 +350,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
 | `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
-| `scripts/commands/` | Slash commands - save-todo and other interactive commands | save-todo |
+| `scripts/commands/` | Slash commands - save-todo, remember, recall and other interactive commands | save-todo, remember, recall |
 
 <!-- AI-CONTEXT-END -->
 
