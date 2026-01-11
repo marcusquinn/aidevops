@@ -55,6 +55,8 @@ The AI will iterate on the task until outputting:
 - All requirements implemented
 - Tests passing (if applicable)
 - Code quality acceptable
+- README.md updated (if adding features/APIs)
+- Conventional commits used (for auto-changelog)
 
 ### Step 4: Automatic Phase Progression
 
@@ -134,9 +136,41 @@ Pass options after the prompt:
 /full-loop "Refactor database layer" --no-auto-pr
 ```
 
+## Documentation & Changelog
+
+### README Updates
+
+When implementing features or APIs, include README updates in your task:
+
+```bash
+/full-loop "Add user authentication with JWT tokens and update README"
+```
+
+The task development phase should update README.md with:
+- New feature documentation
+- Usage examples
+- API endpoint descriptions
+- Configuration options
+
+### Changelog (Auto-Generated)
+
+The release workflow auto-generates CHANGELOG.md from conventional commits. Use proper commit prefixes during task development:
+
+| Prefix | Changelog Section | Example |
+|--------|-------------------|---------|
+| `feat:` | Added | `feat: add JWT authentication` |
+| `fix:` | Fixed | `fix: resolve token expiration bug` |
+| `docs:` | Changed | `docs: update API documentation` |
+| `perf:` | Changed | `perf: optimize database queries` |
+| `refactor:` | Changed | `refactor: simplify auth middleware` |
+| `chore:` | (excluded) | `chore: update dependencies` |
+
+See `workflows/changelog.md` for format details.
+
 ## Related
 
 - `workflows/ralph-loop.md` - Ralph loop technique details
 - `workflows/preflight.md` - Pre-commit quality checks
 - `workflows/pr.md` - PR creation workflow
 - `workflows/postflight.md` - Post-release verification
+- `workflows/changelog.md` - Changelog format and validation
