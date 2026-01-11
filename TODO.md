@@ -82,8 +82,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t031 Company orchestration agent/workflow inspired by @DanielleMorrill #plan #agents #business ~4h (ai:2h test:1h read:1h) logged:2025-01-03 ref:https://x.com/DanielleMorrill/status/2007508036584341899
 - [ ] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~3h (ai:1.5h test:1h read:30m) logged:2025-01-03 ref:https://x.com/elithrar/status/2007455910218871067
 - [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~2h (ai:1h test:30m read:30m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
-- [ ] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03
-- [ ] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03
+- [ ] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z
+- [ ] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z
 - [ ] t036 Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain) #tools #code-review ~1h (ai:30m test:15m read:15m) logged:2025-01-03
 - [ ] t037 Review ALwrity for SEO/marketing capabilities or inspiration #research #seo #marketing ~3h (ai:1.5h test:30m read:1h) logged:2025-01-03
 - [ ] t038 Add CDN origin IP leak detection subagent (Cloudmare-inspired) #security #dns #hosting ~4h (ai:2h test:1h read:1h) logged:2025-01-03
