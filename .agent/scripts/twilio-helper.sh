@@ -41,7 +41,7 @@ print_error() {
 }
 
 # Script directory for relative paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # Config can be in repo configs/ or ~/.aidevops/configs/
 if [[ -f "${SCRIPT_DIR}/../../configs/twilio-config.json" ]]; then
     CONFIG_FILE="${SCRIPT_DIR}/../../configs/twilio-config.json"
