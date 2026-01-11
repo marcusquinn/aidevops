@@ -190,6 +190,52 @@ The release workflow auto-generates CHANGELOG.md from conventional commits. Use 
 
 See `workflows/changelog.md` for format details.
 
+## OpenProse Orchestration
+
+For complex multi-phase workflows, consider expressing the full loop in OpenProse DSL:
+
+```prose
+agent developer:
+  model: opus
+  prompt: "You are a senior developer"
+
+# Phase 1: Task Development
+loop until **task is complete** (max: 50):
+  session: developer
+    prompt: "Implement the feature, run tests, fix issues"
+
+# Phase 2: Preflight (parallel quality checks)
+parallel:
+  lint = session "Run linters and fix issues"
+  types = session "Check types and fix issues"
+  tests = session "Run tests and fix failures"
+
+if **any checks failed**:
+  loop until **all checks pass** (max: 5):
+    session "Fix remaining issues"
+      context: { lint, types, tests }
+
+# Phase 3: PR Creation
+let pr = session "Create pull request with gh pr create --fill"
+
+# Phase 4: PR Review Loop
+loop until **PR is merged** (max: 20):
+  parallel:
+    ci = session "Check CI status"
+    review = session "Check review status"
+  
+  if **CI failed**:
+    session "Fix CI issues and push"
+  
+  if **changes requested**:
+    session "Address review feedback and push"
+
+# Phase 5: Postflight
+session "Verify release health"
+```
+
+See `tools/ai-orchestration/openprose.md` for full OpenProse documentation.
+
 ## Related
 
 - `workflows/ralph-loop.md` - Ralph loop technique details
@@ -197,3 +243,4 @@ See `workflows/changelog.md` for format details.
 - `workflows/pr.md` - PR creation workflow
 - `workflows/postflight.md` - Post-release verification
 - `workflows/changelog.md` - Changelog format and validation
+- `tools/ai-orchestration/openprose.md` - OpenProse DSL for multi-agent orchestration

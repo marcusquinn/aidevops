@@ -18,7 +18,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Build and deploy AI-powered agents and multi-agent workflows
-- **Frameworks**: Langflow, CrewAI, AutoGen, Agno
+- **Frameworks**: Langflow, CrewAI, AutoGen, Agno, OpenProse
 - **Common Pattern**: `~/.aidevops/{tool}/` with venv, .env, start scripts
 - **All MIT Licensed**: Full commercial use permitted
 
@@ -36,6 +36,9 @@ bash .agent/scripts/autogen-helper.sh setup
 
 # Agno (enterprise agent OS)
 bash .agent/scripts/agno-setup.sh setup
+
+# OpenProse (multi-agent DSL - no setup required, pattern-based)
+git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose
 ```
 
 **Port Allocation** (auto-managed via `localhost-helper.sh`):
@@ -64,6 +67,8 @@ Use this matrix to select the right framework for your use case:
 | **Enterprise Agent OS** | Agno | Production-ready runtime, specialized DevOps agents | - |
 | **Code-First Development** | CrewAI | YAML configs, Python decorators, minimal boilerplate | AutoGen |
 | **Microsoft Ecosystem** | AutoGen | .NET support, Azure integration | - |
+| **Multi-Agent DSL** | OpenProse | Explicit control flow, AI-evaluated conditions, zero dependencies | CrewAI Flows |
+| **Loop Orchestration** | OpenProse | `loop until **condition**`, parallel blocks, retry semantics | Ralph Loop |
 | **Local LLM Priority** | All | All support Ollama/local models | - |
 
 ## Framework Comparison
@@ -165,6 +170,38 @@ Use this matrix to select the right framework for your use case:
 - Code review workflows
 - Documentation generation
 - DevOps task automation
+
+### OpenProse
+
+**Best for**: Multi-agent orchestration DSL, explicit control flow, loop agents
+
+- **License**: MIT
+- **Stars**: 500+
+- **GUI**: None (DSL executed by AI session)
+- **Install**: `git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose`
+- **Run**: AI session becomes the VM
+
+**Strengths**:
+
+- Zero dependencies (pattern, not framework)
+- Explicit control flow (`parallel:`, `loop until`, `try/catch`)
+- AI-evaluated conditions (`**the code is production ready**`)
+- Portable across Claude Code, OpenCode, Amp
+- Complements DSPy, TOON, Context7
+
+**Use Cases**:
+
+- Multi-agent parallel workflows
+- Iterative development loops (Ralph-style)
+- Complex conditional orchestration
+- Reusable workflow templates
+
+**Relationship to Other Tools**:
+
+OpenProse operates at the **workflow layer**, complementing:
+- **DSPy**: Prompt optimization (can use DSPy-compiled prompts in agents)
+- **TOON**: Data compression (can TOON-encode context between sessions)
+- **Context7/Augment**: Knowledge retrieval (sessions can call these tools)
 
 ## Common Design Patterns
 
@@ -269,6 +306,7 @@ See `packaging.md` for detailed deployment guides:
 | `crewai.md` | CrewAI setup and usage |
 | `autogen.md` | AutoGen setup and usage |
 | `agno.md` | Agno setup and usage |
+| `openprose.md` | OpenProse DSL for multi-agent orchestration |
 | `packaging.md` | Deployment and packaging |
 
 ## Troubleshooting
@@ -321,3 +359,4 @@ env | grep -E "(OPENAI|ANTHROPIC|OLLAMA)"
 - CrewAI: https://community.crewai.com
 - AutoGen: https://github.com/microsoft/autogen/discussions
 - Agno: https://github.com/agno-ai/agno/discussions
+- OpenProse: https://github.com/openprose/prose/issues
