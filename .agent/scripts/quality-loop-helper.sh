@@ -816,6 +816,9 @@ pr_review_loop() {
                     fi
                 fi
                 ;;
+            *)
+                print_warning "Unknown PR status: $status"
+                ;;
         esac
         
         iteration=$(increment_iteration)
