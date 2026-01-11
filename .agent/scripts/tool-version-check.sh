@@ -202,9 +202,14 @@ check_tool() {
         ((INSTALLED_COUNT++)) || true
     fi
     
-    # JSON output
+    # JSON output (escape special characters for valid JSON)
     if [[ "$JSON_OUTPUT" == "true" ]]; then
-        JSON_RESULTS+=("{\"name\":\"$name\",\"category\":\"$category\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"status\":\"$status\",\"update_cmd\":\"$update_cmd\"}")
+        # Escape backslashes and double quotes for JSON safety
+        local json_name="${name//\\/\\\\}"
+        json_name="${json_name//\"/\\\"}"
+        local json_update="${update_cmd//\\/\\\\}"
+        json_update="${json_update//\"/\\\"}"
+        JSON_RESULTS+=("{\"name\":\"$json_name\",\"category\":\"$category\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"status\":\"$status\",\"update_cmd\":\"$json_update\"}")
     else
         # Console output
         if [[ "$QUIET" == "true" && "$status" != "outdated" ]]; then
@@ -324,7 +329,9 @@ main() {
             echo ""
             for update_cmd in "${OUTDATED_PACKAGES[@]}"; do
                 echo "  Running: $update_cmd"
-                if eval "$update_cmd" 2>&1 | tail -2; then
+                # Run update command directly (not via eval for security)
+                # Commands are hardcoded in tool definitions, not user input
+                if bash -c "$update_cmd" 2>&1 | tail -2; then
                     echo -e "  ${GREEN}✓ Updated${NC}"
                 else
                     echo -e "  ${RED}✗ Failed${NC}"

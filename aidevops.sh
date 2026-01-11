@@ -810,9 +810,8 @@ cmd_features() {
 }
 
 # Update tools command - check and update installed tools
+# Passes all arguments through to tool-version-check.sh
 cmd_update_tools() {
-    local auto_update="${1:-}"
-    
     print_header "Tool Version Check"
     echo ""
     
@@ -824,11 +823,8 @@ cmd_update_tools() {
         return 1
     fi
     
-    if [[ "$auto_update" == "--update" || "$auto_update" == "-u" ]]; then
-        bash "$tool_check_script" --update
-    else
-        bash "$tool_check_script"
-    fi
+    # Pass all arguments through to the script
+    bash "$tool_check_script" "$@"
 }
 
 # Help command

@@ -2043,8 +2043,18 @@ check_tool_updates() {
     fi
     
     # Run the check in quiet mode first to see if there are updates
+    # Capture both output and exit code
     local outdated_output
-    outdated_output=$(bash "$tool_check_script" --quiet 2>/dev/null || true)
+    local check_exit_code
+    outdated_output=$(bash "$tool_check_script" --quiet 2>&1) || check_exit_code=$?
+    check_exit_code=${check_exit_code:-0}
+    
+    # If the script failed, warn and continue
+    if [[ $check_exit_code -ne 0 ]]; then
+        print_warning "Tool version check encountered an error (exit code: $check_exit_code)"
+        print_info "Run 'aidevops update-tools' manually to check for updates"
+        return 0
+    fi
     
     if [[ -z "$outdated_output" ]]; then
         print_success "All tools are up to date!"
