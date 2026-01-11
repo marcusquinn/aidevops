@@ -22,10 +22,13 @@ Cross-session memory for AI assistants using SQLite FTS5 for fast full-text sear
 
 ```bash
 # Store a memory
-~/.aidevops/agents/scripts/memory-helper.sh store "WORKING_SOLUTION" "Fixed CORS with nginx headers" "cors,nginx"
+~/.aidevops/agents/scripts/memory-helper.sh store --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
 
 # Recall memories
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
+
+# Show recent memories
+~/.aidevops/agents/scripts/memory-helper.sh recall --recent
 
 # View statistics
 ~/.aidevops/agents/scripts/memory-helper.sh stats
@@ -66,10 +69,13 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 
 ```bash
 # Store with project context
-memory-helper.sh store "TYPE" "content" "tags" "project-name"
+memory-helper.sh store --type "TYPE" --content "content" --tags "tags" --project "project-name"
 
 # Search with filters
 memory-helper.sh recall "query" --type WORKING_SOLUTION --project myapp --limit 20
+
+# Show recent memories
+memory-helper.sh recall --recent 10
 
 # Maintenance
 memory-helper.sh validate          # Check for stale entries
@@ -77,8 +83,8 @@ memory-helper.sh prune --dry-run   # Preview cleanup
 memory-helper.sh prune             # Remove stale entries
 
 # Export
-memory-helper.sh export json       # Export as JSON
-memory-helper.sh export toon       # Export as TOON (token-efficient)
+memory-helper.sh export --format json   # Export as JSON
+memory-helper.sh export --format toon   # Export as TOON (token-efficient)
 ```
 
 ## Legacy: File-Based Preferences

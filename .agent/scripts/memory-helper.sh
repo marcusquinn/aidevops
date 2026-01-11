@@ -24,8 +24,8 @@ readonly MEMORY_DB="$MEMORY_DIR/memory.db"
 readonly DEFAULT_MAX_AGE_DAYS=90
 readonly STALE_WARNING_DAYS=60
 
-# Valid learning types (matches Continuous-Claude-v3)
-readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN ARCHITECTURAL_DECISION ERROR_FIX USER_PREFERENCE OPEN_THREAD"
+# Valid learning types (matches documentation and Continuous-Claude-v3)
+readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD"
 
 # Colors for output
 readonly RED='\033[0;31m'
@@ -41,6 +41,51 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+#######################################
+# Format JSON results as text (jq fallback)
+# Uses jq if available, otherwise basic parsing
+#######################################
+format_results_text() {
+    local input
+    input=$(cat)
+    
+    if [[ -z "$input" || "$input" == "[]" ]]; then
+        return 0
+    fi
+    
+    if command -v jq &>/dev/null; then
+        echo "$input" | jq -r '.[] | "[\(.type)] (\(.confidence)) - Score: \(.score // "N/A" | tostring | .[0:6])\n  \(.content)\n  Tags: \(.tags)\n  Created: \(.created_at) | Accessed: \(.access_count)x\n"' 2>/dev/null
+    else
+        # Basic fallback without jq - parse JSON manually
+        echo "$input" | sed 's/},{/}\n{/g' | while read -r line; do
+            local type content tags created access_count
+            type=$(echo "$line" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
+            content=$(echo "$line" | sed -n 's/.*"content":"\([^"]*\)".*/\1/p' | head -c 100)
+            tags=$(echo "$line" | sed -n 's/.*"tags":"\([^"]*\)".*/\1/p')
+            created=$(echo "$line" | sed -n 's/.*"created_at":"\([^"]*\)".*/\1/p')
+            access_count=$(echo "$line" | sed -n 's/.*"access_count":\([0-9]*\).*/\1/p')
+            [[ -n "$type" ]] && echo "[$type] $content..."
+            [[ -n "$tags" ]] && echo "  Tags: $tags | Created: $created | Accessed: ${access_count:-0}x"
+            echo ""
+        done
+    fi
+}
+
+#######################################
+# Extract IDs from JSON (jq fallback)
+#######################################
+extract_ids_from_json() {
+    local input
+    input=$(cat)
+    
+    if command -v jq &>/dev/null; then
+        echo "$input" | jq -r '.[].id' 2>/dev/null
+    else
+        # Basic fallback - extract id values
+        echo "$input" | grep -o '"id":"[^"]*"' | sed 's/"id":"//g; s/"//g'
+    fi
+}
 
 #######################################
 # Initialize database with FTS5 schema
@@ -174,7 +219,9 @@ cmd_recall() {
     local limit=5
     local type_filter=""
     local max_age_days=""
+    local project_filter=""
     local format="text"
+    local recent_mode=false
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -182,8 +229,11 @@ cmd_recall() {
             --limit|-l) limit="$2"; shift 2 ;;
             --type|-t) type_filter="$2"; shift 2 ;;
             --max-age-days) max_age_days="$2"; shift 2 ;;
+            --project|-p) project_filter="$2"; shift 2 ;;
+            --recent) recent_mode=true; limit="${2:-10}"; shift; [[ "${1:-}" =~ ^[0-9]+$ ]] && shift ;;
             --format) format="$2"; shift 2 ;;
             --json) format="json"; shift ;;
+            --stats) cmd_stats; return 0 ;;
             *) 
                 # Allow query as positional argument
                 if [[ -z "$query" ]]; then
@@ -193,23 +243,55 @@ cmd_recall() {
         esac
     done
     
+    init_db
+    
+    # Handle --recent mode (no query required)
+    if [[ "$recent_mode" == true ]]; then
+        local results
+        results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id ORDER BY l.created_at DESC LIMIT $limit;")
+        if [[ "$format" == "json" ]]; then
+            echo "$results"
+        else
+            echo ""
+            echo "=== Recent Memories (last $limit) ==="
+            echo ""
+            echo "$results" | format_results_text
+        fi
+        return 0
+    fi
+    
     if [[ -z "$query" ]]; then
-        log_error "Query is required. Use --query \"search terms\""
+        log_error "Query is required. Use --query \"search terms\" or --recent"
         return 1
     fi
     
-    init_db
+    # Escape query for FTS5 - escape both single and double quotes
+    local escaped_query="${query//\'/\'\'}"
+    escaped_query="${escaped_query//\"/\"\"}"
     
-    # Escape query for FTS5 - wrap each word for prefix matching
-    local escaped_query="${query//\"/\"\"}"
-    
-    # Build filters
+    # Build filters with validation
     local extra_filters=""
     if [[ -n "$type_filter" ]]; then
+        # Validate type to prevent SQL injection
+        local type_pattern=" $type_filter "
+        if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
+            log_error "Invalid type: $type_filter"
+            log_error "Valid types: $VALID_TYPES"
+            return 1
+        fi
         extra_filters="$extra_filters AND type = '$type_filter'"
     fi
     if [[ -n "$max_age_days" ]]; then
+        # Validate max_age_days is a positive integer
+        if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
+            log_error "--max-age-days must be a positive integer"
+            return 1
+        fi
         extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
+    fi
+    if [[ -n "$project_filter" ]]; then
+        local escaped_project="${project_filter//\'/\'\'}"
+        extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%'"
     fi
     
     # Search using FTS5 with BM25 ranking
@@ -237,7 +319,7 @@ EOF
     # Update access tracking for returned results (prevents staleness)
     if [[ -n "$results" && "$results" != "[]" ]]; then
         local ids
-        ids=$(echo "$results" | jq -r '.[].id' 2>/dev/null || true)
+        ids=$(echo "$results" | extract_ids_from_json)
         if [[ -n "$ids" ]]; then
             while IFS= read -r id; do
                 [[ -z "$id" ]] && continue
@@ -265,7 +347,7 @@ EOF
         echo "=== Memory Recall: \"$query\" ==="
         echo ""
         
-        echo "$results" | jq -r '.[] | "[\(.type)] (\(.confidence)) - Score: \(.score | tostring | .[0:6])\n  \(.content)\n  Tags: \(.tags)\n  Created: \(.created_at) | Accessed: \(.access_count)x\n"' 2>/dev/null
+        echo "$results" | format_results_text
     fi
 }
 
@@ -407,20 +489,23 @@ LIMIT 20;
 EOF
         fi
     else
-        # Get IDs to delete
-        local ids_to_delete
-        if [[ "$keep_accessed" == true ]]; then
-            ids_to_delete=$(sqlite3 "$MEMORY_DB" "SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL;")
-        else
-            ids_to_delete=$(sqlite3 "$MEMORY_DB" "SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
+        # Validate older_than_days is a positive integer
+        if ! [[ "$older_than_days" =~ ^[0-9]+$ ]]; then
+            log_error "--older-than-days must be a positive integer"
+            return 1
         fi
         
-        # Delete from FTS table
-        while IFS= read -r id; do
-            [[ -z "$id" ]] && continue
-            sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$id';"
-            sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$id';"
-        done <<< "$ids_to_delete"
+        # Use efficient single DELETE with subquery
+        local subquery
+        if [[ "$keep_accessed" == true ]]; then
+            subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL"
+        else
+            subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
+        fi
+        
+        # Delete from both tables using the subquery (much faster than loop)
+        sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
+        sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
         
         log_success "Pruned $count stale entries"
         
@@ -493,14 +578,17 @@ STORE OPTIONS:
     --project <path>      Project path
 
 VALID TYPES:
-    WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN,
-    ARCHITECTURAL_DECISION, ERROR_FIX, USER_PREFERENCE, OPEN_THREAD
+    WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
+    TOOL_CONFIG, DECISION, CONTEXT, ARCHITECTURAL_DECISION, ERROR_FIX, OPEN_THREAD
 
 RECALL OPTIONS:
-    --query <text>        Search query (required)
+    --query <text>        Search query (required unless --recent)
     --limit <n>           Max results (default: 5)
     --type <type>         Filter by type
     --max-age-days <n>    Only recent entries
+    --project <path>      Filter by project path
+    --recent [n]          Show n most recent entries (default: 10)
+    --stats               Show memory statistics
     --json                Output as JSON
 
 PRUNE OPTIONS:

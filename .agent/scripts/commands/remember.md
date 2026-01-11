@@ -51,7 +51,7 @@ Project: {project or "global"}
 After confirmation, run:
 
 ```bash
-~/.aidevops/agents/scripts/memory-helper.sh store "{type}" "{content}" "{tags}" "{project}"
+~/.aidevops/agents/scripts/memory-helper.sh store --type "{type}" --content "{content}" --tags "{tags}" --project "{project}"
 ```
 
 ### Step 4: Confirm Storage
