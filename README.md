@@ -487,12 +487,14 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 | [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
 | [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
 | [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
+| [llm-tldr](https://github.com/parcadei/llm-tldr) | Semantic code analysis (95% token savings) | No |
 
 ### **By Category**
 
 **Context & Codebase:**
 
 - [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) - Semantic codebase retrieval with deep code understanding
+- [llm-tldr](https://github.com/parcadei/llm-tldr) - Semantic code analysis with 95% token savings (tree, structure, CFG, DFG, impact analysis)
 - [osgrep](https://github.com/Ryandonofrio3/osgrep) - Local semantic search (100% private, no cloud)
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
@@ -715,6 +717,42 @@ osgrep "where is authentication handled?"
 
 See `.agent/tools/context/osgrep.md` for complete documentation and AI tool configurations.
 
+### llm-tldr - Semantic Code Analysis
+
+[llm-tldr](https://github.com/parcadei/llm-tldr) extracts code structure and semantics, saving ~95% tokens compared to raw code. From the [Continuous-Claude](https://github.com/parcadei/Continuous-Claude-v3) project.
+
+```bash
+# Install
+pip install llm-tldr
+
+# CLI usage
+tldr tree ./src                    # File structure with line counts
+tldr structure src/auth.py         # Code skeleton (classes, functions)
+tldr context src/auth.py           # Full semantic analysis
+tldr search "authentication" ./src # Semantic code search
+tldr impact src/auth.py validate   # What would change affect?
+```
+
+**MCP Integration:**
+
+```json
+{
+  "llm-tldr": {
+    "command": "tldr-mcp",
+    "args": ["--project", "${workspaceFolder}"]
+  }
+}
+```
+
+| Feature | Token Savings | Use Case |
+|---------|---------------|----------|
+| Structure extraction | 90% | Understanding code layout |
+| Context analysis | 95% | Deep code understanding |
+| Semantic search | N/A | Finding code by meaning |
+| Impact analysis | N/A | Change risk assessment |
+
+See `.agent/tools/context/llm-tldr.md` for complete documentation.
+
 ## **Cross-Tool Compatibility**
 
 ### Agent Skills Standard
@@ -882,6 +920,8 @@ Quality Issue → Fix Applied → Pattern Identified → Framework Updated → I
 | `/log-time-spent` | Log time spent on a task for tracking |
 | `/ready` | Show tasks with no open blockers (Beads integration) |
 | `/sync-beads` | Sync TODO.md/PLANS.md with Beads task graph |
+| `/remember` | Store knowledge for cross-session recall |
+| `/recall` | Search memories from previous sessions |
 
 Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex execution plans). Task dependencies are visualized with [Beads](https://github.com/steveyegge/beads).
 
@@ -1037,6 +1077,52 @@ When ending a session, the AI provides a continuation prompt for the next sessio
 ```
 
 See `.agent/workflows/session-manager.md` for the complete guide.
+
+### Cross-Session Memory System
+
+**"Compound, then clear"** - Sessions should build on each other. The memory system stores knowledge, patterns, and learnings for future sessions using SQLite FTS5 for fast full-text search.
+
+**Slash commands:**
+
+| Command | Purpose |
+|---------|---------|
+| `/remember {content}` | Store a memory with AI-assisted categorization |
+| `/recall {query}` | Search memories by keyword |
+| `/recall --recent` | Show 10 most recent memories |
+| `/recall --stats` | Show memory statistics |
+
+**Memory types:**
+
+| Type | Use For |
+|------|---------|
+| `WORKING_SOLUTION` | Fixes that worked |
+| `FAILED_APPROACH` | What didn't work (avoid repeating) |
+| `CODEBASE_PATTERN` | Project conventions |
+| `USER_PREFERENCE` | Developer preferences |
+| `TOOL_CONFIG` | Tool setup notes |
+| `DECISION` | Architecture decisions |
+| `CONTEXT` | Background info |
+
+**CLI usage:**
+
+```bash
+# Store a memory
+~/.aidevops/agents/scripts/memory-helper.sh store "WORKING_SOLUTION" "Fixed CORS with nginx headers" "cors,nginx"
+
+# Recall memories
+~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
+
+# View statistics
+~/.aidevops/agents/scripts/memory-helper.sh stats
+
+# Maintenance
+~/.aidevops/agents/scripts/memory-helper.sh validate   # Check for stale entries
+~/.aidevops/agents/scripts/memory-helper.sh prune      # Remove stale memories
+```
+
+**Storage:** `~/.aidevops/.agent-workspace/memory/memory.db`
+
+See `.agent/memory/README.md` for complete documentation.
 
 ### **Installation**
 
