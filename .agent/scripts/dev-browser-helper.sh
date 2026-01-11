@@ -329,7 +329,7 @@ show_profile() {
         print_success "Profile exists (${profile_size})"
         echo ""
         print_info "Contents:"
-        ls -la "${PROFILE_DIR}" 2>/dev/null | head -20
+        find "${PROFILE_DIR}" -maxdepth 1 -exec ls -ld {} \; 2>/dev/null | head -20
         echo ""
         print_info "This profile persists:"
         print_info "  - Cookies (stay logged into sites)"

@@ -352,5 +352,3 @@ if [[ "$DRY_RUN" == true ]]; then
     log_warning ""
     log_warning "This was a dry run. Run without --dry-run to generate files."
 fi
-
-return 0
