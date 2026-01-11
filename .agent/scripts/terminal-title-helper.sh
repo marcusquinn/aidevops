@@ -99,6 +99,9 @@ detect_terminal() {
             echo "hyper"
             return 0
             ;;
+        *)
+            # Not a known TERM_PROGRAM, continue to TERM check
+            ;;
     esac
     
     # Check by TERM variable for other terminals
@@ -106,6 +109,9 @@ detect_terminal() {
         xterm*|rxvt*|screen*|tmux*|alacritty|kitty*)
             echo "compatible"
             return 0
+            ;;
+        *)
+            # Not a known TERM, continue to other checks
             ;;
     esac
     
