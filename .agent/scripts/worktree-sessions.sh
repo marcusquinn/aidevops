@@ -356,7 +356,7 @@ cmd_list() {
     
     echo ""
     echo -e "${BOLD}To resume work:${NC}"
-    echo "  1. cd <worktree-path>"
+    echo "  1. cd <worktree-path>" || exit
     echo "  2. Open OpenCode (it will show recent sessions)"
     echo "  3. Use Ctrl+P to browse sessions by title"
     echo ""
@@ -445,7 +445,7 @@ cmd_open() {
     # Try to launch OpenCode (CLI first, then app bundle)
     if command -v opencode &>/dev/null; then
         echo "Launching OpenCode via CLI..."
-        (cd "$selected_path" && opencode .) &
+        (cd "$selected_path" && opencode .) & || exit
     elif [[ "$(uname)" == "Darwin" ]] && { [[ -d "/Applications/OpenCode.app" ]] || [[ -d "$HOME/Applications/OpenCode.app" ]]; }; then
         echo "Launching OpenCode..."
         open -a "OpenCode" "$selected_path"
@@ -454,7 +454,7 @@ cmd_open() {
         xdg-open "$selected_path"
     else
         echo "OpenCode not found. To open manually:"
-        echo "  cd $selected_path"
+        echo "  cd $selected_path" || exit
         echo "  opencode .  # or launch your preferred editor"
     fi
     
