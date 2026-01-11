@@ -19,15 +19,81 @@ tools:
 
 - **Type**: Local development environment management
 - **Config**: `configs/localhost-config.json`
-- **Commands**: `localhost-helper.sh [environments|start|stop|status|localwp-sites|start-site|stop-site|generate-ssl|list-ports|check-port|kill-port|start-mcp] [env] [args]`
-- **LocalWP**: Sites in `/Users/username/Local Sites`, MCP on port 3001
-- **SSL**: `generate-ssl`, `install-ssl`, `trust-cert` for local HTTPS
-- **Ports**: `list-ports`, `check-port`, `kill-port`, `forward-port`
-- **Docker**: `docker-up`, `docker-down`, `docker-logs`, `docker-exec`
-- **MCP query**: `mcp-query "SELECT * FROM wp_posts LIMIT 5"`
+- **Commands**: `localhost-helper.sh [check-port|find-port|list-ports|kill-port|generate-cert|setup-dns|setup-proxy|create-app|start-mcp] [args]`
+- **LocalWP**: Sites in `/Users/username/Local Sites`, MCP on port 8085
+- **SSL**: `generate-cert`, `setup-proxy` for local HTTPS via Traefik
+- **Ports**: `check-port`, `find-port`, `list-ports`, `kill-port`
+
+**CRITICAL: Why .local + SSL + Port Checking?**
+
+| Problem | Solution | Why It Matters |
+|---------|----------|----------------|
+| Port conflicts | `check-port`, `find-port` | Avoids "address already in use" errors |
+| Password managers don't work | SSL via Traefik proxy | 1Password, Bitwarden require HTTPS to autofill |
+| Inconsistent URLs | `.local` domains | `myapp.local` instead of `localhost:3847` |
+| Browser security warnings | `mkcert` trusted certs | No "proceed anyway" clicks |
+
+**Standard Setup Pattern:**
+
+```bash
+# 1. Check port availability first
+localhost-helper.sh check-port 3000
+
+# 2. If conflict, find next available (returns e.g., 3001)
+available_port=$(localhost-helper.sh find-port 3000)
+
+# 3. Create app with .local domain + SSL using available port
+localhost-helper.sh create-app myapp myapp.local "$available_port" true docker
+```
+
 <!-- AI-CONTEXT-END -->
 
 Localhost development provides local development capabilities with .local domain support, perfect for development workflows and testing environments.
+
+## Why .local Domains + SSL + Port Management?
+
+### The Problem with `localhost:port`
+
+Traditional local development uses URLs like `http://localhost:3000`. This causes several issues:
+
+1. **Password managers don't work** - 1Password, Bitwarden, and other password managers require HTTPS to autofill credentials. They won't save or fill passwords on `http://` URLs for security reasons.
+
+2. **Port conflicts are common** - Multiple projects fighting for port 3000, 8080, etc. leads to "EADDRINUSE" errors and manual port hunting.
+
+3. **Inconsistent URLs** - Remembering which project is on which port is cognitive overhead. Was it 3000 or 3001?
+
+4. **No SSL testing** - Can't test SSL-specific features, secure cookies, or HSTS locally.
+
+### The Solution: .local + SSL + Port Checking
+
+| Component | Tool | Purpose |
+|-----------|------|---------|
+| `.local` domains | dnsmasq | Consistent, memorable URLs (`myapp.local`) |
+| SSL certificates | mkcert | Browser-trusted HTTPS locally |
+| Reverse proxy | Traefik | Routes `.local` domains to correct ports |
+| Port management | localhost-helper.sh | Avoids conflicts, finds available ports |
+
+### Standard Workflow
+
+**Before starting any local service:**
+
+```bash
+# 1. Check if desired port is available
+~/.aidevops/agents/scripts/localhost-helper.sh check-port 3000
+
+# 2. If in use, find next available
+available_port=$(~/.aidevops/agents/scripts/localhost-helper.sh find-port 3000)
+echo "Using port: $available_port"
+
+# 3. Create app with .local domain + SSL using available port
+~/.aidevops/agents/scripts/localhost-helper.sh create-app myapp myapp.local "$available_port" true docker
+```
+
+**Result:** Access your app at `https://myapp.local` with:
+- Password manager autofill working
+- No port conflicts
+- Browser-trusted SSL
+- Consistent URL across sessions
 
 ## Provider Overview
 

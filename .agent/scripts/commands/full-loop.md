@@ -16,19 +16,42 @@ Task Development → Preflight → PR Create → PR Review → Postflight → De
 
 ## Workflow
 
-### Step 1: Validate Prerequisites
+### Step 1: Auto-Branch Setup
 
-Before starting, verify:
-
-1. **On feature branch**: Must not be on main/master
-2. **Clean working directory**: Uncommitted changes should be committed or stashed
-3. **Git remote configured**: Need to push and create PR
+The loop automatically handles branch setup when on main/master:
 
 ```bash
-# Check branch
-git branch --show-current
+# Run pre-edit check in loop mode with task description
+~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "$ARGUMENTS"
+```
 
-# Check for uncommitted changes
+**Exit codes:**
+- `0` - Already on feature branch OR docs-only task (proceed)
+- `1` - Interactive mode fallback (shouldn't happen in loop)
+- `2` - Code task on main (auto-create worktree)
+
+**Auto-decision logic:**
+- **Docs-only tasks** (README, CHANGELOG, docs/, typos): Stay on main
+- **Code tasks** (features, fixes, refactors, enhancements): Auto-create worktree
+
+**Detection keywords:**
+- Docs-only: `readme`, `changelog`, `documentation`, `docs/`, `typo`, `spelling`
+- Code (overrides docs): `feature`, `fix`, `bug`, `implement`, `refactor`, `add`, `update`, `enhance`, `port`, `ssl`
+
+**When worktree is needed:**
+
+```bash
+# Generate branch name from task (sanitized, truncated to 40 chars)
+branch_name=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-40)
+~/.aidevops/agents/scripts/worktree-helper.sh add "feature/$branch_name"
+# Continue in new worktree directory
+```
+
+Also verify:
+- **Clean working directory**: Uncommitted changes should be committed or stashed
+- **Git remote configured**: Need to push and create PR
+
+```bash
 git status --short
 ```
 
