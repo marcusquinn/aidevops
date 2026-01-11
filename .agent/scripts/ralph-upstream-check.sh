@@ -320,6 +320,8 @@ main() {
     fi
     
     check_upstream
+    
+    return 0
 }
 
 main "$@"

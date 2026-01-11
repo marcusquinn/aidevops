@@ -251,6 +251,8 @@ main() {
             parse_tasks "$todo_file" | output_text
             ;;
     esac
+    
+    return 0
 }
 
 main "$@"

@@ -33,9 +33,6 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 MARKER_START="# >>> aidevops terminal-title integration >>>"
 MARKER_END="# <<< aidevops terminal-title integration <<<"
 
-# Helper script path
-HELPER_SCRIPT="$HOME/.aidevops/agents/scripts/terminal-title-helper.sh"
-
 # =============================================================================
 # Shell Detection
 # =============================================================================
@@ -529,6 +526,7 @@ main() {
             return 1
             ;;
     esac
+    # Return status of the executed command
 }
 
 main "$@"
