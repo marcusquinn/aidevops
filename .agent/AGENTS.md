@@ -56,6 +56,8 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 **Self-verification**: Before ANY file operation, ask yourself:
 "Have I run pre-edit-check.sh in this session?" If unsure, run it NOW.
 
+**Tool-level enforcement**: Before calling Edit, Write, or Bash (with file-modifying commands), you MUST have already confirmed you're on a feature branch. If the check hasn't been run this session, run it NOW before proceeding.
+
 **Working in aidevops framework**: When modifying aidevops agents, you work in TWO locations:
 - **Source**: `~/Git/aidevops/.agent/` - THIS is the git repo, check branch HERE
 - **Deployed**: `~/.aidevops/agents/` - copy of source, not a git repo

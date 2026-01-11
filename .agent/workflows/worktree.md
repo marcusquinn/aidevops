@@ -423,6 +423,32 @@ git status  # Shows detached HEAD
 git checkout feature/auth
 ```
 
+### Worktree Deleted Mid-Session
+
+If a worktree directory is removed (e.g., PR closed, manual deletion, cleanup script):
+
+```bash
+# 1. Check if branch still exists locally
+git branch --list feature/my-feature
+
+# 2. If branch exists, recreate worktree
+worktree-helper.sh add feature/my-feature
+
+# 3. If branch was deleted remotely but you have local changes
+git fetch origin
+git checkout -b feature/my-feature origin/feature/my-feature 2>/dev/null || \
+  git checkout -b feature/my-feature
+worktree-helper.sh add feature/my-feature
+
+# 4. Restore uncommitted changes from stash (if any were saved)
+git stash list
+git stash pop
+```
+
+**Session continuity**: After recreating the worktree, use `session-rename_sync_branch` tool to re-sync the OpenCode session name with the branch.
+
+**Prevention**: Before closing a PR or deleting a branch, ensure no active sessions are using that worktree. Use `worktree-sessions.sh list` to check.
+
 ## Comparison: Worktrees vs Alternatives
 
 | Approach | Pros | Cons |

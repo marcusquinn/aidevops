@@ -201,6 +201,40 @@ The `/pr` command produces a structured report:
 **Overall**: CHANGES REQUESTED
 ```text
 
+## Loop Commands
+
+For iterative PR workflows that automatically retry until success:
+
+| Command | Purpose | Default Limit |
+|---------|---------|---------------|
+| `/pr-loop` | Iterate until PR approved/merged | 10 iterations |
+| `/preflight-loop` | Iterate until preflight passes | 5 iterations |
+
+### Timeout Recovery
+
+If a loop times out before completion:
+
+1. **Check current status**:
+   ```bash
+   gh pr view --json state,reviewDecision,statusCheckRollup
+   ```
+
+2. **Review what's pending** - usually one of:
+   - CI checks still running (wait and re-check)
+   - Review requested but not completed (ping reviewer)
+   - Failing checks that need manual intervention
+
+3. **Fix and continue** - address issues, then:
+   ```bash
+   # Re-run single review cycle
+   /pr review
+   
+   # Or restart loop if multiple issues remain
+   /pr-loop
+   ```
+
+Loops are convenience wrappers - the manual `/pr review` workflow always works.
+
 ## Fork Workflow (Non-Owner Repositories)
 
 When working on a repository you don't own, use the fork workflow:
