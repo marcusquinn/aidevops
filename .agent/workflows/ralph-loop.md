@@ -657,8 +657,69 @@ cat .claude/full-loop.local.md
 full-loop-helper.sh resume
 ```
 
+## OpenProse Integration
+
+For complex multi-agent orchestration within Ralph loops, consider using OpenProse DSL patterns. OpenProse provides explicit control flow that complements Ralph's iterative approach.
+
+### Parallel Reviews Pattern
+
+Instead of sequential reviews, use OpenProse-style parallel blocks:
+
+```prose
+# Traditional sequential
+session "Security review"
+session "Performance review"
+session "Style review"
+session "Synthesize"
+
+# OpenProse parallel pattern
+parallel:
+  security = session "Security review"
+  perf = session "Performance review"
+  style = session "Style review"
+
+session "Synthesize all reviews"
+  context: { security, perf, style }
+```
+
+### AI-Evaluated Conditions
+
+OpenProse's discretion markers (`**...**`) provide cleaner condition syntax:
+
+```prose
+loop until **all tests pass and code coverage exceeds 80%** (max: 20):
+  session "Run tests, analyze failures, fix bugs"
+```
+
+### Error Recovery
+
+OpenProse's `try/catch/retry` semantics for resilient loops:
+
+```prose
+loop until **task complete** (max: 50):
+  try:
+    session "Attempt implementation"
+      retry: 3
+      backoff: "exponential"
+  catch as err:
+    session "Analyze failure and adjust approach"
+      context: err
+```
+
+### When to Use OpenProse vs Native Ralph
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Simple iterative task | Native Ralph loop |
+| Multi-agent parallel work | OpenProse `parallel:` blocks |
+| Complex conditional logic | OpenProse `if`/`choice` blocks |
+| Error recovery workflows | OpenProse `try/catch/retry` |
+
+See `tools/ai-orchestration/openprose.md` for full OpenProse documentation.
+
 ## Learn More
 
 - Original technique: <https://ghuntley.com/ralph/>
 - Ralph Orchestrator: <https://github.com/mikeyobrien/ralph-orchestrator>
 - Claude Code plugin: <https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum>
+- OpenProse DSL: <https://github.com/openprose/prose>

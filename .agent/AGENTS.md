@@ -379,7 +379,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/build-agent/` | Agent design - composing efficient agents, reviewing agent instructions | build-agent, agent-review |
 | `tools/build-mcp/` | MCP development - creating Model Context Protocol servers and tools | build-mcp, api-wrapper, server-patterns, transports, deployment |
 | `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
-| `tools/ai-orchestration/` | AI orchestration frameworks - visual builders, multi-agent teams, workflow automation | overview, langflow, crewai, autogen, packaging |
+| `tools/ai-orchestration/` | AI orchestration frameworks - visual builders, multi-agent teams, workflow automation, DSL orchestration | overview, langflow, crewai, autogen, openprose, packaging |
 | `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling | stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools |
 | `tools/ui/` | UI components - component libraries, design systems, interface constraints | shadcn, ui-skills |
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, code-simplifier, codacy, coderabbit, qlty, snyk, secretlint, auditing |
