@@ -485,6 +485,47 @@ git add . && git commit -m "fix: Resolve merge conflicts"
 git push
 ```text
 
+## Handling Contradictory AI Feedback
+
+AI code reviewers (CodeRabbit, Codacy, etc.) may occasionally provide contradictory feedback. When this occurs:
+
+### Detection
+
+Contradictory feedback patterns:
+- Reviewer suggests change A → B, then later suggests B → A
+- Different reviewers suggest opposite changes
+- Feedback contradicts documented standards or actual runtime behavior
+
+### Resolution Process
+
+1. **Verify actual behavior**: Test the code to confirm what works
+   ```bash
+   # Example: Verify application name works in AppleScript
+   osascript -e 'tell application "iTerm" to get name'
+   osascript -e 'tell application "iTerm2" to get name'
+   ```
+
+2. **Check authoritative sources**: Documentation, official APIs, standards
+
+3. **Document your decision**: In PR comments, explain:
+   - What the contradictory feedback was
+   - How you verified the correct behavior
+   - Why you're dismissing the feedback
+
+4. **Proceed with merge**: If feedback is demonstrably incorrect, merge despite CHANGES_REQUESTED
+   ```bash
+   gh pr merge 123 --squash --delete-branch
+   ```
+
+### Example Comment
+
+```markdown
+Regarding the iTerm/iTerm2 naming: Both work in AppleScript. 
+The app bundle is `/Applications/iTerm.app` but responds to both 
+`tell application "iTerm"` and `tell application "iTerm2"`. 
+Keeping current code - no change needed.
+```
+
 ## Related Workflows
 
 - **Branch creation**: `workflows/branch.md`

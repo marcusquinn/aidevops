@@ -366,6 +366,9 @@ cmd_clean() {
     local default_branch
     default_branch=$(get_default_branch)
     
+    # Fetch to get current remote branch state (detects deleted branches)
+    git fetch --prune origin 2>/dev/null || true
+    
     while IFS= read -r line; do
         if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
             worktree_path="${BASH_REMATCH[1]}"
@@ -374,9 +377,22 @@ cmd_clean() {
         elif [[ -z "$line" ]]; then
             # End of entry, check if merged (skip default branch)
             if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
+                local is_merged=false
+                local merge_type=""
+                
+                # Check 1: Traditional merge detection
                 if git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+                    is_merged=true
+                    merge_type="merged"
+                # Check 2: Remote branch deleted (indicates squash merge or PR closed)
+                elif ! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
+                    is_merged=true
+                    merge_type="remote deleted"
+                fi
+                
+                if [[ "$is_merged" == "true" ]]; then
                     found_any=true
-                    echo -e "  ${YELLOW}$worktree_branch${NC} (merged)"
+                    echo -e "  ${YELLOW}$worktree_branch${NC} ($merge_type)"
                     echo "    $worktree_path"
                     echo ""
                 fi
@@ -404,9 +420,21 @@ cmd_clean() {
                 worktree_branch="${BASH_REMATCH[1]}"
             elif [[ -z "$line" ]]; then
                 if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
+                    local should_remove=false
+                    
+                    # Check 1: Traditional merge
                     if git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+                        should_remove=true
+                    # Check 2: Remote branch deleted
+                    elif ! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
+                        should_remove=true
+                    fi
+                    
+                    if [[ "$should_remove" == "true" ]]; then
                         echo -e "${BLUE}Removing $worktree_branch...${NC}"
-                        git worktree remove "$worktree_path" 2>/dev/null || true
+                        git worktree remove "$worktree_path" 2>/dev/null || git worktree remove --force "$worktree_path" 2>/dev/null || true
+                        # Also delete the local branch
+                        git branch -D "$worktree_branch" 2>/dev/null || true
                     fi
                 fi
                 worktree_path=""
