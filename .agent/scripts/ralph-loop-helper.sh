@@ -32,7 +32,7 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly SCRIPT_NAME="ralph-loop-helper.sh"
 
