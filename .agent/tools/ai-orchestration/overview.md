@@ -38,14 +38,16 @@ bash .agent/scripts/autogen-helper.sh setup
 bash .agent/scripts/agno-setup.sh setup
 ```
 
-**Port Allocation**:
+**Port Allocation** (auto-managed via `localhost-helper.sh`):
 
-| Tool | API Port | GUI Port | Health Check |
-|------|----------|----------|--------------|
-| Langflow | 7860 | 7860 | /health |
-| CrewAI Studio | 8501 | 8501 | / |
-| AutoGen Studio | 8081 | 8081 | / |
-| Agno | 7777 | 3000 | /health |
+| Tool | Default Port | Health Check | Port File |
+|------|--------------|--------------|-----------|
+| Langflow | 7860 | /health | /tmp/langflow_port |
+| CrewAI Studio | 8501 | / | /tmp/crewai_studio_port |
+| AutoGen Studio | 8081 | / | /tmp/autogen_studio_port |
+| Agno | 7777 (API), 3000 (UI) | /health | - |
+
+**Port Conflict Resolution**: All helper scripts integrate with `localhost-helper.sh` for automatic port management. If a port is in use, an alternative is automatically selected.
 
 <!-- AI-CONTEXT-END -->
 
@@ -275,11 +277,23 @@ See `packaging.md` for detailed deployment guides:
 
 **Port conflicts**:
 
+All AI orchestration helper scripts integrate with `localhost-helper.sh` for automatic port management. If a default port is in use, an alternative is automatically selected and saved to `/tmp/{tool}_port`.
+
 ```bash
-# Check what's using a port
-lsof -i :7860
+# Check port availability (uses localhost-helper.sh if available)
+~/.aidevops/scripts/localhost-helper.sh check-port 7860
+
+# Find next available port
+~/.aidevops/scripts/localhost-helper.sh find-port 7860
+
+# List all dev ports in use
+~/.aidevops/scripts/localhost-helper.sh list-ports
 
 # Kill process on port
+~/.aidevops/scripts/localhost-helper.sh kill-port 7860
+
+# Manual fallback
+lsof -i :7860
 kill -9 $(lsof -t -i:7860)
 ```
 

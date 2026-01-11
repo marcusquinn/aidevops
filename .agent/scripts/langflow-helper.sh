@@ -32,6 +32,7 @@ LANGFLOW_DIR="$HOME/.aidevops/langflow"
 LANGFLOW_PORT="${LANGFLOW_PORT:-7860}"
 SCRIPTS_DIR="$HOME/.aidevops/scripts"
 FLOWS_DIR="$LANGFLOW_DIR/flows"
+LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
 
 # Helper functions
 print_info() {
@@ -48,6 +49,50 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Port management integration with localhost-helper.sh
+# Returns available port (original if free, or next available)
+get_available_port() {
+    local desired_port="$1"
+    
+    # Use localhost-helper.sh if available
+    if [[ -x "$LOCALHOST_HELPER" ]]; then
+        if "$LOCALHOST_HELPER" check-port "$desired_port" >/dev/null 2>&1; then
+            echo "$desired_port"
+            return 0
+        else
+            # Port in use, find alternative
+            local suggested
+            suggested=$("$LOCALHOST_HELPER" find-port "$((desired_port + 1))" 2>/dev/null)
+            if [[ -n "$suggested" ]]; then
+                print_warning "Port $desired_port in use, using $suggested instead"
+                echo "$suggested"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Fallback: basic port check using lsof
+    if ! lsof -i :"$desired_port" >/dev/null 2>&1; then
+        echo "$desired_port"
+        return 0
+    fi
+    
+    # Find next available port
+    local port="$desired_port"
+    while lsof -i :"$port" >/dev/null 2>&1 && [[ $port -lt 65535 ]]; do
+        ((port++))
+    done
+    
+    if [[ $port -lt 65535 ]]; then
+        print_warning "Port $desired_port in use, using $port instead"
+        echo "$port"
+        return 0
+    fi
+    
+    print_error "No available ports found"
+    return 1
 }
 
 # Check prerequisites
@@ -202,27 +247,56 @@ create_management_scripts() {
 # AI DevOps Framework - Langflow Startup Script
 
 LANGFLOW_DIR="$HOME/.aidevops/langflow"
+SCRIPTS_DIR="$HOME/.aidevops/scripts"
+LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
+DESIRED_PORT="${LANGFLOW_PORT:-7860}"
 
 echo "Starting Langflow..."
 
+# Check port availability using localhost-helper.sh
+if [[ -x "$LOCALHOST_HELPER" ]]; then
+    if ! "$LOCALHOST_HELPER" check-port "$DESIRED_PORT" >/dev/null 2>&1; then
+        echo "[WARNING] Port $DESIRED_PORT is in use"
+        SUGGESTED=$("$LOCALHOST_HELPER" find-port "$((DESIRED_PORT + 1))" 2>/dev/null)
+        if [[ -n "$SUGGESTED" ]]; then
+            echo "[INFO] Using alternative port: $SUGGESTED"
+            DESIRED_PORT="$SUGGESTED"
+        fi
+    fi
+else
+    # Fallback port check
+    if lsof -i :"$DESIRED_PORT" >/dev/null 2>&1; then
+        echo "[WARNING] Port $DESIRED_PORT is in use, finding alternative..."
+        while lsof -i :"$DESIRED_PORT" >/dev/null 2>&1 && [[ $DESIRED_PORT -lt 65535 ]]; do
+            ((DESIRED_PORT++))
+        done
+        echo "[INFO] Using port: $DESIRED_PORT"
+    fi
+fi
+
 if [[ -f "$LANGFLOW_DIR/start_langflow.sh" ]]; then
     cd "$LANGFLOW_DIR" || exit 1
+    
+    # Export port for the startup script
+    export LANGFLOW_PORT="$DESIRED_PORT"
+    
     ./start_langflow.sh &
     LANGFLOW_PID=$!
     echo "$LANGFLOW_PID" > /tmp/langflow_pid
+    echo "$DESIRED_PORT" > /tmp/langflow_port
     
     # Wait for startup
     sleep 5
     
-    if curl -s http://localhost:7860/health >/dev/null 2>&1; then
+    if curl -s "http://localhost:$DESIRED_PORT/health" >/dev/null 2>&1; then
         echo ""
         echo "Langflow started successfully!"
-        echo "URL: http://localhost:7860"
-        echo "API Docs: http://localhost:7860/docs"
+        echo "URL: http://localhost:$DESIRED_PORT"
+        echo "API Docs: http://localhost:$DESIRED_PORT/docs"
         echo ""
         echo "Use 'stop-langflow.sh' to stop the server"
     else
-        echo "Langflow may still be starting. Check http://localhost:7860"
+        echo "Langflow may still be starting. Check http://localhost:$DESIRED_PORT"
     fi
 else
     echo "Langflow not set up. Run setup first:"
@@ -260,14 +334,21 @@ EOF
 #!/bin/bash
 # AI DevOps Framework - Langflow Status Script
 
+# Get actual port (from saved file or default)
+if [[ -f /tmp/langflow_port ]]; then
+    PORT=$(cat /tmp/langflow_port)
+else
+    PORT="${LANGFLOW_PORT:-7860}"
+fi
+
 echo "Langflow Status"
 echo "==============="
 
 # Check if running
-if curl -s http://localhost:7860/health >/dev/null 2>&1; then
+if curl -s "http://localhost:$PORT/health" >/dev/null 2>&1; then
     echo "Status: Running"
-    echo "URL: http://localhost:7860"
-    echo "API Docs: http://localhost:7860/docs"
+    echo "URL: http://localhost:$PORT"
+    echo "API Docs: http://localhost:$PORT/docs"
 else
     echo "Status: Not running"
 fi

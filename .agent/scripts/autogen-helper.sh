@@ -29,6 +29,7 @@ NC='\033[0m'
 AUTOGEN_DIR="$HOME/.aidevops/autogen"
 AUTOGEN_STUDIO_PORT="${AUTOGEN_STUDIO_PORT:-8081}"
 SCRIPTS_DIR="$HOME/.aidevops/scripts"
+LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
 
 # Helper functions
 print_info() {
@@ -45,6 +46,50 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Port management integration with localhost-helper.sh
+# Returns available port (original if free, or next available)
+get_available_port() {
+    local desired_port="$1"
+    
+    # Use localhost-helper.sh if available
+    if [[ -x "$LOCALHOST_HELPER" ]]; then
+        if "$LOCALHOST_HELPER" check-port "$desired_port" >/dev/null 2>&1; then
+            echo "$desired_port"
+            return 0
+        else
+            # Port in use, find alternative
+            local suggested
+            suggested=$("$LOCALHOST_HELPER" find-port "$((desired_port + 1))" 2>/dev/null)
+            if [[ -n "$suggested" ]]; then
+                print_warning "Port $desired_port in use, using $suggested instead"
+                echo "$suggested"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Fallback: basic port check using lsof
+    if ! lsof -i :"$desired_port" >/dev/null 2>&1; then
+        echo "$desired_port"
+        return 0
+    fi
+    
+    # Find next available port
+    local port="$desired_port"
+    while lsof -i :"$port" >/dev/null 2>&1 && [[ $port -lt 65535 ]]; do
+        ((port++))
+    done
+    
+    if [[ $port -lt 65535 ]]; then
+        print_warning "Port $desired_port in use, using $port instead"
+        echo "$port"
+        return 0
+    fi
+    
+    print_error "No available ports found"
+    return 1
 }
 
 # Check prerequisites
@@ -236,10 +281,33 @@ create_management_scripts() {
 # AI DevOps Framework - AutoGen Studio Startup Script
 
 AUTOGEN_DIR="$HOME/.aidevops/autogen"
-PORT="${AUTOGEN_STUDIO_PORT:-8081}"
+SCRIPTS_DIR="$HOME/.aidevops/scripts"
+LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
+DESIRED_PORT="${AUTOGEN_STUDIO_PORT:-8081}"
 APPDIR="${AUTOGEN_STUDIO_APPDIR:-$AUTOGEN_DIR/studio-data}"
 
 echo "Starting AutoGen Studio..."
+
+# Check port availability using localhost-helper.sh
+if [[ -x "$LOCALHOST_HELPER" ]]; then
+    if ! "$LOCALHOST_HELPER" check-port "$DESIRED_PORT" >/dev/null 2>&1; then
+        echo "[WARNING] Port $DESIRED_PORT is in use"
+        SUGGESTED=$("$LOCALHOST_HELPER" find-port "$((DESIRED_PORT + 1))" 2>/dev/null)
+        if [[ -n "$SUGGESTED" ]]; then
+            echo "[INFO] Using alternative port: $SUGGESTED"
+            DESIRED_PORT="$SUGGESTED"
+        fi
+    fi
+else
+    # Fallback port check
+    if lsof -i :"$DESIRED_PORT" >/dev/null 2>&1; then
+        echo "[WARNING] Port $DESIRED_PORT is in use, finding alternative..."
+        while lsof -i :"$DESIRED_PORT" >/dev/null 2>&1 && [[ $DESIRED_PORT -lt 65535 ]]; do
+            ((DESIRED_PORT++))
+        done
+        echo "[INFO] Using port: $DESIRED_PORT"
+    fi
+fi
 
 if [[ -d "$AUTOGEN_DIR/venv" ]]; then
     cd "$AUTOGEN_DIR" || exit 1
@@ -257,16 +325,17 @@ if [[ -d "$AUTOGEN_DIR/venv" ]]; then
     # Create app directory
     mkdir -p "$APPDIR"
     
-    # Start AutoGen Studio
-    autogenstudio ui --port "$PORT" --appdir "$APPDIR" &
+    # Start AutoGen Studio with available port
+    autogenstudio ui --port "$DESIRED_PORT" --appdir "$APPDIR" &
     STUDIO_PID=$!
     echo "$STUDIO_PID" > /tmp/autogen_studio_pid
+    echo "$DESIRED_PORT" > /tmp/autogen_studio_port
     
     sleep 5
     
     echo ""
     echo "AutoGen Studio started!"
-    echo "URL: http://localhost:$PORT"
+    echo "URL: http://localhost:$DESIRED_PORT"
     echo ""
     echo "Use 'stop-autogen-studio.sh' to stop"
 else
@@ -305,7 +374,12 @@ EOF
 #!/bin/bash
 # AI DevOps Framework - AutoGen Status Script
 
-PORT="${AUTOGEN_STUDIO_PORT:-8081}"
+# Get actual port (from saved file or default)
+if [[ -f /tmp/autogen_studio_port ]]; then
+    PORT=$(cat /tmp/autogen_studio_port)
+else
+    PORT="${AUTOGEN_STUDIO_PORT:-8081}"
+fi
 
 echo "AutoGen Status"
 echo "=============="

@@ -31,6 +31,7 @@ NC='\033[0m'
 CREWAI_DIR="$HOME/.aidevops/crewai"
 CREWAI_STUDIO_PORT="${CREWAI_STUDIO_PORT:-8501}"
 SCRIPTS_DIR="$HOME/.aidevops/scripts"
+LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
 
 # Helper functions
 print_info() {
@@ -47,6 +48,50 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Port management integration with localhost-helper.sh
+# Returns available port (original if free, or next available)
+get_available_port() {
+    local desired_port="$1"
+    
+    # Use localhost-helper.sh if available
+    if [[ -x "$LOCALHOST_HELPER" ]]; then
+        if "$LOCALHOST_HELPER" check-port "$desired_port" >/dev/null 2>&1; then
+            echo "$desired_port"
+            return 0
+        else
+            # Port in use, find alternative
+            local suggested
+            suggested=$("$LOCALHOST_HELPER" find-port "$((desired_port + 1))" 2>/dev/null)
+            if [[ -n "$suggested" ]]; then
+                print_warning "Port $desired_port in use, using $suggested instead"
+                echo "$suggested"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Fallback: basic port check using lsof
+    if ! lsof -i :"$desired_port" >/dev/null 2>&1; then
+        echo "$desired_port"
+        return 0
+    fi
+    
+    # Find next available port
+    local port="$desired_port"
+    while lsof -i :"$port" >/dev/null 2>&1 && [[ $port -lt 65535 ]]; do
+        ((port++))
+    done
+    
+    if [[ $port -lt 65535 ]]; then
+        print_warning "Port $desired_port in use, using $port instead"
+        echo "$port"
+        return 0
+    fi
+    
+    print_error "No available ports found"
+    return 1
 }
 
 # Check prerequisites
@@ -352,9 +397,32 @@ create_management_scripts() {
 # AI DevOps Framework - CrewAI Studio Startup Script
 
 CREWAI_DIR="$HOME/.aidevops/crewai"
-PORT="${CREWAI_STUDIO_PORT:-8501}"
+SCRIPTS_DIR="$HOME/.aidevops/scripts"
+LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
+DESIRED_PORT="${CREWAI_STUDIO_PORT:-8501}"
 
 echo "Starting CrewAI Studio..."
+
+# Check port availability using localhost-helper.sh
+if [[ -x "$LOCALHOST_HELPER" ]]; then
+    if ! "$LOCALHOST_HELPER" check-port "$DESIRED_PORT" >/dev/null 2>&1; then
+        echo "[WARNING] Port $DESIRED_PORT is in use"
+        SUGGESTED=$("$LOCALHOST_HELPER" find-port "$((DESIRED_PORT + 1))" 2>/dev/null)
+        if [[ -n "$SUGGESTED" ]]; then
+            echo "[INFO] Using alternative port: $SUGGESTED"
+            DESIRED_PORT="$SUGGESTED"
+        fi
+    fi
+else
+    # Fallback port check
+    if lsof -i :"$DESIRED_PORT" >/dev/null 2>&1; then
+        echo "[WARNING] Port $DESIRED_PORT is in use, finding alternative..."
+        while lsof -i :"$DESIRED_PORT" >/dev/null 2>&1 && [[ $DESIRED_PORT -lt 65535 ]]; do
+            ((DESIRED_PORT++))
+        done
+        echo "[INFO] Using port: $DESIRED_PORT"
+    fi
+fi
 
 if [[ -f "$CREWAI_DIR/studio_app.py" ]]; then
     cd "$CREWAI_DIR" || exit 1
@@ -369,16 +437,17 @@ if [[ -f "$CREWAI_DIR/studio_app.py" ]]; then
         set +a
     fi
     
-    # Start Streamlit
-    streamlit run studio_app.py --server.port "$PORT" --server.headless true &
+    # Start Streamlit with available port
+    streamlit run studio_app.py --server.port "$DESIRED_PORT" --server.headless true &
     STUDIO_PID=$!
     echo "$STUDIO_PID" > /tmp/crewai_studio_pid
+    echo "$DESIRED_PORT" > /tmp/crewai_studio_port
     
     sleep 3
     
     echo ""
     echo "CrewAI Studio started!"
-    echo "URL: http://localhost:$PORT"
+    echo "URL: http://localhost:$DESIRED_PORT"
     echo ""
     echo "Use 'stop-crewai-studio.sh' to stop"
 else
@@ -417,7 +486,12 @@ EOF
 #!/bin/bash
 # AI DevOps Framework - CrewAI Status Script
 
-PORT="${CREWAI_STUDIO_PORT:-8501}"
+# Get actual port (from saved file or default)
+if [[ -f /tmp/crewai_studio_port ]]; then
+    PORT=$(cat /tmp/crewai_studio_port)
+else
+    PORT="${CREWAI_STUDIO_PORT:-8501}"
+fi
 
 echo "CrewAI Status"
 echo "============="
