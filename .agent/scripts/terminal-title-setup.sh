@@ -526,8 +526,7 @@ main() {
             return 1
             ;;
     esac
-    
-    return 0
+    # Return status of the executed command
 }
 
 main "$@"
