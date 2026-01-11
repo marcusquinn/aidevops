@@ -84,6 +84,34 @@ is_main_worktree() {
     [[ -d "$git_dir" ]] && [[ "$git_dir" == ".git" || "$git_dir" == "$(get_repo_root)/.git" ]]
 }
 
+# Check if a branch was ever pushed to remote
+# Returns 0 (true) if branch has upstream or remote tracking
+# Returns 1 (false) if branch was never pushed
+branch_was_pushed() {
+    local branch="$1"
+    # Has upstream configured
+    if git config "branch.$branch.remote" &>/dev/null; then
+        return 0
+    fi
+    # Has remote tracking branch
+    if git show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if worktree has uncommitted changes
+worktree_has_changes() {
+    local worktree_path="$1"
+    if [[ -d "$worktree_path" ]]; then
+        local changes
+        changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null | head -1)
+        [[ -n "$changes" ]]
+    else
+        return 1
+    fi
+}
+
 # Generate worktree path from branch name
 # Pattern: ~/Git/{repo}-{branch-slug}
 generate_worktree_path() {
@@ -385,9 +413,19 @@ cmd_clean() {
                     is_merged=true
                     merge_type="merged"
                 # Check 2: Remote branch deleted (indicates squash merge or PR closed)
-                elif ! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
+                # ONLY check this if the branch was previously pushed - unpushed branches should NOT be flagged
+                elif branch_was_pushed "$worktree_branch" && \
+                     ! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
                     is_merged=true
                     merge_type="remote deleted"
+                fi
+                
+                # Safety check: skip if worktree has uncommitted changes
+                if [[ "$is_merged" == "true" ]] && worktree_has_changes "$worktree_path"; then
+                    echo -e "  ${RED}$worktree_branch${NC} (has uncommitted changes - skipping)"
+                    echo "    $worktree_path"
+                    echo ""
+                    is_merged=false
                 fi
                 
                 if [[ "$is_merged" == "true" ]]; then
@@ -422,19 +460,28 @@ cmd_clean() {
                 if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
                     local should_remove=false
                     
+                    # Safety check: never remove worktrees with uncommitted changes
+                    if worktree_has_changes "$worktree_path"; then
+                        echo -e "${RED}Skipping $worktree_branch - has uncommitted changes${NC}"
+                        should_remove=false
                     # Check 1: Traditional merge
-                    if git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+                    elif git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
                         should_remove=true
-                    # Check 2: Remote branch deleted
-                    elif ! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
+                    # Check 2: Remote branch deleted - ONLY if branch was previously pushed
+                    elif branch_was_pushed "$worktree_branch" && \
+                         ! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
                         should_remove=true
                     fi
                     
                     if [[ "$should_remove" == "true" ]]; then
                         echo -e "${BLUE}Removing $worktree_branch...${NC}"
-                        git worktree remove "$worktree_path" 2>/dev/null || git worktree remove --force "$worktree_path" 2>/dev/null || true
-                        # Also delete the local branch
-                        git branch -D "$worktree_branch" 2>/dev/null || true
+                        # Don't use --force to prevent data loss
+                        if ! git worktree remove "$worktree_path" 2>/dev/null; then
+                            echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}"
+                        else
+                            # Also delete the local branch
+                            git branch -D "$worktree_branch" 2>/dev/null || true
+                        fi
                     fi
                 fi
                 worktree_path=""

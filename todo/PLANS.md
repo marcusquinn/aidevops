@@ -800,7 +800,7 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 p009,beads-sync-helper.sh; todo-ready.sh; beads.md subagent; blocked-by/blocks syntax; hierarchical IDs; TOON schema; setup.sh integration; AGENTS.md docs,Robust sync script; comprehensive docs; seamless integration,Add optional UI installation to setup.sh,2d,1.5d,-25,1
 -->
 
-<!--TOON:active_plans[8]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+<!--TOON:active_plans[9]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
 p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
@@ -810,6 +810,7 @@ p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestrat
 p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,
 p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
 p010,Agent Design Pattern Improvements,planning,0,5,,architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,
+p011,Memory Auto-Capture,planning,0,5,,memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,
 -->
 
 ### [2025-01-11] Agent Design Pattern Improvements
@@ -887,6 +888,100 @@ m052,p010,Phase 5: Memory consolidation,2h,,2025-01-11T00:00Z,,pending
 <!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
 d017,p010,Document patterns before implementing improvements,Establishes baseline and validates alignment,2025-01-11,None
 d018,p010,Prioritize automatic session reflection,Highest impact for continual learning,2025-01-11,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+### [2026-01-11] Memory Auto-Capture
+
+**Status:** Planning
+**Estimate:** ~1d (ai:6h test:4h read:2h)
+**PRD:** [todo/tasks/prd-memory-auto-capture.md](tasks/prd-memory-auto-capture.md)
+**Source:** [claude-mem](https://github.com/thedotmack/claude-mem) - inspiration for auto-capture patterns
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p011,Memory Auto-Capture,planning,0,5,,memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,
+-->
+
+#### Purpose
+
+Add automatic memory capture to aidevops, inspired by claude-mem but tool-agnostic. Currently, memory requires manual `/remember` invocation. Auto-capture will:
+- Capture working solutions, failed approaches, and decisions automatically
+- Work across all AI tools (OpenCode, Cursor, Claude Code, Windsurf)
+- Use progressive disclosure to minimize token usage
+- Maintain minimal dependencies (bash + sqlite3)
+
+#### Context from Discussion
+
+**Why not use claude-mem as dependency:**
+- Claude Code only (plugin architecture)
+- Heavy dependencies (Bun, uv, Chroma, Node.js worker)
+- AGPL license (viral, requires source disclosure)
+- aidevops needs tool-agnostic solution
+
+**What we'll implement:**
+- Agent instructions for auto-capture (not lifecycle hooks)
+- Semantic classification into memory types
+- Deduplication via FTS5 similarity
+- Privacy controls (`<private>` tags, .gitignore patterns)
+- `/memory-log` command for reviewing captures
+
+**Architecture decision:** Use agent instructions (Option A) rather than shell wrappers or file watchers. This works with any AI tool that reads AGENTS.md.
+
+#### Progress
+
+- [ ] (2026-01-11) Phase 1: Research & Design ~2h
+  - Finalize capture triggers and thresholds
+  - Design classification rules
+  - Document privacy patterns
+- [ ] (2026-01-11) Phase 2: memory-helper.sh updates ~3.5h
+  - Add `--auto-captured` flag
+  - Add deduplication logic
+  - Add capture statistics
+- [ ] (2026-01-11) Phase 3: AGENTS.md instructions ~2h
+  - Add auto-capture instructions to AGENTS.md
+  - Define when to capture (success, failure, decisions)
+  - Add privacy exclusion patterns
+- [ ] (2026-01-11) Phase 4: /memory-log command ~2h
+  - Create `scripts/commands/memory-log.md`
+  - Show recent auto-captures with filtering
+  - Add prune command for cleanup
+- [ ] (2026-01-11) Phase 5: Privacy filters ~2.5h
+  - Integrate with .gitignore patterns
+  - Add `<private>` tag support
+  - Add secretlint pattern exclusions
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m053,p011,Phase 1: Research & Design,2h,,2026-01-11T12:00Z,,pending
+m054,p011,Phase 2: memory-helper.sh updates,3.5h,,2026-01-11T12:00Z,,pending
+m055,p011,Phase 3: AGENTS.md instructions,2h,,2026-01-11T12:00Z,,pending
+m056,p011,Phase 4: /memory-log command,2h,,2026-01-11T12:00Z,,pending
+m057,p011,Phase 5: Privacy filters,2.5h,,2026-01-11T12:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Use agent instructions instead of lifecycle hooks
+  **Rationale:** Tool-agnostic; works with OpenCode, Cursor, Claude Code, Windsurf without plugins
+  **Date:** 2026-01-11
+
+- **Decision:** Keep FTS5 for search, no vector embeddings
+  **Rationale:** Minimal dependencies; FTS5 is sufficient for keyword search; semantic search adds complexity
+  **Date:** 2026-01-11
+
+- **Decision:** Implement ourselves rather than depend on claude-mem
+  **Rationale:** claude-mem is Claude Code-only; aidevops needs multi-tool support
+  **Date:** 2026-01-11
+
+<!--TOON:decisions[3]{id,plan_id,decision,rationale,date,impact}:
+d019,p011,Use agent instructions instead of lifecycle hooks,Tool-agnostic; works with all AI tools,2026-01-11,None
+d020,p011,Keep FTS5 for search no vector embeddings,Minimal dependencies; FTS5 sufficient,2026-01-11,None
+d021,p011,Implement ourselves rather than depend on claude-mem,claude-mem is Claude Code-only,2026-01-11,None
 -->
 
 #### Surprises & Discoveries
