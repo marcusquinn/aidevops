@@ -1,0 +1,110 @@
+{
+  "crewai_config": {
+    "description": "CrewAI configuration for AI DevOps Framework",
+    "version": "1.0.0",
+    "framework_integration": true,
+    "setup": {
+      "crewai_directory": "~/.aidevops/crewai",
+      "scripts_directory": "~/.aidevops/scripts",
+      "default_studio_port": 8501
+    },
+    "studio": {
+      "enabled": true,
+      "port": 8501,
+      "headless": true
+    },
+    "crew_defaults": {
+      "process": "sequential",
+      "verbose": true,
+      "memory": false,
+      "cache": true,
+      "max_rpm": 10
+    },
+    "agent_defaults": {
+      "verbose": true,
+      "allow_delegation": true,
+      "max_iter": 15,
+      "max_rpm": 10
+    },
+    "model_providers": {
+      "openai": {
+        "enabled": true,
+        "api_key_env": "OPENAI_API_KEY",
+        "default_model": "gpt-4o-mini"
+      },
+      "anthropic": {
+        "enabled": true,
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "default_model": "claude-3-5-sonnet-20241022"
+      },
+      "ollama": {
+        "enabled": true,
+        "base_url": "http://localhost:11434",
+        "default_model": "llama3.2"
+      }
+    },
+    "tools": {
+      "serper": {
+        "enabled": false,
+        "api_key_env": "SERPER_API_KEY"
+      },
+      "browserbase": {
+        "enabled": false
+      },
+      "file_tools": {
+        "enabled": true
+      },
+      "code_tools": {
+        "enabled": true
+      }
+    },
+    "telemetry": {
+      "enabled": false,
+      "env_var": "CREWAI_TELEMETRY"
+    },
+    "integration": {
+      "git_version_control": {
+        "enabled": true,
+        "track_configs": true,
+        "config_files": [
+          "config/agents.yaml",
+          "config/tasks.yaml",
+          "crew.py"
+        ]
+      },
+      "aidevops_workflows": {
+        "enabled": true,
+        "helper_script": ".agent/scripts/crewai-helper.sh"
+      }
+    }
+  },
+  "setup_requirements": {
+    "python": {
+      "version": "3.10-3.13",
+      "packages": ["crewai", "crewai[tools]", "streamlit"],
+      "virtual_environment": "required"
+    },
+    "system": {
+      "memory": "4GB minimum, 8GB recommended",
+      "disk": "2GB for installation",
+      "network": "Internet for initial setup and cloud LLM APIs"
+    }
+  },
+  "usage_examples": {
+    "setup": "bash .agent/scripts/crewai-helper.sh setup",
+    "start_studio": "~/.aidevops/scripts/start-crewai-studio.sh",
+    "stop_studio": "~/.aidevops/scripts/stop-crewai-studio.sh",
+    "status": "~/.aidevops/scripts/crewai-status.sh",
+    "create_crew": "crewai create crew my-project",
+    "run_crew": "crewai run",
+    "access_studio": "http://localhost:8501"
+  },
+  "ai_devops_benefits": {
+    "multi_agent": "Role-based autonomous agents working as teams",
+    "flexibility": "Sequential and hierarchical process types",
+    "code_first": "YAML configs with Python decorators",
+    "flows": "Event-driven workflows for complex orchestration",
+    "local_llm": "Full support for Ollama and local models",
+    "community": "100k+ certified developers, active support"
+  }
+}

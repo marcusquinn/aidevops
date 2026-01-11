@@ -1639,6 +1639,54 @@ setup_browser_tools() {
     print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Stagehand (AI)"
 }
 
+# Setup AI Orchestration Frameworks (Langflow, CrewAI, AutoGen)
+setup_ai_orchestration() {
+    print_info "Setting up AI orchestration frameworks..."
+    
+    local has_python=false
+    
+    # Check Python
+    if command -v python3 &> /dev/null; then
+        local python_version
+        python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
+        local major minor
+        major=$(echo "$python_version" | cut -d. -f1)
+        minor=$(echo "$python_version" | cut -d. -f2)
+        
+        if [[ $major -ge 3 ]] && [[ $minor -ge 10 ]]; then
+            has_python=true
+            print_success "Python $python_version found (3.10+ required)"
+        else
+            print_warning "Python 3.10+ required for AI orchestration, found $python_version"
+        fi
+    else
+        print_warning "Python 3 not found - AI orchestration frameworks unavailable"
+        return 0
+    fi
+    
+    if [[ "$has_python" == "false" ]]; then
+        return 0
+    fi
+    
+    # Create orchestration directory
+    mkdir -p "$HOME/.aidevops/orchestration"
+    
+    # Info about available frameworks
+    print_info "AI Orchestration Frameworks available:"
+    echo "  - Langflow: Visual flow builder (localhost:7860)"
+    echo "  - CrewAI: Multi-agent teams (localhost:8501)"
+    echo "  - AutoGen: Microsoft agentic AI (localhost:8081)"
+    echo ""
+    print_info "Setup individual frameworks with:"
+    echo "  bash .agent/scripts/langflow-helper.sh setup"
+    echo "  bash .agent/scripts/crewai-helper.sh setup"
+    echo "  bash .agent/scripts/autogen-helper.sh setup"
+    echo ""
+    print_info "See .agent/tools/ai-orchestration/overview.md for comparison"
+    
+    return 0
+}
+
 # Setup OpenCode Plugins (Antigravity OAuth)
 # Helper function to add/update a single plugin in OpenCode config
 add_opencode_plugin() {
@@ -2007,6 +2055,7 @@ main() {
     confirm_step "Setup Beads task management" && setup_beads
     confirm_step "Setup SEO MCP servers (DataForSEO, Serper)" && setup_seo_mcps
     confirm_step "Setup browser automation tools" && setup_browser_tools
+    confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
     confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
     confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
 

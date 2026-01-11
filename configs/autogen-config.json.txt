@@ -1,0 +1,118 @@
+{
+  "autogen_config": {
+    "description": "Microsoft AutoGen configuration for AI DevOps Framework",
+    "version": "1.0.0",
+    "framework_integration": true,
+    "setup": {
+      "autogen_directory": "~/.aidevops/autogen",
+      "scripts_directory": "~/.aidevops/scripts",
+      "default_studio_port": 8081
+    },
+    "studio": {
+      "enabled": true,
+      "port": 8081,
+      "appdir": "~/.aidevops/autogen/studio-data"
+    },
+    "agent_defaults": {
+      "model_client_stream": true,
+      "max_tool_iterations": 10
+    },
+    "model_providers": {
+      "openai": {
+        "enabled": true,
+        "api_key_env": "OPENAI_API_KEY",
+        "default_model": "gpt-4o-mini"
+      },
+      "anthropic": {
+        "enabled": true,
+        "api_key_env": "ANTHROPIC_API_KEY"
+      },
+      "azure_openai": {
+        "enabled": false,
+        "api_key_env": "AZURE_OPENAI_API_KEY",
+        "endpoint_env": "AZURE_OPENAI_ENDPOINT"
+      },
+      "ollama": {
+        "enabled": true,
+        "base_url": "http://localhost:11434",
+        "default_model": "llama3.2"
+      }
+    },
+    "extensions": {
+      "openai": {
+        "package": "autogen-ext[openai]",
+        "enabled": true
+      },
+      "mcp": {
+        "package": "autogen-ext[mcp]",
+        "enabled": true,
+        "description": "MCP server integration for tool access"
+      },
+      "docker": {
+        "package": "autogen-ext[docker]",
+        "enabled": false
+      }
+    },
+    "mcp_integration": {
+      "enabled": true,
+      "supported_servers": [
+        "@playwright/mcp",
+        "@anthropic/mcp-server-filesystem",
+        "custom MCP servers"
+      ]
+    },
+    "integration": {
+      "git_version_control": {
+        "enabled": true,
+        "track_files": [
+          "agents/*.py",
+          "workflows/*.py",
+          "config/*.json"
+        ]
+      },
+      "aidevops_workflows": {
+        "enabled": true,
+        "helper_script": ".agent/scripts/autogen-helper.sh"
+      },
+      "dotnet_support": {
+        "enabled": false,
+        "packages": [
+          "Microsoft.AutoGen.Contracts",
+          "Microsoft.AutoGen.Core"
+        ]
+      }
+    }
+  },
+  "setup_requirements": {
+    "python": {
+      "version": "3.10+",
+      "packages": [
+        "autogen-agentchat",
+        "autogen-ext[openai]",
+        "autogenstudio"
+      ],
+      "virtual_environment": "required"
+    },
+    "system": {
+      "memory": "4GB minimum, 8GB recommended",
+      "disk": "2GB for installation",
+      "network": "Internet for initial setup and cloud LLM APIs"
+    }
+  },
+  "usage_examples": {
+    "setup": "bash .agent/scripts/autogen-helper.sh setup",
+    "start_studio": "~/.aidevops/scripts/start-autogen-studio.sh",
+    "stop_studio": "~/.aidevops/scripts/stop-autogen-studio.sh",
+    "status": "~/.aidevops/scripts/autogen-status.sh",
+    "run_example": "python hello_autogen.py",
+    "access_studio": "http://localhost:8081"
+  },
+  "ai_devops_benefits": {
+    "multi_language": "Python and .NET support for cross-platform development",
+    "mcp_native": "Built-in MCP server integration for tool access",
+    "human_in_loop": "Support for human oversight in agent workflows",
+    "layered_api": "Core API for control, AgentChat for rapid prototyping",
+    "microsoft_ecosystem": "Azure OpenAI and enterprise integration",
+    "local_llm": "Full support for Ollama and local models"
+  }
+}
