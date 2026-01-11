@@ -68,11 +68,10 @@ get_project_id() {
     echo ""
 }
 
-# Convert epoch milliseconds to readable date (portable)
-epoch_to_date() {
-    local epoch_ms="$1"
-    if [[ -n "$epoch_ms" ]] && [[ "$epoch_ms" != "null" ]]; then
-        local epoch_sec=$((epoch_ms/1000))
+# Convert epoch seconds to readable date (portable)
+epoch_sec_to_date() {
+    local epoch_sec="$1"
+    if [[ -n "$epoch_sec" ]] && [[ "$epoch_sec" != "0" ]]; then
         # Portable date formatting (BSD: -r, GNU: -d @)
         if date --version &>/dev/null 2>&1; then
             # GNU date
@@ -81,6 +80,16 @@ epoch_to_date() {
             # BSD date (macOS)
             date -r "$epoch_sec" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown"
         fi
+    else
+        echo "unknown"
+    fi
+}
+
+# Convert epoch milliseconds to readable date (portable)
+epoch_to_date() {
+    local epoch_ms="$1"
+    if [[ -n "$epoch_ms" ]] && [[ "$epoch_ms" != "null" ]]; then
+        epoch_sec_to_date "$((epoch_ms/1000))"
     else
         echo "unknown"
     fi
@@ -290,7 +299,7 @@ cmd_list() {
                 
                 if [[ -n "$branch_start" ]]; then
                     local start_date
-                    start_date=$(date -r "$branch_start" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
+                    start_date=$(epoch_sec_to_date "$branch_start")
                     echo -e "    ${DIM}Branch started: $start_date${NC}"
                 fi
                 
