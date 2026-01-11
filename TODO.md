@@ -154,8 +154,8 @@ t030,Evaluate @irl_danB post for useful advantages,,research|tools,1h,30m,,30m,2
 t031,Company orchestration agent/workflow inspired by @DanielleMorrill,,plan|agents|business,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
 t032,Create performance skill/subagent/command inspired by @elithrar,,tools|performance,3h,1.5h,1h,30m,2025-01-03T00:00Z,pending,,,
 t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
-t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
-t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
+t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
+t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,pending,,,
 t037,Review ALwrity for SEO/marketing capabilities or inspiration,,research|seo|marketing,3h,1.5h,30m,1h,2025-01-03T00:00Z,pending,,,
 t038,Add CDN origin IP leak detection subagent (Cloudmare-inspired),,security|dns|hosting,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
@@ -263,5 +263,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-51,42,0,0,24,0,26d18h,15h50m,0,42
+51,40,0,0,26,0,26d18h,16h50m,0,40
 -->
