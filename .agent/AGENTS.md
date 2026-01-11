@@ -31,9 +31,12 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 > 1. Create worktree for suggested branch (recommended for parallel sessions)
 > 2. Create branch with checkout (switches current directory's branch)
 > 3. Use different branch name
-> 4. Stay on `main` (not recommended)
+> 4. Stay on `main` (docs-only acceptable, otherwise not recommended)
 
 3. **Do NOT proceed until user replies with 1, 2, 3, or 4**
+
+**When option 4 is acceptable**: Documentation-only changes (README, CHANGELOG, docs/), typo fixes, version bumps via release script.
+**When option 4 is NOT acceptable**: Any code changes, configuration files, scripts.
 4. If worktree (option 1): `~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}`
 5. If checkout (option 2): `git checkout -b {type}/{name}`
 6. After creating branch, call `session-rename_sync_branch` tool

@@ -581,9 +581,24 @@ gh run list --workflow=postflight.yml --limit=1 --json conclusion,status -q '.[0
 
 If the postflight.yml workflow is still running or failed, the local postflight should NOT report success.
 
+## Worktree Cleanup
+
+After PR merge, clean up any worktrees used for the merged branch:
+
+```bash
+# Check for stale worktrees
+~/.aidevops/agents/scripts/worktree-helper.sh list
+
+# Auto-clean merged worktrees (detects squash merges too)
+~/.aidevops/agents/scripts/worktree-helper.sh clean
+```
+
+The `clean` command detects both traditional merges and squash merges (by checking for deleted remote branches).
+
 ## Related Workflows
 
 - `release.md` - Pre-release and release process
 - `code-review.md` - Code review guidelines
 - `changelog.md` - Changelog management
 - `version-bump.md` - Version management
+- `worktree.md` - Parallel branch development

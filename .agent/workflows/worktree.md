@@ -322,6 +322,25 @@ git branch -d feature/completed
 worktree-helper.sh clean
 ```
 
+### Squash Merge Detection
+
+The `clean` command detects merged branches two ways:
+
+1. **Traditional merges**: Uses `git branch --merged`
+2. **Squash merges**: Checks if remote branch was deleted after PR merge
+
+The command runs `git fetch --prune` automatically to detect deleted remote branches.
+
+**Manual cleanup** if needed:
+
+```bash
+# Force remove worktree
+git worktree remove --force ~/Git/myrepo-feature-old
+
+# Delete local branch
+git branch -D feature/old
+```
+
 ### 4. Don't Checkout Same Branch in Multiple Worktrees
 
 Git prevents this - each branch can only be checked out in one worktree:
