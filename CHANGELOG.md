@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.49.0] - 2026-01-11
+
+### Added
+
+- add tool update checking to setup.sh and aidevops CLI (#56)
+- add OpenProse DSL for multi-agent orchestration (#57)
+
+### Changed
+
+- Documentation: note that OpenProse telemetry is disabled by default in aidevops (#58)
+- Documentation: add Twilio and Telfon to README service coverage
 ## [2.47.0] - 2026-01-11
 
 ### Added
