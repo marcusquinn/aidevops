@@ -118,7 +118,7 @@ User confirms with numbered options to override if needed.
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`, `/session-review`, `/full-loop`
+**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`, `/session-review`, `/full-loop`, `/code-simplifier`
 
 **Time tracking format:**
 
