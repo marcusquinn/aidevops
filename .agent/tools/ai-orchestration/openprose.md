@@ -22,6 +22,7 @@ tools:
 - **Key Feature**: Explicit control flow (`parallel:`, `loop until`, `try/catch`) for multi-agent workflows
 - **License**: MIT
 - **Repo**: https://github.com/openprose/prose
+- **Telemetry**: Disabled by default in aidevops (upstream enables by default)
 
 **When to Use OpenProse**:
 
@@ -42,6 +43,16 @@ git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-p
 claude plugin marketplace add https://github.com/openprose/prose.git
 claude plugin install open-prose@prose
 ```
+
+**Telemetry**: OpenProse upstream enables telemetry by default. When using OpenProse via aidevops, telemetry is **disabled by default**. To explicitly disable when using upstream directly, add to `.prose/state.json`:
+
+```json
+{
+  "OPENPROSE_TELEMETRY": "disabled"
+}
+```
+
+Or pass `--no-telemetry` flag when running programs.
 
 <!-- AI-CONTEXT-END -->
 
