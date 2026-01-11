@@ -225,6 +225,7 @@ If a loop times out before completion:
    - Failing checks that need manual intervention
 
 3. **Fix and continue** - address issues, then:
+
    ```bash
    # Re-run single review cycle
    /pr review
