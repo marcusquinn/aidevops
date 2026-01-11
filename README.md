@@ -475,6 +475,11 @@ ssh-keygen -t ed25519 -C "your-email@domain.com"
 - **[DSPyGround](https://dspyground.com/)**: Interactive playground for prompt optimization
 - **[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)**: Token-Oriented Object Notation - 20-60% token reduction for LLM prompts
 
+### **Communications**
+
+- **[Twilio](https://www.twilio.com/)**: SMS, voice calls, WhatsApp, phone verification (Verify API), call recording & transcription
+- **[Telfon](https://mytelfon.com/)**: Twilio-powered cloud phone system with iOS/Android/Chrome apps for end-user calling interface
+
 ### **Performance & Monitoring**
 
 - **[PageSpeed Insights](https://pagespeed.web.dev/)**: Website performance auditing
