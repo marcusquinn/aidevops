@@ -125,8 +125,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Cursor-style MCP description sync to .agent-workspace/mcp-descriptions/. Add search tool for on-demand discovery instead of loading all tool definitions upfront.
 - [ ] t057 Memory consolidation and pruning #memory #optimization ~2h (ai:1h test:45m read:15m) logged:2025-01-11 blocked-by:t052
   - Notes: Add memory-helper.sh consolidate command. Periodic reflection to merge similar memories and prune stale/superseded entries.
+- [ ] t058 Memory Auto-Capture #plan → [todo/PLANS.md#memory-auto-capture] ~1d (ai:6h test:4h read:2h) logged:2026-01-11
+  - Notes: Automatic memory capture inspired by claude-mem but tool-agnostic. Agent instructions trigger capture after significant operations. Works with OpenCode, Cursor, Claude Code, Windsurf. PRD: todo/tasks/prd-memory-auto-capture.md
 
-<!--TOON:backlog[38]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[39]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
@@ -177,6 +179,7 @@ t054,Automatic session reflection to memory,,workflow|memory,4h,2.5h,1h,30m,2025
 t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025-01-11T00:00Z,pending,t052,,
 t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,pending,t052,,
 t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,pending,t052,,
+t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -263,5 +266,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-51,40,0,0,26,0,26d18h,16h50m,0,40
+52,41,0,0,26,0,27d18h,16h50m,0,41
 -->
