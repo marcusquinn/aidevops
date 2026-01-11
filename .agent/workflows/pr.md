@@ -513,6 +513,7 @@ Contradictory feedback patterns:
    - Why you're dismissing the feedback
 
 4. **Proceed with merge**: If feedback is demonstrably incorrect, merge despite CHANGES_REQUESTED
+
    ```bash
    gh pr merge 123 --squash --delete-branch
    ```
