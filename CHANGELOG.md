@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add /session-review and /full-loop commands for comprehensive AI workflow (#33)
+- add code-simplifier subagent and enforce worktree-first workflow (#34)
+- add cross-session memory system with SQLite FTS5 (#32)
+
+### Changed
+
+- Documentation: update CHANGELOG.md for v2.45.0 release
+- Documentation: add latest capabilities to README
+- Documentation: improve agent instructions based on session review (#31)
+
+### Fixed
+
+- add missing default cases to case statements (#35)
+## [2.45.0] - 2026-01-11
+
+### Added
+
 - Cross-session memory system with SQLite FTS5 (`/remember`, `/recall`) (#32)
 - Code-simplifier subagent and `/code-simplifier` command (#34)
 - `/session-review` and `/full-loop` commands for comprehensive AI workflow (#33)
