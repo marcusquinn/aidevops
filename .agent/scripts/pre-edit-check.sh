@@ -49,8 +49,8 @@ done
 # Function to detect if task is docs-only
 is_docs_only() {
     local task="$1"
-    local task_lower
-    task_lower=$(echo "$task" | tr '[:upper:]' '[:lower:]')
+    # Use bash 4.0+ parameter expansion for lowercase (more efficient than tr)
+    local task_lower="${task,,}"
     
     # Code change indicators (negative match - if present, NOT docs-only)
     # These take precedence over docs patterns

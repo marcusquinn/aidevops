@@ -141,9 +141,9 @@ list_dev_ports() {
     echo ""
     
     # Common development port ranges
-    local dev_ports="3000 3001 3002 3003 4000 5000 5173 5174 8000 8080 8085 8888 9000 9222 11235"
+    local dev_ports=(3000 3001 3002 3003 4000 5000 5173 5174 8000 8080 8085 8888 9000 9222 11235)
     
-    for port in $dev_ports; do
+    for port in "${dev_ports[@]}"; do
         if ! is_port_free "$port"; then
             local process_info
             process_info=$(lsof -i :"$port" 2>/dev/null | tail -1 | awk '{print $1}')
@@ -176,14 +176,17 @@ kill_port() {
     print_warning "Killing process(es) on port $port: $pids"
     echo "$pids" | xargs kill -9 2>/dev/null
     
-    sleep 1
-    if is_port_free "$port"; then
-        print_success "Port $port is now free"
-        return 0
-    else
-        print_error "Failed to free port $port"
-        return 1
-    fi
+    # Wait up to 3 seconds for the port to become free
+    for _ in {1..6}; do
+        if is_port_free "$port"; then
+            print_success "Port $port is now free"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    print_error "Failed to free port $port"
+    return 1
 }
 
 # Check if config file exists

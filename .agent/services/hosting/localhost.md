@@ -39,11 +39,11 @@ tools:
 # 1. Check port availability first
 localhost-helper.sh check-port 3000
 
-# 2. If conflict, find next available
-localhost-helper.sh find-port 3000
+# 2. If conflict, find next available (returns e.g., 3001)
+available_port=$(localhost-helper.sh find-port 3000)
 
-# 3. Create app with .local domain + SSL
-localhost-helper.sh create-app myapp myapp.local 3000 true docker
+# 3. Create app with .local domain + SSL using available port
+localhost-helper.sh create-app myapp myapp.local "$available_port" true docker
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -82,11 +82,11 @@ Traditional local development uses URLs like `http://localhost:3000`. This cause
 ~/.aidevops/agents/scripts/localhost-helper.sh check-port 3000
 
 # 2. If in use, find next available
-~/.aidevops/agents/scripts/localhost-helper.sh find-port 3000
-# Output: 3001
+available_port=$(~/.aidevops/agents/scripts/localhost-helper.sh find-port 3000)
+echo "Using port: $available_port"
 
-# 3. Create app with .local domain + SSL
-~/.aidevops/agents/scripts/localhost-helper.sh create-app myapp myapp.local 3001 true docker
+# 3. Create app with .local domain + SSL using available port
+~/.aidevops/agents/scripts/localhost-helper.sh create-app myapp myapp.local "$available_port" true docker
 ```
 
 **Result:** Access your app at `https://myapp.local` with:
