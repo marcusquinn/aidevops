@@ -68,30 +68,69 @@ get_project_id() {
     echo ""
 }
 
-# Convert epoch milliseconds to readable date
+# Convert epoch milliseconds to readable date (portable)
 epoch_to_date() {
     local epoch_ms="$1"
     if [[ -n "$epoch_ms" ]] && [[ "$epoch_ms" != "null" ]]; then
-        date -r $((epoch_ms/1000)) "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown"
+        local epoch_sec=$((epoch_ms/1000))
+        # Portable date formatting (BSD: -r, GNU: -d @)
+        if date --version &>/dev/null 2>&1; then
+            # GNU date
+            date -d "@$epoch_sec" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown"
+        else
+            # BSD date (macOS)
+            date -r "$epoch_sec" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown"
+        fi
     else
         echo "unknown"
     fi
 }
 
-# Get first commit date on branch (divergence from main)
+# Get the default branch (main or master)
+get_default_branch() {
+    local worktree_path="${1:-.}"
+    # Try to get from remote HEAD
+    local default_branch
+    default_branch=$(git -C "$worktree_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    
+    if [[ -n "$default_branch" ]]; then
+        echo "$default_branch"
+        return 0
+    fi
+    
+    # Fallback: check if main or master exists
+    if git -C "$worktree_path" show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+        echo "main"
+    elif git -C "$worktree_path" show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+        echo "master"
+    else
+        echo "main"
+    fi
+}
+
+# Get first commit date on branch (divergence from default branch)
 get_branch_start_date() {
     local worktree_path="$1"
     local branch="$2"
     
-    # Get the first commit unique to this branch
+    # Detect default branch
+    local default_branch
+    default_branch=$(get_default_branch "$worktree_path")
+    
+    # Get the first commit unique to this branch (non-fatal if fails)
     local first_commit_date
-    first_commit_date=$(git -C "$worktree_path" log main.."$branch" --format="%ct" --reverse 2>/dev/null | head -1)
+    first_commit_date=$(git -C "$worktree_path" log "$default_branch..$branch" --format="%ct" --reverse 2>/dev/null | head -1) || true
     
     if [[ -n "$first_commit_date" ]]; then
         echo "$first_commit_date"
     else
         # No unique commits, use worktree creation time (directory mtime)
-        stat -f "%m" "$worktree_path" 2>/dev/null || echo ""
+        # Portable stat (BSD: -f "%m", GNU: -c "%Y")
+        if stat --version &>/dev/null 2>&1; then
+            stat -c "%Y" "$worktree_path" 2>/dev/null || echo ""
+        else
+            stat -f "%m" "$worktree_path" 2>/dev/null || echo ""
+        fi
     fi
 }
 
@@ -144,19 +183,19 @@ find_matching_sessions() {
             score=$((score + 100))
         fi
         
-        # Scoring: branch slug in title
-        if echo "$session_title" | tr '[:upper:]' '[:lower:]' | grep -q "$branch_slug"; then
+        # Scoring: branch slug in title (case-insensitive)
+        if echo "$session_title" | grep -qi "$branch_slug"; then
             score=$((score + 80))
         fi
         
         # Scoring: branch name (without type prefix) in title
-        if echo "$session_title" | tr '[:upper:]' '[:lower:]' | grep -q "$branch_name"; then
+        if echo "$session_title" | grep -qi "$branch_name"; then
             score=$((score + 60))
         fi
         
         # Scoring: key terms from branch name
         for part in "${branch_parts[@]}"; do
-            if [[ ${#part} -gt 3 ]] && echo "$session_title" | tr '[:upper:]' '[:lower:]' | grep -qi "$part"; then
+            if [[ ${#part} -gt 3 ]] && echo "$session_title" | grep -qi "$part"; then
                 score=$((score + 20))
             fi
         done
@@ -375,6 +414,12 @@ cmd_open() {
         return 0
     fi
     
+    # Validate input is a number
+    if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Invalid input: please enter a number${NC}"
+        return 1
+    fi
+    
     local index=$((choice - 1))
     if [[ $index -lt 0 ]] || [[ $index -ge ${#worktrees[@]} ]]; then
         echo -e "${RED}Invalid selection${NC}"
@@ -388,14 +433,20 @@ cmd_open() {
     echo -e "${BLUE}Opening worktree: $selected_branch${NC}"
     echo ""
     
-    # Check if OpenCode.app exists
-    if [[ -d "/Applications/OpenCode.app" ]]; then
+    # Try to launch OpenCode (CLI first, then app bundle)
+    if command -v opencode &>/dev/null; then
+        echo "Launching OpenCode via CLI..."
+        (cd "$selected_path" && opencode .) &
+    elif [[ "$(uname)" == "Darwin" ]] && { [[ -d "/Applications/OpenCode.app" ]] || [[ -d "$HOME/Applications/OpenCode.app" ]]; }; then
         echo "Launching OpenCode..."
         open -a "OpenCode" "$selected_path"
+    elif command -v xdg-open &>/dev/null; then
+        echo "Opening with default application..."
+        xdg-open "$selected_path"
     else
-        echo "OpenCode.app not found. To open manually:"
+        echo "OpenCode not found. To open manually:"
         echo "  cd $selected_path"
-        echo "  # Then launch your preferred editor/terminal"
+        echo "  opencode .  # or launch your preferred editor"
     fi
     
     return 0
