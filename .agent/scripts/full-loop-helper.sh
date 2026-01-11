@@ -245,18 +245,27 @@ run_preflight_phase() {
     fi
     
     # Run quality loop for preflight
+    local preflight_ran=false
     if [[ -x "$SCRIPT_DIR/quality-loop-helper.sh" ]]; then
         "$SCRIPT_DIR/quality-loop-helper.sh" preflight --auto-fix --max-iterations "${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITERATIONS}"
+        preflight_ran=true
     else
         # Fallback to linters-local.sh
         if [[ -x "$SCRIPT_DIR/linters-local.sh" ]]; then
             "$SCRIPT_DIR/linters-local.sh"
+            preflight_ran=true
         else
-            print_warning "No preflight script found, skipping"
+            print_warning "No preflight script found, skipping checks"
+            print_info "Proceeding without preflight validation"
         fi
     fi
     
-    echo "<promise>PREFLIGHT_PASS</promise>"
+    # Only emit promise if checks actually ran
+    if [[ "$preflight_ran" == "true" ]]; then
+        echo "<promise>PREFLIGHT_PASS</promise>"
+    else
+        echo "<promise>PREFLIGHT_SKIPPED</promise>"
+    fi
     return 0
 }
 
@@ -330,13 +339,23 @@ run_pr_review_phase() {
     # Run quality loop for PR review
     if [[ -x "$SCRIPT_DIR/quality-loop-helper.sh" ]]; then
         "$SCRIPT_DIR/quality-loop-helper.sh" pr-review --pr "$pr_number" --wait-for-ci --max-iterations "${MAX_PR_ITERATIONS:-$DEFAULT_MAX_PR_ITERATIONS}"
+        
+        # Verify PR was actually merged before emitting promise
+        local pr_state
+        pr_state=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+        if [[ "$pr_state" == "MERGED" ]]; then
+            echo "<promise>PR_MERGED</promise>"
+        else
+            print_warning "PR #$pr_number is $pr_state (not merged yet)"
+            print_info "Merge PR manually, then run: full-loop-helper.sh resume"
+            echo "<promise>PR_APPROVED</promise>"
+        fi
     else
         print_warning "quality-loop-helper.sh not found, waiting for manual merge"
         print_info "Merge PR manually, then run: full-loop-helper.sh resume"
-        return 0
+        echo "<promise>PR_WAITING</promise>"
     fi
     
-    echo "<promise>PR_MERGED</promise>"
     return 0
 }
 
@@ -345,23 +364,32 @@ run_postflight_phase() {
     
     if [[ "${SKIP_POSTFLIGHT:-false}" == "true" ]]; then
         print_warning "Postflight skipped by user request"
-        echo "<promise>RELEASE_HEALTHY</promise>"
+        echo "<promise>POSTFLIGHT_SKIPPED</promise>"
         return 0
     fi
     
     # Run quality loop for postflight
+    local postflight_ran=false
     if [[ -x "$SCRIPT_DIR/quality-loop-helper.sh" ]]; then
         "$SCRIPT_DIR/quality-loop-helper.sh" postflight --monitor-duration 5m
+        postflight_ran=true
     else
         # Fallback to postflight-check.sh
         if [[ -x "$SCRIPT_DIR/postflight-check.sh" ]]; then
             "$SCRIPT_DIR/postflight-check.sh"
+            postflight_ran=true
         else
-            print_warning "No postflight script found, skipping"
+            print_warning "No postflight script found, skipping verification"
+            print_info "Proceeding without postflight validation"
         fi
     fi
     
-    echo "<promise>RELEASE_HEALTHY</promise>"
+    # Only emit promise if checks actually ran
+    if [[ "$postflight_ran" == "true" ]]; then
+        echo "<promise>RELEASE_HEALTHY</promise>"
+    else
+        echo "<promise>POSTFLIGHT_SKIPPED</promise>"
+    fi
     return 0
 }
 

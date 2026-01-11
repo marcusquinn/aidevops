@@ -118,30 +118,40 @@ check_workflow_adherence() {
     local issues=""
     local passed=""
     
-    # Check 1: Not on main
-    if is_protected_branch; then
-        issues+="on-protected-branch,"
-    else
-        passed+="feature-branch,"
+    # Check if we're in a git repo
+    local is_git_repo=true
+    if ! git rev-parse --git-dir &>/dev/null; then
+        is_git_repo=false
+        issues+="not-a-git-repo,"
     fi
     
-    # Check 2: Recent commits have good messages
-    local short_messages
-    short_messages=$(git log --oneline -5 2>/dev/null | awk 'length($0) < 15' | wc -l | tr -d ' ')
-    if [[ "$short_messages" -gt 0 ]]; then
-        issues+="short-commit-messages,"
-    else
-        passed+="good-commit-messages,"
+    if [[ "$is_git_repo" == "true" ]]; then
+        # Check 1: Not on main
+        if is_protected_branch; then
+            issues+="on-protected-branch,"
+        else
+            passed+="feature-branch,"
+        fi
+        
+        # Check 2: Recent commits have good messages
+        local short_messages
+        short_messages=$(git log --oneline -5 2>/dev/null | awk 'length($0) < 15' | wc -l | tr -d ' ' || echo "0")
+        short_messages="${short_messages:-0}"
+        if [[ "$short_messages" -gt 0 ]]; then
+            issues+="short-commit-messages,"
+        else
+            passed+="good-commit-messages,"
+        fi
+        
+        # Check 3: No secrets in staged files
+        if git diff --cached --name-only 2>/dev/null | grep -qE '\.(env|key|pem|secret)$'; then
+            issues+="potential-secrets-staged,"
+        else
+            passed+="no-secrets-staged,"
+        fi
     fi
     
-    # Check 3: No secrets in staged files
-    if git diff --cached --name-only 2>/dev/null | grep -qE '\.(env|key|pem|secret)$'; then
-        issues+="potential-secrets-staged,"
-    else
-        passed+="no-secrets-staged,"
-    fi
-    
-    # Check 4: TODO.md exists and is tracked
+    # Check 4: TODO.md exists (works in any directory)
     if [[ -f "$project_root/TODO.md" ]]; then
         passed+="todo-exists,"
     else
@@ -213,10 +223,14 @@ gather_context() {
     
     local todo_status
     todo_status=$(get_todo_status "$project_root")
-    local incomplete
-    incomplete=$(echo "$todo_status" | grep -oE 'incomplete:[0-9]+' | cut -d: -f2)
-    if [[ "$incomplete" -gt 0 ]]; then
-        echo "- $incomplete incomplete tasks in TODO.md"
+    # Only show TODO stats if we have a valid TODO file
+    if [[ "$todo_status" != "no-todo-file" ]]; then
+        local incomplete
+        incomplete=$(echo "$todo_status" | grep -oE 'incomplete:[0-9]+' | cut -d: -f2 || echo "0")
+        incomplete="${incomplete:-0}"
+        if [[ "$incomplete" -gt 0 ]]; then
+            echo "- $incomplete incomplete tasks in TODO.md"
+        fi
     fi
     
     local changes
