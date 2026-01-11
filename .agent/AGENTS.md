@@ -351,6 +351,8 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `memory/` | Cross-session memory - SQLite FTS5 storage, /remember and /recall commands | README (system docs) |
 | `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring | dataforseo, serper, google-search-console, site-crawler, eeat-score, domain-research |
 | `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice | guidelines |
+| `tools/content/` | Content tools - summarization, extraction, processing | summarize |
+| `tools/social-media/` | Social media tools - X/Twitter CLI, posting, reading | bird |
 | `tools/build-agent/` | Agent design - composing efficient agents, reviewing agent instructions | build-agent, agent-review |
 | `tools/build-mcp/` | MCP development - creating Model Context Protocol servers and tools | build-mcp, api-wrapper, server-patterns, transports, deployment |
 | `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
@@ -434,6 +436,8 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |
 | Database migrations | `workflows/sql-migrations.md` |
 | Framework internals | `aidevops/architecture.md` (when working in `~/Git/aidevops/`) |
+| Content summarization | `tools/content/summarize.md` |
+| X/Twitter automation | `tools/social-media/bird.md` |
 
 ## Security
 
