@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.45.0] - 2026-01-11
+
+### Added
+
+- Cross-session memory system with SQLite FTS5 (`/remember`, `/recall`) (#32)
+- Code-simplifier subagent and `/code-simplifier` command (#34)
+- `/session-review` and `/full-loop` commands for comprehensive AI workflow (#33)
+- Multi-worktree awareness for Ralph loops (`status --all`, parallel warnings)
+- Auto-discovery for OpenCode commands from `scripts/commands/*.md` (#37)
+
+### Fixed
+
+- SonarCloud S131 violations - add missing default cases to case statements (#35)
+
+### Changed
+
+- Enforce worktree-first workflow - main repo stays on `main` branch
+- Documentation: add multi-worktree section to ralph-loop.md
+
 ## [2.44.0] - 2026-01-11
 
 ### Added
