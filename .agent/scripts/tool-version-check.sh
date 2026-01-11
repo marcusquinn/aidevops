@@ -34,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --category|-c)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --category requires a value (npm, brew, pip, all)"
+                exit 1
+            fi
             CATEGORY="$2"
             shift 2
             ;;
@@ -233,7 +237,7 @@ check_category() {
     shift
     local tools=("$@")
     
-    if [[ "$JSON_OUTPUT" != "true" ]]; then
+    if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
         echo ""
         echo -e "${BOLD}${CYAN}=== $cat_name Tools ===${NC}"
     fi
@@ -246,7 +250,7 @@ check_category() {
 
 # Main
 main() {
-    if [[ "$JSON_OUTPUT" != "true" ]]; then
+    if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
         echo -e "${BOLD}${BLUE}Tool Version Check${NC}"
         echo "=================="
     fi
@@ -299,13 +303,19 @@ main() {
         return 0
     fi
     
-    # Summary
-    echo ""
-    echo -e "${BOLD}Summary${NC}"
-    echo "  Installed & up to date: $INSTALLED_COUNT"
-    echo "  Outdated: $OUTDATED_COUNT"
-    echo "  Not installed: $NOT_INSTALLED_COUNT"
-    echo ""
+    # Summary (skip in quiet mode if nothing outdated)
+    if [[ "$QUIET" == "true" && $OUTDATED_COUNT -eq 0 ]]; then
+        return 0
+    fi
+    
+    if [[ "$QUIET" != "true" ]]; then
+        echo ""
+        echo -e "${BOLD}Summary${NC}"
+        echo "  Installed & up to date: $INSTALLED_COUNT"
+        echo "  Outdated: $OUTDATED_COUNT"
+        echo "  Not installed: $NOT_INSTALLED_COUNT"
+        echo ""
+    fi
     
     # Handle updates
     if [[ $OUTDATED_COUNT -gt 0 ]]; then
