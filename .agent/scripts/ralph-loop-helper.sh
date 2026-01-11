@@ -37,6 +37,7 @@ readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
+readonly BOLD='\033[1m'
 readonly NC='\033[0m' # No Color
 
 # =============================================================================
@@ -93,7 +94,7 @@ USAGE:
 COMMANDS:
   setup     Create state file to start a Ralph loop
   cancel    Cancel the active Ralph loop
-  status    Show current loop status
+  status    Show current loop status (use --all for all worktrees)
   check     Check if output contains completion promise
   increment Increment iteration counter
   external  Run external bash loop (for tools without hook support)
@@ -102,6 +103,9 @@ COMMANDS:
 SETUP OPTIONS:
   --max-iterations <n>           Maximum iterations (default: 0 = unlimited)
   --completion-promise '<text>'  Promise phrase to detect completion
+
+STATUS OPTIONS:
+  --all, -a                      Show loops across all git worktrees
 
 EXTERNAL OPTIONS:
   --tool <name>                  AI CLI tool to use (opencode, claude, aider)
@@ -112,8 +116,11 @@ EXAMPLES:
   # Start a loop (for tools with hook support)
   ralph-loop-helper.sh setup "Build a REST API" --max-iterations 20 --completion-promise "DONE"
 
-  # Check status
+  # Check status in current directory
   ralph-loop-helper.sh status
+
+  # Check status across all worktrees
+  ralph-loop-helper.sh status --all
 
   # Cancel loop
   ralph-loop-helper.sh cancel
@@ -231,6 +238,9 @@ started_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 $prompt
 EOF
 
+    # Check for other active loops in parallel worktrees
+    check_other_loops
+
     # Output setup message
     echo ""
     print_success "Ralph loop activated!"
@@ -284,12 +294,35 @@ cancel_loop() {
 }
 
 # Display current Ralph loop status
-# Arguments: none
+# Arguments:
+#   --all: Show status across all worktrees
 # Returns: 0 (always succeeds)
 # Output: Status information to stdout
 show_status() {
+    local show_all=false
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --all|-a)
+                show_all=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ "$show_all" == "true" ]]; then
+        show_status_all
+        return 0
+    fi
+    
     if [[ ! -f "$RALPH_STATE_FILE" ]]; then
-        echo "No active Ralph loop."
+        echo "No active Ralph loop in current directory."
+        echo ""
+        echo "Tip: Use 'status --all' to check all worktrees"
         return 0
     fi
 
@@ -319,6 +352,125 @@ show_status() {
     echo ""
     echo "State file: $RALPH_STATE_FILE"
 
+    return 0
+}
+
+# Display Ralph loop status across all worktrees
+# Arguments: none
+# Returns: 0 (always succeeds)
+# Output: Status table for all worktrees with active loops
+show_status_all() {
+    echo "Ralph Loop Status - All Worktrees"
+    echo "=================================="
+    echo ""
+    
+    # Check if we're in a git repo
+    if ! git rev-parse --git-dir &>/dev/null; then
+        print_error "Not in a git repository"
+        return 1
+    fi
+    
+    local found_any=false
+    local current_dir
+    current_dir=$(pwd)
+    
+    # Get all worktrees
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
+            local worktree_path="${BASH_REMATCH[1]}"
+            local state_file="$worktree_path/$RALPH_STATE_DIR/$RALPH_STATE_FILE"
+            
+            # Normalize path for comparison
+            state_file="$worktree_path/.claude/ralph-loop.local.md"
+            
+            if [[ -f "$state_file" ]]; then
+                found_any=true
+                
+                # Parse state file
+                local frontmatter
+                frontmatter=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$state_file")
+                
+                local iteration
+                local max_iterations
+                local started_at
+                local branch
+                
+                iteration=$(echo "$frontmatter" | grep '^iteration:' | sed 's/iteration: *//')
+                max_iterations=$(echo "$frontmatter" | grep '^max_iterations:' | sed 's/max_iterations: *//')
+                started_at=$(echo "$frontmatter" | grep '^started_at:' | sed 's/started_at: *//' | sed 's/^"\(.*\)"$/\1/')
+                
+                # Get branch name
+                branch=$(git -C "$worktree_path" branch --show-current 2>/dev/null || echo "unknown")
+                
+                # Mark current directory
+                local marker=""
+                if [[ "$worktree_path" == "$current_dir" ]]; then
+                    marker=" ${GREEN}(current)${NC}"
+                fi
+                
+                echo -e "${BOLD}$branch${NC}$marker"
+                echo "  Path: $worktree_path"
+                echo "  Iteration: $iteration / $(if [[ "$max_iterations" == "0" ]]; then echo "unlimited"; else echo "$max_iterations"; fi)"
+                echo "  Started: $started_at"
+                echo ""
+            fi
+        fi
+    done < <(git worktree list --porcelain)
+    
+    if [[ "$found_any" == "false" ]]; then
+        echo -e "${GREEN}No active Ralph loops in any worktree${NC}"
+    fi
+    
+    return 0
+}
+
+# Check for active loops in other worktrees and warn
+# Arguments: none
+# Returns: 0 (always succeeds)
+# Output: Warning message if other loops are active
+check_other_loops() {
+    # Check if we're in a git repo
+    if ! git rev-parse --git-dir &>/dev/null; then
+        return 0
+    fi
+    
+    local current_dir
+    current_dir=$(pwd)
+    local other_loops=()
+    
+    # Get all worktrees
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
+            local worktree_path="${BASH_REMATCH[1]}"
+            
+            # Skip current directory
+            if [[ "$worktree_path" == "$current_dir" ]]; then
+                continue
+            fi
+            
+            local state_file="$worktree_path/.claude/ralph-loop.local.md"
+            
+            if [[ -f "$state_file" ]]; then
+                local branch
+                branch=$(git -C "$worktree_path" branch --show-current 2>/dev/null || echo "unknown")
+                local iteration
+                iteration=$(grep '^iteration:' "$state_file" | sed 's/iteration: *//')
+                other_loops+=("$branch (iteration $iteration)")
+            fi
+        fi
+    done < <(git worktree list --porcelain)
+    
+    if [[ ${#other_loops[@]} -gt 0 ]]; then
+        echo ""
+        print_warning "Other active Ralph loops detected:"
+        for loop in "${other_loops[@]}"; do
+            echo "  - $loop"
+        done
+        echo ""
+        echo "Use 'ralph-loop-helper.sh status --all' to see details"
+        echo ""
+    fi
+    
     return 0
 }
 
@@ -615,7 +767,7 @@ main() {
             cancel_loop
             ;;
         status)
-            show_status
+            show_status "$@"
             ;;
         check|check-completion)
             if [[ $# -lt 1 ]]; then

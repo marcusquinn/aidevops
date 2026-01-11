@@ -1,0 +1,643 @@
+#!/usr/bin/env bash
+# memory-helper.sh - Lightweight memory system for aidevops
+# Uses SQLite FTS5 for fast text search without external dependencies
+#
+# Usage:
+#   memory-helper.sh store --content "learning" [--type TYPE] [--tags "a,b"] [--session-id ID]
+#   memory-helper.sh recall --query "search terms" [--limit 5] [--type TYPE] [--max-age-days 30]
+#   memory-helper.sh stats                    # Show memory statistics
+#   memory-helper.sh prune [--older-than-days 90] [--dry-run]  # Remove stale entries
+#   memory-helper.sh validate                 # Check for stale/low-quality entries
+#   memory-helper.sh export [--format json|toon]  # Export all memories
+#
+# Staleness Prevention:
+#   - Entries have created_at and last_accessed_at timestamps
+#   - Recall updates last_accessed_at (frequently used = valuable)
+#   - Prune removes entries older than threshold AND never accessed
+#   - Validate warns about potentially stale entries
+
+set -euo pipefail
+
+# Configuration
+readonly MEMORY_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
+readonly MEMORY_DB="$MEMORY_DIR/memory.db"
+readonly DEFAULT_MAX_AGE_DAYS=90
+readonly STALE_WARNING_DAYS=60
+
+# Valid learning types (matches documentation and Continuous-Claude-v3)
+readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD"
+
+# Colors for output
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[0;33m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m' # No Color
+
+#######################################
+# Print colored message
+#######################################
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+#######################################
+# Format JSON results as text (jq fallback)
+# Uses jq if available, otherwise basic parsing
+#######################################
+format_results_text() {
+    local input
+    input=$(cat)
+    
+    if [[ -z "$input" || "$input" == "[]" ]]; then
+        return 0
+    fi
+    
+    if command -v jq &>/dev/null; then
+        echo "$input" | jq -r '.[] | "[\(.type)] (\(.confidence)) - Score: \(.score // "N/A" | tostring | .[0:6])\n  \(.content)\n  Tags: \(.tags)\n  Created: \(.created_at) | Accessed: \(.access_count)x\n"' 2>/dev/null
+    else
+        # Basic fallback without jq - parse JSON manually
+        echo "$input" | sed 's/},{/}\n{/g' | while read -r line; do
+            local type content tags created access_count
+            type=$(echo "$line" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
+            content=$(echo "$line" | sed -n 's/.*"content":"\([^"]*\)".*/\1/p' | head -c 100)
+            tags=$(echo "$line" | sed -n 's/.*"tags":"\([^"]*\)".*/\1/p')
+            created=$(echo "$line" | sed -n 's/.*"created_at":"\([^"]*\)".*/\1/p')
+            access_count=$(echo "$line" | sed -n 's/.*"access_count":\([0-9]*\).*/\1/p')
+            [[ -n "$type" ]] && echo "[$type] $content..."
+            [[ -n "$tags" ]] && echo "  Tags: $tags | Created: $created | Accessed: ${access_count:-0}x"
+            echo ""
+        done
+    fi
+}
+
+#######################################
+# Extract IDs from JSON (jq fallback)
+#######################################
+extract_ids_from_json() {
+    local input
+    input=$(cat)
+    
+    if command -v jq &>/dev/null; then
+        echo "$input" | jq -r '.[].id' 2>/dev/null
+    else
+        # Basic fallback - extract id values
+        echo "$input" | grep -o '"id":"[^"]*"' | sed 's/"id":"//g; s/"//g'
+    fi
+}
+
+#######################################
+# Initialize database with FTS5 schema
+#######################################
+init_db() {
+    mkdir -p "$MEMORY_DIR"
+    
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        log_info "Creating memory database at $MEMORY_DB"
+        
+        sqlite3 "$MEMORY_DB" <<'EOF'
+-- FTS5 virtual table for searchable content
+CREATE VIRTUAL TABLE IF NOT EXISTS learnings USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    content,
+    type,
+    tags,
+    confidence UNINDEXED,
+    created_at UNINDEXED,
+    project_path UNINDEXED,
+    source UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+-- Separate table for access tracking (FTS5 doesn't support UPDATE)
+CREATE TABLE IF NOT EXISTS learning_access (
+    id TEXT PRIMARY KEY,
+    last_accessed_at TEXT,
+    access_count INTEGER DEFAULT 0
+);
+EOF
+        log_success "Database initialized"
+    fi
+}
+
+#######################################
+# Generate unique ID
+#######################################
+generate_id() {
+    # Use timestamp + random for uniqueness
+    echo "mem_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
+}
+
+#######################################
+# Store a learning
+#######################################
+cmd_store() {
+    local content=""
+    local type="WORKING_SOLUTION"
+    local tags=""
+    local confidence="medium"
+    local session_id=""
+    local project_path=""
+    local source="manual"
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --content) content="$2"; shift 2 ;;
+            --type) type="$2"; shift 2 ;;
+            --tags) tags="$2"; shift 2 ;;
+            --confidence) confidence="$2"; shift 2 ;;
+            --session-id) session_id="$2"; shift 2 ;;
+            --project) project_path="$2"; shift 2 ;;
+            --source) source="$2"; shift 2 ;;
+            *) 
+                # Allow content as positional argument
+                if [[ -z "$content" ]]; then
+                    content="$1"
+                fi
+                shift ;;
+        esac
+    done
+    
+    # Validate required fields
+    if [[ -z "$content" ]]; then
+        log_error "Content is required. Use --content \"your learning\""
+        return 1
+    fi
+    
+    # Validate type
+    local type_pattern=" $type "
+    if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
+        log_error "Invalid type: $type"
+        log_error "Valid types: $VALID_TYPES"
+        return 1
+    fi
+    
+    # Validate confidence
+    if [[ ! "$confidence" =~ ^(high|medium|low)$ ]]; then
+        log_error "Invalid confidence: $confidence (use high, medium, or low)"
+        return 1
+    fi
+    
+    # Generate session_id if not provided
+    if [[ -z "$session_id" ]]; then
+        session_id="session_$(date +%Y%m%d_%H%M%S)"
+    fi
+    
+    # Get current project path if not provided
+    if [[ -z "$project_path" ]]; then
+        project_path="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+    
+    init_db
+    
+    local id
+    id=$(generate_id)
+    local created_at
+    created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    # Escape single quotes for SQL
+    local escaped_content="${content//\'/\'\'}"
+    local escaped_tags="${tags//\'/\'\'}"
+    local escaped_project="${project_path//\'/\'\'}"
+    
+    sqlite3 "$MEMORY_DB" <<EOF
+INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, project_path, source)
+VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$escaped_project', '$source');
+EOF
+    
+    log_success "Stored learning: $id"
+    echo "$id"
+}
+
+#######################################
+# Recall learnings with search
+#######################################
+cmd_recall() {
+    local query=""
+    local limit=5
+    local type_filter=""
+    local max_age_days=""
+    local project_filter=""
+    local format="text"
+    local recent_mode=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --query|-q) query="$2"; shift 2 ;;
+            --limit|-l) limit="$2"; shift 2 ;;
+            --type|-t) type_filter="$2"; shift 2 ;;
+            --max-age-days) max_age_days="$2"; shift 2 ;;
+            --project|-p) project_filter="$2"; shift 2 ;;
+            --recent) recent_mode=true; limit="${2:-10}"; shift; [[ "${1:-}" =~ ^[0-9]+$ ]] && shift ;;
+            --format) format="$2"; shift 2 ;;
+            --json) format="json"; shift ;;
+            --stats) cmd_stats; return 0 ;;
+            *) 
+                # Allow query as positional argument
+                if [[ -z "$query" ]]; then
+                    query="$1"
+                fi
+                shift ;;
+        esac
+    done
+    
+    init_db
+    
+    # Handle --recent mode (no query required)
+    if [[ "$recent_mode" == true ]]; then
+        local results
+        results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id ORDER BY l.created_at DESC LIMIT $limit;")
+        if [[ "$format" == "json" ]]; then
+            echo "$results"
+        else
+            echo ""
+            echo "=== Recent Memories (last $limit) ==="
+            echo ""
+            echo "$results" | format_results_text
+        fi
+        return 0
+    fi
+    
+    if [[ -z "$query" ]]; then
+        log_error "Query is required. Use --query \"search terms\" or --recent"
+        return 1
+    fi
+    
+    # Escape query for FTS5 - escape both single and double quotes
+    local escaped_query="${query//\'/\'\'}"
+    escaped_query="${escaped_query//\"/\"\"}"
+    
+    # Build filters with validation
+    local extra_filters=""
+    if [[ -n "$type_filter" ]]; then
+        # Validate type to prevent SQL injection
+        local type_pattern=" $type_filter "
+        if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
+            log_error "Invalid type: $type_filter"
+            log_error "Valid types: $VALID_TYPES"
+            return 1
+        fi
+        extra_filters="$extra_filters AND type = '$type_filter'"
+    fi
+    if [[ -n "$max_age_days" ]]; then
+        # Validate max_age_days is a positive integer
+        if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
+            log_error "--max-age-days must be a positive integer"
+            return 1
+        fi
+        extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
+    fi
+    if [[ -n "$project_filter" ]]; then
+        local escaped_project="${project_filter//\'/\'\'}"
+        extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%'"
+    fi
+    
+    # Search using FTS5 with BM25 ranking
+    # Note: FTS5 tables require special handling - can't use table alias in bm25()
+    local results
+    results=$(sqlite3 -json "$MEMORY_DB" <<EOF
+SELECT 
+    learnings.id,
+    learnings.content,
+    learnings.type,
+    learnings.tags,
+    learnings.confidence,
+    learnings.created_at,
+    COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
+    COALESCE(learning_access.access_count, 0) as access_count,
+    bm25(learnings) as score
+FROM learnings
+LEFT JOIN learning_access ON learnings.id = learning_access.id
+WHERE learnings MATCH '$escaped_query' $extra_filters
+ORDER BY score
+LIMIT $limit;
+EOF
+)
+    
+    # Update access tracking for returned results (prevents staleness)
+    if [[ -n "$results" && "$results" != "[]" ]]; then
+        local ids
+        ids=$(echo "$results" | extract_ids_from_json)
+        if [[ -n "$ids" ]]; then
+            while IFS= read -r id; do
+                [[ -z "$id" ]] && continue
+                sqlite3 "$MEMORY_DB" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+VALUES ('$id', datetime('now'), 1)
+ON CONFLICT(id) DO UPDATE SET 
+    last_accessed_at = datetime('now'),
+    access_count = access_count + 1;
+EOF
+            done <<< "$ids"
+        fi
+    fi
+    
+    # Output based on format
+    if [[ "$format" == "json" ]]; then
+        echo "$results"
+    else
+        if [[ -z "$results" || "$results" == "[]" ]]; then
+            log_warn "No results found for: $query"
+            return 0
+        fi
+        
+        echo ""
+        echo "=== Memory Recall: \"$query\" ==="
+        echo ""
+        
+        echo "$results" | format_results_text
+    fi
+}
+
+#######################################
+# Show memory statistics
+#######################################
+cmd_stats() {
+    init_db
+    
+    echo ""
+    echo "=== Memory Statistics ==="
+    echo ""
+    
+    sqlite3 "$MEMORY_DB" <<'EOF'
+SELECT 'Total learnings' as metric, COUNT(*) as value FROM learnings
+UNION ALL
+SELECT 'By type: ' || type, COUNT(*) FROM learnings GROUP BY type
+UNION ALL
+SELECT 'Never accessed', COUNT(*) FROM learnings l 
+    LEFT JOIN learning_access a ON l.id = a.id WHERE a.id IS NULL
+UNION ALL
+SELECT 'High confidence', COUNT(*) FROM learnings WHERE confidence = 'high';
+EOF
+    
+    echo ""
+    
+    # Show age distribution
+    echo "Age distribution:"
+    sqlite3 "$MEMORY_DB" <<'EOF'
+SELECT 
+    CASE 
+        WHEN created_at >= datetime('now', '-7 days') THEN '  Last 7 days'
+        WHEN created_at >= datetime('now', '-30 days') THEN '  Last 30 days'
+        WHEN created_at >= datetime('now', '-90 days') THEN '  Last 90 days'
+        ELSE '  Older than 90 days'
+    END as age_bucket,
+    COUNT(*) as count
+FROM learnings
+GROUP BY 1
+ORDER BY 1;
+EOF
+}
+
+#######################################
+# Validate and warn about stale entries
+#######################################
+cmd_validate() {
+    init_db
+    
+    echo ""
+    echo "=== Memory Validation ==="
+    echo ""
+    
+    # Check for stale entries (old + never accessed)
+    local stale_count
+    stale_count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') AND a.id IS NULL;")
+    
+    if [[ "$stale_count" -gt 0 ]]; then
+        log_warn "Found $stale_count potentially stale entries (>$STALE_WARNING_DAYS days old, never accessed)"
+        echo ""
+        echo "Stale entries:"
+        sqlite3 "$MEMORY_DB" <<EOF
+SELECT l.id, l.type, substr(l.content, 1, 60) || '...' as content_preview, l.created_at
+FROM learnings l
+LEFT JOIN learning_access a ON l.id = a.id
+WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') 
+AND a.id IS NULL
+LIMIT 10;
+EOF
+        echo ""
+        echo "Run 'memory-helper.sh prune --older-than-days $STALE_WARNING_DAYS' to clean up"
+    else
+        log_success "No stale entries found"
+    fi
+    
+    # Check for duplicate content
+    local dup_count
+    dup_count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM (SELECT content, COUNT(*) as cnt FROM learnings GROUP BY content HAVING cnt > 1);" 2>/dev/null || echo "0")
+    
+    if [[ "$dup_count" -gt 0 ]]; then
+        log_warn "Found $dup_count duplicate entries"
+    fi
+    
+    # Check database size
+    local db_size
+    db_size=$(du -h "$MEMORY_DB" | cut -f1)
+    log_info "Database size: $db_size"
+}
+
+#######################################
+# Prune old/stale entries
+#######################################
+cmd_prune() {
+    local older_than_days=$DEFAULT_MAX_AGE_DAYS
+    local dry_run=false
+    local keep_accessed=true
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --older-than-days) older_than_days="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            --include-accessed) keep_accessed=false; shift ;;
+            *) shift ;;
+        esac
+    done
+    
+    init_db
+    
+    # Build query to find stale entries
+    local count
+    if [[ "$keep_accessed" == true ]]; then
+        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL;")
+    else
+        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
+    fi
+    
+    if [[ "$count" -eq 0 ]]; then
+        log_success "No entries to prune"
+        return 0
+    fi
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would delete $count entries"
+        echo ""
+        if [[ "$keep_accessed" == true ]]; then
+            sqlite3 "$MEMORY_DB" <<EOF
+SELECT l.id, l.type, substr(l.content, 1, 50) || '...' as preview, l.created_at
+FROM learnings l
+LEFT JOIN learning_access a ON l.id = a.id
+WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL
+LIMIT 20;
+EOF
+        else
+            sqlite3 "$MEMORY_DB" <<EOF
+SELECT id, type, substr(content, 1, 50) || '...' as preview, created_at
+FROM learnings 
+WHERE created_at < datetime('now', '-$older_than_days days')
+LIMIT 20;
+EOF
+        fi
+    else
+        # Validate older_than_days is a positive integer
+        if ! [[ "$older_than_days" =~ ^[0-9]+$ ]]; then
+            log_error "--older-than-days must be a positive integer"
+            return 1
+        fi
+        
+        # Use efficient single DELETE with subquery
+        local subquery
+        if [[ "$keep_accessed" == true ]]; then
+            subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL"
+        else
+            subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
+        fi
+        
+        # Delete from both tables using the subquery (much faster than loop)
+        sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
+        sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
+        
+        log_success "Pruned $count stale entries"
+        
+        # Rebuild FTS index
+        sqlite3 "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        log_info "Rebuilt search index"
+    fi
+}
+
+#######################################
+# Export memories
+#######################################
+cmd_export() {
+    local format="json"
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --format) format="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    
+    init_db
+    
+    case "$format" in
+        json)
+            sqlite3 -json "$MEMORY_DB" "SELECT l.*, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id ORDER BY l.created_at DESC;"
+            ;;
+        toon)
+            # TOON format for token efficiency
+            local count
+            count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;")
+            echo "learnings[$count]{id,type,confidence,content,tags,created_at}:"
+            sqlite3 -separator ',' "$MEMORY_DB" "SELECT id, type, confidence, content, tags, created_at FROM learnings ORDER BY created_at DESC;" | while read -r line; do
+                echo "  $line"
+            done
+            ;;
+        *)
+            log_error "Unknown format: $format (use json or toon)"
+            return 1
+            ;;
+    esac
+}
+
+#######################################
+# Show help
+#######################################
+cmd_help() {
+    cat <<'EOF'
+memory-helper.sh - Lightweight memory system for aidevops
+
+USAGE:
+    memory-helper.sh <command> [options]
+
+COMMANDS:
+    store       Store a new learning
+    recall      Search and retrieve learnings
+    stats       Show memory statistics
+    validate    Check for stale/duplicate entries
+    prune       Remove old entries
+    export      Export all memories
+    help        Show this help
+
+STORE OPTIONS:
+    --content <text>      Learning content (required)
+    --type <type>         Learning type (default: WORKING_SOLUTION)
+    --tags <tags>         Comma-separated tags
+    --confidence <level>  high, medium, or low (default: medium)
+    --session-id <id>     Session identifier
+    --project <path>      Project path
+
+VALID TYPES:
+    WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
+    TOOL_CONFIG, DECISION, CONTEXT, ARCHITECTURAL_DECISION, ERROR_FIX, OPEN_THREAD
+
+RECALL OPTIONS:
+    --query <text>        Search query (required unless --recent)
+    --limit <n>           Max results (default: 5)
+    --type <type>         Filter by type
+    --max-age-days <n>    Only recent entries
+    --project <path>      Filter by project path
+    --recent [n]          Show n most recent entries (default: 10)
+    --stats               Show memory statistics
+    --json                Output as JSON
+
+PRUNE OPTIONS:
+    --older-than-days <n> Age threshold (default: 90)
+    --dry-run             Show what would be deleted
+    --include-accessed    Also prune accessed entries
+
+STALENESS PREVENTION:
+    - Entries track created_at and last_accessed_at
+    - Recall updates last_accessed_at (used = valuable)
+    - Prune removes old entries that were never accessed
+    - Validate warns about potentially stale entries
+
+EXAMPLES:
+    # Store a learning
+    memory-helper.sh store --content "Use FTS5 for fast search" --type WORKING_SOLUTION
+
+    # Recall learnings
+    memory-helper.sh recall --query "database search" --limit 10
+
+    # Check for stale entries
+    memory-helper.sh validate
+
+    # Clean up old unused entries
+    memory-helper.sh prune --older-than-days 60 --dry-run
+EOF
+}
+
+#######################################
+# Main entry point
+#######################################
+main() {
+    local command="${1:-help}"
+    shift || true
+    
+    case "$command" in
+        store) cmd_store "$@" ;;
+        recall) cmd_recall "$@" ;;
+        stats) cmd_stats ;;
+        validate) cmd_validate ;;
+        prune) cmd_prune "$@" ;;
+        export) cmd_export "$@" ;;
+        help|--help|-h) cmd_help ;;
+        *)
+            log_error "Unknown command: $command"
+            cmd_help
+            return 1
+            ;;
+    esac
+}
+
+main "$@"
