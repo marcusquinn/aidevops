@@ -1362,6 +1362,169 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /ralph-task command"
 
 # =============================================================================
+# FULL-LOOP COMMAND
+# =============================================================================
+# End-to-end development loop (task → preflight → PR → postflight → deploy)
+
+cat > "$OPENCODE_COMMAND_DIR/full-loop.md" << 'EOF'
+---
+description: Start end-to-end development loop (task → preflight → PR → postflight → deploy)
+agent: Build+
+---
+
+Read ~/.aidevops/agents/scripts/commands/full-loop.md and follow its instructions.
+
+Start a full development loop for: $ARGUMENTS
+
+**Full Loop Phases:**
+```text
+Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
+```
+
+**Usage:**
+```bash
+/full-loop "Implement feature X with tests"
+/full-loop "Fix bug Y" --max-task-iterations 30
+```
+
+**Options:**
+- `--max-task-iterations N` - Max iterations for task (default: 50)
+- `--skip-preflight` - Skip preflight checks
+- `--skip-postflight` - Skip postflight monitoring
+- `--no-auto-pr` - Pause for manual PR creation
+
+**Completion promise:** `<promise>FULL_LOOP_COMPLETE</promise>`
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /full-loop command"
+
+# =============================================================================
+# CODE-SIMPLIFIER COMMAND
+# =============================================================================
+# Simplify and refine code for clarity
+
+cat > "$OPENCODE_COMMAND_DIR/code-simplifier.md" << 'EOF'
+---
+description: Simplify and refine code for clarity, consistency, and maintainability
+agent: Build+
+---
+
+Read ~/.aidevops/agents/tools/code-review/code-simplifier.md and follow its instructions.
+
+Target: $ARGUMENTS
+
+**Usage:**
+```bash
+/code-simplifier              # Simplify recently modified code
+/code-simplifier src/         # Simplify code in specific directory
+/code-simplifier --all        # Review entire codebase (use sparingly)
+```
+
+**Key Principles:**
+- Preserve exact functionality
+- Clarity over brevity
+- Avoid nested ternaries
+- Remove obvious comments
+- Apply project standards
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /code-simplifier command"
+
+# =============================================================================
+# SESSION-REVIEW COMMAND
+# =============================================================================
+# Review session for completeness before ending
+
+cat > "$OPENCODE_COMMAND_DIR/session-review.md" << 'EOF'
+---
+description: Review session for completeness before ending
+agent: Build+
+---
+
+Read ~/.aidevops/agents/scripts/commands/session-review.md and follow its instructions.
+
+Review the current session for: $ARGUMENTS
+
+**Checks performed:**
+1. All objectives completed
+2. Workflow best practices followed
+3. Knowledge captured for future sessions
+4. Clear next steps identified
+
+**Usage:**
+```bash
+/session-review               # Review current session
+/session-review --capture     # Also capture learnings to memory
+```
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /session-review command"
+
+# =============================================================================
+# REMEMBER COMMAND
+# =============================================================================
+# Store a memory for cross-session recall
+
+cat > "$OPENCODE_COMMAND_DIR/remember.md" << 'EOF'
+---
+description: Store a memory for cross-session recall
+agent: Build+
+---
+
+Read ~/.aidevops/agents/scripts/commands/remember.md and follow its instructions.
+
+Remember: $ARGUMENTS
+
+**Usage:**
+```bash
+/remember "User prefers worktrees over checkout"
+/remember "The auth module uses JWT with 24h expiry"
+/remember --type WORKING_SOLUTION "Fixed by adding explicit return"
+```
+
+**Memory types:**
+- WORKING_SOLUTION - Solutions that worked
+- FAILED_APPROACH - Approaches that didn't work
+- CODEBASE_PATTERN - Patterns in this codebase
+- USER_PREFERENCE - User preferences
+- TOOL_CONFIG - Tool configurations
+- DECISION - Decisions made
+- CONTEXT - General context
+
+**Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /remember command"
+
+# =============================================================================
+# RECALL COMMAND
+# =============================================================================
+# Search memories from previous sessions
+
+cat > "$OPENCODE_COMMAND_DIR/recall.md" << 'EOF'
+---
+description: Search memories from previous sessions
+agent: Build+
+---
+
+Read ~/.aidevops/agents/scripts/commands/recall.md and follow its instructions.
+
+Search for: $ARGUMENTS
+
+**Usage:**
+```bash
+/recall authentication        # Search for auth-related memories
+/recall --recent              # Show 10 most recent memories
+/recall --stats               # Show memory statistics
+/recall --type WORKING_SOLUTION  # Filter by type
+```
+
+**Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
+EOF
+((command_count++))
+echo -e "  ${GREEN}✓${NC} Created /recall command"
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -1385,6 +1548,7 @@ echo "    /postflight       - Check code audit feedback on latest push"
 echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
 echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
 echo "    /code-standards   - Check against documented standards"
+echo "    /code-simplifier  - Simplify code for clarity and maintainability"
 echo ""
 echo "  Git & Release:"
 echo "    /feature          - Create feature branch"
@@ -1405,13 +1569,19 @@ echo "  Utilities:"
 echo "    /onboarding       - Interactive setup wizard (START HERE for new users)"
 echo "    /setup-aidevops   - Deploy latest agent changes locally"
 echo "    /agent-review     - Review and improve agent instructions"
+echo "    /session-review   - Review session for completeness before ending"
 echo "    /context          - Build AI context"
 echo "    /list-keys        - List API keys with storage locations"
 echo "    /log-time-spent   - Log time spent on a task"
 echo ""
+echo "  Memory:"
+echo "    /remember         - Store a memory for cross-session recall"
+echo "    /recall           - Search memories from previous sessions"
+echo ""
 echo "  Automation (Ralph Loops):"
 echo "    /ralph-loop       - Start iterative AI development loop"
 echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
+echo "    /full-loop        - End-to-end: task → preflight → PR → postflight"
 echo "    /cancel-ralph     - Cancel active Ralph loop"
 echo "    /ralph-status     - Show Ralph loop status"
 echo "    /preflight-loop   - Iterative preflight until all pass"
