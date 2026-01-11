@@ -95,6 +95,35 @@ epoch_to_date() {
     fi
 }
 
+# Check if a worktree has an active Ralph loop
+# Arguments:
+#   $1 - worktree path
+# Returns: 0 if active loop, 1 if not
+# Output: Loop info string if active, empty if not
+get_ralph_loop_status() {
+    local worktree_path="$1"
+    local state_file="$worktree_path/.claude/ralph-loop.local.md"
+    
+    if [[ -f "$state_file" ]]; then
+        local iteration
+        local max_iterations
+        local started_at
+        
+        iteration=$(grep '^iteration:' "$state_file" 2>/dev/null | sed 's/iteration: *//')
+        max_iterations=$(grep '^max_iterations:' "$state_file" 2>/dev/null | sed 's/max_iterations: *//')
+        started_at=$(grep '^started_at:' "$state_file" 2>/dev/null | sed 's/started_at: *//' | sed 's/^"\(.*\)"$/\1/')
+        
+        if [[ "$max_iterations" == "0" ]]; then
+            echo "iteration $iteration (unlimited)"
+        else
+            echo "iteration $iteration/$max_iterations"
+        fi
+        return 0
+    fi
+    
+    return 1
+}
+
 # Get the default branch (main or master)
 get_default_branch() {
     local worktree_path="${1:-.}"
@@ -313,6 +342,13 @@ cmd_list() {
                     echo -e "    ${DIM}Last commit: $last_commit_date${NC}"
                 fi
                 
+                # Check for active Ralph loop
+                local ralph_status
+                ralph_status=$(get_ralph_loop_status "$worktree_path")
+                if [[ -n "$ralph_status" ]]; then
+                    echo -e "    ${YELLOW}Ralph loop: $ralph_status${NC}"
+                fi
+                
                 echo ""
                 
                 # Find matching sessions
@@ -445,7 +481,7 @@ cmd_open() {
     # Try to launch OpenCode (CLI first, then app bundle)
     if command -v opencode &>/dev/null; then
         echo "Launching OpenCode via CLI..."
-        (cd "$selected_path" && opencode .) & || exit
+        (cd "$selected_path" && opencode .) &
     elif [[ "$(uname)" == "Darwin" ]] && { [[ -d "/Applications/OpenCode.app" ]] || [[ -d "$HOME/Applications/OpenCode.app" ]]; }; then
         echo "Launching OpenCode..."
         open -a "OpenCode" "$selected_path"
@@ -454,7 +490,7 @@ cmd_open() {
         xdg-open "$selected_path"
     else
         echo "OpenCode not found. To open manually:"
-        echo "  cd $selected_path" || exit
+        echo "  cd $selected_path"
         echo "  opencode .  # or launch your preferred editor"
     fi
     

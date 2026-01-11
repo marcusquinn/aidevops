@@ -21,6 +21,7 @@ tools:
 - **Purpose**: Enable parallel work on multiple branches without conflicts
 - **Problem solved**: Branch switching affects all terminal tabs/sessions
 - **Solution**: Separate working directories, each on its own branch
+- **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`
 
 **Key Commands**:
 
@@ -318,15 +319,23 @@ Sessions are scored based on:
 
 ## Best Practices
 
-### 1. Keep Main Worktree on Main
+### 1. ALWAYS Keep Main Repo on Main (Critical)
 
 ```bash
-# Main repo directory stays on main branch
-~/Git/myrepo/  → main branch (reference, PRs, releases)
+# Main repo directory MUST stay on main branch
+~/Git/myrepo/  → main branch ONLY (never checkout feature branches here)
 
 # All feature work in linked worktrees
 ~/Git/myrepo-feature-*/  → feature branches
 ```
+
+**Why this is critical**: If the main repo is left on a feature branch:
+- Next session inherits wrong branch state
+- Uncommitted changes block branch switches
+- "Your local changes would be overwritten" errors occur
+- Parallel workflow assumptions break
+
+**Never use `git checkout -b` in the main repo directory.** Always use worktrees.
 
 ### 2. Name Worktrees Consistently
 
