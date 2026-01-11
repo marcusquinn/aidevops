@@ -19,6 +19,7 @@ NC='\033[0m' # No Color
 # Global flags
 CLEAN_MODE=false
 INTERACTIVE_MODE=false
+UPDATE_TOOLS_MODE=false
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 INSTALL_DIR="$HOME/Git/aidevops"
 
@@ -2025,6 +2026,62 @@ setup_seo_mcps() {
     return 0
 }
 
+# Check for tool updates after setup
+check_tool_updates() {
+    print_info "Checking for tool updates..."
+    
+    local tool_check_script="$HOME/.aidevops/agents/scripts/tool-version-check.sh"
+    
+    if [[ ! -f "$tool_check_script" ]]; then
+        # Try local script if deployed version not available yet
+        tool_check_script=".agent/scripts/tool-version-check.sh"
+    fi
+    
+    if [[ ! -f "$tool_check_script" ]]; then
+        print_warning "Tool version check script not found - skipping update check"
+        return 0
+    fi
+    
+    # Run the check in quiet mode first to see if there are updates
+    # Capture both output and exit code
+    local outdated_output
+    local check_exit_code
+    outdated_output=$(bash "$tool_check_script" --quiet 2>&1) || check_exit_code=$?
+    check_exit_code=${check_exit_code:-0}
+    
+    # If the script failed, warn and continue
+    if [[ $check_exit_code -ne 0 ]]; then
+        print_warning "Tool version check encountered an error (exit code: $check_exit_code)"
+        print_info "Run 'aidevops update-tools' manually to check for updates"
+        return 0
+    fi
+    
+    if [[ -z "$outdated_output" ]]; then
+        print_success "All tools are up to date!"
+        return 0
+    fi
+    
+    # Show what's outdated
+    echo ""
+    print_warning "Some tools have updates available:"
+    echo ""
+    bash "$tool_check_script" --quiet
+    echo ""
+    
+    read -r -p "Update all outdated tools now? (y/n): " do_update
+    
+    if [[ "$do_update" == "y" || "$do_update" == "Y" ]]; then
+        print_info "Updating tools..."
+        bash "$tool_check_script" --update
+        print_success "Tool updates complete!"
+    else
+        print_info "Skipped tool updates"
+        print_info "Run 'aidevops update-tools' anytime to update tools"
+    fi
+    
+    return 0
+}
+
 # Parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -2037,6 +2094,10 @@ parse_args() {
                 INTERACTIVE_MODE=true
                 shift
                 ;;
+            --update|-u)
+                UPDATE_TOOLS_MODE=true
+                shift
+                ;;
             --help|-h)
                 echo "Usage: ./setup.sh [OPTIONS]"
                 echo ""
@@ -2044,11 +2105,14 @@ parse_args() {
                 echo "  --clean        Remove stale files before deploying (cleans ~/.aidevops/agents/)"
                 echo "  --interactive  Ask confirmation before each step"
                 echo "  -i             Short for --interactive"
+                echo "  --update       Check for and offer to update outdated tools after setup"
+                echo "  -u             Short for --update"
                 echo "  --help         Show this help message"
                 echo ""
                 echo "Default behavior adds/overwrites files without removing deleted agents."
                 echo "Use --clean after removing or renaming agents to sync deletions."
                 echo "Use --interactive to control each step individually."
+                echo "Use --update to check for tool updates after setup completes."
                 exit 0
                 ;;
             *)
@@ -2076,6 +2140,9 @@ main() {
         echo "Mode: Interactive (confirm each step)"
         echo ""
         echo "Controls: [Y]es (default) / [n]o skip / [q]uit"
+    fi
+    if [[ "$UPDATE_TOOLS_MODE" == "true" ]]; then
+        echo "Mode: Update (will check for tool updates after setup)"
     fi
     echo ""
 
@@ -2117,11 +2184,12 @@ main() {
     print_success "🎉 Setup complete!"
     echo ""
 echo "CLI Command:"
-echo "  aidevops init       - Initialize aidevops in a project"
-echo "  aidevops features   - List available features"
-echo "  aidevops status     - Check installation status"
-echo "  aidevops update     - Update to latest version"
-echo "  aidevops uninstall  - Remove aidevops"
+echo "  aidevops init         - Initialize aidevops in a project"
+echo "  aidevops features     - List available features"
+echo "  aidevops status       - Check installation status"
+echo "  aidevops update       - Update to latest version"
+echo "  aidevops update-tools - Check for and update installed tools"
+echo "  aidevops uninstall    - Remove aidevops"
     echo ""
     echo "Deployed to:"
     echo "  ~/.aidevops/agents/     - Agent files (main agents, subagents, scripts)"
@@ -2175,6 +2243,12 @@ echo "  aidevops uninstall  - Remove aidevops"
     echo ""
     echo "Happy server managing! 🚀"
     echo ""
+    
+    # Check for tool updates if --update flag was passed
+    if [[ "$UPDATE_TOOLS_MODE" == "true" ]]; then
+        echo ""
+        check_tool_updates
+    fi
     
     # Offer to launch onboarding for new users (only if not running inside OpenCode)
     if [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
