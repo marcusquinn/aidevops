@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.46.0] - 2026-01-11
+
+### Added
+
+- implement v2 architecture with fresh context per iteration (#38)
 ## [2.45.0] - 2026-01-11
 
 ### Added
