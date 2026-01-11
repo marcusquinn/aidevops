@@ -118,7 +118,7 @@ User confirms with numbered options to override if needed.
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`
+**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`, `/session-review`, `/full-loop`
 
 **Time tracking format:**
 
@@ -271,6 +271,12 @@ opencode mcp list
 
 ## Session Completion & Parallel Work
 
+**Run `/session-review` before ending a session** to ensure:
+- All objectives completed
+- Workflow best practices followed
+- Knowledge captured for future sessions
+- Clear next steps identified
+
 **Recognize session completion signals:**
 - All session tasks marked `[x]` in TODO.md
 - PR merged and release published
@@ -364,7 +370,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
 | `services/email/` | Email services - transactional email, deliverability | ses |
 | `services/accounting/` | Accounting integration - invoicing, expenses, financial reports | quickfile |
-| `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop |
+| `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop, session-review |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
 | `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
 | `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier and other interactive commands | save-todo, remember, recall, code-simplifier |
@@ -469,6 +475,8 @@ Never create files in `~/` root for files needed only with the current task.
 | `beads-sync-helper.sh` | Sync TODO.md/PLANS.md with Beads graph |
 | `todo-ready.sh` | Show tasks with no open blockers |
 | `ralph-loop-helper.sh` | Iterative AI development loops (Ralph technique) |
+| `full-loop-helper.sh` | End-to-end development loop (task → PR → deploy) |
+| `session-review-helper.sh` | Gather session context for completeness review |
 
 ## Quality Workflow
 
