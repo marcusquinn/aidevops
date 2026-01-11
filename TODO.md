@@ -113,6 +113,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
 - [ ] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~30m (ai:15m test:10m read:5m) logged:2025-01-11
   - Notes: AGENTS.md lines 85-89 contain SonarCloud hotspot patterns (S5332, S6506 exclusions). Move to tools/code-review/ subagent to reduce root AGENTS.md size. Low priority - patterns work fine where they are.
+- [ ] t059 Review and merge unmerged feature branches #git #cleanup ~1h (ai:30m test:15m read:15m) logged:2026-01-11 started:2026-01-11T05:25Z
+  - Notes: Originally 13 branches. Processed 4 this session (PRs #44, #45, #46, #47). Remaining: 9 branches (4 chore, 5 feature). See todo/BRANCH-INVENTORY.md for details.
 - [ ] t052 Agent Design Pattern Improvements #plan → [todo/PLANS.md#agent-design-pattern-improvements] ~1d (ai:6h test:4h read:2h) logged:2025-01-11
   - Notes: Implement remaining improvements from Lance Martin's agent design patterns analysis. Includes: YAML frontmatter for subagents, automatic session reflection, cache-aware prompts, tool description indexing, memory consolidation.
 - [ ] t053 Add YAML frontmatter to source subagents #architecture #agents ~2h (ai:1.5h test:30m) logged:2025-01-11 blocked-by:t052
@@ -175,6 +177,7 @@ t049,Add timing analysis commands to ralph-loop workflow,,workflow|automation,30
 t050,Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent,,refactor|docs,30m,15m,10m,5m,2025-01-11T00:00Z,pending,,,
 t052,Agent Design Pattern Improvements,,plan|architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,pending,,,
 t053,Add YAML frontmatter to source subagents,,architecture|agents,2h,1.5h,30m,,2025-01-11T00:00Z,pending,t052,,
+t059,Review and merge unmerged feature branches,,git|cleanup,2h,1h,30m,30m,2026-01-11T00:00Z,pending,,,
 t054,Automatic session reflection to memory,,workflow|memory,4h,2.5h,1h,30m,2025-01-11T00:00Z,pending,t052,,
 t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025-01-11T00:00Z,pending,t052,,
 t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,pending,t052,,
@@ -266,5 +269,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-52,41,0,0,26,0,27d18h,16h50m,0,41
+53,42,0,0,26,0,27d20h,16h50m,0,42
 -->
