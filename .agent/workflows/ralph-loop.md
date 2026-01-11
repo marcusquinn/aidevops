@@ -227,7 +227,36 @@ Implement feature X following TDD:
 7. Output: <promise>COMPLETE</promise>
 ```
 
-### 4. Escape Hatches
+### 4. Documentation Updates
+
+Include documentation requirements in your completion criteria:
+
+**README updates** - When adding features, APIs, or changing behavior:
+
+```text
+Implement feature X.
+
+When complete:
+- Feature working with tests
+- README.md updated with usage examples
+- Output: <promise>COMPLETE</promise>
+```
+
+**Changelog via commits** - Use conventional commit messages for auto-generated changelogs:
+
+```text
+# Good commit messages (auto-included in changelog)
+feat: add user authentication
+fix: resolve memory leak in connection pool
+docs: update API documentation
+
+# Excluded from changelog
+chore: update dependencies
+```
+
+The release workflow auto-generates CHANGELOG.md from conventional commits. See `workflows/changelog.md`.
+
+### 5. Escape Hatches
 
 Always use `--max-iterations` as a safety net:
 
@@ -542,12 +571,24 @@ The loop is designed for maximum AI autonomy while preserving human control at s
 
 | Phase | AI Autonomous | Human Required |
 |-------|---------------|----------------|
-| Task Development | Code changes, iterations, fixes | Initial task definition, scope decisions |
+| Task Development | Code changes, iterations, fixes, README updates | Initial task definition, scope decisions |
 | Preflight | Auto-fix, re-run checks | Override to skip (emergency only) |
 | PR Creation | Auto-create with `--fill` | Custom title/description if needed |
 | PR Review | Address feedback, push fixes | Approve/merge (if required by repo) |
 | Postflight | Monitor, report issues | Rollback decision if issues found |
 | Deploy | Run `setup.sh` | None (fully autonomous) |
+
+### Documentation in Loops
+
+**README updates**: Include in task development phase when adding features/APIs.
+
+**Changelog**: Auto-generated from conventional commits during release. Use proper prefixes:
+- `feat:` → Added section
+- `fix:` → Fixed section
+- `docs:` → Changed section
+- `chore:` → Excluded from changelog
+
+See `workflows/changelog.md` for details.
 
 ### Options
 
