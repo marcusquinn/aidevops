@@ -10,10 +10,18 @@ mode: subagent
 > **Skip this section if you don't have Edit/Write/Bash tools** (e.g., Plan+ agent).
 > Read-only agents should proceed directly to responding to the user.
 
-**CRITICAL**: This check MUST be performed BEFORE any edit/write tool call.
+**CRITICAL**: This check MUST be performed BEFORE:
+- **Creating** new files
+- **Editing** existing files
+- **Writing** any content to disk
+- Using Edit, Write, or Bash tools that modify files
+
 Failure to follow this workflow is a bug in the AI assistant's behavior.
 
-**Self-check before editing**: Say "Checking git branch..." and run:
+**Trigger words requiring this check**: create, add, write, update, modify, change, fix, implement, refactor.
+If the user's request contains ANY of these, run the check FIRST.
+
+**Self-check before any file operation**: Say "Checking git branch..." and run:
 
 ```bash
 ~/.aidevops/agents/scripts/pre-edit-check.sh
@@ -42,6 +50,15 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 6. After creating branch, call `session-rename_sync_branch` tool
 
 **Why this matters**: Skipping this check causes direct commits to `main`, bypassing PR review.
+
+**Self-verification**: Before ANY file operation, ask yourself:
+"Have I run pre-edit-check.sh in this session?" If unsure, run it NOW.
+
+**Working in aidevops framework**: When modifying aidevops agents, you work in TWO locations:
+- **Source**: `~/Git/aidevops/.agent/` - THIS is the git repo, check branch HERE
+- **Deployed**: `~/.aidevops/agents/` - copy of source, not a git repo
+
+Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location.
 
 ---
 
@@ -156,6 +173,9 @@ User confirms with numbered options to override if needed.
 
 # List all worktrees
 ~/.aidevops/agents/scripts/worktree-helper.sh list
+
+# Find sessions for open worktrees
+~/.aidevops/agents/scripts/worktree-sessions.sh list
 
 # Clean up after merge
 ~/.aidevops/agents/scripts/worktree-helper.sh clean
