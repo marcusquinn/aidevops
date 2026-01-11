@@ -395,6 +395,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/wordpress/` | WordPress ecosystem - local dev, fleet management, plugin curation, custom fields | wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf |
 | `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
 | `services/email/` | Email services - transactional email, deliverability | ses |
+| `services/communications/` | Communications platform - SMS, voice, WhatsApp, verify, recordings | twilio, telfon |
 | `services/accounting/` | Accounting integration - invoicing, expenses, financial reports | quickfile |
 | `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop, session-review |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
