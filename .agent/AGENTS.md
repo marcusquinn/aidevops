@@ -36,12 +36,14 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 
 > On `main`. Suggested branch: `{type}/{suggested-name}`
 >
-> 1. Create worktree for suggested branch (recommended for parallel sessions)
-> 2. Create branch with checkout (switches current directory's branch)
+> 1. Create worktree for suggested branch (recommended - enables parallel work)
+> 2. Create branch with checkout (only if single-session workflow preferred)
 > 3. Use different branch name
 > 4. Stay on `main` (docs-only acceptable, otherwise not recommended)
 
 3. **Do NOT proceed until user replies with 1, 2, 3, or 4**
+
+**Default choice**: Prefer option 1 (worktree) unless user has expressed preference for option 2. Worktrees prevent branch-switching conflicts across terminals and AI sessions.
 
 **When option 4 is acceptable**: Documentation-only changes (README, CHANGELOG, docs/), typo fixes, version bumps via release script.
 **When option 4 is NOT acceptable**: Any code changes, configuration files, scripts.
