@@ -107,6 +107,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: After PR merge, postflight.md should remind to clean up worktrees for merged branches. Add section with `worktree-helper.sh list` and `worktree-helper.sh clean` commands.
 - [ ] t049 Add timing analysis commands to ralph-loop workflow #workflow #automation ~30m (ai:15m test:10m read:5m) logged:2025-01-10
   - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
+- [ ] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~30m (ai:15m test:10m read:5m) logged:2025-01-11
+  - Notes: AGENTS.md lines 85-89 contain SonarCloud hotspot patterns (S5332, S6506 exclusions). Move to tools/code-review/ subagent to reduce root AGENTS.md size. Low priority - patterns work fine where they are.
 
 <!--TOON:backlog[38]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -152,6 +154,7 @@ t046,Review Clawdbot for inspiration and incorporation into aidevops,,research|a
 t047,TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research,,git|sync|planning,4h,2h,1h,1h,2025-01-09T00:00Z,pending,,,
 t048,Add worktree cleanup reminder to postflight workflow,,workflow|git,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
 t049,Add timing analysis commands to ralph-loop workflow,,workflow|automation,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
+t050,Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent,,refactor|docs,30m,15m,10m,5m,2025-01-11T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -238,5 +241,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-50,41,0,0,24,0,26d17h30m,15h50m,0,41
+51,42,0,0,24,0,26d18h,15h50m,0,42
 -->
