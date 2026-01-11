@@ -61,9 +61,9 @@ When running multiple OpenCode sessions on the same repo:
 | Starting new work | Always create a new branch first |
 | **Multiple parallel sessions** | **Use git worktrees** (see below) |
 
-**Git Worktrees for Parallel Work** (RECOMMENDED):
+**Git Worktrees for Parallel Work** (DEFAULT):
 
-For true parallel development without branch conflicts, use git worktrees:
+**Core principle**: The main repo directory (`~/Git/{repo}/`) should ALWAYS stay on `main`. All feature work happens in worktree directories.
 
 ```bash
 # Create separate working directory for a branch
@@ -76,6 +76,8 @@ For true parallel development without branch conflicts, use git worktrees:
 # Each terminal/session works in its own directory
 # No branch switching affects other sessions
 ```
+
+**Why this matters**: If the main repo is left on a feature branch, the next session inherits that state. This causes "local changes would be overwritten" errors and breaks parallel workflows.
 
 See `workflows/worktree.md` for full worktree workflow.
 
@@ -277,16 +279,18 @@ grep -A 5 "^### \[" todo/PLANS.md | grep -i "{user_request_keywords}"
 
 **If on `main` branch**, auto-select best match and offer override:
 
-> On `main`. Creating `feature/{best-match-name}` (from {source}).
+> On `main`. Creating worktree for `feature/{best-match-name}` (from {source}).
 >
 > [Enter] to confirm, or:
 > 1. Use different name
-> 2. Continue on `main` (not recommended)
+> 2. Continue on `main` (docs-only, not recommended for code)
 
 Where `{source}` is one of:
 - "TODO.md" - matched a task
 - "PLANS.md" - matched an active plan
 - "your request" - derived from conversation
+
+**Note**: Always use worktrees, not `git checkout -b`. The main repo directory must stay on `main`.
 
 **If existing branch matches**, auto-select it:
 

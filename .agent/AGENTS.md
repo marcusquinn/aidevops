@@ -36,22 +36,29 @@ If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with ed
 
 > On `main`. Suggested branch: `{type}/{suggested-name}`
 >
-> 1. Create worktree for suggested branch (recommended - enables parallel work)
-> 2. Create branch with checkout (only if single-session workflow preferred)
-> 3. Use different branch name
-> 4. Stay on `main` (docs-only acceptable, otherwise not recommended)
+> 1. Create worktree (recommended - keeps main repo on main)
+> 2. Use different branch name
+> 3. Stay on `main` (docs-only, not recommended for code)
 
-3. **Do NOT proceed until user replies with 1, 2, 3, or 4**
+3. **Do NOT proceed until user replies with 1, 2, or 3**
 
-**Default choice**: Prefer option 1 (worktree) unless user has expressed preference for option 2. Worktrees prevent branch-switching conflicts across terminals and AI sessions.
+**Why worktrees are the default**: The main repo directory (`~/Git/{repo}/`) should ALWAYS stay on `main`. This prevents:
+- Uncommitted changes blocking branch switches
+- Parallel sessions inheriting wrong branch state
+- "Your local changes would be overwritten" errors
 
-**When option 4 is acceptable**: Documentation-only changes (README, CHANGELOG, docs/), typo fixes, version bumps via release script.
-**When option 4 is NOT acceptable**: Any code changes, configuration files, scripts.
-4. If worktree (option 1): `~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}`
-5. If checkout (option 2): `git checkout -b {type}/{name}`
-6. After creating branch, call `session-rename_sync_branch` tool
+**When option 3 is acceptable**: Documentation-only changes (README, CHANGELOG, docs/), typo fixes, version bumps via release script.
+**When option 3 is NOT acceptable**: Any code changes, configuration files, scripts.
+
+4. Create worktree: `~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}`
+5. After creating branch, call `session-rename_sync_branch` tool
+
+**Legacy checkout workflow**: If user explicitly requests `git checkout -b` instead of worktrees, warn them:
+> Note: Checkout leaves main repo on feature branch. Remember to `git checkout main` when done, or use worktrees to avoid this.
 
 **Why this matters**: Skipping this check causes direct commits to `main`, bypassing PR review.
+
+**Main repo principle**: The directory `~/Git/{repo}/` should always stay on `main`. All feature work happens in worktree directories (`~/Git/{repo}-{type}-{name}/`). This ensures any session opening the main repo starts clean.
 
 **Self-verification**: Before ANY file operation, ask yourself:
 "Have I run pre-edit-check.sh in this session?" If unsure, run it NOW.
@@ -291,6 +298,12 @@ Suggestions:
 - After 3+ hours of continuous work
 - When user requests unrelated task
 
+**Session cleanup checklist** (before ending):
+1. Commit or stash uncommitted changes
+2. If in worktree: no action needed (worktree stays on its branch)
+3. If used `git checkout -b` in main repo: `git checkout main` before ending
+4. Run `worktree-helper.sh clean` to remove merged worktrees
+
 **Spawning parallel sessions** (for related but separate work):
 
 ```bash
@@ -337,7 +350,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
 | `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling | stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools |
 | `tools/ui/` | UI components - component libraries, design systems, interface constraints | shadcn, ui-skills |
-| `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, codacy, coderabbit, qlty, snyk, secretlint, auditing |
+| `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, code-simplifier, codacy, coderabbit, qlty, snyk, secretlint, auditing |
 | `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy, llm-tldr |
 | `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
 | `tools/data-extraction/` | Data extraction - scraping business data, Google Maps, reviews | outscraper |
@@ -354,7 +367,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
 | `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
-| `scripts/commands/` | Slash commands - save-todo, remember, recall and other interactive commands | save-todo, remember, recall |
+| `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier and other interactive commands | save-todo, remember, recall, code-simplifier |
 
 <!-- AI-CONTEXT-END -->
 
@@ -462,6 +475,8 @@ Never create files in `~/` root for files needed only with the current task.
 ```text
 Development → @code-standards (reference)
      ↓
+Post-edit → /code-simplifier (refine)
+     ↓
 Pre-commit → /linters-local (fast, offline)
      ↓
 PR Review → /pr (orchestrates all checks)
@@ -476,6 +491,7 @@ Post-merge → /postflight (verify CI)
 | Stage | Command | Purpose |
 |-------|---------|---------|
 | During development | `@code-standards` | Reference quality rules |
+| Post-edit | `/code-simplifier` | Simplify and refine code |
 | Pre-commit | `/linters-local` | Fast local checks |
 | PR creation | `/pr review` | Full orchestrated review |
 | PR review | `/code-audit-remote` | Remote service audits |
