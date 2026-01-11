@@ -334,7 +334,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling | stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools |
 | `tools/ui/` | UI components - component libraries, design systems, interface constraints | shadcn, ui-skills |
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, codacy, coderabbit, qlty, snyk, secretlint, auditing |
-| `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy |
+| `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy, llm-tldr |
 | `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
 | `tools/data-extraction/` | Data extraction - scraping business data, Google Maps, reviews | outscraper |
 | `tools/deployment/` | Deployment automation - self-hosted PaaS, serverless, CI/CD | coolify, coolify-cli, vercel |
