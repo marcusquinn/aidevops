@@ -1349,6 +1349,59 @@ setup_nodejs_env() {
     fi
 }
 
+# Setup LocalWP MCP server for AI database access
+setup_localwp_mcp() {
+    print_info "Setting up LocalWP MCP server..."
+
+    # Check if LocalWP is installed
+    local localwp_found=false
+    if [[ -d "/Applications/Local.app" ]] || [[ -d "$HOME/Applications/Local.app" ]]; then
+        localwp_found=true
+    fi
+
+    if [[ "$localwp_found" != "true" ]]; then
+        print_info "LocalWP not found - skipping MCP server setup"
+        print_info "Install LocalWP from: https://localwp.com/"
+        return 0
+    fi
+
+    print_success "LocalWP found"
+
+    # Check if npm is available
+    if ! command -v npm &> /dev/null; then
+        print_warning "npm not found - cannot install LocalWP MCP server"
+        print_info "Install Node.js and npm first"
+        return 0
+    fi
+
+    # Check if mcp-local-wp is already installed
+    if command -v mcp-local-wp &> /dev/null; then
+        print_success "LocalWP MCP server already installed"
+        return 0
+    fi
+
+    # Offer to install mcp-local-wp
+    print_info "LocalWP MCP server enables AI assistants to query WordPress databases"
+    read -r -p "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? (y/n): " install_mcp
+
+    if [[ "$install_mcp" == "y" ]]; then
+        print_info "Installing LocalWP MCP server..."
+        if npm install -g @verygoodplugins/mcp-local-wp > /dev/null 2>&1; then
+            print_success "LocalWP MCP server installed successfully"
+            print_info "Start with: ~/.aidevops/agents/scripts/localhost-helper.sh start-mcp"
+            print_info "Or configure in OpenCode MCP settings for auto-start"
+        else
+            print_warning "Failed to install LocalWP MCP server"
+            print_info "Try manually: npm install -g @verygoodplugins/mcp-local-wp"
+        fi
+    else
+        print_info "Skipped LocalWP MCP server installation"
+        print_info "Install later: npm install -g @verygoodplugins/mcp-local-wp"
+    fi
+
+    return 0
+}
+
 # Setup Augment Context Engine MCP
 setup_augment_context_engine() {
     print_info "Setting up Augment Context Engine MCP..."
@@ -2050,6 +2103,7 @@ main() {
     confirm_step "Update OpenCode configuration" && update_opencode_config
     confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
     confirm_step "Setup Node.js environment" && setup_nodejs_env
+    confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
     confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
     confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
     confirm_step "Setup Beads task management" && setup_beads
