@@ -951,6 +951,7 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 | `/linters-local` | Run local linting (ShellCheck, secretlint) |
 | `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `/code-standards` | Check against documented quality standards |
+| `/code-simplifier` | Simplify and refine code for clarity and maintainability |
 | `/list-keys` | List all configured API keys and their storage locations |
 | `/pr` | Unified PR workflow (orchestrates all checks) |
 
@@ -978,6 +979,8 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 | Command | Purpose |
 |---------|---------|
 | `/agent-review` | Analyze session and suggest agent improvements |
+| `/session-review` | Review session for completeness and capture learnings |
+| `/full-loop` | End-to-end development loop (task → preflight → PR → postflight → deploy) |
 | `/preflight-loop` | Run preflight checks iteratively until all pass |
 
 ### Ralph Loop - Iterative AI Development
@@ -1012,6 +1015,37 @@ Task → Implement → Check → Fix Issues → Re-check → ... → Complete
 
 See `.agent/workflows/ralph-loop.md` for the full workflow guide.
 
+### Full Loop - End-to-End Development Automation
+
+The **Full Loop** chains all development phases into a single automated workflow:
+
+```text
+Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
+```
+
+**Usage:**
+
+```bash
+# Start a full development loop
+/full-loop "Implement feature X with tests"
+
+# With options
+/full-loop "Fix bug Y" --max-task-iterations 30 --skip-postflight
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--max-task-iterations N` | Max iterations for task (default: 50) |
+| `--skip-preflight` | Skip preflight checks |
+| `--skip-postflight` | Skip postflight monitoring |
+| `--no-auto-pr` | Pause for manual PR creation |
+
+The loop pauses for human input at merge approval, rollback decisions, and scope changes.
+
+See `.agent/scripts/commands/full-loop.md` for complete documentation.
+
 ### Git Worktrees - Parallel Branch Development
 
 Work on multiple branches simultaneously without stashing or switching. Each branch gets its own directory.
@@ -1036,7 +1070,7 @@ Work on multiple branches simultaneously without stashing or switching. Each bra
 - No context switching or stash management
 - Each OpenCode session can work on a different branch
 
-The pre-edit check now recommends worktrees when creating branches, keeping your main directory on `main`.
+**Worktree-first workflow:** The pre-edit check now **enforces** worktrees as the default when creating branches, keeping your main directory on `main`. This prevents uncommitted changes from blocking branch switches and ensures parallel sessions don't inherit wrong branch state.
 
 See `.agent/workflows/worktree.md` for the complete guide.
 
