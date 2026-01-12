@@ -80,10 +80,13 @@ When a new lead comes in:
 
 ```text
 1. Use fluentcrm_create_contact with lead details
-2. Apply source tag: fluentcrm_attach_tag_to_contact with ['lead-source-{source}']
-3. Add to nurture list: fluentcrm_attach_contact_to_list
+2. Apply source tag: fluentcrm_attach_tag_to_contact with tagIds (numeric IDs)
+   - First use fluentcrm_list_tags to get tag IDs for tags like 'lead-source-website'
+3. Add to nurture list: fluentcrm_attach_contact_to_list with listIds (numeric IDs)
 4. Automation triggers welcome sequence
 ```
+
+**Note**: FluentCRM MCP uses numeric IDs for tags and lists, not slugs. Use `fluentcrm_list_tags` or `fluentcrm_list_lists` to get IDs.
 
 ### Lead Qualification
 
@@ -216,7 +219,7 @@ fluentcrm_attach_tag_to_contact with:
 fluentcrm_create_smart_link with:
 - title: "Proposal - {Company Name}"
 - target_url: proposal URL
-- apply_tags: ['proposal-viewed']
+- apply_tags: [tag_id] (numeric ID for 'proposal-viewed' tag)
 ```
 
 ## Quote Generation
