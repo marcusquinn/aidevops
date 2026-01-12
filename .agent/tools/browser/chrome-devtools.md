@@ -22,6 +22,7 @@ tools:
 - Performance: `lighthouse()`, `measureWebVitals()` (LCP, FID, CLS, TTFB)
 - Scraping: `extractData()`, `screenshot()` (fullPage, element)
 - Debug: `captureConsole()`, `monitorNetwork()` (xhr, fetch, document)
+- Throttling: `throttleRequest()`, `throttleRequests()` (individual request throttling - Chrome 136+)
 - Mobile: `emulateDevice()`, `simulateTouch()` (tap, swipe)
 - SEO: `extractSEO()`, `validateStructuredData()`
 - Visual: `visualRegression()`, `analyzeCSSCoverage()`
@@ -106,6 +107,73 @@ await chromeDevTools.monitorNetwork({
   captureBody: true
 });
 ```
+
+## **Network Conditions & Throttling**
+
+### **Individual Request Throttling** (New in Chrome 136+)
+
+Chrome DevTools now supports throttling individual network requests rather than the entire page. This enables precise testing of how your application handles slow-loading specific resources.
+
+**Use cases:**
+- Test lazy-loading behavior when specific images load slowly
+- Simulate slow API responses without affecting other requests
+- Debug race conditions when certain scripts load out of order
+- Test error handling for slow third-party resources
+
+```javascript
+// Throttle a specific API endpoint
+await chromeDevTools.throttleRequest({
+  url: "https://your-website.com",
+  requestPattern: "**/api/slow-endpoint",
+  latency: 3000,  // Add 3 second delay
+  downloadThroughput: 50 * 1024  // 50 KB/s
+});
+
+// Throttle specific image requests
+await chromeDevTools.throttleRequest({
+  url: "https://your-website.com",
+  requestPattern: "*.jpg",
+  latency: 2000,
+  downloadThroughput: 100 * 1024  // 100 KB/s
+});
+
+// Throttle multiple patterns with different conditions
+await chromeDevTools.throttleRequests({
+  url: "https://your-website.com",
+  rules: [
+    {
+      pattern: "**/api/critical",
+      latency: 0,
+      downloadThroughput: -1  // No throttling (priority)
+    },
+    {
+      pattern: "**/api/*",
+      latency: 1500,
+      downloadThroughput: 200 * 1024
+    },
+    {
+      pattern: "*.woff2",
+      latency: 500,
+      downloadThroughput: 50 * 1024
+    }
+  ]
+});
+```
+
+**Manual DevTools usage:**
+1. Open DevTools (F12) → Network panel
+2. Right-click any request → "Throttle request"
+3. Choose preset (Slow 3G, Fast 3G) or custom values
+4. Request-specific throttling persists until cleared
+
+**Comparison with page-level throttling:**
+
+| Feature | Page-Level | Individual Request |
+|---------|------------|-------------------|
+| Scope | All requests | Specific URL patterns |
+| Use case | General slow network testing | Targeted resource testing |
+| Precision | Low | High |
+| Real-world simulation | Broad conditions | Specific failure scenarios |
 
 ## 📱 **Mobile Testing**
 
