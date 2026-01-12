@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329
 # terminal-title-setup.sh - Install shell integration for terminal title sync
 # Part of aidevops framework: https://aidevops.sh
 #
@@ -530,3 +531,4 @@ main() {
 }
 
 main "$@"
+exit $?
