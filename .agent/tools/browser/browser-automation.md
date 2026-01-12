@@ -16,69 +16,298 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Default Tool: Dev-Browser
+## Default Tool: Agent-Browser
 
-**ALWAYS try dev-browser first** for any browser automation task. It's the fastest, cheapest, and most capable option.
+**ALWAYS use agent-browser first** for any browser automation task. It's CLI-first, AI-optimized, and requires no server setup.
 
 ```bash
 # Setup (one-time)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup
+~/.aidevops/agents/scripts/agent-browser-helper.sh setup
 
-# Start server (required before use)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
+# Basic workflow
+agent-browser open example.com
+agent-browser snapshot -i              # Get interactive elements with refs
+agent-browser click @e2                # Click by ref
+agent-browser close
 ```
 
-**Why dev-browser is default**:
-- **14% faster, 39% cheaper** than alternatives (benchmarked)
-- **Stateful**: Pages persist across script executions
-- **Codebase-aware**: Read source code to write selectors directly
-- **LLM-friendly**: ARIA snapshots for element discovery
+**Why agent-browser is default**:
+- **Zero setup**: No daemon to start, just run commands
+- **AI-optimized**: Snapshot + ref pattern for deterministic element targeting
+- **Multi-session**: Isolated browser instances with `--session`
+- **Visual debugging**: Screenshots and DevTools for self-diagnosis
+
+## Visual Debugging (Don't Ask User - Check Yourself)
+
+**CRITICAL**: Before asking the user what they see, use these tools to check yourself:
+
+```bash
+# Take screenshot to see current state
+agent-browser screenshot /tmp/current-state.png
+
+# Get page info
+agent-browser get title
+agent-browser get url
+
+# Check for errors
+agent-browser errors
+
+# View console messages
+agent-browser console
+
+# Get element state
+agent-browser is visible @e5
+agent-browser is enabled @e5
+
+# Headed mode for complex debugging
+agent-browser open example.com --headed
+```
+
+**Self-diagnosis workflow**:
+1. Action fails or unexpected result
+2. Take screenshot: `agent-browser screenshot /tmp/debug.png`
+3. Check errors: `agent-browser errors`
+4. Get snapshot: `agent-browser snapshot -i`
+5. Analyze and retry - only ask user if truly stuck
 
 ## Tool Selection Decision Tree
 
 ```text
 Need browser automation?
     │
-    ├─► Dev-browser running? ──► YES ──► Use dev-browser (default)
-    │                              │
-    │                              └─► NO ──► Start it: dev-browser-helper.sh start
+    ├─► Default choice ──► agent-browser (CLI-first, AI-optimized)
     │
-    ├─► Need CLI-first / shell scripts? ──► Use agent-browser
+    ├─► Need TypeScript API / stateful pages? ──► dev-browser
     │
-    ├─► Need existing browser session/cookies? ──► Use Playwriter
+    ├─► Need existing browser session/cookies? ──► Playwriter
     │
-    ├─► Need natural language control? ──► Use Stagehand
+    ├─► Need natural language control? ──► Stagehand
     │
-    └─► Need web crawling/extraction? ──► Use Crawl4AI
+    └─► Need web crawling/extraction? ──► Crawl4AI
 ```
 
 ## Quick Reference
 
 | Tool | Best For | Setup |
 |------|----------|-------|
-| **dev-browser** (DEFAULT) | Dev testing, multi-step workflows | `dev-browser-helper.sh setup` |
-| **agent-browser** | CLI-first, shell scripts, CI/CD, multi-session | `npm i -g agent-browser` |
+| **agent-browser** (DEFAULT) | CLI automation, AI agents, CI/CD, multi-session | `agent-browser-helper.sh setup` |
+| **dev-browser** | TypeScript API, stateful pages, dev testing | `dev-browser-helper.sh setup` |
 | **playwriter** | Existing sessions, bypass detection | Chrome extension + MCP |
 | **stagehand** | Natural language automation | `stagehand-helper.sh setup` |
 | **crawl4ai** | Web scraping, content extraction | `crawl4ai-helper.sh setup` |
 | **playwright** | Cross-browser testing | MCP integration |
 
-**Full docs**: `tools/browser/dev-browser.md` (default), `tools/browser/agent-browser.md`, `tools/browser/playwriter.md`, etc.
+**Full docs**: `tools/browser/agent-browser.md` (default), `tools/browser/dev-browser.md`, `tools/browser/playwriter.md`, etc.
 
 **Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only
 <!-- AI-CONTEXT-END -->
 
-## Dev-Browser Usage (Default)
+## Session Persistence (Cookies, Storage, Auth State)
 
-**Always start here** - dev-browser handles most browser automation needs.
+### Why Persist Sessions?
+
+- **Avoid repeated logins**: Save auth state once, reuse across sessions
+- **Maintain context**: Keep shopping carts, preferences, form data
+- **Faster automation**: Skip login flows in subsequent runs
+
+### Saving Auth State
+
+After logging in, save the complete browser state:
+
+```bash
+# Login to a site
+agent-browser open https://app.example.com/login
+agent-browser snapshot -i
+agent-browser fill @e3 "user@example.com"
+agent-browser fill @e4 "password"
+agent-browser click @e5
+agent-browser wait --url "**/dashboard"
+
+# Save auth state (cookies + localStorage + sessionStorage)
+agent-browser state save ~/.aidevops/.agent-workspace/auth/example-com.json
+agent-browser close
+```
+
+### Loading Auth State
+
+Restore saved state in new sessions:
+
+```bash
+# Start new session with saved auth
+agent-browser open https://app.example.com
+agent-browser state load ~/.aidevops/.agent-workspace/auth/example-com.json
+agent-browser reload  # Apply loaded state
+# Now logged in without re-entering credentials
+```
+
+### Cookie Management
+
+```bash
+# View all cookies
+agent-browser cookies
+
+# Set a specific cookie
+agent-browser cookies set "session_id" "abc123"
+
+# Set cookie with options
+agent-browser cookies set "auth_token" "xyz789" --domain ".example.com" --path "/" --secure
+
+# Clear all cookies
+agent-browser cookies clear
+```
+
+### LocalStorage & SessionStorage
+
+```bash
+# View all localStorage
+agent-browser storage local
+
+# Get specific key
+agent-browser storage local "user_preferences"
+
+# Set value
+agent-browser storage local set "theme" "dark"
+agent-browser storage local set "api_token" "bearer_xyz123"
+
+# Clear localStorage
+agent-browser storage local clear
+
+# Same commands work for sessionStorage
+agent-browser storage session
+agent-browser storage session set "temp_data" "value"
+agent-browser storage session clear
+```
+
+### Multi-Session with Shared Auth
+
+```bash
+# Session 1: Login and save state
+agent-browser --session login open https://app.example.com/login
+# ... perform login ...
+agent-browser --session login state save ~/.aidevops/.agent-workspace/auth/app.json
+agent-browser --session login close
+
+# Session 2: Use saved auth for task A
+agent-browser --session taskA open https://app.example.com
+agent-browser --session taskA state load ~/.aidevops/.agent-workspace/auth/app.json
+agent-browser --session taskA reload
+# ... perform task A ...
+
+# Session 3: Use same auth for task B (parallel)
+agent-browser --session taskB open https://app.example.com
+agent-browser --session taskB state load ~/.aidevops/.agent-workspace/auth/app.json
+agent-browser --session taskB reload
+# ... perform task B ...
+```
+
+### Auth State Best Practices
+
+| Practice | Why |
+|----------|-----|
+| Store in `~/.aidevops/.agent-workspace/auth/` | Gitignored, secure location |
+| Name by domain | `github-com.json`, `app-example-com.json` |
+| Refresh periodically | Sessions expire, re-login and re-save |
+| Don't commit auth files | Contains sensitive tokens |
+| Use `--session` for isolation | Prevent cross-contamination |
+
+### Injecting Cookies/Tokens Programmatically
+
+For CI/CD or scripts where you have tokens from environment:
+
+```bash
+# Set auth cookie from environment variable
+agent-browser open https://api.example.com
+agent-browser cookies set "auth_token" "$AUTH_TOKEN" --domain ".example.com" --secure --httponly
+agent-browser reload
+
+# Or inject into localStorage
+agent-browser storage local set "access_token" "$ACCESS_TOKEN"
+agent-browser storage local set "refresh_token" "$REFRESH_TOKEN"
+agent-browser reload
+```
+
+## Agent-Browser Usage (Default)
 
 ### Quick Start
 
 ```bash
-# 1. Start server (if not running)
+# 1. Setup (one-time)
+~/.aidevops/agents/scripts/agent-browser-helper.sh setup
+
+# 2. Basic workflow
+agent-browser open https://example.com
+agent-browser snapshot -i                 # Interactive elements only
+agent-browser click @e1                   # Click by ref
+agent-browser screenshot page.png
+agent-browser close
+```
+
+### Snapshot + Ref Pattern (AI-Optimized)
+
+This is the **recommended workflow for AI agents**:
+
+```bash
+# 1. Navigate and get snapshot
+agent-browser open https://news.ycombinator.com
+agent-browser snapshot -i --json
+
+# Output includes refs:
+# - link "Hacker News" [ref=e2]
+# - link "new" [ref=e3]
+# - textbox [ref=e224]
+
+# 2. Use refs for deterministic interaction
+agent-browser click @e3                   # Click "new" link
+agent-browser fill @e224 "search term"    # Fill search box
+
+# 3. Get new snapshot after page change
+agent-browser snapshot -i
+```
+
+### Common Patterns
+
+**Form submission**:
+
+```bash
+agent-browser open https://example.com/contact
+agent-browser snapshot -i
+agent-browser fill @e1 "John Doe"
+agent-browser fill @e2 "john@example.com"
+agent-browser fill @e3 "Hello, this is my message"
+agent-browser click @e4  # Submit button
+agent-browser wait --text "Thank you"
+agent-browser screenshot /tmp/success.png
+```
+
+**Multi-page workflow**:
+
+```bash
+agent-browser open https://shop.example.com
+agent-browser snapshot -i
+agent-browser click @e5  # Product link
+agent-browser wait --load networkidle
+agent-browser snapshot -i
+agent-browser click @e3  # Add to cart
+agent-browser click @e8  # Checkout
+agent-browser state save ~/.aidevops/.agent-workspace/auth/shop-cart.json
+```
+
+**Full documentation**: `tools/browser/agent-browser.md`
+
+## Alternative Tools
+
+Use these when agent-browser doesn't fit the use case:
+
+### Dev-Browser - TypeScript API
+
+**Stateful browser automation with persistent Playwright server**
+
+```bash
+# Setup and start
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# 2. Execute automation script
+# Use TypeScript API
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
 const client = await connect("http://localhost:9222");
@@ -90,49 +319,13 @@ await client.disconnect();
 EOF
 ```
 
-### Common Patterns
+**When to use**: TypeScript projects, stateful page interactions, dev testing with hot reload.
 
-**Navigate and interact**:
-
-```bash
-cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
-import { connect, waitForPageLoad } from "@/client.js";
-const client = await connect("http://localhost:9222");
-const page = await client.page("main");
-await page.goto("http://localhost:3000/login");
-await page.fill('input[name="email"]', 'user@example.com');
-await page.fill('input[name="password"]', 'password');
-await page.click('button[type="submit"]');
-await waitForPageLoad(page);
-console.log("Logged in:", page.url());
-await client.disconnect();
-EOF
-```
-
-**Get ARIA snapshot** (for unknown pages):
-
-```bash
-cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
-import { connect, waitForPageLoad } from "@/client.js";
-const client = await connect("http://localhost:9222");
-const page = await client.page("main");
-await page.goto("https://example.com");
-await waitForPageLoad(page);
-const snapshot = await client.getAISnapshot("main");
-console.log(snapshot);
-await client.disconnect();
-EOF
-```
-
-**Full documentation**: `tools/browser/dev-browser.md`
-
-## Alternative Tools
-
-Use these when dev-browser doesn't fit the use case:
+See `tools/browser/dev-browser.md` for full documentation.
 
 ### Playwriter - Chrome Extension MCP
 
-**Browser automation via Chrome extension with full Playwright API - minimal context bloat**
+**Browser automation via Chrome extension with full Playwright API**
 
 ```bash
 # 1. Install Chrome extension
@@ -144,110 +337,64 @@ Use these when dev-browser doesn't fit the use case:
 # 3. Click extension icon on tabs to control (turns green)
 ```
 
-**Key Advantages**:
-- **1 tool vs 17+** - Single `execute` tool runs Playwright code
-- **Your existing browser** - Reuse sessions, extensions, cookies
-- **Bypass detection** - Disconnect extension to bypass automation detection
-- **Collaborate with AI** - Work alongside it, help with captchas
+**When to use**: Reuse existing browser sessions, bypass automation detection, work alongside AI with your extensions.
 
 See `tools/browser/playwriter.md` for full documentation.
 
-### **🤘 Stagehand AI Browser Automation**
+### Stagehand - Natural Language Automation
 
-**Revolutionary AI-powered browser automation with natural language control - Available in JavaScript and Python**
-
-#### **JavaScript Version**
+**AI-powered browser automation with natural language control**
 
 ```bash
-# Quick setup
-bash .agent/scripts/stagehand-helper.sh setup
+# Setup
+bash ~/.aidevops/agents/scripts/stagehand-helper.sh setup
 
-# MCP integration
-bash .agent/scripts/setup-mcp-integrations.sh stagehand
+# Natural language actions
+await stagehand.act("click the login button")
+await stagehand.act("fill in the email field with user@example.com")
 
-# Run examples
-cd ~/.aidevops/stagehand
-npm run search-products "wireless headphones"
-npm run analyze-linkedin
+# Structured extraction
+const data = await stagehand.extract("get product prices", z.array(z.number()))
 ```
 
-#### **Python Version** 🐍 **NEW**
+**When to use**: Natural language control, self-healing automation, unknown page structures.
+
+See `tools/browser/stagehand.md` for full documentation.
+
+### Crawl4AI - Web Scraping
+
+**AI-powered web crawling and content extraction**
 
 ```bash
-# Quick setup
-bash .agent/scripts/stagehand-python-helper.sh setup
+# Setup
+bash ~/.aidevops/agents/scripts/crawl4ai-helper.sh setup
 
-# MCP integration
-bash .agent/scripts/setup-mcp-integrations.sh stagehand-python
-
-# Run examples
-source ~/.aidevops/stagehand-python/.venv/bin/activate
-python examples/basic_example.py
-python examples/ecommerce_automation.py "wireless headphones"
+# Crawl and extract
+crawl4ai https://example.com --extract "main content"
 ```
 
-#### **Both Versions**
+**When to use**: Web scraping, content extraction, bulk data collection.
 
-```bash
-# Setup both JavaScript and Python
-bash .agent/scripts/setup-mcp-integrations.sh stagehand-both
-```
+See `tools/browser/crawl4ai.md` for full documentation.
 
-**Key Features**:
+## Debugging Checklist
 
-- **Natural Language Actions**: `await stagehand.act("click the login button")`
-- **Structured Data Extraction**: Extract data with Zod (JS) or Pydantic (Python) schemas
-- **Self-Healing Automation**: Adapts when websites change
-- **Autonomous Agents**: Complete workflows with AI decision-making
-- **Local-First Privacy**: Complete control over browser and data
-- **Multi-Language Support**: Choose JavaScript or Python based on your needs
+When automation fails, check in this order:
 
-**Perfect for**:
+1. **Screenshot**: `agent-browser screenshot /tmp/debug.png`
+2. **Errors**: `agent-browser errors`
+3. **Console**: `agent-browser console`
+4. **URL**: `agent-browser get url` (redirected?)
+5. **Snapshot**: `agent-browser snapshot -i` (elements changed?)
+6. **Visibility**: `agent-browser is visible @eX`
+7. **Headed mode**: `agent-browser open url --headed` (watch it happen)
 
-- E-commerce automation and price monitoring
-- Social media analytics and engagement
-- User journey testing and QA
-- Data collection and research with type safety
-- Autonomous business process automation
-- Data science workflows (Python) or web development (JavaScript)
+**Only ask the user after exhausting these self-diagnosis steps.**
 
-### **Workflow Integration**
+## Ethical Guidelines
 
-```bash
-# Convert documents for agent context
-bash .agent/scripts/pandoc-helper.sh batch ./social-media-docs ./agent-ready
-
-# Start Agno with browser automation
-~/.aidevops/scripts/start-agno-stack.sh
-
-# Agents can now:
-# - Analyze social media strategies from converted documents
-# - Automate engagement based on documented guidelines
-# - Generate reports and analytics
-# - Optimize automation based on performance data
-```
-
-### **Version Management Integration**
-
-```bash
-# Get current framework version for agent context
-VERSION=$(bash .agent/scripts/version-manager.sh get)
-
-# Agents are aware of framework version and capabilities
-# Can provide version-specific automation features
-```
-
-## 📈 **Benefits for AI DevOps**
-
-- **🤖 Intelligent Automation**: AI-powered decision making for web interactions
-- **🔒 Ethical Compliance**: Built-in safety guidelines and rate limiting
-- **📊 Analytics Integration**: Comprehensive tracking and reporting
-- **🔄 Framework Integration**: Seamless workflow with existing tools
-- **🎯 Professional Focus**: Specialized agents for business use cases
-- **🛡️ Security First**: Secure credential management and privacy protection
-
----
-
-**Automate your web presence responsibly with AI-powered browser automation!** 🌐🤖✨
-
-**Remember**: Always use automation ethically and in compliance with platform terms of service. Focus on adding genuine value and maintaining authentic professional relationships.
+- **Respect ToS**: Check site terms before automating
+- **Rate limit**: 2-5 second delays between actions
+- **No spam**: Don't automate mass messaging or fake engagement
+- **Legitimate use**: Focus on genuine value, not manipulation
+- **Privacy**: Don't scrape personal data without consent
