@@ -102,16 +102,22 @@ epoch_to_date() {
 # Output: Loop info string if active, empty if not
 get_ralph_loop_status() {
     local worktree_path="$1"
-    local state_file="$worktree_path/.claude/ralph-loop.local.md"
+    # Check new location first, then legacy
+    local state_file="$worktree_path/.agent/loop-state/ralph-loop.local.md"
+    local state_file_legacy="$worktree_path/.claude/ralph-loop.local.md"
     
-    if [[ -f "$state_file" ]]; then
+    local active_file=""
+    [[ -f "$state_file" ]] && active_file="$state_file"
+    [[ -z "$active_file" && -f "$state_file_legacy" ]] && active_file="$state_file_legacy"
+    
+    if [[ -n "$active_file" ]]; then
         local iteration
         local max_iterations
         local started_at
         
-        iteration=$(grep '^iteration:' "$state_file" 2>/dev/null | sed 's/iteration: *//')
-        max_iterations=$(grep '^max_iterations:' "$state_file" 2>/dev/null | sed 's/max_iterations: *//')
-        started_at=$(grep '^started_at:' "$state_file" 2>/dev/null | sed 's/started_at: *//' | sed 's/^"\(.*\)"$/\1/')
+        iteration=$(grep '^iteration:' "$active_file" 2>/dev/null | sed 's/iteration: *//')
+        max_iterations=$(grep '^max_iterations:' "$active_file" 2>/dev/null | sed 's/max_iterations: *//')
+        started_at=$(grep '^started_at:' "$active_file" 2>/dev/null | sed 's/started_at: *//' | sed 's/^"\(.*\)"$/\1/')
         
         if [[ "$max_iterations" == "0" ]]; then
             echo "iteration $iteration (unlimited)"

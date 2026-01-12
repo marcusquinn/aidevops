@@ -23,10 +23,14 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.claude}"
+readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.agent/loop-state}"
 readonly LOOP_STATE_FILE="${LOOP_STATE_DIR}/loop-state.json"
 readonly LOOP_RECEIPTS_DIR="${LOOP_STATE_DIR}/receipts"
 readonly LOOP_REANCHOR_FILE="${LOOP_STATE_DIR}/re-anchor.md"
+
+# Legacy state directory (for backward compatibility during migration)
+# shellcheck disable=SC2034  # Exported for use by sourcing scripts
+readonly LOOP_LEGACY_STATE_DIR=".claude"
 
 # Colors (exported for use by sourcing scripts)
 export LC_RED='\033[0;31m'
@@ -239,6 +243,65 @@ loop_cleanup() {
 }
 
 # =============================================================================
+# Guardrails System (Signs)
+# =============================================================================
+
+# Generate guardrails from recent failures
+# Transforms FAILED_APPROACH memories into actionable "signs" that prevent
+# repeating the same mistakes. Limited to N most recent to control token cost.
+#
+# Arguments:
+#   $1 - max_signs (default: 5)
+# Returns: 0
+# Output: Guardrails markdown to stdout
+loop_generate_guardrails() {
+    local max_signs="${1:-5}"
+    local task_id
+    task_id=$(loop_get_state ".task_id")
+    
+    # Check if memory helper is available
+    if ! command -v ~/.aidevops/agents/scripts/memory-helper.sh &>/dev/null; then
+        echo "No guardrails (memory system unavailable)"
+        return 0
+    fi
+    
+    # Query memory for FAILED_APPROACH entries from this loop
+    local failures
+    failures=$(~/.aidevops/agents/scripts/memory-helper.sh recall \
+        "failure retry loop $task_id" \
+        --limit "$max_signs" \
+        --format json 2>/dev/null || echo "[]")
+    
+    # Check if we have any failures
+    local count
+    count=$(echo "$failures" | jq 'length' 2>/dev/null || echo "0")
+    
+    if [[ "$count" == "0" || "$count" == "null" ]]; then
+        echo "No guardrails yet (no recorded failures)."
+        return 0
+    fi
+    
+    # Transform failures to guardrail format
+    # Format: "Failed: X. Reason: Y" -> sign with trigger and instruction
+    echo "$failures" | jq -r '
+        .[] | 
+        "### Sign: " + (
+            .content // .memory // "" | 
+            gsub("^Failed: "; "") | 
+            split(". Reason:")[0] // "unknown issue"
+        ) + "\n" +
+        "- **Trigger**: Before similar operation\n" +
+        "- **Instruction**: " + (
+            .content // .memory // "" | 
+            split(". Reason:")[1] // "Avoid this approach" |
+            gsub("^ "; "")
+        ) + "\n"
+    ' 2>/dev/null || echo "No guardrails (parse error)."
+    
+    return 0
+}
+
+# =============================================================================
 # Re-Anchor System
 # =============================================================================
 
@@ -272,11 +335,32 @@ loop_generate_reanchor() {
         todo_in_progress=$(grep -A10 "## In Progress" TODO.md 2>/dev/null | head -15 || echo "No tasks in progress")
     fi
     
+    # Extract single next task (the "pin" concept from Loom)
+    # Focus on ONE task per iteration to reduce context drift
+    local next_task=""
+    if [[ -f "TODO.md" ]]; then
+        # Get first unchecked task from In Progress section, or first from Backlog
+        next_task=$(awk '
+            /^## In Progress/,/^##/ { if (/^- \[ \]/) { print; exit } }
+        ' TODO.md 2>/dev/null || echo "")
+        
+        if [[ -z "$next_task" ]]; then
+            next_task=$(awk '
+                /^## Backlog/,/^##/ { if (/^- \[ \]/) { print; exit } }
+            ' TODO.md 2>/dev/null || echo "")
+        fi
+    fi
+    
     # Get relevant memories
     local memories=""
     if [[ -n "$task_keywords" ]] && command -v ~/.aidevops/agents/scripts/memory-helper.sh &>/dev/null; then
         memories=$(~/.aidevops/agents/scripts/memory-helper.sh recall "$task_keywords" --limit 5 --format text 2>/dev/null || echo "No relevant memories")
     fi
+    
+    # Generate guardrails from failures (the "signs" concept)
+    # These are actionable rules derived from past failures - "same mistake never happens twice"
+    local guardrails
+    guardrails=$(loop_generate_guardrails 5)
     
     # Get latest receipt
     local latest_receipt=""
@@ -286,7 +370,7 @@ loop_generate_reanchor() {
         latest_receipt=$(cat "$latest_receipt_file")
     fi
     
-    # Generate re-anchor prompt
+    # Generate re-anchor prompt with single-task focus
     cat > "$LOOP_REANCHOR_FILE" << EOF
 # Re-Anchor Context (MANDATORY - Read Before Any Work)
 
@@ -295,6 +379,12 @@ loop_generate_reanchor() {
 ## Original Task
 
 $prompt
+
+## FOCUS: Single Next Task
+
+Choose the single most important next action. Do NOT try to do everything at once.
+
+${next_task:-"No specific task found in TODO.md - work on the original task above."}
 
 ## Current State
 
@@ -313,6 +403,10 @@ $git_log
 $todo_in_progress
 \`\`\`
 
+## Guardrails (Do Not Repeat These Mistakes)
+
+$guardrails
+
 ## Relevant Memories
 
 $memories
@@ -326,7 +420,7 @@ ${latest_receipt:-"First iteration - no previous receipt"}
 ---
 
 **IMPORTANT:** Re-read this context before proceeding. Do NOT rely on conversation history.
-Continue working on the task. When complete, output: <promise>$(loop_get_state ".completion_promise")</promise>
+Focus on ONE task per iteration. When the overall task is complete, output: <promise>$(loop_get_state ".completion_promise")</promise>
 EOF
     
     cat "$LOOP_REANCHOR_FILE"
@@ -512,7 +606,10 @@ loop_track_attempt() {
     return 0
 }
 
-# Check if task should be blocked
+# Check if task should be blocked (gutter detection)
+# When the same task fails repeatedly, it's likely "in the gutter" - 
+# adding more iterations won't help, need a different approach.
+#
 # Arguments:
 #   $1 - max_attempts (default: 5)
 #   $2 - task_id (optional)
@@ -523,6 +620,13 @@ loop_should_block() {
     
     local attempts
     attempts=$(jq -r ".attempts[\"$task_id\"] // 0" "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
+    
+    # Warn at 80% of max attempts (gutter warning)
+    local warn_threshold=$(( (max_attempts * 4) / 5 ))
+    if [[ "$attempts" -ge "$warn_threshold" && "$attempts" -lt "$max_attempts" ]]; then
+        loop_log_warn "Possible gutter: $attempts/$max_attempts attempts on task $task_id"
+        loop_log_warn "Consider: different approach, smaller scope, or human review"
+    fi
     
     [[ "$attempts" -ge "$max_attempts" ]]
 }

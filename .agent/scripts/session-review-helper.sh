@@ -89,12 +89,18 @@ get_todo_status() {
 # Check for Ralph loop
 get_ralph_status() {
     local project_root="$1"
-    local ralph_file="$project_root/.claude/ralph-loop.local.md"
+    # Check new location first, then legacy
+    local ralph_file="$project_root/.agent/loop-state/ralph-loop.local.md"
+    local ralph_file_legacy="$project_root/.claude/ralph-loop.local.md"
     
-    if [[ -f "$ralph_file" ]]; then
+    local active_file=""
+    [[ -f "$ralph_file" ]] && active_file="$ralph_file"
+    [[ -z "$active_file" && -f "$ralph_file_legacy" ]] && active_file="$ralph_file_legacy"
+    
+    if [[ -n "$active_file" ]]; then
         local iteration max_iter
-        iteration=$(grep '^iteration:' "$ralph_file" 2>/dev/null | cut -d: -f2 | tr -d ' ' || echo "0")
-        max_iter=$(grep '^max_iterations:' "$ralph_file" 2>/dev/null | cut -d: -f2 | tr -d ' ' || echo "unlimited")
+        iteration=$(grep '^iteration:' "$active_file" 2>/dev/null | cut -d: -f2 | tr -d ' ' || echo "0")
+        max_iter=$(grep '^max_iterations:' "$active_file" 2>/dev/null | cut -d: -f2 | tr -d ' ' || echo "unlimited")
         echo "active:true,iteration:$iteration,max:$max_iter"
     else
         echo "active:false"

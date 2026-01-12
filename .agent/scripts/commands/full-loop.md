@@ -63,7 +63,7 @@ git status --short
 
 This will:
 1. Initialize the Ralph loop for task development
-2. Set up state tracking in `.claude/full-loop.local.md`
+2. Set up state tracking in `.agent/loop-state/full-loop.local.md`
 3. Begin iterating on the task
 
 ### Step 3: Task Development (Ralph Loop)

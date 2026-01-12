@@ -19,10 +19,25 @@ Each plan includes:
 - **Time Estimate**: `~2w (ai:1w test:0.5w read:0.5w)`
 - **Timestamps**: `logged:`, `started:`, `completed:`
 - **Dependencies**: `blocked-by:p001` or `blocks:p003`
+- **Linkage (The Pin)**: File:line references for search hit-rate (see below)
 - **Progress**: Timestamped checkboxes with estimates and actuals
 - **Decision Log**: Key decisions with rationale
 - **Surprises & Discoveries**: Unexpected findings
 - **Outcomes & Retrospective**: Results and lessons (when complete)
+
+### Linkage (The Pin)
+
+Based on [Loom's spec-as-lookup-table pattern](https://ghuntley.com/ralph/), each plan should include a Linkage section that functions as a lookup table for AI search:
+
+| Concept | Files | Lines | Synonyms |
+|---------|-------|-------|----------|
+| {concept} | {file path} | {line range} | {related terms} |
+
+**Why this matters:**
+- Reduces hallucination by providing explicit anchors
+- Improves search hit-rate with synonyms
+- Points to exact file hunks for context
+- Prevents AI from inventing when it should reference
 
 ## Active Plans
 
@@ -64,6 +79,13 @@ Each plan includes:
 #### Purpose
 
 Brief description of why this work matters.
+
+#### Linkage (The Pin)
+
+| Concept | Files | Lines | Synonyms |
+|---------|-------|-------|----------|
+| {main concept} | src/path/file.ts | 45-120 | {term1}, {term2} |
+| {related concept} | src/path/other.ts | 12-89 | {term3}, {term4} |
 
 #### Progress
 
