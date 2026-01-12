@@ -1,0 +1,20 @@
+{
+  "chrome_profile_dir": "~/.aidevops/.agent-workspace/chrome-gsc-profile",
+  "default_sitemap_path": "sitemap.xml",
+  "screenshot_dir": "/tmp/gsc-screenshots",
+  "timeout_ms": 60000,
+  "headless": false,
+  "notes": {
+    "chrome_profile": "Persistent Chrome profile preserves Google login between sessions",
+    "first_time_setup": "Run 'gsc-sitemap-helper.sh login' to authenticate with Google",
+    "sitemap_format": "Script uses full URL format: https://www.domain.com/sitemap.xml",
+    "screenshots": "Screenshots saved for verification at each step",
+    "headless_mode": "Set to true after initial login for automated runs",
+    "requirements": [
+      "Node.js and npm installed",
+      "Playwright: npm install playwright",
+      "Chrome browser installed",
+      "Domain verified in Google Search Console"
+    ]
+  }
+}

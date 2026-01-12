@@ -372,7 +372,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 |--------|---------|---------------|
 | `aidevops/` | Framework internals - extending aidevops, adding MCPs, architecture decisions | setup, architecture, add-new-mcp-to-aidevops, troubleshooting, mcp-integrations |
 | `memory/` | Cross-session memory - SQLite FTS5 storage, /remember and /recall commands | README (system docs) |
-| `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring | dataforseo, serper, google-search-console, site-crawler, eeat-score, domain-research |
+| `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring, sitemap submission | dataforseo, serper, google-search-console, gsc-sitemaps, site-crawler, eeat-score, domain-research |
 | `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice | guidelines |
 | `tools/content/` | Content tools - summarization, extraction, processing | summarize |
 | `tools/social-media/` | Social media tools - X/Twitter CLI, posting, reading | bird |
@@ -457,6 +457,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | Browser automation | `tools/browser/stagehand.md` or `tools/browser/playwright.md` |
 | WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
+| Sitemap submission | `seo/gsc-sitemaps.md` |
 | MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` |
 | Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |
 | Database migrations | `workflows/sql-migrations.md` |
