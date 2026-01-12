@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.51.0] - 2026-01-12
+
+### Added
+
+- FluentCRM MCP integration for sales and marketing automation (#64)
+- Ralph loop guardrails system - failures become actionable "signs" (#65)
+- Single-task extraction in re-anchor prompts (Loom's "pin" concept) (#65)
+- Linkage section in plans-template.md for spec-as-lookup-table pattern (#65)
+
+### Changed
+
+- Loop state directory migrated from `.claude/` to `.agent/loop-state/` (backward compatible) (#65)
+- Ralph loop documentation updated with context pollution prevention philosophy (#65)
+- Chrome DevTools docs: add individual network request throttling (#66)
+- Linter thresholds improved and preflight issues fixed (#62)
+- Legal: change governing law to Jersey, add TERMS.md (#62)
+
+### Fixed
+
+- Add missing return statements to shell functions (SonarCloud S7682) (#63)
+
 ## [2.50.0] - 2026-01-12
 
 ### Added
