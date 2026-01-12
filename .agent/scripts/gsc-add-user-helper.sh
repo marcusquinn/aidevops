@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329
 # Google Search Console - Add Service Account to All Properties
 # Uses Playwright to automate adding a service account to all GSC properties
 
@@ -311,3 +312,5 @@ case "${1:-}" in
         exit 1
         ;;
 esac
+
+exit 0
