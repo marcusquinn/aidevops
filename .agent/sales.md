@@ -231,7 +231,7 @@ fluentcrm_create_smart_link with:
 3. **Convert to invoice** via QuickFile integration
 4. **Track payment** status
 
-See `services/accounting/quickfile.md` for invoice generation.
+See `.agent/services/accounting/quickfile.md` for invoice generation.
 
 ## Sales Reporting
 
