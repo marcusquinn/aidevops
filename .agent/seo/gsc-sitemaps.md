@@ -29,20 +29,22 @@ tools:
 
 ```bash
 # Submit sitemap for single domain
-gsc-sitemap-helper.sh submit example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
 
 # Submit sitemaps for multiple domains
-gsc-sitemap-helper.sh submit example.com example.net example.org
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com example.net example.org
 
 # Submit from file (one domain per line)
-gsc-sitemap-helper.sh submit --file domains.txt
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt
 
 # Check sitemap status
-gsc-sitemap-helper.sh status example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
 
 # List all sitemaps for a domain
-gsc-sitemap-helper.sh list example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh list example.com
 ```
+
+**Note**: Add `~/.aidevops/agents/scripts` to your PATH for shorter commands, or use the full path as shown above.
 
 **Prerequisites**:
 - Domain verified in Google Search Console
@@ -140,19 +142,19 @@ Store in `~/.config/aidevops/gsc-config.json`:
 1. **Install dependencies**:
 
    ```bash
-   gsc-sitemap-helper.sh setup
+   ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh setup
    ```
 
 2. **Login to Google** (first run opens browser for manual login):
 
    ```bash
-   gsc-sitemap-helper.sh login
+   ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login
    ```
 
 3. **Verify access**:
 
    ```bash
-   gsc-sitemap-helper.sh list example.com
+   ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh list example.com
    ```
 
 ## Usage Examples

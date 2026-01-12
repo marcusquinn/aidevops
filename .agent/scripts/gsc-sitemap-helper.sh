@@ -91,12 +91,24 @@ ensure_playwright() {
         return 1
     fi
     
-    # Check if playwright is available
-    if ! npx playwright --version &> /dev/null 2>&1; then
-        log_info "Installing Playwright..."
-        npm install playwright
+    # Check if playwright is available in WORK_DIR
+    if [[ ! -d "${WORK_DIR}/node_modules/playwright" ]]; then
+        log_info "Installing Playwright in ${WORK_DIR}..."
+        # Install in WORK_DIR to avoid polluting other projects
+        npm --prefix "${WORK_DIR}" install playwright > /dev/null 2>&1 || {
+            log_error "Failed to install Playwright"
+            return 1
+        }
     fi
     return 0
+}
+
+# Sanitize domain for safe embedding in JavaScript
+sanitize_domain() {
+    local domain="$1"
+    # Remove any characters that could break JS string literals
+    # Allow only alphanumeric, dots, and hyphens (valid domain chars)
+    echo "$domain" | tr -cd 'a-zA-Z0-9.-'
 }
 
 create_submit_script() {
@@ -227,8 +239,9 @@ async function main() {
                 continue;
             }
             
-            // Fill with full URL
-            const fullSitemapUrl = \`https://www.\${domain}/\${SITEMAP_PATH}\`;
+            // Fill with full URL - use domain as-is (don't force www.)
+            // GSC accepts both www and non-www depending on how the property is verified
+            const fullSitemapUrl = \`https://\${domain}/\${SITEMAP_PATH}\`;
             console.log(\`Found input, filling \${fullSitemapUrl}...\`);
             await input.click();
             await page.waitForTimeout(300);
@@ -435,6 +448,10 @@ cmd_submit() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sitemap)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--sitemap requires a value"
+                    return 1
+                fi
                 sitemap_path="$2"
                 shift 2
                 ;;
@@ -447,10 +464,22 @@ cmd_submit() {
                 shift
                 ;;
             --timeout)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--timeout requires a value"
+                    return 1
+                fi
+                if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                    log_error "--timeout must be a number (milliseconds)"
+                    return 1
+                fi
                 timeout="$2"
                 shift 2
                 ;;
             --file)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--file requires a value"
+                    return 1
+                fi
                 file="$2"
                 shift 2
                 ;;
@@ -463,7 +492,8 @@ cmd_submit() {
                 return 1
                 ;;
             *)
-                domains+=("$1")
+                # Sanitize domain input
+                domains+=("$(sanitize_domain "$1")")
                 shift
                 ;;
         esac
@@ -486,13 +516,22 @@ cmd_submit() {
         return 1
     fi
     
-    # Convert domains array to JSON
-    local domains_json="["
-    for i in "${!domains[@]}"; do
-        [[ $i -gt 0 ]] && domains_json+=","
-        domains_json+="\"${domains[$i]}\""
-    done
-    domains_json+="]"
+    # Convert domains array to JSON safely using jq
+    local domains_json
+    if command -v jq &> /dev/null; then
+        domains_json=$(printf '%s\n' "${domains[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+    else
+        # Fallback: manual construction with basic escaping
+        domains_json="["
+        for i in "${!domains[@]}"; do
+            [[ $i -gt 0 ]] && domains_json+=","
+            # Escape quotes and backslashes
+            local escaped_domain="${domains[$i]//\\/\\\\}"
+            escaped_domain="${escaped_domain//\"/\\\"}"
+            domains_json+="\"${escaped_domain}\""
+        done
+        domains_json+="]"
+    fi
     
     ensure_directories
     ensure_playwright || return 1

@@ -179,19 +179,19 @@ Use `seo/gsc-sitemaps.md` for automated sitemap submissions:
 
 ```bash
 # Submit sitemap for single domain
-gsc-sitemap-helper.sh submit example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
 
 # Submit for multiple domains
-gsc-sitemap-helper.sh submit example.com example.net example.org
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com example.net example.org
 
 # Submit from file
-gsc-sitemap-helper.sh submit --file domains.txt
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt
 
 # Check status
-gsc-sitemap-helper.sh status example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
 ```
 
-Uses Playwright browser automation with persistent Chrome profile. First-time setup requires `gsc-sitemap-helper.sh login` to authenticate.
+Uses Playwright browser automation with persistent Chrome profile. First-time setup requires `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login` to authenticate.
 
 ### Content Optimization
 
