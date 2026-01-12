@@ -203,6 +203,92 @@ migrate_old_backups() {
     return 0
 }
 
+# Migrate loop state from .claude/ to .agent/loop-state/ in user projects
+# This handles the breaking change from v2.51.0 where loop state directory moved
+# The migration is non-destructive: moves files, doesn't delete originals until confirmed
+migrate_loop_state_directories() {
+    print_info "Checking for legacy loop state directories..."
+    
+    local migrated=0
+    local git_dirs=()
+    
+    # Find Git repositories in common locations
+    # Check ~/Git/ and current directory's parent
+    for search_dir in "$HOME/Git" "$(dirname "$(pwd)")"; do
+        if [[ -d "$search_dir" ]]; then
+            while IFS= read -r -d '' git_dir; do
+                git_dirs+=("$(dirname "$git_dir")")
+            done < <(find "$search_dir" -maxdepth 3 -type d -name ".git" -print0 2>/dev/null)
+        fi
+    done
+    
+    for repo_dir in "${git_dirs[@]}"; do
+        local old_state_dir="$repo_dir/.claude"
+        local new_state_dir="$repo_dir/.agent/loop-state"
+        
+        # Skip if no old state directory
+        [[ ! -d "$old_state_dir" ]] && continue
+        
+        # Check for loop state files in old location
+        local has_loop_state=false
+        if [[ -f "$old_state_dir/ralph-loop.local.md" ]] || \
+           [[ -f "$old_state_dir/loop-state.json" ]] || \
+           [[ -d "$old_state_dir/receipts" ]]; then
+            has_loop_state=true
+        fi
+        
+        [[ "$has_loop_state" != "true" ]] && continue
+        
+        print_info "Found legacy loop state in: $repo_dir/.claude/"
+        
+        # Create new directory
+        mkdir -p "$new_state_dir"
+        
+        # Move loop-related files
+        for file in ralph-loop.local.md loop-state.json re-anchor.md guardrails.md; do
+            if [[ -f "$old_state_dir/$file" ]]; then
+                mv "$old_state_dir/$file" "$new_state_dir/"
+                print_info "  Moved $file"
+            fi
+        done
+        
+        # Move receipts directory
+        if [[ -d "$old_state_dir/receipts" ]]; then
+            mv "$old_state_dir/receipts" "$new_state_dir/"
+            print_info "  Moved receipts/"
+        fi
+        
+        # Check if .claude/ is now empty (only has hidden files or nothing)
+        local remaining
+        remaining=$(find "$old_state_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+        
+        if [[ "$remaining" -eq 0 ]]; then
+            rmdir "$old_state_dir" 2>/dev/null && print_info "  Removed empty .claude/"
+        else
+            print_warning "  .claude/ has other files, not removing"
+        fi
+        
+        # Update .gitignore if needed
+        local gitignore="$repo_dir/.gitignore"
+        if [[ -f "$gitignore" ]]; then
+            if ! grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
+                echo ".agent/loop-state/" >> "$gitignore"
+                print_info "  Added .agent/loop-state/ to .gitignore"
+            fi
+        fi
+        
+        ((migrated++))
+    done
+    
+    if [[ $migrated -gt 0 ]]; then
+        print_success "Migrated loop state in $migrated repositories"
+    else
+        print_info "No legacy loop state directories found"
+    fi
+    
+    return 0
+}
+
 # Bootstrap: Clone or update repo if running remotely (via curl)
 bootstrap_repo() {
     # Detect if running from curl (no script directory context)
@@ -2162,6 +2248,7 @@ main() {
     confirm_step "Setup terminal title integration" && setup_terminal_title
     confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
     confirm_step "Migrate old backups to new structure" && migrate_old_backups
+    confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
