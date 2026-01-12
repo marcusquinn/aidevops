@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.50.0] - 2026-01-12
+
+### Added
+
+- add GSC sitemap submission via Playwright automation (#60)
+- add agent-browser support for headless browser automation CLI (#59)
+
+### Changed
+
+- Documentation: update browser-automation guide with agent-browser as default (#61)
 ## [2.49.0] - 2026-01-11
 
 ### Added
