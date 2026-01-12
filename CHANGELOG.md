@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - add missing return statements to shell functions (S7682) (#63)
+
 ## [2.51.0] - 2026-01-12
 
 ### Added
