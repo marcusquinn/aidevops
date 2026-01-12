@@ -70,7 +70,8 @@ grep -A 20 "## In Progress" TODO.md 2>/dev/null || echo "No TODO.md"
 # Check for uncommitted changes
 git status --short
 
-# Check for active Ralph loop
+# Check for active Ralph loop (new location, then legacy)
+test -f .agent/loop-state/ralph-loop.local.md && cat .agent/loop-state/ralph-loop.local.md | head -10 || \
 test -f .claude/ralph-loop.local.md && cat .claude/ralph-loop.local.md | head -10
 
 # Check recent PR activity

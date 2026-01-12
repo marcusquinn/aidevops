@@ -23,10 +23,14 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.claude}"
+readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.agent/loop-state}"
 readonly LOOP_STATE_FILE="${LOOP_STATE_DIR}/loop-state.json"
 readonly LOOP_RECEIPTS_DIR="${LOOP_STATE_DIR}/receipts"
 readonly LOOP_REANCHOR_FILE="${LOOP_STATE_DIR}/re-anchor.md"
+
+# Legacy state directory (for backward compatibility during migration)
+# shellcheck disable=SC2034  # Exported for use by sourcing scripts
+readonly LOOP_LEGACY_STATE_DIR=".claude"
 
 # Colors (exported for use by sourcing scripts)
 export LC_RED='\033[0;31m'
@@ -272,6 +276,22 @@ loop_generate_reanchor() {
         todo_in_progress=$(grep -A10 "## In Progress" TODO.md 2>/dev/null | head -15 || echo "No tasks in progress")
     fi
     
+    # Extract single next task (the "pin" concept from Loom)
+    # Focus on ONE task per iteration to reduce context drift
+    local next_task=""
+    if [[ -f "TODO.md" ]]; then
+        # Get first unchecked task from In Progress section, or first from Backlog
+        next_task=$(awk '
+            /^## In Progress/,/^##/ { if (/^- \[ \]/) { print; exit } }
+        ' TODO.md 2>/dev/null || echo "")
+        
+        if [[ -z "$next_task" ]]; then
+            next_task=$(awk '
+                /^## Backlog/,/^##/ { if (/^- \[ \]/) { print; exit } }
+            ' TODO.md 2>/dev/null || echo "")
+        fi
+    fi
+    
     # Get relevant memories
     local memories=""
     if [[ -n "$task_keywords" ]] && command -v ~/.aidevops/agents/scripts/memory-helper.sh &>/dev/null; then
@@ -286,7 +306,7 @@ loop_generate_reanchor() {
         latest_receipt=$(cat "$latest_receipt_file")
     fi
     
-    # Generate re-anchor prompt
+    # Generate re-anchor prompt with single-task focus
     cat > "$LOOP_REANCHOR_FILE" << EOF
 # Re-Anchor Context (MANDATORY - Read Before Any Work)
 
@@ -295,6 +315,12 @@ loop_generate_reanchor() {
 ## Original Task
 
 $prompt
+
+## FOCUS: Single Next Task
+
+Choose the single most important next action. Do NOT try to do everything at once.
+
+${next_task:-"No specific task found in TODO.md - work on the original task above."}
 
 ## Current State
 
@@ -326,7 +352,7 @@ ${latest_receipt:-"First iteration - no previous receipt"}
 ---
 
 **IMPORTANT:** Re-read this context before proceeding. Do NOT rely on conversation history.
-Continue working on the task. When complete, output: <promise>$(loop_get_state ".completion_promise")</promise>
+Focus on ONE task per iteration. When the overall task is complete, output: <promise>$(loop_get_state ".completion_promise")</promise>
 EOF
     
     cat "$LOOP_REANCHOR_FILE"

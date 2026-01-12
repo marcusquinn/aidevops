@@ -42,9 +42,14 @@ if [[ -f "$SCRIPT_DIR/loop-common.sh" ]]; then
     source "$SCRIPT_DIR/loop-common.sh"
 fi
 
-# Legacy state file (for backward compatibility)
-readonly RALPH_STATE_DIR=".claude"
+# State directories
+readonly RALPH_STATE_DIR=".agent/loop-state"
 readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.md"
+
+# Legacy state directory (for backward compatibility during migration)
+readonly RALPH_LEGACY_STATE_DIR=".claude"
+# shellcheck disable=SC2034  # Defined for documentation, used in status checks
+readonly RALPH_LEGACY_STATE_FILE="${RALPH_LEGACY_STATE_DIR}/ralph-loop.local.md"
 
 # Adaptive timing constants (evidence-based from PR #19 analysis)
 readonly RALPH_DELAY_BASE="${RALPH_DELAY_BASE:-2}"
@@ -580,11 +585,14 @@ show_status_all() {
         if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
             local worktree_path="${BASH_REMATCH[1]}"
             
-            # Check for v2 state
-            local v2_state="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.claude/ralph-loop.local.md"
+            # Check for v2 state (new location first, then legacy)
+            local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
+            local v2_state_legacy="$worktree_path/.claude/loop-state.json"
+            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.md"
+            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.md"
             
-            if [[ -f "$v2_state" ]] || [[ -f "$legacy_state" ]]; then
+            # Check any of the state file locations
+            if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then
                 found_any=true
                 
                 local branch
@@ -598,16 +606,24 @@ show_status_all() {
                 echo -e "${BOLD}$branch${NC}$marker"
                 echo "  Path: $worktree_path"
                 
-                if [[ -f "$v2_state" ]]; then
+                # Determine which state file to read (prefer new location)
+                local active_v2_state=""
+                local active_legacy_state=""
+                [[ -f "$v2_state" ]] && active_v2_state="$v2_state"
+                [[ -z "$active_v2_state" && -f "$v2_state_legacy" ]] && active_v2_state="$v2_state_legacy"
+                [[ -f "$legacy_state" ]] && active_legacy_state="$legacy_state"
+                [[ -z "$active_legacy_state" && -f "$legacy_state_old" ]] && active_legacy_state="$legacy_state_old"
+                
+                if [[ -n "$active_v2_state" ]]; then
                     local iteration max_iterations
-                    iteration=$(jq -r '.iteration // 0' "$v2_state" 2>/dev/null || echo "?")
-                    max_iterations=$(jq -r '.max_iterations // 0' "$v2_state" 2>/dev/null || echo "?")
+                    iteration=$(jq -r '.iteration // 0' "$active_v2_state" 2>/dev/null || echo "?")
+                    max_iterations=$(jq -r '.max_iterations // 0' "$active_v2_state" 2>/dev/null || echo "?")
                     echo "  Mode: v2 (fresh context)"
                     echo "  Iteration: $iteration / $max_iterations"
-                elif [[ -f "$legacy_state" ]]; then
+                elif [[ -n "$active_legacy_state" ]]; then
                     local iteration max_iterations
-                    iteration=$(grep '^iteration:' "$legacy_state" | sed 's/iteration: *//')
-                    max_iterations=$(grep '^max_iterations:' "$legacy_state" | sed 's/max_iterations: *//')
+                    iteration=$(grep '^iteration:' "$active_legacy_state" | sed 's/iteration: *//')
+                    max_iterations=$(grep '^max_iterations:' "$active_legacy_state" | sed 's/max_iterations: *//')
                     echo "  Mode: legacy (same session)"
                     echo "  Iteration: $iteration / $(if [[ "$max_iterations" == "0" ]]; then echo "unlimited"; else echo "$max_iterations"; fi)"
                 fi
@@ -641,18 +657,25 @@ check_other_loops() {
                 continue
             fi
 
-            local v2_state="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.claude/ralph-loop.local.md"
+            # Check all possible state file locations (new and legacy)
+            local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
+            local v2_state_legacy="$worktree_path/.claude/loop-state.json"
+            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.md"
+            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.md"
 
-            if [[ -f "$v2_state" ]] || [[ -f "$legacy_state" ]]; then
+            if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then
                 local branch
                 branch=$(git -C "$worktree_path" branch --show-current 2>/dev/null || echo "unknown")
                 local iteration="?"
                 
                 if [[ -f "$v2_state" ]]; then
                     iteration=$(jq -r '.iteration // 0' "$v2_state" 2>/dev/null || echo "?")
+                elif [[ -f "$v2_state_legacy" ]]; then
+                    iteration=$(jq -r '.iteration // 0' "$v2_state_legacy" 2>/dev/null || echo "?")
                 elif [[ -f "$legacy_state" ]]; then
                     iteration=$(grep '^iteration:' "$legacy_state" | sed 's/iteration: *//')
+                elif [[ -f "$legacy_state_old" ]]; then
+                    iteration=$(grep '^iteration:' "$legacy_state_old" | sed 's/iteration: *//')
                 fi
                 
                 other_loops+=("$branch (iteration $iteration)")

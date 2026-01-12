@@ -184,6 +184,9 @@ test-*.yaml
 .cursor/
 .factory/
 
+# Loop state files (local to each worktree, not committed)
+.agent/loop-state/
+
 # Superset local config
 .superset/
 

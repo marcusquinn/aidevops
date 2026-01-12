@@ -159,7 +159,7 @@ Cancel the active Ralph loop.
 
 ## State File
 
-Ralph stores its state in `.claude/ralph-loop.local.md` (gitignored):
+Ralph stores its state in `.agent/loop-state/ralph-loop.local.md` (gitignored):
 
 ```yaml
 ---
@@ -355,13 +355,13 @@ If your AI CLI doesn't support stop hooks, use the external loop:
 
 ```bash
 # View current iteration
-grep '^iteration:' .claude/ralph-loop.local.md
+grep '^iteration:' .agent/loop-state/ralph-loop.local.md
 
 # View full state
-head -10 .claude/ralph-loop.local.md
+head -10 .agent/loop-state/ralph-loop.local.md
 
 # Check if loop is active
-test -f .claude/ralph-loop.local.md && echo "Active" || echo "Not active"
+test -f .agent/loop-state/ralph-loop.local.md && echo "Active" || echo "Not active"
 ```
 
 ## Multi-Worktree Awareness
@@ -643,7 +643,7 @@ full-loop-helper.sh start "Add new helper script" --no-auto-deploy
 
 ### State Management
 
-The full loop maintains state in `.claude/full-loop.local.md` (gitignored), allowing:
+The full loop maintains state in `.agent/loop-state/full-loop.local.md` (gitignored), allowing:
 
 - Resume after interruption
 - Track current phase
@@ -651,7 +651,7 @@ The full loop maintains state in `.claude/full-loop.local.md` (gitignored), allo
 
 ```bash
 # Check current state
-cat .claude/full-loop.local.md
+cat .agent/loop-state/full-loop.local.md
 
 # Resume from where you left off
 full-loop-helper.sh resume

@@ -31,8 +31,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
-readonly STATE_DIR=".claude"
+readonly STATE_DIR=".agent/loop-state"
 readonly STATE_FILE="${STATE_DIR}/quality-loop.local.md"
+
+# Legacy state directory (for backward compatibility during migration)
+# shellcheck disable=SC2034  # Defined for documentation
+readonly LEGACY_STATE_DIR=".claude"
 
 # Default settings
 readonly DEFAULT_MAX_ITERATIONS=10
