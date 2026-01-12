@@ -111,9 +111,18 @@ sanitize_domain() {
     echo "$domain" | tr -cd 'a-zA-Z0-9.-'
 }
 
+# Sanitize sitemap path for safe embedding in JavaScript
+sanitize_sitemap_path() {
+    local path="$1"
+    # Allow only alphanumeric, dots, hyphens, underscores, and forward slashes
+    # These are valid URL path characters for sitemaps
+    echo "$path" | tr -cd 'a-zA-Z0-9./_-'
+}
+
 create_submit_script() {
     local domains_json="$1"
-    local sitemap_path="$2"
+    local sitemap_path
+    sitemap_path="$(sanitize_sitemap_path "$2")"
     local dry_run="$3"
     local headless="$4"
     local timeout="$5"
@@ -323,7 +332,8 @@ SCRIPT
 }
 
 create_status_script() {
-    local domain="$1"
+    local domain
+    domain="$(sanitize_domain "$1")"
     local chrome_profile
     chrome_profile="$(get_chrome_profile_path)"
     
@@ -506,7 +516,12 @@ cmd_submit() {
             return 1
         fi
         while IFS= read -r line; do
-            [[ -n "$line" && ! "$line" =~ ^# ]] && domains+=("$line")
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^# ]] && continue
+            # Sanitize domain from file
+            local sanitized
+            sanitized="$(sanitize_domain "$line")"
+            [[ -n "$sanitized" ]] && domains+=("$sanitized")
         done < "$file"
     fi
     
