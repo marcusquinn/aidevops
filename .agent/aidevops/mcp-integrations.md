@@ -146,17 +146,19 @@ export FLUENTCRM_API_PASSWORD="your_application_password"
 claude mcp add fluentcrm npx @netflyapp/fluentcrm-mcp-server
 ```
 
-**For OpenCode** - use bash wrapper pattern:
+**For OpenCode** - use bash wrapper pattern (disabled globally, enabled per-agent):
 
 ```json
 {
   "fluentcrm": {
     "type": "local",
     "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && npx @netflyapp/fluentcrm-mcp-server"],
-    "enabled": true
+    "enabled": false
   }
 }
 ```
+
+**Per-Agent Enablement**: The `sales.md` and `marketing.md` agents have `fluentcrm_*: true` in their tools section to enable FluentCRM tools only when those agents are active.
 
 **Available Tools**: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
 

@@ -10,6 +10,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
+  fluentcrm_*: true
 ---
 
 # Marketing - Main Agent

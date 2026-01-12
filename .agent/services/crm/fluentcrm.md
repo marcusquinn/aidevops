@@ -63,19 +63,21 @@ npx @netflyapp/fluentcrm-mcp-server
 
 ### OpenCode Configuration
 
-Add to `~/.config/opencode/opencode.json`:
+Add to `~/.config/opencode/opencode.json` (disabled globally for token efficiency):
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "fluentcrm": {
       "type": "local",
       "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && npx @netflyapp/fluentcrm-mcp-server"],
-      "enabled": true
+      "enabled": false
     }
   }
 }
 ```
+
+**Per-Agent Enablement**: FluentCRM tools are enabled via `fluentcrm_*: true` in the `tools:` section of `sales.md` and `marketing.md` agents. This ensures the MCP is only loaded when those agents are active.
 
 ### Claude Desktop Configuration
 
