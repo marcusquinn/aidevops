@@ -58,6 +58,10 @@ This document provides comprehensive setup and usage instructions for advanced M
 
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 
+### **📧 CRM & Marketing**
+
+- **FluentCRM MCP**: WordPress CRM with contacts, campaigns, automations, and email marketing
+
 ### **📚 Legacy MCP Servers (from MCP-SERVERS.md)**
 
 - **Context7 MCP**: Real-time documentation access for development libraries
@@ -129,6 +133,34 @@ claude mcp add perplexity npx perplexity-mcp@latest
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 claude mcp add google-search-console npx mcp-server-gsc@latest
 ```
+
+### **FluentCRM MCP**
+
+```bash
+# Store credentials in ~/.config/aidevops/mcp-env.sh:
+export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
+export FLUENTCRM_API_USERNAME="your_username"
+export FLUENTCRM_API_PASSWORD="your_application_password"
+
+# For Claude Desktop:
+claude mcp add fluentcrm npx @netflyapp/fluentcrm-mcp-server
+```
+
+**For OpenCode** - use bash wrapper pattern:
+
+```json
+{
+  "fluentcrm": {
+    "type": "local",
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && npx @netflyapp/fluentcrm-mcp-server"],
+    "enabled": true
+  }
+}
+```
+
+**Available Tools**: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
+
+See `services/crm/fluentcrm.md` for detailed documentation.
 
 ## 🔧 **Configuration Examples**
 
