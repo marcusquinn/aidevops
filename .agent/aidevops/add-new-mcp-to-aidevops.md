@@ -42,9 +42,23 @@ tools:
 
 **MCP Tool Enablement Strategy**:
 
-- **Global**: Disabled (`"mcp-name_*": false` in tools section)
-- **Per-Agent**: Enabled only for agents that need it
-- **Rationale**: Context efficiency - each agent only loads needed MCPs
+- **Global Config**: Disabled (`"enabled": false` in opencode.json)
+- **Subagent Only**: Enable `mcp-name_*: true` in the subagent's `tools:` section
+- **Never in Main Agents**: Main agents (sales.md, marketing.md, etc.) reference subagents but never enable MCPs directly
+- **Rationale**: Context efficiency - MCP only loads when subagent is invoked
+
+**Correct Pattern**:
+
+```yaml
+# In services/crm/fluentcrm.md (SUBAGENT) - CORRECT
+tools:
+  fluentcrm_*: true  # MCP enabled here
+
+# In sales.md (MAIN AGENT) - references subagent, no MCP
+tools:
+  read: true
+  # NO fluentcrm_* here - main agents don't enable MCPs
+```
 
 **Related Agents to Call**:
 

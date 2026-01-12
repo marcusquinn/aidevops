@@ -1,0 +1,12 @@
+{
+  "fluentcrm": {
+    "type": "local",
+    "command": [
+      "/bin/bash",
+      "-c",
+      "source ~/.config/aidevops/mcp-env.sh && npx @netflyapp/fluentcrm-mcp-server"
+    ],
+    "enabled": false,
+    "_comment": "Disabled globally. Enabled via fluentcrm_*: true in services/crm/fluentcrm.md subagent."
+  }
+}

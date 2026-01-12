@@ -459,6 +459,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Sitemap submission | `seo/gsc-sitemaps.md` |
+| CRM/email marketing | `services/crm/fluentcrm.md` |
 | MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` |
 | Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |
 | Database migrations | `workflows/sql-migrations.md` |
