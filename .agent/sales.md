@@ -32,9 +32,11 @@ tools:
 
 | Category | Key Tools |
 |----------|-----------|
-| **Contacts** | `fluentcrm_list_contacts`, `fluentcrm_create_contact`, `fluentcrm_find_contact_by_email`, `fluentcrm_update_contact` |
-| **Tags** | `fluentcrm_attach_tag_to_contact`, `fluentcrm_detach_tag_from_contact` |
-| **Lists** | `fluentcrm_attach_contact_to_list`, `fluentcrm_detach_contact_from_list` |
+| **Contacts** | `fluentcrm_list_contacts`, `fluentcrm_get_contact`, `fluentcrm_create_contact`, `fluentcrm_update_contact`, `fluentcrm_delete_contact`, `fluentcrm_find_contact_by_email` |
+| **Tags** | `fluentcrm_list_tags`, `fluentcrm_create_tag`, `fluentcrm_delete_tag`, `fluentcrm_attach_tag_to_contact`, `fluentcrm_detach_tag_from_contact` |
+| **Lists** | `fluentcrm_list_lists`, `fluentcrm_create_list`, `fluentcrm_delete_list`, `fluentcrm_attach_contact_to_list`, `fluentcrm_detach_contact_from_list` |
+| **Campaigns** | `fluentcrm_list_campaigns`, `fluentcrm_create_campaign`, `fluentcrm_pause_campaign`, `fluentcrm_resume_campaign`, `fluentcrm_delete_campaign` |
+| **Smart Links** | `fluentcrm_list_smart_links`, `fluentcrm_create_smart_link`, `fluentcrm_get_smart_link`, `fluentcrm_delete_smart_link` |
 | **Reports** | `fluentcrm_dashboard_stats`, `fluentcrm_custom_fields` |
 
 **Typical Tasks**:
@@ -218,6 +220,7 @@ fluentcrm_attach_tag_to_contact with:
 # Create trackable proposal link
 fluentcrm_create_smart_link with:
 - title: "Proposal - {Company Name}"
+- slug: "proposal-{company-slug}"
 - target_url: proposal URL
 - apply_tags: [tag_id] (numeric ID for 'proposal-viewed' tag)
 ```
