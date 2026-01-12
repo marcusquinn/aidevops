@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add FluentCRM MCP integration for sales and marketing (#64)
+- migrate loop state to .agent/loop-state and enhance re-anchor (#65)
+
+### Changed
+
+- Documentation: update CHANGELOG.md for v2.51.0 release
+- Documentation: add individual network request throttling to Chrome DevTools (#66)
+- Documentation: change governing law to Jersey
+- Documentation: add TERMS.md with liability disclaimers
+
+### Fixed
+
+- add missing return statements to shell functions (S7682) (#63)
+## [2.51.0] - 2026-01-12
+
+### Added
+
 - FluentCRM MCP integration for sales and marketing automation (#64)
 - Ralph loop guardrails system - failures become actionable "signs" (#65)
 - Single-task extraction in re-anchor prompts (Loom's "pin" concept) (#65)
