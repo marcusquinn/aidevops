@@ -73,7 +73,7 @@ aidevops is released under the MIT License. These Terms of Use supplement but do
 
 ## Governing Law
 
-These terms are governed by the laws of the United Kingdom, without regard to conflict of law principles.
+These terms are governed by the laws of the Bailiwick of Jersey, without regard to conflict of law principles.
 
 ## Severability
 
