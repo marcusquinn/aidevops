@@ -158,7 +158,7 @@ claude mcp add fluentcrm npx @netflyapp/fluentcrm-mcp-server
 }
 ```
 
-**Per-Agent Enablement**: The `sales.md` and `marketing.md` agents have `fluentcrm_*: true` in their tools section to enable FluentCRM tools only when those agents are active.
+**Per-Agent Enablement**: The `services/crm/fluentcrm.md` subagent has `fluentcrm_*: true` in its tools section. Main agents (`sales.md`, `marketing.md`) reference this subagent for CRM operations.
 
 **Available Tools**: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
 

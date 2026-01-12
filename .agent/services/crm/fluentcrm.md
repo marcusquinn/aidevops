@@ -9,6 +9,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
+  fluentcrm_*: true
 ---
 
 # FluentCRM MCP Integration
@@ -77,7 +78,7 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
 }
 ```
 
-**Per-Agent Enablement**: FluentCRM tools are enabled via `fluentcrm_*: true` in the `tools:` section of `sales.md` and `marketing.md` agents. This ensures the MCP is only loaded when those agents are active.
+**Per-Agent Enablement**: FluentCRM tools are enabled via `fluentcrm_*: true` in this subagent's `tools:` section. Main agents (`sales.md`, `marketing.md`) reference this subagent for CRM operations, ensuring the MCP is only loaded when needed.
 
 ### Claude Desktop Configuration
 
