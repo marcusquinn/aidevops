@@ -85,6 +85,7 @@ extract_ids_from_json() {
         # Basic fallback - extract id values
         echo "$input" | grep -o '"id":"[^"]*"' | sed 's/"id":"//g; s/"//g'
     fi
+    return 0
 }
 
 #######################################
@@ -120,6 +121,7 @@ CREATE TABLE IF NOT EXISTS learning_access (
 EOF
         log_success "Database initialized"
     fi
+    return 0
 }
 
 #######################################
@@ -128,6 +130,7 @@ EOF
 generate_id() {
     # Use timestamp + random for uniqueness
     echo "mem_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
+    return 0
 }
 
 #######################################
@@ -389,6 +392,7 @@ FROM learnings
 GROUP BY 1
 ORDER BY 1;
 EOF
+    return 0
 }
 
 #######################################
@@ -435,6 +439,7 @@ EOF
     local db_size
     db_size=$(du -h "$MEMORY_DB" | cut -f1)
     log_info "Database size: $db_size"
+    return 0
 }
 
 #######################################
@@ -615,6 +620,7 @@ EXAMPLES:
     # Clean up old unused entries
     memory-helper.sh prune --older-than-days 60 --dry-run
 EOF
+    return 0
 }
 
 #######################################

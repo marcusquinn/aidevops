@@ -41,6 +41,7 @@ find_project_root() {
 # Get current branch
 get_branch() {
     git branch --show-current 2>/dev/null || echo "not-a-git-repo"
+    return 0
 }
 
 # Check if on protected branch
@@ -48,12 +49,14 @@ is_protected_branch() {
     local branch
     branch=$(get_branch)
     [[ "$branch" == "main" || "$branch" == "master" ]]
+    return 0
 }
 
 # Get recent commits
 get_recent_commits() {
     local count="${1:-10}"
     git log --oneline -"$count" 2>/dev/null || echo "No commits"
+    return 0
 }
 
 # Get uncommitted changes count
@@ -62,6 +65,7 @@ get_uncommitted_changes() {
     staged=$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d '[:space:]')
     unstaged=$(git diff --name-only 2>/dev/null | wc -l | tr -d '[:space:]')
     echo "staged:${staged:-0},unstaged:${unstaged:-0}"
+    return 0
 }
 
 # Get TODO.md status
@@ -95,6 +99,7 @@ get_ralph_status() {
     else
         echo "active:false"
     fi
+    return 0
 }
 
 # Get open PRs
@@ -110,6 +115,7 @@ get_pr_status() {
     else
         echo "gh-not-installed"
     fi
+    return 0
 }
 
 # Check workflow adherence
