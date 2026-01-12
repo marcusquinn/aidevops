@@ -61,6 +61,8 @@ FluentCRM provides a self-hosted WordPress CRM with full API access via MCP.
 
 **Environment Setup**:
 
+> **Security Note**: Never commit actual credentials to version control. Store environment variables in `~/.config/aidevops/mcp-env.sh` (600 permissions). Rotate application passwords regularly.
+
 ```bash
 # Add to ~/.config/aidevops/mcp-env.sh
 export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
@@ -68,7 +70,7 @@ export FLUENTCRM_API_USERNAME="your_username"
 export FLUENTCRM_API_PASSWORD="your_application_password"
 ```
 
-See `services/crm/fluentcrm.md` for detailed setup instructions.
+See `.agent/services/crm/fluentcrm.md` for detailed setup instructions.
 
 ## Lead Management
 
@@ -319,4 +321,4 @@ When marketing qualifies a lead:
 
 - FluentCRM Docs: https://fluentcrm.com/docs/
 - FluentCRM REST API: https://rest-api.fluentcrm.com/
-- See `services/crm/fluentcrm.md` for detailed troubleshooting
+- See `.agent/services/crm/fluentcrm.md` for detailed troubleshooting
