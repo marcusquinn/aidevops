@@ -15,10 +15,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; return 0; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; return 0; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; return 0; }
 
 show_help() {
     cat << 'HELP'
@@ -46,6 +46,7 @@ Requirements:
   - Chrome browser with logged-in Google session
   - User must have Owner access to GSC properties
 HELP
+    return 0
 }
 
 get_chrome_profile_path() {
@@ -64,6 +65,7 @@ get_chrome_profile_path() {
             exit 1
             ;;
     esac
+    return 0
 }
 
 ensure_playwright() {
@@ -77,6 +79,7 @@ ensure_playwright() {
         log_info "Installing Playwright..."
         npm install playwright
     fi
+    return 0
 }
 
 create_add_script() {
@@ -182,6 +185,7 @@ async function main() {
 
 main().catch(console.error);
 SCRIPT
+    return 0
 }
 
 create_list_script() {
@@ -216,11 +220,13 @@ async function main() {
 
 main().catch(console.error);
 SCRIPT
+    return 0
 }
 
 run_script() {
     cd "${WORK_DIR}" || exit
     node "${GSC_SCRIPT}"
+    return 0
 }
 
 cmd_add() {
@@ -267,6 +273,7 @@ cmd_add() {
     [[ -n "$excludes" ]] && log_info "Excluding: ${excludes}"
     
     run_script
+    return 0
 }
 
 cmd_list() {
@@ -275,6 +282,7 @@ cmd_list() {
     
     log_info "Listing all GSC properties..."
     run_script
+    return 0
 }
 
 cmd_check() {
@@ -288,6 +296,7 @@ cmd_check() {
     # Use the GSC MCP to check access
     log_info "Checking GSC API access for ${service_account}..."
     log_info "Run: opencode mcp call google-search-console list-sites"
+    return 0
 }
 
 # Main

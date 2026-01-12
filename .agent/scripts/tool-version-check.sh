@@ -120,12 +120,14 @@ get_installed_version() {
     else
         echo "not installed"
     fi
+    return 0
 }
 
 # Get latest npm version
 get_npm_latest() {
     local pkg="$1"
     npm view "$pkg" version 2>/dev/null || echo "unknown"
+    return 0
 }
 
 # Get latest brew version
@@ -136,12 +138,14 @@ get_brew_latest() {
     else
         echo "unknown"
     fi
+    return 0
 }
 
 # Get latest pip version
 get_pip_latest() {
     local pkg="$1"
     pip index versions "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+    return 0
 }
 
 # Compare versions (returns 0 if v1 < v2)
@@ -251,6 +255,7 @@ check_category() {
         IFS='|' read -r category name cmd ver_flag pkg update_cmd <<< "$tool_spec"
         check_tool "$category" "$name" "$cmd" "$ver_flag" "$pkg" "$update_cmd"
     done
+    return 0
 }
 
 # Main

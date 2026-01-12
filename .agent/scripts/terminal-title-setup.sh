@@ -25,10 +25,10 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Logging
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARNING]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARNING]${NC} $*"; return 0; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 # Marker comments for our integration
 MARKER_START="# >>> aidevops terminal-title integration >>>"
@@ -42,24 +42,29 @@ detect_shell() {
     local shell_name
     shell_name=$(basename "${SHELL:-/bin/bash}")
     echo "$shell_name"
+    return 0
 }
 
 has_oh_my_zsh() {
     [[ -d "$HOME/.oh-my-zsh" ]]
+    return 0
 }
 
 has_oh_my_bash() {
     [[ -d "$HOME/.oh-my-bash" ]]
+    return 0
 }
 
 has_starship() {
     command -v starship &>/dev/null
+    return 0
 }
 
 has_powerlevel10k() {
     [[ -d "$HOME/.oh-my-zsh/custom/themes/powerlevel10k" ]] || \
     [[ -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]] || \
     grep -q "powerlevel10k" "$HOME/.zshrc" 2>/dev/null
+    return 0
 }
 
 # =============================================================================
@@ -70,6 +75,7 @@ TABBY_CONFIG_FILE="$HOME/Library/Application Support/tabby/config.yaml"
 
 has_tabby() {
     [[ -f "$TABBY_CONFIG_FILE" ]]
+    return 0
 }
 
 # Check if Tabby has disableDynamicTitle: true (blocks OSC title changes)
@@ -84,9 +90,10 @@ tabby_has_dynamic_title_disabled() {
 tabby_count_disabled_profiles() {
     if [[ ! -f "$TABBY_CONFIG_FILE" ]]; then
         echo "0"
-        return
+        return 0
     fi
     grep -c "disableDynamicTitle: true" "$TABBY_CONFIG_FILE" 2>/dev/null || echo "0"
+    return 0
 }
 
 # Fix Tabby config to allow dynamic titles
@@ -162,6 +169,7 @@ _aidevops_terminal_title() {
     if [[ -n "$title" ]]; then
         print -Pn "\e]0;${title}\a"
     fi
+    return 0
 }
 
 # Override Oh-My-Zsh title variables to use our function
@@ -191,6 +199,7 @@ _aidevops_terminal_title() {
     if [[ -n "$title" ]]; then
         print -Pn "\e]0;${title}\a"
     fi
+    return 0
 }
 
 # Add to precmd hooks
@@ -217,6 +226,7 @@ _aidevops_terminal_title() {
     if [[ -n "$title" ]]; then
         echo -ne "\033]0;${title}\007"
     fi
+    return 0
 }
 
 # Add to PROMPT_COMMAND
@@ -243,6 +253,7 @@ function _aidevops_terminal_title --on-event fish_prompt
     end
 end
 EOF
+    return 0
 }
 
 # =============================================================================
@@ -270,11 +281,13 @@ get_rc_file() {
             echo ""
             ;;
     esac
+    return 0
 }
 
 is_installed() {
     local rc_file="$1"
     [[ -f "$rc_file" ]] && grep -q "$MARKER_START" "$rc_file"
+    return 0
 }
 
 remove_integration() {
@@ -460,6 +473,7 @@ cmd_status() {
         log_warn "Terminal title integration is NOT installed"
         echo "Run: terminal-title-setup.sh install"
     fi
+    return 0
 }
 
 cmd_help() {
@@ -499,6 +513,7 @@ EXAMPLES:
     terminal-title-setup.sh uninstall
 
 EOF
+    return 0
 }
 
 # =============================================================================

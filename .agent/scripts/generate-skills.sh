@@ -60,18 +60,22 @@ done
 
 log_info() {
     echo -e "${BLUE}$1${NC}"
+    return 0
 }
 
 log_success() {
     echo -e "${GREEN}✓${NC} $1"
+    return 0
 }
 
 log_warning() {
     echo -e "${YELLOW}⚠${NC} $1"
+    return 0
 }
 
 log_error() {
     echo -e "${RED}✗${NC} $1"
+    return 0
 }
 
 # Extract frontmatter field from markdown file
@@ -93,6 +97,7 @@ extract_frontmatter_field() {
             exit
         }
     ' "$file"
+    return 0
 }
 
 # Extract description from file - tries frontmatter first, then first heading
@@ -128,6 +133,7 @@ extract_description() {
 to_skill_name() {
     local name="$1"
     echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g'
+    return 0
 }
 
 # Capitalize first letter (portable)
@@ -138,6 +144,7 @@ capitalize() {
     first=$(echo "$str" | cut -c1 | tr '[:lower:]' '[:upper:]')
     rest=$(echo "$str" | cut -c2-)
     echo "${first}${rest}"
+    return 0
 }
 
 # Generate SKILL.md content for a folder with parent .md
@@ -188,6 +195,7 @@ generate_folder_skill() {
         echo "## Subskills"
         echo "$subskills"
     fi
+    return 0
 }
 
 # Generate SKILL.md content for a leaf .md file
@@ -216,6 +224,7 @@ generate_leaf_skill() {
     echo "# ${title}"
     echo ""
     echo "See [${filename}.md](${relative_path}) for full instructions."
+    return 0
 }
 
 # =============================================================================

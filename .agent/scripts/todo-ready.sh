@@ -71,6 +71,7 @@ parse_tasks() {
             echo "READY|$task_id|$task_desc|$task_est|"
         fi
     done < "$todo_file"
+    return 0
 }
 
 # Output as text
@@ -108,6 +109,7 @@ output_text() {
     echo "Blocked: $blocked_count | In Progress: $in_progress_count"
     echo ""
     echo "Start work with: \"Let's work on [task-id]\""
+    return 0
 }
 
 # Output as verbose
@@ -157,6 +159,7 @@ output_verbose() {
                 ;;
         esac
     done
+    return 0
 }
 
 # Output as JSON
@@ -203,6 +206,7 @@ output_json() {
   }
 }
 EOF
+    return 0
 }
 
 # Main

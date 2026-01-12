@@ -15,10 +15,10 @@ readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+print_info() { echo -e "${BLUE}[INFO]${NC} $1"; return 0; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; return 0; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; return 0; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; return 0; }
 
 DRY_RUN=false
 TARGET_FILE=""
@@ -105,6 +105,7 @@ find_missing_defaults() {
         }
     }
     ' "$file"
+    return 0
 }
 
 # Add default case before esac

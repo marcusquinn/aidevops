@@ -42,20 +42,24 @@ verbose=false
 
 log_info() {
     echo -e "${BLUE}[ralph-upstream]${NC} $1"
+    return 0
 }
 
 log_success() {
     echo -e "${GREEN}[ralph-upstream]${NC} $1"
+    return 0
 }
 
 log_warning() {
     echo -e "${YELLOW}[ralph-upstream]${NC} $1"
+    return 0
 }
 
 log_verbose() {
     if [[ "$verbose" == "true" ]]; then
         echo -e "${BLUE}[ralph-upstream]${NC} $1"
     fi
+    return 0
 }
 
 # =============================================================================
@@ -64,6 +68,7 @@ log_verbose() {
 
 ensure_cache_dir() {
     mkdir -p "$CACHE_DIR"
+    return 0
 }
 
 is_cache_valid() {
@@ -87,12 +92,14 @@ read_cache() {
     if [[ -f "$CACHE_FILE" ]]; then
         cat "$CACHE_FILE"
     fi
+    return 0
 }
 
 write_cache() {
     local data="$1"
     ensure_cache_dir
     echo "$data" > "$CACHE_FILE"
+    return 0
 }
 
 # =============================================================================
@@ -116,6 +123,7 @@ get_file_sha() {
     local filename="$2"
     
     echo "$json" | jq -r ".[] | select(.name == \"$filename\") | .sha" 2>/dev/null || echo ""
+    return 0
 }
 
 fetch_file_content() {
@@ -123,6 +131,7 @@ fetch_file_content() {
     local url="https://raw.githubusercontent.com/${UPSTREAM_REPO}/main/${UPSTREAM_PATH}/${filename}"
     
     curl -sf "$url" 2>/dev/null || echo ""
+    return 0
 }
 
 # =============================================================================
@@ -133,6 +142,7 @@ extract_version() {
     local content="$1"
     # Try to extract version from plugin.json or package.json
     echo "$content" | jq -r '.version // empty' 2>/dev/null || echo "unknown"
+    return 0
 }
 
 compare_implementations() {
@@ -190,6 +200,7 @@ compare_implementations() {
     fi
     
     echo "$changes_found"
+    return 0
 }
 
 # =============================================================================
@@ -284,6 +295,7 @@ DESCRIPTION:
 UPSTREAM:
   https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum
 EOF
+    return 0
 }
 
 # =============================================================================
