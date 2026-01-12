@@ -58,6 +58,10 @@ This document provides comprehensive setup and usage instructions for advanced M
 
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 
+### **📧 CRM & Marketing**
+
+- **FluentCRM MCP**: WordPress CRM with contacts, campaigns, automations, and email marketing
+
 ### **📚 Legacy MCP Servers (from MCP-SERVERS.md)**
 
 - **Context7 MCP**: Real-time documentation access for development libraries
@@ -129,6 +133,61 @@ claude mcp add perplexity npx perplexity-mcp@latest
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 claude mcp add google-search-console npx mcp-server-gsc@latest
 ```
+
+### **FluentCRM MCP**
+
+**Note**: The FluentCRM MCP server is not published to npm. It requires cloning and building locally.
+
+```bash
+# 1. Clone and build the MCP server
+mkdir -p ~/.local/share/mcp-servers
+cd ~/.local/share/mcp-servers
+git clone https://github.com/netflyapp/fluentcrm-mcp-server.git
+cd fluentcrm-mcp-server
+npm install
+npm run build
+
+# 2. Store credentials in ~/.config/aidevops/mcp-env.sh:
+export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
+export FLUENTCRM_API_USERNAME="your_username"
+export FLUENTCRM_API_PASSWORD="your_application_password"
+```
+
+**For OpenCode** - use bash wrapper pattern (disabled globally, enabled per-agent):
+
+```json
+{
+  "fluentcrm": {
+    "type": "local",
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
+    "enabled": false
+  }
+}
+```
+
+**For Claude Desktop**:
+
+```json
+{
+  "mcpServers": {
+    "fluentcrm": {
+      "command": "node",
+      "args": ["~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
+      "env": {
+        "FLUENTCRM_API_URL": "https://your-domain.com/wp-json/fluent-crm/v2",
+        "FLUENTCRM_API_USERNAME": "your_username",
+        "FLUENTCRM_API_PASSWORD": "your_application_password"
+      }
+    }
+  }
+}
+```
+
+**Per-Agent Enablement**: The `services/crm/fluentcrm.md` subagent has `fluentcrm_*: true` in its tools section. Main agents (`sales.md`, `marketing.md`) reference this subagent for CRM operations.
+
+**Available Tools**: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
+
+See `services/crm/fluentcrm.md` for detailed documentation.
 
 ## 🔧 **Configuration Examples**
 

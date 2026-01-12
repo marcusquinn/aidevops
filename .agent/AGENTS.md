@@ -357,8 +357,8 @@ See `workflows/session-manager.md` for full session lifecycle guidance.
 | `seo.md` | SEO optimization and analysis |
 | `content.md` | Content creation workflows |
 | `research.md` | Research and analysis tasks |
-| `marketing.md` | Marketing strategy |
-| `sales.md` | Sales operations |
+| `marketing.md` | Marketing strategy, email campaigns, automation (FluentCRM) |
+| `sales.md` | Sales operations, CRM, pipeline management (FluentCRM) |
 | `legal.md` | Legal compliance |
 | `accounts.md` | Financial operations |
 | `health.md` | Health and wellness |
@@ -396,6 +396,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
 | `services/email/` | Email services - transactional email, deliverability | ses |
 | `services/communications/` | Communications platform - SMS, voice, WhatsApp, verify, recordings | twilio, telfon |
+| `services/crm/` | CRM integration - contact management, email marketing, automation | fluentcrm |
 | `services/accounting/` | Accounting integration - invoicing, expenses, financial reports | quickfile |
 | `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop, session-review |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
@@ -458,6 +459,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Sitemap submission | `seo/gsc-sitemaps.md` |
+| CRM/email marketing | `services/crm/fluentcrm.md` |
 | MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` |
 | Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |
 | Database migrations | `workflows/sql-migrations.md` |

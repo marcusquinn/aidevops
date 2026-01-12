@@ -146,6 +146,23 @@ tools:
   wordpress-mcp_*: true         # WordPress MCP tools
 ```
 
+**CRITICAL: MCP Placement Rule**
+
+- **Enable MCPs in SUBAGENTS only** (files in subdirectories like `services/crm/`, `tools/wordpress/`)
+- **NEVER enable MCPs in main agents** (`sales.md`, `marketing.md`, `seo.md`, etc.)
+- Main agents reference subagents for MCP functionality
+- This ensures MCPs only load when the specific subagent is invoked
+
+```yaml
+# CORRECT: MCP in subagent (services/crm/fluentcrm.md)
+tools:
+  fluentcrm_*: true
+
+# WRONG: MCP in main agent (sales.md)
+tools:
+  fluentcrm_*: true  # DON'T DO THIS - use subagent reference instead
+```
+
 **MCP requirements with tool filtering** (documents intent for future `includeTools` support):
 
 ```yaml
