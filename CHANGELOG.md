@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.51.1] - 2026-01-12
+
+### Added
+
+- Loop state migration in setup.sh from `.claude/` to `.agent/loop-state/` (#67)
+
 ## [2.51.0] - 2026-01-12
 
 ### Added
