@@ -312,19 +312,67 @@ Always use `--max-iterations` as a safety net:
 
 ## Philosophy
 
-### 1. Iteration > Perfection
+### 1. Context Pollution Prevention
+
+Every AI session has a context window (working memory). As you work:
+- Files read, commands run, outputs produced all accumulate
+- Wrong turns and half-baked plans stay in context
+- **You can keep adding, but you can't delete**
+
+Eventually you hit the familiar symptom cluster:
+- Repeating itself
+- "Fixing" the same bug in slightly different ways
+- Confidently undoing its own previous fix
+- Circular reasoning
+
+That's **context pollution**. Once you're there, "try harder" doesn't work.
+
+Ralph doesn't try to clean the memory. It throws it away and starts fresh.
+
+### 2. Progress Persists, Failures Don't
+
+The trick is simple: **externalize state**.
+
+| Context (bad for state) | Files + Git (good for state) |
+|------------------------|------------------------------|
+| Dies with the conversation | Only what you choose to write |
+| Persists forever in session | Can be patched / rolled back |
+| Polluted by dead ends | Git doesn't hallucinate |
+
+Each fresh agent starts clean, then reconstructs reality from files.
+
+### 3. Guardrails: Same Mistake Never Happens Twice
+
+Ralph will do something stupid. The win condition is not "no mistakes."
+
+**The win condition is the same mistake never happens twice.**
+
+When something breaks, the loop stores it as a guardrail (sign):
+
+```markdown
+### Sign: check imports before adding
+- trigger: adding a new import statement
+- instruction: check if import already exists
+- added after: iteration 3 (duplicate import broke build)
+```
+
+Guardrails are append-only. Mistakes evaporate from context. Lessons accumulate in files.
+
+Next iteration reads guardrails first. Cheap. Brutal. Effective.
+
+### 4. Iteration > Perfection
 
 Don't aim for perfect on first try. Let the loop refine the work.
 
-### 2. Failures Are Data
+### 5. Failures Are Data
 
 "Deterministically bad" means failures are predictable and informative. Use them to tune prompts.
 
-### 3. Operator Skill Matters
+### 6. Operator Skill Matters
 
 Success depends on writing good prompts, not just having a good model.
 
-### 4. Persistence Wins
+### 7. Persistence Wins
 
 Keep trying until success. The loop handles retry logic automatically.
 
