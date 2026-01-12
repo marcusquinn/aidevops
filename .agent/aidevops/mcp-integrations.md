@@ -136,14 +136,21 @@ claude mcp add google-search-console npx mcp-server-gsc@latest
 
 ### **FluentCRM MCP**
 
+**Note**: The FluentCRM MCP server is not published to npm. It requires cloning and building locally.
+
 ```bash
-# Store credentials in ~/.config/aidevops/mcp-env.sh:
+# 1. Clone and build the MCP server
+mkdir -p ~/.local/share/mcp-servers
+cd ~/.local/share/mcp-servers
+git clone https://github.com/netflyapp/fluentcrm-mcp-server.git
+cd fluentcrm-mcp-server
+npm install
+npm run build
+
+# 2. Store credentials in ~/.config/aidevops/mcp-env.sh:
 export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
 export FLUENTCRM_API_USERNAME="your_username"
 export FLUENTCRM_API_PASSWORD="your_application_password"
-
-# For Claude Desktop:
-claude mcp add fluentcrm npx @netflyapp/fluentcrm-mcp-server
 ```
 
 **For OpenCode** - use bash wrapper pattern (disabled globally, enabled per-agent):
@@ -152,8 +159,26 @@ claude mcp add fluentcrm npx @netflyapp/fluentcrm-mcp-server
 {
   "fluentcrm": {
     "type": "local",
-    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && npx @netflyapp/fluentcrm-mcp-server"],
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
     "enabled": false
+  }
+}
+```
+
+**For Claude Desktop**:
+
+```json
+{
+  "mcpServers": {
+    "fluentcrm": {
+      "command": "node",
+      "args": ["~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
+      "env": {
+        "FLUENTCRM_API_URL": "https://your-domain.com/wp-json/fluent-crm/v2",
+        "FLUENTCRM_API_USERNAME": "your_username",
+        "FLUENTCRM_API_PASSWORD": "your_application_password"
+      }
+    }
   }
 }
 ```

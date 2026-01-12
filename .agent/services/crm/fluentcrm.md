@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Type**: WordPress CRM plugin with REST API
-- **MCP Server**: `@netflyapp/fluentcrm-mcp-server`
+- **MCP Server**: `fluentcrm-mcp-server` (local build from GitHub)
 - **Auth**: WordPress Basic Auth (username + application password)
 - **API Base**: `https://your-domain.com/wp-json/fluent-crm/v2`
 - **Capabilities**: Contacts, Tags, Lists, Campaigns, Automations, Email Templates, Webhooks, Smart Links
@@ -54,12 +54,19 @@ FluentCRM is a self-hosted WordPress CRM and email marketing automation plugin. 
 
 ### MCP Server Setup
 
-```bash
-# Install the FluentCRM MCP server
-npm install -g @netflyapp/fluentcrm-mcp-server
+**Note**: The FluentCRM MCP server is not published to npm. It requires cloning and building locally from GitHub.
 
-# Or run directly with npx
-npx @netflyapp/fluentcrm-mcp-server
+```bash
+# Clone and build the MCP server
+mkdir -p ~/.local/share/mcp-servers
+cd ~/.local/share/mcp-servers
+git clone https://github.com/netflyapp/fluentcrm-mcp-server.git
+cd fluentcrm-mcp-server
+npm install
+npm run build
+
+# Verify build succeeded
+ls dist/fluentcrm-mcp-server.js
 ```
 
 ### OpenCode Configuration
@@ -71,7 +78,7 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
   "mcp": {
     "fluentcrm": {
       "type": "local",
-      "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && npx @netflyapp/fluentcrm-mcp-server"],
+      "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
       "enabled": false
     }
   }
@@ -88,8 +95,8 @@ Add to Claude Desktop MCP settings:
 {
   "mcpServers": {
     "fluentcrm": {
-      "command": "npx",
-      "args": ["@netflyapp/fluentcrm-mcp-server"],
+      "command": "node",
+      "args": ["~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
       "env": {
         "FLUENTCRM_API_URL": "https://your-domain.com/wp-json/fluent-crm/v2",
         "FLUENTCRM_API_USERNAME": "your_username",

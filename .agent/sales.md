@@ -26,7 +26,7 @@ tools:
 - `marketing.md` - Lead generation and campaigns
 - `content.md` - Sales collateral and proposals
 - `services/accounting/quickfile.md` - Invoicing and payments
-- `services/crm/fluentcrm.md` - CRM operations (detailed)
+- `.agent/services/crm/fluentcrm.md` - CRM operations (detailed)
 
 **FluentCRM MCP Tools**:
 
@@ -36,7 +36,10 @@ tools:
 | **Tags** | `fluentcrm_list_tags`, `fluentcrm_create_tag`, `fluentcrm_delete_tag`, `fluentcrm_attach_tag_to_contact`, `fluentcrm_detach_tag_from_contact` |
 | **Lists** | `fluentcrm_list_lists`, `fluentcrm_create_list`, `fluentcrm_delete_list`, `fluentcrm_attach_contact_to_list`, `fluentcrm_detach_contact_from_list` |
 | **Campaigns** | `fluentcrm_list_campaigns`, `fluentcrm_create_campaign`, `fluentcrm_pause_campaign`, `fluentcrm_resume_campaign`, `fluentcrm_delete_campaign` |
-| **Smart Links** | `fluentcrm_list_smart_links`, `fluentcrm_create_smart_link`, `fluentcrm_get_smart_link`, `fluentcrm_delete_smart_link` |
+| **Templates** | `fluentcrm_list_email_templates`, `fluentcrm_create_email_template` |
+| **Automations** | `fluentcrm_list_automations`, `fluentcrm_create_automation` |
+| **Webhooks** | `fluentcrm_list_webhooks`, `fluentcrm_create_webhook` |
+| **Smart Links** | `fluentcrm_list_smart_links`, `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode`, `fluentcrm_validate_smart_link_data` |
 | **Reports** | `fluentcrm_dashboard_stats`, `fluentcrm_custom_fields` |
 
 **Typical Tasks**:
