@@ -43,6 +43,8 @@ Need browser automation?
     │                              │
     │                              └─► NO ──► Start it: dev-browser-helper.sh start
     │
+    ├─► Need CLI-first / shell scripts? ──► Use agent-browser
+    │
     ├─► Need existing browser session/cookies? ──► Use Playwriter
     │
     ├─► Need natural language control? ──► Use Stagehand
@@ -55,12 +57,13 @@ Need browser automation?
 | Tool | Best For | Setup |
 |------|----------|-------|
 | **dev-browser** (DEFAULT) | Dev testing, multi-step workflows | `dev-browser-helper.sh setup` |
+| **agent-browser** | CLI-first, shell scripts, CI/CD, multi-session | `npm i -g agent-browser` |
 | **playwriter** | Existing sessions, bypass detection | Chrome extension + MCP |
 | **stagehand** | Natural language automation | `stagehand-helper.sh setup` |
 | **crawl4ai** | Web scraping, content extraction | `crawl4ai-helper.sh setup` |
 | **playwright** | Cross-browser testing | MCP integration |
 
-**Full docs**: `tools/browser/dev-browser.md` (default), `tools/browser/playwriter.md`, etc.
+**Full docs**: `tools/browser/dev-browser.md` (default), `tools/browser/agent-browser.md`, `tools/browser/playwriter.md`, etc.
 
 **Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only
 <!-- AI-CONTEXT-END -->
