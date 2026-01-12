@@ -21,6 +21,7 @@ mode: subagent
 |----------|---------|
 | `keyword-research.md` | Comprehensive keyword research with SERP weakness detection |
 | `google-search-console.md` | GSC queries and search performance |
+| `gsc-sitemaps.md` | Sitemap submission via Playwright browser automation |
 | `dataforseo.md` | Comprehensive SEO data APIs (SERP, keywords, backlinks) |
 | `serper.md` | Google Search API (web, images, news, places) |
 | `site-crawler.md` | SEO site auditing (Screaming Frog-like capabilities) |
@@ -171,6 +172,26 @@ eeat-score-helper.sh score https://example.com/article
 
 Scores 7 criteria (1-10): Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing.
 Output: `{domain}-eeat-score-{date}.xlsx` with scores and reasoning.
+
+### Sitemap Submission
+
+Use `seo/gsc-sitemaps.md` for automated sitemap submissions:
+
+```bash
+# Submit sitemap for single domain
+gsc-sitemap-helper.sh submit example.com
+
+# Submit for multiple domains
+gsc-sitemap-helper.sh submit example.com example.net example.org
+
+# Submit from file
+gsc-sitemap-helper.sh submit --file domains.txt
+
+# Check status
+gsc-sitemap-helper.sh status example.com
+```
+
+Uses Playwright browser automation with persistent Chrome profile. First-time setup requires `gsc-sitemap-helper.sh login` to authenticate.
 
 ### Content Optimization
 
