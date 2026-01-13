@@ -97,6 +97,12 @@ The result: AI agents that work *with* your development process, not around it.
 npm install -g aidevops
 ```
 
+**Bun** (fast alternative):
+
+```bash
+bun install -g aidevops
+```
+
 **Homebrew** (macOS/Linux):
 
 ```bash
@@ -1461,6 +1467,9 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 ```bash
 # npm (recommended)
 npm install -g aidevops
+
+# Bun (fast alternative)
+bun install -g aidevops
 
 # Homebrew
 brew tap marcusquinn/tap && brew install aidevops
