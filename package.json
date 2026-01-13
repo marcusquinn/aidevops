@@ -60,7 +60,6 @@
     "bin/",
     "aidevops.sh",
     "setup.sh",
-    ".agent/",
     "VERSION",
     "scripts/npm-postinstall.js"
   ],

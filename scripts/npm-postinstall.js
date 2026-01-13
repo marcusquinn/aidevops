@@ -1,21 +1,19 @@
-#!/usr/bin/env node
 /**
  * npm postinstall script for aidevops
  * Runs setup.sh to deploy agents after npm install -g
  */
 
-const { execSync, spawn } = require('child_process');
+const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const packageDir = path.resolve(__dirname, '..');
 const setupScript = path.join(packageDir, 'setup.sh');
-const agentsDir = path.join(require('os').homedir(), '.aidevops', 'agents');
+const agentsDir = path.join(os.homedir(), '.aidevops', 'agents');
 
 // Check if this is a global install
-const isGlobalInstall = process.env.npm_config_global === 'true' || 
-                        process.argv.includes('--global') ||
-                        process.argv.includes('-g');
+const isGlobalInstall = process.env.npm_config_global === 'true';
 
 // Skip if not global install (local dev doesn't need postinstall)
 if (!isGlobalInstall && fs.existsSync(agentsDir)) {
@@ -54,7 +52,8 @@ try {
     console.log('');
 } catch (error) {
     console.error('aidevops: Setup encountered issues (non-critical)');
-    console.error('Run manually: bash ~/.aidevops/setup.sh');
+    console.error(`Run manually: bash "${setupScript}"`);
+    console.error('Or reinstall with: bash <(curl -fsSL https://aidevops.sh)');
     // Don't fail the install
     process.exit(0);
 }

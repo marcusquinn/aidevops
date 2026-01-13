@@ -88,7 +88,10 @@ register_repo() {
     init_repos_file
     
     # Normalize path (resolve symlinks, remove trailing slash)
-    repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P)
+    if ! repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P); then
+        print_warning "Cannot access path: $repo_path"
+        return 1
+    fi
     
     if ! command -v jq &>/dev/null; then
         print_warning "jq not installed - repo tracking disabled"
@@ -109,6 +112,7 @@ register_repo() {
             '.initialized_repos += [{path: $path, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]' \
             "$REPOS_FILE" > "$temp_file" && mv "$temp_file" "$REPOS_FILE"
     fi
+    return 0
 }
 
 # Get list of registered repos
@@ -121,6 +125,7 @@ get_registered_repos() {
     fi
     
     jq -r '.initialized_repos[] | .path' "$REPOS_FILE" 2>/dev/null || echo ""
+    return 0
 }
 
 # Check if a repo needs upgrade (version behind current)
@@ -1473,19 +1478,21 @@ cmd_repos() {
         
         remove|rm)
             local repo_path="${2:-}"
+            local original_path="$repo_path"
             
             if [[ -z "$repo_path" ]]; then
                 # Use current directory
                 if git rev-parse --is-inside-work-tree &>/dev/null; then
                     repo_path=$(git rev-parse --show-toplevel)
+                    original_path="$repo_path"
                 else
                     print_error "Specify a repo path or run from within a git repo"
                     return 1
                 fi
             fi
             
-            # Normalize path
-            repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P) || repo_path="$2"
+            # Normalize path (keep original if normalization fails)
+            repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P) || repo_path="$original_path"
             
             if ! command -v jq &>/dev/null; then
                 print_error "jq required for repo management"
@@ -1510,9 +1517,6 @@ cmd_repos() {
             
             local removed=0
             local temp_file="${REPOS_FILE}.tmp"
-            
-            # Filter out repos that don't exist
-            jq '[.initialized_repos[] | select(.path as $p | ($p | type == "string") and ([$p] | .[0] | test("^/")))]' "$REPOS_FILE" > /dev/null 2>&1
             
             while IFS= read -r repo_path; do
                 [[ -z "$repo_path" ]] && continue

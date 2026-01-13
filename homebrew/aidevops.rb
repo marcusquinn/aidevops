@@ -34,7 +34,8 @@ class Aidevops < Formula
   end
 
   def post_install
-    # Run setup to deploy agents
+    # Run setup to deploy agents (non-interactive)
+    ENV["AIDEVOPS_NONINTERACTIVE"] = "1"
     system "bash", "#{libexec}/setup.sh"
   end
 
