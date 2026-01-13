@@ -51,11 +51,13 @@ The result: AI agents that work *with* your development process, not around it.
 
 <!-- Release & Version Info -->
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/releases)
+[![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
+[![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 [![GitHub Release Date](https://img.shields.io/github/release-date/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
 <!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.53.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-2.53.2-blue)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
 [![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
@@ -87,13 +89,28 @@ The result: AI agents that work *with* your development process, not around it.
 
 ## **Quick Start**
 
-**One-liner install** (fresh install or update):
+### Installation Options
+
+**npm** (recommended - [verified provenance](https://docs.npmjs.com/generating-provenance-statements)):
+
+```bash
+npm install -g aidevops
+```
+
+**Homebrew** (macOS/Linux):
+
+```bash
+brew tap marcusquinn/tap
+brew install aidevops
+```
+
+**curl** (one-liner):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
 ```
 
-Or manually:
+**Manual** (git clone):
 
 ```bash
 git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
@@ -116,12 +133,16 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 **After installation, use the CLI:**
 
 ```bash
-aidevops status     # Check what's installed
-aidevops update     # Update to latest version
-aidevops init       # Initialize aidevops in any project
-aidevops features   # List available features
-aidevops uninstall  # Remove aidevops
+aidevops status      # Check what's installed
+aidevops update      # Update framework + check registered projects
+aidevops init        # Initialize aidevops in any project
+aidevops features    # List available features
+aidevops repos       # List/add/remove registered projects
+aidevops detect      # Scan for unregistered aidevops projects
+aidevops uninstall   # Remove aidevops
 ```
+
+**Project tracking:** When you run `aidevops init`, the project is automatically registered in `~/.config/aidevops/repos.json`. Running `aidevops update` checks all registered projects for version updates.
 
 ### **Use aidevops in Any Project**
 
@@ -1438,9 +1459,14 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 **Get Started:**
 
 ```bash
+# npm (recommended)
+npm install -g aidevops
+
+# Homebrew
+brew tap marcusquinn/tap && brew install aidevops
+
+# curl
 bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
 ```
-
-Or: `git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops && ~/Git/aidevops/setup.sh`
 
 **Transform your AI assistant into a powerful infrastructure management tool with seamless access to all your servers and services.**
