@@ -1,0 +1,137 @@
+name: Publish Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 2.52.1)'
+        required: true
+
+jobs:
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - name: Get version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "version=$INPUT_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update package.json version
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm version "$PKG_VERSION" --no-git-tag-version --allow-same-version
+      
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN_MARCUSQUINN }}
+      
+      - name: Summary
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "## npm Package Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** $PKG_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "npm install -g aidevops" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: publish-npm
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Get version and SHA
+        id: release
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(cat VERSION)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Get SHA256 of the release tarball (fail on HTTP errors)
+          TARBALL_URL="https://github.com/marcusquinn/aidevops/archive/refs/tags/v${VERSION}.tar.gz"
+          if ! SHA256=$(curl -fsSL "$TARBALL_URL" | sha256sum | cut -d' ' -f1); then
+            echo "::error::Failed to download tarball for SHA256 calculation"
+            exit 1
+          fi
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+      
+      - name: Update Homebrew formula
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_SHA256: ${{ steps.release.outputs.sha256 }}
+        run: |
+          # Update the formula with new version and SHA
+          sed -i "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v.*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${RELEASE_VERSION}.tar.gz\"|" homebrew/aidevops.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${RELEASE_SHA256}\"|" homebrew/aidevops.rb
+      
+      - name: Push to homebrew-tap repo
+        # Pinned to commit SHA for security
+        uses: dmnemec/copy_file_to_another_repo_action@bbebd3da22e4a37d04dca5f782edd5201cb97083
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          source_file: 'homebrew/aidevops.rb'
+          destination_repo: 'marcusquinn/homebrew-tap'
+          destination_folder: 'Formula'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          user_name: 'github-actions[bot]'
+          commit_message: 'Update aidevops to v${{ steps.release.outputs.version }}'
+        continue-on-error: true
+      
+      - name: Summary
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_SHA256: ${{ steps.release.outputs.sha256 }}
+        run: |
+          echo "## Homebrew Tap Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** $RELEASE_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA256:** $RELEASE_SHA256" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "brew install marcusquinn/tap/aidevops" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** If the tap repo doesn't exist yet, create it first:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Create repo: marcusquinn/homebrew-tap" >> $GITHUB_STEP_SUMMARY
+          echo "2. Add Formula/ directory" >> $GITHUB_STEP_SUMMARY
+          echo "3. Set HOMEBREW_TAP_TOKEN secret with repo write access" >> $GITHUB_STEP_SUMMARY

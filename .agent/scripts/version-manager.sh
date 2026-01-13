@@ -595,60 +595,56 @@ generate_release_notes() {
     IFS='.' read -r major minor patch <<< "$version"
 
     cat << EOF
-🚀 **AI DevOps Framework v$version**
+## AI DevOps Framework v$version
 
-## 📋 **What's New in v$version**
+### Installation
 
-### ✨ **Key Features**
-- Enhanced framework capabilities and integrations
-- Improved documentation and user experience
-- Quality improvements and bug fixes
-- Updated service integrations and configurations
+\`\`\`bash
+# npm (recommended)
+npm install -g aidevops
 
-### 🔧 **Technical Improvements**
-- Framework optimization and performance enhancements
-- Security updates and best practices implementation
-- Documentation updates and clarity improvements
-- Configuration and setup enhancements
+# Homebrew
+brew install marcusquinn/tap/aidevops
 
-### 📊 **Framework Status**
-- **27+ Service Integrations**: Complete DevOps ecosystem coverage
-- **Enterprise Security**: Zero credential exposure patterns
-- **Quality Monitoring**: A+ grades across all platforms
-- **Professional Versioning**: Semantic version management
-- **Comprehensive Documentation**: 18,000+ lines of guides
-
-## 🚀 **Quick Start**
-
-`bash`
-# Clone the repository
-git clone https://github.com/marcusquinn/aidevops.git
-cd aidevops
-
-# Run setup wizard
-bash setup.sh
-
-# Configure your services
-# Follow the comprehensive documentation in .agent/
+# curl
+bash <(curl -fsSL https://aidevops.sh)
 \`\`\`
 
-## 📚 **Documentation**
-- **[Setup Guide](README.md)**: Complete framework setup
-- **[API Integrations](.agent/API-INTEGRATIONS.md)**: 27+ service APIs
-- **[Security Guide](.agent/SECURITY.md)**: Enterprise security practices
-- **[MCP Integration](.agent/MCP-INTEGRATIONS.md)**: Real-time AI data access
+### What's New
 
-## 🔗 **Links**
+See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
+
+### Quick Start
+
+\`\`\`bash
+# Check installation
+aidevops status
+
+# Initialize in a project
+aidevops init
+
+# Update framework + projects
+aidevops update
+
+# List registered projects
+aidevops repos
+\`\`\`
+
+### Documentation
+
+- **[Setup Guide](README.md)**: Complete framework setup
+- **[User Guide](.agent/AGENTS.md)**: AI assistant integration
+- **[API Integrations](.agent/aidevops/api-integrations.md)**: Service APIs
+
+### Links
+
+- **Website**: https://aidevops.sh
 - **Repository**: https://github.com/marcusquinn/aidevops
-- **Documentation**: Available in repository
 - **Issues**: https://github.com/marcusquinn/aidevops/issues
-- **Discussions**: https://github.com/marcusquinn/aidevops/discussions
 
 ---
 
 **Full Changelog**: https://github.com/marcusquinn/aidevops/compare/v1.0.0...v$version
-
-**Copyright © Marcus Quinn 2025** - All rights reserved under MIT License
 EOF
     return 0
 }

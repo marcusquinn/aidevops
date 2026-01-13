@@ -19,6 +19,9 @@ NC='\033[0m' # No Color
 # Paths
 INSTALL_DIR="$HOME/Git/aidevops"
 AGENTS_DIR="$HOME/.aidevops/agents"
+CONFIG_DIR="$HOME/.config/aidevops"
+REPOS_FILE="$CONFIG_DIR/repos.json"
+# shellcheck disable=SC2034  # Used in fresh install fallback
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 VERSION_FILE="$INSTALL_DIR/VERSION"
 
@@ -65,6 +68,121 @@ check_dir() {
 # Check if a file exists
 check_file() {
     [[ -f "$1" ]]
+}
+
+# Initialize repos.json if it doesn't exist
+init_repos_file() {
+    if [[ ! -f "$REPOS_FILE" ]]; then
+        mkdir -p "$CONFIG_DIR"
+        echo '{"initialized_repos": []}' > "$REPOS_FILE"
+    fi
+    return 0
+}
+
+# Register a repo in repos.json
+# Usage: register_repo <path> <version> <features>
+register_repo() {
+    local repo_path="$1"
+    local version="$2"
+    local features="$3"
+    
+    init_repos_file
+    
+    # Normalize path (resolve symlinks, remove trailing slash)
+    if ! repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P); then
+        print_warning "Cannot access path: $repo_path"
+        return 1
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not installed - repo tracking disabled"
+        return 0
+    fi
+    
+    # Check if repo already registered
+    if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
+        # Update existing entry
+        local temp_file="${REPOS_FILE}.tmp"
+        jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
+            '(.initialized_repos[] | select(.path == $path)) |= {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}' \
+            "$REPOS_FILE" > "$temp_file" && mv "$temp_file" "$REPOS_FILE"
+    else
+        # Add new entry
+        local temp_file="${REPOS_FILE}.tmp"
+        jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
+            '.initialized_repos += [{path: $path, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]' \
+            "$REPOS_FILE" > "$temp_file" && mv "$temp_file" "$REPOS_FILE"
+    fi
+    return 0
+}
+
+# Get list of registered repos
+get_registered_repos() {
+    init_repos_file
+    
+    if ! command -v jq &>/dev/null; then
+        echo "[]"
+        return 0
+    fi
+    
+    jq -r '.initialized_repos[] | .path' "$REPOS_FILE" 2>/dev/null || echo ""
+    return 0
+}
+
+# Check if a repo needs upgrade (version behind current)
+check_repo_needs_upgrade() {
+    local repo_path="$1"
+    local current_version
+    current_version=$(get_version)
+    
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+    
+    local repo_version
+    repo_version=$(jq -r --arg path "$repo_path" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE" 2>/dev/null)
+    
+    if [[ -z "$repo_version" || "$repo_version" == "null" ]]; then
+        return 1
+    fi
+    
+    # Compare versions (simple string comparison works for semver)
+    if [[ "$repo_version" != "$current_version" ]]; then
+        return 0  # needs upgrade
+    fi
+    return 1  # up to date
+}
+
+# Detect if current directory has aidevops but isn't registered
+detect_unregistered_repo() {
+    local project_root
+    
+    # Check if in a git repo
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        return 1
+    fi
+    
+    project_root=$(git rev-parse --show-toplevel 2>/dev/null)
+    
+    # Check for .aidevops.json
+    if [[ ! -f "$project_root/.aidevops.json" ]]; then
+        return 1
+    fi
+    
+    init_repos_file
+    
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+    
+    # Check if already registered
+    if jq -e --arg path "$project_root" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
+        return 1  # already registered
+    fi
+    
+    # Not registered - return the path
+    echo "$project_root"
+    return 0
 }
 
 # Check if on protected branch and offer worktree creation
@@ -384,28 +502,80 @@ cmd_update() {
         remote_hash=$(git rev-parse origin/main)
         
         if [[ "$local_hash" == "$remote_hash" ]]; then
-            print_success "Already up to date!"
-            return 0
-        fi
-        
-        print_info "Pulling latest changes..."
-        git pull --ff-only origin main
-        
-        if [[ $? -eq 0 ]]; then
-            local new_version
-            new_version=$(get_version)
-            print_success "Updated to version $new_version"
-            echo ""
-            print_info "Running setup to apply changes..."
-            bash "$INSTALL_DIR/setup.sh"
+            print_success "Framework already up to date!"
         else
-            print_error "Failed to pull updates"
-            print_info "Try: cd $INSTALL_DIR && git pull"
-            return 1
+            print_info "Pulling latest changes..."
+            if git pull --ff-only origin main; then
+                local new_version
+                new_version=$(get_version)
+                print_success "Updated to version $new_version"
+                echo ""
+                print_info "Running setup to apply changes..."
+                bash "$INSTALL_DIR/setup.sh"
+            else
+                print_error "Failed to pull updates"
+                print_info "Try: cd $INSTALL_DIR && git pull"
+                return 1
+            fi
         fi
     else
         print_warning "Repository not found, performing fresh install..."
+        # shellcheck disable=SC2312  # curl|bash is intentional for install
         bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
+    fi
+    
+    # Check registered repos for updates
+    echo ""
+    print_header "Checking Initialized Projects"
+    
+    local repos_needing_upgrade=()
+    local current_ver
+    current_ver=$(get_version)
+    
+    while IFS= read -r repo_path; do
+        [[ -z "$repo_path" ]] && continue
+        
+        if [[ -d "$repo_path" ]]; then
+            if check_repo_needs_upgrade "$repo_path"; then
+                repos_needing_upgrade+=("$repo_path")
+            fi
+        fi
+    done < <(get_registered_repos)
+    
+    if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then
+        print_success "All registered projects are up to date"
+    else
+        echo ""
+        print_warning "${#repos_needing_upgrade[@]} project(s) may need updates:"
+        for repo in "${repos_needing_upgrade[@]}"; do
+            local repo_name
+            repo_name=$(basename "$repo")
+            echo "  - $repo_name ($repo)"
+        done
+        echo ""
+        read -r -p "Update .aidevops.json version in these projects? [y/N] " response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            for repo in "${repos_needing_upgrade[@]}"; do
+                if [[ -f "$repo/.aidevops.json" ]]; then
+                    print_info "Updating $repo..."
+                    # Update version in .aidevops.json
+                    if command -v jq &>/dev/null; then
+                        local temp_file="${repo}/.aidevops.json.tmp"
+                        jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" > "$temp_file" && \
+                            mv "$temp_file" "$repo/.aidevops.json"
+                        
+                        # Update repos.json entry
+                        local features
+                        features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
+                        register_repo "$repo" "$current_ver" "$features"
+                        
+                        print_success "Updated $(basename "$repo")"
+                    else
+                        print_warning "jq not installed - manual update needed for $repo"
+                    fi
+                fi
+            done
+        fi
     fi
 }
 
@@ -811,9 +981,11 @@ EOF
     local gitignore="$project_root/.gitignore"
     if [[ -f "$gitignore" ]]; then
         if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-            echo "" >> "$gitignore"
-            echo "# aidevops" >> "$gitignore"
-            echo ".agent" >> "$gitignore"
+            {
+                echo ""
+                echo "# aidevops"
+                echo ".agent"
+            } >> "$gitignore"
             print_success "Added .agent to .gitignore"
         fi
         # Add .beads if beads is enabled
@@ -824,6 +996,19 @@ EOF
             fi
         fi
     fi
+    
+    # Build features string for registration
+    local features_list=""
+    [[ "$enable_planning" == "true" ]] && features_list="${features_list}planning,"
+    [[ "$enable_git_workflow" == "true" ]] && features_list="${features_list}git-workflow,"
+    [[ "$enable_code_quality" == "true" ]] && features_list="${features_list}code-quality,"
+    [[ "$enable_time_tracking" == "true" ]] && features_list="${features_list}time-tracking,"
+    [[ "$enable_database" == "true" ]] && features_list="${features_list}database,"
+    [[ "$enable_beads" == "true" ]] && features_list="${features_list}beads,"
+    features_list="${features_list%,}"  # Remove trailing comma
+    
+    # Register repo in repos.json
+    register_repo "$project_root" "$aidevops_version" "$features_list"
     
     echo ""
     print_success "AI DevOps initialized!"
@@ -1209,6 +1394,243 @@ cmd_update_tools() {
     bash "$tool_check_script" "$@"
 }
 
+# Repos command - list and manage registered repos
+cmd_repos() {
+    local action="${1:-list}"
+    
+    case "$action" in
+        list|ls)
+            print_header "Registered AI DevOps Projects"
+            echo ""
+            
+            init_repos_file
+            
+            if ! command -v jq &>/dev/null; then
+                print_error "jq required for repo management"
+                return 1
+            fi
+            
+            local count
+            count=$(jq '.initialized_repos | length' "$REPOS_FILE" 2>/dev/null || echo "0")
+            
+            if [[ "$count" == "0" ]]; then
+                print_info "No projects registered yet"
+                echo ""
+                echo "Initialize a project with: aidevops init"
+                return 0
+            fi
+            
+            local current_ver
+            current_ver=$(get_version)
+            
+            jq -r '.initialized_repos[] | "\(.path)|\(.version)|\(.features | join(","))"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features; do
+                local name
+                name=$(basename "$path")
+                local status="✓"
+                local status_color="$GREEN"
+                
+                if [[ "$version" != "$current_ver" ]]; then
+                    status="↑"
+                    status_color="$YELLOW"
+                fi
+                
+                if [[ ! -d "$path" ]]; then
+                    status="✗"
+                    status_color="$RED"
+                fi
+                
+                echo -e "${status_color}${status}${NC} ${BOLD}$name${NC}"
+                echo "    Path: $path"
+                echo "    Version: $version"
+                echo "    Features: $features"
+                echo ""
+            done
+            
+            echo "Legend: ✓ up-to-date  ↑ update available  ✗ not found"
+            ;;
+        
+        add)
+            # Register current directory
+            if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+                print_error "Not in a git repository"
+                return 1
+            fi
+            
+            local project_root
+            project_root=$(git rev-parse --show-toplevel)
+            
+            if [[ ! -f "$project_root/.aidevops.json" ]]; then
+                print_error "No .aidevops.json found - run 'aidevops init' first"
+                return 1
+            fi
+            
+            local version features
+            if command -v jq &>/dev/null; then
+                version=$(jq -r '.version' "$project_root/.aidevops.json" 2>/dev/null || echo "unknown")
+                features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+            else
+                version="unknown"
+                features=""
+            fi
+            
+            register_repo "$project_root" "$version" "$features"
+            print_success "Registered $(basename "$project_root")"
+            ;;
+        
+        remove|rm)
+            local repo_path="${2:-}"
+            local original_path="$repo_path"
+            
+            if [[ -z "$repo_path" ]]; then
+                # Use current directory
+                if git rev-parse --is-inside-work-tree &>/dev/null; then
+                    repo_path=$(git rev-parse --show-toplevel)
+                    original_path="$repo_path"
+                else
+                    print_error "Specify a repo path or run from within a git repo"
+                    return 1
+                fi
+            fi
+            
+            # Normalize path (keep original if normalization fails)
+            repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P) || repo_path="$original_path"
+            
+            if ! command -v jq &>/dev/null; then
+                print_error "jq required for repo management"
+                return 1
+            fi
+            
+            local temp_file="${REPOS_FILE}.tmp"
+            jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" > "$temp_file" && \
+                mv "$temp_file" "$REPOS_FILE"
+            
+            print_success "Removed $repo_path from registry"
+            ;;
+        
+        clean)
+            # Remove entries for repos that no longer exist
+            print_info "Cleaning up stale repo entries..."
+            
+            if ! command -v jq &>/dev/null; then
+                print_error "jq required for repo management"
+                return 1
+            fi
+            
+            local removed=0
+            local temp_file="${REPOS_FILE}.tmp"
+            
+            while IFS= read -r repo_path; do
+                [[ -z "$repo_path" ]] && continue
+                if [[ ! -d "$repo_path" ]]; then
+                    jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" > "$temp_file" && \
+                        mv "$temp_file" "$REPOS_FILE"
+                    print_info "Removed: $repo_path"
+                    removed=$((removed + 1))
+                fi
+            done < <(get_registered_repos)
+            
+            if [[ $removed -eq 0 ]]; then
+                print_success "No stale entries found"
+            else
+                print_success "Removed $removed stale entries"
+            fi
+            ;;
+        
+        *)
+            echo "Usage: aidevops repos <command>"
+            echo ""
+            echo "Commands:"
+            echo "  list     List all registered projects (default)"
+            echo "  add      Register current project"
+            echo "  remove   Remove project from registry"
+            echo "  clean    Remove entries for non-existent projects"
+            ;;
+    esac
+}
+
+# Detect command - check for unregistered aidevops repos
+cmd_detect() {
+    print_header "Detecting AI DevOps Projects"
+    echo ""
+    
+    # Check current directory first
+    local unregistered
+    unregistered=$(detect_unregistered_repo)
+    
+    if [[ -n "$unregistered" ]]; then
+        print_info "Found unregistered aidevops project:"
+        echo "  $unregistered"
+        echo ""
+        read -r -p "Register this project? [Y/n] " response
+        response="${response:-y}"
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            local version features
+            if command -v jq &>/dev/null; then
+                version=$(jq -r '.version' "$unregistered/.aidevops.json" 2>/dev/null || echo "unknown")
+                features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$unregistered/.aidevops.json" 2>/dev/null || echo "")
+            else
+                version="unknown"
+                features=""
+            fi
+            register_repo "$unregistered" "$version" "$features"
+            print_success "Registered $(basename "$unregistered")"
+        fi
+        return 0
+    fi
+    
+    # Scan common locations
+    print_info "Scanning for aidevops projects in ~/Git/..."
+    
+    local found=0
+    local to_register=()
+    
+    if [[ -d "$HOME/Git" ]]; then
+        while IFS= read -r -d '' aidevops_json; do
+            local repo_dir
+            repo_dir=$(dirname "$aidevops_json")
+            
+            # Check if already registered
+            init_repos_file
+            if command -v jq &>/dev/null; then
+                if ! jq -e --arg path "$repo_dir" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
+                    to_register+=("$repo_dir")
+                    found=$((found + 1))
+                fi
+            fi
+        done < <(find "$HOME/Git" -maxdepth 3 -name ".aidevops.json" -print0 2>/dev/null)
+    fi
+    
+    if [[ $found -eq 0 ]]; then
+        print_success "No unregistered aidevops projects found"
+        return 0
+    fi
+    
+    echo ""
+    print_info "Found $found unregistered project(s):"
+    for repo in "${to_register[@]}"; do
+        echo "  - $(basename "$repo") ($repo)"
+    done
+    
+    echo ""
+    read -r -p "Register all? [Y/n] " response
+    response="${response:-y}"
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        for repo in "${to_register[@]}"; do
+            local version features
+            if command -v jq &>/dev/null; then
+                version=$(jq -r '.version' "$repo/.aidevops.json" 2>/dev/null || echo "unknown")
+                features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
+            else
+                version="unknown"
+                features=""
+            fi
+            register_repo "$repo" "$version" "$features"
+            print_success "Registered $(basename "$repo")"
+        done
+    fi
+    return 0
+}
+
 # Help command
 cmd_help() {
     local version
@@ -1223,8 +1645,11 @@ cmd_help() {
     echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
     echo "  features           List available features for init"
     echo "  status             Check installation status of all components"
-    echo "  update             Update aidevops to the latest version"
+    echo "  update             Update aidevops to the latest version (alias: upgrade)"
+    echo "  upgrade            Alias for update"
     echo "  update-tools       Check for outdated tools (--update to auto-update)"
+    echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+    echo "  detect             Find and register aidevops projects"
     echo "  uninstall          Remove aidevops from your system"
     echo "  version            Show version information"
     echo "  help               Show this help message"
@@ -1235,13 +1660,18 @@ cmd_help() {
     echo "  aidevops upgrade-planning    # Upgrade planning files to latest"
     echo "  aidevops features            # List available features"
     echo "  aidevops status              # Check what's installed"
-    echo "  aidevops update              # Update aidevops to latest version"
+    echo "  aidevops update              # Update framework + check projects"
+    echo "  aidevops repos               # List registered projects"
+    echo "  aidevops repos add           # Register current project"
+    echo "  aidevops detect              # Find unregistered projects"
     echo "  aidevops update-tools        # Check for outdated tools"
     echo "  aidevops update-tools -u     # Update all outdated tools"
     echo "  aidevops uninstall           # Remove aidevops"
     echo ""
-    echo "Quick install:"
-    echo "  bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)"
+    echo "Installation:"
+    echo "  npm install -g aidevops      # via npm"
+    echo "  brew install marcusquinn/tap/aidevops  # via Homebrew"
+    echo "  bash <(curl -fsSL https://aidevops.sh) # via curl"
     echo ""
     echo "Documentation: https://github.com/marcusquinn/aidevops"
 }
@@ -1264,6 +1694,14 @@ cmd_version() {
 main() {
     local command="${1:-help}"
     
+    # Auto-detect unregistered repo on any command (silent check)
+    local unregistered
+    unregistered=$(detect_unregistered_repo 2>/dev/null)
+    if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
+        echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
+        echo ""
+    fi
+    
     case "$command" in
         init|i)
             shift
@@ -1285,6 +1723,13 @@ main() {
         upgrade-planning|up)
             shift
             cmd_upgrade_planning "$@"
+            ;;
+        repos|projects)
+            shift
+            cmd_repos "$@"
+            ;;
+        detect|scan)
+            cmd_detect
             ;;
         uninstall|remove)
             cmd_uninstall

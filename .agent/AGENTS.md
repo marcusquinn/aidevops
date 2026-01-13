@@ -407,14 +407,20 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 
 ## Getting Started
 
-Run `setup.sh` from the aidevops repository to install agents locally:
+**Installation:**
 
 ```bash
-cd ~/Git/aidevops
-./setup.sh
+# npm (recommended)
+npm install -g aidevops
+
+# Homebrew
+brew install marcusquinn/tap/aidevops
+
+# curl (manual)
+bash <(curl -fsSL https://aidevops.sh)
 ```
 
-This copies agents to `~/.aidevops/agents/` and configures AI assistants.
+This installs the CLI and deploys agents to `~/.aidevops/agents/`.
 
 **Initialize aidevops in any project:**
 
@@ -434,8 +440,17 @@ aidevops features                # List available features
 | `aidevops upgrade-planning` | Upgrade TODO.md/PLANS.md to latest templates |
 | `aidevops features` | List available features |
 | `aidevops status` | Check installation status |
-| `aidevops update` | Update to latest version |
+| `aidevops update` | Update framework + check registered projects |
+| `aidevops upgrade` | Alias for update |
+| `aidevops repos` | List registered projects |
+| `aidevops repos add` | Register current project |
+| `aidevops detect` | Find unregistered aidevops projects |
+| `aidevops update-tools` | Check for outdated tools |
 | `aidevops uninstall` | Remove aidevops |
+
+**Project tracking:** When you run `aidevops init`, the project is registered in `~/.config/aidevops/repos.json`. Running `aidevops update` will check all registered projects and offer to update their `.aidevops.json` version.
+
+**Auto-detection:** When you clone a repo that has `.aidevops.json`, the CLI will suggest registering it. Run `aidevops detect` to scan `~/Git/` for unregistered projects.
 
 For AI-assisted setup guidance, see `aidevops/setup.md`.
 

@@ -46,6 +46,7 @@ readonly STATE_FILE="${STATE_DIR}/full-loop.local.md"
 # Legacy state directory (for backward compatibility during migration)
 # shellcheck disable=SC2034  # Defined for documentation, used in cancel checks
 readonly LEGACY_STATE_DIR=".claude"
+# shellcheck disable=SC2034  # Defined for backward compatibility path reference
 readonly LEGACY_STATE_FILE="${LEGACY_STATE_DIR}/full-loop.local.md"
 
 # Default settings

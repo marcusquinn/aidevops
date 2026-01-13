@@ -1,9 +1,12 @@
 {
   "name": "aidevops",
   "version": "2.53.0",
-  "description": "AI DevOps Framework with DSPy, Bun, Elysia, and high-performance tooling",
+  "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "aidevops": "./bin/aidevops"
+  },
   "scripts": {
     "dev": "bun run .opencode/server/api-gateway.ts",
     "dashboard": "bun run .opencode/server/mcp-dashboard.ts",
@@ -15,22 +18,23 @@
     "setup": "bun install && npm run install:python",
     "setup:bun": "bun install",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/npm-postinstall.js || true"
   },
   "keywords": [
-    "dspy",
-    "dspyground",
-    "crawl4ai",
-    "capsolver",
-    "bun",
-    "elysia",
     "ai",
     "devops",
-    "prompt-optimization",
+    "cli",
+    "automation",
+    "code-quality",
+    "git-workflow",
+    "mcp",
     "llm",
-    "mcp"
+    "dspy",
+    "prompt-optimization",
+    "ai-agents"
   ],
-  "author": "AI DevOps Framework",
+  "author": "Marcus Quinn <marcus@aidevops.sh>",
   "license": "MIT",
   "dependencies": {
     "dspyground": "^0.2.0",
@@ -46,15 +50,26 @@
     "typescript": "^5.0.0"
   },
   "engines": {
-    "bun": ">=1.0.0",
     "node": ">=18.0.0"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "files": [
+    "bin/",
+    "aidevops.sh",
+    "setup.sh",
+    "VERSION",
+    "scripts/npm-postinstall.js",
+    "templates/"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/marcusquinn/aidevops.git"
+    "url": "git+https://github.com/marcusquinn/aidevops.git"
   },
   "bugs": {
     "url": "https://github.com/marcusquinn/aidevops/issues"
   },
-  "homepage": "https://github.com/marcusquinn/aidevops#readme"
+  "homepage": "https://aidevops.sh"
 }

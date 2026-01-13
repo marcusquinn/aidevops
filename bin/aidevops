@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# AI DevOps Framework CLI wrapper
+# This wrapper handles both npm global install and local development
+
+set -euo pipefail
+
+# Find the actual script location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if we're in an npm global install or local development
+if [[ -f "$SCRIPT_DIR/../aidevops.sh" ]]; then
+    # npm install -g or local development
+    exec bash "$SCRIPT_DIR/../aidevops.sh" "$@"
+elif [[ -f "$HOME/Git/aidevops/aidevops.sh" ]]; then
+    # Fallback to standard install location
+    exec bash "$HOME/Git/aidevops/aidevops.sh" "$@"
+else
+    echo "Error: aidevops.sh not found"
+    echo "Please run: bash <(curl -fsSL https://aidevops.sh)"
+    exit 1
+fi
