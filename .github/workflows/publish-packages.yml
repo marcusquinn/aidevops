@@ -24,8 +24,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+      
+      # Ensure npm supports OIDC trusted publishing
+      - name: Update npm for Trusted Publishers
+        run: npm install -g npm@latest
       
       - name: Get version
         id: version
@@ -44,10 +48,9 @@ jobs:
         run: |
           npm version "$PKG_VERSION" --no-git-tag-version --allow-same-version
       
+      # No token needed - uses OIDC Trusted Publisher authentication
       - name: Publish to npm
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN_MARCUSQUINN }}
       
       - name: Summary
         env:
@@ -56,6 +59,7 @@ jobs:
           echo "## npm Package Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** $PKG_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "**Auth:** Trusted Publisher (OIDC)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Install with:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
