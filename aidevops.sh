@@ -796,13 +796,21 @@ cmd_upgrade_planning() {
         return 1
     fi
     
-    # Check if planning is enabled
-    local planning_enabled
-    planning_enabled=$(grep -o '"planning": *true' "$project_root/.aidevops.json" 2>/dev/null || echo "")
-    if [[ -z "$planning_enabled" ]]; then
-        print_error "Planning feature not enabled"
-        print_info "Run 'aidevops init planning' to enable"
-        return 1
+    # Check if planning is enabled (use jq if available, fallback to grep)
+    if command -v jq &>/dev/null; then
+        if ! jq -e '.features.planning == true' "$project_root/.aidevops.json" &>/dev/null; then
+            print_error "Planning feature not enabled"
+            print_info "Run 'aidevops init planning' to enable"
+            return 1
+        fi
+    else
+        local planning_enabled
+        planning_enabled=$(grep -o '"planning": *true' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+        if [[ -z "$planning_enabled" ]]; then
+            print_error "Planning feature not enabled"
+            print_info "Run 'aidevops init planning' to enable"
+            return 1
+        fi
     fi
     
     local todo_file="$project_root/TODO.md"
@@ -910,23 +918,22 @@ cmd_upgrade_planning() {
             fi
         fi
         
-        # Copy template (strip frontmatter)
-        sed '1,/^---$/d' "$todo_template" | sed '1,/^---$/d' > "$todo_file" 2>/dev/null || \
+        # Copy template (strip YAML frontmatter - lines between first two ---)
+        awk 'BEGIN{skip=0} /^---$/{skip++; if(skip==2){skip=0; next}} skip<2{next} {print}' "$todo_template" > "$todo_file" 2>/dev/null || \
             cp "$todo_template" "$todo_file"
         
         # Update date placeholder
         sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
         rm -f "${todo_file}.tmp"
         
-        # Merge existing tasks into Backlog section
+        # Merge existing tasks into Backlog section (after the TOON block closing tag)
         if [[ -n "$existing_tasks" ]]; then
-            # Find the Backlog section and insert tasks after the TOON marker
-            local backlog_marker="<!--TOON:backlog"
-            if grep -q "$backlog_marker" "$todo_file"; then
-                # Insert tasks after the TOON backlog marker line
+            # Find the Backlog TOON block and insert tasks after its closing -->
+            if grep -q "<!--TOON:backlog" "$todo_file"; then
                 local temp_file="${todo_file}.merge"
                 awk -v tasks="$existing_tasks" '
-                    /<!--TOON:backlog/ { print; getline; print; print ""; print tasks; next }
+                    /<!--TOON:backlog/ { in_backlog=1 }
+                    in_backlog && /^-->$/ { print; print ""; print tasks; in_backlog=0; next }
                     { print }
                 ' "$todo_file" > "$temp_file"
                 mv "$temp_file" "$todo_file"
@@ -957,22 +964,21 @@ cmd_upgrade_planning() {
             fi
         fi
         
-        # Copy template (strip frontmatter)
-        sed '1,/^---$/d' "$plans_template" | sed '1,/^---$/d' > "$plans_file" 2>/dev/null || \
+        # Copy template (strip YAML frontmatter - lines between first two ---)
+        awk 'BEGIN{skip=0} /^---$/{skip++; if(skip==2){skip=0; next}} skip<2{next} {print}' "$plans_template" > "$plans_file" 2>/dev/null || \
             cp "$plans_template" "$plans_file"
         
         # Update date placeholder
         sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$plans_file" 2>/dev/null || true
         rm -f "${plans_file}.tmp"
         
-        # Merge existing plans into Active Plans section
+        # Merge existing plans into Active Plans section (after the TOON block closing tag)
         if [[ -n "$existing_plans" ]]; then
-            # Find the Active Plans section and insert after the TOON marker
-            local active_marker="<!--TOON:active_plans"
-            if grep -q "$active_marker" "$plans_file"; then
+            if grep -q "<!--TOON:active_plans" "$plans_file"; then
                 local temp_file="${plans_file}.merge"
                 awk -v plans="$existing_plans" '
-                    /<!--TOON:active_plans/ { print; getline; print; print ""; print plans; next }
+                    /<!--TOON:active_plans/ { in_active=1 }
+                    in_active && /^-->$/ { print; print ""; print plans; in_active=0; next }
                     { print }
                 ' "$plans_file" > "$temp_file"
                 mv "$temp_file" "$plans_file"
@@ -988,15 +994,22 @@ cmd_upgrade_planning() {
     local aidevops_version
     aidevops_version=$(get_version)
     
-    # Add templates_version to config if not present
-    if ! grep -q '"templates_version"' "$config_file" 2>/dev/null; then
-        # Insert templates_version after version line
-        sed -i.tmp "s/\"version\": \"[^\"]*\"/\"version\": \"$aidevops_version\",\n  \"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
-        rm -f "${config_file}.tmp"
+    # Add/update templates_version in config (use jq if available)
+    if command -v jq &>/dev/null; then
+        local temp_json="${config_file}.tmp"
+        jq --arg version "$aidevops_version" '.templates_version = $version' "$config_file" > "$temp_json" && \
+            mv "$temp_json" "$config_file"
     else
-        # Update existing templates_version
-        sed -i.tmp "s/\"templates_version\": \"[^\"]*\"/\"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
-        rm -f "${config_file}.tmp"
+        # Fallback to sed if jq not available
+        if ! grep -q '"templates_version"' "$config_file" 2>/dev/null; then
+            # Insert templates_version after version line
+            sed -i.tmp "s/\"version\": \"[^\"]*\"/\"version\": \"$aidevops_version\",\n  \"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
+            rm -f "${config_file}.tmp"
+        else
+            # Update existing templates_version
+            sed -i.tmp "s/\"templates_version\": \"[^\"]*\"/\"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
+            rm -f "${config_file}.tmp"
+        fi
     fi
     
     echo ""
