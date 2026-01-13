@@ -92,6 +92,67 @@ check_secretlint_installed() {
     fi
 }
 
+# Check if required rule presets are installed
+# Returns: 0=all rules installed, 1=missing rules, 2=no config
+check_rules_installed() {
+    local config_file="${1:-$SECRETLINT_CONFIG_FILE}"
+    
+    if [[ ! -f "$config_file" ]]; then
+        return 2
+    fi
+    
+    # Extract rule IDs from config
+    local missing_rules=()
+    
+    # Check for preset-recommend (most common)
+    if grep -q "secretlint-rule-preset-recommend" "$config_file"; then
+        if ! npm list @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
+            if ! npm list -g @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
+                missing_rules+=("@secretlint/secretlint-rule-preset-recommend")
+            fi
+        fi
+    fi
+    
+    # Check for pattern rule
+    if grep -q "secretlint-rule-pattern" "$config_file"; then
+        if ! npm list @secretlint/secretlint-rule-pattern &>/dev/null; then
+            if ! npm list -g @secretlint/secretlint-rule-pattern &>/dev/null; then
+                missing_rules+=("@secretlint/secretlint-rule-pattern")
+            fi
+        fi
+    fi
+    
+    if [[ ${#missing_rules[@]} -gt 0 ]]; then
+        print_error "Missing required secretlint rules:"
+        for rule in "${missing_rules[@]}"; do
+            echo "  - $rule"
+        done
+        print_info "Install with: npm install --save-dev ${missing_rules[*]}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate secretlint installation (binary + rules)
+validate_secretlint_setup() {
+    local has_issues=0
+    
+    # Check binary
+    if ! check_secretlint_installed; then
+        has_issues=1
+    fi
+    
+    # Check rules if config exists
+    if [[ -f "$SECRETLINT_CONFIG_FILE" ]]; then
+        if ! check_rules_installed; then
+            has_issues=1
+        fi
+    fi
+    
+    return $has_issues
+}
+
 # Check if Docker is available
 check_docker_available() {
     if command -v docker &> /dev/null; then
@@ -406,6 +467,12 @@ run_secretlint_scan() {
         init_secretlint_config
     fi
     
+    # Validate that required rules are installed
+    if ! check_rules_installed "$SECRETLINT_CONFIG_FILE"; then
+        print_error "Secretlint rules not properly installed. Run: $0 install"
+        return 2
+    fi
+    
     # Build command array for safe execution
     local -a cmd_array
     read -ra cmd_array <<< "$cmd"
@@ -436,6 +503,10 @@ run_secretlint_scan() {
     elif [[ $exit_code -eq 1 ]]; then
         print_error "Secrets detected! Please review and remove/rotate exposed credentials."
         print_info "Tip: Use 'secretlint-disable-line' comments to ignore false positives"
+    elif [[ $exit_code -eq 2 ]]; then
+        print_error "Scan failed - configuration or installation error"
+        print_info "Run: $0 status (to diagnose)"
+        print_info "Run: $0 install (to fix installation)"
     else
         print_error "Scan failed with error code: $exit_code"
     fi
@@ -581,6 +652,17 @@ show_status() {
         print_info "Ignore patterns: $ignore_count"
     else
         print_warning "Ignore file: Not found"
+    fi
+    echo ""
+    
+    # Validate rule installation
+    print_info "Rule Installation:"
+    if [[ -f "$SECRETLINT_CONFIG_FILE" ]]; then
+        if check_rules_installed "$SECRETLINT_CONFIG_FILE" 2>/dev/null; then
+            print_success "All configured rules are installed"
+        fi
+    else
+        print_warning "No config file - cannot validate rules"
     fi
     echo ""
     

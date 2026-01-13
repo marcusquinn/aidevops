@@ -33,7 +33,7 @@
   "author": "AI DevOps Framework",
   "license": "MIT",
   "dependencies": {
-    "dspyground": "^0.1.0",
+    "dspyground": "^0.2.0",
     "elysia": "^1.1.0"
   },
   "devDependencies": {
