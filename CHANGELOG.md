@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.52.0] - 2026-01-13
+
+### Added
+
+- add `aidevops upgrade-planning` command to upgrade TODO.md/PLANS.md to latest TOON-enhanced templates
+- add protected branch check to `init` and `upgrade-planning` with worktree creation option
+- preserve existing tasks when upgrading planning files with automatic backup
+
+### Fixed
+
+- fix awk frontmatter stripping logic for template processing
+- fix BSD/macOS sed compatibility for JSON updates (use awk for portable newlines)
+
 ## [2.51.1] - 2026-01-12
 
 ### Changed
