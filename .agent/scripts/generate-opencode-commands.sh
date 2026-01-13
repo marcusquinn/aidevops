@@ -991,7 +991,7 @@ description: Interactive onboarding wizard - discover services, configure integr
 agent: AI-DevOps
 ---
 
-Read ~/.aidevops/agents/aidevops/onboarding.md and follow its instructions.
+Read ~/.aidevops/agents/onboarding.md and follow its instructions.
 
 This is the recommended starting point for new aidevops users.
 
