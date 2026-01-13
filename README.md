@@ -107,7 +107,7 @@ brew install aidevops
 **Direct from source** (aidevops.sh):
 
 ```bash
-bash <(curl -fsSL https://aidevops.sh)
+bash <(curl -fsSL https://aidevops.sh/install)
 ```
 
 **Manual** (git clone):
@@ -1466,7 +1466,7 @@ npm install -g aidevops
 brew tap marcusquinn/tap && brew install aidevops
 
 # Direct from source
-bash <(curl -fsSL https://aidevops.sh)
+bash <(curl -fsSL https://aidevops.sh/install)
 ```
 
 **Transform your AI assistant into a powerful infrastructure management tool with seamless access to all your servers and services.**
