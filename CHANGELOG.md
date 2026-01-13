@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - correct onboarding command path to root agent location (#72)
 - use prefix increment to avoid set -e exit on zero (#70)
+
 ## [2.52.0] - 2026-01-13
 
 ### Added
