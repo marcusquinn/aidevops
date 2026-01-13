@@ -67,6 +67,92 @@ check_file() {
     [[ -f "$1" ]]
 }
 
+# Check if on protected branch and offer worktree creation
+# Returns 0 if safe to proceed, 1 if user cancelled
+# Sets WORKTREE_PATH if worktree was created
+check_protected_branch() {
+    local branch_type="${1:-chore}"
+    local branch_suffix="${2:-aidevops-setup}"
+    
+    # Not in a git repo - skip check
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        return 0
+    fi
+    
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "")
+    
+    # Not on a protected branch - safe to proceed
+    if [[ ! "$current_branch" =~ ^(main|master)$ ]]; then
+        return 0
+    fi
+    
+    local project_root
+    project_root=$(git rev-parse --show-toplevel)
+    local repo_name
+    repo_name=$(basename "$project_root")
+    local suggested_branch="$branch_type/$branch_suffix"
+    
+    echo ""
+    print_warning "On protected branch '$current_branch'"
+    echo ""
+    echo "Options:"
+    echo "  1. Create worktree: $suggested_branch (recommended)"
+    echo "  2. Continue on $current_branch (commits directly to main)"
+    echo "  3. Cancel"
+    echo ""
+    read -r -p "Choice [1]: " choice
+    choice="${choice:-1}"
+    
+    case "$choice" in
+        1)
+            # Create worktree
+            local worktree_dir
+            worktree_dir="$(dirname "$project_root")/${repo_name}-${branch_type}-${branch_suffix}"
+            
+            print_info "Creating worktree at $worktree_dir..."
+            
+            if [[ -f "$AGENTS_DIR/scripts/worktree-helper.sh" ]]; then
+                if bash "$AGENTS_DIR/scripts/worktree-helper.sh" add "$suggested_branch" 2>/dev/null; then
+                    export WORKTREE_PATH="$worktree_dir"
+                    echo ""
+                    print_success "Worktree created!"
+                    print_info "Switching to: $worktree_dir"
+                    echo ""
+                    # Change to worktree directory
+                    cd "$worktree_dir" || return 1
+                    return 0
+                else
+                    print_error "Failed to create worktree"
+                    return 1
+                fi
+            else
+                # Fallback without helper script
+                if git worktree add -b "$suggested_branch" "$worktree_dir" 2>/dev/null; then
+                    export WORKTREE_PATH="$worktree_dir"
+                    echo ""
+                    print_success "Worktree created!"
+                    print_info "Switching to: $worktree_dir"
+                    echo ""
+                    cd "$worktree_dir" || return 1
+                    return 0
+                else
+                    print_error "Failed to create worktree"
+                    return 1
+                fi
+            fi
+            ;;
+        2)
+            print_warning "Continuing on $current_branch - changes will commit directly"
+            return 0
+            ;;
+        3|*)
+            print_info "Cancelled"
+            return 1
+            ;;
+    esac
+}
+
 # Status command - check all installations
 cmd_status() {
     print_header "AI DevOps Framework Status"
@@ -450,6 +536,11 @@ cmd_init() {
         return 1
     fi
     
+    # Check for protected branch and offer worktree
+    if ! check_protected_branch "chore" "aidevops-init"; then
+        return 1
+    fi
+    
     local project_root
     project_root=$(git rev-parse --show-toplevel)
     print_info "Project root: $project_root"
@@ -784,6 +875,13 @@ cmd_upgrade_planning() {
     if ! git rev-parse --is-inside-work-tree &>/dev/null; then
         print_error "Not in a git repository"
         return 1
+    fi
+    
+    # Check for protected branch and offer worktree (skip for dry-run)
+    if [[ "$dry_run" != "true" ]]; then
+        if ! check_protected_branch "chore" "upgrade-planning"; then
+            return 1
+        fi
     fi
     
     local project_root
