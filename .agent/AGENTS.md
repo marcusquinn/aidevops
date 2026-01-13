@@ -353,7 +353,6 @@ See `workflows/session-manager.md` for full session lifecycle guidance.
 | `plan-plus.md` | Read-only planning with semantic codebase search |
 | `build-plus.md` | Enhanced Build with context tools |
 | `aidevops.md` | Framework operations, meta-agents, setup |
-| `onboarding.md` | Interactive setup wizard for new users |
 | `seo.md` | SEO optimization and analysis |
 | `content.md` | Content creation workflows |
 | `research.md` | Research and analysis tasks |
@@ -370,7 +369,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 
 | Folder | Purpose | Key Subagents |
 |--------|---------|---------------|
-| `aidevops/` | Framework internals - extending aidevops, adding MCPs, architecture decisions | setup, architecture, add-new-mcp-to-aidevops, troubleshooting, mcp-integrations |
+| `aidevops/` | Framework internals - extending aidevops, adding MCPs, architecture decisions | onboarding, setup, architecture, add-new-mcp-to-aidevops, troubleshooting, mcp-integrations |
 | `memory/` | Cross-session memory - SQLite FTS5 storage, /remember and /recall commands | README (system docs) |
 | `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring, sitemap submission | dataforseo, serper, google-search-console, gsc-sitemaps, site-crawler, eeat-score, domain-research |
 | `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice | guidelines |
