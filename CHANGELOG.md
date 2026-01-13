@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.0] - 2026-01-13
+
+### Added
+
+- add frontend debugging guide with browser verification patterns (#69)
+
 ## [2.52.1] - 2026-01-13
 
 ### Fixed
 
 - correct onboarding command path to root agent location (#72)
 - use prefix increment to avoid set -e exit on zero (#70)
+
 ## [2.52.0] - 2026-01-13
 
 ### Added

@@ -6,7 +6,7 @@ The aidevops framework now uses `~/.aidevops/` for all working files.
 
 ## New Structure
 
-```
+```text
 ~/.aidevops/
 ├── agents/                    # Agent files (deployed from repo)
 ├── .agent-workspace/          # Your working files

@@ -513,6 +513,21 @@ Secretlint integrates with the framework's quality pipeline:
 
 ### Common Issues
 
+**"Failed to load rule module: @secretlint/secretlint-rule-preset-recommend is not found"**
+
+This error means secretlint is installed but the required rule preset is missing. The config file references rules that aren't installed.
+
+```bash
+# Fix: Install the preset alongside secretlint
+npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
+
+# Or globally
+npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+
+# Verify installation
+./.agent/scripts/secretlint-helper.sh status
+```
+
 **"No configuration file found"**
 
 ```bash
@@ -524,8 +539,25 @@ Secretlint integrates with the framework's quality pipeline:
 ```bash
 # Use npx
 npx secretlint "**/*"
-# Or install globally
+# Or install globally (include the preset!)
 npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+```
+
+**Scan fails with exit code 2**
+
+Exit code 2 indicates a configuration or installation error (not secrets found). Check:
+
+```bash
+# Diagnose the issue
+./.agent/scripts/secretlint-helper.sh status
+
+# Common fixes:
+# 1. Missing rules - reinstall
+./.agent/scripts/secretlint-helper.sh install
+
+# 2. Invalid config - reinitialize
+rm .secretlintrc.json
+./.agent/scripts/secretlint-helper.sh init
 ```
 
 **Performance issues with large repos**

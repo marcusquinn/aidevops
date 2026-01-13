@@ -91,6 +91,25 @@ composer test
 bash ~/Git/aidevops/.agent/scripts/linters-local.sh
 ```
 
+#### Frontend Bug Verification (CRITICAL)
+
+**For React/Next.js/frontend bugs**: HTTP status codes do NOT verify the fix works.
+
+```bash
+# BAD: This returns 200 even when React crashes client-side
+curl -s https://myapp.local -o /dev/null -w "%{http_code}"
+
+# GOOD: Use browser screenshot to verify
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
+# Then navigate and screenshot - see tools/ui/frontend-debugging.md
+```
+
+**Why curl lies**: Server returns 200 because error boundaries render successfully. The crash happens during client-side hydration, which curl never executes.
+
+**Always verify frontend fixes with actual browser rendering.**
+
+See `tools/ui/frontend-debugging.md` for detailed browser verification workflow.
+
 ### 6. Commit Changes
 
 Make atomic commits with clear messages:

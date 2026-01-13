@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "2.52.1",
+  "version": "2.53.0",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "main": "index.js",
@@ -37,7 +37,7 @@
   "author": "Marcus Quinn <marcus@aidevops.sh>",
   "license": "MIT",
   "dependencies": {
-    "dspyground": "^0.1.0",
+    "dspyground": "^0.2.0",
     "elysia": "^1.1.0"
   },
   "devDependencies": {
