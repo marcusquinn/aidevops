@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: update CHANGELOG.md for v2.52.0 release
+
 ## [2.52.0] - 2026-01-13
 
 ### Added
