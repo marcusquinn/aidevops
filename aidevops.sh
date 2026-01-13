@@ -76,6 +76,7 @@ init_repos_file() {
         mkdir -p "$CONFIG_DIR"
         echo '{"initialized_repos": []}' > "$REPOS_FILE"
     fi
+    return 0
 }
 
 # Register a repo in repos.json
@@ -157,7 +158,7 @@ detect_unregistered_repo() {
     local project_root
     
     # Check if in a git repo
-    if ! git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
         return 1
     fi
     
@@ -1524,7 +1525,7 @@ cmd_repos() {
                     jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" > "$temp_file" && \
                         mv "$temp_file" "$REPOS_FILE"
                     print_info "Removed: $repo_path"
-                    ((removed++))
+                    removed=$((removed + 1))
                 fi
             done < <(get_registered_repos)
             
@@ -1593,7 +1594,7 @@ cmd_detect() {
             if command -v jq &>/dev/null; then
                 if ! jq -e --arg path "$repo_dir" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
                     to_register+=("$repo_dir")
-                    ((found++))
+                    found=$((found + 1))
                 fi
             fi
         done < <(find "$HOME/Git" -maxdepth 3 -name ".aidevops.json" -print0 2>/dev/null)
@@ -1627,6 +1628,7 @@ cmd_detect() {
             print_success "Registered $(basename "$repo")"
         done
     fi
+    return 0
 }
 
 # Help command

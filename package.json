@@ -61,7 +61,8 @@
     "aidevops.sh",
     "setup.sh",
     "VERSION",
-    "scripts/npm-postinstall.js"
+    "scripts/npm-postinstall.js",
+    "templates/"
   ],
   "repository": {
     "type": "git",
