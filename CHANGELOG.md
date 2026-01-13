@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.3] - 2026-01-13
+
+### Changed
+
+- Documentation: use aidevops.sh/install URL
+- Documentation: use aidevops.sh URL for direct install option
+- Documentation: update README with npm/Homebrew install, repo tracking, v2.53.2
 ## [2.53.0] - 2026-01-13
 
 ### Added
