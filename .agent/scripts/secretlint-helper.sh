@@ -143,11 +143,11 @@ validate_secretlint_setup() {
         has_issues=1
     fi
     
-    # Check rules if config exists
-    if [[ -f "$SECRETLINT_CONFIG_FILE" ]]; then
-        if ! check_rules_installed; then
-            has_issues=1
-        fi
+    # Check rules - exit code 1 means missing rules, exit code 2 means no config (ok)
+    check_rules_installed
+    local rules_exit=$?
+    if [[ $rules_exit -eq 1 ]]; then
+        has_issues=1
     fi
     
     return $has_issues
@@ -658,7 +658,7 @@ show_status() {
     # Validate rule installation
     print_info "Rule Installation:"
     if [[ -f "$SECRETLINT_CONFIG_FILE" ]]; then
-        if check_rules_installed "$SECRETLINT_CONFIG_FILE" 2>/dev/null; then
+        if check_rules_installed "$SECRETLINT_CONFIG_FILE"; then
             print_success "All configured rules are installed"
         fi
     else
