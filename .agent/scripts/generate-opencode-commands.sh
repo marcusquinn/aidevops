@@ -54,7 +54,7 @@ If no specific file is provided, review the agents used in this session and prop
 
 Follow the improvement proposal format from the agent-review instructions.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /agent-review command"
 
 # =============================================================================
@@ -79,7 +79,7 @@ This includes:
 3. Version consistency verification
 4. Git status check (clean working tree)
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /preflight command"
 
 # =============================================================================
@@ -118,7 +118,7 @@ Target: $ARGUMENTS
 
 Report findings and recommend next actions (fix issues, merge, etc.)
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /postflight command"
 
 # =============================================================================
@@ -150,7 +150,7 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
 
 **CRITICAL**: Use only the single command above - it handles everything atomically.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /release command"
 
 # =============================================================================
@@ -175,7 +175,7 @@ This updates:
 2. package.json (if exists)
 3. Other version references as configured
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /version-bump command"
 
 # =============================================================================
@@ -198,7 +198,7 @@ This maintains CHANGELOG.md with:
 - Version sections with dates
 - Categories: Added, Changed, Deprecated, Removed, Fixed, Security
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /changelog command"
 
 # =============================================================================
@@ -224,7 +224,7 @@ This runs fast, offline checks:
 
 For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /linters-local command"
 
 # =============================================================================
@@ -250,7 +250,7 @@ This calls external quality services:
 
 For local linting (fast, offline), use /linters-local first
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /code-audit-remote command"
 
 # =============================================================================
@@ -276,7 +276,7 @@ This validates against our documented standards:
 - S1481: No unused variables
 - ShellCheck: Zero violations
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /code-standards command"
 
 # =============================================================================
@@ -299,7 +299,7 @@ This will:
 2. Set up development environment
 3. Guide feature implementation
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /feature command"
 
 cat > "$OPENCODE_COMMAND_DIR/bugfix.md" << 'EOF'
@@ -317,7 +317,7 @@ This will:
 2. Guide bug investigation
 3. Implement and test fix
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /bugfix command"
 
 cat > "$OPENCODE_COMMAND_DIR/hotfix.md" << 'EOF'
@@ -335,7 +335,7 @@ This will:
 2. Implement minimal fix
 3. Fast-track to release
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /hotfix command"
 
 # =============================================================================
@@ -377,7 +377,7 @@ Pad key names to align columns. End with total count.
 
 Security: Key values are NEVER displayed.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /list-keys command"
 
 # =============================================================================
@@ -426,7 +426,7 @@ Arguments: $ARGUMENTS
 
 When task is completed, the `actual:` field is calculated from all logged time.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /log-time-spent command"
 
 # =============================================================================
@@ -450,7 +450,7 @@ This generates optimized context for AI assistants including:
 2. Architecture overview
 3. Dependencies and relationships
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /context command"
 
 # =============================================================================
@@ -485,7 +485,7 @@ Additional context: $ARGUMENTS
 - `/create-pr` → Creates PR with auto-generated title/description
 - `/create-pr fixes authentication bug` → Adds context to description
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /create-pr command"
 
 # Keep /pr as alias pointing to /create-pr for discoverability
@@ -501,7 +501,7 @@ Context: $ARGUMENTS
 
 Run /create-pr with the same arguments.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /pr command (alias for /create-pr)"
 
 # =============================================================================
@@ -539,7 +539,7 @@ Feature to document: $ARGUMENTS
 
 User can reply with "1A, 2B" or provide details.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /create-prd command"
 
 # =============================================================================
@@ -579,7 +579,7 @@ PRD or feature: $ARGUMENTS
 
 Mark tasks complete by changing `- [ ]` to `- [x]` as work progresses.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
 
 # =============================================================================
@@ -667,7 +667,7 @@ After displaying, offer:
 2. Filter/sort differently
 3. Done browsing
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /list-todo command"
 
 # =============================================================================
@@ -733,7 +733,7 @@ Capture from conversation:
 
 This goes into PLANS.md "Context from Discussion" section.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /save-todo command"
 
 # =============================================================================
@@ -776,7 +776,7 @@ Offer options:
 2. Add new task to TODO.md
 3. Create new execution plan
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /plan-status command"
 
 # =============================================================================
@@ -818,7 +818,7 @@ Keywords to research: $ARGUMENTS
 
 Wildcards supported: "best * for dogs" expands to variations.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /keyword-research command"
 
 # =============================================================================
@@ -857,7 +857,7 @@ Seed keyword for autocomplete: $ARGUMENTS
 
 This is ideal for discovering question-based and long-tail keywords.
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /autocomplete-research command"
 
 # =============================================================================
@@ -919,7 +919,7 @@ Technical: Slow Page, High Spam, Non-HTTPS, Broken, Flash, Frames, Non-Canonical
 Content: Old Content, Title Mismatch, No Keyword in Headings, No Headings, Unmatched Intent
 SERP: UGC-Heavy Results
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /keyword-research-extended command"
 
 # =============================================================================
@@ -977,7 +977,7 @@ keyword-research-helper.sh webmaster https://example.com --days 90 --no-enrich
 3. Discover keywords you're ranking for but not targeting
 4. Compare Google vs Bing performance
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
 
 # =============================================================================
@@ -1031,7 +1031,7 @@ This is the recommended starting point for new aidevops users.
 
 Arguments: $ARGUMENTS
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /onboarding command"
 
 # =============================================================================
@@ -1064,7 +1064,7 @@ cd ~/Git/aidevops && ./setup.sh || exit
 
 Arguments: $ARGUMENTS
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /setup-aidevops command"
 
 # =============================================================================
@@ -1114,7 +1114,7 @@ The promise must be TRUE - do not output false promises to escape.
 /ralph-loop "Fix all TypeScript errors" --completion-promise "ALL_FIXED" --max-iterations 10
 ```
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /ralph-loop command"
 
 # =============================================================================
@@ -1139,7 +1139,7 @@ This removes the state file at `.agent/loop-state/ralph-loop.local.md` and stops
 
 If no loop is active, it will report "No active Ralph loop found."
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /cancel-ralph command"
 
 # =============================================================================
@@ -1167,7 +1167,7 @@ This shows:
 - Completion promise (if set)
 - When the loop started
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /ralph-status command"
 
 # =============================================================================
@@ -1213,7 +1213,7 @@ This applies the Ralph Wiggum technique to quality checks:
 /preflight-loop  # Manual fixes between iterations
 ```
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /preflight-loop command"
 
 # =============================================================================
@@ -1263,7 +1263,7 @@ Arguments: $ARGUMENTS
 /pr-loop --pr 123 --max-iterations 20
 ```
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /pr-loop command"
 
 # =============================================================================
@@ -1308,7 +1308,7 @@ Arguments: $ARGUMENTS
 /postflight-loop --monitor-duration 1h --max-iterations 10
 ```
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /postflight-loop command"
 
 # =============================================================================
@@ -1358,7 +1358,7 @@ This will:
 - Task must have `#ralph` tag
 - Task should have completion criteria defined
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /ralph-task command"
 
 # =============================================================================
@@ -1395,7 +1395,7 @@ Task Development → Preflight → PR Create → PR Review → Postflight → De
 
 **Completion promise:** `<promise>FULL_LOOP_COMPLETE</promise>`
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /full-loop command"
 
 # =============================================================================
@@ -1427,7 +1427,7 @@ Target: $ARGUMENTS
 - Remove obvious comments
 - Apply project standards
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /code-simplifier command"
 
 # =============================================================================
@@ -1457,7 +1457,7 @@ Review the current session for: $ARGUMENTS
 /session-review --capture     # Also capture learnings to memory
 ```
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /session-review command"
 
 # =============================================================================
@@ -1493,7 +1493,7 @@ Remember: $ARGUMENTS
 
 **Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /remember command"
 
 # =============================================================================
@@ -1521,7 +1521,7 @@ Search for: $ARGUMENTS
 
 **Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
 EOF
-((command_count++))
+((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /recall command"
 
 # =============================================================================
@@ -1549,7 +1549,7 @@ if [[ -d "$COMMANDS_DIR" ]]; then
         
         # Copy command file directly (it already has proper frontmatter)
         cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
-        ((command_count++))
+        ((++command_count))
         echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
     done
 fi
