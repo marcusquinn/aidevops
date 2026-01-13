@@ -23,6 +23,8 @@ This is a **test document** to demonstrate the Pandoc conversion capabilities of
 
 ### Code Example
 
-    bash .agent/scripts/pandoc-helper.sh convert document.docx
+```bash
+bash .agent/scripts/pandoc-helper.sh convert document.docx
+```
 
 For more information, visit the [AI DevOps repository](https://github.com/marcusquinn/aidevops).

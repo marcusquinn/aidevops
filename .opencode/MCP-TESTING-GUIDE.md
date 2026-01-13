@@ -173,7 +173,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 
 ### Config File Location
 
-```
+```text
 .opencode/server/mcp-test-config.json
 ```
 
@@ -287,7 +287,7 @@ const data = await response.json()
 
 ## Files Reference
 
-```
+```text
 .opencode/
 ├── server/
 │   ├── api-gateway.ts          # Main API gateway

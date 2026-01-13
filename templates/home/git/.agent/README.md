@@ -1,26 +1,31 @@
 # AI Assistant Directory - Home Level
 
-**🔒 SECURITY NOTICE: This directory contains minimal configuration only. All detailed instructions are maintained in the authoritative repository.**
+**SECURITY NOTICE: This directory contains minimal configuration only. All detailed instructions are maintained in the authoritative repository.**
 
-## 📍 **Authoritative Source**
+## Authoritative Source
+
 All AI assistant working directories and instructions are maintained at:
 **Repository**: `~/git/aidevops/.agent/`
 **Documentation**: `~/git/aidevops/AGENTS.md`
 
-## 🎯 **Purpose**
+## Purpose
+
 This directory exists to:
+
 1. **Provide minimal local configuration** for AI assistants
 2. **Reference the authoritative repository** for all operations
 3. **Maintain security** by avoiding detailed instructions in user space
 
-## 📁 **Working Directory Redirection**
+## Working Directory Redirection
+
 **DO NOT use this directory for AI operations.** Instead use:
 
 - **Temporary files**: `~/git/aidevops/.agent/tmp/`
 - **Persistent memory**: `~/git/aidevops/.agent/memory/`
 - **Development tools**: `~/git/aidevops/.agent/scripts/`
 
-## 🔗 **Access Authoritative Tools**
+## Access Authoritative Tools
+
 ```bash
 # Navigate to authoritative AI tools
 cd ~/git/aidevops/.agent/
@@ -33,7 +38,8 @@ ls ~/git/aidevops/.agent/tmp/
 ls ~/git/aidevops/.agent/memory/
 ```
 
-## ⚠️ **Security Warning**
+## Security Warning
+
 **This directory should remain minimal.** All AI assistant operations should use the authoritative repository's .agent/ directory to prevent security vulnerabilities and maintain centralized control.
 
 ---
