@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.0] - 2026-01-13
+
+### Added
+
+- add frontend debugging guide with browser verification patterns (#69)
 ## [2.52.1] - 2026-01-13
 
 ### Fixed
