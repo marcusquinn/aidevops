@@ -101,6 +101,7 @@ check_protected_branch() {
     echo "  2. Continue on $current_branch (commits directly to main)"
     echo "  3. Cancel"
     echo ""
+    local choice
     read -r -p "Choice [1]: " choice
     choice="${choice:-1}"
     
@@ -1017,8 +1018,14 @@ cmd_upgrade_planning() {
         fi
         
         # Copy template (strip YAML frontmatter - lines between first two ---)
-        awk 'BEGIN{skip=0} /^---$/{skip++; if(skip==2){skip=0; next}} skip<2{next} {print}' "$todo_template" > "$todo_file" 2>/dev/null || \
+        # Use temp file to avoid race condition on failure
+        local temp_todo="${todo_file}.new"
+        if awk '/^---$/ && !p {c++; if(c==2) p=1; next} p' "$todo_template" > "$temp_todo" 2>/dev/null && [[ -s "$temp_todo" ]]; then
+            mv "$temp_todo" "$todo_file"
+        else
+            rm -f "$temp_todo"
             cp "$todo_template" "$todo_file"
+        fi
         
         # Update date placeholder
         sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
@@ -1063,8 +1070,14 @@ cmd_upgrade_planning() {
         fi
         
         # Copy template (strip YAML frontmatter - lines between first two ---)
-        awk 'BEGIN{skip=0} /^---$/{skip++; if(skip==2){skip=0; next}} skip<2{next} {print}' "$plans_template" > "$plans_file" 2>/dev/null || \
+        # Use temp file to avoid race condition on failure
+        local temp_plans="${plans_file}.new"
+        if awk '/^---$/ && !p {c++; if(c==2) p=1; next} p' "$plans_template" > "$temp_plans" 2>/dev/null && [[ -s "$temp_plans" ]]; then
+            mv "$temp_plans" "$plans_file"
+        else
+            rm -f "$temp_plans"
             cp "$plans_template" "$plans_file"
+        fi
         
         # Update date placeholder
         sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$plans_file" 2>/dev/null || true
@@ -1098,11 +1111,16 @@ cmd_upgrade_planning() {
         jq --arg version "$aidevops_version" '.templates_version = $version' "$config_file" > "$temp_json" && \
             mv "$temp_json" "$config_file"
     else
-        # Fallback to sed if jq not available
+        # Fallback using awk for portable newline handling (BSD sed doesn't support \n)
         if ! grep -q '"templates_version"' "$config_file" 2>/dev/null; then
             # Insert templates_version after version line
-            sed -i.tmp "s/\"version\": \"[^\"]*\"/\"version\": \"$aidevops_version\",\n  \"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
-            rm -f "${config_file}.tmp"
+            local temp_json="${config_file}.tmp"
+            awk -v ver="$aidevops_version" '
+                /"version":/ { 
+                    sub(/"version": "[^"]*"/, "\"version\": \"" ver "\",\n  \"templates_version\": \"" ver "\"")
+                }
+                { print }
+            ' "$config_file" > "$temp_json" && mv "$temp_json" "$config_file"
         else
             # Update existing templates_version
             sed -i.tmp "s/\"templates_version\": \"[^\"]*\"/\"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
@@ -1116,11 +1134,13 @@ cmd_upgrade_planning() {
     echo "Next steps:"
     echo "  1. Review the upgraded files"
     echo "  2. Verify your tasks were preserved"
-    echo "  3. Remove .bak files when satisfied"
-    echo ""
-    echo "If issues occurred, restore from backups:"
-    [[ "$todo_needs_upgrade" == "true" ]] && echo "  mv TODO.md.bak TODO.md"
-    [[ "$plans_needs_upgrade" == "true" ]] && echo "  mv todo/PLANS.md.bak todo/PLANS.md"
+    if [[ "$backup" == "true" ]]; then
+        echo "  3. Remove .bak files when satisfied"
+        echo ""
+        echo "If issues occurred, restore from backups:"
+        [[ "$todo_needs_upgrade" == "true" ]] && echo "  mv TODO.md.bak TODO.md"
+        [[ "$plans_needs_upgrade" == "true" ]] && echo "  mv todo/PLANS.md.bak todo/PLANS.md"
+    fi
 }
 
 # Features command - list available features
