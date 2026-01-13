@@ -143,6 +143,18 @@ This creates:
 
 **Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `beads`
 
+### Upgrade Planning Files
+
+When aidevops templates evolve, upgrade existing projects to the latest format:
+
+```bash
+aidevops upgrade-planning           # Interactive upgrade with backup
+aidevops upgrade-planning --dry-run # Preview changes without modifying
+aidevops upgrade-planning --force   # Skip confirmation prompt
+```
+
+This preserves your existing tasks while adding TOON-enhanced parsing, dependency tracking, and better structure.
+
 ### Task Graph Visualization with Beads
 
 [Beads](https://github.com/steveyegge/beads) provides task dependency tracking and graph visualization:

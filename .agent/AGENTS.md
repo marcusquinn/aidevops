@@ -431,6 +431,7 @@ aidevops features                # List available features
 | Command | Purpose |
 |---------|---------|
 | `aidevops init [features]` | Initialize aidevops in current project |
+| `aidevops upgrade-planning` | Upgrade TODO.md/PLANS.md to latest templates |
 | `aidevops features` | List available features |
 | `aidevops status` | Check installation status |
 | `aidevops update` | Update to latest version |
