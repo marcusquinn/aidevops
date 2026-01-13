@@ -761,6 +761,257 @@ EOF
     fi
 }
 
+# Upgrade planning command - upgrade TODO.md and PLANS.md to latest templates
+cmd_upgrade_planning() {
+    local force=false
+    local backup=true
+    local dry_run=false
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=true; shift ;;
+            --no-backup) backup=false; shift ;;
+            --dry-run|-n) dry_run=true; shift ;;
+            *) shift ;;
+        esac
+    done
+    
+    print_header "Upgrade Planning Files"
+    echo ""
+    
+    # Check if in a git repo
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        print_error "Not in a git repository"
+        return 1
+    fi
+    
+    local project_root
+    project_root=$(git rev-parse --show-toplevel)
+    
+    # Check if aidevops is initialized
+    if [[ ! -f "$project_root/.aidevops.json" ]]; then
+        print_error "aidevops not initialized in this project"
+        print_info "Run 'aidevops init' first"
+        return 1
+    fi
+    
+    # Check if planning is enabled
+    local planning_enabled
+    planning_enabled=$(grep -o '"planning": *true' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+    if [[ -z "$planning_enabled" ]]; then
+        print_error "Planning feature not enabled"
+        print_info "Run 'aidevops init planning' to enable"
+        return 1
+    fi
+    
+    local todo_file="$project_root/TODO.md"
+    local plans_file="$project_root/todo/PLANS.md"
+    local todo_template="$AGENTS_DIR/templates/todo-template.md"
+    local plans_template="$AGENTS_DIR/templates/plans-template.md"
+    
+    # Check templates exist
+    if [[ ! -f "$todo_template" ]]; then
+        print_error "TODO template not found: $todo_template"
+        return 1
+    fi
+    if [[ ! -f "$plans_template" ]]; then
+        print_error "PLANS template not found: $plans_template"
+        return 1
+    fi
+    
+    local needs_upgrade=false
+    local todo_needs_upgrade=false
+    local plans_needs_upgrade=false
+    
+    # Check TODO.md
+    if [[ -f "$todo_file" ]]; then
+        # Check if it's using the minimal template (no TOON markers)
+        if ! grep -q "TOON:meta" "$todo_file" 2>/dev/null; then
+            todo_needs_upgrade=true
+            needs_upgrade=true
+            print_warning "TODO.md uses minimal template (missing TOON markers)"
+        else
+            print_success "TODO.md already has TOON markers"
+        fi
+    else
+        print_info "TODO.md not found - will create from template"
+        todo_needs_upgrade=true
+        needs_upgrade=true
+    fi
+    
+    # Check PLANS.md
+    if [[ -f "$plans_file" ]]; then
+        # Check if it's using the minimal template (no TOON markers)
+        if ! grep -q "TOON:meta" "$plans_file" 2>/dev/null; then
+            plans_needs_upgrade=true
+            needs_upgrade=true
+            print_warning "todo/PLANS.md uses minimal template (missing TOON markers)"
+        else
+            print_success "todo/PLANS.md already has TOON markers"
+        fi
+    else
+        print_info "todo/PLANS.md not found - will create from template"
+        plans_needs_upgrade=true
+        needs_upgrade=true
+    fi
+    
+    if [[ "$needs_upgrade" == "false" ]]; then
+        echo ""
+        print_success "Planning files are up to date!"
+        return 0
+    fi
+    
+    echo ""
+    
+    if [[ "$dry_run" == "true" ]]; then
+        print_info "Dry run - no changes will be made"
+        echo ""
+        [[ "$todo_needs_upgrade" == "true" ]] && echo "  Would upgrade: TODO.md"
+        [[ "$plans_needs_upgrade" == "true" ]] && echo "  Would upgrade: todo/PLANS.md"
+        return 0
+    fi
+    
+    # Confirm upgrade unless forced
+    if [[ "$force" == "false" ]]; then
+        echo "Files to upgrade:"
+        [[ "$todo_needs_upgrade" == "true" ]] && echo "  - TODO.md"
+        [[ "$plans_needs_upgrade" == "true" ]] && echo "  - todo/PLANS.md"
+        echo ""
+        echo "This will:"
+        echo "  1. Extract existing tasks from current files"
+        echo "  2. Create backups (.bak files)"
+        echo "  3. Apply new TOON-enhanced templates"
+        echo "  4. Merge existing tasks into new structure"
+        echo ""
+        read -r -p "Continue? [y/N] " response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            print_info "Upgrade cancelled"
+            return 0
+        fi
+    fi
+    
+    echo ""
+    
+    # Upgrade TODO.md
+    if [[ "$todo_needs_upgrade" == "true" ]]; then
+        print_info "Upgrading TODO.md..."
+        
+        # Extract existing tasks if file exists
+        local existing_tasks=""
+        if [[ -f "$todo_file" ]]; then
+            # Extract task lines (lines starting with - [ ] or - [x] or - [-])
+            existing_tasks=$(grep -E "^[[:space:]]*- \[([ x-])\]" "$todo_file" 2>/dev/null || echo "")
+            
+            # Create backup
+            if [[ "$backup" == "true" ]]; then
+                cp "$todo_file" "${todo_file}.bak"
+                print_success "Backup created: TODO.md.bak"
+            fi
+        fi
+        
+        # Copy template (strip frontmatter)
+        sed '1,/^---$/d' "$todo_template" | sed '1,/^---$/d' > "$todo_file" 2>/dev/null || \
+            cp "$todo_template" "$todo_file"
+        
+        # Update date placeholder
+        sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
+        rm -f "${todo_file}.tmp"
+        
+        # Merge existing tasks into Backlog section
+        if [[ -n "$existing_tasks" ]]; then
+            # Find the Backlog section and insert tasks after the TOON marker
+            local backlog_marker="<!--TOON:backlog"
+            if grep -q "$backlog_marker" "$todo_file"; then
+                # Insert tasks after the TOON backlog marker line
+                local temp_file="${todo_file}.merge"
+                awk -v tasks="$existing_tasks" '
+                    /<!--TOON:backlog/ { print; getline; print; print ""; print tasks; next }
+                    { print }
+                ' "$todo_file" > "$temp_file"
+                mv "$temp_file" "$todo_file"
+                print_success "Merged existing tasks into Backlog"
+            fi
+        fi
+        
+        print_success "TODO.md upgraded to TOON-enhanced template"
+    fi
+    
+    # Upgrade PLANS.md
+    if [[ "$plans_needs_upgrade" == "true" ]]; then
+        print_info "Upgrading todo/PLANS.md..."
+        
+        # Ensure directory exists
+        mkdir -p "$project_root/todo/tasks"
+        
+        # Extract existing plans if file exists
+        local existing_plans=""
+        if [[ -f "$plans_file" ]]; then
+            # Extract plan sections (### headers and their content)
+            existing_plans=$(awk '/^### /{found=1} found{print}' "$plans_file" 2>/dev/null || echo "")
+            
+            # Create backup
+            if [[ "$backup" == "true" ]]; then
+                cp "$plans_file" "${plans_file}.bak"
+                print_success "Backup created: todo/PLANS.md.bak"
+            fi
+        fi
+        
+        # Copy template (strip frontmatter)
+        sed '1,/^---$/d' "$plans_template" | sed '1,/^---$/d' > "$plans_file" 2>/dev/null || \
+            cp "$plans_template" "$plans_file"
+        
+        # Update date placeholder
+        sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$plans_file" 2>/dev/null || true
+        rm -f "${plans_file}.tmp"
+        
+        # Merge existing plans into Active Plans section
+        if [[ -n "$existing_plans" ]]; then
+            # Find the Active Plans section and insert after the TOON marker
+            local active_marker="<!--TOON:active_plans"
+            if grep -q "$active_marker" "$plans_file"; then
+                local temp_file="${plans_file}.merge"
+                awk -v plans="$existing_plans" '
+                    /<!--TOON:active_plans/ { print; getline; print; print ""; print plans; next }
+                    { print }
+                ' "$plans_file" > "$temp_file"
+                mv "$temp_file" "$plans_file"
+                print_success "Merged existing plans into Active Plans"
+            fi
+        fi
+        
+        print_success "todo/PLANS.md upgraded to TOON-enhanced template"
+    fi
+    
+    # Update .aidevops.json with template version
+    local config_file="$project_root/.aidevops.json"
+    local aidevops_version
+    aidevops_version=$(get_version)
+    
+    # Add templates_version to config if not present
+    if ! grep -q '"templates_version"' "$config_file" 2>/dev/null; then
+        # Insert templates_version after version line
+        sed -i.tmp "s/\"version\": \"[^\"]*\"/\"version\": \"$aidevops_version\",\n  \"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
+        rm -f "${config_file}.tmp"
+    else
+        # Update existing templates_version
+        sed -i.tmp "s/\"templates_version\": \"[^\"]*\"/\"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
+        rm -f "${config_file}.tmp"
+    fi
+    
+    echo ""
+    print_success "Planning files upgraded!"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Review the upgraded files"
+    echo "  2. Verify your tasks were preserved"
+    echo "  3. Remove .bak files when satisfied"
+    echo ""
+    echo "If issues occurred, restore from backups:"
+    [[ "$todo_needs_upgrade" == "true" ]] && echo "  mv TODO.md.bak TODO.md"
+    [[ "$plans_needs_upgrade" == "true" ]] && echo "  mv todo/PLANS.md.bak todo/PLANS.md"
+}
+
 # Features command - list available features
 cmd_features() {
     print_header "AI DevOps Features"
@@ -837,18 +1088,20 @@ cmd_help() {
     echo "Usage: aidevops <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  init [features]  Initialize aidevops in current project"
-    echo "  features         List available features for init"
-    echo "  status           Check installation status of all components"
-    echo "  update           Update aidevops to the latest version"
-    echo "  update-tools     Check for outdated tools (--update to auto-update)"
-    echo "  uninstall        Remove aidevops from your system"
-    echo "  version          Show version information"
-    echo "  help             Show this help message"
+    echo "  init [features]    Initialize aidevops in current project"
+    echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
+    echo "  features           List available features for init"
+    echo "  status             Check installation status of all components"
+    echo "  update             Update aidevops to the latest version"
+    echo "  update-tools       Check for outdated tools (--update to auto-update)"
+    echo "  uninstall          Remove aidevops from your system"
+    echo "  version            Show version information"
+    echo "  help               Show this help message"
     echo ""
     echo "Examples:"
     echo "  aidevops init                # Initialize with all features"
     echo "  aidevops init planning       # Initialize with planning only"
+    echo "  aidevops upgrade-planning    # Upgrade planning files to latest"
     echo "  aidevops features            # List available features"
     echo "  aidevops status              # Check what's installed"
     echo "  aidevops update              # Update aidevops to latest version"
@@ -897,6 +1150,10 @@ main() {
         update-tools|tools)
             shift
             cmd_update_tools "$@"
+            ;;
+        upgrade-planning|up)
+            shift
+            cmd_upgrade_planning "$@"
             ;;
         uninstall|remove)
             cmd_uninstall
