@@ -10,6 +10,12 @@ engines:
       - 'configs/**'
       - 'tests/**'
 
+  # Security analysis
+  semgrep:
+    enabled: true
+    exclude_paths:
+      - 'scripts/**'  # npm postinstall paths are safe (package-relative)
+
   # Documentation analysis
   markdownlint:
     enabled: true
@@ -28,6 +34,7 @@ engines:
     exclude_paths:
       - 'configs/**'
       - 'tests/**'
+      - 'scripts/**'  # npm postinstall uses CommonJS for Node.js compatibility
 
 exclude_paths:
   # Exclude generated or third-party files
