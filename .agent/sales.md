@@ -62,7 +62,7 @@ subagents:
 
 | Category | Key Tools |
 |----------|-----------|
-| **Account Info** | `get_account_summaries`, `get_property_details` |
+| **Account Info** | `get_account_summaries`, `get_property_details`, `list_google_ads_links` |
 | **Reports** | `run_report`, `get_custom_dimensions_and_metrics` |
 | **Real-time** | `run_realtime_report` |
 

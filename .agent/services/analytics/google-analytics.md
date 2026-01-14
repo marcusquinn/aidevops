@@ -75,6 +75,7 @@ gcloud auth application-default login \
 ```
 
 After authentication, note the credentials file path printed:
+
 ```text
 Credentials saved to file: [PATH_TO_CREDENTIALS_JSON]
 ```
@@ -101,9 +102,9 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
 
 **Per-Agent Enablement**: Google Analytics tools are enabled via `analytics_mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing.md`, `sales.md`) reference this subagent for analytics operations, ensuring the MCP is only loaded when needed.
 
-### Claude Desktop Configuration
+### Gemini CLI Configuration
 
-Add to Claude Desktop MCP settings (`~/.gemini/settings.json` for Gemini):
+Add to Gemini CLI settings (`~/.gemini/settings.json`):
 
 ```json
 {
