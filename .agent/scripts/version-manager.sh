@@ -617,10 +617,10 @@ generate_release_notes() {
 
 \`\`\`bash
 # npm (recommended)
-npm install -g aidevops
+npm install -g aidevops && aidevops update
 
 # Homebrew
-brew install marcusquinn/tap/aidevops
+brew install marcusquinn/tap/aidevops && aidevops update
 
 # curl
 bash <(curl -fsSL https://aidevops.sh)

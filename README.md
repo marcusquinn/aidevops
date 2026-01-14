@@ -94,24 +94,21 @@ The result: AI agents that work *with* your development process, not around it.
 **npm** (recommended - [verified provenance](https://docs.npmjs.com/generating-provenance-statements)):
 
 ```bash
-npm install -g aidevops
-aidevops update  # Deploy agents (required after npm install)
+npm install -g aidevops && aidevops update
 ```
 
-> **Note**: npm suppresses postinstall output. Run `aidevops update` to deploy agents to `~/.aidevops/agents/`. The CLI will remind you if agents need updating.
+> **Note**: npm suppresses postinstall output. The `&& aidevops update` deploys agents to `~/.aidevops/agents/`. The CLI will remind you if agents need updating.
 
 **Bun** (fast alternative):
 
 ```bash
-bun install -g aidevops
-aidevops update  # Deploy agents
+bun install -g aidevops && aidevops update
 ```
 
 **Homebrew** (macOS/Linux):
 
 ```bash
-brew tap marcusquinn/tap
-brew install aidevops
+brew install marcusquinn/tap/aidevops && aidevops update
 ```
 
 **Direct from source** (aidevops.sh):
@@ -1472,13 +1469,13 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 
 ```bash
 # npm (recommended)
-npm install -g aidevops
+npm install -g aidevops && aidevops update
 
 # Bun (fast alternative)
-bun install -g aidevops
+bun install -g aidevops && aidevops update
 
 # Homebrew
-brew tap marcusquinn/tap && brew install aidevops
+brew install marcusquinn/tap/aidevops && aidevops update
 
 # Direct from source
 bash <(curl -fsSL https://aidevops.sh/install)
