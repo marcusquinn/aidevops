@@ -28,19 +28,16 @@ tools:
 2. **Is this the best solution?** - Are there simpler alternatives? Does it fit architecture?
 3. **Is the scope appropriate?** - Does the PR do exactly what's needed, no more, no less?
 
-**Quick Commands**:
+**Usage** (paste URL or reference this workflow):
 
 ```bash
-# Review a specific issue
-/review-issue 123
-/review-issue https://github.com/owner/repo/issues/123
+# Paste issue/PR URL and ask AI to review using this workflow
+# Example: "Review this issue using workflows/review-issue-pr.md"
+# https://github.com/owner/repo/issues/123
 
-# Review a specific PR
-/review-pr 456
-/review-pr https://github.com/owner/repo/pull/456
-
-# Full triage (issue + linked PR)
-/review-issue-pr 123
+# Or use gh CLI directly
+gh issue view 123 --json title,body,labels,author
+gh pr view 456 --json title,body,files,additions,deletions
 ```
 
 <!-- AI-CONTEXT-END -->
