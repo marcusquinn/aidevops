@@ -128,6 +128,12 @@ For each code example:
 - Is it readable without the detailed section?
 - Would an AI get stuck with only the AI-CONTEXT?
 
+#### 6. Slash Command Audit
+
+- Are any commands defined inline in main agents?
+- Should inline commands move to `scripts/commands/` or domain subagent?
+- Do main agents only reference commands (not implement them)?
+
 ### Improvement Proposal Format
 
 When proposing changes:
