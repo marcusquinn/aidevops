@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.55.0] - 2026-01-14
+
+### Added
+
+- add Peekaboo MCP server integration for macOS GUI automation (#91)
+- add macos-automator MCP for AppleScript automation (#89)
+- add sweet-cookie documentation for cookie extraction (#90)
+
+### Changed
+
+- Documentation: add && aidevops update to npm/bun/brew install commands (#87)
 ## [2.54.2] - 2026-01-14
 
 ### Fixed
