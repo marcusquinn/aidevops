@@ -19,7 +19,7 @@
     "setup:bun": "bun install",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/npm-postinstall.js || true"
+    "postinstall": "node scripts/npm-postinstall.cjs || true"
   },
   "keywords": [
     "ai",
@@ -37,8 +37,11 @@
   "author": "Marcus Quinn <marcus@aidevops.sh>",
   "license": "MIT",
   "dependencies": {
-    "dspyground": "^0.2.0",
+    "dspyground": "^0.3.10",
     "elysia": "^1.1.0"
+  },
+  "overrides": {
+    "next": "^16.1.1"
   },
   "devDependencies": {
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
@@ -61,7 +64,7 @@
     "aidevops.sh",
     "setup.sh",
     "VERSION",
-    "scripts/npm-postinstall.js",
+    "scripts/npm-postinstall.cjs",
     "templates/"
   ],
   "repository": {
