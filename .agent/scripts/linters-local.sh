@@ -307,21 +307,22 @@ check_secrets() {
             print_info "Run: bash $secretlint_script init"
         fi
     elif command -v docker &> /dev/null; then
-        print_info "Secretlint: Using Docker for scan (30s timeout)..."
+        local timeout_sec=60
+        print_info "Secretlint: Using Docker for scan (${timeout_sec}s timeout)..."
         # Use gtimeout (macOS) or timeout (Linux) to prevent Docker from hanging
         local timeout_cmd=""
         if command -v gtimeout &> /dev/null; then
-            timeout_cmd="gtimeout 30"
+            timeout_cmd="gtimeout $timeout_sec"
         elif command -v timeout &> /dev/null; then
-            timeout_cmd="timeout 30"
+            timeout_cmd="timeout $timeout_sec"
         fi
         
         local docker_result
         if [[ -n "$timeout_cmd" ]]; then
-            docker_result=$($timeout_cmd docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
+            docker_result=$($timeout_cmd docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
         else
             # No timeout available, run without (may hang on large repos)
-            docker_result=$(docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
+            docker_result=$(docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
         fi
         
         if [[ -z "$docker_result" ]] || [[ "$docker_result" == *"0 problems"* ]]; then
