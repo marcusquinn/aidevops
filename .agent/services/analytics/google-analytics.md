@@ -9,7 +9,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
-  analytics_mcp_*: true
+  google-analytics-mcp_*: true
 ---
 
 # Google Analytics MCP Integration
@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Type**: Google Analytics 4 (GA4) API integration
-- **MCP Server**: `analytics-mcp` (official Google package via pipx)
+- **MCP Server**: `google-analytics-mcp` (config key) / `analytics-mcp` (PyPI package)
 - **Auth**: Google Cloud Application Default Credentials (ADC)
 - **APIs**: Google Analytics Admin API, Google Analytics Data API
 - **Capabilities**: Account summaries, property details, reports, real-time data, custom dimensions/metrics
@@ -87,7 +87,7 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
 ```json
 {
   "mcp": {
-    "analytics-mcp": {
+    "google-analytics-mcp": {
       "type": "local",
       "command": ["pipx", "run", "analytics-mcp"],
       "env": {
@@ -100,7 +100,7 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
 }
 ```
 
-**Per-Agent Enablement**: Google Analytics tools are enabled via `analytics_mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing.md`, `sales.md`) reference this subagent for analytics operations, ensuring the MCP is only loaded when needed.
+**Per-Agent Enablement**: Google Analytics tools are enabled via `google-analytics-mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing.md`, `sales.md`) reference this subagent for analytics operations, ensuring the MCP is only loaded when needed.
 
 ### Gemini CLI Configuration
 
@@ -109,7 +109,7 @@ Add to Gemini CLI settings (`~/.gemini/settings.json`):
 ```json
 {
   "mcpServers": {
-    "analytics-mcp": {
+    "google-analytics-mcp": {
       "command": "pipx",
       "args": ["run", "analytics-mcp"],
       "env": {

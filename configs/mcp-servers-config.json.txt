@@ -66,7 +66,7 @@
       },
       "description": "Peekaboo MCP server for macOS screen capture, AI vision analysis, and GUI automation"
     },
-    "analytics-mcp": {
+    "google-analytics-mcp": {
       "command": "pipx",
       "args": ["run", "analytics-mcp"],
       "env": {
