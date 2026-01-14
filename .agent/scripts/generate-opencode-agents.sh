@@ -469,6 +469,22 @@ if 'shadcn_*' not in config['tools']:
     config['tools']['shadcn_*'] = False
     print("  Added shadcn_* to tools (disabled globally, enabled for @shadcn subagent)")
 
+# macOS Automator MCP - AppleScript and JXA automation (macOS only)
+# Docs: https://github.com/steipete/macos-automator-mcp
+import platform
+if platform.system() == 'Darwin':
+    if 'macos-automator' not in config['mcp']:
+        config['mcp']['macos-automator'] = {
+            "type": "local",
+            "command": ["npx", "-y", "@steipete/macos-automator-mcp@latest"],
+            "enabled": True
+        }
+        print("  Added macos-automator MCP server (macOS only)")
+
+    if 'macos-automator_*' not in config['tools']:
+        config['tools']['macos-automator_*'] = False
+        print("  Added macos-automator_* to tools (disabled globally, enabled for @mac subagent)")
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 
@@ -522,6 +538,9 @@ while IFS= read -r f; do
             ;;
         shadcn)
             extra_tools=$'  shadcn_*: true\n  write: true\n  edit: true'
+            ;;
+        macos-automator|mac)
+            extra_tools=$'  macos-automator_*: true\n  webfetch: true'
             ;;
         *)
             ;;  # No extra tools for other agents

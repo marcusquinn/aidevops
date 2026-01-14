@@ -392,6 +392,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/opencode/` | OpenCode config - CLI setup, plugins, authentication, Oh-My-OpenCode extensions | opencode, opencode-anthropic-auth, oh-my-opencode |
 | `tools/task-management/` | Task tracking - dependency graphs, blocking relationships, visual planning | beads |
 | `tools/terminal/` | Terminal integration - tab titles, git context display | terminal-title |
+| `tools/automation/` | macOS automation - AppleScript, JXA, accessibility API, app control | mac, macos-automator |
 | `tools/wordpress/` | WordPress ecosystem - local dev, fleet management, plugin curation, custom fields | wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf |
 | `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
 | `services/email/` | Email services - transactional email, deliverability | ses |
@@ -483,6 +484,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | Framework internals | `aidevops/architecture.md` (when working in `~/Git/aidevops/`) |
 | Content summarization | `tools/content/summarize.md` |
 | X/Twitter automation | `tools/social-media/bird.md` |
+| macOS automation | `tools/automation/mac.md` (AppleScript, JXA, app control) |
 
 ## Security
 
