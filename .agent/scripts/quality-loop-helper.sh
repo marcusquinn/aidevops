@@ -226,16 +226,31 @@ get_pending_checks() {
 # Arguments:
 #   $1 - Loop type (preflight, pr-review, postflight)
 #   $2 - Max iterations
-#   $3 - Options string
+#   $3 - Options string (key=value pairs separated by commas)
 # Returns: 0
-# Side effects: Creates .claude/quality-loop.local.md
+# Side effects: Creates .agent/loop-state/quality-loop.local.md
 create_state() {
     local loop_type="$1"
     local max_iterations="$2"
-    local options="$3"
-    
+    local options_str="$3"
+
     mkdir -p "$STATE_DIR"
-    
+
+    # Convert options string to YAML object format
+    # Input: "auto_fix=true,wait_for_ci=false" -> "  auto_fix: true\n  wait_for_ci: false"
+    local options_yaml=""
+    if [[ -n "$options_str" ]]; then
+        options_yaml=$(echo "$options_str" | tr ',' '\n' | while IFS='=' read -r key value; do
+            [[ -z "$key" ]] && continue
+            # Handle boolean and numeric values without quotes
+            if [[ "$value" == "true" || "$value" == "false" || "$value" =~ ^[0-9]+$ ]]; then
+                echo "  $key: $value"
+            else
+                echo "  $key: \"$value\""
+            fi
+        done)
+    fi
+
     cat > "$STATE_FILE" << EOF
 ---
 type: $loop_type
@@ -243,7 +258,8 @@ iteration: 1
 max_iterations: $max_iterations
 status: running
 started_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-options: "$options"
+options:
+$options_yaml
 checks_passed: []
 checks_failed: []
 fixes_applied: 0
