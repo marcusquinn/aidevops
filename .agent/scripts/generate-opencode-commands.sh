@@ -122,6 +122,35 @@ EOF
 echo -e "  ${GREEN}✓${NC} Created /postflight command"
 
 # =============================================================================
+# REVIEW-ISSUE-PR COMMAND
+# =============================================================================
+# Review external issues and PRs - validate problems and evaluate solutions
+
+cat > "$OPENCODE_COMMAND_DIR/review-issue-pr.md" << 'EOF'
+---
+description: Review external issue or PR - validate problem and evaluate solution
+agent: Build+
+subtask: true
+---
+
+Read ~/.aidevops/agents/workflows/review-issue-pr.md and follow its instructions.
+
+Review this issue or PR: $ARGUMENTS
+
+**Usage:**
+- `/review-issue-pr 123` - Review issue or PR by number
+- `/review-issue-pr https://github.com/owner/repo/issues/123` - Review by URL
+- `/review-issue-pr https://github.com/owner/repo/pull/456` - Review PR by URL
+
+**Core questions to answer:**
+1. Is the issue real? (reproducible, not duplicate, actually a bug)
+2. Is this the best solution? (simplest approach, fixes root cause)
+3. Is the scope appropriate? (minimal changes, no scope creep)
+EOF
+((++command_count))
+echo -e "  ${GREEN}✓${NC} Created /review-issue-pr command"
+
+# =============================================================================
 # RELEASE COMMAND
 # =============================================================================
 # Full release workflow - direct execution, no subagent needed
@@ -1575,6 +1604,7 @@ echo ""
 echo "  Quality:"
 echo "    /preflight        - Quality checks before commit"
 echo "    /postflight       - Check code audit feedback on latest push"
+echo "    /review-issue-pr  - Review external issue/PR (validate problem, evaluate solution)"
 echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
 echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
 echo "    /code-standards   - Check against documented standards"
