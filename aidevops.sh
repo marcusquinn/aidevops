@@ -1702,6 +1702,26 @@ main() {
         echo ""
     fi
     
+    # Check if agents need updating (skip for update command itself)
+    if [[ "$command" != "update" && "$command" != "upgrade" && "$command" != "u" ]]; then
+        local cli_version agents_version
+        cli_version=$(get_version)
+        if [[ -f "$AGENTS_DIR/VERSION" ]]; then
+            agents_version=$(cat "$AGENTS_DIR/VERSION")
+        else
+            agents_version="not installed"
+        fi
+        
+        if [[ "$agents_version" == "not installed" ]]; then
+            echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"
+            echo ""
+        elif [[ "$cli_version" != "$agents_version" ]]; then
+            echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"
+            echo -e "       Run: aidevops update"
+            echo ""
+        fi
+    fi
+    
     case "$command" in
         init|i)
             shift

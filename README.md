@@ -95,12 +95,16 @@ The result: AI agents that work *with* your development process, not around it.
 
 ```bash
 npm install -g aidevops
+aidevops update  # Deploy agents (required after npm install)
 ```
+
+> **Note**: npm suppresses postinstall output. Run `aidevops update` to deploy agents to `~/.aidevops/agents/`. The CLI will remind you if agents need updating.
 
 **Bun** (fast alternative):
 
 ```bash
 bun install -g aidevops
+aidevops update  # Deploy agents
 ```
 
 **Homebrew** (macOS/Linux):
