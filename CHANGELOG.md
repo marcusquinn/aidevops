@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.54.0] - 2026-01-14
+
+### Added
+
+- add subagent filtering via frontmatter (#75)
+
+### Changed
+
+- Documentation: add troubleshooting section with support links to QuickFile agent (#76)
+- Documentation: add upgrade-planning and update-tools to CLI commands
+- Documentation: add Bun as installation option
+
+### Fixed
+
+- add SonarCloud exclusions for shell code smell rules (#77)
 ## [2.53.3] - 2026-01-13
 
 ### Changed
