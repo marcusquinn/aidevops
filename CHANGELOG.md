@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - add SonarCloud exclusions for shell code smell rules (#77)
+
 ## [2.53.3] - 2026-01-13
 
 ### Changed
