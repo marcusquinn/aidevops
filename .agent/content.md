@@ -2,6 +2,22 @@
 name: content
 description: Content creation and management - copywriting, guidelines, editorial workflows
 mode: subagent
+subagents:
+  # Content
+  - guidelines
+  - summarize
+  # SEO integration
+  - keyword-research
+  - eeat-score
+  # WordPress publishing
+  - wp-admin
+  - mainwp
+  # Research
+  - context7
+  - crawl4ai
+  # Built-in
+  - general
+  - explore
 ---
 
 # Content - Main Agent

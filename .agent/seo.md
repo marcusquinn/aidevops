@@ -2,6 +2,18 @@
 name: seo
 description: SEO optimization and analysis - keyword research, Search Console, DataForSEO, site crawling
 mode: subagent
+subagents:
+  - keyword-research
+  - google-search-console
+  - gsc-sitemaps
+  - dataforseo
+  - serper
+  - site-crawler
+  - eeat-score
+  - domain-research
+  - pagespeed
+  - general
+  - explore
 ---
 
 # SEO - Main Agent

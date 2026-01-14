@@ -2,6 +2,10 @@
 name: accounts
 description: Financial operations and accounting - QuickFile integration, invoicing, expense tracking
 mode: subagent
+subagents:
+  - quickfile
+  - general
+  - explore
 ---
 
 # Accounts - Main Agent

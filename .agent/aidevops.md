@@ -2,6 +2,42 @@
 name: aidevops
 description: AI DevOps framework operations - setup, configuration, meta-agents, troubleshooting
 mode: subagent
+subagents:
+  # Framework internals
+  - setup
+  - troubleshooting
+  - architecture
+  - add-new-mcp-to-aidevops
+  - mcp-integrations
+  - mcp-troubleshooting
+  - configs
+  - providers
+  # Agent development
+  - build-agent
+  - agent-review
+  - build-mcp
+  - server-patterns
+  - api-wrapper
+  - transports
+  - deployment
+  # Workflows
+  - git-workflow
+  - release
+  - version-bump
+  - preflight
+  - postflight
+  # Code quality
+  - code-standards
+  - linters-local
+  - secretlint
+  # Credentials
+  - api-key-setup
+  - api-key-management
+  - vaultwarden
+  - list-keys
+  # Built-in
+  - general
+  - explore
 ---
 
 # AI DevOps - Framework Main Agent

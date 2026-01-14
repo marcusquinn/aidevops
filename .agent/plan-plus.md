@@ -2,6 +2,24 @@
 name: plan-plus
 description: Read-only planning agent with semantic codebase search - analysis without modifications
 mode: subagent
+subagents:
+  # Context/search (read-only)
+  - osgrep
+  - augment-context-engine
+  - context-builder
+  - context7
+  # Planning workflows
+  - plans
+  - plans-quick
+  - prd-template
+  - tasks-template
+  # Architecture review
+  - architecture
+  - code-standards
+  - best-practices
+  # Built-in
+  - general
+  - explore
 ---
 
 # Plan+ - Enhanced Plan Agent

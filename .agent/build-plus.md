@@ -2,6 +2,44 @@
 name: build-plus
 description: Enhanced build agent with semantic codebase search and context tools
 mode: subagent
+subagents:
+  # Core workflows
+  - git-workflow
+  - branch
+  - preflight
+  - postflight
+  - release
+  - version-bump
+  - pr
+  - conversation-starter
+  - error-feedback
+  # Code quality
+  - code-standards
+  - code-simplifier
+  - best-practices
+  - auditing
+  - secretlint
+  - qlty
+  # Context tools
+  - osgrep
+  - augment-context-engine
+  - context-builder
+  - context7
+  - toon
+  # Browser/testing
+  - playwright
+  - stagehand
+  - pagespeed
+  # Git platforms
+  - github-cli
+  - gitlab-cli
+  - github-actions
+  # Deployment
+  - coolify
+  - vercel
+  # Built-in
+  - general
+  - explore
 ---
 
 # Build+ - Enhanced Build Agent

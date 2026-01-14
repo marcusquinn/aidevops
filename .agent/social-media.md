@@ -2,6 +2,18 @@
 name: social-media
 description: Social media management - content scheduling, analytics, engagement, multi-platform strategy
 mode: subagent
+subagents:
+  # Social tools
+  - bird
+  # Content
+  - guidelines
+  - summarize
+  # Research
+  - crawl4ai
+  - serper
+  # Built-in
+  - general
+  - explore
 ---
 
 # Social Media - Main Agent

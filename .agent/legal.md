@@ -2,6 +2,15 @@
 name: legal
 description: Legal compliance and documentation - contracts, policies, regulatory guidance
 mode: subagent
+subagents:
+  # Research
+  - context7
+  - crawl4ai
+  # Content
+  - guidelines
+  # Built-in
+  - general
+  - explore
 ---
 
 # Legal - Main Agent
