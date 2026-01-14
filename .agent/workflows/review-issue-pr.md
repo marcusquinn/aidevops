@@ -117,8 +117,8 @@ Before evaluating solutions:
 **Analysis Commands**:
 
 ```bash
-# Find related code
-grep -r "relevant_function" --include="*.{js,ts,py,sh}"
+# Find related code (use multiple --include flags)
+grep -r "relevant_function" --include='*.js' --include='*.ts' --include='*.py' --include='*.sh'
 
 # Check git history for the area
 git log --oneline -20 -- path/to/affected/file
@@ -314,14 +314,6 @@ Would you be open to updating the PR with this approach? Or if you prefer,
 I can make the change - just let me know!
 ```
 
-## Integration with Other Workflows
-
-| Workflow | When to Use |
-|----------|-------------|
-| `/pr review` | After approving external PR, run full quality checks |
-| `/code-standards` | Reference for evaluating code quality |
-| `/linters-local` | Run before final approval |
-
 ## CLI Commands
 
 ```bash
@@ -364,7 +356,10 @@ Recommended labels for issue triage:
 
 ## Related Workflows
 
-- **PR quality checks**: `workflows/pr.md`
-- **Code standards**: `tools/code-review/code-standards.md`
-- **GitHub CLI**: `tools/git/github-cli.md`
-- **Fork workflow**: `workflows/pr.md` (Fork Workflow section)
+| Workflow | When to Use |
+|----------|-------------|
+| `workflows/pr.md` | After approving external PR, run full quality checks |
+| `tools/code-review/code-standards.md` | Reference for evaluating code quality |
+| `/linters-local` | Run before final approval |
+| `tools/git/github-cli.md` | GitHub CLI reference |
+| `workflows/pr.md` (Fork Workflow) | When contributor uses fork workflow |
