@@ -704,8 +704,36 @@ See "Subagent YAML Frontmatter" section for full permission options.
 │   ├── {category}/           # Grouped by function
 ├── services/                 # External integrations
 │   ├── {category}/           # Grouped by type
-└── workflows/                # Process guides
+├── workflows/                # Process guides
+└── scripts/
+    └── commands/             # Slash command definitions
 ```text
+
+### Slash Command Placement
+
+**CRITICAL**: Never define slash commands inline in main agents.
+
+| Command Type | Location | Example |
+|--------------|----------|---------|
+| Generic (cross-domain) | `scripts/commands/{command}.md` | `/save-todo`, `/remember`, `/code-simplifier` |
+| Domain-specific | `{domain}/{subagent}.md` | `/keyword-research` in `seo/keyword-research.md` |
+
+**Main agents only reference commands** - they list available commands but never contain the implementation:
+
+```markdown
+# Good: Reference in main agent (seo.md)
+**Commands**: `/keyword-research`, `/autocomplete-research`
+
+# Bad: Implementation in main agent
+## /keyword-research Command
+[50 lines of command implementation...]
+```text
+
+**Why this matters:**
+- Keeps main agents under instruction budget
+- Enables command reuse across agents
+- Allows targeted reading (only load command when invoked)
+- Prevents duplication when multiple agents use same command
 
 **Naming conventions:**
 
