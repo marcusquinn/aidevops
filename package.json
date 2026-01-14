@@ -37,11 +37,7 @@
   "author": "Marcus Quinn <marcus@aidevops.sh>",
   "license": "MIT",
   "dependencies": {
-    "dspyground": "^0.3.10",
     "elysia": "^1.1.0"
-  },
-  "overrides": {
-    "next": "^16.1.1"
   },
   "devDependencies": {
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
