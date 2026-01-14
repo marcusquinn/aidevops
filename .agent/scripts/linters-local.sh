@@ -308,13 +308,18 @@ check_secrets() {
         fi
     elif command -v docker &> /dev/null; then
         local timeout_sec=60
-        print_info "Secretlint: Using Docker for scan (${timeout_sec}s timeout)..."
         # Use gtimeout (macOS) or timeout (Linux) to prevent Docker from hanging
         local timeout_cmd=""
         if command -v gtimeout &> /dev/null; then
             timeout_cmd="gtimeout $timeout_sec"
         elif command -v timeout &> /dev/null; then
             timeout_cmd="timeout $timeout_sec"
+        fi
+        
+        if [[ -n "$timeout_cmd" ]]; then
+            print_info "Secretlint: Using Docker for scan (${timeout_sec}s timeout)..."
+        else
+            print_info "Secretlint: Using Docker for scan (no timeout available)..."
         fi
         
         local docker_result
