@@ -139,13 +139,15 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 **After installation, use the CLI:**
 
 ```bash
-aidevops status      # Check what's installed
-aidevops update      # Update framework + check registered projects
-aidevops init        # Initialize aidevops in any project
-aidevops features    # List available features
-aidevops repos       # List/add/remove registered projects
-aidevops detect      # Scan for unregistered aidevops projects
-aidevops uninstall   # Remove aidevops
+aidevops status           # Check what's installed
+aidevops update           # Update framework + check registered projects
+aidevops init             # Initialize aidevops in any project
+aidevops features         # List available features
+aidevops repos            # List/add/remove registered projects
+aidevops detect           # Scan for unregistered aidevops projects
+aidevops upgrade-planning # Upgrade TODO.md/PLANS.md to latest templates
+aidevops update-tools     # Check and update installed tools
+aidevops uninstall        # Remove aidevops
 ```
 
 **Project tracking:** When you run `aidevops init`, the project is automatically registered in `~/.config/aidevops/repos.json`. Running `aidevops update` checks all registered projects for version updates.
