@@ -183,6 +183,7 @@ Use run_report with:
 ### Common Report Examples
 
 **Traffic Overview**:
+
 ```text
 run_report with:
 - dimensions: ["date"]
@@ -191,6 +192,7 @@ run_report with:
 ```
 
 **Top Pages**:
+
 ```text
 run_report with:
 - dimensions: ["pagePath", "pageTitle"]
@@ -200,6 +202,7 @@ run_report with:
 ```
 
 **Traffic Sources**:
+
 ```text
 run_report with:
 - dimensions: ["sessionSource", "sessionMedium"]
@@ -207,6 +210,7 @@ run_report with:
 ```
 
 **Geographic Distribution**:
+
 ```text
 run_report with:
 - dimensions: ["country", "city"]
@@ -214,6 +218,7 @@ run_report with:
 ```
 
 **Device Breakdown**:
+
 ```text
 run_report with:
 - dimensions: ["deviceCategory", "operatingSystem"]
@@ -247,12 +252,14 @@ Use run_realtime_report with:
 ### Real-time Use Cases
 
 **Current Active Users**:
+
 ```text
 run_realtime_report with:
 - metrics: ["activeUsers"]
 ```
 
 **Active Users by Page**:
+
 ```text
 run_realtime_report with:
 - dimensions: ["unifiedScreenName"]
@@ -260,6 +267,7 @@ run_realtime_report with:
 ```
 
 **Active Users by Source**:
+
 ```text
 run_realtime_report with:
 - dimensions: ["sessionSource"]
