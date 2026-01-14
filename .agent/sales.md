@@ -20,6 +20,8 @@ subagents:
   # Research
   - outscraper
   - crawl4ai
+  # Analytics
+  - google-analytics
   # Built-in
   - general
   - explore
@@ -39,7 +41,8 @@ subagents:
 - `marketing.md` - Lead generation and campaigns
 - `content.md` - Sales collateral and proposals
 - `services/accounting/quickfile.md` - Invoicing and payments
-- `.agent/services/crm/fluentcrm.md` - CRM operations (detailed)
+- `services/crm/fluentcrm.md` - CRM operations (detailed)
+- `services/analytics/google-analytics.md` - GA4 e-commerce and conversion tracking
 
 **FluentCRM MCP Tools**:
 
@@ -55,6 +58,14 @@ subagents:
 | **Smart Links** | `fluentcrm_list_smart_links`, `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode`, `fluentcrm_validate_smart_link_data` |
 | **Reports** | `fluentcrm_dashboard_stats`, `fluentcrm_custom_fields` |
 
+**Google Analytics MCP Tools** (when `google-analytics` subagent loaded):
+
+| Category | Key Tools |
+|----------|-----------|
+| **Account Info** | `get_account_summaries`, `get_property_details`, `list_google_ads_links` |
+| **Reports** | `run_report`, `get_custom_dimensions_and_metrics` |
+| **Real-time** | `run_realtime_report` |
+
 **Typical Tasks**:
 
 - Lead capture and qualification
@@ -62,6 +73,7 @@ subagents:
 - Contact segmentation
 - Sales automation setup
 - Quote and proposal generation
+- E-commerce and conversion analytics (GA4)
 
 <!-- AI-CONTEXT-END -->
 

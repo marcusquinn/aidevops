@@ -398,8 +398,9 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `services/email/` | Email services - transactional email, deliverability | ses |
 | `services/communications/` | Communications platform - SMS, voice, WhatsApp, verify, recordings | twilio, telfon |
 | `services/crm/` | CRM integration - contact management, email marketing, automation | fluentcrm |
+| `services/analytics/` | Website analytics - GA4 reporting, traffic analysis, real-time data, e-commerce tracking | google-analytics |
 | `services/accounting/` | Accounting integration - invoicing, expenses, financial reports | quickfile |
-| `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, preflight, postflight, ralph-loop, session-review |
+| `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, review-issue-pr, preflight, postflight, ralph-loop, session-review |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
 | `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
 | `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier and other interactive commands | save-todo, remember, recall, code-simplifier |
@@ -470,6 +471,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 |-------------|------------|
 | Planning complex work | `workflows/plans.md`, `tools/task-management/beads.md` |
 | Code quality/reviews | `tools/code-review/code-standards.md`, then specific tools as needed |
+| External issues/PRs | `workflows/review-issue-pr.md` (triage external contributions) |
 | Git operations | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
 | Release/versioning | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser automation | `tools/browser/stagehand.md` or `tools/browser/playwright.md` |
@@ -478,6 +480,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Sitemap submission | `seo/gsc-sitemaps.md` |
+| Website analytics | `services/analytics/google-analytics.md` (GA4 reports, traffic, conversions) |
 | CRM/email marketing | `services/crm/fluentcrm.md` |
 | MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` |
 | Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |

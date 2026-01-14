@@ -135,8 +135,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Inspired by opengraphdebug.com. Two subagents: 1) debug-opengraph.md - validate Open Graph meta tags (og:title, og:description, og:image, og:url, twitter:card), preview social sharing appearance, check image dimensions/accessibility. 2) debug-favicon.md - validate favicon setup across platforms (favicon.ico, apple-touch-icon, manifest icons), check sizes/formats, verify PWA manifest. Could use browser automation (Stagehand/Playwright) or direct HTML parsing. Add to tools/seo/ or tools/browser/.
 - [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~2h (ai:1h read:1h) logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
   - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem.
-- [ ] t063 Fix secretlint scanning performance #bugfix #secretlint #performance ~30m (ai:15m test:10m read:5m) logged:2026-01-14
-  - Notes: Secretlint scans 19,790 files (572MB) including python-env binaries, causing 60+ min hangs. Fix: 1) Add missing patterns to .secretlintignore (python-env, .osgrep, .scannerwork) - must mirror .gitignore to avoid security gaps. 2) Add --init flag to docker run for proper timeout handling. 3) Increase timeout from 30s to 60s. Result: Scans ~230 files in seconds, timeout now properly stops container. Principle: .secretlintignore must be subset of .gitignore.
+- [x] t063 Fix secretlint scanning performance #bugfix #secretlint #performance ~30m (ai:15m test:10m read:5m) logged:2026-01-14 completed:2026-01-14
+  - Notes: Added python-env, .osgrep, .scannerwork to .secretlintignore. Increased Docker timeout 30s→60s. Fixed misleading timeout message when gtimeout/timeout unavailable.
 
 <!--TOON:backlog[40]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -280,5 +280,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-56,45,0,0,26,0,28d3h,16h50m,0,45
+57,44,0,0,27,0,28d3h30m,16h50m,0,44
 -->

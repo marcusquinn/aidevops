@@ -65,6 +65,15 @@
         "PEEKABOO_AI_PROVIDERS": "openai/gpt-4o"
       },
       "description": "Peekaboo MCP server for macOS screen capture, AI vision analysis, and GUI automation"
+    },
+    "analytics-mcp": {
+      "command": "pipx",
+      "args": ["run", "analytics-mcp"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "YOUR_CREDENTIALS_JSON_PATH_HERE",
+        "GOOGLE_PROJECT_ID": "YOUR_GCP_PROJECT_ID_HERE"
+      },
+      "description": "Google Analytics MCP server for GA4 reporting, account management, and real-time analytics. Requires pipx and Google Cloud ADC setup."
     }
   }
 }
