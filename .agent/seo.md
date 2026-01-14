@@ -12,6 +12,7 @@ subagents:
   - eeat-score
   - domain-research
   - pagespeed
+  - google-analytics
   - general
   - explore
 ---
@@ -23,11 +24,11 @@ subagents:
 ## Quick Reference
 
 - **Purpose**: SEO optimization and analysis
-- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Context7
-- **MCP**: GSC, DataForSEO, Serper, Context7 for comprehensive SEO data and library docs
+- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
+- **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7 for comprehensive SEO data and library docs
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`
 
-**Subagents** (`seo/`):
+**Subagents** (`seo/` and `services/analytics/`):
 
 | Subagent | Purpose |
 |----------|---------|
@@ -38,6 +39,7 @@ subagents:
 | `serper.md` | Google Search API (web, images, news, places) |
 | `site-crawler.md` | SEO site auditing (Screaming Frog-like capabilities) |
 | `eeat-score.md` | E-E-A-T content quality scoring and analysis |
+| `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
@@ -83,6 +85,11 @@ dataforseo.backlinks [domain]
 # Serper via MCP
 serper.google_search [query]
 serper.google_search_news [query]
+
+# Google Analytics via MCP (when google-analytics subagent loaded)
+get_account_summaries
+run_report [property_id] [dimensions] [metrics] [date_range]
+run_realtime_report [property_id] [dimensions] [metrics]
 ```
 
 **Testing**: Use OpenCode CLI to test SEO commands without restarting TUI:
