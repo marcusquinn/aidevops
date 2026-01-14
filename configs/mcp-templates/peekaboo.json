@@ -1,0 +1,105 @@
+{
+  "_comment": "Peekaboo MCP Server - macOS Screen Capture and GUI Automation",
+  "_docs": "https://github.com/steipete/Peekaboo",
+  "_requirements": [
+    "macOS 15+ (Sequoia)",
+    "Node.js 22+ (for npx)",
+    "Screen Recording permission",
+    "Accessibility permission"
+  ],
+  "_install": "brew install steipete/tap/peekaboo",
+
+  "claude_desktop": {
+    "_comment": "Add to Claude Desktop config (Developer > Edit Config)",
+    "mcpServers": {
+      "peekaboo": {
+        "command": "npx",
+        "args": ["-y", "@steipete/peekaboo"],
+        "env": {
+          "PEEKABOO_AI_PROVIDERS": "openai/gpt-4o,anthropic/claude-sonnet-4"
+        }
+      }
+    }
+  },
+
+  "opencode": {
+    "_comment": "Add to ~/.config/opencode/opencode.json",
+    "mcp": {
+      "peekaboo": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@steipete/peekaboo"],
+        "env": {
+          "PEEKABOO_AI_PROVIDERS": "openai/gpt-4o"
+        }
+      }
+    }
+  },
+
+  "cursor": {
+    "_comment": "Add to Cursor MCP settings",
+    "mcpServers": {
+      "peekaboo": {
+        "command": "npx",
+        "args": ["-y", "@steipete/peekaboo"]
+      }
+    }
+  },
+
+  "windsurf": {
+    "_comment": "Add to Windsurf MCP settings",
+    "mcpServers": {
+      "peekaboo": {
+        "command": "npx",
+        "args": ["-y", "@steipete/peekaboo"]
+      }
+    }
+  },
+
+  "ai_providers": {
+    "_comment": "Supported AI providers for vision analysis",
+    "openai": {
+      "models": ["gpt-5.1", "gpt-4.1", "gpt-4o"],
+      "env": "OPENAI_API_KEY"
+    },
+    "anthropic": {
+      "models": ["claude-opus-4", "claude-sonnet-4"],
+      "env": "ANTHROPIC_API_KEY"
+    },
+    "xai": {
+      "models": ["grok-4-fast"],
+      "env": "XAI_API_KEY"
+    },
+    "google": {
+      "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
+      "env": "GOOGLE_API_KEY"
+    },
+    "ollama": {
+      "models": ["llama3.3", "llava"],
+      "env": null,
+      "_comment": "Local models, no API key needed"
+    }
+  },
+
+  "tools_provided": [
+    "peekaboo_image - Capture screenshots (screen/window/menu)",
+    "peekaboo_see - Capture UI with element annotations",
+    "peekaboo_click - Click elements by ID, label, or coordinates",
+    "peekaboo_type - Type text into focused element",
+    "peekaboo_press - Press special keys",
+    "peekaboo_hotkey - Execute keyboard shortcuts",
+    "peekaboo_scroll - Scroll views or elements",
+    "peekaboo_swipe - Gesture-style drags",
+    "peekaboo_drag - Drag and drop",
+    "peekaboo_move - Move cursor",
+    "peekaboo_window - Window management",
+    "peekaboo_app - Application control",
+    "peekaboo_space - Virtual desktop management",
+    "peekaboo_menu - Menu interaction",
+    "peekaboo_menubar - Status bar interaction",
+    "peekaboo_dock - Dock interaction",
+    "peekaboo_dialog - Dialog handling",
+    "peekaboo_list - Enumerate apps/windows/screens",
+    "peekaboo_agent - Natural language automation"
+  ]
+}
