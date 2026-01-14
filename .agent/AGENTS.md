@@ -411,10 +411,10 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 
 ```bash
 # npm (recommended)
-npm install -g aidevops
+npm install -g aidevops && aidevops update
 
 # Homebrew
-brew install marcusquinn/tap/aidevops
+brew install marcusquinn/tap/aidevops && aidevops update
 
 # curl (manual)
 bash <(curl -fsSL https://aidevops.sh)

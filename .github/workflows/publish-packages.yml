@@ -63,7 +63,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Install with:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "npm install -g aidevops" >> $GITHUB_STEP_SUMMARY
+          echo "npm install -g aidevops && aidevops update" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   update-homebrew-tap:
@@ -132,7 +132,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Install with:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "brew install marcusquinn/tap/aidevops" >> $GITHUB_STEP_SUMMARY
+          echo "brew install marcusquinn/tap/aidevops && aidevops update" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** If the tap repo doesn't exist yet, create it first:" >> $GITHUB_STEP_SUMMARY
