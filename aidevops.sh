@@ -1696,7 +1696,7 @@ main() {
     
     # Auto-detect unregistered repo on any command (silent check)
     local unregistered
-    unregistered=$(detect_unregistered_repo 2>/dev/null)
+    unregistered=$(detect_unregistered_repo 2>/dev/null) || true
     if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
         echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
         echo ""
