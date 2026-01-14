@@ -2112,6 +2112,72 @@ setup_seo_mcps() {
     return 0
 }
 
+# Setup Google Analytics MCP (disabled by default)
+setup_google_analytics_mcp() {
+    print_info "Setting up Google Analytics MCP..."
+    
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    # Check if opencode.json exists
+    if [[ ! -f "$opencode_config" ]]; then
+        print_warning "OpenCode config not found at $opencode_config - skipping Google Analytics MCP"
+        return 0
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        print_warning "jq not found - cannot add Google Analytics MCP to config"
+        print_info "Install jq and re-run setup, or manually add the MCP config"
+        return 0
+    fi
+    
+    # Check if pipx is available
+    if ! command -v pipx &> /dev/null; then
+        print_warning "pipx not found - Google Analytics MCP requires pipx"
+        print_info "Install pipx: brew install pipx (macOS) or pip install pipx"
+        print_info "Then re-run setup to add Google Analytics MCP"
+        return 0
+    fi
+    
+    # Check if google-analytics-mcp already exists in config
+    if jq -e '.mcp["google-analytics-mcp"]' "$opencode_config" > /dev/null 2>&1; then
+        print_info "Google Analytics MCP already configured in OpenCode"
+        return 0
+    fi
+    
+    # Add google-analytics-mcp to opencode.json (disabled by default)
+    local tmp_config
+    tmp_config=$(mktemp)
+    
+    if jq '.mcp["google-analytics-mcp"] = {
+        "type": "local",
+        "command": ["pipx", "run", "analytics-mcp"],
+        "environment": {
+            "GOOGLE_APPLICATION_CREDENTIALS": "",
+            "GOOGLE_PROJECT_ID": ""
+        },
+        "enabled": false
+    }' "$opencode_config" > "$tmp_config" 2>/dev/null; then
+        mv "$tmp_config" "$opencode_config"
+        print_success "Added Google Analytics MCP to OpenCode (disabled by default)"
+        print_info "To enable: Set credentials and change enabled to true in opencode.json"
+        print_info "Or use the google-analytics subagent which enables it automatically"
+    else
+        rm -f "$tmp_config"
+        print_warning "Failed to add Google Analytics MCP to config"
+    fi
+    
+    # Show setup instructions
+    print_info "Google Analytics MCP setup:"
+    print_info "  1. Enable Google Analytics Admin & Data APIs in Google Cloud Console"
+    print_info "  2. Configure ADC: gcloud auth application-default login --scopes https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
+    print_info "  3. Update GOOGLE_APPLICATION_CREDENTIALS path in opencode.json"
+    print_info "  4. Set GOOGLE_PROJECT_ID in opencode.json"
+    print_info "Documentation: ~/.aidevops/agents/services/analytics/google-analytics.md"
+    
+    return 0
+}
+
 # Check for tool updates after setup
 check_tool_updates() {
     print_info "Checking for tool updates..."
@@ -2262,6 +2328,7 @@ main() {
     confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
     confirm_step "Setup Beads task management" && setup_beads
     confirm_step "Setup SEO MCP servers (DataForSEO, Serper)" && setup_seo_mcps
+    confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
     confirm_step "Setup browser automation tools" && setup_browser_tools
     confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
     confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
