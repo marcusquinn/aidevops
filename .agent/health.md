@@ -4,7 +4,6 @@ description: Health and wellness domain - medical information, fitness, nutritio
 mode: subagent
 subagents:
   # Research
-  - context7
   - crawl4ai
   # Built-in
   - general
