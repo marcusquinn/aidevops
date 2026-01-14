@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add && aidevops update to npm/bun/brew install commands (#87)
+
 ## [2.54.2] - 2026-01-14
 
 ### Fixed
