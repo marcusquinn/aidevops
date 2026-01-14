@@ -185,7 +185,7 @@ SKIP_FILES = {"AGENTS.md", "README.md"}
 def parse_frontmatter(filepath):
     """Parse YAML frontmatter from markdown file."""
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # Check for frontmatter
@@ -207,6 +207,10 @@ def parse_frontmatter(filepath):
         
         for line in lines:
             stripped = line.strip()
+            # Ignore comments and empty lines
+            if not stripped or stripped.startswith('#'):
+                continue
+            
             if stripped.startswith('- ') and current_key:
                 # List item
                 current_list.append(stripped[2:].strip())
@@ -229,7 +233,9 @@ def parse_frontmatter(filepath):
             result[current_key] = current_list
         
         return result
-    except:
+    except (IOError, OSError, UnicodeDecodeError) as e:
+        import sys
+        print(f"Warning: Failed to parse frontmatter for {filepath}: {e}", file=sys.stderr)
         return {}
 
 def filename_to_display(filename):
