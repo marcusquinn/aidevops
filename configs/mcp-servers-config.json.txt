@@ -57,6 +57,14 @@
         "DEBUG": "false"
       },
       "description": "Context7 MCP server for accessing latest documentation of development tools and frameworks"
+    },
+    "peekaboo": {
+      "command": "npx",
+      "args": ["-y", "@steipete/peekaboo"],
+      "env": {
+        "PEEKABOO_AI_PROVIDERS": "openai/gpt-4o"
+      },
+      "description": "Peekaboo MCP server for macOS screen capture, AI vision analysis, and GUI automation"
     }
   }
 }

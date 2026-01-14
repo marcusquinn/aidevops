@@ -380,7 +380,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/build-mcp/` | MCP development - creating Model Context Protocol servers and tools | build-mcp, api-wrapper, server-patterns, transports, deployment |
 | `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
 | `tools/ai-orchestration/` | AI orchestration frameworks - visual builders, multi-agent teams, workflow automation, DSL orchestration | overview, langflow, crewai, autogen, openprose, packaging |
-| `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling | agent-browser, stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools |
+| `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling, macOS GUI automation | agent-browser, stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools, peekaboo |
 | `tools/ui/` | UI components - component libraries, design systems, frontend debugging, hydration errors | shadcn, ui-skills, frontend-debugging |
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, code-simplifier, codacy, coderabbit, qlty, snyk, secretlint, auditing |
 | `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy, llm-tldr |
@@ -392,6 +392,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/opencode/` | OpenCode config - CLI setup, plugins, authentication, Oh-My-OpenCode extensions | opencode, opencode-anthropic-auth, oh-my-opencode |
 | `tools/task-management/` | Task tracking - dependency graphs, blocking relationships, visual planning | beads |
 | `tools/terminal/` | Terminal integration - tab titles, git context display | terminal-title |
+| `tools/automation/` | macOS automation - AppleScript, JXA, accessibility API, app control | mac, macos-automator |
 | `tools/wordpress/` | WordPress ecosystem - local dev, fleet management, plugin curation, custom fields | wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf |
 | `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
 | `services/email/` | Email services - transactional email, deliverability | ses |
@@ -472,6 +473,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | Git operations | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
 | Release/versioning | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser automation | `tools/browser/stagehand.md` or `tools/browser/playwright.md` |
+| macOS GUI automation | `tools/browser/peekaboo.md` (screen capture, native app control) |
 | Frontend debugging | `tools/ui/frontend-debugging.md` (hydration errors, monorepo gotchas) |
 | WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
