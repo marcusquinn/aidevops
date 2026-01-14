@@ -280,4 +280,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-56,45,0,0,26,0,28d3h,16h50m,0,45
+57,44,0,0,27,0,28d3h30m,16h50m,0,44
+-->
