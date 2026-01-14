@@ -8,7 +8,7 @@
 # Provides installation, configuration, and usage of Peekaboo for AI agents
 
 # Source shared constants and functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Colors for output
