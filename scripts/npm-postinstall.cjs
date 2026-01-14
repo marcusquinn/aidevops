@@ -1,59 +1,51 @@
 /**
  * npm postinstall script for aidevops
- * Runs setup.sh to deploy agents after npm install -g
+ * 
+ * The npm package contains only the CLI wrapper. The full agent files
+ * are deployed from ~/Git/aidevops via `aidevops update`.
  */
 
-const { execSync } = require('child_process');
-const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const path = require('path');
 
-const packageDir = path.resolve(__dirname, '..');
-const setupScript = path.join(packageDir, 'setup.sh');
 const agentsDir = path.join(os.homedir(), '.aidevops', 'agents');
+const versionFile = path.join(agentsDir, 'VERSION');
 
-// Check if this is a global install
-const isGlobalInstall = process.env.npm_config_global === 'true';
-
-// Skip if not global install (local dev doesn't need postinstall)
-if (!isGlobalInstall && fs.existsSync(agentsDir)) {
-    console.log('aidevops: Local install detected, skipping setup (agents already deployed)');
-    process.exit(0);
+// Check current installed version
+let installedVersion = 'not installed';
+if (fs.existsSync(versionFile)) {
+    installedVersion = fs.readFileSync(versionFile, 'utf8').trim();
 }
 
-// Check if setup.sh exists
-if (!fs.existsSync(setupScript)) {
-    console.log('aidevops: setup.sh not found, skipping postinstall');
-    process.exit(0);
-}
+// Get package version
+const packageJson = require('../package.json');
+const packageVersion = packageJson.version;
 
-console.log('aidevops: Running setup to deploy agents...');
+console.log('');
+console.log('aidevops CLI installed successfully!');
+console.log('');
+console.log(`  CLI version:    ${packageVersion}`);
+console.log(`  Agents version: ${installedVersion}`);
 console.log('');
 
-try {
-    // Run setup.sh non-interactively
-    execSync(`bash "${setupScript}"`, {
-        stdio: 'inherit',
-        cwd: packageDir,
-        env: {
-            ...process.env,
-            // Skip interactive prompts
-            AIDEVOPS_NONINTERACTIVE: '1'
-        }
-    });
-    
+if (installedVersion === 'not installed') {
+    console.log('To complete installation, run:');
     console.log('');
-    console.log('aidevops installed successfully!');
+    console.log('  aidevops update');
+    console.log('');
+    console.log('This will clone the repository and deploy agents to ~/.aidevops/agents/');
+} else if (installedVersion !== packageVersion) {
+    console.log('To update agents to match CLI version, run:');
+    console.log('');
+    console.log('  aidevops update');
+    console.log('');
+} else {
+    console.log('CLI and agents are in sync. Ready to use!');
     console.log('');
     console.log('Quick start:');
     console.log('  aidevops status    # Check installation');
     console.log('  aidevops init      # Initialize in a project');
     console.log('  aidevops help      # Show all commands');
-    console.log('');
-} catch (error) {
-    console.error('aidevops: Setup encountered issues (non-critical)');
-    console.error(`Run manually: bash "${setupScript}"`);
-    console.error('Or reinstall with: bash <(curl -fsSL https://aidevops.sh)');
-    // Don't fail the install
-    process.exit(0);
 }
+console.log('');
