@@ -10,6 +10,19 @@ tools:
   glob: true
   grep: true
   webfetch: true
+subagents:
+  # CRM
+  - fluentcrm
+  # Accounting
+  - quickfile
+  # Content for proposals
+  - guidelines
+  # Research
+  - outscraper
+  - crawl4ai
+  # Built-in
+  - general
+  - explore
 ---
 
 # Sales - Main Agent

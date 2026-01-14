@@ -10,6 +10,23 @@ tools:
   glob: true
   grep: true
   webfetch: true
+subagents:
+  # CRM
+  - fluentcrm
+  # Content
+  - guidelines
+  - summarize
+  # SEO
+  - keyword-research
+  - serper
+  - dataforseo
+  # Social
+  - bird
+  # Analytics
+  - google-search-console
+  # Built-in
+  - general
+  - explore
 ---
 
 # Marketing - Main Agent

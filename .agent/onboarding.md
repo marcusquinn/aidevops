@@ -2,6 +2,19 @@
 name: onboarding
 description: Interactive onboarding wizard - discover services, check credentials, configure integrations
 mode: subagent
+subagents:
+  # Setup/config
+  - setup
+  - troubleshooting
+  - api-key-setup
+  - list-keys
+  - mcp-integrations
+  # Services overview
+  - services
+  - service-links
+  # Built-in
+  - general
+  - explore
 ---
 
 # Onboarding Wizard - aidevops Configuration

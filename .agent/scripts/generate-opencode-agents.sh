@@ -182,6 +182,56 @@ AGENT_TEMPS = {
 # Files to skip (not primary agents)
 SKIP_FILES = {"AGENTS.md", "README.md"}
 
+def parse_frontmatter(filepath):
+    """Parse YAML frontmatter from markdown file."""
+    try:
+        with open(filepath, 'r') as f:
+            content = f.read()
+        
+        # Check for frontmatter
+        if not content.startswith('---'):
+            return {}
+        
+        # Find end of frontmatter
+        end_idx = content.find('---', 3)
+        if end_idx == -1:
+            return {}
+        
+        frontmatter = content[3:end_idx].strip()
+        
+        # Simple YAML parsing for subagents list
+        result = {}
+        lines = frontmatter.split('\n')
+        current_key = None
+        current_list = []
+        
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('- ') and current_key:
+                # List item
+                current_list.append(stripped[2:].strip())
+            elif ':' in stripped and not stripped.startswith('-'):
+                # Save previous list if any
+                if current_key and current_list:
+                    result[current_key] = current_list
+                    current_list = []
+                
+                # New key
+                key, value = stripped.split(':', 1)
+                current_key = key.strip()
+                value = value.strip()
+                if value:
+                    result[current_key] = value
+                    current_key = None
+        
+        # Save final list
+        if current_key and current_list:
+            result[current_key] = current_list
+        
+        return result
+    except:
+        return {}
+
 def filename_to_display(filename):
     """Convert filename to display name."""
     name = filename.replace(".md", "")
@@ -190,8 +240,14 @@ def filename_to_display(filename):
     # Convert kebab-case to Title-Case
     return "-".join(word.capitalize() for word in name.split("-"))
 
-def get_agent_config(display_name, filename):
-    """Generate agent configuration."""
+def get_agent_config(display_name, filename, subagents=None):
+    """Generate agent configuration.
+    
+    Args:
+        display_name: Agent display name
+        filename: Agent markdown filename
+        subagents: Optional list of allowed subagent names (from frontmatter)
+    """
     tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
     temp = AGENT_TEMPS.get(display_name, 0.2)
     
@@ -209,11 +265,21 @@ def get_agent_config(display_name, filename):
     else:
         config["permission"] = {"external_directory": "allow"}
     
+    # Add subagent filtering via permission.task if subagents specified
+    # This generates deny-all + allow-specific rules
+    if subagents and isinstance(subagents, list) and len(subagents) > 0:
+        task_perms = {"*": "deny"}
+        for subagent in subagents:
+            task_perms[subagent] = "allow"
+        config["permission"]["task"] = task_perms
+        print(f"    {display_name}: filtered to {len(subagents)} subagents")
+    
     return config
 
 # Discover all root-level .md files
 primary_agents = {}
 discovered = []
+subagent_filtered_count = 0
 
 for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
     filename = os.path.basename(filepath)
@@ -221,7 +287,14 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
         continue
     
     display_name = filename_to_display(filename)
-    primary_agents[display_name] = get_agent_config(display_name, filename)
+    
+    # Parse frontmatter for subagents list
+    frontmatter = parse_frontmatter(filepath)
+    subagents = frontmatter.get('subagents', None)
+    if subagents:
+        subagent_filtered_count += 1
+    
+    primary_agents[display_name] = get_agent_config(display_name, filename, subagents)
     discovered.append(display_name)
 
 # Sort agents: ordered ones first, then alphabetical
@@ -288,6 +361,8 @@ config['agent'] = sorted_agents
 
 print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
+if subagent_filtered_count > 0:
+    print(f"  Subagent filtering: {subagent_filtered_count} agents have permission.task rules")
 
 # =============================================================================
 # MCP SERVERS - Ensure required MCP servers are configured

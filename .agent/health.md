@@ -2,6 +2,13 @@
 name: health
 description: Health and wellness domain - medical information, fitness, nutrition guidance
 mode: subagent
+subagents:
+  # Research
+  - context7
+  - crawl4ai
+  # Built-in
+  - general
+  - explore
 ---
 
 # Health - Main Agent
