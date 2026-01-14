@@ -395,6 +395,16 @@ validate_version_consistency() {
         fi
     fi
 
+    # Check aidevops.sh CLI
+    if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
+        if grep -q "# Version: $expected_version" "$REPO_ROOT/aidevops.sh"; then
+            print_success "aidevops.sh: $expected_version ✓"
+        else
+            print_error "aidevops.sh does not contain version $expected_version"
+            errors=$((errors + 1))
+        fi
+    fi
+
     # Check Claude Code plugin marketplace.json
     if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
         if grep -q "\"version\": \"$expected_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
@@ -443,6 +453,12 @@ update_version_in_files() {
     if [[ -f "$REPO_ROOT/setup.sh" ]]; then
         sed -i '' "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
         print_success "Updated setup.sh"
+    fi
+    
+    # Update aidevops.sh CLI if it exists
+    if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
+        sed -i '' "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/aidevops.sh"
+        print_success "Updated aidevops.sh"
     fi
     
     # Update README version badge
@@ -498,7 +514,7 @@ commit_version_changes() {
     print_info "Committing version changes..."
     
     # Stage all version-related files (including CHANGELOG.md and Claude plugin)
-    git add VERSION package.json README.md setup.sh sonar-project.properties CHANGELOG.md .claude-plugin/marketplace.json 2>/dev/null
+    git add VERSION package.json README.md setup.sh aidevops.sh sonar-project.properties CHANGELOG.md .claude-plugin/marketplace.json 2>/dev/null
     
     # Check if there are changes to commit
     if git diff --cached --quiet; then
