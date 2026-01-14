@@ -133,6 +133,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Git-compatible VCS (24.7k stars) with unique features: working-copy-as-commit (no staging area), operation log with undo, conflicts as first-class objects, automatic rebase of descendants, anonymous branches. Could simplify worktree workflows, enable safer experimentation, and provide better conflict handling. Evaluate: 1) Integration with existing git workflows 2) Colocated mode compatibility 3) Benefits for AI-assisted development 4) Learning curve vs productivity gains.
 - [ ] t061 Create debug-opengraph and debug-favicon subagents #tools #seo #browser ~3h (ai:2h test:30m read:30m) logged:2026-01-14 ref:https://opengraphdebug.com/
   - Notes: Inspired by opengraphdebug.com. Two subagents: 1) debug-opengraph.md - validate Open Graph meta tags (og:title, og:description, og:image, og:url, twitter:card), preview social sharing appearance, check image dimensions/accessibility. 2) debug-favicon.md - validate favicon setup across platforms (favicon.ico, apple-touch-icon, manifest icons), check sizes/formats, verify PWA manifest. Could use browser automation (Stagehand/Playwright) or direct HTML parsing. Add to tools/seo/ or tools/browser/.
+- [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~2h (ai:1h read:1h) logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
+  - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem.
 
 <!--TOON:backlog[40]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -189,6 +191,7 @@ t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01
 t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
 t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,2h,1h,,1h,2026-01-13T00:00Z,pending,,,
 t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,3h,2h,30m,30m,2026-01-14T00:00Z,pending,,,
+t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,2h,1h,,1h,2026-01-14T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -275,5 +278,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-55,44,0,0,26,0,28d1h,16h50m,0,44
+56,45,0,0,26,0,28d3h,16h50m,0,45
 -->
