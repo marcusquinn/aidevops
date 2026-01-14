@@ -409,6 +409,7 @@ if 'outscraper_*' not in config['tools']:
 # DataForSEO MCP - for comprehensive SEO data
 # Uses bun x if available, falls back to npx
 import shutil
+import platform
 bun_path = shutil.which('bun')
 npx_path = shutil.which('npx') or '/opt/homebrew/bin/npx'
 pkg_runner = f"{bun_path} x" if bun_path else npx_path
@@ -471,12 +472,12 @@ if 'shadcn_*' not in config['tools']:
 
 # macOS Automator MCP - AppleScript and JXA automation (macOS only)
 # Docs: https://github.com/steipete/macos-automator-mcp
-import platform
+# Note: import platform is at line 412 with other imports
 if platform.system() == 'Darwin':
     if 'macos-automator' not in config['mcp']:
         config['mcp']['macos-automator'] = {
             "type": "local",
-            "command": ["npx", "-y", "@steipete/macos-automator-mcp@latest"],
+            "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
             "enabled": True
         }
         print("  Added macos-automator MCP server (macOS only)")
@@ -540,7 +541,10 @@ while IFS= read -r f; do
             extra_tools=$'  shadcn_*: true\n  write: true\n  edit: true'
             ;;
         macos-automator|mac)
-            extra_tools=$'  macos-automator_*: true\n  webfetch: true'
+            # Only enable macos-automator tools on macOS
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                extra_tools=$'  macos-automator_*: true\n  webfetch: true'
+            fi
             ;;
         *)
             ;;  # No extra tools for other agents

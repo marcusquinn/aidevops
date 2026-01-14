@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Execute AppleScript and JXA (JavaScript for Automation) on macOS
-- **Install**: `npm install -g @steipete/macos-automator-mcp@latest`
+- **Install**: `npm install -g @steipete/macos-automator-mcp@0.2.0`
 - **Auth**: None required (uses macOS permissions)
 - **MCP Tools**: `execute_script`, `get_scripting_tips`, `accessibility_query`
 - **Docs**: <https://github.com/steipete/macos-automator-mcp>
@@ -29,7 +29,7 @@ tools:
 ```json
 "macos-automator": {
   "type": "local",
-  "command": ["npx", "-y", "@steipete/macos-automator-mcp@latest"],
+  "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
   "enabled": true
 }
 ```
@@ -98,20 +98,20 @@ The application running the MCP server needs explicit permissions:
 No installation needed - runs directly via npx:
 
 ```bash
-npx -y @steipete/macos-automator-mcp@latest
+npx -y @steipete/macos-automator-mcp@0.2.0
 ```
 
 ### 2. Or Install Globally
 
 ```bash
-npm install -g @steipete/macos-automator-mcp@latest
+npm install -g @steipete/macos-automator-mcp@0.2.0
 ```
 
 ### 3. Verify Installation
 
 ```bash
 # Test that it runs
-npx -y @steipete/macos-automator-mcp@latest --help
+npx -y @steipete/macos-automator-mcp@0.2.0 --help
 ```
 
 ## AI Tool Configurations
@@ -125,7 +125,7 @@ Edit `~/.config/opencode/opencode.json`:
   "mcp": {
     "macos-automator": {
       "type": "local",
-      "command": ["npx", "-y", "@steipete/macos-automator-mcp@latest"],
+      "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
       "enabled": true
     }
   },
@@ -153,10 +153,10 @@ Add via CLI command:
 
 ```bash
 # User scope (all projects)
-claude mcp add-json macos-automator --scope user '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@latest"]}'
+claude mcp add-json macos-automator --scope user '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
 
 # Project scope (current project only)
-claude mcp add-json macos-automator --scope project '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@latest"]}'
+claude mcp add-json macos-automator --scope project '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
 ```
 
 ### Cursor
@@ -168,7 +168,7 @@ Go to Settings > Tools & MCP > New MCP Server:
   "mcpServers": {
     "macos-automator": {
       "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@latest"]
+      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
     }
   }
 }
@@ -183,7 +183,7 @@ Edit `~/.codeium/windsurf/mcp.json`:
   "mcpServers": {
     "macos-automator": {
       "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@latest"]
+      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
     }
   }
 }
@@ -197,7 +197,7 @@ Click ... > Add Custom Server:
 {
   "macos-automator": {
     "command": "npx",
-    "args": ["-y", "@steipete/macos-automator-mcp@latest"],
+    "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"],
     "env": {}
   }
 }
@@ -213,7 +213,7 @@ Create `.vscode/mcp.json` in your project root:
     "macos-automator": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@latest"]
+      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
     }
   },
   "inputs": []
@@ -229,7 +229,7 @@ Edit `~/.gemini/settings.json`:
   "mcpServers": {
     "macos-automator": {
       "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@latest"]
+      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
     }
   }
 }
@@ -240,7 +240,7 @@ Edit `~/.gemini/settings.json`:
 Add via CLI:
 
 ```bash
-droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@latest
+droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0
 ```
 
 ## MCP Tools
@@ -263,19 +263,26 @@ Execute AppleScript or JXA code.
 
 **Examples**:
 
+Get Safari URL:
+
 ```json
-// Get Safari URL
 {
   "script_content": "tell application \"Safari\" to get URL of front document",
   "language": "applescript"
 }
+```
 
-// Use knowledge base script
+Use knowledge base script:
+
+```json
 {
   "kb_script_id": "safari_get_active_tab_url"
 }
+```
 
-// Toggle dark mode
+Toggle dark mode:
+
+```json
 {
   "kb_script_id": "systemsettings_toggle_dark_mode_ui"
 }
@@ -296,14 +303,21 @@ Search the knowledge base of 200+ pre-built scripts.
 
 **Examples**:
 
+List all categories:
+
 ```json
-// List all categories
 { "list_categories": true }
+```
 
-// Search for clipboard scripts
+Search for clipboard scripts:
+
+```json
 { "search_term": "clipboard" }
+```
 
-// Get Safari automation tips
+Get Safari automation tips:
+
+```json
 { "category": "safari" }
 ```
 
