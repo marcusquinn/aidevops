@@ -1,5 +1,7 @@
 #!/bin/bash
-# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+# shellcheck disable=SC1091,SC2034
+# SC1091: Can't follow non-constant source (shared-constants.sh)
+# SC2034: Unused variables (sourced constants may not all be used)
 
 # Peekaboo Helper - macOS Screen Capture and GUI Automation
 # Part of AI DevOps Framework
@@ -103,7 +105,7 @@ install_cli() {
     check_homebrew || return 1
     
     # Add tap if not already added
-    if ! brew tap | grep -q "steipete/tap"; then
+    if ! brew tap-info steipete/tap &>/dev/null; then
         print_info "Adding steipete/tap..."
         brew tap steipete/tap
     fi
@@ -260,18 +262,18 @@ capture() {
         return 1
     fi
     
-    local cmd="peekaboo image --mode $mode"
+    local cmd_args=("peekaboo" "image" "--mode" "$mode")
     
     if [[ -n "$output" ]]; then
-        cmd="$cmd --path $output"
+        cmd_args+=("--path" "$output")
     fi
     
     if [[ -n "$app" ]] && [[ "$mode" == "window" ]]; then
-        cmd="$cmd --app \"$app\""
+        cmd_args+=("--app" "$app")
     fi
     
-    print_info "Capturing: $cmd"
-    eval "$cmd"
+    print_info "Capturing: ${cmd_args[*]}"
+    "${cmd_args[@]}"
     return $?
 }
 
@@ -395,7 +397,7 @@ EOF
 # Main command handler
 main() {
     local command="${1:-help}"
-    shift 2>/dev/null || true
+    shift || true
     
     case "$command" in
         install-cli|install_cli)

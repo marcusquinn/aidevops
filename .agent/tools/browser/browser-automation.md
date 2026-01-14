@@ -81,6 +81,8 @@ Need browser automation?
     │
     ├─► Need existing browser session/cookies? ──► Playwriter
     │
+    ├─► Need cookies for API calls (no browser)? ──► sweet-cookie
+    │
     ├─► Need natural language control? ──► Stagehand
     │
     └─► Need web crawling/extraction? ──► Crawl4AI
@@ -93,11 +95,12 @@ Need browser automation?
 | **agent-browser** (DEFAULT) | CLI automation, AI agents, CI/CD, multi-session | `agent-browser-helper.sh setup` |
 | **dev-browser** | TypeScript API, stateful pages, dev testing | `dev-browser-helper.sh setup` |
 | **playwriter** | Existing sessions, bypass detection | Chrome extension + MCP |
+| **sweet-cookie** | Cookie extraction for API calls, session reuse | `npm i @steipete/sweet-cookie` |
 | **stagehand** | Natural language automation | `stagehand-helper.sh setup` |
 | **crawl4ai** | Web scraping, content extraction | `crawl4ai-helper.sh setup` |
 | **playwright** | Cross-browser testing | MCP integration |
 
-**Full docs**: `tools/browser/agent-browser.md` (default), `tools/browser/dev-browser.md`, `tools/browser/playwriter.md`, etc.
+**Full docs**: `tools/browser/agent-browser.md` (default), `tools/browser/dev-browser.md`, `tools/browser/sweet-cookie.md`, etc.
 
 **Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only
 <!-- AI-CONTEXT-END -->

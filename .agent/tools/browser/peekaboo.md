@@ -40,11 +40,11 @@ tools:
 peekaboo image --mode screen --retina --path ~/Desktop/screen.png
 
 # Click a button by label
-peekaboo see --app Safari --json-output | jq -r '.data.snapshot_id' | read SNAPSHOT
+SNAPSHOT=$(peekaboo see --app Safari --json-output | jq -r '.data.snapshot_id')
 peekaboo click --on "Reload this page" --snapshot "$SNAPSHOT"
 
 # Natural language automation
-peekaboo "Open Notes and create a TODO list with three items"
+peekaboo agent "Open Notes and create a TODO list with three items"
 ```
 
 <!-- AI-CONTEXT-END -->
