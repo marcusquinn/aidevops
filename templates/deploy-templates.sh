@@ -38,29 +38,32 @@ create_backup_with_rotation() {
     local source_path="$1"
     local backup_name="$2"
     local backup_dir
-    backup_dir="$BACKUP_BASE_DIR/$backup_name/$(date +%Y%m%d_%H%M%S)"
+    # Use nanoseconds to avoid collisions on rapid successive invocations
+    backup_dir="$BACKUP_BASE_DIR/$backup_name/$(date +%Y%m%d_%H%M%S%N)"
 
-    # Create backup directory
-    mkdir -p "$backup_dir"
-
-    # Copy source to backup
+    # Validate source exists before attempting backup
     if [[ -d "$source_path" ]]; then
+        mkdir -p "$backup_dir"
         cp -R "$source_path" "$backup_dir/"
-    else
+    elif [[ -f "$source_path" ]]; then
+        mkdir -p "$backup_dir"
         cp "$source_path" "$backup_dir/"
+    else
+        print_warning "Source path does not exist: $source_path"
+        return 1
     fi
+
+    print_info "Backed up to $backup_dir"
 
     # Rotate old backups (keep last N)
     local backup_type_dir="$BACKUP_BASE_DIR/$backup_name"
     local backup_count
-    backup_count=$(find "$backup_type_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
+    backup_count=$(find "$backup_type_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l)
 
-    if [[ $backup_count -gt $BACKUP_KEEP_COUNT ]]; then
+    if (( backup_count > BACKUP_KEEP_COUNT )); then
         local to_delete=$((backup_count - BACKUP_KEEP_COUNT))
         # Delete oldest backups (sorted by name = sorted by date)
-        find "$backup_type_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do
-            rm -rf "$old_backup"
-        done
+        find "$backup_type_dir" -maxdepth 1 -type d -name "20*" -print0 2>/dev/null | sort -z | head -z -n "$to_delete" | xargs -0 rm -rf
         print_info "Rotated backups: removed $to_delete old backup(s)"
     fi
 
@@ -68,37 +71,40 @@ create_backup_with_rotation() {
 }
 
 # Clean up old in-place backup files from previous versions
+# Uses find -delete to safely remove only files (not directories)
 cleanup_old_backups() {
     local cleaned=0
+    local count
     
     # Clean ~/AGENTS.md.backup.* files
-    if compgen -G "$HOME/AGENTS.md.backup.*" > /dev/null 2>&1; then
-        local count
-        count=$(find "$HOME" -maxdepth 1 -name "AGENTS.md.backup.*" -type f 2>/dev/null | wc -l | tr -d ' ')
-        rm -f "$HOME"/AGENTS.md.backup.*
-        cleaned=$((cleaned + count))
+    count=$(find "$HOME" -maxdepth 1 -name "AGENTS.md.backup.*" -type f 2>/dev/null | wc -l)
+    if (( count > 0 )); then
+        find "$HOME" -maxdepth 1 -name "AGENTS.md.backup.*" -type f -delete 2>/dev/null
+        (( cleaned += count ))
     fi
     
     # Clean ~/git/AGENTS.md.backup.* or ~/Git/AGENTS.md.backup.* files
     for git_dir in "$HOME/git" "$HOME/Git"; do
-        if [[ -d "$git_dir" ]] && compgen -G "$git_dir/AGENTS.md.backup.*" > /dev/null 2>&1; then
-            local count
-            count=$(find "$git_dir" -maxdepth 1 -name "AGENTS.md.backup.*" -type f 2>/dev/null | wc -l | tr -d ' ')
-            rm -f "$git_dir"/AGENTS.md.backup.*
-            cleaned=$((cleaned + count))
+        if [[ -d "$git_dir" ]]; then
+            count=$(find "$git_dir" -maxdepth 1 -name "AGENTS.md.backup.*" -type f 2>/dev/null | wc -l)
+            if (( count > 0 )); then
+                find "$git_dir" -maxdepth 1 -name "AGENTS.md.backup.*" -type f -delete 2>/dev/null
+                (( cleaned += count ))
+            fi
         fi
     done
     
     # Clean ~/.aidevops/.agent-workspace/README.md.backup.* files
     local workspace="$HOME/.aidevops/.agent-workspace"
-    if [[ -d "$workspace" ]] && compgen -G "$workspace/README.md.backup.*" > /dev/null 2>&1; then
-        local count
-        count=$(find "$workspace" -maxdepth 1 -name "README.md.backup.*" -type f 2>/dev/null | wc -l | tr -d ' ')
-        rm -f "$workspace"/README.md.backup.*
-        cleaned=$((cleaned + count))
+    if [[ -d "$workspace" ]]; then
+        count=$(find "$workspace" -maxdepth 1 -name "README.md.backup.*" -type f 2>/dev/null | wc -l)
+        if (( count > 0 )); then
+            find "$workspace" -maxdepth 1 -name "README.md.backup.*" -type f -delete 2>/dev/null
+            (( cleaned += count ))
+        fi
     fi
     
-    if [[ $cleaned -gt 0 ]]; then
+    if (( cleaned > 0 )); then
         print_success "Cleaned up $cleaned old backup file(s)"
     fi
     
