@@ -787,7 +787,7 @@ pr_review_loop() {
         print_info "=== PR Review Iteration $iteration / $max_iterations ==="
         
         local status
-        status=$(check_pr_status "$pr_number" "$wait_for_ci")
+        status=$(check_pr_status "$pr_number" "$wait_for_ci" | tail -n 1 | tr -d '\r')
         
         case "$status" in
             MERGED)
