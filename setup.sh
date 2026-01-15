@@ -1836,12 +1836,12 @@ add_opencode_plugin() {
     
     # Check if plugin array exists and if plugin is already configured
     local has_plugin_array
-    has_plugin_array=$(jq -e '.plugin' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+    has_plugin_array=$(jq -e '.plugin' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
     
     if [[ "$has_plugin_array" == "true" ]]; then
         # Check if plugin is already in the array
         local plugin_exists
-        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
         
         if [[ "$plugin_exists" == "true" ]]; then
             # Update existing plugin to latest version
@@ -1965,12 +1965,12 @@ setup_oh_my_opencode() {
     
     # Check if plugin array exists
     local has_plugin_array
-    has_plugin_array=$(jq -e '.plugin' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+    has_plugin_array=$(jq -e '.plugin' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
     
     if [[ "$has_plugin_array" == "true" ]]; then
         # Check if plugin is already in the array
         local plugin_exists
-        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(. == $p or startswith($p + "@"))) | length > 0' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(. == $p or startswith($p + "@"))) | length > 0' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
         
         if [[ "$plugin_exists" == "true" ]]; then
             print_info "Oh-My-OpenCode already configured"

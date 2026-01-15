@@ -69,6 +69,9 @@ readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
 
+# Output file for tool capture (shared with EXIT trap)
+output_file=""
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -258,9 +261,8 @@ run_v2_loop() {
     echo ""
 
     local iteration=1
-    local output_file
-    output_file=$(mktemp)
-    trap 'rm -f "$output_file"' EXIT
+    output_file="$(mktemp)"
+    trap 'rm -f "${output_file:-}"' RETURN
 
     while [[ $iteration -le $max_iterations ]]; do
         print_step "=== Iteration $iteration/$max_iterations ==="
@@ -291,7 +293,11 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
         
         case "$tool" in
             opencode)
-                echo "$reanchor_prompt" | opencode --print > "$output_file" 2>&1 || exit_code=$?
+                local opencode_args=("run" "$reanchor_prompt" "--format" "json")
+                if [[ -n "${RALPH_MODEL:-}" ]]; then
+                    opencode_args+=("--model" "$RALPH_MODEL")
+                fi
+                opencode "${opencode_args[@]}" > "$output_file" 2>&1 || exit_code=$?
                 ;;
             claude)
                 echo "$reanchor_prompt" | claude --print > "$output_file" 2>&1 || exit_code=$?
@@ -307,10 +313,15 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
 
         if [[ $exit_code -ne 0 ]]; then
             print_warning "Tool exited with code $exit_code (continuing)"
+            if [[ -s "$output_file" ]]; then
+                print_warning "Tool output (last 20 lines):"
+                tail -n 20 "$output_file"
+            fi
         fi
 
         # Check for completion promise
         if grep -q "<promise>$completion_promise</promise>" "$output_file" 2>/dev/null; then
+            # opencode run emits JSON events; grep still works on raw output
             print_success "Completion promise detected!"
             
             # Create success receipt

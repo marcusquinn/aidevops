@@ -410,7 +410,10 @@ run_preflight_checks() {
     
     # Check 1: ShellCheck
     print_info "  Checking ShellCheck..."
-    if find .agent/scripts -name "*.sh" -exec shellcheck {} \; >/dev/null 2>&1; then
+    # Keep this aligned with linters-local.sh which checks warnings+errors.
+    # Otherwise, info-level shellcheck findings can fail preflight even though
+    # the repo's accepted local-linter gate passes.
+    if find .agent/scripts -name "*.sh" -exec shellcheck --severity=warning {} \; >/dev/null 2>&1; then
         results="${results}shellcheck:pass\n"
         print_success "    ShellCheck: PASS"
     else
@@ -422,8 +425,10 @@ run_preflight_checks() {
             print_info "    Auto-fix not available for ShellCheck (manual fixes required)"
         fi
     fi
+
+
     
-    # Check 2: Secretlint
+    # Check 2: Secretlint (skip if not installed)
     print_info "  Checking secrets..."
     if command -v secretlint &>/dev/null; then
         if secretlint "**/*" --no-terminalLink 2>/dev/null; then
@@ -480,7 +485,7 @@ run_preflight_checks() {
         print_info "    Version: SKIPPED (version-manager.sh not found)"
     fi
     
-    # Return results
+    # Return results (stdout only)
     if [[ "$all_passed" == "true" ]]; then
         echo "PASS"
     else
@@ -524,7 +529,7 @@ preflight_loop() {
         print_info "=== Preflight Iteration $iteration / $max_iterations ==="
         
         local result_status
-        result_status=$(run_preflight_checks "$auto_fix" | tail -n 1 | tr -d '\r')
+        result_status=$(run_preflight_checks "$auto_fix" 2>/dev/null | tail -n 1 | tr -d '\r')
         
         if [[ "$result_status" == "PASS" ]]; then
             echo ""
