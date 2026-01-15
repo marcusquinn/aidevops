@@ -67,20 +67,20 @@ print_info() {
 
 check_sonarcloud_status() {
     echo -e "${BLUE}Checking SonarCloud Status (remote API)...${NC}"
-    
+
     local response
     if response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1"); then
         local total_issues
         total_issues=$(echo "$response" | jq -r '.total // 0')
-        
+
         echo "Total Issues: $total_issues"
-        
+
         if [[ $total_issues -le $MAX_TOTAL_ISSUES ]]; then
             print_success "SonarCloud: $total_issues issues (within threshold of $MAX_TOTAL_ISSUES)"
         else
             print_warning "SonarCloud: $total_issues issues (exceeds threshold of $MAX_TOTAL_ISSUES)"
         fi
-        
+
         # Get detailed breakdown
         local breakdown_response
         if breakdown_response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=10&facets=rules"); then
@@ -91,29 +91,29 @@ check_sonarcloud_status() {
         print_error "Failed to fetch SonarCloud status"
         return 1
     fi
-    
+
     return 0
 }
 
 check_return_statements() {
     echo -e "${BLUE}Checking Return Statements (S7682)...${NC}"
-    
+
     local violations=0
     local files_checked=0
-    
+
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             ((files_checked++))
-            
+
             # Count multi-line functions (exclude one-liners like: func() { echo "x"; })
             # One-liners don't need explicit return statements
             local functions_count
             functions_count=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file" 2>/dev/null || echo "0")
-            
+
             # Count all return patterns: return 0, return 1, return $var, return $((expr))
             local return_statements
             return_statements=$(grep -cE "return [0-9]+|return \\\$" "$file" 2>/dev/null || echo "0")
-            
+
             # Also count exit statements at script level (exit 0, exit $?)
             local exit_statements
             exit_statements=$(grep -cE "^exit [0-9]+|^exit \\\$" "$file" 2>/dev/null || echo "0")
@@ -125,7 +125,7 @@ check_return_statements() {
             functions_count=${functions_count:-0}
             return_statements=${return_statements:-0}
             exit_statements=${exit_statements:-0}
-            
+
             # Total returns = return statements + exit statements (for main)
             local total_returns=$((return_statements + exit_statements))
 
@@ -135,30 +135,30 @@ check_return_statements() {
             fi
         fi
     done
-    
+
     echo "Files checked: $files_checked"
     echo "Files with violations: $violations"
-    
+
     if [[ $violations -le $MAX_RETURN_ISSUES ]]; then
         print_success "Return statements: $violations violations (within threshold)"
     else
         print_error "Return statements: $violations violations (exceeds threshold of $MAX_RETURN_ISSUES)"
         return 1
     fi
-    
+
     return 0
 }
 
 check_positional_parameters() {
     echo -e "${BLUE}Checking Positional Parameters (S7679)...${NC}"
-    
+
     local violations=0
-    
+
     # Find direct usage of positional parameters inside functions (not in local assignments)
     # Exclude: heredocs (<<), awk scripts, main script body, and local assignments
     local tmp_file
     tmp_file=$(mktemp)
-    
+
     # Only check inside function bodies, exclude heredocs, awk/sed patterns, and comments
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
@@ -193,12 +193,12 @@ check_positional_parameters() {
             ' "$file" >> "$tmp_file"
         fi
     done
-    
+
     if [[ -s "$tmp_file" ]]; then
         violations=$(wc -l < "$tmp_file")
         violations=${violations//[^0-9]/}
         violations=${violations:-0}
-        
+
         if [[ $violations -gt 0 ]]; then
             print_warning "Found $violations positional parameter violations:"
             head -10 "$tmp_file"
@@ -207,52 +207,52 @@ check_positional_parameters() {
             fi
         fi
     fi
-    
+
     rm -f "$tmp_file"
-    
+
     if [[ $violations -le $MAX_POSITIONAL_ISSUES ]]; then
         print_success "Positional parameters: $violations violations (within threshold)"
     else
         print_error "Positional parameters: $violations violations (exceeds threshold of $MAX_POSITIONAL_ISSUES)"
         return 1
     fi
-    
+
     return 0
 }
 
 check_string_literals() {
     echo -e "${BLUE}Checking String Literals (S1192)...${NC}"
-    
+
     local violations=0
-    
+
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Find strings that appear 3 or more times
             local repeated_strings
             repeated_strings=$(grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3 {print $1, $2}' | wc -l)
-            
+
             if [[ $repeated_strings -gt 0 ]]; then
                 ((violations += repeated_strings))
                 print_warning "$file has $repeated_strings repeated string literals"
             fi
         fi
     done
-    
+
     if [[ $violations -le $MAX_STRING_LITERAL_ISSUES ]]; then
         print_success "String literals: $violations violations (within threshold)"
     else
         print_error "String literals: $violations violations (exceeds threshold of $MAX_STRING_LITERAL_ISSUES)"
         return 1
     fi
-    
+
     return 0
 }
 
 run_shellcheck() {
     echo -e "${BLUE}Running ShellCheck Validation...${NC}"
-    
+
     local violations=0
-    
+
     for file in .agent/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Only count errors and warnings, not info-level (SC1091, SC2329, etc.)
@@ -265,24 +265,24 @@ run_shellcheck() {
             fi
         fi
     done
-    
+
     if [[ $violations -eq 0 ]]; then
         print_success "ShellCheck: No violations found"
     else
         print_error "ShellCheck: $violations files with violations"
         return 1
     fi
-    
+
     return 0
 }
 
 # Check for secrets in codebase
 check_secrets() {
     echo -e "${BLUE}Checking for Exposed Secrets (Secretlint)...${NC}"
-    
+
     local secretlint_script=".agent/scripts/secretlint-helper.sh"
     local violations=0
-    
+
     # Check if secretlint is available
     if command -v secretlint &> /dev/null || [[ -f "node_modules/.bin/secretlint" ]]; then
         # Run secretlint scan
@@ -292,7 +292,7 @@ check_secrets() {
         else
             secretlint_cmd="./node_modules/.bin/secretlint"
         fi
-        
+
         if [[ -f ".secretlintrc.json" ]]; then
             # Run scan and capture exit code
             if $secretlint_cmd "**/*" --format compact 2>/dev/null; then
@@ -307,24 +307,29 @@ check_secrets() {
             print_info "Run: bash $secretlint_script init"
         fi
     elif command -v docker &> /dev/null; then
-        local secretlint_timeout=60
-        print_info "Secretlint: Using Docker for scan (${secretlint_timeout}s timeout)..."
+        local timeout_sec=60
         # Use gtimeout (macOS) or timeout (Linux) to prevent Docker from hanging
         local timeout_cmd=""
         if command -v gtimeout &> /dev/null; then
-            timeout_cmd="gtimeout ${secretlint_timeout}"
+            timeout_cmd="gtimeout ${timeout_sec}"
         elif command -v timeout &> /dev/null; then
-            timeout_cmd="timeout ${secretlint_timeout}"
+            timeout_cmd="timeout ${timeout_sec}"
         fi
-        
+
+        if [[ -n "$timeout_cmd" ]]; then
+            print_info "Secretlint: Using Docker for scan (${timeout_sec}s timeout)..."
+        else
+            print_info "Secretlint: Using Docker for scan (no timeout available)..."
+        fi
+
         local docker_result
         if [[ -n "$timeout_cmd" ]]; then
-            docker_result=$($timeout_cmd docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
+            docker_result=$($timeout_cmd docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
         else
             # No timeout available, run without (may hang on large repos)
-            docker_result=$(docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
+            docker_result=$(docker run --init -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm secretlint/secretlint secretlint "**/*" --format compact 2>&1) || true
         fi
-        
+
         if [[ -z "$docker_result" ]] || [[ "$docker_result" == *"0 problems"* ]]; then
             print_success "Secretlint: No secrets detected"
         elif [[ "$docker_result" == *"timed out"* ]] || [[ "$docker_result" == *"timeout"* ]]; then
@@ -338,7 +343,7 @@ check_secrets() {
         print_warning "Secretlint: Not installed (install with: npm install secretlint)"
         print_info "Run: bash $secretlint_script install"
     fi
-    
+
     return $violations
 }
 
@@ -391,25 +396,25 @@ check_remote_cli_status() {
 
 main() {
     print_header
-    
+
     local exit_code=0
-    
+
     # Run all local quality checks
     check_sonarcloud_status || exit_code=1
     echo ""
-    
+
     check_return_statements || exit_code=1
     echo ""
-    
+
     check_positional_parameters || exit_code=1
     echo ""
-    
+
     check_string_literals || exit_code=1
     echo ""
-    
+
     run_shellcheck || exit_code=1
     echo ""
-    
+
     check_secrets || exit_code=1
     echo ""
 
@@ -428,7 +433,7 @@ main() {
     else
         print_error "QUALITY ISSUES DETECTED. Please address violations before committing."
     fi
-    
+
     return $exit_code
 }
 
