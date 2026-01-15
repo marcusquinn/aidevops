@@ -12,6 +12,10 @@ readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
+# Backup configuration
+readonly BACKUP_KEEP_COUNT=5
+readonly BACKUP_BASE_DIR="$HOME/.aidevops/template-backups"
+
 # Print functions
 print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; return 0; }
 print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 0; }
@@ -28,15 +32,87 @@ if [[ ! -f "$REPO_ROOT/AGENTS.md" ]] || [[ ! -d "$REPO_ROOT/.agent" ]]; then
     exit 1
 fi
 
+# Create a backup with rotation (keeps last N backups in centralized location)
+# Usage: create_backup_with_rotation <source_path> <backup_name>
+create_backup_with_rotation() {
+    local source_path="$1"
+    local backup_name="$2"
+    local backup_dir
+    backup_dir="$BACKUP_BASE_DIR/$backup_name/$(date +%Y%m%d_%H%M%S)"
+
+    # Create backup directory
+    mkdir -p "$backup_dir"
+
+    # Copy source to backup
+    if [[ -d "$source_path" ]]; then
+        cp -R "$source_path" "$backup_dir/"
+    else
+        cp "$source_path" "$backup_dir/"
+    fi
+
+    # Rotate old backups (keep last N)
+    local backup_type_dir="$BACKUP_BASE_DIR/$backup_name"
+    local backup_count
+    backup_count=$(find "$backup_type_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ $backup_count -gt $BACKUP_KEEP_COUNT ]]; then
+        local to_delete=$((backup_count - BACKUP_KEEP_COUNT))
+        # Delete oldest backups (sorted by name = sorted by date)
+        find "$backup_type_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do
+            rm -rf "$old_backup"
+        done
+        print_info "Rotated backups: removed $to_delete old backup(s)"
+    fi
+
+    return 0
+}
+
+# Clean up old in-place backup files from previous versions
+cleanup_old_backups() {
+    local cleaned=0
+    
+    # Clean ~/AGENTS.md.backup.* files
+    if compgen -G "$HOME/AGENTS.md.backup.*" > /dev/null 2>&1; then
+        local count
+        count=$(find "$HOME" -maxdepth 1 -name "AGENTS.md.backup.*" -type f 2>/dev/null | wc -l | tr -d ' ')
+        rm -f "$HOME"/AGENTS.md.backup.*
+        cleaned=$((cleaned + count))
+    fi
+    
+    # Clean ~/git/AGENTS.md.backup.* or ~/Git/AGENTS.md.backup.* files
+    for git_dir in "$HOME/git" "$HOME/Git"; do
+        if [[ -d "$git_dir" ]] && compgen -G "$git_dir/AGENTS.md.backup.*" > /dev/null 2>&1; then
+            local count
+            count=$(find "$git_dir" -maxdepth 1 -name "AGENTS.md.backup.*" -type f 2>/dev/null | wc -l | tr -d ' ')
+            rm -f "$git_dir"/AGENTS.md.backup.*
+            cleaned=$((cleaned + count))
+        fi
+    done
+    
+    # Clean ~/.aidevops/.agent-workspace/README.md.backup.* files
+    local workspace="$HOME/.aidevops/.agent-workspace"
+    if [[ -d "$workspace" ]] && compgen -G "$workspace/README.md.backup.*" > /dev/null 2>&1; then
+        local count
+        count=$(find "$workspace" -maxdepth 1 -name "README.md.backup.*" -type f 2>/dev/null | wc -l | tr -d ' ')
+        rm -f "$workspace"/README.md.backup.*
+        cleaned=$((cleaned + count))
+    fi
+    
+    if [[ $cleaned -gt 0 ]]; then
+        print_success "Cleaned up $cleaned old backup file(s)"
+    fi
+    
+    return 0
+}
+
 deploy_home_agents() {
     local target_file="$HOME/AGENTS.md"
     
     print_info "Deploying minimal AGENTS.md to home directory..."
     
-    # Backup existing file if it exists
+    # Backup existing file if it exists (with rotation)
     if [[ -f "$target_file" ]]; then
-        print_warning "Existing AGENTS.md found, creating backup..."
-        cp "$target_file" "$target_file.backup.$(date +%Y%m%d_%H%M%S)"
+        create_backup_with_rotation "$target_file" "home-agents"
     fi
     
     # Deploy template
@@ -57,10 +133,9 @@ deploy_git_agents() {
         print_info "Created git directory: $git_dir"
     fi
     
-    # Backup existing file if it exists
+    # Backup existing file if it exists (with rotation)
     if [[ -f "$target_file" ]]; then
-        print_warning "Existing git/AGENTS.md found, creating backup..."
-        cp "$target_file" "$target_file.backup.$(date +%Y%m%d_%H%M%S)"
+        create_backup_with_rotation "$target_file" "git-agents"
     fi
     
     # Deploy template
@@ -81,10 +156,9 @@ deploy_agent_directory() {
         print_info "Created workspace directory: $agent_workspace"
     fi
     
-    # Backup existing README if it exists
+    # Backup existing README if it exists (with rotation)
     if [[ -f "$target_file" ]]; then
-        print_warning "Existing .agent-workspace/README.md found, creating backup..."
-        cp "$target_file" "$target_file.backup.$(date +%Y%m%d_%H%M%S)"
+        create_backup_with_rotation "$target_file" "workspace-readme"
     fi
     
     # Deploy template
@@ -127,6 +201,9 @@ main() {
     
     print_info "Deploying minimal, secure AGENTS.md templates..."
     print_warning "These templates contain minimal instructions to prevent prompt injection attacks"
+    
+    # Clean up old in-place backups from previous versions
+    cleanup_old_backups
     
     deploy_home_agents
     deploy_git_agents
