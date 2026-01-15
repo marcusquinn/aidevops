@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - resolve unbound variable and use opencode run (#104)
 - suppress jq output in plugin array checks
 - output options as YAML object instead of string (#101)
+
 ## [2.55.0] - 2026-01-14
 
 ### Added
