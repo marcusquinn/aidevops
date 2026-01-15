@@ -31,6 +31,7 @@ tools:
 - Google Search Console: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON)
 
 **Development**:
+- Claude Code MCP: Claude Code automation (forked server)
 - Next.js DevTools MCP
 - Context7 MCP: Real-time library docs
 - LocalWP MCP: WordPress database access
@@ -56,6 +57,7 @@ This document provides comprehensive setup and usage instructions for advanced M
 
 ### **⚡ Development Tools**
 
+- **Claude Code MCP**: Run Claude Code as an MCP server for automation
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
 
 ### **📧 CRM & Marketing**
@@ -92,6 +94,17 @@ playwright-mcp --install-browsers
 # Add to MCP client
 claude mcp add playwright npx playwright-mcp@latest
 ```
+
+### **Claude Code MCP (Fork)**
+
+```bash
+# Add forked MCP server via Claude CLI
+claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
+```
+
+**One-time setup**: run `claude --dangerously-skip-permissions` and accept prompts.
+**Upstream**: https://github.com/steipete/claude-code-mcp (revert if merged).
+**Local dev (optional)**: clone the fork and swap the command to `./start.sh` for instant iteration.
 
 ### **Ahrefs MCP**
 

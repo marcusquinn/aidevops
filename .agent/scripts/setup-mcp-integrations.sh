@@ -36,6 +36,7 @@ get_mcp_command() {
         "google-search-console") echo "npx mcp-server-gsc@latest" ;;
         "pagespeed-insights") echo "npx mcp-pagespeed-server@latest" ;;
         "grep-vercel") echo "remote:https://mcp.grep.app" ;;
+        "claude-code-mcp") echo "npx -y github:marcusquinn/claude-code-mcp" ;;
         "stagehand") echo "node ${HOME}/.aidevops/stagehand/examples/basic-example.js" ;;
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
         "stagehand-both") echo "both" ;;
@@ -47,7 +48,7 @@ get_mcp_command() {
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel stagehand stagehand-python stagehand-both dataforseo serper"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel claude-code-mcp stagehand stagehand-python stagehand-both dataforseo serper"
 
 # Check prerequisites
 check_prerequisites() {
@@ -185,6 +186,18 @@ install_mcp() {
             print_success "Grep by Vercel MCP setup complete!"
             print_info "Use 'gh_grep' tool in prompts to search GitHub code"
             print_info "Example: 'use gh_grep to find examples of SST Astro components'"
+            ;;
+        "claude-code-mcp")
+            print_info "Setting up Claude Code MCP (forked) for Claude Code automation..."
+            print_info "Source: https://github.com/marcusquinn/claude-code-mcp"
+            print_info "Upstream: https://github.com/steipete/claude-code-mcp (revert if merged)"
+            print_warning "Requires Claude CLI and prior acceptance of --dangerously-skip-permissions"
+            print_info "One-time setup: claude --dangerously-skip-permissions"
+            if command -v claude &> /dev/null; then
+                claude mcp add claude-code-mcp "$mcp_command"
+            fi
+            print_success "Claude Code MCP setup complete!"
+            print_info "Use 'claude_code' tool to run Claude Code tasks"
             ;;
         "stagehand")
             print_info "Setting up Stagehand AI Browser Automation MCP integration..."
