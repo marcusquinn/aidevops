@@ -121,12 +121,14 @@ AGENT_TOOLS = {
     "Build+": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
+        "claude-code-mcp_*": True
     },
     "AI-DevOps": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
+        "claude-code-mcp_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
@@ -166,7 +168,8 @@ AGENT_TOOLS = {
 DEFAULT_TOOLS = {
     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
     "webfetch": True, "task": True,
-    "osgrep_*": True, "augment-context-engine_*": True
+    "osgrep_*": True, "augment-context-engine_*": True,
+    "claude-code-mcp_*": False
 }
 
 # Temperature settings (by display name, default 0.2)
@@ -471,6 +474,21 @@ if 'shadcn' not in config['mcp']:
 if 'shadcn_*' not in config['tools']:
     config['tools']['shadcn_*'] = False
     print("  Added shadcn_* to tools (disabled globally, enabled for @shadcn subagent)")
+
+# Claude Code MCP - forked for local automation
+# Source: https://github.com/marcusquinn/claude-code-mcp
+# Upstream: https://github.com/steipete/claude-code-mcp (revert if merged)
+config['mcp']['claude-code-mcp'] = {
+    "type": "local",
+    "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
+    "enabled": True
+}
+print("  Ensured claude-code-mcp MCP server (forked)")
+
+# Claude Code MCP tools disabled globally (enable per-agent if needed)
+if 'claude-code-mcp_*' not in config['tools']:
+    config['tools']['claude-code-mcp_*'] = False
+    print("  Added claude-code-mcp_* to tools (disabled globally, enabled for Build+/AI-DevOps)")
 
 # macOS Automator MCP - AppleScript and JXA automation (macOS only)
 # Docs: https://github.com/steipete/macos-automator-mcp

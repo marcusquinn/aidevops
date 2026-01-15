@@ -242,7 +242,30 @@ bash .agent/scripts/setup-mcp-integrations.sh pagespeed
 
 ---
 
-### Development Tools (3 servers)
+### Development Tools (4 servers)
+
+#### Claude Code MCP (Fork)
+
+Run Claude Code as an MCP server for automation.
+
+**Installation**:
+
+```bash
+claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
+```
+
+**Upstream**: https://github.com/steipete/claude-code-mcp (revert if merged).
+**Local dev (optional)**: clone the fork and point the MCP command to `./start.sh`.
+
+**One-time setup**: run `claude --dangerously-skip-permissions` and accept prompts.
+
+**Use Cases**:
+
+- Run Claude Code workflows from MCP clients
+- Multi-step code edits via Claude Code CLI
+- Reuse Claude Code toolchain in Cursor/Windsurf
+
+---
 
 #### Next.js DevTools MCP
 
@@ -331,6 +354,9 @@ bash .agent/scripts/setup-mcp-integrations.sh playwright
 
 # Ahrefs
 bash .agent/scripts/setup-mcp-integrations.sh ahrefs
+
+# Claude Code MCP (fork)
+bash .agent/scripts/setup-mcp-integrations.sh claude-code-mcp
 
 # Context7
 bash .agent/scripts/setup-mcp-integrations.sh context7
