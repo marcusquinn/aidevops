@@ -528,10 +528,10 @@ preflight_loop() {
         echo ""
         print_info "=== Preflight Iteration $iteration / $max_iterations ==="
         
-    local result_status
-    result_status=$(run_preflight_checks "$auto_fix" 2>/dev/null | tail -n 1 | tr -d '\r')
-    
-    if [[ "$result_status" == "PASS" ]]; then
+        local result_status
+        result_status=$(run_preflight_checks "$auto_fix" 2>/dev/null | tail -n 1 | tr -d '\r')
+        
+        if [[ "$result_status" == "PASS" ]]; then
             echo ""
             print_success "All preflight checks passed!"
             update_state "status" "completed"
@@ -792,7 +792,7 @@ pr_review_loop() {
         print_info "=== PR Review Iteration $iteration / $max_iterations ==="
         
         local status
-        status=$(check_pr_status "$pr_number" "$wait_for_ci")
+        status=$(check_pr_status "$pr_number" "$wait_for_ci" | tail -n 1 | tr -d '\r')
         
         case "$status" in
             MERGED)
