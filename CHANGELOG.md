@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.56.0] - 2026-01-15
+
+### Added
+
+- point Claude Code MCP to fork (#105)
+- add claude-code-mcp server (#103)
+- auto-deploy Google Analytics MCP to OpenCode config (#100)
+- add Google Analytics MCP integration (#98)
+- add /review-issue-pr slash command (#95)
+- add review-issue-pr for triaging external contributions (#94)
+
+### Fixed
+
+- improve secretlint performance with ignore patterns (#107)
+- handle preflight PASS output (#106)
+- resolve unbound variable and use opencode run (#104)
+- suppress jq output in plugin array checks
+- output options as YAML object instead of string (#101)
 ## [2.55.0] - 2026-01-14
 
 ### Added
