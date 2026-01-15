@@ -523,10 +523,10 @@ preflight_loop() {
         echo ""
         print_info "=== Preflight Iteration $iteration / $max_iterations ==="
         
-        local result
-        result=$(run_preflight_checks "$auto_fix")
+        local result_status
+        result_status=$(run_preflight_checks "$auto_fix" | tail -n 1 | tr -d '\r')
         
-        if [[ "$result" == "PASS" ]]; then
+        if [[ "$result_status" == "PASS" ]]; then
             echo ""
             print_success "All preflight checks passed!"
             update_state "status" "completed"
