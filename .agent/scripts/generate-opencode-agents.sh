@@ -494,7 +494,7 @@ if platform.system() == 'Darwin':
 if 'claude-code-mcp' not in config['mcp']:
     config['mcp']['claude-code-mcp'] = {
         "type": "local",
-        "command": ["npx", "-y", "@steipete/claude-code-mcp@latest"],
+        "command": ["npx", "-y", "@steipete/claude-code-mcp@1.10.12"],
         "enabled": True
     }
     print("  Added claude-code-mcp MCP server")
