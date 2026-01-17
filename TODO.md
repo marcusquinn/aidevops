@@ -207,6 +207,11 @@ t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20
 
 ## In Progress
 
+- [ ] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h (ai:1h test:30m read:30m) logged:2026-01-17
+  - Notes: From postflight check on v2.58.0 release. Two issues:
+    1. **SonarCloud critical issues (2)**: "Add a default case (*) to handle unexpected values" - likely in case/switch statements in shell scripts. Run `sonarcloud-cli.sh issues --severity CRITICAL` to locate.
+    2. **OpenCode AI Agent workflow failures (2)**: `.github/workflows/opencode-agent.yml` failing. Check workflow logs via `gh run list --workflow=opencode-agent.yml` to diagnose.
+
 <!-- No tasks currently in progress -->
 
 <!--TOON:in_progress[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
