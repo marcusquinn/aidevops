@@ -117,6 +117,14 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
+**File Discovery** (fastest to slowest):
+1. `git ls-files '*.md'` - Instant, git-tracked files only
+2. `fd -e md` or `fd -g '*.md'` - Fast, respects .gitignore, Rust-based
+3. `rg --files -g '*.md'` - Fast, respects .gitignore (ripgrep)
+4. `mcp_glob` tool - Fallback when bash unavailable or for complex patterns
+
+Use `git ls-files` for tracked files (most common). Use `fd` for untracked files or system-wide searches (e.g., `~/.config/`). The `mcp_glob` tool is CPU-intensive on large codebases.
+
 **Localhost Standards** (for any local service setup):
 - **Always check port first**: `localhost-helper.sh check-port <port>` before starting services
 - **Use .local domains**: `myapp.local` not `localhost:3000` (enables password manager autofill)

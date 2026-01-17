@@ -445,12 +445,32 @@ See `.agent/aidevops/architecture.md` for detailed implementation notes and refe
 
 ```bash
 # Install dependencies (auto-detected by setup.sh)
-brew install sshpass jq curl mkcert dnsmasq  # macOS
-sudo apt-get install sshpass jq curl dnsmasq  # Ubuntu/Debian
+brew install sshpass jq curl mkcert dnsmasq fd ripgrep  # macOS
+sudo apt-get install sshpass jq curl dnsmasq fd-find ripgrep  # Ubuntu/Debian
 
 # Generate SSH key
 ssh-keygen -t ed25519 -C "your-email@domain.com"
 ```
+
+### **File Discovery Tools**
+
+AI agents use fast file discovery tools for efficient codebase navigation:
+
+| Tool | Purpose | Speed |
+|------|---------|-------|
+| `fd` | Fast file finder (replaces `find`) | ~10x faster |
+| `ripgrep` | Fast content search (replaces `grep`) | ~10x faster |
+
+Both tools respect `.gitignore` by default and are written in Rust for maximum performance.
+
+**Preference order for file discovery:**
+
+1. `git ls-files '*.md'` - Instant, git-tracked files only
+2. `fd -e md` - Fast, respects .gitignore
+3. `rg --files -g '*.md'` - Fast, respects .gitignore
+4. Built-in glob tools - Fallback when bash unavailable
+
+The setup script offers to install these tools automatically.
 
 ## **Comprehensive Service Coverage**
 
