@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.57.0] - 2026-01-17
+
+### Added
+
+- add worktrunk as default worktree tool with fallback (#109)
+
+### Fixed
+
+- add backup rotation to prevent file accumulation (#108)
 ## [2.56.0] - 2026-01-15
 
 ### Added
