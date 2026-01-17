@@ -208,6 +208,7 @@ The `pre-edit-check.sh` script works with both tools:
 ### Session Naming
 
 After creating a worktree, sync the session name:
+
 ```bash
 # Claude Code MCP tool
 session-rename_sync_branch
@@ -233,6 +234,7 @@ session-rename_sync_branch
 ### "wt: command not found"
 
 Shell integration not installed:
+
 ```bash
 wt config shell install
 source ~/.zshrc  # or ~/.bashrc
@@ -241,6 +243,7 @@ source ~/.zshrc  # or ~/.bashrc
 ### "Branch already checked out"
 
 Each branch can only be in one worktree:
+
 ```bash
 wt list  # Find where branch is checked out
 wt remove feature/auth  # Remove if not needed
@@ -249,6 +252,7 @@ wt remove feature/auth  # Remove if not needed
 ### Windows: "wt" opens Windows Terminal
 
 On Windows, `wt` is aliased to Windows Terminal. Use `git-wt` instead:
+
 ```bash
 git-wt switch feature/auth
 ```
