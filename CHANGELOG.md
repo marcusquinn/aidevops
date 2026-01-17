@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - change state files from .md to .state extension (#111)
 - exclude loop-state from agent discovery and deployment (#110)
 - add backup rotation to prevent file accumulation (#108)
+
 ## [2.57.0] - 2026-01-17
 
 ### Added
