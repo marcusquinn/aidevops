@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - add backup rotation to prevent file accumulation (#108)
+
 ## [2.56.0] - 2026-01-15
 
 ### Added
