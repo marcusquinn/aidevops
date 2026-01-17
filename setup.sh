@@ -1266,9 +1266,16 @@ deploy_aidevops_agents() {
         rm -rf "${target_dir:?}"/*
     fi
     
-    # Copy all agent files and folders (excluding scripts which are large)
-    # We copy scripts separately to maintain structure
-    cp -R "$source_dir"/* "$target_dir/"
+    # Copy all agent files and folders, excluding:
+    # - loop-state/ (local runtime state, not agents)
+    # Use rsync for selective exclusion
+    if command -v rsync &>/dev/null; then
+        rsync -a --exclude='loop-state/' "$source_dir/" "$target_dir/"
+    else
+        # Fallback: copy then remove loop-state
+        cp -R "$source_dir"/* "$target_dir/"
+        rm -rf "$target_dir/loop-state" 2>/dev/null || true
+    fi
     
     if [[ $? -eq 0 ]]; then
         print_success "Deployed agents to $target_dir"

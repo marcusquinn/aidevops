@@ -62,6 +62,12 @@ for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.
     rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
+# Remove loop-state files that were incorrectly created as agents
+# These are runtime state files, not agents
+for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+    rm -f "$OPENCODE_AGENT_DIR/$f"
+done
+
 # =============================================================================
 # PRIMARY AGENTS - Defined in opencode.json for Tab order control
 # =============================================================================
@@ -615,7 +621,7 @@ tools:
 EOF
     fi
     ((subagent_count++))
-done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f | sort)
+done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" | sort)
 
 echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
 
