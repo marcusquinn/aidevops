@@ -84,6 +84,7 @@ NPM_TOOLS=(
 BREW_TOOLS=(
     "brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
     "brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
+    "brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"
     "brew|Beads CLI|bd|version|steveyegge/beads/bd|brew upgrade steveyegge/beads/bd"
     "brew|jq|jq|--version|jq|brew upgrade jq"
     "brew|ShellCheck|shellcheck|--version|shellcheck|brew upgrade shellcheck"

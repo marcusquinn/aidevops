@@ -23,19 +23,22 @@ tools:
 - **Solution**: Separate working directories, each on its own branch
 - **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`
 
-**Key Commands**:
+**Recommended Tool**: [Worktrunk](https://worktrunk.dev) (`wt`) - install via `brew install max-sixty/worktrunk/wt`
+
+**Key Commands** (Worktrunk - preferred):
 
 ```bash
-# Create worktree for a branch
+wt switch -c feature/my-feature   # Create worktree + cd into it
+wt list                           # List worktrees with CI status
+wt merge                          # Squash/rebase/merge + cleanup
+wt remove                         # Remove current worktree
+```
+
+**Fallback** (worktree-helper.sh - no dependencies):
+
+```bash
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
-
-# List all worktrees
 ~/.aidevops/agents/scripts/worktree-helper.sh list
-
-# Remove worktree (keeps branch)
-~/.aidevops/agents/scripts/worktree-helper.sh remove feature/my-feature
-
-# Clean up merged worktrees
 ~/.aidevops/agents/scripts/worktree-helper.sh clean
 ```
 
@@ -457,6 +460,23 @@ git stash pop
 **Session continuity**: After recreating the worktree, use `session-rename_sync_branch` tool to re-sync the OpenCode session name with the branch.
 
 **Prevention**: Before closing a PR or deleting a branch, ensure no active sessions are using that worktree. Use `worktree-sessions.sh list` to check.
+
+## Tool Comparison: Worktrunk vs worktree-helper.sh
+
+| Feature | Worktrunk (`wt`) | worktree-helper.sh |
+|---------|------------------|-------------------|
+| Shell integration | Built-in (cd support) | Prints path only |
+| Hooks | Yes (post-create, etc.) | No |
+| CI status | Yes (in `wt list`) | No |
+| PR links | Yes (in `wt list`) | No |
+| Merge workflow | `wt merge` (squash/rebase) | Manual |
+| LLM commits | Yes (via llm) | No |
+| Dependencies | Rust binary | Bash only |
+| Installation | brew/cargo/winget | Already deployed |
+
+**Recommendation**: Use Worktrunk when available for better UX. Use worktree-helper.sh as fallback or in minimal environments.
+
+See `tools/git/worktrunk.md` for full Worktrunk documentation.
 
 ## Comparison: Worktrees vs Alternatives
 

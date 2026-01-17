@@ -562,6 +562,132 @@ setup_git_clis() {
     return 0
 }
 
+# Setup Worktrunk - Git worktree management for parallel AI agent workflows
+setup_worktrunk() {
+    print_info "Setting up Worktrunk (git worktree management)..."
+    
+    # Check if worktrunk (wt) is already installed
+    if command -v wt >/dev/null 2>&1; then
+        local wt_version
+        wt_version=$(wt --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "Worktrunk already installed: $wt_version"
+        
+        # Check if shell integration is installed
+        local shell_name
+        shell_name=$(basename "${SHELL:-/bin/bash}")
+        local shell_rc=""
+        case "$shell_name" in
+            zsh)  shell_rc="$HOME/.zshrc" ;;
+            bash) 
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    shell_rc="$HOME/.bash_profile"
+                else
+                    shell_rc="$HOME/.bashrc"
+                fi
+                ;;
+        esac
+        
+        if [[ -n "$shell_rc" ]] && [[ -f "$shell_rc" ]]; then
+            if ! grep -q "worktrunk" "$shell_rc" 2>/dev/null; then
+                print_info "Shell integration not detected"
+                read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? (y/n): " install_shell
+                if [[ "$install_shell" == "y" ]]; then
+                    if wt config shell install 2>/dev/null; then
+                        print_success "Shell integration installed"
+                        print_info "Restart your terminal or run: source $shell_rc"
+                    else
+                        print_warning "Shell integration failed - run manually: wt config shell install"
+                    fi
+                fi
+            else
+                print_success "Shell integration already configured"
+            fi
+        fi
+        return 0
+    fi
+    
+    # Worktrunk not installed - offer to install
+    print_info "Worktrunk makes git worktrees as easy as branches"
+    echo "  • wt switch feat     - Switch/create worktree (with cd)"
+    echo "  • wt list            - List worktrees with CI status"
+    echo "  • wt merge           - Squash/rebase/merge + cleanup"
+    echo "  • Hooks for automated setup (npm install, etc.)"
+    echo ""
+    echo "  Note: aidevops also includes worktree-helper.sh as a fallback"
+    echo ""
+    
+    local pkg_manager
+    pkg_manager=$(detect_package_manager)
+    
+    if [[ "$pkg_manager" == "brew" ]]; then
+        read -r -p "Install Worktrunk via Homebrew? (y/n): " install_wt
+        
+        if [[ "$install_wt" == "y" ]]; then
+            print_info "Installing Worktrunk..."
+            if brew install max-sixty/worktrunk/wt 2>/dev/null; then
+                print_success "Worktrunk installed"
+                
+                # Install shell integration
+                print_info "Installing shell integration..."
+                if wt config shell install 2>/dev/null; then
+                    print_success "Shell integration installed"
+                    print_info "Restart your terminal or source your shell config"
+                else
+                    print_warning "Shell integration failed - run manually: wt config shell install"
+                fi
+                
+                echo ""
+                print_info "Quick start:"
+                echo "  wt switch feature/my-feature  # Create/switch to worktree"
+                echo "  wt list                       # List all worktrees"
+                echo "  wt merge                      # Merge and cleanup"
+                echo ""
+                print_info "Documentation: ~/.aidevops/agents/tools/git/worktrunk.md"
+            else
+                print_warning "Homebrew installation failed"
+                echo "  Try: cargo install worktrunk && wt config shell install"
+            fi
+        else
+            print_info "Skipped Worktrunk installation"
+            print_info "Install later: brew install max-sixty/worktrunk/wt"
+            print_info "Fallback available: ~/.aidevops/agents/scripts/worktree-helper.sh"
+        fi
+    elif command -v cargo >/dev/null 2>&1; then
+        read -r -p "Install Worktrunk via Cargo? (y/n): " install_wt
+        
+        if [[ "$install_wt" == "y" ]]; then
+            print_info "Installing Worktrunk via Cargo..."
+            if cargo install worktrunk 2>/dev/null; then
+                print_success "Worktrunk installed"
+                
+                # Install shell integration
+                if wt config shell install 2>/dev/null; then
+                    print_success "Shell integration installed"
+                else
+                    print_warning "Shell integration failed - run manually: wt config shell install"
+                fi
+            else
+                print_warning "Cargo installation failed"
+            fi
+        else
+            print_info "Skipped Worktrunk installation"
+        fi
+    else
+        print_warning "Worktrunk not installed"
+        echo ""
+        echo "  Install options:"
+        echo "    macOS/Linux (Homebrew): brew install max-sixty/worktrunk/wt"
+        echo "    Cargo:                  cargo install worktrunk"
+        echo "    Windows:                winget install max-sixty.worktrunk"
+        echo ""
+        echo "  After install: wt config shell install"
+        echo ""
+        print_info "Fallback available: ~/.aidevops/agents/scripts/worktree-helper.sh"
+    fi
+    
+    return 0
+}
+
 # Setup recommended tools (Tabby terminal, Zed editor)
 setup_recommended_tools() {
     print_info "Checking recommended development tools..."
@@ -2306,6 +2432,7 @@ main() {
     confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
     confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
     confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
+    confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
     confirm_step "Setup SSH key" && setup_ssh_key
     confirm_step "Setup configuration files" && setup_configs
     confirm_step "Set secure permissions on config files" && set_permissions
