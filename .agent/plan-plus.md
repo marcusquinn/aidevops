@@ -101,6 +101,31 @@ Plan+ can write directly to planning files:
 
 **Use this for:** Capturing tasks, writing plans, documenting decisions.
 
+## Auto-Commit Planning Files
+
+After modifying TODO.md or todo/, commit and push immediately:
+
+```bash
+~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: {description}"
+```
+
+**When to auto-commit:**
+- After adding a new task
+- After updating task status
+- After writing or updating a plan
+
+**Commit message conventions:**
+
+| Action | Message |
+|--------|---------|
+| New task | `plan: add {task title}` |
+| Status update | `plan: {task} → done` |
+| New plan | `plan: add {plan name}` |
+| Batch updates | `plan: batch planning updates` |
+
+**Why this bypasses branch/PR workflow:** Planning files are metadata about work,
+not the work itself. They don't need code review - just quick persistence.
+
 ## Handoff to Build+ (IMPORTANT)
 
 **When all planning decisions are made and you're ready to implement code:**
