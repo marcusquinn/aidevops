@@ -1144,17 +1144,30 @@ See `.agent/scripts/commands/full-loop.md` for complete documentation.
 
 Work on multiple branches simultaneously without stashing or switching. Each branch gets its own directory.
 
-**Quick usage:**
+**Recommended: [Worktrunk](https://worktrunk.dev)** (`wt`) - Git worktree management with shell integration, CI status, and PR links:
 
 ```bash
-# Create worktree for a new branch
+# Install (macOS/Linux)
+brew install max-sixty/worktrunk/wt && wt config shell install
+
+# Create worktree + cd into it
+wt switch -c feature/my-feature
+
+# Create worktree + start Claude Code
+wt switch -c -x claude feature/ai-task
+
+# List worktrees with CI status and PR links
+wt list
+
+# Merge + cleanup (squash/rebase options)
+wt merge
+```
+
+**Fallback** (no dependencies):
+
+```bash
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
-# Creates: ~/Git/aidevops-feature-my-feature/
-
-# List all worktrees
 ~/.aidevops/agents/scripts/worktree-helper.sh list
-
-# Clean up after merge
 ~/.aidevops/agents/scripts/worktree-helper.sh clean
 ```
 
@@ -1162,11 +1175,11 @@ Work on multiple branches simultaneously without stashing or switching. Each bra
 - Run tests on one branch while coding on another
 - Compare implementations side-by-side
 - No context switching or stash management
-- Each OpenCode session can work on a different branch
+- Each AI session can work on a different branch
 
 **Worktree-first workflow:** The pre-edit check now **enforces** worktrees as the default when creating branches, keeping your main directory on `main`. This prevents uncommitted changes from blocking branch switches and ensures parallel sessions don't inherit wrong branch state.
 
-See `.agent/workflows/worktree.md` for the complete guide.
+See `.agent/workflows/worktree.md` for the complete guide and `.agent/tools/git/worktrunk.md` for Worktrunk documentation.
 
 ### Session Management - Parallel AI Sessions
 
@@ -1190,9 +1203,9 @@ opencode --non-interactive --prompt "Continue with feature X" &
 # New terminal tab (macOS)
 osascript -e 'tell application "Terminal" to do script "cd ~/Git/project && opencode"'
 
-# Worktree-based (isolated branch)
-~/.aidevops/agents/scripts/worktree-helper.sh add feature/next-feature
-cd ../project-feature-next-feature && opencode
+# Worktree-based (isolated branch) - recommended
+wt switch -c -x opencode feature/next-feature  # Worktrunk: create + start OpenCode
+# Or fallback: ~/.aidevops/agents/scripts/worktree-helper.sh add feature/next-feature
 ```
 
 **Session handoff pattern:**
