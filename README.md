@@ -870,7 +870,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 
 | Name | File | Purpose | MCPs Enabled |
 |------|------|---------|--------------|
-| Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search | context7, augment, repomix |
+| Plan+ | `plan-plus.md` | Planning with semantic search, writes to TODO.md/todo/ | context7, augment, repomix |
 | Build+ | `build-plus.md` | Enhanced Build with context tools | context7, augment, repomix |
 | Build-Agent | `build-agent.md` | Design and improve AI agents | context7, augment, repomix |
 | Build-MCP | `build-mcp.md` | Build MCP servers with TS+Bun+ElysiaJS | context7, augment, repomix |
