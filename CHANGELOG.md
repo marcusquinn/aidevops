@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add Worktrunk as recommended worktree tool (#116)
+
 ## [2.60.0] - 2026-01-17
 
 ### Added
