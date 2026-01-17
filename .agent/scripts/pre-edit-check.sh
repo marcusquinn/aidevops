@@ -58,7 +58,8 @@ is_docs_only() {
     local code_patterns="feature|fix|bug|implement|refactor|add.*function|update.*code|create.*script|modify.*config|change.*logic|new.*api|endpoint|enhance|port|ssl|helper"
     
     # Docs-only indicators (positive match)
-    local docs_patterns="^readme|^changelog|^documentation|docs/|typo|spelling|comment only|license only|^update readme|^update changelog|^update docs"
+    # Includes planning files (TODO.md, todo/) which can be edited on main
+    local docs_patterns="^readme|^changelog|^documentation|docs/|typo|spelling|comment only|license only|^update readme|^update changelog|^update docs|^todo|todo\.md|plans\.md|planning|^add task|^update task|backlog"
     
     # Check for code patterns first (takes precedence)
     if echo "$task_lower" | grep -qE "$code_patterns"; then
