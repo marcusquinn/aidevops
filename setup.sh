@@ -562,6 +562,109 @@ setup_git_clis() {
     return 0
 }
 
+# Setup file discovery tools (fd, ripgrep) for efficient file searching
+setup_file_discovery_tools() {
+    print_info "Setting up file discovery tools..."
+    
+    local missing_tools=()
+    local missing_packages=()
+    local missing_names=()
+    
+    # Check for fd (fd-find)
+    if ! command -v fd >/dev/null 2>&1; then
+        missing_tools+=("fd")
+        missing_packages+=("fd")
+        missing_names+=("fd (fast file finder)")
+    else
+        local fd_version
+        fd_version=$(fd --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "fd found: $fd_version"
+    fi
+    
+    # Check for ripgrep
+    if ! command -v rg >/dev/null 2>&1; then
+        missing_tools+=("rg")
+        missing_packages+=("ripgrep")
+        missing_names+=("ripgrep (fast content search)")
+    else
+        local rg_version
+        rg_version=$(rg --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "ripgrep found: $rg_version"
+    fi
+    
+    # Offer to install missing tools
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        print_warning "Missing file discovery tools: ${missing_names[*]}"
+        echo ""
+        echo "  These tools provide 10x faster file discovery than built-in glob:"
+        echo "    fd      - Fast alternative to 'find', respects .gitignore"
+        echo "    ripgrep - Fast alternative to 'grep', respects .gitignore"
+        echo ""
+        echo "  AI agents use these for efficient codebase navigation."
+        echo ""
+        
+        local pkg_manager
+        pkg_manager=$(detect_package_manager)
+        
+        if [[ "$pkg_manager" != "unknown" ]]; then
+            read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_fd_tools
+            
+            if [[ "$install_fd_tools" == "y" ]]; then
+                print_info "Installing ${missing_packages[*]}..."
+                
+                # Handle package name differences across package managers
+                local actual_packages=()
+                for pkg in "${missing_packages[@]}"; do
+                    case "$pkg_manager" in
+                        apt)
+                            # Debian/Ubuntu uses fd-find instead of fd
+                            if [[ "$pkg" == "fd" ]]; then
+                                actual_packages+=("fd-find")
+                            else
+                                actual_packages+=("$pkg")
+                            fi
+                            ;;
+                        *)
+                            actual_packages+=("$pkg")
+                            ;;
+                    esac
+                done
+                
+                if install_packages "$pkg_manager" "${actual_packages[@]}"; then
+                    print_success "File discovery tools installed"
+                    
+                    # On Debian/Ubuntu, fd is installed as fdfind - create alias
+                    if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
+                        print_info "Note: On Debian/Ubuntu, fd is installed as 'fdfind'"
+                        echo "  Consider adding to your shell config: alias fd=fdfind"
+                    fi
+                else
+                    print_warning "Failed to install some file discovery tools (non-critical)"
+                fi
+            else
+                print_info "Skipped file discovery tools installation"
+                echo ""
+                echo "  Manual installation:"
+                echo "    macOS:        brew install fd ripgrep"
+                echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep"
+                echo "    Fedora:       sudo dnf install fd-find ripgrep"
+                echo "    Arch:         sudo pacman -S fd ripgrep"
+            fi
+        else
+            echo ""
+            echo "  Manual installation:"
+            echo "    macOS:        brew install fd ripgrep"
+            echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep"
+            echo "    Fedora:       sudo dnf install fd-find ripgrep"
+            echo "    Arch:         sudo pacman -S fd ripgrep"
+        fi
+    else
+        print_success "All file discovery tools installed!"
+    fi
+    
+    return 0
+}
+
 # Setup Worktrunk - Git worktree management for parallel AI agent workflows
 setup_worktrunk() {
     print_info "Setting up Worktrunk (git worktree management)..."
@@ -2439,6 +2542,7 @@ main() {
     confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
     confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
     confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
+    confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
     confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
     confirm_step "Setup SSH key" && setup_ssh_key
     confirm_step "Setup configuration files" && setup_configs
