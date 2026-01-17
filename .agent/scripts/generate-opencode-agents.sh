@@ -119,8 +119,8 @@ AGENT_ORDER = ["Plan+", "Build+", "AI-DevOps"]
 # These are MCP tools that specific agents need access to
 AGENT_TOOLS = {
     "Plan+": {
-        # Read-only agent - no write/edit/bash
-        "write": False, "edit": False, "bash": False,
+        # Planning agent - read all, write only to planning files (via permissions), no bash
+        "write": True, "edit": True, "bash": False,
         "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
     },
@@ -278,7 +278,24 @@ def get_agent_config(display_name, filename, subagents=None):
     
     # Special permissions
     if display_name == "Plan+":
-        config["permission"] = {"edit": "deny", "write": "deny", "bash": "deny"}
+        # Plan+ can read all files, but only write/edit planning files
+        # Path-based permissions: deny by default, allow specific paths
+        config["permission"] = {
+            "bash": "deny",
+            "read": "allow",
+            "write": {
+                "*": "deny",
+                "TODO.md": "allow",
+                "todo/*": "allow",
+                "todo/**": "allow",
+            },
+            "edit": {
+                "*": "deny",
+                "TODO.md": "allow",
+                "todo/*": "allow",
+                "todo/**": "allow",
+            }
+        }
     else:
         config["permission"] = {"external_directory": "allow"}
     
