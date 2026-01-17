@@ -1164,7 +1164,7 @@ Cancel the active Ralph loop.
 ~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
 ```
 
-This removes the state file at `.agent/loop-state/ralph-loop.local.md` and stops the loop.
+This removes the state file at `.agent/loop-state/ralph-loop.local.state` and stops the loop.
 
 If no loop is active, it will report "No active Ralph loop found."
 EOF

@@ -41,13 +41,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agent/loop-state"
-readonly STATE_FILE="${STATE_DIR}/full-loop.local.md"
+readonly STATE_FILE="${STATE_DIR}/full-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
 # shellcheck disable=SC2034  # Defined for documentation, used in cancel checks
 readonly LEGACY_STATE_DIR=".claude"
 # shellcheck disable=SC2034  # Defined for backward compatibility path reference
-readonly LEGACY_STATE_FILE="${LEGACY_STATE_DIR}/full-loop.local.md"
+readonly LEGACY_STATE_FILE="${LEGACY_STATE_DIR}/full-loop.local.state"
 
 # Default settings
 readonly DEFAULT_MAX_TASK_ITERATIONS=50
@@ -562,7 +562,7 @@ cmd_resume() {
     case "$CURRENT_PHASE" in
         "$PHASE_TASK")
             # Check if task is complete (check both new and legacy locations)
-            if [[ -f ".agent/loop-state/ralph-loop.local.md" ]] || [[ -f ".claude/ralph-loop.local.md" ]]; then
+            if [[ -f ".agent/loop-state/ralph-loop.local.state" ]] || [[ -f ".claude/ralph-loop.local.state" ]]; then
                 print_info "Task loop still active. Complete it first."
                 return 0
             fi
@@ -643,10 +643,10 @@ cmd_cancel() {
     clear_state
     
     # Also cancel any sub-loops (both new and legacy locations)
-    rm -f ".agent/loop-state/ralph-loop.local.md" 2>/dev/null
-    rm -f ".agent/loop-state/quality-loop.local.md" 2>/dev/null
-    rm -f ".claude/ralph-loop.local.md" 2>/dev/null
-    rm -f ".claude/quality-loop.local.md" 2>/dev/null
+    rm -f ".agent/loop-state/ralph-loop.local.state" 2>/dev/null
+    rm -f ".agent/loop-state/quality-loop.local.state" 2>/dev/null
+    rm -f ".claude/ralph-loop.local.state" 2>/dev/null
+    rm -f ".claude/quality-loop.local.state" 2>/dev/null
     
     print_success "Full loop cancelled"
     return 0

@@ -32,7 +32,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agent/loop-state"
-readonly STATE_FILE="${STATE_DIR}/quality-loop.local.md"
+readonly STATE_FILE="${STATE_DIR}/quality-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
 # shellcheck disable=SC2034  # Defined for documentation
@@ -228,7 +228,7 @@ get_pending_checks() {
 #   $2 - Max iterations
 #   $3 - Options string (key=value pairs separated by commas)
 # Returns: 0
-# Side effects: Creates .agent/loop-state/quality-loop.local.md
+# Side effects: Creates .agent/loop-state/quality-loop.local.state
 create_state() {
     local loop_type="$1"
     local max_iterations="$2"
