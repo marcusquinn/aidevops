@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.60.0] - 2026-01-17
+
+### Added
+
+- Add file discovery performance guidance to AGENTS.md with preference order (git ls-files, fd, rg, mcp_glob)
+- Add setup_file_discovery_tools() to setup.sh for automatic fd/ripgrep installation
+- Add File Discovery Tools section to README.md with documentation
+
 ## [2.59.0] - 2026-01-17
 
 ### Added
