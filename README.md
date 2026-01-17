@@ -1149,11 +1149,12 @@ Work on multiple branches simultaneously without stashing or switching. Each bra
 ```bash
 # Install (macOS/Linux)
 brew install max-sixty/worktrunk/wt && wt config shell install
+# Restart your shell for shell integration to take effect
 
 # Create worktree + cd into it
 wt switch -c feature/my-feature
 
-# Create worktree + start Claude Code
+# Create worktree + start any AI CLI (-x runs command after switch)
 wt switch -c -x claude feature/ai-task
 
 # List worktrees with CI status and PR links
@@ -1167,6 +1168,7 @@ wt merge
 
 ```bash
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
+# Creates: ~/Git/{repo}-feature-my-feature/ (cd there manually)
 ~/.aidevops/agents/scripts/worktree-helper.sh list
 ~/.aidevops/agents/scripts/worktree-helper.sh clean
 ```
@@ -1204,8 +1206,10 @@ opencode --non-interactive --prompt "Continue with feature X" &
 osascript -e 'tell application "Terminal" to do script "cd ~/Git/project && opencode"'
 
 # Worktree-based (isolated branch) - recommended
-wt switch -c -x opencode feature/next-feature  # Worktrunk: create + start OpenCode
-# Or fallback: ~/.aidevops/agents/scripts/worktree-helper.sh add feature/next-feature
+wt switch -c -x opencode feature/next-feature  # Worktrunk: create + start AI CLI
+# Or fallback:
+# ~/.aidevops/agents/scripts/worktree-helper.sh add feature/next-feature
+# cd ~/Git/{repo}-feature-next-feature && opencode
 ```
 
 **Session handoff pattern:**
