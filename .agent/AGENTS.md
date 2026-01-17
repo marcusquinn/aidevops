@@ -67,9 +67,11 @@ Detection keywords:
 **When option 3 is NOT acceptable**: Any code changes, configuration files, scripts.
 
 **Planning files exception**: TODO.md and todo/ can be edited directly on main and auto-committed:
+
 ```bash
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: add new task"
 ```
+
 Planning files are metadata about work, not the work itself - they don't need PR review.
 
 4. Create worktree: `~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}`
