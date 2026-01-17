@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.58.0] - 2026-01-17
+
+### Added
+
+- add path-based write permissions for Plan+ agent (#112)
+- add worktrunk as default worktree tool with fallback (#109)
+
+### Fixed
+
+- clean up aidevops runtime files before worktree removal
+- change state files from .md to .state extension (#111)
+- exclude loop-state from agent discovery and deployment (#110)
+- add backup rotation to prevent file accumulation (#108)
 ## [2.57.0] - 2026-01-17
 
 ### Added
