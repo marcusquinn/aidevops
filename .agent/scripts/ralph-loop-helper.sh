@@ -44,12 +44,12 @@ fi
 
 # State directories
 readonly RALPH_STATE_DIR=".agent/loop-state"
-readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.md"
+readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
 readonly RALPH_LEGACY_STATE_DIR=".claude"
 # shellcheck disable=SC2034  # Defined for documentation, used in status checks
-readonly RALPH_LEGACY_STATE_FILE="${RALPH_LEGACY_STATE_DIR}/ralph-loop.local.md"
+readonly RALPH_LEGACY_STATE_FILE="${RALPH_LEGACY_STATE_DIR}/ralph-loop.local.state"
 
 # Adaptive timing constants (evidence-based from PR #19 analysis)
 readonly RALPH_DELAY_BASE="${RALPH_DELAY_BASE:-2}"
@@ -599,8 +599,8 @@ show_status_all() {
             # Check for v2 state (new location first, then legacy)
             local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
             local v2_state_legacy="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.md"
-            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.md"
+            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.state"
             
             # Check any of the state file locations
             if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then
@@ -671,8 +671,8 @@ check_other_loops() {
             # Check all possible state file locations (new and legacy)
             local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
             local v2_state_legacy="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.md"
-            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.md"
+            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.state"
 
             if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then
                 local branch

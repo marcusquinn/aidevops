@@ -231,7 +231,7 @@ migrate_loop_state_directories() {
         
         # Check for loop state files in old location
         local has_loop_state=false
-        if [[ -f "$old_state_dir/ralph-loop.local.md" ]] || \
+        if [[ -f "$old_state_dir/ralph-loop.local.state" ]] || \
            [[ -f "$old_state_dir/loop-state.json" ]] || \
            [[ -d "$old_state_dir/receipts" ]]; then
             has_loop_state=true
@@ -245,7 +245,7 @@ migrate_loop_state_directories() {
         mkdir -p "$new_state_dir"
         
         # Move loop-related files
-        for file in ralph-loop.local.md loop-state.json re-anchor.md guardrails.md; do
+        for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
             if [[ -f "$old_state_dir/$file" ]]; then
                 mv "$old_state_dir/$file" "$new_state_dir/"
                 print_info "  Moved $file"
