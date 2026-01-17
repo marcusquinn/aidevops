@@ -222,21 +222,18 @@ Cross-session memory using SQLite FTS5 for fast full-text search.
 **Parallel branch work** (git worktrees): For multiple terminals/sessions on different branches:
 
 ```bash
-# Create worktree for a branch (separate directory)
+# Recommended: Worktrunk (install: brew install max-sixty/worktrunk/wt)
+wt switch -c feature/my-feature   # Create worktree + cd into it
+wt list                           # List with CI status
+wt merge                          # Squash/rebase + cleanup
+
+# Fallback: worktree-helper.sh (no dependencies)
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
-# Creates: ~/Git/{repo}-feature-my-feature/
-
-# List all worktrees
 ~/.aidevops/agents/scripts/worktree-helper.sh list
-
-# Find sessions for open worktrees
-~/.aidevops/agents/scripts/worktree-sessions.sh list
-
-# Clean up after merge
 ~/.aidevops/agents/scripts/worktree-helper.sh clean
 ```
 
-See `workflows/worktree.md` for full workflow.
+See `workflows/worktree.md` for full workflow, `tools/git/worktrunk.md` for Worktrunk docs.
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
@@ -387,7 +384,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
 | `tools/data-extraction/` | Data extraction - scraping business data, Google Maps, reviews | outscraper |
 | `tools/deployment/` | Deployment automation - self-hosted PaaS, serverless, CI/CD | coolify, coolify-cli, vercel |
-| `tools/git/` | Git operations - GitHub/GitLab/Gitea CLIs, Actions, authentication, AI PR automation | github-cli, gitlab-cli, gitea-cli, github-actions, opencode-github, opencode-gitlab |
+| `tools/git/` | Git operations - GitHub/GitLab/Gitea CLIs, Actions, worktrees, AI PR automation | github-cli, gitlab-cli, gitea-cli, github-actions, worktrunk, opencode-github, opencode-gitlab |
 | `tools/credentials/` | Secret management - API keys, password vaults, environment variables | api-key-setup, api-key-management, vaultwarden, environment-variables |
 | `tools/opencode/` | OpenCode config - CLI setup, plugins, authentication, Oh-My-OpenCode extensions | opencode, opencode-anthropic-auth, oh-my-opencode |
 | `tools/task-management/` | Task tracking - dependency graphs, blocking relationships, visual planning | beads |

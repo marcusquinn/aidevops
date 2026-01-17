@@ -50,6 +50,11 @@
     └── scripts/           # Helper scripts
 ```
 
+**Before extending aidevops**: Read `.agent/aidevops/architecture.md` for:
+- Agent design patterns (progressive disclosure, context offloading, Ralph loop)
+- Extension guide (adding services, tools, documentation standards)
+- Framework conventions (naming, code standards, security requirements)
+
 <!-- AI-CONTEXT-END -->
 
 ## Two AGENTS.md Files
