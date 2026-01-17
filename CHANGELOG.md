@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add auto-commit for planning files (TODO.md, todo/) (#114)
+
 ## [2.58.0] - 2026-01-17
 
 ### Added
