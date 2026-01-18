@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.61.0] - 2026-01-18
+
+### Added
+
+- add Clawdbot integration for mobile AI access (#118)
+
+### Changed
+
+- Documentation: add one-time Bash guidance for Plan+ file discovery (#119)
+
+### Fixed
+
+- prefer Worktrunk (wt) over worktree-helper.sh (#120)
 ## [2.60.2] - 2026-01-18
 
 ### Fixed
