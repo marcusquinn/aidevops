@@ -181,6 +181,7 @@ check_tool() {
         npm) latest=$(get_npm_latest "$pkg") ;;
         brew) latest=$(get_brew_latest "$pkg") ;;
         pip) latest=$(get_pip_latest "$pkg") ;;
+        *) latest="unknown" ;;
     esac
     
     local status="up_to_date"
@@ -236,6 +237,9 @@ check_tool() {
                 ;;
             up_to_date)
                 echo -e "${color}${icon}  $name: $installed${NC}"
+                ;;
+            *)
+                echo -e "${color}${icon}  $name: $installed (status: $status)${NC}"
                 ;;
         esac
     fi
