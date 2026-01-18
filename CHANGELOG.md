@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - add missing default cases in tool-version-check.sh (S131) (#122)
 - handle pull_request_review_comment events in OpenCode Agent workflow (#121)
+
 ## [2.61.0] - 2026-01-18
 
 ### Added
