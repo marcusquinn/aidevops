@@ -133,6 +133,8 @@ Self-check: "Am I about to use `mcp_glob`?" If yes, use these instead:
 
 **Default**: `git ls-files` for any repo. `fd` for `~/.config/` or untracked files.
 
+**Why this matters**: `mcp_glob` is CPU-intensive on large codebases and should only be used when Bash tools are unavailable. Always prefer the Bash alternatives above.
+
 **Localhost Standards** (for any local service setup):
 - **Always check port first**: `localhost-helper.sh check-port <port>` before starting services
 - **Use .local domains**: `myapp.local` not `localhost:3000` (enables password manager autofill)
