@@ -43,6 +43,11 @@ The loop automatically handles branch setup when on main/master:
 ```bash
 # Generate branch name from task (sanitized, truncated to 40 chars)
 branch_name=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-40)
+
+# Preferred: Use Worktrunk (wt) if installed
+wt switch -c "feature/$branch_name"
+
+# Fallback: Use worktree-helper.sh if wt not available
 ~/.aidevops/agents/scripts/worktree-helper.sh add "feature/$branch_name"
 # Continue in new worktree directory
 ```

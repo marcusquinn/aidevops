@@ -74,7 +74,7 @@ Detection keywords:
 
 Planning files are metadata about work, not the work itself - they don't need PR review.
 
-4. Create worktree: `~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}`
+4. Create worktree: `wt switch -c {type}/{name}` (preferred) or `worktree-helper.sh add {type}/{name}` (fallback)
 5. After creating branch, call `session-rename_sync_branch` tool
 
 **Legacy checkout workflow**: If user explicitly requests `git checkout -b` instead of worktrees, warn them:
@@ -254,12 +254,15 @@ Cross-session memory using SQLite FTS5 for fast full-text search.
 **Parallel branch work** (git worktrees): For multiple terminals/sessions on different branches:
 
 ```bash
-# Recommended: Worktrunk (install: brew install max-sixty/worktrunk/wt)
+# ALWAYS check for wt first, use it if available
+command -v wt &>/dev/null && wt switch -c feature/my-feature
+
+# Worktrunk commands (preferred - install: brew install max-sixty/worktrunk/wt)
 wt switch -c feature/my-feature   # Create worktree + cd into it
 wt list                           # List with CI status
 wt merge                          # Squash/rebase + cleanup
 
-# Fallback: worktree-helper.sh (no dependencies)
+# Fallback: worktree-helper.sh (only if wt not installed)
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
 ~/.aidevops/agents/scripts/worktree-helper.sh list
 ~/.aidevops/agents/scripts/worktree-helper.sh clean
@@ -346,7 +349,7 @@ Session goals achieved:
 Suggestions:
 1. Run @agent-review to capture learnings
 2. Start new session for clean context
-3. For parallel work: worktree-helper.sh add {type}/{name}
+3. For parallel work: `wt switch -c {type}/{name}` (or worktree-helper.sh if wt unavailable)
 ---
 ```
 
@@ -360,14 +363,15 @@ Suggestions:
 1. Commit or stash uncommitted changes
 2. If in worktree: no action needed (worktree stays on its branch)
 3. If used `git checkout -b` in main repo: `git checkout main` before ending
-4. Run `worktree-helper.sh clean` to remove merged worktrees
+4. Run `wt list` then `wt merge` (or `worktree-helper.sh clean`) to remove merged worktrees
 
 **Spawning parallel sessions** (for related but separate work):
 
 ```bash
 # Create worktree + spawn new terminal (macOS)
-~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/{repo}-feature-parallel-task && opencode"'
+wt switch -c feature/parallel-task  # preferred
+# Or: ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
+osascript -e 'tell application "Terminal" to do script "cd ~/Git/{repo}.feature-parallel-task && opencode"'
 
 # Or background session
 opencode run "Continue with task X" --agent Build+ &
