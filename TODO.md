@@ -52,7 +52,6 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t010 Evaluate Merging build-agent and build-mcp into aidevops #plan → [todo/PLANS.md#evaluate-merging-build-agent-and-build-mcp-into-aidevops] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t004 Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
@@ -65,7 +64,6 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~1h (ai:30m read:30m) logged:2025-12-21
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~1d (ai:4h test:4h read:2h) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
-- [ ] t018 Enhance Plan+ and Build+ with OpenCode's Latest Features #plan → [todo/PLANS.md#enhance-plan-and-build-with-opencodes-latest-features] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21
 - [ ] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~2h (ai:1h test:30m read:30m) logged:2025-12-22
 - [ ] t023 Evaluate Shannon AI pentester for security testing integration #security #tools ~2h (ai:1h test:30m read:30m) logged:2025-01-03
@@ -221,6 +219,10 @@ t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20
 
 ## Done
 
+- [x] t010 Evaluate Merging build-agent and build-mcp into aidevops #plan ~4h actual:1h logged:2025-12-21 completed:2026-01-18
+  - Notes: Decision: Keep as subagents in tools/ (not merge into aidevops.md). Implemented in v2.41.0 - generate-opencode-agents.sh cleans up old files, architecture.md documents the pattern.
+- [x] t018 Enhance Plan+ and Build+ with OpenCode's Latest Features #plan ~3h actual:1h logged:2025-12-21 completed:2026-01-18
+  - Notes: All 4 phases complete. 1) Disabled built-in build/plan agents. 2) Set Plan+ as default_agent. 3) Added granular bash permissions for file discovery (git ls-files, fd, rg --files). 4) Updated generate-opencode-agents.sh. PR #123 merged.
 - [x] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h actual:30m logged:2026-01-17 started:2026-01-18T18:00Z completed:2026-01-18
   - Notes: SonarCloud quality gate was already OK. Fixed OpenCode Agent workflow failing on `pull_request_review_comment` events due to `context.payload.issue` being undefined. Now uses `context.payload.pull_request` as fallback and appropriate API methods for PR review comments. PR #121 merged.
 - [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h logged:2025-12-18 completed:2025-12-20
