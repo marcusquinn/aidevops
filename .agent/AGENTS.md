@@ -109,6 +109,9 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 **Critical Rules**:
 - **Git check before edits**: See "MANDATORY: Pre-Edit Git Check" section above
+- **File discovery**: Use `git ls-files` or `fd`, NOT `mcp_glob` (see File Discovery below)
+- **Context budget**: Never consume >100K tokens on a single operation; for remote repos: fetch README first, check size with `gh api`, use `includePatterns`
+- **Agent capability check**: Before edits, verify you have Edit/Write/Bash tools; if not, suggest switching to Build+
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
@@ -117,13 +120,18 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
-**File Discovery** (fastest to slowest):
-1. `git ls-files '*.md'` - Instant, git-tracked files only
-2. `fd -e md` or `fd -g '*.md'` - Fast, respects .gitignore, Rust-based
-3. `rg --files -g '*.md'` - Fast, respects .gitignore (ripgrep)
-4. `mcp_glob` tool - Fallback when bash unavailable or for complex patterns
+**File Discovery** (STOP before using `mcp_glob`):
 
-Use `git ls-files` for tracked files (most common). Use `fd` for untracked files or system-wide searches (e.g., `~/.config/`). The `mcp_glob` tool is CPU-intensive on large codebases.
+Self-check: "Am I about to use `mcp_glob`?" If yes, use these instead:
+
+| Use Case | Command | Why |
+|----------|---------|-----|
+| Git-tracked files | `git ls-files '*.md'` | Instant, most common case |
+| Untracked/system files | `fd -e md` or `fd -g '*.md'` | Fast, respects .gitignore |
+| Content + file list | `rg --files -g '*.md'` | Fast, respects .gitignore |
+| **Bash unavailable only** | `mcp_glob` tool | Last resort - CPU intensive |
+
+**Default**: `git ls-files` for any repo. `fd` for `~/.config/` or untracked files.
 
 **Localhost Standards** (for any local service setup):
 - **Always check port first**: `localhost-helper.sh check-port <port>` before starting services

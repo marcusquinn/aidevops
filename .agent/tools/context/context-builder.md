@@ -8,7 +8,7 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: false
+  webfetch: true
   task: true
 ---
 
@@ -63,6 +63,30 @@ tools:
 - Interface definitions
 - Import/export statements
 - Omits: implementation details, comments, empty lines
+
+## CRITICAL: Remote Repository Guardrails
+
+**NEVER blindly pack a remote repository.** Follow this escalation:
+
+1. **Fetch README first** - `webfetch "https://github.com/{user}/{repo}"` (~1-5K tokens)
+2. **Check repo size** - `gh api repos/{user}/{repo} --jq '.size'` (size in KB)
+3. **Apply size thresholds**:
+
+| Repo Size (KB) | Est. Tokens | Action |
+|----------------|-------------|--------|
+| < 500 | < 50K | Safe for compressed pack |
+| 500-2000 | 50-200K | Use `includePatterns` only |
+| > 2000 | > 200K | **NEVER full pack** - targeted files only |
+
+4. **Use patterns** - `mcp_repomix_pack_remote_repository(..., includePatterns="README.md,src/**/*.ts")`
+
+**What NOT to do:**
+```bash
+# DANGEROUS - packs entire repo without size check
+mcp_repomix_pack_remote_repository(remote="https://github.com/some/large-repo")
+```
+
+See `tools/context/context-guardrails.md` for full workflow and recovery procedures.
 
 <!-- AI-CONTEXT-END -->
 

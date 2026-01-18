@@ -636,6 +636,27 @@ This protocol should also be reviewed when:
 - User feedback indicates protocol is too aggressive/passive
 - Duplicate detection fails to catch conflicts
 
+### Tool Selection Checklist
+
+Before using tools, verify you're using the optimal choice:
+
+| Task | Preferred Tool | Avoid | Why |
+|------|---------------|-------|-----|
+| Find files by pattern | `git ls-files` or `fd` | `mcp_glob` | CLI is 10x faster |
+| Search file contents | `rg` (ripgrep) | `mcp_grep` | CLI is more powerful |
+| Read file contents | `mcp_read` | `cat` via bash | Better error handling |
+| Edit files | `mcp_edit` | `sed` via bash | Safer, atomic |
+| Web content | `mcp_webfetch` | `curl` via bash | Handles redirects |
+| Remote repo research | `mcp_webfetch` README first | `mcp_repomix_pack_remote_repository` | Prevents context overload |
+
+**Self-check prompt**: Before calling any MCP tool, ask:
+> "Is there a faster CLI alternative I should use via Bash?"
+
+**Context budget check**: Before context-heavy operations, ask:
+> "Could this return >50K tokens? Have I checked the size first?"
+
+See `tools/context/context-guardrails.md` for detailed guardrails.
+
 ### Agent File Structure Convention
 
 All agent files should follow this structure:

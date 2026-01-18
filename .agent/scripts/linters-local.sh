@@ -348,6 +348,103 @@ check_secrets() {
 }
 
 # Check AI-Powered Quality CLIs integration
+check_markdown_lint() {
+    print_info "Checking Markdown Style..."
+
+    local md_files
+    local violations=0
+    local markdownlint_cmd=""
+
+    # Find markdownlint command
+    if command -v markdownlint &> /dev/null; then
+        markdownlint_cmd="markdownlint"
+    elif [[ -f "node_modules/.bin/markdownlint" ]]; then
+        markdownlint_cmd="node_modules/.bin/markdownlint"
+    fi
+
+    # Get markdown files to check:
+    # 1. Uncommitted changes (staged + unstaged)
+    # 2. If no uncommitted, check files changed in current branch vs main
+    # 3. Fallback to all tracked .md files in .agent/
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        # First try uncommitted changes
+        md_files=$(git diff --name-only --diff-filter=ACMR HEAD -- '*.md' 2>/dev/null)
+        
+        # If no uncommitted, check branch diff vs main
+        if [[ -z "$md_files" ]]; then
+            local base_branch
+            base_branch=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || echo "")
+            if [[ -n "$base_branch" ]]; then
+                md_files=$(git diff --name-only "$base_branch" HEAD -- '*.md' 2>/dev/null)
+            fi
+        fi
+        
+        # Fallback: check all .agent/*.md files
+        if [[ -z "$md_files" ]]; then
+            md_files=$(git ls-files '.agent/**/*.md' 2>/dev/null)
+        fi
+    else
+        md_files=$(find . -name "*.md" -type f 2>/dev/null | grep -v node_modules)
+    fi
+
+    if [[ -z "$md_files" ]]; then
+        print_success "Markdown: No markdown files to check"
+        return 0
+    fi
+
+    if [[ -n "$markdownlint_cmd" ]]; then
+        # Run markdownlint and capture output
+        local lint_output
+        lint_output=$($markdownlint_cmd $md_files 2>&1) || true
+        
+        if [[ -n "$lint_output" ]]; then
+            # Count violations (each line is a violation)
+            violations=$(echo "$lint_output" | grep -c "MD[0-9]" || echo "0")
+            
+            if [[ $violations -gt 0 ]]; then
+                print_warning "Markdown: $violations style issues found"
+                echo "$lint_output" | head -10
+                if [[ $violations -gt 10 ]]; then
+                    echo "... and $((violations - 10)) more"
+                fi
+                print_info "Run: markdownlint --fix .agent/**/*.md to auto-fix"
+                # Non-blocking for now - many pre-existing issues
+                # TODO: Make blocking after fixing existing issues
+                return 0
+            fi
+        fi
+        print_success "Markdown: No style issues found"
+    else
+        # Fallback: basic checks without markdownlint
+        local issues=0
+        
+        # Check for fenced code blocks without language (MD040)
+        # Pattern: line starts with optional whitespace, then ``` with nothing after (or just whitespace)
+        for file in $md_files; do
+            local count
+            # Use grep -E for extended regex (portable across macOS/Linux)
+            count=$(grep -cE '^[[:space:]]*```[[:space:]]*$' "$file" 2>/dev/null || echo "0")
+            if [[ $count -gt 0 ]]; then
+                print_warning "$file: $count fenced code blocks without language specifier"
+                grep -nE '^[[:space:]]*```[[:space:]]*$' "$file" 2>/dev/null | head -3
+                issues=$((issues + count))
+            fi
+        done
+        
+        if [[ $issues -gt 0 ]]; then
+            print_warning "Markdown: $issues issues found (install markdownlint for full checks)"
+            print_info "Install: npm install -g markdownlint-cli"
+            # Non-blocking for now - many pre-existing issues
+            # TODO: Make blocking after fixing existing issues
+            return 0
+        fi
+        
+        print_success "Markdown: Basic checks passed (install markdownlint for full checks)"
+    fi
+
+    return 0
+}
+
 check_remote_cli_status() {
     print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
@@ -418,12 +515,10 @@ main() {
     check_secrets || exit_code=1
     echo ""
 
-    check_remote_cli_status
-
+    check_markdown_lint || exit_code=1
     echo ""
-    print_info "Markdown Formatting Tools Available:"
-    print_info "Run: bash .agent/scripts/markdown-lint-fix.sh manual . (for quick fixes)"
-    print_info "Run: bash .agent/scripts/markdown-formatter.sh format . (for comprehensive formatting)"
+
+    check_remote_cli_status
     echo ""
 
     # Final summary
