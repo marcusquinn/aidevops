@@ -1,5 +1,5 @@
 ---
-description: CodeRabbit AI code review integration
+description: CodeRabbit AI code review - CLI and PR integration
 mode: subagent
 tools:
   read: true
@@ -12,90 +12,138 @@ tools:
   task: true
 ---
 
-# CodeRabbit Analysis Trigger
+# CodeRabbit AI Code Review
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- Purpose: Trigger CodeRabbit AI analysis on pull requests
-- Analysis scope: Shell scripts (.agent/scripts/), MCP configs, docs/
-- Goals: Code quality improvements, framework enhancements, documentation quality
-- Expected fixes: Variable quoting, error handling, return checks, path handling
-- Config validation: JSON schema, env vars, API keys, security
-- Docs fixes: Markdown linting, code blocks, links, formatting
-- Post-analysis: Review suggestions, apply auto-fixes, test, commit, close PR
+- **Purpose**: AI-powered code review via CLI (local) and PR (GitHub/GitLab)
+- **CLI Install**: `curl -fsSL https://cli.coderabbit.ai/install.sh | sh`
+- **CLI Auth**: `coderabbit auth login` (browser-based OAuth)
+- **Review uncommitted**: `coderabbit --plain` or `coderabbit --prompt-only`
+- **Review all changes**: `coderabbit --plain --type all`
+- **Compare branch**: `coderabbit --plain --base develop`
+- **Helper script**: `~/.aidevops/agents/scripts/coderabbit-cli.sh`
+- **Docs**: https://docs.coderabbit.ai/cli/overview
+
+## CLI Modes
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| Plain | `coderabbit --plain` | Scripts, AI agents, readable output |
+| Prompt-only | `coderabbit --prompt-only` | AI agent integration (minimal) |
+| Interactive | `coderabbit` | Manual review with TUI |
+
+## Review Types
+
+| Type | Flag | Description |
+|------|------|-------------|
+| All | `--type all` | Committed + uncommitted (default) |
+| Uncommitted | `--type uncommitted` | Only working directory changes |
+| Committed | `--type committed` | Only committed changes |
+
+## Rate Limits
+
+- Free: 2 reviews/hour
+- Pro: 8 reviews/hour
+- Paid users get learnings-powered reviews from codebase history
+
 <!-- AI-CONTEXT-END -->
 
-This file is created to trigger CodeRabbit analysis and gather auto-fix recommendations.
+## Installation
 
-## 🎯 **Analysis Goals**
+```bash
+# Install CLI
+curl -fsSL https://cli.coderabbit.ai/install.sh | sh
 
-### **Code Quality Improvements**
+# Restart shell or reload config
+source ~/.zshrc
 
-- Identify potential auto-fixes for shell scripts
-- Analyze MCP integration code for best practices
-- Review documentation for consistency and clarity
-- Detect any security or performance issues
+# Authenticate (opens browser)
+coderabbit auth login
+```
 
-### **Framework Enhancements**
+## Usage Examples
 
-- Validate MCP configuration templates
-- Review setup and validation scripts
-- Analyze error handling patterns
-- Check for code duplication or optimization opportunities
+### Local Code Review (Before Commit)
 
-### **Documentation Quality**
+```bash
+# Review uncommitted changes (plain text for AI agents)
+coderabbit --plain
 
-- Review Markdown formatting and structure
-- Validate code examples and snippets
-- Check for broken links or references
-- Ensure consistency across documentation files
+# Review with minimal output for AI agent integration
+coderabbit --prompt-only
 
-## 🔧 **Expected Auto-Fixes**
+# Review against specific base branch
+coderabbit --plain --base develop
 
-### **Shell Script Improvements**
+# Review only uncommitted changes
+coderabbit --plain --type uncommitted
+```
 
-- Variable quoting and expansion
-- Error handling enhancements
-- Function return value checks
-- Path handling improvements
+### AI Agent Integration
 
-### **Configuration Validation**
+For Claude Code, Cursor, or other AI coding agents:
 
-- JSON schema validation
-- Environment variable handling
-- API key management best practices
-- Security configuration reviews
+```text
+Run coderabbit --prompt-only in the background, let it take as long as it needs,
+and fix any critical issues it finds. Ignore nits.
+```
 
-### **Documentation Enhancements**
+### Helper Script
 
-- Markdown linting fixes
-- Code block language specifications
-- Link validation and updates
-- Formatting consistency improvements
+```bash
+# Using aidevops helper script
+~/.aidevops/agents/scripts/coderabbit-cli.sh install
+~/.aidevops/agents/scripts/coderabbit-cli.sh auth
+~/.aidevops/agents/scripts/coderabbit-cli.sh review              # plain mode
+~/.aidevops/agents/scripts/coderabbit-cli.sh review prompt-only  # AI mode
+~/.aidevops/agents/scripts/coderabbit-cli.sh review plain develop # vs develop
+~/.aidevops/agents/scripts/coderabbit-cli.sh status
+```
 
-## 📊 **Analysis Scope**
+## PR-Based Reviews
 
-This analysis covers:
+CodeRabbit also provides automatic PR reviews on GitHub/GitLab:
 
-- All shell scripts in `.agent/scripts/`
-- MCP configuration templates in `configs/mcp-templates/`
-- Documentation files in `docs/`
-- Main README.md and configuration files
-- Setup and validation automation scripts
+1. Install CodeRabbit GitHub App: https://github.com/apps/coderabbitai
+2. Reviews appear automatically on PRs
+3. Use `@coderabbitai` commands in PR comments
 
-## 🚀 **Post-Analysis Actions**
+## Analysis Scope
 
-After CodeRabbit analysis:
+CodeRabbit analyzes:
 
-1. Review all suggested improvements
-2. Apply auto-fixes where appropriate
-3. Implement manual fixes for complex issues
-4. Update documentation based on recommendations
-5. Re-run validation scripts to ensure functionality
-6. Commit improvements and close this PR
+- Race conditions, memory leaks, security vulnerabilities
+- Logic errors, null pointer exceptions
+- Code style and best practices
+- Documentation quality
 
----
+## Expected Fixes
 
-**This PR will be closed after CodeRabbit analysis is complete and recommendations are implemented.**
+| Category | Examples |
+|----------|----------|
+| Shell scripts | Variable quoting, error handling, return checks |
+| Security | SQL injection, credential exposure, input validation |
+| Performance | Memory leaks, inefficient loops, resource cleanup |
+| Documentation | Markdown formatting, code blocks, broken links |
+
+## Troubleshooting
+
+```bash
+# Check CLI status
+coderabbit --version
+
+# Re-authenticate if token expired
+coderabbit auth login
+
+# Check if in git repo
+git status
+```
+
+## Resources
+
+- CLI Docs: https://docs.coderabbit.ai/cli/overview
+- Claude Code Integration: https://docs.coderabbit.ai/cli/claude-code-integration
+- Cursor Integration: https://docs.coderabbit.ai/cli/cursor-integration

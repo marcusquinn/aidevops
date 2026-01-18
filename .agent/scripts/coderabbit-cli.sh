@@ -10,14 +10,19 @@
 # Usage: ./coderabbit-cli.sh [command] [options]
 # Commands:
 #   install     - Install CodeRabbit CLI
-#   setup       - Configure API key and settings
-#   review      - Review current changes
-#   analyze     - Analyze specific files or directories
+#   auth        - Authenticate with CodeRabbit (browser-based)
+#   review      - Review uncommitted changes (--plain for AI agents)
+#   review-all  - Review all changes including committed (--plain)
 #   status      - Check CodeRabbit CLI status
 #   help        - Show this help message
 #
+# CLI Modes:
+#   --plain       - Plain text output (for scripts/AI agents)
+#   --prompt-only - Minimal output optimized for AI agents
+#   --base <branch> - Compare against specific base branch
+#
 # Author: AI DevOps Framework
-# Version: 1.1.1
+# Version: 1.2.0
 # License: MIT
 
 # Colors for output
@@ -280,54 +285,111 @@ load_api_key() {
     return 0
 }
 
-# Review current changes
+# Review uncommitted changes (default mode for local development)
 review_changes() {
-    print_header "Reviewing current changes with CodeRabbit..."
+    local mode="${1:-plain}"
+    local base_branch="${2:-}"
+    
+    print_header "Reviewing uncommitted changes with CodeRabbit..."
     
     if ! check_cli_installed; then
         print_error "CodeRabbit CLI not installed. Run: $0 install"
         return 1
     fi
     
-    if ! load_api_key; then
-        return 1
+    print_info "Analyzing uncommitted git changes..."
+    
+    # Build command based on mode
+    local cmd="coderabbit"
+    case "$mode" in
+        "plain")
+            cmd="$cmd --plain --type uncommitted"
+            ;;
+        "prompt-only")
+            cmd="$cmd --prompt-only --type uncommitted"
+            ;;
+        "interactive")
+            cmd="$cmd --type uncommitted"
+            ;;
+    esac
+    
+    # Add base branch if specified
+    if [[ -n "$base_branch" ]]; then
+        cmd="$cmd --base $base_branch"
     fi
     
-    print_info "Analyzing current git changes..."
-    if coderabbit review; then
+    print_info "Running: $cmd"
+    if eval "$cmd"; then
         print_success "Code review completed"
         return 0
     else
         print_error "Code review failed"
         return 1
     fi
-    return 0
 }
 
-# Analyze specific files or directories
-analyze_code() {
-    local target="${1:-.}"
+# Review all changes (committed + uncommitted)
+review_all_changes() {
+    local mode="${1:-plain}"
+    local base_branch="${2:-}"
     
-    print_header "Analyzing code with CodeRabbit: $target"
+    print_header "Reviewing all changes with CodeRabbit..."
     
     if ! check_cli_installed; then
         print_error "CodeRabbit CLI not installed. Run: $0 install"
         return 1
     fi
     
-    if ! load_api_key; then
+    print_info "Analyzing all git changes (committed + uncommitted)..."
+    
+    # Build command based on mode
+    local cmd="coderabbit"
+    case "$mode" in
+        "plain")
+            cmd="$cmd --plain --type all"
+            ;;
+        "prompt-only")
+            cmd="$cmd --prompt-only --type all"
+            ;;
+        "interactive")
+            cmd="$cmd --type all"
+            ;;
+    esac
+    
+    # Add base branch if specified
+    if [[ -n "$base_branch" ]]; then
+        cmd="$cmd --base $base_branch"
+    fi
+    
+    print_info "Running: $cmd"
+    if eval "$cmd"; then
+        print_success "Code review completed"
+        return 0
+    else
+        print_error "Code review failed"
+        return 1
+    fi
+}
+
+# Authenticate with CodeRabbit (browser-based OAuth)
+auth_login() {
+    print_header "Authenticating with CodeRabbit..."
+    
+    if ! check_cli_installed; then
+        print_error "CodeRabbit CLI not installed. Run: $0 install"
         return 1
     fi
     
-    print_info "Running CodeRabbit analysis on: $target"
-    if coderabbit analyze "$target"; then
-        print_success "Code analysis completed"
+    print_info "Opening browser for authentication..."
+    print_info "Follow the prompts to sign in and copy the access token."
+    
+    if coderabbit auth login; then
+        print_success "Authentication successful"
         return 0
     else
-        print_error "Code analysis failed"
+        print_error "Authentication failed"
         return 1
     fi
-    return 0
 }
 
 # Check CodeRabbit CLI status
@@ -357,40 +419,62 @@ show_help() {
     echo "Usage: $0 [command] [options]"
     echo ""
     echo "Commands:"
-    echo "  install     - Install CodeRabbit CLI"
-    echo "  setup       - Configure API key and settings"
-    echo "  review      - Review current git changes"
-    echo "  analyze     - Analyze specific files or directories"
-    echo "  status      - Check CodeRabbit CLI status"
-    echo "  help        - Show this help message"
+    echo "  install              - Install CodeRabbit CLI"
+    echo "  auth                 - Authenticate with CodeRabbit (browser-based)"
+    echo "  review [mode] [base] - Review uncommitted changes"
+    echo "  review-all [mode] [base] - Review all changes (committed + uncommitted)"
+    echo "  status               - Check CodeRabbit CLI status"
+    echo "  reviews              - Fetch CodeRabbit reviews from GitHub PRs"
+    echo "  fix <file>           - Apply auto-fixes to a file"
+    echo "  help                 - Show this help message"
+    echo ""
+    echo "Review modes:"
+    echo "  plain       - Plain text output (default, best for scripts/AI)"
+    echo "  prompt-only - Minimal output optimized for AI agents"
+    echo "  interactive - Full interactive TUI mode"
     echo ""
     echo "Examples:"
-    echo "  $0 install"
-    echo "  $0 setup"
-    echo "  $0 review"
-    echo "  $0 analyze .agent/scripts/"
-    echo "  $0 status"
+    echo "  $0 install                    # Install CLI"
+    echo "  $0 auth                       # Authenticate (browser)"
+    echo "  $0 review                     # Review uncommitted (plain mode)"
+    echo "  $0 review prompt-only         # Review for AI agents"
+    echo "  $0 review plain develop       # Review against develop branch"
+    echo "  $0 review-all                 # Review all changes"
+    echo "  $0 status                     # Check CLI status"
     echo ""
-    echo "For more information, visit: https://www.coderabbit.ai/cli"
+    echo "Direct CLI usage (equivalent commands):"
+    echo "  coderabbit --plain            # Plain text review"
+    echo "  coderabbit --prompt-only      # AI agent optimized"
+    echo "  coderabbit --type uncommitted # Only uncommitted changes"
+    echo "  coderabbit --base develop     # Compare against develop"
+    echo ""
+    echo "For more information: https://docs.coderabbit.ai/cli/overview"
     return 0
 }
 
 # Main function
 main() {
     local command="${1:-help}"
+    local arg2="${2:-}"
+    local arg3="${3:-}"
 
     case "$command" in
         "install")
             install_cli
             ;;
+        "auth"|"login")
+            auth_login
+            ;;
         "setup")
-            setup_api_key
+            # Legacy: redirect to auth
+            print_warning "setup is deprecated, use 'auth' instead"
+            auth_login
             ;;
         "review")
-            review_changes
+            review_changes "$arg2" "$arg3"
             ;;
-        "analyze")
-            analyze_code "$_arg2"
+        "review-all")
+            review_all_changes "$arg2" "$arg3"
             ;;
         "status")
             check_status
@@ -399,7 +483,7 @@ main() {
             get_coderabbit_reviews
             ;;
         "fix")
-            apply_coderabbit_fixes "$_arg2"
+            apply_coderabbit_fixes "$arg2"
             ;;
         "help"|"--help"|"-h")
             show_help
