@@ -109,6 +109,9 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 **Critical Rules**:
 - **Git check before edits**: See "MANDATORY: Pre-Edit Git Check" section above
+- **File discovery**: Use `git ls-files` or `fd`, NOT `mcp_glob` (see File Discovery below)
+- **Context budget**: Never consume >100K tokens on a single operation; for remote repos: fetch README first, check size with `gh api`, use `includePatterns`
+- **Agent capability check**: Before edits, verify you have Edit/Write/Bash tools; if not, suggest switching to Build+
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
