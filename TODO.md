@@ -84,7 +84,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Created tools/content/summarize.md subagent. steipete/summarize (726+ stars) - CLI for URL/YouTube/podcast summarization with AI. Supports multiple providers (OpenAI, Anthropic, Google, xAI, OpenRouter). Install: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`.
 - [x] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
   - Notes: Created tools/social-media/bird.md subagent. steipete/bird (434+ stars) - Fast X/Twitter CLI using GraphQL API with browser cookie auth. Commands: tweet, reply, read, search, mentions, bookmarks, likes, following/followers. Install: `npm i -g @steipete/bird` or `brew install steipete/tap/bird`.
-- [ ] t036 Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain) #tools #code-review ~1h (ai:30m test:15m read:15m) logged:2025-01-03
+- [x] t036 Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain) #tools #code-review ~1h actual:45m (ai:30m test:15m) logged:2025-01-03 started:2026-01-18T19:00Z completed:2026-01-18
+  - Notes: Fixed CLI commands in coderabbit-cli.sh - changed `coderabbit review` to `coderabbit --plain --type uncommitted`. Added --prompt-only mode, --type flag, --base flag. Replaced setup_api_key() with auth_login() (browser OAuth). Rewrote coderabbit.md with comprehensive CLI docs. PR #124 merged.
 - [ ] t037 Review ALwrity for SEO/marketing capabilities or inspiration #research #seo #marketing ~3h (ai:1.5h test:30m read:1h) logged:2025-01-03
 - [ ] t038 Add CDN origin IP leak detection subagent (Cloudmare-inspired) #security #dns #hosting ~4h (ai:2h test:1h read:1h) logged:2025-01-03
 - [ ] t039 Add anti-detect browser subagent for multi-account automation #tools #browser #privacy ~8h (ai:4h test:2h read:2h) logged:2025-01-03 ref:https://github.com/daijro/camoufox
@@ -168,7 +169,7 @@ t032,Create performance skill/subagent/command inspired by @elithrar,,tools|perf
 t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
 t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
-t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,pending,,,
+t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,done,,,
 t037,Review ALwrity for SEO/marketing capabilities or inspiration,,research|seo|marketing,3h,1.5h,30m,1h,2025-01-03T00:00Z,pending,,,
 t038,Add CDN origin IP leak detection subagent (Cloudmare-inspired),,security|dns|hosting,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
 t039,Add anti-detect browser subagent for multi-account automation,,tools|browser|privacy,8h,4h,2h,2h,2025-01-03T00:00Z,pending,,,
