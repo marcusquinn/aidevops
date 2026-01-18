@@ -119,8 +119,9 @@ AGENT_ORDER = ["Plan+", "Build+", "AI-DevOps"]
 # These are MCP tools that specific agents need access to
 AGENT_TOOLS = {
     "Plan+": {
-        # Planning agent - read all, write only to planning files (via permissions), no bash
-        "write": True, "edit": True, "bash": False,
+        # Planning agent - read all, write only to planning files (via permissions)
+        # Bash enabled with granular permissions for read-only file discovery commands
+        "write": True, "edit": True, "bash": True,
         "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
     },
@@ -279,9 +280,24 @@ def get_agent_config(display_name, filename, subagents=None):
     # Special permissions
     if display_name == "Plan+":
         # Plan+ can read all files, but only write/edit planning files
+        # Bash has granular permissions for read-only file discovery commands
         # Path-based permissions: deny by default, allow specific paths
         config["permission"] = {
-            "bash": "deny",
+            "bash": {
+                # File discovery commands (fast alternatives to mcp_glob)
+                "git ls-files*": "allow",
+                "git status*": "allow",
+                "git log*": "allow",
+                "git diff*": "allow",
+                "git branch*": "allow",
+                "git show*": "allow",
+                "fd *": "allow",
+                "fd -e *": "allow",
+                "fd -g *": "allow",
+                "rg --files*": "allow",
+                # Deny everything else
+                "*": "deny"
+            },
             "read": "allow",
             "write": {
                 "*": "deny",
@@ -392,6 +408,10 @@ sorted_agents["plan"] = {"disable": True}
 print("  Disabled default 'build' and 'plan' agents (replaced by Build+ and Plan+)")
 
 config['agent'] = sorted_agents
+
+# Set Plan+ as the default agent (first in Tab cycle, auto-selected on startup)
+config['default_agent'] = "Plan+"
+print("  Set Plan+ as default agent")
 
 print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
