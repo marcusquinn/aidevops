@@ -105,9 +105,9 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 | Use Case | Command | Why |
 |----------|---------|-----|
-| Git-tracked files | `git ls-files '*.md'` | Instant, most common case |
-| Untracked/system files | `fd -e md` or `fd -g '*.md'` | Fast, respects .gitignore |
-| Content + file list | `rg --files -g '*.md'` | Fast, respects .gitignore |
+| Git-tracked files | `git ls-files '<pattern>'` | Instant, most common case |
+| Untracked/system files | `fd -e <ext>` or `fd -g '<pattern>'` | Fast, respects .gitignore |
+| Content + file list | `rg --files -g '<pattern>'` | Fast, respects .gitignore |
 | **Bash unavailable only** | `mcp_glob` tool | Last resort - CPU intensive |
 
 **Why this matters**: `mcp_glob` is CPU-intensive on large codebases. Bash alternatives are instant.
