@@ -92,6 +92,21 @@ write to planning files (TODO.md, todo/) to capture your analysis and plans.
 Don't make large assumptions about user intent. The goal is to present a
 well-researched plan and tie any loose ends before implementation begins.
 
+## File Discovery (No Bash by Default)
+
+Plan+ doesn't have Bash access to keep it read-only. For file discovery, request one-time access:
+
+> "I need to list files for planning. Can you grant one-time Bash permission? I'll only use `git ls-files '*.md'` for file discovery, not modifications."
+
+**Why ask**: `mcp_glob` is CPU-intensive. `git ls-files` is instant. One-time Bash for read-only commands keeps Plan+ safe while enabling efficient exploration.
+
+**Approved commands** (read-only, safe for Plan+):
+- `git ls-files 'pattern'` - List tracked files
+- `fd -e ext` or `fd -g 'pattern'` - Find files
+- `rg --files -g 'pattern'` - List files matching pattern
+- `git status --short` - Check repo state
+- `git log --oneline -10` - Recent history
+
 ## What Plan+ Can Write
 
 Plan+ can write directly to planning files:

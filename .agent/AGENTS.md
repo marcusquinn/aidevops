@@ -135,6 +135,12 @@ Self-check: "Am I about to use `mcp_glob`?" If yes, use these instead:
 
 **Why this matters**: `mcp_glob` is CPU-intensive on large codebases and should only be used when Bash tools are unavailable. Always prefer the Bash alternatives above.
 
+**Plan+ agents without Bash**: If you're in Plan+ (or another read-only agent) and need file discovery, request one-time Bash access from the user:
+
+> "I need to list files but don't have Bash access. Can you grant one-time Bash permission for file discovery? I'll only use it for `git ls-files` or `fd`, not for any modifications."
+
+This keeps Plan+ read-only for code while enabling efficient file discovery. The user can approve the specific command without granting full Bash access.
+
 **Localhost Standards** (for any local service setup):
 - **Always check port first**: `localhost-helper.sh check-port <port>` before starting services
 - **Use .local domains**: `myapp.local` not `localhost:3000` (enables password manager autofill)
