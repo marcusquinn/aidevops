@@ -8,7 +8,7 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: false
+  webfetch: true
   task: true
 ---
 
@@ -78,12 +78,12 @@ tools:
 | 500-2000 | 50-200K | Use `includePatterns` only |
 | > 2000 | > 200K | **NEVER full pack** - targeted files only |
 
-4. **Use patterns** - `repomix_pack_remote_repository(..., includePatterns="README.md,src/**/*.ts")`
+4. **Use patterns** - `mcp_repomix_pack_remote_repository(..., includePatterns="README.md,src/**/*.ts")`
 
 **What NOT to do:**
 ```bash
 # DANGEROUS - packs entire repo without size check
-repomix_pack_remote_repository("https://github.com/some/large-repo")
+mcp_repomix_pack_remote_repository(remote="https://github.com/some/large-repo")
 ```
 
 See `tools/context/context-guardrails.md` for full workflow and recovery procedures.

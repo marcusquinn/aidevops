@@ -76,24 +76,30 @@ START
 
 GitHub API `.size` is in KB. Rough token estimate:
 
-- **Repo KB x 10 = approximate full-pack tokens** (very rough)
-- **Compressed mode reduces by ~80%**
+- **Repo KB x 100 = approximate full-pack tokens** (very rough, matches thresholds: 500KB -> ~50K tokens)
+- **Compressed mode reduces by ~70-80%**
 - **Targeted patterns can reduce by 90-99%**
 
 ## Tool-Specific Guardrails
 
-### repomix_pack_remote_repository
+### mcp_repomix_pack_remote_repository
+
+MCP tool name: `mcp_repomix_pack_remote_repository`
+Helper script: `context-builder-helper.sh remote user/repo [branch]`
 
 ```bash
 # BAD - no size check, no patterns
-repomix_pack_remote_repository("https://github.com/large/repo")
+mcp_repomix_pack_remote_repository(remote="https://github.com/large/repo")
 
 # GOOD - size check first
 gh api repos/large/repo --jq '.size'  # Check KB
 # If < 500 KB:
-repomix_pack_remote_repository("https://github.com/small/repo", compress=true)
+mcp_repomix_pack_remote_repository(remote="https://github.com/small/repo", compress=true)
 # If > 500 KB:
-repomix_pack_remote_repository("https://github.com/large/repo", includePatterns="README.md,src/**/*.ts,docs/**")
+mcp_repomix_pack_remote_repository(remote="https://github.com/large/repo", includePatterns="README.md,src/**/*.ts,docs/**")
+
+# Or use helper script:
+context-builder-helper.sh remote large/repo main  # Auto-compresses
 ```
 
 ### mcp_grep on large outputs
