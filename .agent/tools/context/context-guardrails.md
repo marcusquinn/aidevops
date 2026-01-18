@@ -133,7 +133,8 @@ If you hit "prompt is too long":
 2. **Ask user what specific question they have** - Focus on the actual need
 3. **Use targeted approach** - Get only needed context
 4. **Document the failure** - Use `/remember` for future sessions:
-   ```
+
+   ```text
    /remember FAILED_APPROACH: Attempted to pack {repo} without size check. 
    Repo was {size}KB (~{tokens} tokens). Use includePatterns next time.
    ```
