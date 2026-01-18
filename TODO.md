@@ -207,11 +207,6 @@ t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20
 
 ## In Progress
 
-- [ ] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h (ai:1h test:30m read:30m) logged:2026-01-17
-  - Notes: From postflight check on v2.58.0 release. Two issues:
-    1. **SonarCloud critical issues (2)**: "Add a default case (*) to handle unexpected values" - likely in case/switch statements in shell scripts. Run `sonarcloud-cli.sh issues --severity CRITICAL` to locate.
-    2. **OpenCode AI Agent workflow failures (2)**: `.github/workflows/opencode-agent.yml` failing. Check workflow logs via `gh run list --workflow=opencode-agent.yml` to diagnose.
-
 <!-- No tasks currently in progress -->
 
 <!--TOON:in_progress[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
@@ -226,6 +221,8 @@ t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20
 
 ## Done
 
+- [x] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h actual:30m logged:2026-01-17 started:2026-01-18T18:00Z completed:2026-01-18
+  - Notes: SonarCloud quality gate was already OK. Fixed OpenCode Agent workflow failing on `pull_request_review_comment` events due to `context.payload.issue` being undefined. Now uses `context.payload.pull_request` as fallback and appropriate API methods for PR review comments. PR #121 merged.
 - [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h logged:2025-12-18 completed:2025-12-20
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18
