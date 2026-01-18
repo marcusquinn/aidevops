@@ -129,8 +129,16 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
     echo ""
     echo -e "${BOLD}Create a worktree (keeps main repo on main):${NC}"
     echo ""
-    echo "    ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{description}"
-    echo "    cd ../{repo}-{type}-{description}"
+    if command -v wt &>/dev/null; then
+        echo "    wt switch -c {type}/{description}"
+        echo ""
+        echo "    (Using Worktrunk - recommended)"
+    else
+        echo "    ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{description}"
+        echo "    cd ../{repo}-{type}-{description}"
+        echo ""
+        echo "    (Install Worktrunk for better experience: brew install max-sixty/worktrunk/wt)"
+    fi
     echo ""
     echo -e "${YELLOW}Why worktrees? The main repo directory should ALWAYS stay on main.${NC}"
     echo -e "${YELLOW}Using 'git checkout -b' here leaves the repo on a feature branch,${NC}"
