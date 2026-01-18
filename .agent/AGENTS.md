@@ -117,13 +117,20 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
 
-**File Discovery** (fastest to slowest):
-1. `git ls-files '*.md'` - Instant, git-tracked files only
-2. `fd -e md` or `fd -g '*.md'` - Fast, respects .gitignore, Rust-based
-3. `rg --files -g '*.md'` - Fast, respects .gitignore (ripgrep)
-4. `mcp_glob` tool - Fallback when bash unavailable or for complex patterns
+**File Discovery** (STOP before using `mcp_glob`):
 
-Use `git ls-files` for tracked files (most common). Use `fd` for untracked files or system-wide searches (e.g., `~/.config/`). The `mcp_glob` tool is CPU-intensive on large codebases.
+Self-check: "Am I about to use `mcp_glob`?" If yes, use these instead:
+
+| Use Case | Command | Why |
+|----------|---------|-----|
+| Git-tracked files | `git ls-files '*.md'` | Instant, most common case |
+| Untracked/system files | `fd -e md` or `fd -g '*.md'` | Fast, respects .gitignore |
+| Content + file list | `rg --files -g '*.md'` | Fast, respects .gitignore |
+| **Bash unavailable only** | `mcp_glob` tool | Last resort - CPU intensive |
+
+**Default**: `git ls-files` for any repo. `fd` for `~/.config/` or untracked files.
+
+**Why this matters**: `mcp_glob` is CPU-intensive on large codebases and should only be used when Bash tools are unavailable. Always prefer the Bash alternatives above.
 
 **Localhost Standards** (for any local service setup):
 - **Always check port first**: `localhost-helper.sh check-port <port>` before starting services

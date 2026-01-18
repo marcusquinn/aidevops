@@ -396,6 +396,35 @@ auggie token print  # Verify
 | Chrome DevTools | Chrome running | `--remote-debugging-port=9222` | Browser debugging |
 | Playwriter | Browser extension | Install from Chrome Web Store | Extension-based automation |
 
+### Personal AI Assistant (Mobile Access)
+
+| Service | Requirements | Setup | Purpose |
+|---------|--------------|-------|---------|
+| Clawdbot | Node.js >= 22 | `npm install -g clawdbot@latest && clawdbot onboard` | AI via WhatsApp, Telegram, Slack, Discord |
+
+**Clawdbot setup** (recommended for mobile AI access):
+
+```bash
+# Install globally
+npm install -g clawdbot@latest
+
+# Run onboarding wizard (installs daemon, connects channels)
+clawdbot onboard --install-daemon
+
+# Verify
+clawdbot doctor
+```
+
+Clawdbot lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
+
+**Key features:**
+- Multi-channel inbox (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
+- Voice Wake + Talk Mode (macOS/iOS/Android)
+- Skills system compatible with aidevops agents
+- Browser control, cron jobs, webhooks
+
+**Docs**: https://docs.clawd.bot
+
 ### WordPress
 
 | Service | Requirements | Setup Link | Purpose |
@@ -522,6 +551,14 @@ For new users, suggest this order based on their interests:
 4. Hetzner + Cloudflare
 5. All code quality tools
 6. DataForSEO + Serper
+7. Clawdbot (mobile AI access)
+
+### Mobile-First / Always-On
+
+1. Clawdbot (`clawdbot onboard --install-daemon`)
+2. OpenAI or Anthropic API key
+3. Connect WhatsApp or Telegram channel
+4. Optional: Voice Wake for hands-free
 
 ## Troubleshooting
 
