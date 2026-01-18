@@ -92,20 +92,23 @@ write to planning files (TODO.md, todo/) to capture your analysis and plans.
 Don't make large assumptions about user intent. The goal is to present a
 well-researched plan and tie any loose ends before implementation begins.
 
-## File Discovery (No Bash by Default)
+## File Discovery (Granular Bash Permissions)
 
-Plan+ doesn't have Bash access to keep it read-only. For file discovery, request one-time access:
+Plan+ has **granular bash permissions** for read-only file discovery commands.
+Use these instead of `mcp_glob` (which is CPU-intensive):
 
-> "I need to list files for planning. Can you grant one-time Bash permission? I'll only use `git ls-files '*.md'` for file discovery, not modifications."
+| Command | Use Case |
+|---------|----------|
+| `git ls-files 'pattern'` | List tracked files (fastest) |
+| `fd -e ext` or `fd -g 'pattern'` | Find files (respects .gitignore) |
+| `rg --files -g 'pattern'` | List files matching pattern |
+| `git status` | Check repo state |
+| `git log` | View commit history |
+| `git diff` | View changes |
+| `git branch` | List/check branches |
+| `git show` | View commit details |
 
-**Why ask**: `mcp_glob` is CPU-intensive. `git ls-files` is instant. One-time Bash for read-only commands keeps Plan+ safe while enabling efficient exploration.
-
-**Approved commands** (read-only, safe for Plan+):
-- `git ls-files 'pattern'` - List tracked files
-- `fd -e ext` or `fd -g 'pattern'` - Find files
-- `rg --files -g 'pattern'` - List files matching pattern
-- `git status --short` - Check repo state
-- `git log --oneline -10` - Recent history
+**All other bash commands are denied** - Plan+ cannot modify files via bash.
 
 ## What Plan+ Can Write
 
