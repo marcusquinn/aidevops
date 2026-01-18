@@ -97,6 +97,27 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 ---
 
+## 🛑 MANDATORY: File Discovery
+
+> **NEVER use `mcp_glob` when Bash is available.**
+
+**Self-check before ANY file search**: "Am I about to use `mcp_glob`?" If yes, STOP and use:
+
+| Use Case | Command | Why |
+|----------|---------|-----|
+| Git-tracked files | `git ls-files '<pattern>'` | Instant, most common case |
+| Untracked/system files | `fd -e <ext>` or `fd -g '<pattern>'` | Fast, respects .gitignore |
+| Content + file list | `rg --files -g '<pattern>'` | Fast, respects .gitignore |
+| **Bash unavailable only** | `mcp_glob` tool | Last resort - CPU intensive |
+
+**Why this matters**: `mcp_glob` is CPU-intensive on large codebases. Bash alternatives are instant.
+
+**Only exception**: Agents without Bash tool (rare - even Plan+ has granular bash permissions for `git ls-files`, `fd`, `rg --files`).
+
+Failure to follow this rule is a bug in the AI assistant's behavior.
+
+---
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -109,7 +130,7 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 
 **Critical Rules**:
 - **Git check before edits**: See "MANDATORY: Pre-Edit Git Check" section above
-- **File discovery**: Use `git ls-files` or `fd`, NOT `mcp_glob` (see File Discovery below)
+- **File discovery**: See "MANDATORY: File Discovery" section above
 - **Context budget**: Never consume >100K tokens on a single operation; for remote repos: fetch README first, check size with `gh api`, use `includePatterns`
 - **Agent capability check**: Before edits, verify you have Edit/Write/Bash tools; if not, suggest switching to Build+
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/` for files needed only with the current task.
@@ -119,28 +140,6 @@ Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location
 - Re-read files immediately before editing (stale reads cause "file modified" errors)
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations
-
-**File Discovery** (STOP before using `mcp_glob`):
-
-Self-check: "Am I about to use `mcp_glob`?" If yes, use these instead:
-
-| Use Case | Command | Why |
-|----------|---------|-----|
-| Git-tracked files | `git ls-files '*.md'` | Instant, most common case |
-| Untracked/system files | `fd -e md` or `fd -g '*.md'` | Fast, respects .gitignore |
-| Content + file list | `rg --files -g '*.md'` | Fast, respects .gitignore |
-| **Bash unavailable only** | `mcp_glob` tool | Last resort - CPU intensive |
-
-**Default**: `git ls-files` for any repo. `fd` for `~/.config/` or untracked files.
-
-**Why this matters**: `mcp_glob` is CPU-intensive on large codebases and should only be used when Bash tools are unavailable. Always prefer the Bash alternatives above.
-
-**Plan+ has granular bash permissions**: Plan+ can run read-only file discovery commands directly:
-- `git ls-files`, `git status`, `git log`, `git diff`, `git branch`, `git show`
-- `fd -e`, `fd -g` (file finder)
-- `rg --files` (ripgrep file listing)
-
-All other bash commands are denied, keeping Plan+ safe for planning without code modification risk.
 
 **Localhost Standards** (for any local service setup):
 - **Always check port first**: `localhost-helper.sh check-port <port>` before starting services
