@@ -724,7 +724,7 @@ main() {
             --owner|-o) require_arg "$1" "${2:-}"; FILTER_OWNER="$2"; shift ;;
             --status) require_arg "$1" "${2:-}"; FILTER_STATUS="$2"; shift ;;
             --estimate-filter) require_arg "$1" "${2:-}"; FILTER_ESTIMATE="$2"; shift ;;
-            --group-by|-g) require_arg "$1" "${2:-}"; GROUP_BY="$2"; shift ;;  # Reserved for future grouping feature (SC2034 expected)
+            --group-by|-g) require_arg "$1" "${2:-}"; GROUP_BY="$2"; export GROUP_BY; shift ;;  # Reserved for future
             --plans) SHOW_PLANS=true ;;
             --done) SHOW_DONE=true ;;
             --all) SHOW_ALL=true ;;
