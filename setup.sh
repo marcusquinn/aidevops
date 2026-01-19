@@ -633,10 +633,19 @@ setup_file_discovery_tools() {
                 if install_packages "$pkg_manager" "${actual_packages[@]}"; then
                     print_success "File discovery tools installed"
                     
-                    # On Debian/Ubuntu, fd is installed as fdfind - create alias
+                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in ~/.profile
                     if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
-                        print_info "Note: On Debian/Ubuntu, fd is installed as 'fdfind'"
-                        echo "  Consider adding to your shell config: alias fd=fdfind"
+                        local profile_file="$HOME/.profile"
+                        if ! grep -q "alias fd=" "$profile_file" 2>/dev/null; then
+                            print_info "Adding fd alias to $profile_file..."
+                            echo '' >> "$profile_file"
+                            echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$profile_file"
+                            echo 'alias fd="fdfind"' >> "$profile_file"
+                            print_success "Added alias fd=fdfind to $profile_file"
+                            echo "  Run 'source ~/.profile' or restart your shell to activate"
+                        else
+                            print_success "fd alias already exists in $profile_file"
+                        fi
                     fi
                 else
                     print_warning "Failed to install some file discovery tools (non-critical)"
