@@ -633,18 +633,27 @@ setup_file_discovery_tools() {
                 if install_packages "$pkg_manager" "${actual_packages[@]}"; then
                     print_success "File discovery tools installed"
                     
-                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in ~/.profile
+                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in shell rc file
                     if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
-                        local profile_file="$HOME/.profile"
-                        if ! grep -q "alias fd=" "$profile_file" 2>/dev/null; then
-                            print_info "Adding fd alias to $profile_file..."
-                            echo '' >> "$profile_file"
-                            echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$profile_file"
-                            echo 'alias fd="fdfind"' >> "$profile_file"
-                            print_success "Added alias fd=fdfind to $profile_file"
-                            echo "  Run 'source ~/.profile' or restart your shell to activate"
+                        local shell_rc="$HOME/.profile"
+                        if [[ "$SHELL" == *"zsh"* ]] || [[ -n "${ZSH_VERSION:-}" ]]; then
+                            shell_rc="$HOME/.zshrc"
+                        elif [[ "$SHELL" == *"bash"* ]] || [[ -n "${BASH_VERSION:-}" ]]; then
+                            shell_rc="$HOME/.bashrc"
+                        fi
+                        
+                        if ! grep -q 'alias fd="fdfind"' "$shell_rc" 2>/dev/null; then
+                            print_info "Adding fd alias to $shell_rc..."
+                            if { echo '' >> "$shell_rc" && \
+                                 echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$shell_rc" && \
+                                 echo 'alias fd="fdfind"' >> "$shell_rc"; }; then
+                                print_success "Added alias fd=fdfind to $shell_rc"
+                                echo "  Run 'source $shell_rc' or restart your shell to activate"
+                            else
+                                print_warning "Failed to write fd alias to $shell_rc"
+                            fi
                         else
-                            print_success "fd alias already exists in $profile_file"
+                            print_success "fd alias already exists in $shell_rc"
                         fi
                     fi
                 else
