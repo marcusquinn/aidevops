@@ -25,7 +25,7 @@ If the script fails or is unavailable, read and parse the files manually:
 1. Read `TODO.md` and `todo/PLANS.md`
 2. Parse tasks by status (In Progress, Backlog, Done)
 3. Apply any filters from arguments
-4. Format as markdown tables
+4. Format as Markdown tables
 
 ## Arguments
 
@@ -63,7 +63,7 @@ If the script fails or is unavailable, read and parse the files manually:
 
 ## Output Format
 
-The script outputs markdown tables:
+The script outputs Markdown tables:
 
 ```markdown
 ## Tasks Overview
@@ -92,8 +92,8 @@ The script outputs markdown tables:
 ---
 
 **Options:**
-1. Work on a specific task (enter task ID like `t014` or number)
-2. Filter/sort differently
+1. Work on a specific task (enter task ID like `t014` or row number from `#` column)
+2. Filter/sort differently (e.g., `--priority`, `-t seo`)
 3. Done browsing
 ```
 
@@ -101,9 +101,9 @@ The script outputs markdown tables:
 
 Wait for user input:
 
-1. **Task ID or number** - Start working on that task
-2. **Filter command** - Re-run with new filters
-3. **"done" or "3"** - End browsing
+1. **Task ID or row number** - Start working on that task (e.g., `t014` or `5`)
+2. **Filter command** - Re-run with new filters (e.g., `-t seo`)
+3. **"3" or "done"** - End browsing
 
 When user selects a task:
 - Check if it's a plan reference (`#plan` tag or `→ PLANS.md`)

@@ -335,13 +335,14 @@ apply_filters() {
         [[ "$status" != "$FILTER_STATUS" ]] && return 1
     fi
     
-    # Tag filter (case insensitive, partial match)
+    # Tag filter (case insensitive, literal substring match)
     if [[ -n "$FILTER_TAG" ]]; then
         local tag_lower
         local tags_lower
         tag_lower=$(echo "$FILTER_TAG" | tr '[:upper:]' '[:lower:]')
         tags_lower=$(echo "$tags" | tr '[:upper:]' '[:lower:]')
-        [[ ! "$tags_lower" =~ $tag_lower ]] && return 1
+        # Use literal substring match, not regex
+        [[ "$tags_lower" != *"$tag_lower"* ]] && return 1
     fi
     
     # Owner filter
@@ -581,6 +582,18 @@ output_markdown() {
     echo "3. Done browsing"
 }
 
+# Escape string for JSON output
+json_escape() {
+    local str="$1"
+    # Escape backslash first, then other special chars
+    str="${str//\\/\\\\}"
+    str="${str//\"/\\\"}"
+    str="${str//$'\n'/\\n}"
+    str="${str//$'\r'/\\r}"
+    str="${str//$'\t'/\\t}"
+    echo "$str"
+}
+
 # Output as JSON
 output_json() {
     local tasks_file="$1"
@@ -595,8 +608,9 @@ output_json() {
         [[ "$status" != "in-progress" && "$status" != "in-review" ]] && continue
         $first || echo ","
         first=false
-        # Escape quotes in desc
-        desc="${desc//\"/\\\"}"
+        desc=$(json_escape "$desc")
+        tags=$(json_escape "$tags")
+        owner=$(json_escape "$owner")
         printf '    {"id":"%s","desc":"%s","est":"%s","tags":"%s","owner":"%s"}' "$id" "$desc" "$est" "$tags" "$owner"
     done < "$tasks_file"
     echo ""
@@ -609,7 +623,9 @@ output_json() {
         [[ "$status" != "pending" ]] && continue
         $first || echo ","
         first=false
-        desc="${desc//\"/\\\"}"
+        desc=$(json_escape "$desc")
+        tags=$(json_escape "$tags")
+        owner=$(json_escape "$owner")
         printf '    {"id":"%s","desc":"%s","est":"%s","tags":"%s","owner":"%s","logged":"%s","blocked_by":"%s"}' "$id" "$desc" "$est" "$tags" "$owner" "$logged" "$blocked_by"
     done < "$tasks_file"
     echo ""
@@ -623,8 +639,9 @@ output_json() {
             [[ "$type" != "plan" ]] && continue
             $first || echo ","
             first=false
-            title="${title//\"/\\\"}"
-            next="${next//\"/\\\"}"
+            title=$(json_escape "$title")
+            status=$(json_escape "$status")
+            next=$(json_escape "$next")
             printf '    {"title":"%s","status":"%s","est":"%s","phase":%s,"total":%s,"next":"%s"}' "$title" "$status" "$est" "${phase:-0}" "${total:-0}" "$next"
         done < "$plans_file"
     fi
@@ -638,7 +655,7 @@ output_json() {
         [[ "$status" != "done" ]] && continue
         $first || echo ","
         first=false
-        desc="${desc//\"/\\\"}"
+        desc=$(json_escape "$desc")
         printf '    {"id":"%s","desc":"%s","est":"%s","completed":"%s"}' "$id" "$desc" "$est" "$logged"
     done < "$tasks_file"
     echo ""
@@ -684,6 +701,16 @@ Examples:
 EOF
 }
 
+# Require argument for option
+require_arg() {
+    local opt="$1"
+    local val="$2"
+    if [[ -z "$val" || "$val" == -* ]]; then
+        echo "ERROR: Option $opt requires an argument" >&2
+        exit 1
+    fi
+}
+
 # Main
 main() {
     # Parse command line
@@ -693,16 +720,23 @@ main() {
             --estimate|-e) SORT_BY="estimate" ;;
             --date|-d) SORT_BY="date" ;;
             --alpha|-a) SORT_BY="alpha" ;;
-            --tag|-t) FILTER_TAG="$2"; shift ;;
-            --owner|-o) FILTER_OWNER="$2"; shift ;;
-            --status) FILTER_STATUS="$2"; shift ;;
-            --estimate-filter) FILTER_ESTIMATE="$2"; shift ;;
-            --group-by|-g) GROUP_BY="$2"; shift ;;  # Reserved for future grouping feature (SC2034 expected)
+            --tag|-t) require_arg "$1" "${2:-}"; FILTER_TAG="$2"; shift ;;
+            --owner|-o) require_arg "$1" "${2:-}"; FILTER_OWNER="$2"; shift ;;
+            --status) require_arg "$1" "${2:-}"; FILTER_STATUS="$2"; shift ;;
+            --estimate-filter) require_arg "$1" "${2:-}"; FILTER_ESTIMATE="$2"; shift ;;
+            --group-by|-g) require_arg "$1" "${2:-}"; GROUP_BY="$2"; shift ;;  # Reserved for future grouping feature (SC2034 expected)
             --plans) SHOW_PLANS=true ;;
             --done) SHOW_DONE=true ;;
             --all) SHOW_ALL=true ;;
             --compact) COMPACT=true ;;
-            --limit) LIMIT="$2"; shift ;;
+            --limit) 
+                require_arg "$1" "${2:-}"
+                if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                    echo "ERROR: --limit requires a numeric value" >&2
+                    exit 1
+                fi
+                LIMIT="$2"; shift 
+                ;;
             --json) OUTPUT_JSON=true ;;
             --no-color) NO_COLOR=true ;;
             --help|-h) show_help; exit 0 ;;

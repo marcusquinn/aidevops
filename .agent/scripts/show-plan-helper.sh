@@ -183,7 +183,7 @@ parse_plan_content() {
             continue
         fi
         
-        if [[ "$line" =~ ^####[[:space:]]+Surprises ]]; then
+        if [[ "$line" =~ ^####[[:space:]]+(Surprises|Discoveries) ]]; then
             in_purpose=false
             in_progress=false
             in_decisions=false
@@ -362,6 +362,18 @@ output_markdown() {
     echo "3. Back to task list (\`/list-todo\`)"
 }
 
+# Escape string for JSON output
+json_escape() {
+    local str="$1"
+    # Escape backslash first, then other special chars
+    str="${str//\\/\\\\}"
+    str="${str//\"/\\\"}"
+    str="${str//$'\n'/\\n}"
+    str="${str//$'\r'/\\r}"
+    str="${str//$'\t'/\\t}"
+    echo "$str"
+}
+
 # Output plan as JSON
 output_json() {
     local plans_file="$1"
@@ -370,7 +382,7 @@ output_json() {
     
     local content
     content=$(extract_plan "$plans_file" "$query") || {
-        echo '{"error": "Plan not found"}' >&2
+        echo '{"error": "Plan not found"}'
         return 1
     }
     
@@ -393,12 +405,18 @@ output_json() {
     done < <(parse_plan_content "$content")
     
     # Escape for JSON
-    title="${title//\"/\\\"}"
-    purpose="${purpose//\"/\\\"}"
-    progress="${progress//\"/\\\"}"
-    decisions="${decisions//\"/\\\"}"
-    discoveries="${discoveries//\"/\\\"}"
-    context="${context//\"/\\\"}"
+    title=$(json_escape "$title")
+    status=$(json_escape "$status")
+    estimate=$(json_escape "$estimate")
+    purpose=$(json_escape "$purpose")
+    progress=$(json_escape "$progress")
+    decisions=$(json_escape "$decisions")
+    discoveries=$(json_escape "$discoveries")
+    context=$(json_escape "$context")
+    
+    # Handle empty numeric fields
+    [[ -z "$phase" ]] && phase=0
+    [[ -z "$total_phases" ]] && total_phases=0
     
     cat << EOF
 {
@@ -420,7 +438,7 @@ EOF
         [[ -z "$task_id" ]] && continue
         $first || echo ","
         first=false
-        desc="${desc//\"/\\\"}"
+        desc=$(json_escape "$desc")
         printf '    {"id": "%s", "desc": "%s"}' "$task_id" "$desc"
     done < <(get_related_tasks "$todo_file" "$title")
     

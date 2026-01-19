@@ -51,7 +51,7 @@ If the script fails or is unavailable:
 
 ## Output Format
 
-The script outputs formatted markdown:
+The script outputs formatted Markdown:
 
 ```markdown
 # Plan Title
@@ -103,15 +103,15 @@ Key decisions, research findings, constraints from conversation.
 
 Wait for user input:
 
-1. **"1" or "start"** - Begin working on the plan
+1. **"1"** - Begin working on the plan
    - Run pre-edit check
    - Create/switch to appropriate branch
    - Mark first pending phase as in-progress
 
-2. **"2" or plan name** - Show another plan
-   - Re-run `/show-plan <name>`
+2. **"2"** - View another plan
+   - Prompt for plan name, then run `/show-plan <name>`
 
-3. **"3" or "back"** - Return to task list
+3. **"3"** - Return to task list
    - Run `/list-todo`
 
 ## Starting Work on a Plan
@@ -119,6 +119,7 @@ Wait for user input:
 When user chooses to start:
 
 1. **Check branch status:**
+
    ```bash
    ~/.aidevops/agents/scripts/pre-edit-check.sh
    ```
