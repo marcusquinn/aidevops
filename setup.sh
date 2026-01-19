@@ -633,27 +633,28 @@ setup_file_discovery_tools() {
                 if install_packages "$pkg_manager" "${actual_packages[@]}"; then
                     print_success "File discovery tools installed"
                     
-                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in shell rc file
+                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in all existing shell rc files
                     if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
-                        local shell_rc="$HOME/.profile"
-                        if [[ "$SHELL" == *"zsh"* ]] || [[ -n "${ZSH_VERSION:-}" ]]; then
-                            shell_rc="$HOME/.zshrc"
-                        elif [[ "$SHELL" == *"bash"* ]] || [[ -n "${BASH_VERSION:-}" ]]; then
-                            shell_rc="$HOME/.bashrc"
-                        fi
+                        local rc_files=("$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile")
+                        local added_to=""
                         
-                        if ! grep -q 'alias fd="fdfind"' "$shell_rc" 2>/dev/null; then
-                            print_info "Adding fd alias to $shell_rc..."
-                            if { echo '' >> "$shell_rc" && \
-                                 echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$shell_rc" && \
-                                 echo 'alias fd="fdfind"' >> "$shell_rc"; }; then
-                                print_success "Added alias fd=fdfind to $shell_rc"
-                                echo "  Run 'source $shell_rc' or restart your shell to activate"
-                            else
-                                print_warning "Failed to write fd alias to $shell_rc"
+                        for rc_file in "${rc_files[@]}"; do
+                            [[ ! -f "$rc_file" ]] && continue
+                            
+                            if ! grep -q 'alias fd="fdfind"' "$rc_file" 2>/dev/null; then
+                                if { echo '' >> "$rc_file" && \
+                                     echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$rc_file" && \
+                                     echo 'alias fd="fdfind"' >> "$rc_file"; }; then
+                                    added_to="${added_to:+$added_to, }$rc_file"
+                                fi
                             fi
+                        done
+                        
+                        if [[ -n "$added_to" ]]; then
+                            print_success "Added alias fd=fdfind to: $added_to"
+                            echo "  Restart your shell to activate"
                         else
-                            print_success "fd alias already exists in $shell_rc"
+                            print_success "fd alias already configured"
                         fi
                     fi
                 else
