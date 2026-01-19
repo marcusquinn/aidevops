@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.63.0] - 2026-01-19
+
+### Added
+
+- add /list-todo and /show-plan commands (#126)
 ## [2.62.1] - 2026-01-19
 
 ### Changed
