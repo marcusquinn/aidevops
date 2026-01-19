@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.62.1] - 2026-01-19
+
+### Changed
+
+- Refactor: elevate mcp_glob warning to MANDATORY section (#125)
 ## [2.62.0] - 2026-01-18
 
 ### Added
