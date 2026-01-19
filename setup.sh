@@ -635,7 +635,7 @@ setup_file_discovery_tools() {
                     
                     # On Debian/Ubuntu, fd is installed as fdfind - create alias in all existing shell rc files
                     if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
-                        local rc_files=("$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile")
+                        local rc_files=("$HOME/.bashrc" "$HOME/.zshrc")
                         local added_to=""
                         
                         for rc_file in "${rc_files[@]}"; do
