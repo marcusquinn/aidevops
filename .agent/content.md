@@ -5,6 +5,7 @@ mode: subagent
 subagents:
   # Content
   - guidelines
+  - humanise
   - summarize
   # SEO integration
   - keyword-research
@@ -31,6 +32,7 @@ subagents:
 
 **Subagents** (`content/`):
 - `guidelines.md` - Content standards and style guide
+- `humanise.md` - Remove AI writing patterns, make text sound human
 
 **Integrations**:
 - `seo.md` - Keyword optimization
@@ -63,6 +65,17 @@ See `content/guidelines.md` for:
 - SEO requirements
 - Quality checklist
 
+### Humanising Content
+
+Use `/humanise` or `content/humanise.md` to remove AI writing patterns:
+- Inflated significance and promotional language
+- Vague attributions and weasel words
+- AI vocabulary (delve, tapestry, landscape, etc.)
+- Rule of three, negative parallelisms
+- Em dash overuse, excessive hedging
+
+The humanise subagent is adapted from [blader/humanizer](https://github.com/blader/humanizer), based on Wikipedia's "Signs of AI writing" guide.
+
 ### Publishing
 
 Integrate with WordPress workflow:
@@ -94,9 +107,10 @@ When oh-my-opencode is installed, leverage these specialized agents for enhanced
 1. Research → @librarian finds examples and best practices
 2. Outline → Content agent structures the piece
 3. Draft → @document-writer creates polished prose
-4. Optimize → SEO agent adds keywords, meta
-5. Visual → @multimodal-looker analyzes/describes images
-6. Publish → WordPress agent deploys
+4. Humanise → /humanise removes AI patterns, adds voice
+5. Optimize → SEO agent adds keywords, meta
+6. Visual → @multimodal-looker analyzes/describes images
+7. Publish → WordPress agent deploys
 ```
 
 **Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
