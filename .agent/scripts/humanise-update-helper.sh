@@ -70,7 +70,7 @@ fetch_upstream() {
     fi
     
     echo "Fetching upstream from ${UPSTREAM_REPO}..."
-    if curl -fsSL "$UPSTREAM_RAW" -o "$CACHE_FILE" 2>/dev/null; then
+    if curl -fsSL "$UPSTREAM_RAW" -o "$CACHE_FILE"; then
         # Extract version from fetched file
         local version
         version=$(grep -E '^version:' "$CACHE_FILE" | head -1 | sed 's/version:[[:space:]]*//' | tr -d '"'"'" || echo "unknown")
