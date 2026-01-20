@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.65.0] - 2026-01-20
+
+### Added
+
+- add README create/update workflow and /readme command (#129)
+- add humanise subagent for AI writing pattern removal (#128)
+- add humanise subagent for AI writing pattern removal
+
+### Changed
+
+- Documentation: update README and CHANGELOG for humanise feature
+
+### Fixed
+
+- show curl errors for better debugging
 ## [2.64.0] - 2026-01-20
 
 ### Added
