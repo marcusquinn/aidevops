@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.64.0] - 2026-01-20
+
+### Added
+
+- add humanise subagent for AI writing pattern removal (#128)
+- add /humanise slash command for on-demand text humanisation
+- add humanise-update-helper.sh to check for upstream skill updates
+
 ## [2.63.0] - 2026-01-19
 
 ### Added
