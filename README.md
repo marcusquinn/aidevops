@@ -896,7 +896,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 | Build-MCP | `build-mcp.md` | Build MCP servers with TS+Bun+ElysiaJS | context7, augment, repomix |
 | Accounts | `accounts.md` | Financial operations | quickfile, augment |
 | AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup | context7, augment, repomix |
-| Content | `content.md` | Content creation workflows | augment |
+| Content | `content.md` | Content creation, humanise AI text | augment |
 | Health | `health.md` | Health and wellness guidance | augment |
 | Legal | `legal.md` | Legal compliance and documentation | augment |
 | Marketing | `marketing.md` | Marketing strategy and automation | augment |
@@ -1048,6 +1048,12 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 | `/code-simplifier` | Simplify and refine code for clarity and maintainability |
 | `/list-keys` | List all configured API keys and their storage locations |
 | `/pr` | Unified PR workflow (orchestrates all checks) |
+
+**Content Workflow**:
+
+| Command | Purpose |
+|---------|---------|
+| `/humanise` | Remove AI writing patterns, make text sound human |
 
 **SEO Workflow**:
 
