@@ -359,11 +359,12 @@ When using `/readme --sections`:
 | `--sections` value | Updates |
 |--------------------|---------|
 | `installation` | Installation, Prerequisites, Quick Start |
-| `usage` | Usage, Commands, Examples |
+| `usage` | Usage, Commands, Examples, API |
 | `config` | Configuration, Environment Variables |
 | `architecture` | Architecture, Project Structure |
-| `troubleshooting` | Troubleshooting section |
+| `troubleshooting` | Troubleshooting |
 | `deployment` | Deployment, Production Setup |
+| `badges` | Badge section only |
 | `all` | Full regeneration (default) |
 
 ## Quality Checklist

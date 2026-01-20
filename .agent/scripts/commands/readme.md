@@ -6,7 +6,7 @@ mode: subagent
 
 Create or update a comprehensive README.md file for the current project.
 
-Arguments: $ARGUMENTS
+**Arguments**: Optional flags like `--sections "installation,usage"` for partial updates. Without arguments, generates/updates the full README.
 
 ## Workflow
 
