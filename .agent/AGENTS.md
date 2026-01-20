@@ -173,7 +173,7 @@ User confirms with numbered options to override if needed.
 | `todo/tasks/prd-*.md` | Product requirement documents |
 | `todo/tasks/tasks-*.md` | Implementation task lists |
 
-**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`, `/session-review`, `/full-loop`, `/code-simplifier`
+**Slash commands:** `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`, `/log-time-spent`, `/ready`, `/sync-beads`, `/remember`, `/recall`, `/session-review`, `/full-loop`, `/code-simplifier`, `/humanise`
 
 **Time tracking format:**
 
@@ -406,7 +406,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `aidevops/` | Framework internals - extending aidevops, adding MCPs, architecture decisions | setup, architecture, add-new-mcp-to-aidevops, troubleshooting, mcp-integrations |
 | `memory/` | Cross-session memory - SQLite FTS5 storage, /remember and /recall commands | README (system docs) |
 | `seo/` | Search optimization - keyword research, rankings, site audits, E-E-A-T scoring, sitemap submission | dataforseo, serper, google-search-console, gsc-sitemaps, site-crawler, eeat-score, domain-research |
-| `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice | guidelines |
+| `content/` | Content creation - copywriting standards, editorial guidelines, tone of voice, AI writing pattern removal | guidelines, humanise |
 | `tools/content/` | Content tools - summarization, extraction, processing | summarize |
 | `tools/social-media/` | Social media tools - X/Twitter CLI, posting, reading | bird |
 | `tools/build-agent/` | Agent design - composing efficient agents, reviewing agent instructions | build-agent, agent-review |
@@ -436,7 +436,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, review-issue-pr, preflight, postflight, ralph-loop, session-review |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
 | `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
-| `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier and other interactive commands | save-todo, remember, recall, code-simplifier |
+| `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier, humanise and other interactive commands | save-todo, remember, recall, code-simplifier, humanise |
 
 <!-- AI-CONTEXT-END -->
 
@@ -565,6 +565,7 @@ Never create files in `~/` root for files needed only with the current task.
 | `ralph-loop-helper.sh` | Iterative AI development loops (Ralph technique) |
 | `full-loop-helper.sh` | End-to-end development loop (task → PR → deploy) |
 | `session-review-helper.sh` | Gather session context for completeness review |
+| `humanise-update-helper.sh` | Check for upstream updates to humanise subagent |
 
 ## Quality Workflow
 
