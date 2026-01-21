@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.68.0] - 2026-01-21
+
+### Added
+
+- add /add-skill command for external skill import (#135)
+
+### Changed
+
+- Documentation: add /add-skill command to README (#136)
 ## [2.67.2] - 2026-01-21
 
 ### Changed
