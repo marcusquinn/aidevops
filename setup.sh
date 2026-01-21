@@ -1556,6 +1556,83 @@ create_skill_symlinks() {
     return 0
 }
 
+# Check for updates to imported skills from upstream repositories
+check_skill_updates() {
+    print_info "Checking for skill updates..."
+    
+    local skill_sources="$HOME/.aidevops/agents/configs/skill-sources.json"
+    
+    # Skip if no skill-sources.json or required tools not available
+    if [[ ! -f "$skill_sources" ]]; then
+        print_info "No imported skills to check"
+        return 0
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not found - cannot check skill updates"
+        return 0
+    fi
+    
+    if ! command -v curl &>/dev/null; then
+        print_warning "curl not found - cannot check skill updates"
+        return 0
+    fi
+    
+    local skill_count
+    skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+    
+    if [[ "$skill_count" -eq 0 ]]; then
+        print_info "No imported skills to check"
+        return 0
+    fi
+    
+    local updates_available=0
+    local update_list=""
+    
+    # Check each skill for updates
+    while IFS= read -r skill_json; do
+        local name upstream_url upstream_commit
+        name=$(echo "$skill_json" | jq -r '.name')
+        upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
+        upstream_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
+        
+        # Skip skills without upstream URL or commit (e.g., context7 imports)
+        if [[ -z "$upstream_url" || "$upstream_url" == "null" ]]; then
+            continue
+        fi
+        if [[ -z "$upstream_commit" ]]; then
+            continue
+        fi
+        
+        # Extract owner/repo from GitHub URL
+        local owner_repo
+        owner_repo=$(echo "$upstream_url" | sed -E 's|https://github.com/||; s|\.git$||; s|/tree/.*||')
+        
+        if [[ -z "$owner_repo" || ! "$owner_repo" =~ / ]]; then
+            continue
+        fi
+        
+        # Get latest commit from GitHub API (silent, with timeout)
+        local latest_commit
+        latest_commit=$(curl -s --max-time 5 "https://api.github.com/repos/$owner_repo/commits?per_page=1" 2>/dev/null | jq -r '.[0].sha // empty')
+        
+        if [[ -n "$latest_commit" && "$latest_commit" != "$upstream_commit" ]]; then
+            ((updates_available++))
+            update_list="${update_list}\n  - $name (${upstream_commit:0:7} → ${latest_commit:0:7})"
+        fi
+    done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+    
+    if [[ $updates_available -gt 0 ]]; then
+        print_warning "Skill updates available:$update_list"
+        print_info "Run: ~/.aidevops/agents/scripts/add-skill-helper.sh check-updates"
+        print_info "To update a skill: ~/.aidevops/agents/scripts/add-skill-helper.sh add <url> --force"
+    else
+        print_success "All imported skills are up to date"
+    fi
+    
+    return 0
+}
+
 # Inject aidevops reference into AI assistant AGENTS.md files
 inject_agents_reference() {
     print_info "Adding aidevops reference to AI assistant configurations..."
@@ -2663,6 +2740,7 @@ main() {
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
     confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
     confirm_step "Create symlinks for imported skills" && create_skill_symlinks
+    confirm_step "Check for skill updates from upstream" && check_skill_updates
     confirm_step "Inject agents reference into AI configs" && inject_agents_reference
     confirm_step "Update OpenCode configuration" && update_opencode_config
     confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
