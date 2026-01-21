@@ -131,8 +131,11 @@ parse_github_url() {
     # Remove .git suffix if present
     input="${input%.git}"
     
-    # Remove /tree/main or /tree/master if present
-    input=$(echo "$input" | sed -E 's|/tree/(main|master)(/.*)?$|\2|')
+    # Remove /tree/main or /tree/master if present (capture subpath after branch)
+    # Use bash parameter expansion instead of sed for macOS compatibility
+    if [[ "$input" =~ /tree/(main|master)(/.*)? ]]; then
+        input="${BASH_REMATCH[2]#/}"
+    fi
     
     # Split by /
     IFS='/' read -ra parts <<< "$input"
