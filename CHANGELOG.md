@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add cross-reference from cloudflare.md to cloudflare-platform.md (#147)
+
 ## [2.70.3] - 2026-01-21
 
 ### Fixed
