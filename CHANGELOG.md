@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - handle dynamic GitHub release badge in version-manager.sh (#134)
+
 ## [2.67.1] - 2026-01-21
 
 ### Changed
