@@ -122,8 +122,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Create session-distill-helper.sh to extract learnings. Integrate with /session-review. Auto-call /remember with distilled insights.
 - [ ] t055 Document cache-aware prompt patterns #docs #optimization ~1h (ai:30m test:15m read:15m) logged:2025-01-11 blocked-by:t052
   - Notes: Add guidance to build-agent.md for stable-prefix patterns and avoiding instruction reordering for better prompt cache hits.
-- [ ] t056 Tool description indexing for on-demand MCP discovery #tools #context ~3h (ai:2h test:45m read:15m) logged:2025-01-11 blocked-by:t052
-  - Notes: Cursor-style MCP description sync to .agent-workspace/mcp-descriptions/. Add search tool for on-demand discovery instead of loading all tool definitions upfront.
+- [ ] t056 Tool description indexing for on-demand MCP discovery #tools #context ~3h (ai:2h test:45m read:15m) logged:2025-01-11 blocked-by:t052 blocks:t067
+  - Notes: Cursor-style MCP description sync to .agent-workspace/mcp-descriptions/. Add search tool for on-demand discovery instead of loading all tool definitions upfront. Enables t067 (OpenCode MCP on-demand activation).
 - [ ] t057 Memory consolidation and pruning #memory #optimization ~2h (ai:1h test:45m read:15m) logged:2025-01-11 blocked-by:t052
   - Notes: Add memory-helper.sh consolidate command. Periodic reflection to merge similar memories and prune stale/superseded entries.
 - [ ] t058 Memory Auto-Capture #plan → [todo/PLANS.md#memory-auto-capture] ~1d (ai:6h test:4h read:2h) logged:2026-01-11
@@ -138,6 +138,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t066 /add-skill System for External Skill Import #plan → [todo/PLANS.md#add-skill-system-for-external-skill-import] ~2d (ai:1d test:0.5d read:0.5d) logged:2026-01-21
   - Notes: Import external AI agent skills (SKILL.md, AGENTS.md) into aidevops with upstream tracking, conflict detection, merge support, and multi-assistant output generation. Research complete - see PLANS.md for full PRD. Branch: feature/add-skill-command
   - Notes: Load up Search Console → Performance → Filter Query → Query Regex → paste `^(?:\S+\s+){6,}\S+$`. You're already ranking for all these and people are finding you on these topics. Copy the first query (or whatever you want to write about) → Google → take the first 3 SERP results → using detailed copy all the headings. Plug it into your favorite LLM and ask it to write for you on this topic. Edit it so it feels natural. Works well because you're already ranking for these terms and people are finding you in LLMs through these channels.
+- [ ] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056
+  - Notes: MCPs should be available when activated by their relevant subagent rather than loaded for all main agents. Disable MCPs that are only needed when called by a subagent to improve OpenCode command loading time. Pattern: subagent triggers MCP activation on-demand instead of preloading all MCPs globally. Depends on t056 for MCP description indexing infrastructure.
 - [x] t063 Fix secretlint scanning performance #bugfix #secretlint #performance ~30m (ai:15m test:10m read:5m) logged:2026-01-14 completed:2026-01-14
   - Notes: Added python-env, .osgrep, .scannerwork to .secretlintignore. Added bun.lock to .gitignore to maintain subset rule. Increased Docker timeout 30s→60s. Optional: glob whitelist in linters-local.sh for further optimization.
 - [x] t066 Add /add-skill command for external skill import #tools #skills #agents ~4h (ai:3h test:30m read:30m) logged:2026-01-21 started:2026-01-21T00:00Z completed:2026-01-21 actual:4h
@@ -193,13 +195,14 @@ t053,Add YAML frontmatter to source subagents,,architecture|agents,2h,1.5h,30m,,
 t059,Review and merge unmerged feature branches,,git|cleanup,2h,1h,30m,30m,2026-01-11T00:00Z,pending,,,
 t054,Automatic session reflection to memory,,workflow|memory,4h,2.5h,1h,30m,2025-01-11T00:00Z,pending,t052,,
 t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025-01-11T00:00Z,pending,t052,,
-t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,pending,t052,,
+t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,pending,t052,t067,
 t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,pending,t052,,
 t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
 t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,2h,1h,,1h,2026-01-13T00:00Z,pending,,,
 t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,3h,2h,30m,30m,2026-01-14T00:00Z,pending,,,
 t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,2h,1h,,1h,2026-01-14T00:00Z,pending,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20m,,10m,2026-01-15T00:00Z,pending,,,
+t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,pending,t056,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -292,5 +295,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-57,44,0,0,27,0,28d3h30m,16h50m,0,44
+58,45,0,0,27,0,28d7h30m,16h50m,6,39
 -->
