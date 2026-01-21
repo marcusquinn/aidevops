@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.1] - 2026-01-21
+
+### Changed
+
+- Documentation: address code review feedback on Imported Skills section (#144)
 ## [2.70.0] - 2026-01-21
 
 ### Added
