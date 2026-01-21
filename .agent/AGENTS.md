@@ -451,6 +451,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, code-simplifier, codacy, coderabbit, qlty, snyk, secretlint, auditing |
 | `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy, llm-tldr |
 | `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
+| `tools/video/` | Video creation - programmatic video generation with React, animations, rendering | remotion |
 | `tools/data-extraction/` | Data extraction - scraping business data, Google Maps, reviews | outscraper |
 | `tools/deployment/` | Deployment automation - self-hosted PaaS, serverless, CI/CD | coolify, coolify-cli, vercel |
 | `tools/git/` | Git operations - GitHub/GitLab/Gitea CLIs, Actions, worktrees, AI PR automation | github-cli, gitlab-cli, gitea-cli, github-actions, worktrunk, opencode-github, opencode-gitlab |
@@ -555,6 +556,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | Content summarization | `tools/content/summarize.md` |
 | X/Twitter automation | `tools/social-media/bird.md` |
 | macOS automation | `tools/automation/mac.md` (AppleScript, JXA, app control) |
+| Programmatic video | `tools/video/remotion.md` (React video creation, animations) |
 
 ## Security
 
