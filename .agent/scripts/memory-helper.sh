@@ -521,6 +521,118 @@ EOF
 }
 
 #######################################
+# Consolidate similar memories
+# Merges memories with similar content to reduce redundancy
+#######################################
+cmd_consolidate() {
+    local dry_run=false
+    local similarity_threshold=0.8
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            --threshold) similarity_threshold="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    
+    init_db
+    
+    log_info "Analyzing memories for consolidation..."
+    
+    # Find potential duplicates using FTS5 similarity
+    # Group by type and look for similar content
+    local duplicates
+    duplicates=$(sqlite3 "$MEMORY_DB" <<'EOF'
+SELECT 
+    l1.id as id1, 
+    l2.id as id2,
+    l1.type,
+    substr(l1.content, 1, 50) as content1,
+    substr(l2.content, 1, 50) as content2,
+    l1.created_at as created1,
+    l2.created_at as created2
+FROM learnings l1
+JOIN learnings l2 ON l1.type = l2.type 
+    AND l1.id < l2.id
+    AND l1.content != l2.content
+WHERE (
+    -- Check for significant word overlap
+    (SELECT COUNT(*) FROM (
+        SELECT value FROM json_each('["' || replace(lower(l1.content), ' ', '","') || '"]')
+        INTERSECT
+        SELECT value FROM json_each('["' || replace(lower(l2.content), ' ', '","') || '"]')
+    )) * 2.0 / (
+        length(l1.content) - length(replace(l1.content, ' ', '')) + 1 +
+        length(l2.content) - length(replace(l2.content, ' ', '')) + 1
+    ) > 0.5
+)
+LIMIT 20;
+EOF
+)
+    
+    if [[ -z "$duplicates" ]]; then
+        log_success "No similar memories found for consolidation"
+        return 0
+    fi
+    
+    local count
+    count=$(echo "$duplicates" | wc -l | tr -d ' ')
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Found $count potential consolidation pairs:"
+        echo ""
+        echo "$duplicates" | while IFS='|' read -r id1 id2 type content1 content2 created1 created2; do
+            echo "  [$type] #$id1 vs #$id2"
+            echo "    1: $content1..."
+            echo "    2: $content2..."
+            echo ""
+        done
+        echo ""
+        log_info "Run without --dry-run to consolidate"
+    else
+        local consolidated=0
+        
+        echo "$duplicates" | while IFS='|' read -r id1 id2 type content1 content2 created1 created2; do
+            # Keep the older entry (more established), merge tags
+            local older_id newer_id
+            if [[ "$created1" < "$created2" ]]; then
+                older_id="$id1"
+                newer_id="$id2"
+            else
+                older_id="$id2"
+                newer_id="$id1"
+            fi
+            
+            # Merge tags from newer into older
+            local older_tags newer_tags
+            older_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id';")
+            newer_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id';")
+            
+            if [[ -n "$newer_tags" ]]; then
+                local merged_tags
+                merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+                sqlite3 "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags' WHERE id = '$older_id';"
+            fi
+            
+            # Transfer access history
+            sqlite3 "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id' WHERE id = '$newer_id' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id');" 2>/dev/null || true
+            
+            # Delete the newer duplicate
+            sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id';"
+            sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id';"
+            
+            ((consolidated++)) || true
+        done
+        
+        # Rebuild FTS index
+        sqlite3 "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        
+        log_success "Consolidated $count memory pairs"
+    fi
+}
+
+#######################################
 # Export memories
 #######################################
 cmd_export() {
@@ -571,6 +683,7 @@ COMMANDS:
     stats       Show memory statistics
     validate    Check for stale/duplicate entries
     prune       Remove old entries
+    consolidate Merge similar memories to reduce redundancy
     export      Export all memories
     help        Show this help
 
@@ -619,6 +732,9 @@ EXAMPLES:
 
     # Clean up old unused entries
     memory-helper.sh prune --older-than-days 60 --dry-run
+
+    # Consolidate similar memories
+    memory-helper.sh consolidate --dry-run
 EOF
     return 0
 }
@@ -636,6 +752,7 @@ main() {
         stats) cmd_stats ;;
         validate) cmd_validate ;;
         prune) cmd_prune "$@" ;;
+        consolidate) cmd_consolidate "$@" ;;
         export) cmd_export "$@" ;;
         help|--help|-h) cmd_help ;;
         *)

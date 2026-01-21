@@ -227,11 +227,44 @@ Cross-session memory using SQLite FTS5 for fast full-text search.
 
 **Memory types:** `WORKING_SOLUTION`, `FAILED_APPROACH`, `CODEBASE_PATTERN`, `USER_PREFERENCE`, `TOOL_CONFIG`, `DECISION`, `CONTEXT`
 
-**CLI:** `~/.aidevops/agents/scripts/memory-helper.sh [store|recall|stats|validate|prune|export]`
+**CLI:** `~/.aidevops/agents/scripts/memory-helper.sh [store|recall|stats|validate|prune|consolidate|export]`
 
 **Storage:** `~/.aidevops/.agent-workspace/memory/memory.db`
 
+**Session distillation:** At session end, extract learnings automatically:
+
+```bash
+~/.aidevops/agents/scripts/session-distill-helper.sh auto
+```
+
 **Full docs:** See `memory/README.md` and `scripts/commands/remember.md`
+
+## MCP On-Demand Loading
+
+MCPs are disabled globally and enabled per-agent to reduce context token usage.
+
+**Discovery pattern:**
+
+```bash
+# Search for tools by capability
+~/.aidevops/agents/scripts/mcp-index-helper.sh search "screenshot"
+
+# Find which MCP provides a tool
+~/.aidevops/agents/scripts/mcp-index-helper.sh get-mcp "query-docs"
+
+# List all indexed MCPs
+~/.aidevops/agents/scripts/mcp-index-helper.sh list
+```
+
+**How it works:**
+1. Main agents don't enable MCPs directly
+2. Subagents declare needed MCPs in YAML frontmatter
+3. When subagent is invoked, its MCPs become available
+4. MCP index enables discovery without loading all tools
+
+**Token savings:** Loading only needed MCPs can reduce context by 50-90%.
+
+**Full docs:** See `tools/context/mcp-discovery.md`
 
 ## Git Workflow (File Changes)
 

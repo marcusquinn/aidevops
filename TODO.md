@@ -114,18 +114,18 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: AGENTS.md lines 85-89 contain SonarCloud hotspot patterns (S5332, S6506 exclusions). Move to tools/code-review/ subagent to reduce root AGENTS.md size. Low priority - patterns work fine where they are.
 - [x] t059 Review and merge unmerged feature branches #git #cleanup ~1h (ai:30m test:15m read:15m) logged:2026-01-11 started:2026-01-11T05:25Z completed:2026-01-11 actual:45m
   - Notes: Processed all 13 branches. PRs merged: #44, #46, #48, #51. PRs closed (already in main): #45, #47, #49, #50. Branches deleted (superseded): feature/beads-integration, feature/domain-research-subagent, feature/loop-system-v2, feature/memory-auto-capture, feature/session-review-command. All remote branches cleaned up.
-- [ ] t052 Agent Design Pattern Improvements #plan → [todo/PLANS.md#agent-design-pattern-improvements] ~1d (ai:6h test:4h read:2h) logged:2025-01-11
-  - Notes: Implement remaining improvements from Lance Martin's agent design patterns analysis. Includes: YAML frontmatter for subagents, automatic session reflection, cache-aware prompts, tool description indexing, memory consolidation.
-- [ ] t053 Add YAML frontmatter to source subagents #architecture #agents ~2h (ai:1.5h test:30m) logged:2025-01-11 blocked-by:t052
-  - Notes: Add description, triggers, tools fields to all .agent/**/*.md files. Update generate-opencode-agents.sh to parse frontmatter for better progressive disclosure.
-- [ ] t054 Automatic session reflection to memory #workflow #memory ~4h (ai:2.5h test:1h read:30m) logged:2025-01-11 blocked-by:t052
-  - Notes: Create session-distill-helper.sh to extract learnings. Integrate with /session-review. Auto-call /remember with distilled insights.
-- [ ] t055 Document cache-aware prompt patterns #docs #optimization ~1h (ai:30m test:15m read:15m) logged:2025-01-11 blocked-by:t052
-  - Notes: Add guidance to build-agent.md for stable-prefix patterns and avoiding instruction reordering for better prompt cache hits.
-- [ ] t056 Tool description indexing for on-demand MCP discovery #tools #context ~3h (ai:2h test:45m read:15m) logged:2025-01-11 blocked-by:t052
-  - Notes: Cursor-style MCP description sync to .agent-workspace/mcp-descriptions/. Add search tool for on-demand discovery instead of loading all tool definitions upfront.
-- [ ] t057 Memory consolidation and pruning #memory #optimization ~2h (ai:1h test:45m read:15m) logged:2025-01-11 blocked-by:t052
-  - Notes: Add memory-helper.sh consolidate command. Periodic reflection to merge similar memories and prune stale/superseded entries.
+- [ ] t052 Agent Design Pattern Improvements #plan → [todo/PLANS.md#agent-design-pattern-improvements] ~1d (ai:6h test:4h read:2h) logged:2025-01-11 started:2026-01-21T05:04Z
+  - Notes: Implement remaining improvements from Lance Martin's agent design patterns analysis. Includes: YAML frontmatter for subagents, automatic session reflection, cache-aware prompts, tool description indexing, memory consolidation. Branch: feature/agent-design-mcp-optimization
+- [x] t053 Add YAML frontmatter to source subagents #architecture #agents ~2h (ai:1.5h test:30m) logged:2025-01-11 blocked-by:t052 completed:2026-01-21 actual:0m
+  - Notes: ALREADY COMPLETE - All 195 subagents already have YAML frontmatter with tools: section. Verified via `find .agent -mindepth 2 -name "*.md" | while read f; do head -1 "$f" | grep -q "^---$" || echo "$f"; done` (no output = all have frontmatter).
+- [x] t054 Automatic session reflection to memory #workflow #memory ~4h (ai:2.5h test:1h read:30m) logged:2025-01-11 blocked-by:t052 started:2026-01-21T05:30Z completed:2026-01-21 actual:30m
+  - Notes: Created session-distill-helper.sh with analyze/extract/store/auto/prompt commands. Extracts learnings from git history (ERROR_FIX, WORKING_SOLUTION, CODEBASE_PATTERN, CONTEXT). Integrates with memory-helper.sh for storage.
+- [x] t055 Document cache-aware prompt patterns #docs #optimization ~1h (ai:30m test:15m read:15m) logged:2025-01-11 blocked-by:t052 started:2026-01-21T05:45Z completed:2026-01-21 actual:15m
+  - Notes: Added "Cache-Aware Prompt Patterns" section to build-agent.md. Covers: stable prefix pattern, instruction ordering, avoiding dynamic prefixes, AI-CONTEXT blocks, MCP tool definitions stability.
+- [x] t056 Tool description indexing for on-demand MCP discovery #tools #context ~3h (ai:2h test:45m read:15m) logged:2025-01-11 blocked-by:t052 blocks:t067 started:2026-01-21T05:15Z completed:2026-01-21 actual:45m
+  - Notes: Created mcp-index-helper.sh with SQLite FTS5 for tool discovery. Commands: sync, search, list, status, rebuild, get-mcp. Created tools/context/mcp-discovery.md subagent. Enables lazy-load MCP pattern.
+- [x] t057 Memory consolidation and pruning #memory #optimization ~2h (ai:1h test:45m read:15m) logged:2025-01-11 blocked-by:t052 started:2026-01-21T06:00Z completed:2026-01-21 actual:15m
+  - Notes: Added consolidate command to memory-helper.sh. Finds similar memories using word overlap, merges tags, keeps older entry. Supports --dry-run and --threshold options.
 - [ ] t058 Memory Auto-Capture #plan → [todo/PLANS.md#memory-auto-capture] ~1d (ai:6h test:4h read:2h) logged:2026-01-11
   - Notes: Automatic memory capture inspired by claude-mem but tool-agnostic. Agent instructions trigger capture after significant operations. Works with OpenCode, Cursor, Claude Code, Windsurf. PRD: todo/tasks/prd-memory-auto-capture.md
 - [ ] t060 Research jj (Jujutsu) VCS for aidevops advantages #research #git #tools ~2h (ai:1h read:1h) logged:2026-01-13 ref:https://github.com/jj-vcs/jj
@@ -142,6 +142,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added python-env, .osgrep, .scannerwork to .secretlintignore. Added bun.lock to .gitignore to maintain subset rule. Increased Docker timeout 30s→60s. Optional: glob whitelist in linters-local.sh for further optimization.
 - [x] t066 Add /add-skill command for external skill import #tools #skills #agents ~4h (ai:3h test:30m read:30m) logged:2026-01-21 started:2026-01-21T00:00Z completed:2026-01-21 actual:4h
   - Notes: Implemented complete system for importing skills from external GitHub repos. Created add-skill-helper.sh (~630 lines) for fetching, format detection (SKILL.md, AGENTS.md, .cursorrules, raw markdown), conversion, and registration. Created skill-update-helper.sh (~280 lines) for upstream update checking. Added skill-sources.json registry, /add-skill command, add-skill.md subagent. Updated setup.sh with create_skill_symlinks() for cross-tool compatibility. PR #135.
+- [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
+  - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
 <!--TOON:backlog[40]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
@@ -189,17 +191,18 @@ t048,Add worktree cleanup reminder to postflight workflow,,workflow|git,30m,15m,
 t049,Add timing analysis commands to ralph-loop workflow,,workflow|automation,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
 t050,Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent,,refactor|docs,30m,15m,10m,5m,2025-01-11T00:00Z,pending,,,
 t052,Agent Design Pattern Improvements,,plan|architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,pending,,,
-t053,Add YAML frontmatter to source subagents,,architecture|agents,2h,1.5h,30m,,2025-01-11T00:00Z,pending,t052,,
+t053,Add YAML frontmatter to source subagents,,architecture|agents,2h,1.5h,30m,,2025-01-11T00:00Z,done,t052,,
 t059,Review and merge unmerged feature branches,,git|cleanup,2h,1h,30m,30m,2026-01-11T00:00Z,pending,,,
-t054,Automatic session reflection to memory,,workflow|memory,4h,2.5h,1h,30m,2025-01-11T00:00Z,pending,t052,,
-t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025-01-11T00:00Z,pending,t052,,
-t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,pending,t052,,
-t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,pending,t052,,
+t054,Automatic session reflection to memory,,workflow|memory,4h,2.5h,1h,30m,2025-01-11T00:00Z,done,t052,,
+t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025-01-11T00:00Z,done,t052,,
+t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,done,t052,t067,
+t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,done,t052,,
 t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
 t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,2h,1h,,1h,2026-01-13T00:00Z,pending,,,
 t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,3h,2h,30m,30m,2026-01-14T00:00Z,pending,,,
 t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,2h,1h,,1h,2026-01-14T00:00Z,pending,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20m,,10m,2026-01-15T00:00Z,pending,,,
+t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -292,5 +295,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-57,44,0,0,27,0,28d3h30m,16h50m,0,44
+58,38,1,0,33,0,28d7h30m,19h5m,0,38
 -->

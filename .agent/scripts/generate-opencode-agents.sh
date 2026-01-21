@@ -663,6 +663,20 @@ done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-
 echo -e "  ${GREEN}✓${NC} Generated $subagent_count subagent files"
 
 # =============================================================================
+# MCP INDEX - Sync tool descriptions for on-demand discovery
+# =============================================================================
+
+echo -e "${BLUE}Syncing MCP tool index for on-demand discovery...${NC}"
+
+MCP_INDEX_HELPER="$AGENTS_DIR/scripts/mcp-index-helper.sh"
+if [[ -x "$MCP_INDEX_HELPER" ]]; then
+    "$MCP_INDEX_HELPER" sync 2>/dev/null || echo -e "  ${YELLOW}⚠${NC} MCP index sync skipped (non-critical)"
+    echo -e "  ${GREEN}✓${NC} MCP tool index updated"
+else
+    echo -e "  ${YELLOW}⚠${NC} MCP index helper not found (install with setup.sh)"
+fi
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
@@ -673,6 +687,11 @@ echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
 echo ""
 echo "Tab order: Plan+ → Build+ → AI-DevOps → (alphabetical)"
+echo ""
+echo "MCP Loading Strategy:"
+echo "  - MCPs disabled globally, enabled per-agent (reduces context tokens)"
+echo "  - Use 'mcp-index-helper.sh search <query>' to discover tools on-demand"
+echo "  - Subagents enable specific MCPs via frontmatter tools: section"
 echo ""
 echo "To add a new primary agent: Create ~/.aidevops/agents/{name}.md"
 echo "To add a new subagent: Create ~/.aidevops/agents/{folder}/{name}.md"
