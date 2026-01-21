@@ -7,8 +7,8 @@
 set -euo pipefail
 
 # Configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)" || exit
 AGENT_DIR="$REPO_ROOT/.agent"
 
 # Cached counts (populated once, reused)
