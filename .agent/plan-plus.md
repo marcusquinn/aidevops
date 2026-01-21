@@ -17,6 +17,9 @@ subagents:
   - architecture
   - code-standards
   - best-practices
+  # Agent design
+  - build-agent
+  - agent-review
   # Built-in
   - general
   - explore
