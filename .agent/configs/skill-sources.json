@@ -2,5 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Registry of imported external skills with upstream tracking for update detection",
   "version": "1.0.0",
-  "skills": []
+  "skills": [
+    {
+      "name": "animejs",
+      "upstream_url": "https://github.com/juliangarnier/anime",
+      "upstream_commit": "",
+      "local_path": ".agent/tools/animation/animejs.md",
+      "format_detected": "context7",
+      "docs_url": "https://animejs.com/documentation",
+      "context7_id": "/websites/animejs",
+      "imported_at": "2026-01-21T12:00:00Z",
+      "last_checked": "2026-01-21T12:00:00Z",
+      "merge_strategy": "added",
+      "notes": "Imported via Context7 documentation API with /websites/animejs library ID"
+    }
+  ]
 }
