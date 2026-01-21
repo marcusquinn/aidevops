@@ -36,6 +36,7 @@ tools:
 - Point to source files rather than duplicate content
 
 **Dynamic Counts (aidevops repo)**:
+
 ```bash
 # Check if counts are stale
 ~/.aidevops/agents/scripts/readme-helper.sh check

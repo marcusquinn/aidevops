@@ -87,6 +87,7 @@ The AI will iterate on the task until outputting:
 - Conventional commits used (for auto-changelog)
 
 **README check (aidevops repo only):**
+
 ```bash
 # Check if README counts are stale after adding agents/scripts
 ~/.aidevops/agents/scripts/readme-helper.sh check
