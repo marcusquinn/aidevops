@@ -31,8 +31,25 @@ tools:
 - Explore codebase BEFORE writing (detect stack, deployment, structure)
 - Prioritize maintainability over exhaustive detail
 - Avoid patterns that cause staleness (hardcoded counts, version numbers)
+- Use approximate counts with `~` or `+` suffix (e.g., `~15 agents`, `100+ scripts`)
 - Include AI-CONTEXT blocks for AI-readable documentation
 - Point to source files rather than duplicate content
+
+**Dynamic Counts (aidevops repo)**:
+
+```bash
+# Check if counts are stale
+~/.aidevops/agents/scripts/readme-helper.sh check
+
+# Get current counts
+~/.aidevops/agents/scripts/readme-helper.sh counts
+
+# Preview updates
+~/.aidevops/agents/scripts/readme-helper.sh update
+
+# Apply updates
+~/.aidevops/agents/scripts/readme-helper.sh update --apply
+```
 
 **Commands**:
 
