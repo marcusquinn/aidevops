@@ -56,10 +56,8 @@ The result: AI agents that work *with* your development process, not around it.
 [![GitHub Release Date](https://img.shields.io/github/release-date/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/releases)
 [![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
 
-<!-- Repository Stats -->
-[![Version](https://img.shields.io/badge/Version-2.66.0-blue)](https://github.com/marcusquinn/aidevops/releases)
+<!-- Repository Stats (dynamic badges only - no hardcoded versions/counts) -->
 [![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
-[![Lines of code](https://img.shields.io/badge/Lines%20of%20Code-18%2C000%2B-brightgreen)](https://github.com/marcusquinn/aidevops)
 [![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
 [![GitHub top language](https://img.shields.io/github/languages/top/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
 
@@ -73,8 +71,31 @@ The result: AI agents that work *with* your development process, not around it.
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20+-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: AI-assisted DevOps automation framework
+- **Install**: `npm install -g aidevops && aidevops update`
+- **Entry**: `aidevops` CLI, `~/.aidevops/agents/AGENTS.md`
+- **Stack**: Bash scripts, TypeScript (Bun), MCP servers
+
+**Key Commands**:
+
+- `aidevops init` - Initialize in any project
+- `aidevops update` - Update framework
+- `/onboarding` - Interactive setup wizard (in AI assistant)
+
+**Agent Structure**:
+
+- 14 main agents (Plan+, Build+, SEO, WordPress, etc.)
+- 200+ subagent markdown files organized by domain
+- 130+ helper scripts in `.agent/scripts/`
+
+<!-- AI-CONTEXT-END -->
 
 ## **Enterprise-Grade Quality & Security**
 
@@ -1438,14 +1459,17 @@ bash .agent/scripts/continue-cli.sh review
 ```text
 aidevops/
 ├── setup.sh                       # Main setup script
-├── AGENTS.md                      # AI agent guidance
-├── .agent/scripts/                # Automation & setup scripts
-├── .agent/scripts/                     # Service helper scripts
+├── AGENTS.md                      # AI agent guidance (dev)
+├── .agent/                        # Agents and documentation
+│   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
+│   ├── *.md                       # 14 main agents
+│   ├── scripts/                   # 130+ helper scripts
+│   ├── tools/                     # Cross-domain utilities
+│   ├── services/                  # External service integrations
+│   └── workflows/                 # Development process guides
 ├── configs/                       # Configuration templates
-├── .agent/                          # Comprehensive documentation
-├── .agent/                        # AI agent development tools
 ├── ssh/                           # SSH key management
-└── templates/                     # Reusable templates and examples
+└── templates/                     # Reusable templates
 ```
 
 ## **Configuration & Setup**
