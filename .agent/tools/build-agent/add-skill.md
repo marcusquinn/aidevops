@@ -47,6 +47,7 @@ External Skill (GitHub)
 The emerging standard for AI assistant skills.
 
 **Structure:**
+
 ```markdown
 ---
 name: skill-name
@@ -258,6 +259,7 @@ Ensure URL is in format:
 ### "jq not found"
 
 Install jq for full functionality:
+
 ```bash
 brew install jq  # macOS
 apt install jq   # Ubuntu/Debian

@@ -105,6 +105,7 @@ EOF
 ensure_skill_sources() {
     if [[ ! -f "$SKILL_SOURCES" ]]; then
         mkdir -p "$(dirname "$SKILL_SOURCES")"
+        # shellcheck disable=SC2016 # Single quotes intentional - $schema/$comment are JSON keys, not variables
         echo '{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Registry of imported external skills with upstream tracking",
@@ -142,7 +143,10 @@ parse_github_url() {
         
         # Everything after owner/repo is subpath
         if [[ ${#parts[@]} -gt 2 ]]; then
-            subpath=$(IFS='/'; echo "${parts[*]:2}")
+            local old_ifs="$IFS"
+            IFS='/'
+            subpath="${parts[*]:2}"
+            IFS="$old_ifs"
         fi
     fi
     

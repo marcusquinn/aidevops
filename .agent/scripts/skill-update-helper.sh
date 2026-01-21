@@ -293,7 +293,11 @@ cmd_check() {
         echo "  \"up_to_date\": $up_to_date,"
         echo "  \"updates_available\": $updates_available,"
         echo "  \"check_failed\": $check_failed,"
-        echo "  \"results\": [$(IFS=,; echo "${results[*]}")]"
+        local old_ifs="$IFS"
+        IFS=','
+        local results_json="${results[*]}"
+        IFS="$old_ifs"
+        echo "  \"results\": [$results_json]"
         echo "}"
     fi
     
