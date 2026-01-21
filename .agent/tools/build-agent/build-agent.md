@@ -805,6 +805,91 @@ cd ~/Git/aidevops && ./setup.sh
 
 See `aidevops/setup.md` for deployment details.
 
+### Cache-Aware Prompt Patterns
+
+LLM providers implement prompt caching to reduce costs and latency. Anthropic's prompt caching, for example, caches the first N tokens of a prompt and reuses them across calls. To maximize cache hits:
+
+**Stable Prefix Pattern**
+
+Keep the beginning of your prompts stable across calls:
+
+```text
+# Good: Stable prefix, variable suffix
+[AGENTS.md content - stable]     ← Cached
+[Subagent content - stable]      ← Cached  
+[User message - variable]        ← Not cached
+
+# Bad: Variable content early
+[Dynamic timestamp]              ← Breaks cache
+[AGENTS.md content]              ← Not cached (prefix changed)
+```
+
+**Instruction Ordering**
+
+Never reorder instructions between calls:
+
+```markdown
+# Good: Consistent order
+1. Security rules
+2. Code standards
+3. Output format
+
+# Bad: Reordering based on task
+# Call 1: Security, Code, Output
+# Call 2: Code, Security, Output  ← Cache miss
+```
+
+**Avoid Dynamic Prefixes**
+
+Don't put variable content at the start of agent files:
+
+```markdown
+# Bad: Dynamic content at top
+Last updated: 2025-01-21  ← Changes daily, breaks cache
+Version: 2.41.0           ← Changes on release
+
+# Good: Static content at top
+# Agent Name - Purpose
+[Static instructions...]
+
+<!-- Dynamic content at end if needed -->
+```
+
+**AI-CONTEXT Blocks**
+
+The `<!-- AI-CONTEXT-START -->` pattern helps by:
+1. Putting essential, stable content first
+2. Detailed docs after (may be truncated, but prefix cached)
+
+```markdown
+<!-- AI-CONTEXT-START -->
+[Stable, essential content - always cached]
+<!-- AI-CONTEXT-END -->
+
+## Detailed Documentation
+[Less critical, may vary - cache still benefits from prefix]
+```
+
+**MCP Tool Definitions**
+
+MCP tools are injected into prompts. Minimize tool churn:
+
+```json
+// Good: Stable tool set per agent
+"SEO": { "tools": { "dataforseo_*": true, "serper_*": true } }
+
+// Bad: Dynamically changing tools
+// Session 1: dataforseo_*, serper_*
+// Session 2: dataforseo_*, gsc_*  ← Different tools, cache miss
+```
+
+**Measuring Cache Effectiveness**
+
+Monitor your API usage for cache hit rates. High cache hits indicate:
+- Stable instruction prefixes
+- Consistent tool configurations
+- Effective progressive disclosure (subagents loaded only when needed)
+
 ### Reviewing Existing Agents
 
 See `build-agent/agent-review.md` for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
