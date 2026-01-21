@@ -13,6 +13,8 @@ tools:
 
 # Cloudflare API Setup for AI-Assisted Development
 
+> **For Cloudflare development** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.), see `cloudflare-platform.md` which covers 60 products with detailed API references, patterns, and gotchas.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
