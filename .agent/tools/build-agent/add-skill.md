@@ -62,9 +62,9 @@ Instructions for the AI agent...
 2. Step two
 
 ## Usage
+
 ```bash
 command examples
-```
 ```
 
 **Conversion:** Preserve frontmatter, add `mode: subagent` and `imported_from: external`.

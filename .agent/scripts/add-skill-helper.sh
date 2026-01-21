@@ -402,9 +402,11 @@ cmd_add() {
     local force=false
     local dry_run=false
     
-    # Parse options
+    # Parse options using named variable for clarity (S7679)
+    local opt
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        opt="$1"
+        case "$opt" in
             --name)
                 custom_name="$2"
                 shift 2
@@ -418,7 +420,7 @@ cmd_add() {
                 shift
                 ;;
             *)
-                log_error "Unknown option: $1"
+                log_error "Unknown option: $opt"
                 return 1
                 ;;
         esac

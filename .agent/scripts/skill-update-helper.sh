@@ -376,11 +376,13 @@ main() {
     local command="check"
     local skill_name=""
     
-    # Parse arguments
+    # Parse arguments using named variable for clarity (S7679)
+    local arg
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             check|update|status)
-                command="$1"
+                command="$arg"
                 shift
                 ;;
             --auto-update)
@@ -400,13 +402,13 @@ main() {
                 exit 0
                 ;;
             -*)
-                log_error "Unknown option: $1"
+                log_error "Unknown option: $arg"
                 show_help
                 exit 1
                 ;;
             *)
                 # Assume it's a skill name for update command
-                skill_name="$1"
+                skill_name="$arg"
                 shift
                 ;;
         esac
