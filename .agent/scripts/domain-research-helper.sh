@@ -752,8 +752,11 @@ main() {
         shift || true
     fi
     
+    # Parse options using named variable (S7679)
+    local opt
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        opt="$1"
+        case "$opt" in
             --filter|-f)
                 filter="$2"
                 shift 2
@@ -787,12 +790,12 @@ main() {
                 shift 2
                 ;;
             -*)
-                print_error "Unknown option: $1"
+                print_error "Unknown option: $opt"
                 return 1
                 ;;
             *)
                 if [[ -z "$target" ]]; then
-                    target="$1"
+                    target="$opt"
                 fi
                 shift
                 ;;

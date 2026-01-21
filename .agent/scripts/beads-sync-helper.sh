@@ -571,12 +571,15 @@ main() {
     local dry_run=false
     local verbose=false
     
+    # Parse options using named variable (S7679)
+    local opt
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        opt="$1"
+        case "$opt" in
             --force) force=true ;;
             --dry-run) dry_run=true ;;
             --verbose) verbose=true ;;
-            *) log_error "Unknown option: $1"; show_help; return 1 ;;
+            *) log_error "Unknown option: $opt"; show_help; return 1 ;;
         esac
         shift
     done
