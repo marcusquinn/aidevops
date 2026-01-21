@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - resolve Homebrew install failures and improve setup.sh error handling (#146)
+
 ## [2.70.2] - 2026-01-21
 
 ### Changed
