@@ -81,6 +81,7 @@ Already in aidevops format.
 Plain markdown without frontmatter.
 
 **Conversion:** Wrap in markdown with generated frontmatter:
+
 ```markdown
 ---
 description: Imported from .cursorrules

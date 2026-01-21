@@ -293,10 +293,10 @@ cmd_check() {
         echo "  \"up_to_date\": $up_to_date,"
         echo "  \"updates_available\": $updates_available,"
         echo "  \"check_failed\": $check_failed,"
-        local old_ifs="$IFS"
-        IFS=','
-        local results_json="${results[*]}"
-        IFS="$old_ifs"
+        # Join results array with comma using printf
+        local results_json
+        results_json=$(printf '%s,' "${results[@]}")
+        results_json="${results_json%,}"  # Remove trailing comma
         echo "  \"results\": [$results_json]"
         echo "}"
     fi

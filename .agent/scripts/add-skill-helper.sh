@@ -143,10 +143,9 @@ parse_github_url() {
         
         # Everything after owner/repo is subpath
         if [[ ${#parts[@]} -gt 2 ]]; then
-            local old_ifs="$IFS"
-            IFS='/'
-            subpath="${parts[*]:2}"
-            IFS="$old_ifs"
+            # Join remaining parts with / using printf
+            subpath=$(printf '%s/' "${parts[@]:2}")
+            subpath="${subpath%/}"  # Remove trailing slash
         fi
     fi
     
