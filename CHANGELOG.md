@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.67.0] - 2026-01-21
+
+### Added
+
+- add readme-helper.sh for dynamic count management (#131)
+- add agent design subagents for planning discussions (#132)
+
+### Changed
+
+- Documentation: improve README maintainability and add AI-CONTEXT block (#130)
 ## [2.66.0] - 2026-01-21
 
 ### Added
