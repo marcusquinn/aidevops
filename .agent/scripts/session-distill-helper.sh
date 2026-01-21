@@ -82,18 +82,24 @@ analyze_session() {
         completed_tasks="0"
     fi
     
-    # Build analysis JSON
-    cat > "$analysis_file" << EOF
-{
-    "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-    "branch": "$branch",
-    "commits_today": $commits_today,
-    "files_changed": $files_changed,
-    "error_fixes": $error_fixes,
-    "completed_tasks": $completed_tasks,
-    "recent_commits": $(echo "$recent_commits" | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')
-}
-EOF
+    # Build analysis JSON safely using jq to prevent JSON injection
+    jq -n \
+        --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --arg branch "$branch" \
+        --argjson commits_today "$commits_today" \
+        --argjson files_changed "$files_changed" \
+        --argjson error_fixes "$error_fixes" \
+        --argjson completed_tasks "$completed_tasks" \
+        --arg recent_commits "$recent_commits" \
+        '{
+            timestamp: $timestamp,
+            branch: $branch,
+            commits_today: $commits_today,
+            files_changed: $files_changed,
+            error_fixes: $error_fixes,
+            completed_tasks: $completed_tasks,
+            recent_commits: ($recent_commits | split("\n") | map(select(length > 0)))
+        }' > "$analysis_file"
     
     log_success "Session analysis saved to $analysis_file"
     cat "$analysis_file"
@@ -135,7 +141,11 @@ extract_learnings() {
         if [[ -n "$fix_commits" ]]; then
             while IFS= read -r commit_msg; do
                 if [[ -n "$commit_msg" ]]; then
-                    learnings+=("{\"type\": \"ERROR_FIX\", \"content\": \"$commit_msg\", \"tags\": \"session,auto-distill,$branch\"}")
+                    # Use jq to safely build JSON and prevent injection
+                    local learning_json
+                    learning_json=$(jq -n --arg type "ERROR_FIX" --arg content "$commit_msg" --arg tags "session,auto-distill,$branch" \
+                        '{type: $type, content: $content, tags: $tags}')
+                    learnings+=("$learning_json")
                 fi
             done <<< "$fix_commits"
         fi
@@ -144,7 +154,10 @@ extract_learnings() {
     # Pattern 2: Feature branch completion → WORKING_SOLUTION
     if [[ "$branch" == feature/* ]] && [[ "$commits_today" -gt 2 ]]; then
         local feature_name="${branch#feature/}"
-        learnings+=("{\"type\": \"WORKING_SOLUTION\", \"content\": \"Implemented feature: $feature_name\", \"tags\": \"session,feature,$feature_name\"}")
+        local learning_json
+        learning_json=$(jq -n --arg type "WORKING_SOLUTION" --arg content "Implemented feature: $feature_name" --arg tags "session,feature,$feature_name" \
+            '{type: $type, content: $content, tags: $tags}')
+        learnings+=("$learning_json")
     fi
     
     # Pattern 3: Refactor patterns → CODEBASE_PATTERN
@@ -153,7 +166,10 @@ extract_learnings() {
     if [[ -n "$refactor_commits" ]]; then
         while IFS= read -r commit_msg; do
             if [[ -n "$commit_msg" ]]; then
-                learnings+=("{\"type\": \"CODEBASE_PATTERN\", \"content\": \"$commit_msg\", \"tags\": \"session,refactor,$branch\"}")
+                local learning_json
+                learning_json=$(jq -n --arg type "CODEBASE_PATTERN" --arg content "$commit_msg" --arg tags "session,refactor,$branch" \
+                    '{type: $type, content: $content, tags: $tags}')
+                learnings+=("$learning_json")
             fi
         done <<< "$refactor_commits"
     fi
@@ -164,7 +180,10 @@ extract_learnings() {
     if [[ -n "$doc_commits" ]]; then
         while IFS= read -r commit_msg; do
             if [[ -n "$commit_msg" ]]; then
-                learnings+=("{\"type\": \"CONTEXT\", \"content\": \"$commit_msg\", \"tags\": \"session,documentation,$branch\"}")
+                local learning_json
+                learning_json=$(jq -n --arg type "CONTEXT" --arg content "$commit_msg" --arg tags "session,documentation,$branch" \
+                    '{type: $type, content: $content, tags: $tags}')
+                learnings+=("$learning_json")
             fi
         done <<< "$doc_commits"
     fi
@@ -225,9 +244,9 @@ store_learnings() {
         if [[ -n "$content" && "$content" != "null" ]]; then
             # Store to memory
             if "$MEMORY_HELPER" store --content "$content" --type "$type" --tags "$tags" 2>/dev/null; then
-                ((stored++))
+                stored=$((stored + 1))
             fi
-            ((count++))
+            count=$((count + 1))
         fi
     done < <(jq -c '.[]' "$learnings_file" 2>/dev/null)
     

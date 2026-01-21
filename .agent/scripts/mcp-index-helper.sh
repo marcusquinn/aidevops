@@ -312,6 +312,15 @@ search_tools() {
     echo -e "${CYAN}Searching for tools matching: ${NC}$query"
     echo ""
     
+    # Escape single quotes for SQL injection prevention
+    local query_esc="${query//\'/\'\'}"
+    
+    # Validate limit is a positive integer
+    if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+        log_error "Limit must be a positive integer"
+        return 1
+    fi
+    
     # FTS5 search with ranking
     sqlite3 -header -column "$INDEX_DB" <<EOF
 SELECT 
@@ -321,7 +330,7 @@ SELECT
     category as Category,
     CASE enabled_globally WHEN 1 THEN 'Yes' ELSE 'No' END as Global
 FROM mcp_tools_fts
-WHERE mcp_tools_fts MATCH '$query'
+WHERE mcp_tools_fts MATCH '$query_esc'
 ORDER BY rank
 LIMIT $limit;
 EOF
@@ -354,13 +363,15 @@ EOF
         # List tools for specific MCP
         echo -e "${CYAN}Tools for MCP: ${NC}$mcp_name"
         echo ""
+        # Escape single quotes for SQL injection prevention
+        local mcp_name_esc="${mcp_name//\'/\'\'}"
         sqlite3 -header -column "$INDEX_DB" <<EOF
 SELECT 
     tool_name as Tool,
     description as Description,
     CASE enabled_globally WHEN 1 THEN 'Yes' ELSE 'No' END as Global
 FROM mcp_tools
-WHERE mcp_name = '$mcp_name'
+WHERE mcp_name = '$mcp_name_esc'
 ORDER BY tool_name;
 EOF
     fi
@@ -436,11 +447,15 @@ get_mcp_for_tool() {
     
     init_db
     
+    # Escape single quotes and percent signs for SQL injection prevention
+    local tool_query_esc="${tool_query//\'/\'\'}"
+    tool_query_esc="${tool_query_esc//%/%%}"
+    
     # Find which MCP provides this tool
     sqlite3 "$INDEX_DB" <<EOF
 SELECT DISTINCT mcp_name
 FROM mcp_tools
-WHERE tool_name LIKE '%$tool_query%'
+WHERE tool_name LIKE '%$tool_query_esc%'
 LIMIT 1;
 EOF
     return 0

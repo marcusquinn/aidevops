@@ -526,7 +526,7 @@ EOF
 #######################################
 cmd_consolidate() {
     local dry_run=false
-    local similarity_threshold=0.8
+    local similarity_threshold=0.5
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -536,6 +536,12 @@ cmd_consolidate() {
         esac
     done
     
+    # Validate similarity_threshold is a valid decimal
+    if ! [[ "$similarity_threshold" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+        log_error "--threshold must be a decimal number (e.g., 0.5)"
+        return 1
+    fi
+    
     init_db
     
     log_info "Analyzing memories for consolidation..."
@@ -543,7 +549,7 @@ cmd_consolidate() {
     # Find potential duplicates using FTS5 similarity
     # Group by type and look for similar content
     local duplicates
-    duplicates=$(sqlite3 "$MEMORY_DB" <<'EOF'
+    duplicates=$(sqlite3 "$MEMORY_DB" <<EOF
 SELECT 
     l1.id as id1, 
     l2.id as id2,
@@ -565,7 +571,7 @@ WHERE (
     )) * 2.0 / (
         length(l1.content) - length(replace(l1.content, ' ', '')) + 1 +
         length(l2.content) - length(replace(l2.content, ' ', '')) + 1
-    ) > 0.5
+    ) > $similarity_threshold
 )
 LIMIT 20;
 EOF
@@ -593,7 +599,10 @@ EOF
     else
         local consolidated=0
         
-        echo "$duplicates" | while IFS='|' read -r id1 id2 type content1 content2 created1 created2; do
+        # Use here-string instead of pipe to avoid subshell variable scope issue
+        while IFS='|' read -r id1 id2 type content1 content2 created1 created2; do
+            [[ -z "$id1" ]] && continue
+            
             # Keep the older entry (more established), merge tags
             local older_id newer_id
             if [[ "$created1" < "$created2" ]]; then
@@ -604,31 +613,37 @@ EOF
                 newer_id="$id1"
             fi
             
+            # Escape IDs for SQL injection prevention
+            local older_id_esc="${older_id//\'/\'\'}"
+            local newer_id_esc="${newer_id//\'/\'\'}"
+            
             # Merge tags from newer into older
             local older_tags newer_tags
-            older_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id';")
-            newer_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id';")
+            older_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id_esc';")
+            newer_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id_esc';")
             
             if [[ -n "$newer_tags" ]]; then
                 local merged_tags
                 merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
-                sqlite3 "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags' WHERE id = '$older_id';"
+                # Escape merged_tags for SQL injection prevention
+                local merged_tags_esc="${merged_tags//\'/\'\'}"
+                sqlite3 "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
             fi
             
             # Transfer access history
-            sqlite3 "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id' WHERE id = '$newer_id' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id');" 2>/dev/null || true
+            sqlite3 "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" 2>/dev/null || true
             
             # Delete the newer duplicate
-            sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id';"
-            sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id';"
+            sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
+            sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id_esc';"
             
-            ((consolidated++)) || true
-        done
+            consolidated=$((consolidated + 1))
+        done <<< "$duplicates"
         
         # Rebuild FTS index
         sqlite3 "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
         
-        log_success "Consolidated $count memory pairs"
+        log_success "Consolidated $consolidated memory pairs"
     fi
 }
 
