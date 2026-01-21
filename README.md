@@ -91,9 +91,9 @@ The result: AI agents that work *with* your development process, not around it.
 
 **Agent Structure**:
 
-- 14 main agents (Plan+, Build+, SEO, WordPress, etc.)
+- ~15 main agents (Plan+, Build+, SEO, WordPress, etc.)
 - 200+ subagent markdown files organized by domain
-- 130+ helper scripts in `.agent/scripts/`
+- 100+ helper scripts in `.agent/scripts/`
 
 <!-- AI-CONTEXT-END -->
 
@@ -1462,8 +1462,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agent/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 14 main agents
-│   ├── scripts/                   # 130+ helper scripts
+│   ├── *.md                       # ~15 main agents
+│   ├── scripts/                   # 100+ helper scripts
 │   ├── tools/                     # Cross-domain utilities
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
