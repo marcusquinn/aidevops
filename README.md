@@ -42,7 +42,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 <!-- License & Legal -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025-blue.svg)](https://github.com/marcusquinn)
+[![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025--2026-blue.svg)](https://github.com/marcusquinn)
 
 <!-- GitHub Stats -->
 [![GitHub stars](https://img.shields.io/github/stars/marcusquinn/aidevops.svg?style=social)](https://github.com/marcusquinn/aidevops/stargazers)
@@ -91,8 +91,8 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- 13 main agents (Plan+, Build+, SEO, WordPress, etc.)
-- 225+ subagent markdown files organized by domain
+- ~15 main agents (Plan+, Build+, SEO, WordPress, etc.)
+- 230+ subagent markdown files organized by domain
 - 130+ helper scripts in `.agent/scripts/`
 
 <!-- AI-CONTEXT-END -->
@@ -566,6 +566,11 @@ The setup script offers to install these tools automatically.
 
 - **[Twilio](https://www.twilio.com/)**: SMS, voice calls, WhatsApp, phone verification (Verify API), call recording & transcription
 - **[Telfon](https://mytelfon.com/)**: Twilio-powered cloud phone system with iOS/Android/Chrome apps for end-user calling interface
+
+### **Animation & Video**
+
+- **[Anime.js](https://animejs.com/)**: Lightweight JavaScript animation library for CSS, SVG, DOM attributes, and JS objects
+- **[Remotion](https://remotion.dev/)**: Programmatic video creation with React - create videos using code with 29 specialized rule files
 
 ### **Performance & Monitoring**
 
@@ -1126,6 +1131,12 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 | `/release` | Full release workflow (bump, tag, GitHub release, auto-changelog) |
 | `/postflight` | Verify release health after deployment |
 
+**Documentation**:
+
+| Command | Purpose |
+|---------|---------|
+| `/readme` | Create or update README.md (supports `--sections` for partial updates) |
+
 **Meta/Improvement**:
 
 | Command | Purpose |
@@ -1544,7 +1555,7 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 5. Submit pull request
 
 **License:** MIT License - see [LICENSE](LICENSE) file for details
-**Created by Marcus Quinn** - Copyright © 2025
+**Created by Marcus Quinn** - Copyright © 2025-2026
 
 ---
 
