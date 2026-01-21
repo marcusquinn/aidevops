@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # Configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly MEMORY_HELPER="$SCRIPT_DIR/memory-helper.sh"
 readonly WORKSPACE_DIR="${AIDEVOPS_WORKSPACE:-$HOME/.aidevops/.agent-workspace}"
