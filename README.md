@@ -891,6 +891,33 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 
 This installs the complete framework: ~15 domain agents, 80+ subagents, and 100+ helper scripts.
 
+### Importing External Skills
+
+Import skills from any GitHub repository using `/add-skill`:
+
+```bash
+# Import from GitHub (auto-detects format)
+/add-skill owner/repo
+
+# Examples
+/add-skill anthropics/courses           # SKILL.md format
+/add-skill PatrickJS/awesome-cursorrules # .cursorrules format
+/add-skill someone/agents-repo          # AGENTS.md format
+```
+
+**Supported formats:**
+- `SKILL.md` - Agent Skills standard (preferred)
+- `AGENTS.md` - Claude Code agents format
+- `.cursorrules` - Cursor rules (auto-converted to SKILL.md)
+
+**Features:**
+- Conflict detection with existing skills
+- Version tracking for updates (`/add-skill --check-updates`)
+- Symlinks created for Claude Code, Cursor, Amp, and other tools
+- Registry stored in `.agent/configs/skill-sources.json`
+
+See `.agent/tools/build-agent/add-skill.md` for full documentation.
+
 ## **AI Agents & Subagents**
 
 **Agents are specialized AI personas with focused knowledge and tool access.** Instead of giving your AI assistant access to everything at once (which wastes context tokens), agents provide targeted capabilities for specific tasks.
@@ -1099,6 +1126,7 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 
 | Command | Purpose |
 |---------|---------|
+| `/add-skill` | Import external skills from GitHub repos (SKILL.md, AGENTS.md, .cursorrules) |
 | `/agent-review` | Analyze session and suggest agent improvements |
 | `/session-review` | Review session for completeness and capture learnings |
 | `/full-loop` | End-to-end development loop (task → preflight → PR → postflight → deploy) |
