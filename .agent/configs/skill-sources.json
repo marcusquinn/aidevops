@@ -15,6 +15,18 @@
       "last_checked": "2026-01-21T12:00:00Z",
       "merge_strategy": "added",
       "notes": "Imported via Context7 documentation API with /websites/animejs library ID"
+    },
+    {
+      "name": "remotion",
+      "upstream_url": "https://github.com/remotion-dev/skills",
+      "upstream_commit": "9550e1643dd451d3f8c131579d8ae827b2ce3eea",
+      "local_path": ".agent/tools/video/remotion.md",
+      "format_detected": "skill-md",
+      "imported_at": "2026-01-21T04:58:00Z",
+      "last_checked": "2026-01-21T04:58:00Z",
+      "merge_strategy": "added",
+      "notes": "Includes 29 rule files in .agent/tools/video/remotion/",
+      "context7_id": "/remotion-dev/remotion"
     }
   ]
 }
