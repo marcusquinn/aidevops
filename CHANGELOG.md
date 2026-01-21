@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.69.0] - 2026-01-21
+
+### Added
+
+- Agent Design Pattern Improvements (t052-t057, t067) (#140)
+- add anime.js skill imported via Context7 (#137)
+- import Remotion video skill from GitHub (#138)
+
+### Changed
+
+- Documentation: update README with new skills and accurate counts (#141)
+- Documentation: update README with Remotion skill and accurate counts
+
+### Fixed
+
+- portable regex and nested skill support (#139)
 ## [2.68.0] - 2026-01-21
 
 ### Added
