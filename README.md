@@ -445,24 +445,24 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 
 ## **Imported Skills**
 
-aidevops includes curated skills imported from external repositories, with automatic update tracking:
+aidevops includes curated skills imported from external repositories. Skills from GitHub repos support automatic update tracking:
 
 | Skill | Source | Description |
 |-------|--------|-------------|
 | **cloudflare-platform** | [dmmulroy/cloudflare-skill](https://github.com/dmmulroy/cloudflare-skill) | 60 Cloudflare products: Workers, Pages, D1, R2, KV, Durable Objects, AI, networking, security |
 | **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
-| **animejs** | [Context7 docs](https://animejs.com) | JavaScript animation library patterns and API |
+| **animejs** | [animejs.com](https://animejs.com) | JavaScript animation library patterns and API (via Context7) |
 
 **Skill Commands:**
 
 ```bash
-/add-skill <owner/repo>      # Import a skill from GitHub
-/add-skill list              # List imported skills
-/add-skill check-updates     # Check for upstream updates
-/add-skill <repo> --force    # Update an existing skill
+/add-skill <owner/repo>        # Import a skill from GitHub
+/add-skill list                # List imported skills
+/add-skill check-updates       # Check for upstream updates
+/add-skill <owner/repo> --force  # Update an existing skill
 ```
 
-Skills are registered in `.agent/configs/skill-sources.json` and checked for updates during `./setup.sh`.
+Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` and checked for updates during `./setup.sh`.
 
 ## **Agent Design Patterns**
 
