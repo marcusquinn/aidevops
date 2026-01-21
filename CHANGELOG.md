@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.0] - 2026-01-21
+
+### Added
+
+- Auto-create fd alias on Debian/Ubuntu (#127)
 ## [2.65.0] - 2026-01-20
 
 ### Added
