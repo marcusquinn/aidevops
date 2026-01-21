@@ -304,14 +304,22 @@ convert_skill_md() {
     name=$(extract_skill_name "$source_file")
     description=$(extract_skill_description "$source_file")
     
-    # Create aidevops-style header
+    # Escape YAML special characters in description
+    local safe_description
+    safe_description=$(printf '%s' "${description:-Imported skill}" | sed 's/\\/\\\\/g; s/"/\\"/g; s/:/: /g; s/^- /\\- /')
+    
+    # Escape name for markdown heading
+    local safe_name
+    safe_name=$(printf '%s' "${name:-$skill_name}" | sed 's/\\/\\\\/g')
+    
+    # Create aidevops-style header with properly quoted description
     cat > "$target_file" << EOF
 ---
-description: ${description:-Imported skill}
+description: "${safe_description}"
 mode: subagent
 imported_from: external
 ---
-# ${name:-$skill_name}
+# ${safe_name}
 
 EOF
     
@@ -340,38 +348,44 @@ register_skill() {
     
     ensure_skill_sources
     
+    # jq is required for reliable JSON manipulation
+    if ! command -v jq &>/dev/null; then
+        log_error "jq is required to update $SKILL_SOURCES"
+        log_info "Install with: brew install jq (macOS) or apt install jq (Linux)"
+        return 1
+    fi
+    
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
-    # Create new skill entry
+    # Create new skill entry using jq for proper JSON escaping
     local new_entry
-    new_entry=$(cat << EOF
-{
-  "name": "$name",
-  "upstream_url": "$upstream_url",
-  "upstream_commit": "$commit",
-  "local_path": "$local_path",
-  "format_detected": "$format",
-  "imported_at": "$timestamp",
-  "last_checked": "$timestamp",
-  "merge_strategy": "$merge_strategy",
-  "notes": "$notes"
-}
-EOF
-)
+    new_entry=$(jq -n \
+        --arg name "$name" \
+        --arg upstream_url "$upstream_url" \
+        --arg upstream_commit "$commit" \
+        --arg local_path "$local_path" \
+        --arg format_detected "$format" \
+        --arg imported_at "$timestamp" \
+        --arg last_checked "$timestamp" \
+        --arg merge_strategy "$merge_strategy" \
+        --arg notes "$notes" \
+        '{
+            name: $name,
+            upstream_url: $upstream_url,
+            upstream_commit: $upstream_commit,
+            local_path: $local_path,
+            format_detected: $format_detected,
+            imported_at: $imported_at,
+            last_checked: $last_checked,
+            merge_strategy: $merge_strategy,
+            notes: $notes
+        }')
     
-    # Add to skills array using jq if available, otherwise use sed
-    if command -v jq &>/dev/null; then
-        local tmp_file
-        tmp_file=$(mktemp)
-        jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" > "$tmp_file"
-        mv "$tmp_file" "$SKILL_SOURCES"
-    else
-        # Fallback: simple append (less robust)
-        log_warning "jq not found, using basic JSON append"
-        sed -i.bak 's/"skills": \[/"skills": [\n'"$(echo "$new_entry" | tr '\n' ' ')"',/' "$SKILL_SOURCES"
-        rm -f "${SKILL_SOURCES}.bak"
-    fi
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" > "$tmp_file"
+    mv "$tmp_file" "$SKILL_SOURCES"
     
     return 0
 }
@@ -437,7 +451,9 @@ cmd_add() {
             # openskills handles everything, just register it
             local skill_name="${custom_name:-$(basename "${subpath:-$repo}")}"
             skill_name=$(to_kebab_case "$skill_name")
-            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/$skill_name" "skill-md" "" "openskills" "Installed via openskills CLI"
+            # openskills installs to ~/.config/opencode/skills/<name>/SKILL.md
+            # Register with .md extension for consistency with other paths
+            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/${skill_name}.md" "skill-md" "" "openskills" "Installed via openskills CLI"
             return 0
         fi
         log_warning "openskills failed, falling back to direct fetch"
@@ -491,9 +507,10 @@ cmd_add() {
     target_path=$(determine_target_path "$skill_name" "$description" "$source_dir")
     log_info "Target path: .agent/$target_path"
     
-    # Check for conflicts
+    # Check for conflicts (check_conflicts returns 1 when conflicts exist)
     local conflicts
-    if conflicts=$(check_conflicts "$target_path" ".agent"); then
+    conflicts=$(check_conflicts "$target_path" ".agent") || true
+    if [[ -n "$conflicts" ]]; then
         if [[ "$force" != true ]]; then
             log_warning "Conflicts detected:"
             echo "$conflicts" | while read -r conflict; do

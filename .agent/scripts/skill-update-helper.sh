@@ -158,7 +158,8 @@ get_latest_commit() {
     local api_url="https://api.github.com/repos/$owner_repo/commits?per_page=1"
     local response
     
-    response=$(curl -s -H "Accept: application/vnd.github.v3+json" "$api_url" 2>/dev/null)
+    response=$(curl -s --connect-timeout 10 --max-time 30 \
+        -H "Accept: application/vnd.github.v3+json" "$api_url" 2>/dev/null)
     
     if [[ -z "$response" ]]; then
         return 1
@@ -326,7 +327,8 @@ cmd_update() {
         # Update all skills with available updates
         log_info "Checking and updating all skills..."
         AUTO_UPDATE=true
-        cmd_check
+        # cmd_check returns 1 when updates are available, which is expected here
+        cmd_check || true
     fi
     
     return 0

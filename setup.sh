@@ -1527,11 +1527,17 @@ create_skill_symlinks() {
         
         # Create symlinks in each AI assistant directory
         for skill_dir in "${skill_dirs[@]}"; do
-            local target_dir="$skill_dir/$name"
-            local target_file="$target_dir/SKILL.md"
+            local target_file
             
-            # Create skill subdirectory
-            mkdir -p "$target_dir" 2>/dev/null || continue
+            # Amp expects <name>.md directly, others expect <name>/SKILL.md
+            if [[ "$skill_dir" == *"/amp/tools" ]]; then
+                target_file="$skill_dir/${name}.md"
+            else
+                local target_dir="$skill_dir/$name"
+                target_file="$target_dir/SKILL.md"
+                # Create skill subdirectory
+                mkdir -p "$target_dir" 2>/dev/null || continue
+            fi
             
             # Create symlink (remove existing first)
             rm -f "$target_file" 2>/dev/null || true
