@@ -342,86 +342,45 @@ run_preflight_checks() {
 }
 
 # Function to validate version consistency across files
+# Delegates to the standalone validator script for single source of truth
 validate_version_consistency() {
     local expected_version="$1"
-    local errors=0
-
+    local validator_script="${REPO_ROOT}/.agent/scripts/validate-version-consistency.sh"
+    
     print_info "Validating version consistency across files..."
-
-    # Check VERSION file
-    if [[ -f "$VERSION_FILE" ]]; then
-        local version_file_content
-        version_file_content=$(cat "$VERSION_FILE")
-        if [[ "$version_file_content" != "$expected_version" ]]; then
-            print_error "VERSION file contains '$version_file_content', expected '$expected_version'"
-            errors=$((errors + 1))
-        else
-            print_success "VERSION file: $expected_version ✓"
-        fi
+    
+    if [[ -x "$validator_script" ]]; then
+        # Use the standalone validator (single source of truth)
+        "$validator_script" "$expected_version"
+        return $?
     else
-        print_error "VERSION file not found"
-        errors=$((errors + 1))
-    fi
-
-    # Check README badge (optional - dynamic GitHub release badge is preferred)
-    if [[ -f "$REPO_ROOT/README.md" ]]; then
-        if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
-            print_success "README.md uses dynamic GitHub release badge (recommended) ✓"
-        elif grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
-            print_success "README.md badge: $expected_version ✓"
+        # Fallback: basic validation if standalone script not found
+        print_warning "Standalone validator not found, using basic validation"
+        
+        local errors=0
+        
+        # Check VERSION file
+        if [[ -f "$VERSION_FILE" ]]; then
+            local version_file_content
+            version_file_content=$(cat "$VERSION_FILE")
+            if [[ "$version_file_content" != "$expected_version" ]]; then
+                print_error "VERSION file contains '$version_file_content', expected '$expected_version'"
+                errors=$((errors + 1))
+            else
+                print_success "VERSION file: $expected_version ✓"
+            fi
         else
-            print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
-        fi
-    else
-        print_warning "README.md not found"
-    fi
-
-    # Check sonar-project.properties
-    if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
-        if grep -q "sonar.projectVersion=$expected_version" "$REPO_ROOT/sonar-project.properties"; then
-            print_success "sonar-project.properties: $expected_version ✓"
-        else
-            print_error "sonar-project.properties does not contain version $expected_version"
+            print_error "VERSION file not found"
             errors=$((errors + 1))
         fi
-    fi
-
-    # Check setup.sh
-    if [[ -f "$REPO_ROOT/setup.sh" ]]; then
-        if grep -q "# Version: $expected_version" "$REPO_ROOT/setup.sh"; then
-            print_success "setup.sh: $expected_version ✓"
+        
+        if [[ $errors -eq 0 ]]; then
+            print_success "Basic version validation passed: $expected_version"
+            return 0
         else
-            print_error "setup.sh does not contain version $expected_version"
-            errors=$((errors + 1))
+            print_error "Found $errors version inconsistencies"
+            return 1
         fi
-    fi
-
-    # Check aidevops.sh CLI
-    if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
-        if grep -q "# Version: $expected_version" "$REPO_ROOT/aidevops.sh"; then
-            print_success "aidevops.sh: $expected_version ✓"
-        else
-            print_error "aidevops.sh does not contain version $expected_version"
-            errors=$((errors + 1))
-        fi
-    fi
-
-    # Check Claude Code plugin marketplace.json
-    if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
-        if grep -q "\"version\": \"$expected_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
-            print_success ".claude-plugin/marketplace.json: $expected_version ✓"
-        else
-            print_error ".claude-plugin/marketplace.json does not contain version $expected_version"
-            errors=$((errors + 1))
-        fi
-    fi
-
-    if [[ $errors -eq 0 ]]; then
-        print_success "All version references are consistent: $expected_version"
-        return 0
-    else
-        print_error "Found $errors version inconsistencies"
-        return 1
     fi
     return 0
 }
@@ -483,7 +442,15 @@ update_version_in_files() {
     # Update Claude Code plugin marketplace.json
     if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
         sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
-        print_success "Updated .claude-plugin/marketplace.json"
+        
+        # Validate the update was successful
+        if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
+            print_success "Updated .claude-plugin/marketplace.json"
+        else
+            print_error "Failed to update .claude-plugin/marketplace.json"
+            print_info "Please manually update the version in .claude-plugin/marketplace.json"
+            return 1
+        fi
     fi
     return 0
 }
