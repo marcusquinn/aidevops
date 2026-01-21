@@ -83,8 +83,14 @@ The AI will iterate on the task until outputting:
 - All requirements implemented
 - Tests passing (if applicable)
 - Code quality acceptable
-- README.md updated (if adding features/APIs)
+- README.md updated (if adding features/APIs) - use `/readme --sections` for targeted updates
 - Conventional commits used (for auto-changelog)
+
+**README check (aidevops repo only):**
+```bash
+# Check if README counts are stale after adding agents/scripts
+~/.aidevops/agents/scripts/readme-helper.sh check
+```
 
 ### Step 4: Automatic Phase Progression
 

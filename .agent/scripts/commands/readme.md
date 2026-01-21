@@ -113,8 +113,24 @@ Multiple sections: `--sections "installation,usage,config"`
 /readme --sections "all"
 ```
 
+## Dynamic Counts (aidevops repo)
+
+When working in the aidevops repository, use the helper script to manage counts:
+
+```bash
+# Check if README counts are stale
+~/.aidevops/agents/scripts/readme-helper.sh check
+
+# Preview count updates
+~/.aidevops/agents/scripts/readme-helper.sh update
+
+# Apply count updates
+~/.aidevops/agents/scripts/readme-helper.sh update --apply
+```
+
 ## Related
 
 - `workflows/readme-create-update.md` - Full workflow guidance
 - `workflows/changelog.md` - Changelog updates
 - `workflows/wiki-update.md` - Wiki documentation
+- `scripts/readme-helper.sh` - Dynamic count management
