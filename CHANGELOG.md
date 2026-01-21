@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add cloudflare-platform to AGENTS.md subagent table (#145)
+
 ## [2.70.1] - 2026-01-21
 
 ### Changed
