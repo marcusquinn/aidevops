@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Registry of imported external skills with upstream tracking for update detection",
+  "version": "1.0.0",
+  "skills": []
+}
