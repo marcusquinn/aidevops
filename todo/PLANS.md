@@ -897,6 +897,149 @@ d018,p010,Prioritize automatic session reflection,Highest impact for continual l
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
+### [2026-01-21] /add-skill System for External Skill Import
+
+**Status:** Planning (Research Complete)
+**Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
+**Branch:** `feature/add-skill-command` (worktree at `~/Git/aidevops.feature-add-skill-command/`)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p012,/add-skill System for External Skill Import,planning,0,6,,skills|agents|import|multi-assistant,2d,1d,0.5d,0.5d,2026-01-21T00:00Z,
+-->
+
+#### Purpose
+
+Create a comprehensive skill import system that allows rapid adoption of external AI agent skills into aidevops, with upstream tracking for updates and multi-assistant compatibility.
+
+**Problem:** Many people are creating and sharing Claude Code skills, OpenCode skills, and other AI assistant configurations. aidevops has its own superior `.agent/` folder structure. We need to rapidly import external skills, convert to aidevops format, handle conflicts intelligently, and track upstream for updates.
+
+#### Research Completed (2026-01-21)
+
+**AI Assistant Compatibility Matrix:**
+
+| Assistant | Config Location | Skills Format | AGENTS.md | Pointer Support |
+|-----------|----------------|---------------|-----------|-----------------|
+| OpenCode | `.opencode/skills/` | SKILL.md | Yes | Yes (description) |
+| Codex (OpenAI) | `.codex/skills/` | SKILL.md | Yes (hierarchical) | Yes |
+| Claude Code | `.claude/skills/` | SKILL.md | Yes | Yes |
+| Amp (Sourcegraph) | `.claude/skills/`, `~/.config/amp/tools/` | SKILL.md | Yes | Yes |
+| Droid (Factory) | `.factory/droids/` | Markdown+YAML | Yes | Yes |
+| Cursor | `.cursorrules` | Plain MD | No | Symlinks only |
+| Windsurf | `.windsurf/rules/` | MD+frontmatter | Yes | Yes |
+| Cline | `.clinerules/` | Markdown | No | Symlinks only |
+| Continue | `config.yaml` | YAML rules | No | No |
+| Aider | `.aider.conf.yml` | YAML+CONVENTIONS.md | No | Yes (read:) |
+| Roo, Goose, Copilot, Gemini | SKILL.md | SKILL.md | Yes | Yes |
+
+**Key Standards:**
+- **agentskills.io specification**: Universal SKILL.md format with YAML frontmatter
+- **skills.sh CLI**: `npx skills add <owner/repo>` - supports 17+ AI assistants
+- **AGENTS.md hierarchical**: Codex, Amp, Droid, Windsurf support directory-scoped AGENTS.md
+
+**Example Skills to Import:**
+- `dmmulroy/cloudflare-skill` - 60+ Cloudflare products (conflicts with existing cloudflare.md)
+- `remotion-dev/skills` - Video creation in React
+- `vercel-labs/agent-skills` - React best practices
+- `expo/skills` - React Native/Expo
+- `anthropics/skills` - Official Anthropic skills
+- `trailofbits/skills` - Security auditing
+
+**Architecture Decision:**
+- Source of truth: `.agent/` (aidevops format)
+- `setup.sh` generates symlinks to `~/.config/opencode/skills/`, `~/.codex/skills/`, `~/.claude/skills/`, `~/.config/amp/tools/`
+- Nesting: Simple skills → single .md file; Complex skills → folder with subagents
+- Tracking: `skill-sources.json` with upstream URL, version, last-checked
+
+#### Progress
+
+- [ ] (2026-01-21) Phase 1: Create skill-sources.json schema and registry ~2h
+  - Define JSON schema for tracking upstream skills
+  - Add existing humanise.md as first tracked skill
+  - Create `.agent/configs/skill-sources.json`
+- [ ] (2026-01-21) Phase 2: Create add-skill-helper.sh ~4h
+  - Fetch via `npx skills add` or direct GitHub
+  - Detect format (SKILL.md, AGENTS.md, .cursorrules, raw)
+  - Extract metadata, instructions, resources
+  - Check for conflicts with existing .agent/ files
+- [ ] (2026-01-21) Phase 3: Create /add-skill command ~2h
+  - Create `scripts/commands/add-skill.md`
+  - Present merge options when conflicts detected
+  - Register in skill-sources.json after import
+- [ ] (2026-01-21) Phase 4: Create add-skill.md subagent ~3h
+  - Create `tools/build-agent/add-skill.md`
+  - Conversion logic for different formats
+  - Merge strategies (add/replace/separate)
+  - Follow build-agent.md and agent-review.md guidance
+- [ ] (2026-01-21) Phase 5: Create skill-update-helper.sh ~2h
+  - Check all tracked skills for upstream updates
+  - Compare commits/versions
+  - Show diff and update options
+- [ ] (2026-01-21) Phase 6: Update setup.sh for symlinks ~3h
+  - Generate symlinks to all AI assistant skill locations
+  - Update generate-skills.sh for SKILL.md stubs
+  - Document in AGENTS.md
+
+<!--TOON:milestones[6]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m058,p012,Phase 1: Create skill-sources.json schema and registry,2h,,2026-01-21T00:00Z,,pending
+m059,p012,Phase 2: Create add-skill-helper.sh,4h,,2026-01-21T00:00Z,,pending
+m060,p012,Phase 3: Create /add-skill command,2h,,2026-01-21T00:00Z,,pending
+m061,p012,Phase 4: Create add-skill.md subagent,3h,,2026-01-21T00:00Z,,pending
+m062,p012,Phase 5: Create skill-update-helper.sh,2h,,2026-01-21T00:00Z,,pending
+m063,p012,Phase 6: Update setup.sh for symlinks,3h,,2026-01-21T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Use symlinks by default, pointer fallback for Windows
+  **Rationale:** Single source of truth; updates to .agent/ automatically reflected
+  **Date:** 2026-01-21
+
+- **Decision:** Use `npx skills add` as fetch mechanism when available
+  **Rationale:** skills.sh is emerging standard; supports 17+ AI assistants
+  **Date:** 2026-01-21
+
+- **Decision:** Complex skills become folders with subagents
+  **Rationale:** Follows aidevops nesting convention (parent.md + parent/)
+  **Date:** 2026-01-21
+
+- **Decision:** Merge conflicts require human decision (add/replace/separate/skip)
+  **Rationale:** Preserves existing knowledge; prevents accidental overwrites
+  **Date:** 2026-01-21
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d022,p012,Use symlinks by default pointer fallback for Windows,Single source of truth; auto-reflects updates,2026-01-21,None
+d023,p012,Use npx skills add as fetch mechanism,skills.sh is emerging standard,2026-01-21,None
+d024,p012,Complex skills become folders with subagents,Follows aidevops nesting convention,2026-01-21,None
+d025,p012,Merge conflicts require human decision,Preserves existing knowledge,2026-01-21,None
+-->
+
+#### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `.agent/configs/skill-sources.json` | Registry of imported skills with upstream tracking |
+| `.agent/scripts/add-skill-helper.sh` | Fetch, analyse, convert, merge skills |
+| `.agent/scripts/skill-update-helper.sh` | Check all tracked skills for updates |
+| `.agent/scripts/commands/add-skill.md` | `/add-skill` command definition |
+| `.agent/tools/build-agent/add-skill.md` | Subagent with conversion/merge logic |
+
+#### Files to Update
+
+| File | Changes |
+|------|---------|
+| `setup.sh` | Generate symlinks to all AI assistant skill locations |
+| `generate-skills.sh` | Create SKILL.md stubs pointing to .agent/ source |
+| `AGENTS.md` | Document /add-skill command in quick reference |
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+---
+
 ### [2026-01-11] Memory Auto-Capture
 
 **Status:** Planning
