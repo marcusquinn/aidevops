@@ -91,9 +91,9 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- ~15 main agents (Plan+, Build+, SEO, WordPress, etc.)
-- 200+ subagent markdown files organized by domain
-- 100+ helper scripts in `.agent/scripts/`
+- 13 main agents (Plan+, Build+, SEO, WordPress, etc.)
+- 225+ subagent markdown files organized by domain
+- 130+ helper scripts in `.agent/scripts/`
 
 <!-- AI-CONTEXT-END -->
 
@@ -449,7 +449,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 100+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 130+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent tables, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -527,6 +527,10 @@ The setup script offers to install these tools automatically.
 - **[Langflow](https://langflow.org/)**: Visual drag-and-drop builder for AI workflows (MIT, localhost:7860)
 - **[CrewAI](https://crewai.com/)**: Multi-agent teams with role-based orchestration (MIT, localhost:8501)
 - **[AutoGen](https://microsoft.github.io/autogen/)**: Microsoft's agentic AI framework with MCP support (MIT, localhost:8081)
+
+### **Video Creation**
+
+- **[Remotion](https://remotion.dev/)**: Programmatic video creation with React - animations, compositions, media handling, captions
 
 ### **WordPress Development**
 
@@ -889,7 +893,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: ~15 domain agents, 80+ subagents, and 100+ helper scripts.
+This installs the complete framework: 13 domain agents, 225+ subagents, and 130+ helper scripts.
 
 ### Importing External Skills
 
@@ -955,7 +959,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 80+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 225+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1490,9 +1494,9 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agent/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # ~15 main agents
-│   ├── scripts/                   # 100+ helper scripts
-│   ├── tools/                     # Cross-domain utilities
+│   ├── *.md                       # 13 main agents
+│   ├── scripts/                   # 130+ helper scripts
+│   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
 ├── configs/                       # Configuration templates
