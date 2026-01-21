@@ -889,7 +889,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 14 domain agents, 80+ subagents, and 100+ helper scripts.
+This installs the complete framework: ~15 domain agents, 80+ subagents, and 100+ helper scripts.
 
 ## **AI Agents & Subagents**
 
