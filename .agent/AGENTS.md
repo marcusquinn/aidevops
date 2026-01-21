@@ -27,7 +27,28 @@ If the user's request contains ANY of these, run the check FIRST.
 ~/.aidevops/agents/scripts/pre-edit-check.sh
 ```
 
-If the script outputs "STOP - ON PROTECTED BRANCH", you MUST NOT proceed with edits.
+**Script exit codes and required actions:**
+
+| Exit Code | Meaning | Required Action |
+|-----------|---------|-----------------|
+| `0` | OK to proceed | Continue with edits |
+| `1` | On protected branch (main/master) | STOP - present branch creation options |
+| `2` | Loop mode: worktree needed | Auto-create worktree for code task |
+| `3` | On feature branch in main repo | Present options to user (see below) |
+
+If the script outputs "STOP - ON PROTECTED BRANCH" (exit 1), you MUST NOT proceed with edits.
+
+If the script outputs "WARNING - MAIN REPO ON FEATURE BRANCH" (exit 3), present these options:
+
+> Currently on branch: `{branch}` (in main repo, not worktree)
+>
+> 1. Create worktree for this task (recommended)
+> 2. Continue on current branch (not recommended for code)
+> 3. Switch main repo back to main, then create worktree
+>
+> Which would you prefer? [1/2/3]
+
+**Do NOT proceed until user replies with 1, 2, or 3**
 
 **Manual check if script unavailable:**
 
@@ -52,7 +73,7 @@ Auto-decision rules:
 - **Docs-only tasks** (README, CHANGELOG, docs/, typos) -> Option 3 (stay on main)
 - **Code tasks** (feature, fix, implement, refactor, enhance) -> Option 1 (create worktree automatically)
 
-Exit codes: `0` = proceed, `1` = interactive stop, `2` = create worktree needed
+Exit codes: `0` = proceed, `1` = on main (stop), `2` = create worktree needed, `3` = on feature branch in main repo (warn)
 
 Detection keywords:
 - Docs-only: `readme`, `changelog`, `documentation`, `docs/`, `typo`, `spelling`
@@ -83,6 +104,25 @@ Planning files are metadata about work, not the work itself - they don't need PR
 **Why this matters**: Skipping this check causes direct commits to `main`, bypassing PR review.
 
 **Main repo principle**: The directory `~/Git/{repo}/` should always stay on `main`. All feature work happens in worktree directories (`~/Git/{repo}-{type}-{name}/`). This ensures any session opening the main repo starts clean.
+
+**Feature branch scenarios**: When already on a feature branch (not main), the script checks if you're in the main repo or a worktree:
+
+| Scenario | Script Output | Action |
+|----------|---------------|--------|
+| Feature branch in worktree | `OK - On branch: X (in worktree)` | Proceed normally |
+| Feature branch in main repo | `WARNING - MAIN REPO ON FEATURE BRANCH` | Present options to user |
+| Personal dev branch (e.g., `marcus`) | Same as feature branch | Treat as feature branch |
+
+**Why feature branches in main repo are problematic:**
+- Parallel sessions opening `~/Git/{repo}/` inherit the wrong branch
+- Uncommitted changes block switching to other branches
+- Easy to forget and commit unrelated work to wrong branch
+- Merge conflicts when multiple sessions modify same files
+
+**Small tasks exception**: For quick fixes that don't warrant a separate worktree, option 2 (continue on current branch) is acceptable IF:
+- The task is directly related to the current branch's purpose
+- You'll complete and commit before ending the session
+- No parallel sessions are expected
 
 **Self-verification**: Before ANY file operation, ask yourself:
 "Have I run pre-edit-check.sh in this session?" If unsure, run it NOW.
