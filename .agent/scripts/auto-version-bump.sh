@@ -118,8 +118,8 @@ main() {
             print_success "Version bumped: $current_version → $new_version"
             update_version_badge "$new_version"
             
-            # Add updated files to git
-            git add VERSION README.md sonar-project.properties setup.sh 2>/dev/null
+            # Add updated files to git (all version-tracked files)
+            git add VERSION README.md sonar-project.properties setup.sh aidevops.sh package.json .claude-plugin/marketplace.json 2>/dev/null
             
             echo "$new_version"
         else
