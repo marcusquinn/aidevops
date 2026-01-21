@@ -83,13 +83,13 @@ The result: AI agents that work *with* your development process, not around it.
 - **Entry**: `aidevops` CLI, `~/.aidevops/agents/AGENTS.md`
 - **Stack**: Bash scripts, TypeScript (Bun), MCP servers
 
-**Key Commands**:
+### Key Commands
 
 - `aidevops init` - Initialize in any project
 - `aidevops update` - Update framework
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 
-**Agent Structure**:
+### Agent Structure
 
 - ~15 main agents (Plan+, Build+, SEO, WordPress, etc.)
 - 200+ subagent markdown files organized by domain
