@@ -443,6 +443,27 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 - **Performance Auditing**: PageSpeed Insights and Lighthouse integration
 - **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
 
+## **Imported Skills**
+
+aidevops includes curated skills imported from external repositories, with automatic update tracking:
+
+| Skill | Source | Description |
+|-------|--------|-------------|
+| **cloudflare-platform** | [dmmulroy/cloudflare-skill](https://github.com/dmmulroy/cloudflare-skill) | 60 Cloudflare products: Workers, Pages, D1, R2, KV, Durable Objects, AI, networking, security |
+| **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
+| **animejs** | [Context7 docs](https://animejs.com) | JavaScript animation library patterns and API |
+
+**Skill Commands:**
+
+```bash
+/add-skill <owner/repo>      # Import a skill from GitHub
+/add-skill list              # List imported skills
+/add-skill check-updates     # Check for upstream updates
+/add-skill <repo> --force    # Update an existing skill
+```
+
+Skills are registered in `.agent/configs/skill-sources.json` and checked for updates during `./setup.sh`.
+
 ## **Agent Design Patterns**
 
 aidevops implements proven agent design patterns identified by [Lance Martin (LangChain)](https://x.com/RLanceMartin/status/2009683038272401719) and validated across successful agents like Claude Code, Manus, and Cursor.
