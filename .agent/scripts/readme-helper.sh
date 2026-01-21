@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2034,SC2155
+# shellcheck disable=SC2155
 
 # AI DevOps Framework - README Helper
 # Manages dynamic counts and README maintenance tasks
@@ -11,6 +11,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT_DIR="$REPO_ROOT/.agent"
 
+# Cached counts (populated once, reused)
+_CACHED_MAIN_AGENTS=""
+_CACHED_SUBAGENTS=""
+_CACHED_SCRIPTS=""
+
 # Color output functions
 print_success() { local msg="$1"; echo -e "\033[32m[SUCCESS]\033[0m $msg"; return 0; }
 print_error() { local msg="$1"; echo -e "\033[31m[ERROR]\033[0m $msg"; return 0; }
@@ -19,26 +24,58 @@ print_info() { local msg="$1"; echo -e "\033[34m[INFO]\033[0m $msg"; return 0; }
 
 # Count main agents (*.md files in .agent/ root, excluding AGENTS.md)
 count_main_agents() {
-    local count
-    count=$(find "$AGENT_DIR" -maxdepth 1 -name "*.md" -type f ! -name "AGENTS.md" 2>/dev/null | wc -l | tr -d ' ')
-    echo "$count"
+    if [[ -n "$_CACHED_MAIN_AGENTS" ]]; then
+        echo "$_CACHED_MAIN_AGENTS"
+        return 0
+    fi
+    if [[ ! -d "$AGENT_DIR" ]]; then
+        echo "0"
+        return 0
+    fi
+    _CACHED_MAIN_AGENTS=$(find "$AGENT_DIR" -maxdepth 1 -name "*.md" -type f ! -name "AGENTS.md" 2>/dev/null | wc -l | tr -d ' ')
+    echo "$_CACHED_MAIN_AGENTS"
     return 0
 }
 
 # Count subagent markdown files (all .md files in subdirectories)
 count_subagents() {
-    local count
-    count=$(find "$AGENT_DIR" -mindepth 2 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
-    echo "$count"
+    if [[ -n "$_CACHED_SUBAGENTS" ]]; then
+        echo "$_CACHED_SUBAGENTS"
+        return 0
+    fi
+    if [[ ! -d "$AGENT_DIR" ]]; then
+        echo "0"
+        return 0
+    fi
+    _CACHED_SUBAGENTS=$(find "$AGENT_DIR" -mindepth 2 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+    echo "$_CACHED_SUBAGENTS"
     return 0
 }
 
 # Count helper scripts
 count_scripts() {
-    local count
-    count=$(find "$AGENT_DIR/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
-    echo "$count"
+    if [[ -n "$_CACHED_SCRIPTS" ]]; then
+        echo "$_CACHED_SCRIPTS"
+        return 0
+    fi
+    if [[ ! -d "$AGENT_DIR/scripts" ]]; then
+        echo "0"
+        return 0
+    fi
+    _CACHED_SCRIPTS=$(find "$AGENT_DIR/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
+    echo "$_CACHED_SCRIPTS"
     return 0
+}
+
+# Round to approximate value (consistent logic for check and update)
+round_scripts() {
+    local count="$1"
+    echo "$((count / 10 * 10))"
+}
+
+round_subagents() {
+    local count="$1"
+    echo "$((count / 50 * 50))"
 }
 
 # Get all counts as JSON
@@ -53,27 +90,20 @@ get_counts_json() {
 }
 
 # Get approximate counts (for README display)
+# Uses consistent rounding: scripts to nearest 10, subagents to nearest 50
 get_approximate_counts() {
     local main_agents subagents scripts
     main_agents=$(count_main_agents)
     subagents=$(count_subagents)
     scripts=$(count_scripts)
     
-    # Round to nearest 5 or 10 for cleaner display
-    local approx_agents approx_subagents approx_scripts
+    # For agents, use ~N format (exact count with tilde)
+    local approx_agents="~$main_agents"
     
-    # For agents, use ~N format
-    approx_agents="~$main_agents"
-    
-    # For subagents, round to nearest 50
-    if [[ $subagents -ge 200 ]]; then
-        approx_subagents="$((subagents / 50 * 50))+"
-    else
-        approx_subagents="$((subagents / 10 * 10))+"
-    fi
-    
-    # For scripts, round to nearest 10
-    approx_scripts="$((scripts / 10 * 10))+"
+    # For subagents and scripts, use consistent rounding functions
+    local approx_subagents approx_scripts
+    approx_subagents="$(round_subagents "$subagents")+"
+    approx_scripts="$(round_scripts "$scripts")+"
     
     echo "main_agents=$approx_agents"
     echo "subagents=$approx_subagents"
@@ -172,10 +202,10 @@ update_readme_counts() {
     subagents=$(count_subagents)
     scripts=$(count_scripts)
     
-    # Calculate approximate values
+    # Calculate approximate values using consistent rounding functions
     local approx_scripts approx_subagents
-    approx_scripts=$((scripts / 10 * 10))
-    approx_subagents=$((subagents / 50 * 50))
+    approx_scripts=$(round_scripts "$scripts")
+    approx_subagents=$(round_subagents "$subagents")
     
     if [[ "$dry_run" == "true" ]]; then
         print_info "Dry run - would update:"
