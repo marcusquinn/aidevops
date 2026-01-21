@@ -421,19 +421,26 @@ update_version_in_files() {
         print_success "Updated aidevops.sh"
     fi
     
-    # Update README version badge
+    # Update README version badge (skip if using dynamic GitHub release badge)
     if [[ -f "$REPO_ROOT/README.md" ]]; then
-        # Use more robust regex pattern for version numbers (handles single and multi-digit)
-        # macOS sed requires different syntax for extended regex
-        sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
-
-        # Validate the update was successful
-        if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
-            print_success "Updated README.md version badge to $new_version"
+        if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
+            # Dynamic badge - no update needed, GitHub handles it automatically
+            print_success "README.md uses dynamic GitHub release badge (no update needed)"
+        elif grep -q "Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue" "$REPO_ROOT/README.md"; then
+            # Hardcoded badge - update it
+            sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
+            
+            # Validate the update was successful
+            if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
+                print_success "Updated README.md version badge to $new_version"
+            else
+                print_error "Failed to update README.md version badge"
+                print_info "Please manually update the version badge in README.md"
+                return 1
+            fi
         else
-            print_error "Failed to update README.md version badge"
-            print_info "Please manually update the version badge in README.md"
-            return 1
+            # No version badge found - that's okay, just warn
+            print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
         fi
     else
         print_warning "README.md not found, skipping version badge update"
