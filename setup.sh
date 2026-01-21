@@ -1470,6 +1470,86 @@ generate_agent_skills() {
     return 0
 }
 
+# Create symlinks for imported skills to AI assistant skill directories
+create_skill_symlinks() {
+    print_info "Creating symlinks for imported skills..."
+    
+    local skill_sources="$HOME/.aidevops/agents/configs/skill-sources.json"
+    local agents_dir="$HOME/.aidevops/agents"
+    
+    # Skip if no skill-sources.json or jq not available
+    if [[ ! -f "$skill_sources" ]]; then
+        print_info "No imported skills found (skill-sources.json not present)"
+        return 0
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not found - cannot create skill symlinks"
+        return 0
+    fi
+    
+    # Check if there are any skills
+    local skill_count
+    skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+    
+    if [[ "$skill_count" -eq 0 ]]; then
+        print_info "No imported skills to symlink"
+        return 0
+    fi
+    
+    # AI assistant skill directories
+    local skill_dirs=(
+        "$HOME/.config/opencode/skills"
+        "$HOME/.codex/skills"
+        "$HOME/.claude/skills"
+        "$HOME/.config/amp/tools"
+    )
+    
+    # Create skill directories if they don't exist
+    for dir in "${skill_dirs[@]}"; do
+        mkdir -p "$dir" 2>/dev/null || true
+    done
+    
+    local created_count=0
+    
+    # Read each skill and create symlinks
+    while IFS= read -r skill_json; do
+        local name local_path
+        name=$(echo "$skill_json" | jq -r '.name')
+        local_path=$(echo "$skill_json" | jq -r '.local_path')
+        
+        # Skip if path doesn't exist
+        local full_path="$agents_dir/${local_path#.agent/}"
+        if [[ ! -f "$full_path" ]]; then
+            print_warning "Skill file not found: $full_path"
+            continue
+        fi
+        
+        # Create symlinks in each AI assistant directory
+        for skill_dir in "${skill_dirs[@]}"; do
+            local target_dir="$skill_dir/$name"
+            local target_file="$target_dir/SKILL.md"
+            
+            # Create skill subdirectory
+            mkdir -p "$target_dir" 2>/dev/null || continue
+            
+            # Create symlink (remove existing first)
+            rm -f "$target_file" 2>/dev/null || true
+            if ln -sf "$full_path" "$target_file" 2>/dev/null; then
+                ((created_count++))
+            fi
+        done
+    done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+    
+    if [[ $created_count -gt 0 ]]; then
+        print_success "Created $created_count skill symlinks across AI assistants"
+    else
+        print_info "No skill symlinks created"
+    fi
+    
+    return 0
+}
+
 # Inject aidevops reference into AI assistant AGENTS.md files
 inject_agents_reference() {
     print_info "Adding aidevops reference to AI assistant configurations..."
@@ -2576,6 +2656,7 @@ main() {
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
     confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
+    confirm_step "Create symlinks for imported skills" && create_skill_symlinks
     confirm_step "Inject agents reference into AI configs" && inject_agents_reference
     confirm_step "Update OpenCode configuration" && update_opencode_config
     confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
