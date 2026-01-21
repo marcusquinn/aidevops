@@ -633,10 +633,29 @@ setup_file_discovery_tools() {
                 if install_packages "$pkg_manager" "${actual_packages[@]}"; then
                     print_success "File discovery tools installed"
                     
-                    # On Debian/Ubuntu, fd is installed as fdfind - create alias
+                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in all existing shell rc files
                     if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
-                        print_info "Note: On Debian/Ubuntu, fd is installed as 'fdfind'"
-                        echo "  Consider adding to your shell config: alias fd=fdfind"
+                        local rc_files=("$HOME/.bashrc" "$HOME/.zshrc")
+                        local added_to=""
+                        
+                        for rc_file in "${rc_files[@]}"; do
+                            [[ ! -f "$rc_file" ]] && continue
+                            
+                            if ! grep -q 'alias fd="fdfind"' "$rc_file" 2>/dev/null; then
+                                if { echo '' >> "$rc_file" && \
+                                     echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$rc_file" && \
+                                     echo 'alias fd="fdfind"' >> "$rc_file"; }; then
+                                    added_to="${added_to:+$added_to, }$rc_file"
+                                fi
+                            fi
+                        done
+                        
+                        if [[ -n "$added_to" ]]; then
+                            print_success "Added alias fd=fdfind to: $added_to"
+                            echo "  Restart your shell to activate"
+                        else
+                            print_success "fd alias already configured"
+                        fi
                     fi
                 else
                     print_warning "Failed to install some file discovery tools (non-critical)"
