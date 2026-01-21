@@ -461,7 +461,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/terminal/` | Terminal integration - tab titles, git context display | terminal-title |
 | `tools/automation/` | macOS automation - AppleScript, JXA, accessibility API, app control | mac, macos-automator |
 | `tools/wordpress/` | WordPress ecosystem - local dev, fleet management, plugin curation, custom fields | wp-dev, wp-admin, localwp, mainwp, wp-preferred, scf |
-| `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudron, closte, 101domains, spaceship |
+| `services/hosting/` | Hosting providers - DNS, domains, cloud servers, managed WordPress | hostinger, hetzner, cloudflare, cloudflare-platform, cloudron, closte, 101domains, spaceship |
 | `services/email/` | Email services - transactional email, deliverability | ses |
 | `services/communications/` | Communications platform - SMS, voice, WhatsApp, verify, recordings | twilio, telfon |
 | `services/crm/` | CRM integration - contact management, email marketing, automation | fluentcrm |
