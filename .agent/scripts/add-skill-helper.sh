@@ -131,10 +131,9 @@ parse_github_url() {
     # Remove .git suffix if present
     input="${input%.git}"
     
-    # Remove /tree/main or /tree/master if present (capture subpath after branch)
-    # Use bash parameter expansion instead of sed for macOS compatibility
-    if [[ "$input" =~ /tree/(main|master)(/.*)? ]]; then
-        input="${BASH_REMATCH[2]#/}"
+    # Remove /tree/main or /tree/master if present (use bash instead of sed for portability)
+    if [[ "$input" =~ ^(.+)/tree/(main|master)(/.*)?$ ]]; then
+        input="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"
     fi
     
     # Split by /
@@ -157,25 +156,41 @@ parse_github_url() {
 }
 
 # Detect skill format from directory contents
+# Returns: format|skill_subdir (e.g., "skill-md-nested|skill/cloudflare")
 detect_format() {
     local dir="$1"
     
+    # Check for direct SKILL.md first
     if [[ -f "$dir/SKILL.md" ]]; then
-        echo "skill-md"
-    elif [[ -f "$dir/AGENTS.md" ]]; then
-        echo "agents-md"
+        echo "skill-md|"
+        return 0
+    fi
+    
+    # Check for nested skill directory (e.g., skill/*/SKILL.md)
+    local nested_skill
+    nested_skill=$(find "$dir" -maxdepth 3 -name "SKILL.md" -type f 2>/dev/null | head -1)
+    if [[ -n "$nested_skill" ]]; then
+        local skill_subdir
+        skill_subdir=$(dirname "$nested_skill")
+        skill_subdir="${skill_subdir#"$dir/"}"
+        echo "skill-md-nested|$skill_subdir"
+        return 0
+    fi
+    
+    if [[ -f "$dir/AGENTS.md" ]]; then
+        echo "agents-md|"
     elif [[ -f "$dir/.cursorrules" ]]; then
-        echo "cursorrules"
+        echo "cursorrules|"
     elif [[ -f "$dir/README.md" ]]; then
-        echo "readme"
+        echo "readme|"
     else
         # Look for any .md file
         local md_file
         md_file=$(find "$dir" -maxdepth 1 -name "*.md" -type f | head -1)
         if [[ -n "$md_file" ]]; then
-            echo "markdown"
+            echo "markdown|"
         else
-            echo "unknown"
+            echo "unknown|"
         fi
     fi
     return 0
@@ -246,14 +261,15 @@ determine_target_path() {
         content=$(cat "$source_dir/AGENTS.md")
     fi
     
-    # Detect category from content
-    if echo "$content" | grep -qi "deploy\|vercel\|coolify\|docker\|kubernetes"; then
-        category="tools/deployment"
-    elif echo "$content" | grep -qi "cloudflare\|dns\|hosting\|domain"; then
+    # Detect category from content (order matters - more specific patterns first)
+    # Check skill name first for known services
+    if [[ "$skill_name" == "cloudflare"* ]]; then
+        category="services/hosting"
+    elif echo "$content" | grep -qi "cloudflare workers\|cloudflare pages\|wrangler"; then
         category="services/hosting"
     elif echo "$content" | grep -qi "browser\|playwright\|puppeteer\|selenium"; then
         category="tools/browser"
-    elif echo "$content" | grep -qi "seo\|search\|ranking\|keyword"; then
+    elif echo "$content" | grep -qi "seo\|search.ranking\|keyword.research"; then
         category="seo"
     elif echo "$content" | grep -qi "git\|github\|gitlab"; then
         category="tools/git"
@@ -261,6 +277,10 @@ determine_target_path() {
         category="tools/code-review"
     elif echo "$content" | grep -qi "credential\|secret\|password\|vault"; then
         category="tools/credentials"
+    elif echo "$content" | grep -qi "vercel\|coolify\|docker\|kubernetes"; then
+        category="tools/deployment"
+    elif echo "$content" | grep -qi "dns\|hosting\|domain"; then
+        category="services/hosting"
     fi
     
     echo "$category/$skill_name"
@@ -359,6 +379,17 @@ register_skill() {
         log_error "jq is required to update $SKILL_SOURCES"
         log_info "Install with: brew install jq (macOS) or apt install jq (Linux)"
         return 1
+    fi
+    
+    # Check for existing entry and remove it (update scenario)
+    local existing
+    existing=$(jq -r --arg name "$name" '.skills[] | select(.name == $name) | .name' "$SKILL_SOURCES" 2>/dev/null || echo "")
+    if [[ -n "$existing" ]]; then
+        log_info "Updating existing skill registration: $name"
+        local tmp_file
+        tmp_file=$(mktemp)
+        jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file"
+        mv "$tmp_file" "$SKILL_SOURCES"
     fi
     
     local timestamp
@@ -486,17 +517,25 @@ cmd_add() {
         fi
     fi
     
-    # Detect format
-    local format
-    format=$(detect_format "$source_dir")
+    # Detect format (returns format|skill_subdir)
+    local format_result skill_subdir format
+    format_result=$(detect_format "$source_dir")
+    IFS='|' read -r format skill_subdir <<< "$format_result"
     log_info "Detected format: $format"
+    
+    # For nested skills, update source_dir to point to the skill directory
+    local skill_source_dir="$source_dir"
+    if [[ "$format" == "skill-md-nested" && -n "$skill_subdir" ]]; then
+        skill_source_dir="$source_dir/$skill_subdir"
+        log_info "Found nested skill at: $skill_subdir"
+    fi
     
     # Determine skill name
     local skill_name=""
     if [[ -n "$custom_name" ]]; then
         skill_name=$(to_kebab_case "$custom_name")
-    elif [[ "$format" == "skill-md" ]]; then
-        skill_name=$(extract_skill_name "$source_dir/SKILL.md")
+    elif [[ "$format" == "skill-md" || "$format" == "skill-md-nested" ]]; then
+        skill_name=$(extract_skill_name "$skill_source_dir/SKILL.md")
         skill_name=$(to_kebab_case "${skill_name:-$(basename "${subpath:-$repo}")}")
     else
         skill_name=$(to_kebab_case "$(basename "${subpath:-$repo}")")
@@ -506,13 +545,13 @@ cmd_add() {
     
     # Get description
     local description=""
-    if [[ "$format" == "skill-md" ]]; then
-        description=$(extract_skill_description "$source_dir/SKILL.md")
+    if [[ "$format" == "skill-md" || "$format" == "skill-md-nested" ]]; then
+        description=$(extract_skill_description "$skill_source_dir/SKILL.md")
     fi
     
     # Determine target path
     local target_path
-    target_path=$(determine_target_path "$skill_name" "$description" "$source_dir")
+    target_path=$(determine_target_path "$skill_name" "$description" "$skill_source_dir")
     log_info "Target path: .agent/$target_path"
     
     # Check for conflicts (check_conflicts returns 1 when conflicts exist)
@@ -558,7 +597,7 @@ cmd_add() {
     if [[ "$dry_run" == true ]]; then
         log_info "DRY RUN - Would create:"
         echo "  .agent/${target_path}.md"
-        if [[ -d "$source_dir/scripts" || -d "$source_dir/references" ]]; then
+        if [[ -d "$skill_source_dir/scripts" || -d "$skill_source_dir/references" ]]; then
             echo "  .agent/${target_path}/"
         fi
         return 0
@@ -573,8 +612,8 @@ cmd_add() {
     local target_file=".agent/${target_path}.md"
     
     case "$format" in
-        skill-md)
-            convert_skill_md "$source_dir/SKILL.md" "$target_file" "$skill_name"
+        skill-md|skill-md-nested)
+            convert_skill_md "$skill_source_dir/SKILL.md" "$target_file" "$skill_name"
             ;;
         agents-md)
             cp "$source_dir/AGENTS.md" "$target_file"
@@ -609,10 +648,10 @@ cmd_add() {
     
     # Copy additional resources (scripts, references, assets)
     for resource_dir in scripts references assets; do
-        if [[ -d "$source_dir/$resource_dir" ]]; then
+        if [[ -d "$skill_source_dir/$resource_dir" ]]; then
             local target_resource_dir=".agent/${target_path}/$resource_dir"
             mkdir -p "$target_resource_dir"
-            cp -r "$source_dir/$resource_dir/"* "$target_resource_dir/" 2>/dev/null || true
+            cp -r "$skill_source_dir/$resource_dir/"* "$target_resource_dir/" 2>/dev/null || true
             log_success "Copied: $resource_dir/"
         fi
     done
