@@ -5,6 +5,7 @@
 **Symptom**: Legitimate traffic blocked/challenged
 
 **Diagnosis**:
+
 ```typescript
 // Query GraphQL API for flagged requests
 const query = `
@@ -41,6 +42,7 @@ const query = `
 **Cause**: Sensitivity too low, wrong action
 
 **Fix**:
+
 ```typescript
 // Increase to default (high) sensitivity
 const config = {

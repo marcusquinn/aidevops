@@ -25,6 +25,7 @@ export default {
 ```
 
 **Query for billing**:
+
 ```sql
 SELECT
   blob1 AS customer_id,

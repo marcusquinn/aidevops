@@ -40,6 +40,7 @@ POST /jwt_validation_rules             # Rule: {name,hostname,token_validation_i
 ## Workers
 
 API client:
+
 ```js
 export default {
   async fetch(req, env) {
@@ -52,6 +53,7 @@ export default {
 ```
 
 Dynamic JWKS:
+
 ```js
 export default {
   async scheduled(event, env) {

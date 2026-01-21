@@ -58,6 +58,7 @@ await dispose();
 ### Use Cases
 
 **Unit Tests**
+
 ```typescript
 const { env, dispose } = await getPlatformProxy();
 
@@ -74,6 +75,7 @@ describe("database", () => {
 ```
 
 **Scripts**
+
 ```typescript
 const { env, dispose } = await getPlatformProxy({
   persist: { path: ".wrangler/state" }

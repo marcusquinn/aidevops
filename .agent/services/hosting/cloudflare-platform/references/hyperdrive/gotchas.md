@@ -5,12 +5,14 @@ See [README.md](./README.md), [configuration.md](./configuration.md), [api.md](.
 ## Limits
 
 **Config:**
+
 | Limit | Free | Paid |
 |-------|------|------|
 | Max configs | 10 | 25 |
 | Username/DB name | 63 bytes | 63 bytes |
 
 **Connections:**
+
 | Limit | Free | Paid |
 |-------|------|------|
 | Connection timeout | 15s | 15s |
@@ -18,6 +20,7 @@ See [README.md](./README.md), [configuration.md](./configuration.md), [api.md](.
 | Max origin connections | ~20 | ~100 |
 
 **Queries:**
+
 | Limit | Value |
 |-------|-------|
 | Max duration | 60s |
@@ -71,6 +74,7 @@ try {
 ## Monitor Connections
 
 **PostgreSQL:**
+
 ```sql
 -- Show Hyperdrive connections
 SELECT usename, application_name, client_addr, state

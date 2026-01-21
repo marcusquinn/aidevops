@@ -3,6 +3,7 @@
 ## Workers Binding
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "r2_buckets": [
@@ -15,6 +16,7 @@
 ```
 
 **wrangler.toml:**
+
 ```toml
 [[r2_buckets]]
 binding = 'MY_BUCKET'

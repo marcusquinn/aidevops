@@ -103,12 +103,14 @@ export default {
 **Dashboard:** Workers & Pages → Select Worker → Settings → Triggers → Cron Events
 
 **Wrangler:**
+
 ```bash
 npx wrangler tail
 npx wrangler tail --format json | jq 'select(.event.cron != null)'
 ```
 
 **GraphQL:**
+
 ```graphql
 query CronMetrics($accountTag: string!, $workerName: string!) {
   viewer { accounts(filter: { accountTag: $accountTag }) { workersInvocationsAdaptive(filter: {scriptName: $workerName, eventType: "scheduled"}, limit: 100) { dimensions { datetime, status }, sum { requests, errors } } } }

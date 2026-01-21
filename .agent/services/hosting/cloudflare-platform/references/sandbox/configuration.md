@@ -31,6 +31,7 @@ wrangler.jsonc `instance_type`:
 ## Dockerfile Patterns
 
 **Basic**:
+
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
 RUN pip3 install --no-cache-dir pandas numpy
@@ -38,6 +39,7 @@ EXPOSE 8080  # Required for wrangler dev
 ```
 
 **Scientific**:
+
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
 RUN pip3 install --no-cache-dir \
@@ -46,6 +48,7 @@ RUN pip3 install --no-cache-dir \
 ```
 
 **Node.js**:
+
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
 RUN npm install -g typescript ts-node
@@ -67,6 +70,7 @@ wrangler secret put KEY         # Set secret
 ## Environment & Secrets
 
 **wrangler.jsonc**:
+
 ```jsonc
 {
   "vars": {
@@ -81,6 +85,7 @@ wrangler secret put KEY         # Set secret
 ```
 
 **Usage**:
+
 ```typescript
 const token = env.GITHUB_TOKEN;  // From wrangler secret
 await sandbox.exec('git clone ...', {

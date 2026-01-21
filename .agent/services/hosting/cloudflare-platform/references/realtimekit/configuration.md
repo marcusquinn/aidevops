@@ -5,16 +5,19 @@ Configuration guide for RealtimeKit setup, client SDKs, and wrangler integration
 ## Installation
 
 ### React
+
 ```bash
 npm install @cloudflare/realtimekit @cloudflare/realtimekit-react-ui
 ```
 
 ### Angular
+
 ```bash
 npm install @cloudflare/realtimekit @cloudflare/realtimekit-angular-ui
 ```
 
 ### Web Components/HTML
+
 ```bash
 npm install @cloudflare/realtimekit @cloudflare/realtimekit-ui
 ```
@@ -22,18 +25,21 @@ npm install @cloudflare/realtimekit @cloudflare/realtimekit-ui
 ## Client SDK Configuration
 
 ### React UI Kit
+
 ```tsx
 import { RtkMeeting } from '@cloudflare/realtimekit-react-ui';
 <RtkMeeting authToken="<token>" onLeave={() => {}} />
 ```
 
 ### Angular UI Kit
+
 ```typescript
 @Component({ template: `<rtk-meeting [authToken]="authToken" (rtkLeave)="onLeave($event)"></rtk-meeting>` })
 export class AppComponent { authToken = '<token>'; onLeave() {} }
 ```
 
 ### Web Components
+
 ```html
 <script type="module" src="https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit-ui/dist/realtimekit-ui/realtimekit-ui.esm.js"></script>
 <rtk-meeting id="meeting"></rtk-meeting>
@@ -43,6 +49,7 @@ export class AppComponent { authToken = '<token>'; onLeave() {} }
 ```
 
 ### Core SDK Configuration
+
 ```typescript
 import RealtimeKitClient from '@cloudflare/realtimekit';
 
@@ -65,6 +72,7 @@ await meeting.join();
 **Dashboard**: https://dash.cloudflare.com/?to=/:account/realtime/kit
 
 **API**:
+
 ```bash
 curl -X POST 'https://api.cloudflare.com/client/v4/accounts/<account_id>/realtime/kit/apps' \
   -H 'Content-Type: application/json' \
@@ -94,6 +102,7 @@ curl -X POST 'https://api.cloudflare.com/client/v4/accounts/<account_id>/realtim
 ## Wrangler Configuration
 
 ### Basic Configuration
+
 ```jsonc
 // wrangler.jsonc
 {
@@ -109,6 +118,7 @@ curl -X POST 'https://api.cloudflare.com/client/v4/accounts/<account_id>/realtim
 ```
 
 ### With Database & Storage
+
 ```jsonc
 {
   "d1_databases": [{ "binding": "DB", "database_name": "meetings", "database_id": "d1-id" }],
@@ -118,6 +128,7 @@ curl -X POST 'https://api.cloudflare.com/client/v4/accounts/<account_id>/realtim
 ```
 
 ### Multi-Environment
+
 ```bash
 # Deploy to environments
 wrangler deploy --env staging

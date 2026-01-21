@@ -11,6 +11,7 @@
 4. For proxied sites: Ensure auto-injection enabled in dashboard
 
 **CSP Fix:**
+
 ```html
 <meta http-equiv="Content-Security-Policy" 
       content="script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com;">

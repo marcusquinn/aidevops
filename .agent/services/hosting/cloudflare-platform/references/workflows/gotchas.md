@@ -3,6 +3,7 @@
 ## Timeout Issues
 
 ### Step Timeout
+
 - **Default**: 10 min/attempt
 - **CPU Limit**: 30s default, max 5min (wrangler.toml `limits.cpu_ms = 300_000`)
 
@@ -11,6 +12,7 @@ await step.do('long operation', {timeout: '30 minutes'}, async () => { /* ... */
 ```
 
 ### waitForEvent Timeout
+
 - **Default**: 24h, **Max**: 365d, **Throws on timeout**
 
 ```typescript
@@ -36,6 +38,7 @@ Note: `step.sleep()` doesn't count toward step limit
 ## Debugging
 
 ### Logs
+
 ```typescript
 await step.do('process', async () => {
   console.log('Logged once per successful step'); // ✅
@@ -45,6 +48,7 @@ console.log('Outside step'); // ⚠️ May duplicate on restart
 ```
 
 ### Instance Status
+
 ```bash
 npx wrangler workflows instances describe my-workflow instance-id
 ```
@@ -58,42 +62,49 @@ const status = await instance.status();
 ## Common Pitfalls
 
 ### Non-Deterministic Step Names
+
 ```typescript
 // ❌ BAD: await step.do(`step-${Date.now()}`, ...)
 // ✅ GOOD: await step.do(`step-${event.instanceId}`, ...)
 ```
 
 ### State in Variables
+
 ```typescript
 // ❌ BAD: let total = 0; await step.do('step 1', async () => { total += 10; }); // Lost on hibernation
 // ✅ GOOD: const total = await step.do('step 1', async () => 10); // Persisted
 ```
 
 ### Non-Deterministic Conditionals
+
 ```typescript
 // ❌ BAD: if (Date.now() > deadline) { await step.do(...) }
 // ✅ GOOD: const isLate = await step.do('check', async () => Date.now() > deadline); if (isLate) { await step.do(...) }
 ```
 
 ### Large Step Returns
+
 ```typescript
 // ❌ BAD: return await fetchHugeDataset(); // 5 MiB
 // ✅ GOOD: Store in R2, return { key }
 ```
 
 ### Idempotency Ignored
+
 ```typescript
 // ❌ BAD: await step.do('charge', async () => await chargeCustomer(...)); // Charges on retry
 // ✅ GOOD: Check if already charged first
 ```
 
 ### Instance ID Collision
+
 ```typescript
 // ❌ BAD: await env.MY_WORKFLOW.create({ id: userId, params: {} }); // Reuses IDs
 // ✅ GOOD: await env.MY_WORKFLOW.create({ id: `${userId}-${Date.now()}`, params: {} });
 ```
 
 ### Missing await
+
 ```typescript
 // ❌ BAD: step.do('task', ...); // Fire-and-forget
 // ✅ GOOD: await step.do('task', ...);

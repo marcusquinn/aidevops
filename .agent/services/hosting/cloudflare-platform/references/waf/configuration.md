@@ -12,6 +12,7 @@ While Wrangler primarily manages Workers, WAF configuration is typically done vi
 - Use `wrangler.toml` for environment-specific configurations
 
 **Example: Using Cloudflare API from Worker**:
+
 ```typescript
 // Worker that calls WAF API
 export default {
@@ -33,6 +34,7 @@ export default {
 ### TypeScript SDK Usage
 
 **Installation**:
+
 ```bash
 npm install cloudflare
 # or
@@ -40,5 +42,6 @@ pnpm add cloudflare
 ```
 
 **Basic Setup**:
+
 ```typescript
 import Cloud

@@ -3,6 +3,7 @@
 ## Lifecycle
 
 **onStart()** - Init/hibernation restart:
+
 ```ts
 onStart() {
   this.sql`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT)`;
@@ -11,6 +12,7 @@ onStart() {
 ```
 
 **onRequest(req)** - HTTP:
+
 ```ts
 async onRequest(req: Request) {
   const {pathname} = new URL(req.url);
@@ -20,6 +22,7 @@ async onRequest(req: Request) {
 ```
 
 **onConnect(conn, ctx)** - WebSocket:
+
 ```ts
 async onConnect(conn: Connection, ctx: ConnectionContext) {
   conn.accept();
@@ -29,6 +32,7 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
 ```
 
 **onMessage(conn, msg)** - WS messages:
+
 ```ts
 async onMessage(conn: Connection, msg: WSMessage) {
   const m = JSON.parse(msg as string);
@@ -40,6 +44,7 @@ async onMessage(conn: Connection, msg: WSMessage) {
 ```
 
 **onEmail(email)** - Email routing:
+
 ```ts
 async onEmail(email: AgentEmail) {
   const text = await email.text();

@@ -17,6 +17,7 @@
 5. Using Block action (must use Managed Challenge)
 
 **CSP Fix**:
+
 ```txt
 Content-Security-Policy: script-src 'self' /cdn-cgi/challenge-platform/;
 ```
@@ -28,10 +29,12 @@ Content-Security-Policy: script-src 'self' /cdn-cgi/challenge-platform/;
 1. Check Bot Analytics for affected IPs/paths
 2. Identify detection source (ML, Heuristics, etc.)
 3. Create exception rule:
+
 ```txt
 (cf.bot_management.score lt 30 and http.request.uri.path eq "/problematic-path")
 Action: Skip (Bot Management)
 ```
+
 4. Or allowlist by IP/ASN/country
 
 ## False Negatives (Bots Not Caught)

@@ -114,6 +114,7 @@ npx wrangler pipelines create my-pipeline \
 **Supported types**: `string`, `int32`, `int64`, `float32`, `float64`, `bool`, `timestamp`, `json`, `binary`, `list`, `struct`
 
 **Unstructured streams** (no validation, single `value` column):
+
 ```bash
 npx wrangler pipelines streams create my-stream
 ```
@@ -123,6 +124,7 @@ npx wrangler pipelines streams create my-stream
 ### Via Workers (Recommended)
 
 **Configuration** (`wrangler.toml`):
+
 ```toml
 [[pipelines]]
 pipeline = "<STREAM_ID>"
@@ -130,6 +132,7 @@ binding = "STREAM"
 ```
 
 **Or JSON** (`wrangler.jsonc`):
+
 ```jsonc
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
@@ -143,6 +146,7 @@ binding = "STREAM"
 ```
 
 **Worker code**:
+
 ```typescript
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -162,6 +166,7 @@ export default {
 ```
 
 **Batch sending**:
+
 ```typescript
 const events = [
   { user_id: "user1", event_type: "view" },
@@ -175,6 +180,7 @@ await env.STREAM.send(events);
 **Endpoint format**: `https://{stream-id}.ingest.cloudflare.com`
 
 **Without auth** (for testing):
+
 ```bash
 curl -X POST https://{stream-id}.ingest.cloudflare.com \
   -H "Content-Type: application/json" \
@@ -189,6 +195,7 @@ curl -X POST https://{stream-id}.ingest.cloudflare.com \
 ```
 
 **With authentication**:
+
 ```bash
 curl -X POST https://{stream-id}.ingest.cloudflare.com \
   -H "Content-Type: application/json" \
@@ -203,11 +210,13 @@ curl -X POST https://{stream-id}.ingest.cloudflare.com \
 ### Basic Patterns
 
 **Pass-through**:
+
 ```sql
 INSERT INTO my_sink SELECT * FROM my_stream
 ```
 
 **Filtering**:
+
 ```sql
 INSERT INTO my_sink
 SELECT * FROM my_stream
@@ -215,6 +224,7 @@ WHERE event_type = 'purchase' AND amount > 100
 ```
 
 **Field selection**:
+
 ```sql
 INSERT INTO my_sink
 SELECT user_id, event_type, timestamp, amount
@@ -222,6 +232,7 @@ FROM my_stream
 ```
 
 **Field transformation**:
+
 ```sql
 INSERT INTO my_sink
 SELECT
@@ -234,6 +245,7 @@ FROM my_stream
 ```
 
 **Conditional logic**:
+
 ```sql
 INSERT INTO my_sink
 SELECT
@@ -253,6 +265,7 @@ WHERE event_type IN ('purchase', 'refund')
 ### R2 Data Catalog (Iceberg Tables)
 
 **Create sink**:
+
 ```bash
 npx wrangler pipelines sinks create my-sink \
   --type r2-data-catalog \
@@ -272,6 +285,7 @@ npx wrangler pipelines sinks create my-sink \
 - `--target-row-group-size`: Parquet row group size in MB (default: 256)
 
 **Querying with R2 SQL**:
+
 ```bash
 export WRANGLER_R2_SQL_AUTH_TOKEN=YOUR_API_TOKEN
 
@@ -286,6 +300,7 @@ LIMIT 100"
 ### R2 Storage (Raw Files)
 
 **JSON format**:
+
 ```bash
 npx wrangler pipelines sinks create my-sink \
   --type r2 \
@@ -300,6 +315,7 @@ npx wrangler pipelines sinks create my-sink \
 ```
 
 **Parquet format** (better compression/performance):
+
 ```bash
 npx wrangler pipelines sinks create my-sink \
   --type r2 \
@@ -316,6 +332,7 @@ npx wrangler pipelines sinks create my-sink \
 ```
 
 **File organization**:
+
 ```
 bucket/analytics/events/
   year=2025/
@@ -438,6 +455,7 @@ For authenticated HTTP ingestion endpoints.
 ## Best Practices
 
 ### Schema Design
+
 - ✅ Use structured streams for validation
 - ✅ Mark critical fields as `required: true`
 - ✅ Use appropriate types (`int64` for timestamps, `float64` for decimals)
@@ -445,12 +463,14 @@ For authenticated HTTP ingestion endpoints.
 - ❌ Don't change schemas after creation (recreate stream)
 
 ### Performance
+
 - **Low latency**: Set `--roll-interval 10` (smaller files, more frequent)
 - **Query performance**: Set `--roll-interval 300` and `--roll-size 100` (larger files, less frequent)
 - Use `zstd` compression for best ratio, `snappy` for speed
 - Increase `--target-row-group-size` for analytical workloads
 
 ### SQL Transformations
+
 - ✅ Filter early (`WHERE` clauses reduce data volume)
 - ✅ Select only needed fields (reduces storage costs)
 - ✅ Use functions for enrichment (CONCAT, UPPER, CASE)
@@ -458,6 +478,7 @@ For authenticated HTTP ingestion endpoints.
 - ❌ No JOINs across streams (single stream per pipeline)
 
 ### Workers Integration
+
 - ✅ Use Worker bindings (no token management)
 - ✅ Batch events when possible (`send([event1, event2, ...])`)
 - ✅ Handle send errors gracefully
@@ -478,12 +499,14 @@ export default {
 ```
 
 ### HTTP Ingestion
+
 - ✅ Enable auth for production endpoints
 - ✅ Configure CORS if sending from browsers
 - ✅ Send arrays (not single objects) for batch efficiency
 - ✅ Handle 4xx/5xx responses with retries
 
 ### Monitoring
+
 - Check stream buffer status (dashboard or API)
 - Monitor pipeline processing rate
 - Review R2 storage growth
@@ -504,23 +527,27 @@ Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 ## Troubleshooting
 
 ### Events not appearing in R2
+
 - Wait 10-300 seconds (depends on `--roll-interval`)
 - Check pipeline status: `npx wrangler pipelines get <ID>`
 - Verify stream has data (check dashboard metrics)
 - Confirm sink credentials are valid
 
 ### Schema validation failures
+
 - Events accepted but dropped if invalid
 - Check event structure matches schema exactly
 - Verify required fields are present
 - Check data types (e.g., strings not numbers)
 
 ### Worker binding not found
+
 - Verify `wrangler.toml`/`wrangler.jsonc` has correct `pipeline` ID
 - Redeploy Worker after adding binding
 - Check binding name matches code (`env.STREAM`)
 
 ### SQL errors
+
 - SQL cannot be modified after creation
 - Recreate pipeline with corrected SQL
 - Verify stream and sink names in SQL match actual resources
@@ -529,6 +556,7 @@ Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 ## Complete Example: Ecommerce Analytics
 
 **1. Create schema** (`ecommerce-schema.json`):
+
 ```json
 {
   "fields": [
@@ -562,6 +590,7 @@ Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 ```
 
 **2. Setup infrastructure**:
+
 ```bash
 # Create bucket and enable catalog
 npx wrangler r2 bucket create ecommerce-data
@@ -598,6 +627,7 @@ npx wrangler pipelines create ecommerce-pipeline \
 ```
 
 **3. Configure Worker** (`wrangler.toml`):
+
 ```toml
 name = "ecommerce-api"
 main = "src/index.ts"
@@ -608,6 +638,7 @@ binding = "EVENTS"
 ```
 
 **4. Send events** (`src/index.ts`):
+
 ```typescript
 interface Env {
   EVENTS: Pipeline;
@@ -640,6 +671,7 @@ export default {
 ```
 
 **5. Query results**:
+
 ```bash
 export WRANGLER_R2_SQL_AUTH_TOKEN=$CATALOG_TOKEN
 

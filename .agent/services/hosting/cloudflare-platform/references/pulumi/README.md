@@ -27,6 +27,7 @@ Programmatic management of Cloudflare resources: Workers, Pages, D1, KV, R2, DNS
 Three methods (mutually exclusive):
 
 **1. API Token (Recommended)**
+
 ```typescript
 import * as cloudflare from "@pulumi/cloudflare";
 
@@ -34,28 +35,34 @@ const provider = new cloudflare.Provider("cf", {
     apiToken: process.env.CLOUDFLARE_API_TOKEN,
 });
 ```
+
 Env: `CLOUDFLARE_API_TOKEN`
 
 **2. API Key (Legacy)**
+
 ```typescript
 const provider = new cloudflare.Provider("cf", {
     apiKey: process.env.CLOUDFLARE_API_KEY,
     email: process.env.CLOUDFLARE_EMAIL,
 });
 ```
+
 Env: `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL`
 
 **3. API User Service Key**
+
 ```typescript
 const provider = new cloudflare.Provider("cf", {
     apiUserServiceKey: process.env.CLOUDFLARE_API_USER_SERVICE_KEY,
 });
 ```
+
 Env: `CLOUDFLARE_API_USER_SERVICE_KEY`
 
 ## Setup
 
 **Pulumi.yaml:**
+
 ```yaml
 name: my-cloudflare-app
 runtime: nodejs
@@ -65,12 +72,14 @@ config:
 ```
 
 **Pulumi.<stack>.yaml:**
+
 ```yaml
 config:
   cloudflare:accountId: "abc123..."
 ```
 
 **index.ts:**
+
 ```typescript
 import * as pulumi from "@pulumi/pulumi";
 import * as cloudflare from "@pulumi/cloudflare";
@@ -80,12 +89,14 @@ const accountId = config.require("accountId");
 ```
 
 ## Essential Imports
+
 ```typescript
 import * as pulumi from "@pulumi/pulumi";
 import * as cloudflare from "@pulumi/cloudflare";
 ```
 
 ## Common Resource Types
+
 - `Provider` - Provider config
 - `WorkerScript` - Worker
 - `WorkersKvNamespace` - KV
@@ -98,6 +109,7 @@ import * as cloudflare from "@pulumi/cloudflare";
 - `WorkersDomain` - Custom domain
 
 ## Key Properties
+
 - `accountId` - Required for most resources
 - `zoneId` - Required for DNS/domain
 - `name`/`title` - Resource identifier

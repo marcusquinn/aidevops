@@ -1,4 +1,5 @@
 ### Best Practices
+
 - Keep files under size limits
 - Use supported formats
 - Maintain valid Service API token
@@ -8,6 +9,7 @@
 ## Configuration via Dashboard
 
 ### 1. Create Instance
+
 ```
 Dashboard → AI Search → Create
 → Choose data source (R2 bucket or Website)
@@ -16,12 +18,14 @@ Dashboard → AI Search → Create
 ```
 
 ### 2. Monitor Indexing
+
 ```
 AI Search → Select instance → Overview
 View: indexing status, progress, stats
 ```
 
 ### 3. Test Queries
+
 ```
 AI Search → Select instance → Playground
 → "Search with AI" or "Search"
@@ -29,6 +33,7 @@ AI Search → Select instance → Playground
 ```
 
 ### 4. Get API Token
+
 ```
 AI Search → Select instance → Use AI Search → API
 → Create API Token
@@ -36,6 +41,7 @@ AI Search → Select instance → Use AI Search → API
 ```
 
 ### 5. Connect to Application
+
 ```
 AI Search → Select instance → Connect
 C

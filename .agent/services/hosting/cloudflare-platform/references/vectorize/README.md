@@ -100,6 +100,7 @@ npx wrangler vectorize list-vectors <index-name> \
 ### Configuration
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
@@ -113,6 +114,7 @@ npx wrangler vectorize list-vectors <index-name> \
 ```
 
 **wrangler.toml:**
+
 ```toml
 [[vectorize]]
 binding = "VECTORIZE"  # Available as env.VECTORIZE
@@ -200,6 +202,7 @@ const matches = await env.VECTORIZE.query(queryVector, {
 ```
 
 **Response:**
+
 ```typescript
 interface VectorizeMatches {
   count: number;
@@ -455,6 +458,7 @@ with open('embeddings.ndjson', 'rb') as f:
 - Inserting 2500 vectors at a time = 200K+ vectors per job = fast
 
 **Example:**
+
 ```typescript
 // BAD: 250,000 individual inserts = 250 jobs = ~1 hour
 for (const vector of vectors) {

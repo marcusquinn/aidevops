@@ -33,6 +33,7 @@ export default {
 ```
 
 **wrangler.jsonc**:
+
 ```jsonc
 {
   "name": "my-sandbox-worker",
@@ -58,6 +59,7 @@ export default {
 ```
 
 **Dockerfile**:
+
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
 RUN pip3 install --no-cache-dir pandas numpy matplotlib

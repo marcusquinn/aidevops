@@ -27,6 +27,7 @@ All requests serve static, functions never run.
 Type errors for `context.env`
 
 **Fix:**
+
 ```typescript
 interface Env { MY_BINDING: KVNamespace; }
 

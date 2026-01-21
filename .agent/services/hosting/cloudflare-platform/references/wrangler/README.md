@@ -25,6 +25,7 @@ Run commands: `npx wrangler <command>` (or `pnpm`/`yarn wrangler`)
 ## Essential Commands
 
 ### Project & Development
+
 ```bash
 wrangler init [name]              # Create new project
 wrangler dev                      # Local dev server
@@ -40,6 +41,7 @@ wrangler whoami                   # Check auth status
 ## Resource Management
 
 ### KV
+
 ```bash
 wrangler kv namespace create NAME
 wrangler kv key put "key" "value" --namespace-id=<id>
@@ -47,6 +49,7 @@ wrangler kv key get "key" --namespace-id=<id>
 ```
 
 ### D1
+
 ```bash
 wrangler d1 create NAME
 wrangler d1 execute NAME --command "SQL"
@@ -55,6 +58,7 @@ wrangler d1 migrations apply NAME
 ```
 
 ### R2
+
 ```bash
 wrangler r2 bucket create NAME
 wrangler r2 object put BUCKET/key --file path
@@ -62,6 +66,7 @@ wrangler r2 object get BUCKET/key
 ```
 
 ### Other Resources
+
 ```bash
 wrangler queues create NAME
 wrangler vectorize create NAME --dimensions N --metric cosine
@@ -69,6 +74,7 @@ wrangler hyperdrive create NAME --connection-string "..."
 ```
 
 ### Secrets
+
 ```bash
 wrangler secret put NAME          # Set secret
 wrangler secret list              # List secrets
@@ -76,6 +82,7 @@ wrangler secret delete NAME       # Delete secret
 ```
 
 ### Monitoring
+
 ```bash
 wrangler tail                     # Real-time logs
 wrangler tail --env production    # Tail specific env

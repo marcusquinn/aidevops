@@ -40,4 +40,3 @@ curl "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/spectrum/apps" \
     "proxy_protocol": "v1",
     "tls": "off",
     "origin_dns": {
- 

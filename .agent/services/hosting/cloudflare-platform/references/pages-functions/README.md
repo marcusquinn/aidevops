@@ -24,6 +24,7 @@ Serverless functions on Cloudflare Pages using Workers runtime. Full-stack dev w
 ## Dynamic Routes
 
 **Single segment** `[param]` → string:
+
 ```js
 // /functions/users/[user].js
 export function onRequest(context) {
@@ -33,6 +34,7 @@ export function onRequest(context) {
 ```
 
 **Multi-segment** `[[param]]` → array:
+
 ```js
 // /functions/users/[[catchall]].js
 export function onRequest(context) {

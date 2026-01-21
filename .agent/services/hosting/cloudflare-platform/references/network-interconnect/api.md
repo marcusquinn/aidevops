@@ -12,35 +12,45 @@ Auth: Authorization: Bearer <token>
 ## Interconnects
 
 ### List
+
 ```http
 GET /accounts/{account_id}/cni/interconnects
 ```
+
 Query: `page`, `per_page`
 
 ### Create
+
 ```http
 POST /accounts/{account_id}/cni/interconnects
 ```
+
 Body: `account`, `slot_id`, `type`, `facility`, `speed`, `name`, `description`
 
 ### Get
+
 ```http
 GET /accounts/{account_id}/cni/interconnects/{icon}
 ```
 
 ### Status
+
 ```http
 GET /accounts/{account_id}/cni/interconnects/{icon}/status
 ```
+
 Returns: `active` | `unhealthy` | `pending`
 
 ### LOA
+
 ```http
 GET /accounts/{account_id}/cni/interconnects/{icon}/loa
 ```
+
 Returns PDF.
 
 ### Delete
+
 ```http
 DELETE /accounts/{account_id}/cni/interconnects/{icon}
 ```
@@ -48,17 +58,21 @@ DELETE /accounts/{account_id}/cni/interconnects/{icon}
 ## CNI Objects (BGP config)
 
 ### List
+
 ```http
 GET /accounts/{account_id}/cni/cnis
 ```
 
 ### Create
+
 ```http
 POST /accounts/{account_id}/cni/cnis
 ```
+
 Body: `account`, `cust_ip`, `cf_ip`, `bgp_asn`, `bgp_password`, `vlan`
 
 ### Get/Update/Delete
+
 ```http
 GET /accounts/{account_id}/cni/cnis/{cni}
 PUT /accounts/{account_id}/cni/cnis/{cni}
@@ -68,12 +82,15 @@ DELETE /accounts/{account_id}/cni/cnis/{cni}
 ## Slots
 
 ### List
+
 ```http
 GET /accounts/{account_id}/cni/slots
 ```
+
 Query: `facility`, `occupied`
 
 ### Get
+
 ```http
 GET /accounts/{account_id}/cni/slots/{slot}
 ```
@@ -81,10 +98,12 @@ GET /accounts/{account_id}/cni/slots/{slot}
 ## Settings
 
 ### Get/Update
+
 ```http
 GET /accounts/{account_id}/cni/settings
 PUT /accounts/{account_id}/cni/settings
 ```
+
 Body: `default_asn`
 
 ## TypeScript SDK

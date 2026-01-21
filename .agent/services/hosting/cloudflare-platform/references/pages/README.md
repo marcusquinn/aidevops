@@ -13,15 +13,18 @@ JAMstack platform for full-stack apps on Cloudflare's global network.
 ## Deployment Methods
 
 ### 1. Git Integration (Production)
+
 Dashboard → Workers & Pages → Create → Connect to Git → Configure build
 
 ### 2. Direct Upload
+
 ```bash
 npx wrangler pages deploy ./dist --project-name=my-project
 npx wrangler pages deploy ./dist --project-name=my-project --branch=staging
 ```
 
 ### 3. C3 CLI
+
 ```bash
 npm create cloudflare@latest my-app
 # Select framework → auto-setup + deploy

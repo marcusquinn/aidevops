@@ -13,6 +13,7 @@ R2 SQL is Cloudflare's serverless distributed analytics query engine for queryin
 ## Core Concepts
 
 ### Apache Iceberg Table Format
+
 - Open table format for large-scale analytics datasets
 - ACID transactions for reliable concurrent reads/writes
 - Schema evolution - add/rename/drop columns without rewriting data
@@ -20,6 +21,7 @@ R2 SQL is Cloudflare's serverless distributed analytics query engine for queryin
 - Supported by Spark, Trino, Snowflake, DuckDB, ClickHouse, PyIceberg
 
 ### R2 Data Catalog
+
 - Managed Apache Iceberg catalog built into R2 bucket
 - Exposes standard Iceberg REST catalog interface
 - Single source of truth for table metadata
@@ -27,6 +29,7 @@ R2 SQL is Cloudflare's serverless distributed analytics query engine for queryin
 - Supports multiple query engines safely accessing same tables
 
 ### Architecture
+
 **Query Planner**:
 - Top-down metadata investigation
 - Multi-layer pruning (partition-level, column-level, row-group level)
@@ -50,6 +53,7 @@ R2 SQL is Cloudflare's serverless distributed analytics query engine for queryin
 ### 1. Enable R2 Data Catalog
 
 CLI:
+
 ```bash
 npx wrangler r2 bucket catalog enable <bucket-name>
 ```
@@ -77,6 +81,7 @@ export WRANGLER_R2_SQL_AUTH_TOKEN=<your-token>
 ```
 
 Or `.env` file:
+
 ```
 WRANGLER_R2_SQL_AUTH_TOKEN=<your-token>
 ```
@@ -256,6 +261,7 @@ SELECT * FROM ns.logs ORDER BY user_id;  -- ERROR
 ### Create Pipeline with Data Catalog Sink
 
 Schema file (`schema.json`):
+
 ```json
 {
   "fields": [
@@ -267,6 +273,7 @@ Schema file (`schema.json`):
 ```
 
 Setup:
+
 ```bash
 npx wrangler pipelines setup
 ```
@@ -300,6 +307,7 @@ curl -X POST https://{stream-id}.ingest.cloudflare.com \
 ## Common Use Cases
 
 ### Log Analytics
+
 - Ingest logs via Pipelines to Iceberg table
 - Partition by day(timestamp) for efficient queries
 - Query specific time ranges with automatic pruning
@@ -315,6 +323,7 @@ ORDER BY COUNT(*) DESC;
 ```
 
 ### Fraud Detection
+
 - Stream transaction events to catalog
 - Query suspicious patterns with WHERE filters
 - Aggregate by location, merchant, time windows
@@ -329,6 +338,7 @@ HAVING COUNT(*) > 10;
 ```
 
 ### Business Intelligence
+
 - ETL data into partitioned Iceberg tables
 - Run analytical queries across large datasets
 - Generate reports with GROUP BY aggregations
@@ -349,24 +359,28 @@ LIMIT 10;
 ## Performance Optimization
 
 ### Partitioning Strategy
+
 - Choose partition key based on common query patterns
 - Typical: day(timestamp), hour(timestamp), region, category
 - Enables metadata pruning to skip entire partitions
 - Required for ORDER BY optimization
 
 ### Query Optimization
+
 - Use WHERE filters to leverage partition/column stats
 - Specify LIMIT to enable early termination
 - ORDER BY partition key columns only
 - Filter on high-selectivity columns first
 
 ### Data Organization
+
 - Smaller files → slower queries (overhead)
 - Larger files → better compression, fewer metadata ops
 - Recommended: 100-500MB Parquet files after compression
 - Use appropriate roll intervals in Pipelines (300+ seconds for prod)
 
 ### File Pruning
+
 Automatic at three levels:
 1. Partition-level: Skip manifests not matching query
 2. File-level: Skip Parquet files via column stats
@@ -395,6 +409,7 @@ bucket/
 ## Limitations & Best Practices
 
 ### Current Limitations (Open Beta)
+
 - ORDER BY only on partition key columns
 - COUNT(*) only - COUNT(column) not supported
 - No aliases in SELECT
@@ -403,6 +418,7 @@ bucket/
 - LIMIT max 10,000
 
 ### Best Practices
+
 - Partition by time dimension for time-series data
 - Use BETWEEN for time ranges (leverages partition pruning)
 - Combine filters with AND for better pruning
@@ -411,6 +427,7 @@ bucket/
 - Monitor query performance and adjust partitioning
 
 ### Type Safety
+
 - Quote string values: 'value'
 - Use RFC3339 for timestamps: '2025-01-01T00:00:00Z'
 - Use YYYY-MM-DD for dates: '2025-01-01'
@@ -421,6 +438,7 @@ bucket/
 R2 Data Catalog supports standard Iceberg REST catalog API.
 
 ### Spark (Scala)
+
 ```scala
 val spark = SparkSession.builder()
   .config("spark.sql.catalog.my_catalog", "org.apache.iceberg.spark.SparkCatalog")
@@ -432,11 +450,13 @@ val spark = SparkSession.builder()
 ```
 
 ### Snowflake
+
 - Create external Iceberg catalog connection
 - Configure with Catalog URI and R2 credentials
 - Query tables via SQL interface
 
 ### DuckDB, Trino, ClickHouse
+
 - Supported via Iceberg REST catalog protocol
 - Refer to engine-specific documentation for configuration
 

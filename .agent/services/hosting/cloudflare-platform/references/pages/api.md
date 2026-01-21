@@ -67,6 +67,7 @@ interface EventContext<Env, Params, Data> {
 ## Dynamic Routes
 
 ### Single Segment
+
 ```typescript
 // functions/users/[id].ts
 export const onRequestGet: PagesFunction = async ({ params }) => {
@@ -76,6 +77,7 @@ export const onRequestGet: PagesFunction = async ({ params }) => {
 ```
 
 ### Multi-Segment
+
 ```typescript
 // functions/files/[[path]].ts
 export const onRequestGet: PagesFunction = async ({ params }) => {

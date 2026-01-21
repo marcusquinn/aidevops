@@ -20,13 +20,16 @@ Configuration reference for wrangler.jsonc (recommended) and wrangler.toml.
 ## Field Categories
 
 ### Top-Level Only
+
 - `keep_vars`, `migrations`, `send_metrics`
 
 ### Inheritable (can override per env)
+
 - `name`, `main`, `compatibility_date`, `account_id`
 - `workers_dev`, `routes`, `triggers`, `minify`, `observability`
 
 ### Non-Inheritable (per-env required)
+
 - `vars`, `kv_namespaces`, `d1_databases`, `r2_buckets`
 - `durable_objects`, `vectorize`, `hyperdrive`, `services`, `queues`
 

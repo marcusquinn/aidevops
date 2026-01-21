@@ -259,6 +259,7 @@ try {
 ### Dashboard Setup
 
 **Create gateway:**
+
 ```bash
 # Via Dashboard: AI > AI Gateway > Create Gateway
 # Or via API:
@@ -487,6 +488,7 @@ const response = await client.chat.completions.create(
 Currently, caching requires identical requests. Semantic caching (similar but not identical requests) is planned.
 
 **Current workaround:**
+
 ```typescript
 // Use cf-aig-cache-key for grouped responses
 const normalizedPrompt = normalizePrompt(userInput); // Your logic
@@ -664,11 +666,13 @@ See real-world usage:
 ## Quick Reference
 
 **Create gateway:**
+
 ```bash
 Dashboard → AI → AI Gateway → Create Gateway
 ```
 
 **Basic request:**
+
 ```typescript
 const client = new OpenAI({
   baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/compat`
@@ -676,17 +680,20 @@ const client = new OpenAI({
 ```
 
 **Check cache status:**
+
 ```bash
 # Response header: cf-aig-cache-status: HIT|MISS
 ```
 
 **Get account/gateway IDs:**
+
 ```bash
 # Account ID: Dashboard → Overview → Account ID
 # Gateway ID: Dashboard → AI Gateway → Gateway name/ID
 ```
 
 **Required env vars:**
+
 ```bash
 CF_ACCOUNT_ID=xxx
 GATEWAY_ID=xxx

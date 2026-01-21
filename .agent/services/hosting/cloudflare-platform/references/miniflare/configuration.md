@@ -3,16 +3,19 @@
 ## Script Loading
 
 **Inline:**
+
 ```js
 new Miniflare({ modules: true, script: `export default { ... }` });
 ```
 
 **File-based:**
+
 ```js
 new Miniflare({ scriptPath: "worker.js" });
 ```
 
 **Multi-module auto-crawl:**
+
 ```js
 new Miniflare({
   scriptPath: "src/index.js",
@@ -25,6 +28,7 @@ new Miniflare({
 ```
 
 **Explicit modules:**
+
 ```js
 new Miniflare({
   modules: [
@@ -57,6 +61,7 @@ new Miniflare({
 ```
 
 **Request.cf:**
+
 ```js
 cf: true,        // Fetch from Cloudflare
 cf: "cf.json",   // Load from file
@@ -66,18 +71,21 @@ cf: false,       // Disable
 ## Storage Bindings
 
 **KV:**
+
 ```js
 kvNamespaces: ["TEST_NAMESPACE", "CACHE"],
 kvPersist: "./kv-data", // Optional: persist to disk
 ```
 
 **R2:**
+
 ```js
 r2Buckets: ["BUCKET", "IMAGES"],
 r2Persist: "./r2-data",
 ```
 
 **Durable Objects:**
+
 ```js
 modules: true,
 durableObjects: {
@@ -88,12 +96,14 @@ durableObjectsPersist: "./do-data",
 ```
 
 **D1:**
+
 ```js
 d1Databases: ["DB"],
 d1Persist: "./d1-data",
 ```
 
 **Cache:**
+
 ```js
 cache: true, // Default
 cachePersist: "./cache-data",
@@ -103,6 +113,7 @@ cacheWarnUsage: true,
 ## Bindings
 
 **Environment variables:**
+
 ```js
 bindings: {
   SECRET_KEY: "my-secret-value",
@@ -112,17 +123,20 @@ bindings: {
 ```
 
 **WASM:**
+
 ```js
 wasmBindings: { ADD_MODULE: "./add.wasm" },
 ```
 
 **Text/Data blobs:**
+
 ```js
 textBlobBindings: { TEXT: "./data.txt" },
 dataBlobBindings: { DATA: "./data.bin" },
 ```
 
 **Queue producers:**
+
 ```js
 queueProducers: ["QUEUE"],
 ```
@@ -179,17 +193,20 @@ Update `/etc/hosts`: `127.0.0.1 api.example.com`
 ## Advanced
 
 **Logging:**
+
 ```js
 import { Log, LogLevel } from "miniflare";
 new Miniflare({ log: new Log(LogLevel.DEBUG) }); // DEBUG, INFO, WARN, ERROR
 ```
 
 **Live reload:**
+
 ```js
 liveReload: true, // Auto-reload HTML on worker reload
 ```
 
 **Workers Site:**
+
 ```js
 sitePath: "./public",
 siteInclude: ["**/*.html", "**/*.css"],

@@ -45,6 +45,7 @@ interface ScheduledController {
 ```
 
 **Parse time:**
+
 ```typescript
 const date = new Date(controller.scheduledTime);
 console.log(date.toISOString());

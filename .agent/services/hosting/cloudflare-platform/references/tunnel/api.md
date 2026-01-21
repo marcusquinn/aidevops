@@ -5,6 +5,7 @@
 **Base URL**: `https://api.cloudflare.com/client/v4`
 
 **Authentication**:
+
 ```bash
 Authorization: Bearer ${CF_API_TOKEN}
 ```
@@ -61,15 +62,18 @@ curl -X DELETE "https://api.cloudflare.com/client/v4/accounts/{account_id}/tunne
 ## Remotely-Managed Tunnels
 
 ### Via Dashboard
+
 1. **Zero Trust** > **Networks** > **Tunnels**
 2. **Create a tunnel** > **Cloudflared**
 3. Copy install command with token
 4. Run on origin:
+
 ```bash
 cloudflared service install <TOKEN>
 ```
 
 ### Via Token
+
 ```bash
 # Run with token (no config file needed)
 cloudflared tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}

@@ -60,6 +60,7 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 ## Architecture Patterns
 
 ### Public API (High Security)
+
 ```
 Cloudflare Edge
 ├── API Discovery (identify endpoints)
@@ -71,6 +72,7 @@ Cloudflare Edge
 ```
 
 ### Partner API (mTLS + Schema)
+
 ```
 Cloudflare Edge
 ├── mTLS (verify client certs)
@@ -80,6 +82,7 @@ Cloudflare Edge
 ```
 
 ### Internal API (Discovery + Monitoring)
+
 ```
 Cloudflare Edge
 ├── API Discovery (map shadow APIs)
@@ -106,18 +109,21 @@ Cloudflare Edge
 ## Monitoring
 
 **Security Events:**
+
 ```
 Security > Events
 Filter: Action = block, Service = API Shield
 ```
 
 **Firewall Analytics:**
+
 ```
 Analytics > Security
 Filter by cf.api_gateway.* fields
 ```
 
 **Logpush fields:**
+
 ```json
 {
   "APIGatewayAuthIDPresent": true,

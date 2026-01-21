@@ -3,6 +3,7 @@
 ## SQLite-backed (Recommended)
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "migrations": [
@@ -15,6 +16,7 @@
 ```
 
 **wrangler.toml:**
+
 ```toml
 [[migrations]]
 tag = "v1"
@@ -24,6 +26,7 @@ new_sqlite_classes = ["Counter", "Session"]
 ## KV-backed (Legacy)
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "migrations": [

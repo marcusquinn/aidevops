@@ -75,16 +75,19 @@ database_id = "xxx"
 ## Requirements & Limitations
 
 ### Requirements
+
 - **Wrangler version:** 2.20.0+
 - **Analysis time:** Up to 15 minutes
 - **Traffic requirements:** Consistent multi-location traffic
 - **Workers plan:** All plans (Free, Paid, Enterprise)
 
 ### What Smart Placement Affects
+
 - ✅ **Affects:** `fetch` event handlers only
 - ❌ **Does NOT affect:** RPC methods, named entrypoints, Workers without fetch handlers
 
 ### Baseline Traffic
+
 Smart Placement automatically routes 1% of requests WITHOUT optimization as baseline for performance comparison.
 
 ## Dashboard Configuration

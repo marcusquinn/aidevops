@@ -1,6 +1,7 @@
 ## Best Practices
 
 ### Authentication & Security
+
 1. **Use Admin Read & Write tokens** for read/write operations
 2. **Use Admin Read only tokens** for read-only query engines
 3. **Store tokens securely** in environment variables, not code
@@ -8,6 +9,7 @@
 5. **Use catalog-level maintenance** with service tokens for automation
 
 ### Performance Optimization
+
 1. **Enable compaction** for all production tables
 2. **Choose appropriate target file sizes**:
    - Start with 128 MB for most workloads
@@ -17,4 +19,5 @@
 5. **Monitor query performance** and adjust compaction settings
 
 ### Data Modeling
+
 1. **Use namespaces** to organiz

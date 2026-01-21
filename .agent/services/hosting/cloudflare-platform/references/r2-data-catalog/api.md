@@ -7,6 +7,7 @@
 3. Copy token value
 
 **API Method (Programmatic):**
+
 ```json
 {
   "policies": [{

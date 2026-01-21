@@ -1,6 +1,7 @@
 ## Best Practices
 
 ### Always Close Browsers
+
 ```typescript
 // ❌ BAD - Session stays open until timeout
 const browser = await puppeteer.launch(env.MYBROWSER);
@@ -20,6 +21,7 @@ try {
 ```
 
 ### Optimize Concurrency
+
 Instead of launching multiple browsers:
 - Use multiple tabs in single browser
 - Reuse sessions with session IDs

@@ -76,12 +76,14 @@ ctx.waitUntil(conn.end());
 ## Query Caching
 
 **Cacheable:**
+
 ```sql
 SELECT * FROM posts WHERE published = true;
 SELECT COUNT(*) FROM users;
 ```
 
 **NOT cacheable:**
+
 ```sql
 -- Writes
 INSERT/UPDATE/DELETE
@@ -99,6 +101,7 @@ SELECT UUID();     -- MySQL
 - Disable: `--caching-disabled=true`
 
 **Multiple configs pattern:**
+
 ```typescript
 // Reads: cached
 const sqlCached = postgres(env.HYPERDRIVE_CACHED.connectionString);
@@ -112,6 +115,7 @@ const orders = await sqlNoCache`SELECT * FROM orders WHERE created_at > NOW() - 
 ## ORMs
 
 **Drizzle:**
+
 ```typescript
 import { drizzle } from "drizzle-orm/postgres-js";  // drizzle-orm@^0.26.2
 import postgres from "postgres";
@@ -122,6 +126,7 @@ const users = await db.select().from(users).where(eq(users.active, true)).limit(
 ```
 
 **Kysely:**
+
 ```typescript
 import { Kysely, PostgresDialect } from "kysely";  // kysely@^0.26.3
 import postgres from "postgres";

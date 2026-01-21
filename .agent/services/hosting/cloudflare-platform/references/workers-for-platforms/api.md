@@ -11,6 +11,7 @@ curl -X PUT \
 ```
 
 ### TypeScript SDK
+
 ```typescript
 import Cloudflare from "cloudflare";
 
@@ -31,6 +32,7 @@ await client.workersForPlatforms.dispatch.namespaces.scripts.update(
 ```
 
 ## Deploy with Bindings
+
 ```bash
 curl -X PUT ".../scripts/$SCRIPT_NAME" \
   -F 'metadata={
@@ -63,6 +65,7 @@ curl -X DELETE ".../scripts?tags=customer-123%3Ayes" -H "Authorization: Bearer $
 **3-step process:** Create session → Upload files → Deploy Worker
 
 ### 1. Create Upload Session
+
 ```bash
 curl -X POST ".../scripts/$SCRIPT_NAME/assets-upload-session" \
   -H "Authorization: Bearer $API_TOKEN" \
@@ -77,6 +80,7 @@ curl -X POST ".../scripts/$SCRIPT_NAME/assets-upload-session" \
 **Hash:** First 16 bytes (32 hex chars) of SHA-256
 
 ### 2. Upload Files
+
 ```bash
 curl -X POST ".../workers/assets/upload?base64=true" \
   -H "Authorization: Bearer $UPLOAD_JWT" \
@@ -85,6 +89,7 @@ curl -X POST ".../workers/assets/upload?base64=true" \
 ```
 
 ### 3. Deploy with Assets
+
 ```bash
 curl -X PUT ".../scripts/$SCRIPT_NAME" \
   -F 'metadata={
@@ -96,6 +101,7 @@ curl -X PUT ".../scripts/$SCRIPT_NAME" \
 ```
 
 **Asset Isolation:** Assets shared across namespace. For strict isolation, salt hash:
+
 ```typescript
 const hash = sha256(accountId + fileContents).slice(0, 32);
 ```
@@ -103,6 +109,7 @@ const hash = sha256(accountId + fileContents).slice(0, 32);
 ## Dispatch Workers
 
 ### Subdomain Routing
+
 ```typescript
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -114,6 +121,7 @@ export default {
 ```
 
 ### Path Routing
+
 ```typescript
 const pathParts = new URL(request.url).pathname.split("/").filter(Boolean);
 const userWorker = env.DISPATCHER.get(pathParts[0]);
@@ -121,6 +129,7 @@ return await userWorker.fetch(request);
 ```
 
 ### KV Routing
+
 ```typescript
 const hostname = new URL(request.url).hostname;
 const userWorkerName = await env.ROUTING_KV.get(hostname);
@@ -133,6 +142,7 @@ return await userWorker.fetch(request);
 Control external fetch from user Workers:
 
 ### Configure
+
 ```typescript
 const userWorker = env.DISPATCHER.get(
   workerName, {},
@@ -141,6 +151,7 @@ const userWorker = env.DISPATCHER.get(
 ```
 
 ### Implement
+
 ```typescript
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

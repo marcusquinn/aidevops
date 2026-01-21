@@ -31,6 +31,7 @@ wrangler secret delete SECRET_KEY
 ```
 
 `.dev.vars` (gitignored):
+
 ```
 SECRET_KEY=local-dev-key
 ```

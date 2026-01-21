@@ -25,6 +25,7 @@
 **Problem:** `Cannot find module`
 
 **Fix:**
+
 ```js
 // Use absolute paths or modulesRules
 new Miniflare({
@@ -41,6 +42,7 @@ new Miniflare({
 **Problem:** Data not persisting between runs
 
 **Fix:**
+
 ```js
 // Ensure persist paths are directories, not files
 new Miniflare({
@@ -55,6 +57,7 @@ new Miniflare({
 **Problem:** Cannot directly run TypeScript
 
 **Fix:**
+
 ```js
 // Build before running
 import { spawnSync } from "node:child_process";
@@ -72,6 +75,7 @@ new Miniflare({ scriptPath: "dist/worker.js" });
 **Problem:** `request.cf` is undefined in worker
 
 **Fix:**
+
 ```js
 new Miniflare({
   cf: true, // Fetch from Cloudflare
@@ -85,6 +89,7 @@ new Miniflare({
 **Problem:** `EADDRINUSE` error
 
 **Fix:**
+
 ```js
 // Don't specify port for testing - use dispatchFetch
 new Miniflare({
@@ -100,6 +105,7 @@ const res = await mf.dispatchFetch("http://localhost/");
 **Problem:** `ReferenceError: Counter is not defined`
 
 **Fix:**
+
 ```js
 // Ensure DO class is exported
 new Miniflare({
@@ -117,18 +123,21 @@ new Miniflare({
 ## Debugging Tips
 
 **Enable debug logging:**
+
 ```js
 import { Log, LogLevel } from "miniflare";
 new Miniflare({ log: new Log(LogLevel.DEBUG) });
 ```
 
 **Check binding names match:**
+
 ```js
 const bindings = await mf.getBindings();
 console.log(Object.keys(bindings));
 ```
 
 **Verify storage directly:**
+
 ```js
 const ns = await mf.getKVNamespace("TEST");
 const keys = await ns.list();
@@ -136,6 +145,7 @@ console.log(keys);
 ```
 
 **Test HTTP server separately:**
+
 ```js
 // Use dispatchFetch for tests, not HTTP server
 const res = await mf.dispatchFetch("http://localhost/");
@@ -146,11 +156,13 @@ const res = await mf.dispatchFetch("http://localhost/");
 ### From Wrangler Dev to Miniflare
 
 **Wrangler:**
+
 ```bash
 wrangler dev
 ```
 
 **Miniflare:**
+
 ```js
 new Miniflare({
   scriptPath: "dist/worker.js",

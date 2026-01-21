@@ -5,6 +5,7 @@ Common workflows, full-stack flows, and best practices.
 ## Full-Stack Upload Flow
 
 **Backend API (Next.js route)**
+
 ```typescript
 // app/api/upload-url/route.ts
 export async function POST(req: Request) {
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
 ```
 
 **Frontend component**
+
 ```tsx
 'use client';
 import { useState } from 'react';

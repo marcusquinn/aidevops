@@ -12,6 +12,7 @@ wrangler kv namespace create MY_NAMESPACE --preview  # For local dev
 ## Workers Binding
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "kv_namespaces": [
@@ -24,6 +25,7 @@ wrangler kv namespace create MY_NAMESPACE --preview  # For local dev
 ```
 
 **wrangler.toml:**
+
 ```toml
 [[kv_namespaces]]
 binding = "MY_KV"

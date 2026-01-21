@@ -177,6 +177,7 @@ const domain = new cloudflare.WorkersDomain("my-domain", {
 ## Multi-Language Examples
 
 **Python:**
+
 ```python
 import pulumi
 import pulumi_cloudflare as cloudflare
@@ -191,6 +192,7 @@ worker = cloudflare.WorkerScript("my-worker", account_id=account_id, name="my-wo
 ```
 
 **Go:**
+
 ```go
 import (
     "github.com/pulumi/pulumi-cloudflare/sdk/v6/go/cloudflare"

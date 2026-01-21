@@ -43,6 +43,7 @@ ingress:
 ```
 
 **Validation**:
+
 ```bash
 cloudflared tunnel ingress validate
 cloudflared tunnel ingress rule https://foo.example.com
@@ -63,6 +64,7 @@ cloudflared tunnel ingress rule https://foo.example.com
 ## Origin Configuration
 
 ### Connection Settings
+
 ```yaml
 originRequest:
   connectTimeout: 30s
@@ -73,6 +75,7 @@ originRequest:
 ```
 
 ### TLS Settings
+
 ```yaml
 originRequest:
   noTLSVerify: true                      # Disable cert verification
@@ -81,6 +84,7 @@ originRequest:
 ```
 
 ### HTTP Settings
+
 ```yaml
 originRequest:
   disableChunkedEncoding: true

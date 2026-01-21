@@ -7,6 +7,7 @@ Serverless live and on-demand video streaming platform with one API.
 Cloudflare Stream provides video upload, storage, encoding, and delivery without managing infrastructure. Runs on Cloudflare's global network.
 
 ### Key Features
+
 - **On-demand video**: Upload, encode, store, deliver
 - **Live streaming**: RTMPS/SRT ingestion with ABR
 - **Direct creator uploads**: End users upload without API keys
@@ -20,22 +21,26 @@ Cloudflare Stream provides video upload, storage, encoding, and delivery without
 ## Core Concepts
 
 ### Video Upload Methods
+
 1. **API Upload (TUS protocol)**: Direct server upload
 2. **Upload from URL**: Import from external source
 3. **Direct Creator Uploads**: User-generated content (recommended)
 
 ### Playback Options
+
 1. **Stream Player (iframe)**: Built-in, optimized player
 2. **Custom Player (HLS/DASH)**: Video.js, HLS.js integration
 3. **Thumbnails**: Static or animated previews
 
 ### Access Control
+
 - **Public**: No restrictions
 - **requireSignedURLs**: Token-based access
 - **allowedOrigins**: Domain restrictions
 - **Access Rules**: Geo/IP restrictions in tokens
 
 ### Live Streaming
+
 - RTMPS/SRT ingest from OBS, FFmpeg
 - Automatic recording to on-demand
 - Simulcast to YouTube, Twitch, etc.
@@ -44,6 +49,7 @@ Cloudflare Stream provides video upload, storage, encoding, and delivery without
 ## Quick Start
 
 **Upload video via API**
+
 ```bash
 curl -X POST \
   "https://api.cloudflare.com/client/v4/accounts/{account_id}/stream/copy" \
@@ -53,6 +59,7 @@ curl -X POST \
 ```
 
 **Embed player**
+
 ```html
 <iframe
   src="https://customer-<CODE>.cloudflarestream.com/<VIDEO_ID>/iframe"
@@ -64,6 +71,7 @@ curl -X POST \
 ```
 
 **Create live input**
+
 ```bash
 curl -X POST \
   "https://api.cloudflare.com/client/v4/accounts/{account_id}/stream/live_inputs" \

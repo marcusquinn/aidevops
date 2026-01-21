@@ -3,12 +3,14 @@
 ## Docker Deployment
 
 ### Quick Tunnel
+
 ```dockerfile
 FROM cloudflare/cloudflared:latest
 CMD ["tunnel", "--url", "http://app:8080"]
 ```
 
 ### Named Tunnel
+
 ```yaml
 services:
   cloudflared:
@@ -20,6 +22,7 @@ services:
 ```
 
 ### With Config File
+
 ```yaml
 services:
   cloudflared:
@@ -78,6 +81,7 @@ ingress:
 ```
 
 Run on multiple machines:
+
 ```bash
 # Server 1
 cloudflared tunnel run my-tunnel
@@ -91,6 +95,7 @@ Cloudflare automatically load balances. Long-lived connections (WebSocket, SSH) 
 ## Use Cases
 
 ### Web Application
+
 ```yaml
 ingress:
   - hostname: myapp.example.com
@@ -99,6 +104,7 @@ ingress:
 ```
 
 ### SSH Access
+
 ```yaml
 ingress:
   - hostname: ssh.example.com
@@ -107,11 +113,13 @@ ingress:
 ```
 
 Client:
+
 ```bash
 cloudflared access ssh --hostname ssh.example.com
 ```
 
 ### gRPC Service
+
 ```yaml
 ingress:
   - hostname: grpc.example.com
@@ -122,6 +130,7 @@ ingress:
 ```
 
 ### Multiple Environments
+
 ```yaml
 ingress:
   - hostname: prod.example.com
@@ -136,6 +145,7 @@ ingress:
 ## Service Installation
 
 ### Linux systemd
+
 ```bash
 cloudflared service install
 systemctl start cloudflared
@@ -147,6 +157,7 @@ journalctl -u cloudflared -f
 ```
 
 ### macOS launchd
+
 ```bash
 sudo cloudflared service install
 sudo launchctl start com.cloudflare.cloudflared

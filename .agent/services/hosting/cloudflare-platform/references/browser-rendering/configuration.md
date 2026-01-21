@@ -1,4 +1,5 @@
 ### Wrangler Configuration
+
 ```jsonc
 {
   "name": "browser-worker",
@@ -12,6 +13,7 @@
 ```
 
 ### Basic Pattern
+
 ```typescript
 import puppeteer from "@cloudflare/puppeteer";
 
@@ -36,6 +38,7 @@ export default {
 ```
 
 ### Keep-Alive Sessions
+
 ```javascript
 // Default: 60 seconds idle timeout
 // Max: 10 minutes (600000 ms)

@@ -3,10 +3,12 @@
 ## Product Tiers
 
 ### Bot Fight Mode (Free)
+
 - Auto-blocks definite bots (score=1), excludes verified bots by default
 - JavaScript Detections always enabled, no configuration options
 
 ### Super Bot Fight Mode (Pro/Business)
+
 ```txt
 Dashboard: Security > Bots > Configure
 - Definitely automated: Block/Challenge
@@ -17,6 +19,7 @@ Dashboard: Security > Bots > Configure
 ```
 
 ### Bot Management for Enterprise
+
 ```txt
 Dashboard: Security > Bots > Configure > Auto-updates: ON (recommended)
 
@@ -32,6 +35,7 @@ Action: Managed Challenge
 ## JavaScript Detections Setup
 
 ### Enable via Dashboard
+
 ```txt
 Security > Bots > Configure Bot Management > JS Detections: ON
 
@@ -39,6 +43,7 @@ Update CSP: script-src 'self' /cdn-cgi/challenge-platform/;
 ```
 
 ### Manual JS Injection (API)
+
 ```html
 <script>
 function jsdOnload() {
@@ -52,6 +57,7 @@ function jsdOnload() {
 **Don't combine**: Zone-wide toggle + manual injection
 
 ### WAF Rules for JSD
+
 ```txt
 # NEVER use on first page visit (needs HTML page first)
 (not cf.bot_management.js_detection.passed and http.request.uri.path eq "/api/user/create" and http.request.method eq "POST" and not cf.bot_management.verified_bot)
@@ -59,6 +65,7 @@ Action: Managed Challenge (always use Managed Challenge, not Block)
 ```
 
 ### Limitations
+
 - First request won't have JSD data (needs HTML page first)
 - Strips ETags from HTML responses
 - Not supported with CSP via `<meta>` tags

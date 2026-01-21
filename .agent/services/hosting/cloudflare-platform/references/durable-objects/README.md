@@ -50,23 +50,28 @@ Model each DO around your **atom of coordination**—the logical unit needing se
 ## Core Concepts
 
 ### Class Structure
+
 All DOs extend `DurableObject` base class with constructor receiving `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
 
 ### Accessing from Workers
+
 Workers use bindings to get stubs, then call RPC methods directly (recommended) or use fetch handler (legacy).
 
 ### ID Generation
+
 - `idFromName()`: Deterministic, named coordination
 - `newUniqueId()`: Random IDs for sharding
 - `idFromString()`: Derive from existing IDs
 - Jurisdiction option: Data locality
 
 ### Storage Options
+
 - **SQLite** (recommended): Structured data, transactions, 10GB/DO
 - **Synchronous KV API**: Simple key-value on SQLite objects
 - **Asynchronous KV API**: Legacy/advanced use cases
 
 ### Special Features
+
 - **Alarms**: Schedule future execution per-DO
 - **WebSocket Hibernation**: Zero-cost idle connections
 - **Point-in-Time Recovery**: Restore to any point in 30 days

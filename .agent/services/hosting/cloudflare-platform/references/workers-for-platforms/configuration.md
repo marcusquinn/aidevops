@@ -3,6 +3,7 @@
 ## Dispatch Namespace Binding
 
 ### wrangler.jsonc
+
 ```jsonc
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
@@ -14,6 +15,7 @@
 ```
 
 ### wrangler.toml
+
 ```toml
 [[dispatch_namespaces]]
 binding = "DISPATCHER"
@@ -21,6 +23,7 @@ namespace = "production"
 ```
 
 ### With Outbound Worker
+
 ```jsonc
 {
   "dispatch_namespaces": [{
@@ -62,6 +65,7 @@ const userWorker = env.DISPATCHER.get(
 ```
 
 Handle limit violations:
+
 ```typescript
 try {
   return await userWorker.fetch(request);
@@ -78,6 +82,7 @@ try {
 Deploy HTML/CSS/images with Workers. See [api.md](./api.md#static-assets) for upload process.
 
 ### Wrangler
+
 ```jsonc
 {
   "name": "customer-site",
@@ -98,6 +103,7 @@ npx wrangler deploy --name customer-site --dispatch-namespace production
 Supported: KV, D1, R2, Durable Objects, Analytics Engine, Service, Assets
 
 Add via API metadata (see [api.md](./api.md#deploy-with-bindings)):
+
 ```json
 {
   "bindings": [
@@ -109,6 +115,7 @@ Add via API metadata (see [api.md](./api.md#deploy-with-bindings)):
 ```
 
 Preserve existing bindings:
+
 ```json
 {
   "bindings": [{"type": "r2_bucket", "name": "STORAGE", "bucket_name": "new"}],

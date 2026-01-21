@@ -1,7 +1,7 @@
 ### Common Issues & Solutions
 
 **Issue**: False positives blocking legitimate traffic
-**Solution**: 
+**Solution**:
 - Start with `log` action to monitor
 - Use WAF exceptions for specific endpoints
 - Override managed ruleset rules to less aggressive actions

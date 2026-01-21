@@ -1,6 +1,7 @@
 ## Configuration Options
 
 ### Widget Configurations
+
 ```javascript
 {
   sitekey: 'required',              // Your widget sitekey

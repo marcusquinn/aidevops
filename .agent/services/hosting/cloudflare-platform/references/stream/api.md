@@ -7,6 +7,7 @@ Upload, playback, live streaming, and management APIs.
 ### Direct Creator Upload (Recommended)
 
 **Backend: Create upload URL**
+
 ```typescript
 async function createUploadURL(accountId: string, apiToken: string) {
   const response = await fetch(
@@ -31,6 +32,7 @@ async function createUploadURL(accountId: string, apiToken: string) {
 ```
 
 **Frontend: Upload to Stream**
+
 ```typescript
 async function uploadVideo(file: File, uploadURL: string) {
   const formData = new FormData();

@@ -11,12 +11,14 @@
 ### Configuration
 
 **wrangler.toml:**
+
 ```toml
 [ai]
 binding = "AI"
 ```
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "ai": {
@@ -28,6 +30,7 @@ binding = "AI"
 ### Code Patterns
 
 #### AI Search with Generation
+
 ```typescript
 // Generate AI response with retrieved context
 const answer = await env.AI.autorag("my-autorag").aiSearch({

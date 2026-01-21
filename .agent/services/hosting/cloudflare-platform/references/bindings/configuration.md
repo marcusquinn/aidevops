@@ -3,6 +3,7 @@
 ### JSON vs TOML
 
 **JSON (Recommended for new projects):**
+
 ```jsonc
 // wrangler.jsonc
 {
@@ -17,6 +18,7 @@
 ```
 
 **TOML (Legacy):**
+
 ```toml
 # wrangler.toml
 name = "my-worker"

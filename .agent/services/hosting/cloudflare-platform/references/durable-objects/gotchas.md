@@ -17,11 +17,13 @@
 ## Billing Gotchas
 
 ### Duration Billing Trap
+
 DOs bill for **wall-clock time** while active, not CPU time. WebSocket open 8 hours = 8 hours duration billing, even if DO processed 50 small messages.
 
 **Fix**: Use Hibernatable WebSockets API. DO sleeps while maintaining connections, only wakes (and bills) when messages arrive.
 
 ### storage.list() on Every Request
+
 Storage reads are cheap but not free. Calling `storage.list()` or multiple `storage.get()` on every request adds up.
 
 **Fix**: Profile actual usage. Options:
@@ -30,11 +32,13 @@ Storage reads are cheap but not free. Calling `storage.list()` or multiple `stor
 - Single `storage.get('allData')` with combined object - cheapest if often need multiple keys together
 
 ### Alarm Recursion
+
 Scheduling `setAlarm()` every 5 minutes = 288 wake-ups/day × minimum billable duration. Across thousands of DOs, you're waking them all whether work exists or not.
 
 **Fix**: Only schedule alarms when actual work is pending. Check if alarm is needed before setting.
 
 ### WebSocket Never Closes
+
 If users close browser tabs without proper disconnect and you don't handle it, connection stays "open" from DO's perspective, preventing hibernation.
 
 **Fix**:
@@ -43,6 +47,7 @@ If users close browser tabs without proper disconnect and you don't handle it, c
 3. Use Hibernatable WebSockets API properly
 
 ### Singleton vs Sharding
+
 Global singleton DO handling all traffic = bottleneck + continuous duration billing (never hibernates).
 
 | Design | Cost Pattern |
@@ -54,11 +59,13 @@ Global singleton DO handling all traffic = bottleneck + continuous duration bill
 **Fix**: Use per-entity DOs (per-user, per-room, per-document). They hibernate between activity.
 
 ### Batching Reads
+
 Five separate `storage.get()` calls > one `storage.get(['k1','k2','k3','k4','k5'])`. Each operation has overhead.
 
 **Fix**: Batch reads/writes. Writes without intervening `await` are automatically coalesced into single atomic transaction.
 
 ### Hibernation State Loss
+
 In-memory state is **lost** when DO hibernates or evicts. Waking DO reconstructs from storage.
 
 **Fix**:
@@ -68,11 +75,13 @@ In-memory state is **lost** when DO hibernates or evicts. Waking DO reconstructs
 4. Accept every wake is potentially "cold"
 
 ### Fan-Out Tax
+
 Event notifying 1,000 DOs = 1,000 DO invocations billed immediately. Queue pattern doesn't reduce invocations but provides retries and batching.
 
 **Fix**: For time-sensitive, accept cost. For deferrable, use Queues for retry/dead-letter handling.
 
 ### Idempotency Key Explosion
+
 Creating one DO per idempotency key (used once) = millions of single-use DOs that persist until deleted.
 
 **Fix**:
@@ -82,16 +91,19 @@ Creating one DO per idempotency key (used once) = millions of single-use DOs tha
 4. Consider if KV is sufficient (if strong consistency not needed)
 
 ### Storage Compaction
+
 Individual writes billed per-operation. Writing 100 events individually = 100× the write operations vs batching.
 
 **Fix**: Batch writes. Multiple `INSERT` statements without intervening `await` coalesce into single transaction.
 
 ### waitUntil() Behavior
+
 `ctx.waitUntil()` keeps DO alive (billed) until promises resolve. Waiting for slow external calls = paying for wait time.
 
 **Fix**: For true background work, use alarms or Queues instead of `waitUntil()`.
 
 ### KV vs DO Storage
+
 For read-heavy, write-rare, eventually-consistent-OK data: **KV is cheaper**.
 
 | | KV | DO Storage |

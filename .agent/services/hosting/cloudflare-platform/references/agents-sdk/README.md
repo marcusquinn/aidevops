@@ -3,9 +3,11 @@
 Cloudflare Agents SDK enables building AI-powered agents on Durable Objects with state, WebSockets, SQL, scheduling, and AI integration.
 
 ## Core Value
+
 Build stateful, globally distributed AI agents with persistent memory, real-time connections, scheduled tasks, and async workflows.
 
 ## When to Use
+
 - Persistent state + memory required
 - Real-time WebSocket connections
 - Long-running workflows (minutes/hours)
@@ -14,6 +16,7 @@ Build stateful, globally distributed AI agents with persistent memory, real-time
 - DB queries with agent state
 
 ## Quick Start
+
 ```typescript
 import { Agent } from "agents";
 
@@ -29,6 +32,7 @@ export class MyAgent extends Agent<Env> {
 ```
 
 ## See Also
+
 - durable-objects - Agent infrastructure
 - d1 - External database integration
 - workers-ai - AI model integration

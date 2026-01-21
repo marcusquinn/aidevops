@@ -482,6 +482,7 @@ export default {
 ## Best Practices
 
 1. **Always close sockets:**
+
    ```typescript
    const socket = connect(...);
    try {
@@ -496,6 +497,7 @@ export default {
 3. **Validate destinations** - Prevent connections to unintended hosts
 
 4. **Handle errors gracefully:**
+
    ```typescript
    try {
      const socket = connect(...);

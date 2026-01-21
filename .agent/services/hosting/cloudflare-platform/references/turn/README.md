@@ -17,18 +17,22 @@ Cloudflare TURN (Traversal Using Relays around NAT) Service is a managed relay s
 ## Service Addresses and Ports
 
 ### STUN over UDP
+
 - **Primary**: `stun.cloudflare.com:3478/udp`
 - **Alternate**: `stun.cloudflare.com:53/udp` (not recommended as primary, blocked by many ISPs/browsers)
 
 ### TURN over UDP
+
 - **Primary**: `turn.cloudflare.com:3478/udp`
 - **Alternate**: `turn.cloudflare.com:53/udp`
 
 ### TURN over TCP
+
 - **Primary**: `turn.cloudflare.com:3478/tcp`
 - **Alternate**: `turn.cloudflare.com:80/tcp`
 
 ### TURN over TLS
+
 - **Primary**: `turn.cloudflare.com:5349/tcp`
 - **Alternate**: `turn.cloudflare.com:443/tcp`
 
@@ -39,16 +43,19 @@ All API endpoints require authentication with a Cloudflare API token with "Calls
 Base URL: `https://api.cloudflare.com/client/v4`
 
 ### List TURN Keys
+
 ```
 GET /accounts/{account_id}/calls/turn_keys
 ```
 
 ### Get TURN Key Details
+
 ```
 GET /accounts/{account_id}/calls/turn_keys/{key_id}
 ```
 
 ### Create TURN Key
+
 ```
 POST /accounts/{account_id}/calls/turn_keys
 Content-Type: application/json
@@ -66,6 +73,7 @@ Content-Type: application/json
 - `modified`: ISO 8601 timestamp
 
 ### Update TURN Key
+
 ```
 PUT /accounts/{account_id}/calls/turn_keys/{key_id}
 Content-Type: application/json
@@ -76,6 +84,7 @@ Content-Type: application/json
 ```
 
 ### Delete TURN Key
+
 ```
 DELETE /accounts/{account_id}/calls/turn_keys/{key_id}
 ```
@@ -95,6 +104,7 @@ Content-Type: application/json
 ```
 
 **Response**:
+
 ```json
 {
   "iceServers": {
@@ -395,6 +405,7 @@ async function fetchTURNServers(
 ## Common Use Cases
 
 ### 1. Video Conferencing
+
 Use TURN as fallback when direct peer-to-peer fails due to restrictive NATs/firewalls.
 
 ```typescript
@@ -405,6 +416,7 @@ const config: RTCConfiguration = {
 ```
 
 ### 2. Screen Sharing Applications
+
 Ensure connectivity for high-bandwidth screen sharing streams.
 
 ```typescript
@@ -416,6 +428,7 @@ const pc = new RTCPeerConnection({
 ```
 
 ### 3. IoT Device Communication
+
 Enable WebRTC for devices behind restrictive NATs.
 
 ```typescript
@@ -427,6 +440,7 @@ const config: RTCConfiguration = {
 ```
 
 ### 4. Live Streaming (WHIP/WHEP)
+
 Integrate with Cloudflare Stream for low-latency broadcasting.
 
 ```typescript
@@ -448,16 +462,19 @@ Limits apply per allocation, not account-wide. Exceeding limits results in packe
 ## TLS Configuration
 
 ### Supported TLS Versions
+
 - TLS 1.1
 - TLS 1.2
 - TLS 1.3
 
 ### Recommended Ciphers (TLS 1.3)
+
 - AEAD-AES128-GCM-SHA256
 - AEAD-AES256-GCM-SHA384
 - AEAD-CHACHA20-POLY1305-SHA256
 
 ### Recommended Ciphers (TLS 1.2)
+
 - ECDHE-ECDSA-AES128-GCM-SHA256
 - ECDHE-RSA-AES128-GCM-SHA256
 - ECDHE-RSA-AES128-SHA (also TLS 1.1)
@@ -516,6 +533,7 @@ vars = { ENVIRONMENT = "production" }
    - Use a backend API endpoint
 
 2. **Implement rate limiting**
+
    ```typescript
    // Limit credential generation per client
    const rateLimiter = new Map<string, number>();
@@ -538,6 +556,7 @@ vars = { ENVIRONMENT = "production" }
    - Long-lived sessions: 86400 seconds (24 hours max recommended)
 
 4. **Validate client authentication**
+
    ```typescript
    async function validateClient(request: Request): Promise<boolean> {
      const token = request.headers.get('Authorization')?.split(' ')[1];
@@ -556,6 +575,7 @@ vars = { ENVIRONMENT = "production" }
 ## Troubleshooting
 
 ### Issue: TURN credentials not working
+
 **Check:**
 - Key ID and secret are correct
 - Credentials haven't expired (check TTL)
@@ -563,6 +583,7 @@ vars = { ENVIRONMENT = "production" }
 - Network allows outbound HTTPS
 
 ### Issue: Slow connection establishment
+
 **Solutions:**
 - Ensure proper ICE candidate gathering
 - Check network latency to Cloudflare edge
@@ -570,6 +591,7 @@ vars = { ENVIRONMENT = "production" }
 - Consider using TURN over TLS (port 443)
 
 ### Issue: High packet loss
+
 **Check:**
 - Not exceeding rate limits (5-10k pps)
 - Not exceeding bandwidth limits (50-100 Mbps)
@@ -651,18 +673,21 @@ class TURNMonitor {
 ## Architecture Considerations
 
 ### Anycast Benefits
+
 - **Automatic routing**: Clients connect to nearest location
 - **No region selection**: BGP handles routing
 - **Low latency**: 95% of users within 50ms of edge
 - **Fault tolerance**: Network handles failover
 
 ### When to Use TURN
+
 - **Restrictive NATs**: Symmetric NATs that block direct connections
 - **Corporate firewalls**: Environments blocking WebRTC ports
 - **Mobile networks**: Carrier-grade NAT scenarios
 - **Predictable connectivity**: When reliability > efficiency
 
 ### Integration with Cloudflare Calls SFU
+
 ```typescript
 // TURN is automatically used when needed
 // Cloudflare Calls handles TURN + SFU coordination

@@ -10,6 +10,7 @@
 5. Log size under 256 KB limit
 
 **Solution**:
+
 ```bash
 # Verify config
 cat wrangler.toml | grep -A 5 observability
@@ -30,7 +31,8 @@ curl https://your-worker.workers.dev
 4. Check destination status in dashboard
 
 **Solution**:
+
 ```jsonc
 // Temporarily set to 100% sampling for debugging
 {
-  "observability": 
+  "observability":

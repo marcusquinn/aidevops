@@ -10,6 +10,7 @@ Combine Argo Smart Routing with Tiered Cache for maximum performance:
 - Combined: optimal network path + reduced origin load
 
 **Enable Both Services:**
+
 ```typescript
 async function enableArgoWithTieredCache(
   client: Cloudflare,
@@ -32,6 +33,7 @@ async function enableArgoWithTieredCache(
 ```
 
 **Architecture Flow:**
+
 ```
 Visitor → Edge Data Center (Lower-Tier)
          ↓ [Cache Miss]

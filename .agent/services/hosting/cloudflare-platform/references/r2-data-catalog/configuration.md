@@ -1,6 +1,7 @@
 ## Configuration
 
 ### Prerequisites
+
 - Cloudflare account with R2 subscription
 - R2 bucket created
 - API token with both R2 Storage and R2 Data Catalog permissions
@@ -8,6 +9,7 @@
 ### Enable Catalog on Bucket
 
 **Via Wrangler:**
+
 ```bash
 npx wrangler r2 bucket catalog enable <BUCKET_NAME>
 ```
@@ -30,6 +32,7 @@ npx wrangler r2 bucket catalog enable <BUCKET_NAME>
 3. Copy token value
 
 **API Method (Programmatic):**
+
 ```json
 {
   "policies": [{

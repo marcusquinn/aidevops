@@ -23,6 +23,7 @@ Smart Placement automatically analyzes Worker request duration across Cloudflare
 ### Key Architecture Pattern
 
 **Recommended:** Split full-stack applications into separate Workers:
+
 ```
 User → Frontend Worker (at edge, close to user)
          ↓ Service Binding

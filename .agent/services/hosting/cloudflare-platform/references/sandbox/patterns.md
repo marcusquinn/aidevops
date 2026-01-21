@@ -167,6 +167,7 @@ export default {
 ## Jupyter Integration
 
 **Dockerfile**:
+
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
 RUN pip3 install --no-cache-dir jupyter-server ipykernel matplotlib pandas
@@ -174,6 +175,7 @@ EXPOSE 8888
 ```
 
 **Worker**:
+
 ```typescript
 await sandbox.startProcess('jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser', {
   processId: 'jupyter',

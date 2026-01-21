@@ -28,6 +28,7 @@ class Miniflare {
 ## Event Dispatching
 
 **Fetch (no HTTP server):**
+
 ```js
 const res = await mf.dispatchFetch("http://localhost:8787/path", {
   method: "POST",
@@ -37,6 +38,7 @@ const res = await mf.dispatchFetch("http://localhost:8787/path", {
 ```
 
 **Custom Host routing:**
+
 ```js
 const res = await mf.dispatchFetch("http://localhost:8787/", {
   headers: { "Host": "api.example.com" },
@@ -44,6 +46,7 @@ const res = await mf.dispatchFetch("http://localhost:8787/", {
 ```
 
 **Scheduled:**
+
 ```js
 const worker = await mf.getWorker();
 const result = await worker.scheduled({ cron: "30 * * * *" });
@@ -51,6 +54,7 @@ const result = await worker.scheduled({ cron: "30 * * * *" });
 ```
 
 **Queue:**
+
 ```js
 const worker = await mf.getWorker();
 const result = await worker.queue("queue-name", [
@@ -62,12 +66,14 @@ const result = await worker.queue("queue-name", [
 ## Bindings Access
 
 **Environment variables:**
+
 ```js
 const bindings = await mf.getBindings();
 console.log(bindings.SECRET_KEY);
 ```
 
 **KV:**
+
 ```js
 const ns = await mf.getKVNamespace("TEST_NAMESPACE");
 await ns.put("key", "value");
@@ -75,6 +81,7 @@ const value = await ns.get("key");
 ```
 
 **R2:**
+
 ```js
 const bucket = await mf.getR2Bucket("BUCKET");
 await bucket.put("file.txt", "content");
@@ -82,6 +89,7 @@ const object = await bucket.get("file.txt");
 ```
 
 **Durable Objects:**
+
 ```js
 const ns = await mf.getDurableObjectNamespace("COUNTER");
 const id = ns.idFromName("test");
@@ -94,6 +102,7 @@ await storage.put("key", "value");
 ```
 
 **D1:**
+
 ```js
 const db = await mf.getD1Database("DB");
 await db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)`);
@@ -101,6 +110,7 @@ await db.prepare("INSERT INTO users (name) VALUES (?)").bind("Alice").run();
 ```
 
 **Cache:**
+
 ```js
 const caches = await mf.getCaches();
 const defaultCache = caches.default;
@@ -108,6 +118,7 @@ await defaultCache.put("http://example.com", new Response("cached"));
 ```
 
 **Queue producer:**
+
 ```js
 const producer = await mf.getQueueProducer("QUEUE");
 await producer.send({ body: "message data" });
@@ -116,6 +127,7 @@ await producer.send({ body: "message data" });
 ## Lifecycle
 
 **Reload:**
+
 ```js
 await mf.setOptions({
   scriptPath: "worker.js",
@@ -124,6 +136,7 @@ await mf.setOptions({
 ```
 
 **Watch (manual):**
+
 ```js
 import { watch } from "fs";
 
@@ -137,6 +150,7 @@ watch("worker.js", async () => {
 ```
 
 **Cleanup:**
+
 ```js
 await mf.dispose();
 ```

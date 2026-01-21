@@ -11,6 +11,7 @@ wrangler queues create my-queue --delivery-delay-secs=300
 ## Producer Binding
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "queues": {
@@ -26,6 +27,7 @@ wrangler queues create my-queue --delivery-delay-secs=300
 ```
 
 **wrangler.toml:**
+
 ```toml
 [[queues.producers]]
 queue = "my-queue-name"
@@ -36,6 +38,7 @@ delivery_delay = 60
 ## Consumer Configuration (Push-based)
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "queues": {
@@ -54,6 +57,7 @@ delivery_delay = 60
 ```
 
 **wrangler.toml:**
+
 ```toml
 [[queues.consumers]]
 queue = "my-queue-name"
@@ -67,6 +71,7 @@ retry_delay = 300
 ## Consumer Configuration (Pull-based)
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "queues": {

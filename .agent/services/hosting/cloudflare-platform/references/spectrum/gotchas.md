@@ -3,6 +3,7 @@
 ### Issue: Connection timeouts
 
 **Diagnosis:**
+
 ```bash
 # Test connectivity to Spectrum app
 nc -zv app.example.com 22
@@ -34,6 +35,7 @@ Ensure origin application parses proxy protocol headers.
 ### Issue: TLS errors
 
 **Diagnosis:**
+
 ```bash
 openssl s_client -connect app.example.com:443 -showcerts
 ```

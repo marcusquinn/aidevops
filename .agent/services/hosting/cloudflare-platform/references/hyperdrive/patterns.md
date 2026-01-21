@@ -97,6 +97,7 @@ return Response.json({
 Operates in **transaction mode**: connection acquired per transaction, `RESET` on return.
 
 **SET statements:**
+
 ```typescript
 // ✅ Within transaction
 await client.query("BEGIN");
@@ -113,6 +114,7 @@ await client.query("SELECT * FROM large_table");  // SET not applied
 ```
 
 **Best practices:**
+
 ```typescript
 // ❌ Long transactions block pooling
 await client.query("BEGIN");
@@ -134,6 +136,7 @@ await client.query("COMMIT");
 ## Performance Tips
 
 **1. Enable prepared statements:**
+
 ```typescript
 // ✅ Best
 const sql = postgres(connectionString, {prepare: true});  // Caching enabled
@@ -143,6 +146,7 @@ const sql = postgres(connectionString, {prepare: false}); // Extra round-trips
 ```
 
 **2. Optimize settings:**
+
 ```typescript
 const sql = postgres(connectionString, {
   max: 5,             // Limit per Worker
@@ -153,6 +157,7 @@ const sql = postgres(connectionString, {
 ```
 
 **3. Cache-friendly queries:**
+
 ```typescript
 // ✅ Cacheable (deterministic)
 await sql`SELECT * FROM products WHERE category = 'electronics' LIMIT 10`;
@@ -166,6 +171,7 @@ await sql`SELECT * FROM logs WHERE created_at > ${ts}`;
 ```
 
 **4. Monitor cache hits:**
+
 ```typescript
 const start = Date.now();
 const result = await sql`SELECT * FROM users LIMIT 10`;

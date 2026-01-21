@@ -3,6 +3,7 @@
 ## Wrangler Setup
 
 **wrangler.toml:**
+
 ```toml
 name = "my-worker"
 main = "src/index.ts"
@@ -19,6 +20,7 @@ cpu_ms = 300_000  # 5 min max (default 30s)
 ```
 
 **wrangler.jsonc:**
+
 ```jsonc
 {
   "name": "my-worker",
@@ -32,6 +34,7 @@ cpu_ms = 300_000  # 5 min max (default 30s)
 ## Step Configuration
 
 ### Basic Step
+
 ```typescript
 const data = await step.do('step name', async () => {
   return { result: 'value' };
@@ -39,6 +42,7 @@ const data = await step.do('step name', async () => {
 ```
 
 ### Retry Config
+
 ```typescript
 await step.do('api call', {
   retries: {
@@ -55,6 +59,7 @@ await step.do('api call', {
 ```
 
 ### Parallel Steps
+
 ```typescript
 const [user, settings] = await Promise.all([
   step.do('fetch user', async () => this.env.KV.get(`user:${id}`)),
@@ -63,6 +68,7 @@ const [user, settings] = await Promise.all([
 ```
 
 ### Conditional Steps
+
 ```typescript
 const config = await step.do('fetch config', async () => 
   this.env.KV.get('flags', { type: 'json' })
@@ -78,6 +84,7 @@ if (Date.now() > deadline) { /* BAD */ }
 ```
 
 ### Dynamic Steps (Loops)
+
 ```typescript
 const files = await step.do('list files', async () => 
   this.env.BUCKET.list()
@@ -110,6 +117,7 @@ Sleeping instances don't count toward concurrency.
 ## Parameters
 
 **Pass from Worker:**
+
 ```typescript
 const instance = await env.MY_WORKFLOW.create({
   id: crypto.randomUUID(),
@@ -118,6 +126,7 @@ const instance = await env.MY_WORKFLOW.create({
 ```
 
 **Access in Workflow:**
+
 ```typescript
 async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
   const userId = event.payload.userId;
@@ -127,6 +136,7 @@ async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
 ```
 
 **CLI Trigger:**
+
 ```bash
 npx wrangler workflows trigger my-workflow '{"userId":"user123"}'
 ```
@@ -158,6 +168,7 @@ class_name = "DataProcessing"
 ## Cross-Script Bindings
 
 **billing-worker** defines workflow:
+
 ```toml
 [[workflows]]
 name = "billing-workflow"
@@ -166,6 +177,7 @@ class_name = "BillingWorkflow"
 ```
 
 **web-api-worker** calls it:
+
 ```toml
 [[workflows]]
 name = "billing-workflow"

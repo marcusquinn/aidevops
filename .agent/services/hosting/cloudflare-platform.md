@@ -5,7 +5,6 @@ imported_from: external
 ---
 # cloudflare
 
-
 # Cloudflare Platform Skill
 
 Consolidated skill for building on the Cloudflare platform. Use decision trees below to find the right product, then load detailed references.
@@ -17,6 +16,7 @@ Consolidated skill for building on the Cloudflare platform. Use decision trees b
 Each product in `./references/<product>/` contains a `README.md` as the entry point, which may be structured in one of two ways:
 
 **Multi-file format (5 files):**
+
 | File | Purpose | When to Read |
 |------|---------|--------------|
 | `README.md` | Overview, when to use, getting started | **Always read first** |
@@ -130,6 +130,7 @@ Need IaC?
 ## Product Index
 
 ### Compute & Runtime
+
 | Product | Entry File |
 |---------|------------|
 | Workers | `./references/workers/README.md` |
@@ -145,6 +146,7 @@ Need IaC?
 | Smart Placement | `./references/smart-placement/README.md` |
 
 ### Storage & Data
+
 | Product | Entry File |
 |---------|------------|
 | KV | `./references/kv/README.md` |
@@ -159,6 +161,7 @@ Need IaC?
 | R2 SQL | `./references/r2-sql/README.md` |
 
 ### AI & Machine Learning
+
 | Product | Entry File |
 |---------|------------|
 | Workers AI | `./references/workers-ai/README.md` |
@@ -168,6 +171,7 @@ Need IaC?
 | AI Search | `./references/ai-search/README.md` |
 
 ### Networking & Connectivity
+
 | Product | Entry File |
 |---------|------------|
 | Tunnel | `./references/tunnel/README.md` |
@@ -178,6 +182,7 @@ Need IaC?
 | Workers VPC | `./references/workers-vpc/README.md` |
 
 ### Security
+
 | Product | Entry File |
 |---------|------------|
 | WAF | `./references/waf/README.md` |
@@ -187,6 +192,7 @@ Need IaC?
 | Turnstile | `./references/turnstile/README.md` |
 
 ### Media & Content
+
 | Product | Entry File |
 |---------|------------|
 | Images | `./references/images/README.md` |
@@ -195,12 +201,14 @@ Need IaC?
 | Zaraz | `./references/zaraz/README.md` |
 
 ### Real-Time Communication
+
 | Product | Entry File |
 |---------|------------|
 | RealtimeKit | `./references/realtimekit/README.md` |
 | Realtime SFU | `./references/realtime-sfu/README.md` |
 
 ### Developer Tools
+
 | Product | Entry File |
 |---------|------------|
 | Wrangler | `./references/wrangler/README.md` |
@@ -214,6 +222,7 @@ Need IaC?
 | Workers Playground | `./references/workers-playground/README.md` |
 
 ### Infrastructure as Code
+
 | Product | Entry File |
 |---------|------------|
 | Pulumi | `./references/pulumi/README.md` |
@@ -221,6 +230,7 @@ Need IaC?
 | API | `./references/api/README.md` |
 
 ### Other Services
+
 | Product | Entry File |
 |---------|------------|
 | Email Routing | `./references/email-routing/README.md` |

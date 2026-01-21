@@ -5,6 +5,7 @@
 **Endpoint**: `https://api.cloudflare.com/client/v4/graphql`
 
 **Query Workers Metrics**:
+
 ```graphql
 query {
   viewer {

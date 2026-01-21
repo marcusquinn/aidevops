@@ -43,4 +43,4 @@ export default {
 
 ```typescript
 export default {
-  async email(message, env, 
+  async email(message, env,

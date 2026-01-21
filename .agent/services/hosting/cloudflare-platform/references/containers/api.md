@@ -1,6 +1,7 @@
 ### HTTP Requests
 
 **Default port (recommended):**
+
 ```typescript
 // Uses defaultPort from Container class
 const container = env.MY_CONTAINER.getByName("id");
@@ -8,6 +9,7 @@ const response = await container.fetch(request);
 ```
 
 **Specific port:**
+
 ```typescript
 const port = this.ctx.container.getTcpPort(8080);
 const response = await port.fetch("http://container/api", {

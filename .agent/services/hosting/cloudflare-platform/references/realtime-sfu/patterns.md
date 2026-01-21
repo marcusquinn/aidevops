@@ -13,6 +13,7 @@ Client (WebRTC) <---> CF Edge <---> Backend (HTTP)
 Anycast: Last-mile <50ms (95%), no region select, NACK shield, distributed consensus
 
 Cascading trees auto-scale to millions:
+
 ```
 Publisher -> Edge A -> Edge B -> Sub1
                     \-> Edge C -> Sub2,3
@@ -28,6 +29,7 @@ Publisher -> Edge A -> Edge B -> Sub1
 ## Backend
 
 Express:
+
 ```js
 app.post('/api/new-session', async (req, res) => {
   const r = await fetch(`${CALLS_API}/apps/${process.env.CALLS_APP_ID}/sessions/new`,
@@ -37,6 +39,7 @@ app.post('/api/new-session', async (req, res) => {
 ```
 
 Workers:
+
 ```ts
 export default {
   async fetch(req: Request, env: Env) {
@@ -47,6 +50,7 @@ export default {
 ```
 
 DO Presence:
+
 ```ts
 export class Room {
   sessions = new Map(); // sessionId -> {userId, tracks: [{trackName, kind}]}
@@ -73,6 +77,7 @@ export class Room {
 ## Advanced
 
 Bandwidth mgmt:
+
 ```ts
 const s = pc.getSenders().find(s => s.track?.kind === 'video');
 const p = s.getParameters();
@@ -82,6 +87,7 @@ await s.setParameters(p);
 ```
 
 Simulcast (CF auto-forwards best layer):
+
 ```ts
 pc.addTransceiver('video', {direction: 'sendonly', sendEncodings: [
   {rid: 'high', maxBitrate: 1200000},
@@ -91,6 +97,7 @@ pc.addTransceiver('video', {direction: 'sendonly', sendEncodings: [
 ```
 
 DataChannel:
+
 ```ts
 const dc = pc.createDataChannel('chat', {ordered: true, maxRetransmits: 3});
 dc.onopen = () => dc.send(JSON.stringify({type: 'chat', text: 'Hi'}));
