@@ -15,8 +15,8 @@ class Aidevops < Formula
   depends_on "curl"
 
   def install
-    # Install the CLI script
-    bin.install "aidevops.sh" => "aidevops"
+    # Install the CLI script to libexec (not bin, to avoid double-write conflict)
+    libexec.install "aidevops.sh"
     
     # Install setup script for manual setup
     libexec.install "setup.sh"
@@ -25,7 +25,7 @@ class Aidevops < Formula
     (share/"aidevops").install ".agent"
     (share/"aidevops").install "VERSION"
     
-    # Create wrapper that sets up paths
+    # Create wrapper in bin that calls the libexec script
     (bin/"aidevops").write <<~EOS
       #!/usr/bin/env bash
       export AIDEVOPS_SHARE="#{share}/aidevops"

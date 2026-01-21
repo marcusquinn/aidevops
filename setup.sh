@@ -1374,6 +1374,17 @@ deploy_aidevops_agents() {
     local source_dir="$script_dir/.agent"
     local target_dir="$HOME/.aidevops/agents"
     
+    # Validate source directory exists (catches curl install from wrong directory)
+    if [[ ! -d "$source_dir" ]]; then
+        print_error "Agent source directory not found: $source_dir"
+        print_info "This usually means setup.sh was run from the wrong directory."
+        print_info "The bootstrap should have cloned the repo and re-executed."
+        print_info ""
+        print_info "To fix manually:"
+        print_info "  cd ~/Git/aidevops && ./setup.sh"
+        return 1
+    fi
+    
     # Create backup if target exists (with rotation)
     if [[ -d "$target_dir" ]]; then
         create_backup_with_rotation "$target_dir" "agents"
@@ -1805,14 +1816,20 @@ setup_python_env() {
 
     # Install DSPy dependencies
     print_info "Installing DSPy dependencies..."
+    # shellcheck source=/dev/null
     source python-env/dspy-env/bin/activate
     pip install --upgrade pip > /dev/null 2>&1
-    pip install -r requirements.txt > /dev/null 2>&1
-
-    if [[ $? -eq 0 ]]; then
+    
+    local pip_output
+    if pip_output=$(pip install -r requirements.txt 2>&1); then
         print_success "DSPy dependencies installed successfully"
     else
-        print_warning "Failed to install DSPy dependencies - check requirements.txt"
+        print_warning "Failed to install DSPy dependencies:"
+        # Show last few lines of error for debugging
+        echo "$pip_output" | tail -8 | sed 's/^/  /'
+        echo ""
+        print_info "Check requirements.txt or run manually:"
+        print_info "  source python-env/dspy-env/bin/activate && pip install -r requirements.txt"
     fi
 }
 
@@ -2176,11 +2193,16 @@ setup_browser_tools() {
             print_success "dev-browser already installed"
         else
             print_info "Installing dev-browser (stateful browser automation)..."
-            if bash "$AGENTS_DIR/scripts/dev-browser-helper.sh" setup 2>/dev/null; then
+            local dev_browser_output
+            if dev_browser_output=$(bash "$HOME/.aidevops/agents/scripts/dev-browser-helper.sh" setup 2>&1); then
                 print_success "dev-browser installed"
                 print_info "Start server with: bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start"
             else
-                print_warning "dev-browser setup failed - run manually:"
+                print_warning "dev-browser setup failed:"
+                # Show last few lines of error output for debugging
+                echo "$dev_browser_output" | tail -5 | sed 's/^/  /'
+                echo ""
+                print_info "Run manually to see full output:"
                 print_info "  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup"
             fi
         fi
@@ -2216,9 +2238,21 @@ setup_ai_orchestration() {
             print_success "Python $python_version found (3.10+ required)"
         else
             print_warning "Python 3.10+ required for AI orchestration, found $python_version"
+            echo ""
+            echo "  Upgrade options:"
+            echo "    macOS (Homebrew): brew install python@3.12"
+            echo "    macOS (pyenv):    pyenv install 3.12 && pyenv global 3.12"
+            echo "    Ubuntu/Debian:    sudo apt install python3.12"
+            echo "    Fedora:           sudo dnf install python3.12"
+            echo ""
         fi
     else
         print_warning "Python 3 not found - AI orchestration frameworks unavailable"
+        echo ""
+        echo "  Install options:"
+        echo "    macOS: brew install python@3.12"
+        echo "    Linux: sudo apt install python3 (or dnf/pacman)"
+        echo ""
         return 0
     fi
     
