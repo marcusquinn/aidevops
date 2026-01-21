@@ -51,15 +51,23 @@ validate_version_consistency() {
         errors=$((errors + 1))
     fi
     
-    # Check README badge
+    # Check README badge (optional - dynamic GitHub release badge is preferred)
+    # If using dynamic badge (github.io/v/release), skip hardcoded version check
     if [[ -f "$REPO_ROOT/README.md" ]]; then
-        if grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
+        if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
+            print_success "README.md uses dynamic GitHub release badge (recommended)"
+        elif grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
             print_success "README.md badge: $expected_version"
         else
             local current_badge
             current_badge=$(grep -o "Version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue" "$REPO_ROOT/README.md" || echo "not found")
-            print_error "README.md badge shows '$current_badge', expected 'Version-$expected_version-blue'"
-            errors=$((errors + 1))
+            if [[ "$current_badge" == "not found" ]]; then
+                print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
+                warnings=$((warnings + 1))
+            else
+                print_error "README.md badge shows '$current_badge', expected 'Version-$expected_version-blue'"
+                errors=$((errors + 1))
+            fi
         fi
     else
         print_warning "README.md not found"
