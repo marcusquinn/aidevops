@@ -1003,6 +1003,90 @@ setup_recommended_tools() {
     return 0
 }
 
+# Setup MiniSim - iOS/Android emulator launcher (macOS only)
+setup_minisim() {
+    # Only available on macOS
+    if [[ "$(uname)" != "Darwin" ]]; then
+        return 0
+    fi
+    
+    print_info "Setting up MiniSim (iOS/Android emulator launcher)..."
+    
+    # Check if MiniSim is already installed
+    if [[ -d "/Applications/MiniSim.app" ]]; then
+        print_success "MiniSim already installed"
+        print_info "Global shortcut: Option + Shift + E"
+        return 0
+    fi
+    
+    # Check if Xcode or Android Studio is installed (MiniSim needs at least one)
+    local has_xcode=false
+    local has_android=false
+    
+    if command -v xcrun >/dev/null 2>&1 && xcrun simctl list devices >/dev/null 2>&1; then
+        has_xcode=true
+    fi
+    
+    if [[ -n "${ANDROID_HOME:-}" ]] || [[ -n "${ANDROID_SDK_ROOT:-}" ]] || [[ -d "$HOME/Library/Android/sdk" ]]; then
+        has_android=true
+    fi
+    
+    if [[ "$has_xcode" == "false" && "$has_android" == "false" ]]; then
+        print_info "MiniSim requires Xcode (iOS) or Android Studio (Android)"
+        print_info "Install one of these first, then re-run setup to install MiniSim"
+        return 0
+    fi
+    
+    # Show what's available
+    local available_for=""
+    if [[ "$has_xcode" == "true" ]]; then
+        available_for="iOS simulators"
+    fi
+    if [[ "$has_android" == "true" ]]; then
+        if [[ -n "$available_for" ]]; then
+            available_for="$available_for and Android emulators"
+        else
+            available_for="Android emulators"
+        fi
+    fi
+    
+    print_info "MiniSim is a menu bar app for launching $available_for"
+    echo "  Features:"
+    echo "    - Global shortcut: Option + Shift + E"
+    echo "    - Launch/manage iOS simulators and Android emulators"
+    echo "    - Copy device UDID/ADB ID"
+    echo "    - Cold boot Android emulators"
+    echo "    - Run Android emulators without audio (saves Bluetooth battery)"
+    echo ""
+    
+    # Check if Homebrew is available
+    if ! command -v brew >/dev/null 2>&1; then
+        print_warning "Homebrew not found - cannot install MiniSim automatically"
+        echo "  Install manually: https://github.com/okwasniewski/MiniSim/releases"
+        return 0
+    fi
+    
+    local install_minisim
+    read -r -p "Install MiniSim? (y/n): " install_minisim
+    
+    if [[ "$install_minisim" == "y" ]]; then
+        print_info "Installing MiniSim..."
+        if brew install --cask minisim; then
+            print_success "MiniSim installed successfully"
+            print_info "Global shortcut: Option + Shift + E"
+            print_info "Documentation: ~/.aidevops/agents/tools/mobile/minisim.md"
+        else
+            print_warning "Failed to install MiniSim via Homebrew"
+            echo "  Install manually: https://github.com/okwasniewski/MiniSim/releases"
+        fi
+    else
+        print_info "Skipped MiniSim installation"
+        print_info "Install later: brew install --cask minisim"
+    fi
+    
+    return 0
+}
+
 # Setup SSH key if needed
 setup_ssh_key() {
     print_info "Checking SSH key setup..."
@@ -2757,6 +2841,7 @@ main() {
     # Optional steps with confirmation in interactive mode
     confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
     confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
+    confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
     confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
     confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
     confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk

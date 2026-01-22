@@ -487,6 +487,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/ai-assistants/` | AI tool integration - configuring assistants, CAPTCHA solving, multi-modal agents | agno, capsolver, windsurf, configuration, status |
 | `tools/ai-orchestration/` | AI orchestration frameworks - visual builders, multi-agent teams, workflow automation, DSL orchestration | overview, langflow, crewai, autogen, openprose, packaging |
 | `tools/browser/` | Browser automation - web scraping, testing, screenshots, form filling, cookie extraction, macOS GUI automation | agent-browser, stagehand, playwright, playwriter, crawl4ai, dev-browser, pagespeed, chrome-devtools, sweet-cookie, peekaboo |
+| `tools/mobile/` | Mobile development - iOS simulator and Android emulator management | minisim |
 | `tools/ui/` | UI components - component libraries, design systems, frontend debugging, hydration errors | shadcn, ui-skills, frontend-debugging |
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, code-simplifier, codacy, coderabbit, qlty, snyk, secretlint, auditing |
 | `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy, llm-tldr |
@@ -598,6 +599,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | macOS automation | `tools/automation/mac.md` (AppleScript, JXA, app control) |
 | Programmatic video | `tools/video/remotion.md` (React video creation, animations) |
 | AI image/video generation | `tools/video/higgsfield.md` (100+ generative models via unified API) |
+| Mobile emulators | `tools/mobile/minisim.md` (iOS simulator, Android emulator launcher) |
 
 ## Security
 
