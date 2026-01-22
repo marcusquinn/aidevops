@@ -44,7 +44,7 @@ function Chat() {
     <div>
       {messages.map((m) => (
         <div key={m.id}>
-          {m.role}: {m.content}
+          {m.role}: {m.parts.map(p => p.type === "text" ? p.text : null)}
         </div>
       ))}
       <form onSubmit={handleSubmit}>
@@ -183,10 +183,15 @@ export function AIChatSidebar() {
             {message.parts.map((part, i) => {
               if (part.type === "text") {
                 return message.role === "assistant" ? (
+                  // WARNING: Using dangerouslySetInnerHTML with marked.parse
+                  // Consider using DOMPurify.sanitize() for production:
+                  // import DOMPurify from "dompurify";
+                  // __html: DOMPurify.sanitize(marked.parse(part.text))
                   <div
                     key={i}
+                    className="prose"
                     dangerouslySetInnerHTML={{
-                      __html: marked.parse(part.text),
+                      __html: marked.parse(part.text) as string,
                     }}
                   />
                 ) : (
@@ -317,6 +322,11 @@ console.log(result.object); // Typed!
 4. **Missing error handling**
    - Always handle `error` from `useChat`
    - Provide retry mechanism
+
+5. **XSS vulnerability with markdown rendering**
+   - Never use `dangerouslySetInnerHTML` with unsanitized content
+   - Use DOMPurify to sanitize: `DOMPurify.sanitize(marked.parse(text))`
+   - Install: `npm install dompurify @types/dompurify`
 
 ## Related
 

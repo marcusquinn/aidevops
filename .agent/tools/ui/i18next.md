@@ -202,12 +202,23 @@ t("dashboard:stats.title")
 // Use server-side translation
 import { getTranslation } from "@workspace/i18n/server";
 
-export default async function Page({ params }) {
+// Next.js 15+: params is a Promise
+export default async function Page({ 
+  params 
+}: { 
+  params: Promise<{ locale: string }> 
+}) {
   const { locale } = await params;
   const { t } = await getTranslation(locale, "common");
   
   return <h1>{t("title")}</h1>;
 }
+
+// Next.js 14 and earlier: params is not a Promise
+// export default async function Page({ params }: { params: { locale: string } }) {
+//   const { t } = await getTranslation(params.locale, "common");
+//   return <h1>{t("title")}</h1>;
+// }
 ```
 
 ### Type-Safe Translations
@@ -247,6 +258,9 @@ t("ai.sidebar.title"); // Autocomplete works!
 
 ```bash
 # Check for missing keys across locales
+# Run from packages/i18n/src/translations/ directory
+cd packages/i18n/src/translations
+
 for locale in de es fr; do
   echo "=== Missing in $locale ==="
   diff <(jq -r 'paths | join(".")' en/common.json | sort) \
