@@ -453,16 +453,26 @@ aidevops includes curated skills imported from external repositories. Skills fro
 | **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
 | **animejs** | [animejs.com](https://animejs.com) | JavaScript animation library patterns and API (via Context7) |
 
-**Skill Commands:**
+**CLI Commands:**
 
 ```bash
-/add-skill <owner/repo>        # Import a skill from GitHub
-/add-skill list                # List imported skills
-/add-skill check-updates       # Check for upstream updates
-/add-skill <owner/repo> --force  # Update an existing skill
+aidevops skill add <owner/repo>    # Import a skill from GitHub
+aidevops skill list                # List imported skills
+aidevops skill check               # Check for upstream updates
+aidevops skill update [name]       # Update specific or all skills
+aidevops skill remove <name>       # Remove an imported skill
 ```
 
-Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` and checked for updates during `./setup.sh`.
+Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream commit tracking for update detection. Telemetry is disabled - no data is sent to third parties.
+
+**Browse community skills:** [skills.sh](https://skills.sh) | **Specification:** [agentskills.io](https://agentskills.io)
+
+**Reference:**
+- [Agent Skills Specification](https://agentskills.io/specification) - The open format for SKILL.md files
+- [skills.sh Leaderboard](https://skills.sh) - Discover popular community skills
+- [vercel-labs/add-skill](https://github.com/vercel-labs/add-skill) - The upstream CLI tool (aidevops uses its own implementation)
+- [anthropics/skills](https://github.com/anthropics/skills) - Official Anthropic example skills
+- [agentskills/agentskills](https://github.com/agentskills/agentskills) - Specification source and reference library
 
 ## **Agent Design Patterns**
 
@@ -923,30 +933,43 @@ This installs the complete framework: 13 domain agents, 225+ subagents, and 130+
 
 ### Importing External Skills
 
-Import skills from any GitHub repository using `/add-skill`:
+Import skills from any GitHub repository using the `aidevops skill` CLI:
 
 ```bash
 # Import from GitHub (auto-detects format)
-/add-skill owner/repo
+aidevops skill add owner/repo
 
 # Examples
-/add-skill anthropics/courses           # SKILL.md format
-/add-skill PatrickJS/awesome-cursorrules # .cursorrules format
-/add-skill someone/agents-repo          # AGENTS.md format
+aidevops skill add anthropics/skills/pdf           # Specific skill from multi-skill repo
+aidevops skill add vercel-labs/agent-skills         # All skills from a repo
+aidevops skill add expo/skills --name expo-dev      # Custom name
+aidevops skill add owner/repo --dry-run             # Preview without changes
 ```
 
 **Supported formats:**
-- `SKILL.md` - Agent Skills standard (preferred)
+- `SKILL.md` - [Agent Skills standard](https://agentskills.io/specification) (preferred)
 - `AGENTS.md` - Claude Code agents format
-- `.cursorrules` - Cursor rules (auto-converted to SKILL.md)
+- `.cursorrules` - Cursor rules (auto-converted)
 
 **Features:**
-- Conflict detection with existing skills
-- Version tracking for updates (`/add-skill --check-updates`)
-- Symlinks created for Claude Code, Cursor, Amp, and other tools
+- Auto-detection of skill format and category placement
+- Conflict detection with merge/replace/rename options
+- Upstream commit tracking for update detection (`aidevops skill check`)
+- Conversion to aidevops subagent format with YAML frontmatter
 - Registry stored in `.agent/configs/skill-sources.json`
+- Telemetry disabled (no data sent to skills.sh or other services)
 
-See `.agent/tools/build-agent/add-skill.md` for full documentation.
+**How it differs from `npx add-skill`:**
+
+| | `aidevops skill add` | `npx add-skill` |
+|---|---|---|
+| **Target** | Converts to aidevops format in `.agent/` | Copies SKILL.md to agent-specific dirs |
+| **Tracking** | Git commit-based upstream tracking | Lock file with content hashes |
+| **Telemetry** | Disabled | Sends anonymous install counts |
+| **Scope** | OpenCode-first | 22+ agents |
+| **Updates** | `aidevops skill check` (GitHub API) | `npx skills check` (Vercel API) |
+
+See `.agent/scripts/add-skill-helper.sh` for implementation details.
 
 ## **AI Agents & Subagents**
 
