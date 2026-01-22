@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add feature branch scenario guidance to pre-edit workflow (#148)
+
 ## [2.70.4] - 2026-01-21
 
 ### Changed
