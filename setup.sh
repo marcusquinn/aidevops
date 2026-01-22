@@ -1066,6 +1066,7 @@ setup_minisim() {
         return 0
     fi
     
+    local install_minisim
     read -r -p "Install MiniSim? (y/n): " install_minisim
     
     if [[ "$install_minisim" == "y" ]]; then
