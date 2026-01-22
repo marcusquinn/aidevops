@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.71.0] - 2026-01-22
+
+### Added
+
+- add Higgsfield AI API support with Context7 documentation (#149)
+
+### Changed
+
+- Documentation: add feature branch scenario guidance to pre-edit workflow (#148)
 ## [2.70.4] - 2026-01-21
 
 ### Changed
