@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add MiniSim iOS/Android emulator launcher support (#151)
+
 ## [2.71.0] - 2026-01-22
 
 ### Added
