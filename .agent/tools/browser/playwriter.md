@@ -59,12 +59,14 @@ Add to your MCP client configuration:
   "mcp": {
     "playwriter": {
       "type": "local",
-      "command": ["npx", "playwriter@latest"],
+      "command": ["/opt/homebrew/bin/npx", "-y", "playwriter@latest"],
       "enabled": true
     }
   }
 }
-```text
+```
+
+> **Note**: Use full path to `npx` (e.g., `/opt/homebrew/bin/npx` on macOS with Homebrew) for reliability. The `-y` flag auto-confirms package installation.
 
 **Claude Desktop** (`claude_desktop_config.json`):
 
@@ -73,11 +75,30 @@ Add to your MCP client configuration:
   "mcpServers": {
     "playwriter": {
       "command": "npx",
-      "args": ["playwriter@latest"]
+      "args": ["-y", "playwriter@latest"]
     }
   }
 }
-```text
+```
+
+**Enable per-agent** (OpenCode tools section):
+
+```json
+{
+  "tools": {
+    "playwriter_*": false
+  },
+  "agent": {
+    "Build+": {
+      "tools": {
+        "playwriter_*": true
+      }
+    }
+  }
+}
+```
+
+> **Tip**: Disable globally with `"playwriter_*": false` in `tools`, then enable per-agent to reduce context token usage.
 
 ## Usage
 
