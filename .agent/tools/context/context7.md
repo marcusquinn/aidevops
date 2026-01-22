@@ -238,6 +238,10 @@ get-library-docs("/drizzle-team/drizzle-orm", topic="examples")
 - `/langchain-ai/langchainjs` - LangChain JavaScript
 - `/huggingface/transformers.js` - Hugging Face Transformers
 
+### **Generative Media:**
+
+- `/websites/higgsfield_ai` - Higgsfield AI (100+ image/video/audio models)
+
 ## 🛠️ **Best Practices**
 
 ### **Library Resolution:**
