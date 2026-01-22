@@ -43,17 +43,19 @@ Read this skill when working with:
 
 ## Authentication
 
-All requests require two headers:
+Higgsfield supports two authentication formats depending on the endpoint:
+
+**Format 1: Header-based** (v1 endpoints like `/v1/text2image/soul`, `/v1/image2video/dop`):
 
 ```bash
-hf-api-key: {your_api_key}
-hf-secret: {your_api_secret}
+hf-api-key: {api-key}
+hf-secret: {secret}
 ```
 
-Alternative format (some endpoints):
+**Format 2: Authorization header** (simplified endpoints like `/higgsfield-ai/dop/standard`):
 
 ```bash
-Authorization: Key {api_key}:{api_secret}
+Authorization: Key {api-key}:{secret}
 ```
 
 Store credentials in `~/.config/aidevops/mcp-env.sh`:
@@ -97,7 +99,7 @@ curl -X POST 'https://platform.higgsfield.ai/v1/text2image/soul' \
 | `seed` | integer | No | 1-1000000 for reproducibility |
 | `style_id` | uuid | No | Preset style ID |
 | `style_strength` | number | No | 0-1 (default: 1) |
-| `custom_reference_id` | uuid | No | Character ID for consistency |
+| `custom_reference_id` | string | No | Character ID for consistency (UUID format) |
 | `custom_reference_strength` | number | No | 0-1 (default: 1) |
 | `image_reference` | object | No | Reference image for guidance |
 
@@ -221,7 +223,7 @@ Response:
 
 ```json
 {
-  "id": "character_123456",
+  "id": "3eb3ad49-775d-40bd-b5e5-38b105108780",
   "photo_url": "https://cdn.higgsfield.ai/characters/photo_123.jpg",
   "created_at": "2023-12-07T10:30:00Z"
 }
@@ -233,7 +235,7 @@ Response:
 {
   "params": {
     "prompt": "Character sitting in a coffee shop",
-    "custom_reference_id": "character_123456",
+    "custom_reference_id": "3eb3ad49-775d-40bd-b5e5-38b105108780",
     "custom_reference_strength": 0.9
   }
 }
@@ -291,11 +293,14 @@ Install:
 pip install higgsfield-client
 ```
 
+The SDK provides a simplified interface that abstracts the REST API. It supports multiple models with unified parameters.
+
 ### Synchronous
 
 ```python
 import higgsfield_client
 
+# Using Seedream model (SDK-specific simplified interface)
 result = higgsfield_client.subscribe(
     'bytedance/seedream/v4/text-to-image',
     arguments={
@@ -327,6 +332,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+**Note**: The SDK uses simplified parameters (`resolution`, `aspect_ratio`) that differ from the REST API (`width_and_height`, `quality`). The SDK handles the translation internally.
 
 ## Error Handling
 
