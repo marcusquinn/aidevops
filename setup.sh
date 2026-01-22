@@ -2216,7 +2216,34 @@ setup_browser_tools() {
         print_warning "Node.js not found - Playwriter MCP unavailable"
     fi
     
-    print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Stagehand (AI)"
+    # Playwright MCP (cross-browser testing automation)
+    if [[ "$has_node" == "true" ]]; then
+        print_info "Setting up Playwright MCP..."
+        
+        # Check if Playwright browsers are installed
+        if npx playwright --version &> /dev/null 2>&1; then
+            print_success "Playwright already installed"
+        else
+            read -r -p "Install Playwright MCP with browsers (chromium, firefox, webkit)? (y/n): " install_playwright
+            
+            if [[ "$install_playwright" == "y" ]]; then
+                print_info "Installing Playwright browsers..."
+                if npx playwright install 2>/dev/null; then
+                    print_success "Playwright browsers installed"
+                else
+                    print_warning "Playwright browser installation failed"
+                    print_info "Run manually: npx playwright install"
+                fi
+            else
+                print_info "Skipped Playwright installation"
+                print_info "Install later with: npx playwright install"
+            fi
+        fi
+        
+        print_info "Playwright MCP runs via: npx playwright-mcp@latest"
+    fi
+    
+    print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Playwright (testing), Stagehand (AI)"
 }
 
 # Setup AI Orchestration Frameworks (Langflow, CrewAI, AutoGen)
