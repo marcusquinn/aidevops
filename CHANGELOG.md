@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add technology stack subagents for modern web development (#152)
+
 ## [2.73.0] - 2026-01-23
 
 ### Added
