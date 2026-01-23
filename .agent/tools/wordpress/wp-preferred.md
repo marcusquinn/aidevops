@@ -316,7 +316,7 @@ These 5 plugins form the minimal recommended installation for any new WordPress 
 | Slug | Name | Source |
 |------|------|--------|
 | `network-plugin-auditor` | Network Plugin Auditor | https://wordpress.org/plugins/network-plugin-auditor/ |
-| `ultimate-multisite` | Ultimate Multisite | https://developer.developer.developer-developer-developer/ |
+| `ultimate-multisite` | Ultimate Multisite | https://wordpress.org/plugins/ultimate-multisite/ |
 
 ### Hosting-Specific
 
