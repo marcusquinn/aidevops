@@ -277,6 +277,42 @@ console.log("Logo type:", typeof Logo, Logo);
 
 After fix, ALWAYS verify with browser screenshot, not curl.
 
+## CSS Scroll Debugging
+
+### The "Scroll Trapped in Sidebar" Pattern
+
+**Symptom**: Mouse wheel doesn't scroll the page when cursor is over a sidebar or panel.
+
+**Root Cause Priority** (check in this order):
+
+1. **Global CSS** - `overscroll-behavior: none` on `*` or ancestors
+2. **Overflow on non-scrollable content** - `overflow-auto` creates scroll container even when content fits
+3. **Overlapping elements** - Rails, handles, or invisible buttons intercepting events
+4. **JS event handlers** - Only consider after ruling out CSS causes
+
+**Anti-pattern**: Adding complex JS wheel event handlers before checking CSS:
+
+```tsx
+// DON'T DO THIS FIRST - check CSS overscroll-behavior instead
+const handleWheel = (e: WheelEvent) => {
+  const isScrollable = el.scrollHeight > el.clientHeight;
+  if (!isScrollable) {
+    window.scrollBy({ top: e.deltaY });
+    e.preventDefault();
+  }
+};
+```
+
+**Correct debugging flow**:
+
+1. Open DevTools → Computed styles on the scroll-trapped element
+2. Check `overscroll-behavior` on the element AND its children
+3. Check `overflow` - is it creating an unnecessary scroll container?
+4. Check for absolutely-positioned elements overlapping the area
+5. Only if CSS is correct, investigate JS event handlers
+
+See `tools/ui/tailwind-css.md` for the Tailwind fix pattern.
+
 ## Related Resources
 
 - **Browser automation**: `tools/browser/dev-browser.md`
