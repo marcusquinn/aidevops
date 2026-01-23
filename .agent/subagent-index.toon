@@ -1,17 +1,25 @@
-<!--TOON:agents[14]{name,file,purpose}:
-Plan+,plan-plus.md,Read-only planning with semantic codebase search
-Build+,build-plus.md,Enhanced Build with context tools
-AI-DevOps,aidevops.md,Framework operations and meta-agents
-Onboarding,onboarding.md,Interactive setup wizard for new users
-SEO,seo.md,SEO optimization and analysis
-Content,content.md,Content creation workflows
-Research,research.md,Research and analysis tasks
-Marketing,marketing.md,Marketing strategy and email campaigns (FluentCRM)
-Sales,sales.md,Sales operations and CRM pipeline (FluentCRM)
-Legal,legal.md,Legal compliance
-Accounts,accounts.md,Financial operations
-Health,health.md,Health and wellness
-Social-Media,social-media.md,Social media management
+<!--TOON:agents[14]{name,file,purpose,model_tier}:
+Plan+,plan-plus.md,Read-only planning with semantic codebase search,sonnet
+Build+,build-plus.md,Enhanced Build with context tools,sonnet
+AI-DevOps,aidevops.md,Framework operations and meta-agents,sonnet
+Onboarding,onboarding.md,Interactive setup wizard for new users,sonnet
+SEO,seo.md,SEO optimization and analysis,sonnet
+Content,content.md,Content creation workflows,sonnet
+Research,research.md,Research and analysis tasks,flash
+Marketing,marketing.md,Marketing strategy and email campaigns (FluentCRM),sonnet
+Sales,sales.md,Sales operations and CRM pipeline (FluentCRM),sonnet
+Legal,legal.md,Legal compliance,sonnet
+Accounts,accounts.md,Financial operations,sonnet
+Health,health.md,Health and wellness,sonnet
+Social-Media,social-media.md,Social media management,sonnet
+-->
+
+<!--TOON:model_tiers[5]{tier,model_id,use_case}:
+haiku,claude-3-5-haiku-20241022,Triage routing and simple tasks
+sonnet,claude-sonnet-4-20250514,Code review and implementation
+opus,claude-opus-4-20250514,Architecture and complex reasoning
+flash,gemini-2.5-flash,Fast cheap large context
+pro,gemini-2.5-pro,Capable large context
 -->
 
 <!--TOON:subagents[30]{folder,purpose,key_files}:
