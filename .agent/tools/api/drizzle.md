@@ -40,7 +40,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(), // Note: only sets on INSERT; use .$onUpdate() or DB trigger for UPDATE
 });
 ```
 
@@ -66,6 +66,8 @@ const newUser = await db
   .insert(users)
   .values({ email: "new@example.com", name: "New User" })
   .returning();
+
+const userId = "user-id-to-update"; // From request params, auth, etc.
 
 // Update
 await db
@@ -120,6 +122,7 @@ app.post("/users", zValidator("json", insertUserSchema), async (c) => {
 import { relations } from "drizzle-orm";
 import { pgTable, text, uuid } from "drizzle-orm/pg-core";
 
+// Simplified schema for relations example (see full schema above)
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name"),
@@ -225,6 +228,11 @@ import { db } from "../server";
 import { users, posts } from "../schema";
 
 async function seed() {
+  // Safety: prevent accidental production seeding
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Seeding is disabled in production. Set NODE_ENV=development.");
+  }
+
   console.log("Seeding database...");
 
   // Clear existing data
@@ -245,7 +253,10 @@ async function seed() {
   console.log("Seeding complete!");
 }
 
-seed().catch(console.error);
+seed().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
 ```
 
 ## Common Mistakes

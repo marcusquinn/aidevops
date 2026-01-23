@@ -51,6 +51,7 @@ sticky   → hybrid (normal until scroll threshold)
 <div className="flex">
   <aside className="w-64 shrink-0">Left</aside>
   <main className="flex-1 min-w-0">Content</main>
+  {/* cn = clsx + tailwind-merge (from @turbostarter/ui or similar utility) */}
   <aside className={cn(
     "w-80 shrink-0 transition-all",
     open ? "w-80" : "w-0 overflow-hidden"
@@ -132,6 +133,8 @@ const [isResizing, setIsResizing] = useState(false);
       "before:absolute before:inset-y-0 before:-left-1 before:w-3"
     )}
   />
+  {/* Note: Complete resize requires mousemove/mouseup handlers on window */}
+  {/* See react-context.md for full implementation with setWidth callback */}
 </aside>
 ```
 
@@ -146,6 +149,7 @@ For chat interfaces where content should align to bottom:
 </div>
 
 // Or with min-height for scroll behavior
+{/* ScrollArea from shadcn/ui (radix-ui based) */}
 <ScrollArea className="flex-1">
   <div className="flex min-h-full flex-col justify-end gap-4">
     {messages.map(msg => <Message key={msg.id} {...msg} />)}

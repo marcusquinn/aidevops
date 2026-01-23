@@ -98,7 +98,7 @@ messages.map((message) => (
         return <p key={i}>{part.text}</p>;
       }
       if (part.type === "tool-call") {
-        return <ToolResult key={i} call={part} />;
+        return <ToolResult key={i} call={part} />; {/* Your custom component to render tool output */}
       }
       return null;
     })}
@@ -127,7 +127,16 @@ messages.map((message) => (
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { useState, useRef, useEffect } from "react";
+
+const sanitizeMarkdown = (text: string) => {
+  const html = marked.parse(text) as string;
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote'],
+    ALLOWED_ATTR: ['href', 'class']
+  });
+};
 
 export function AIChatSidebar() {
   const [input, setInput] = useState("");
@@ -183,15 +192,11 @@ export function AIChatSidebar() {
             {message.parts.map((part, i) => {
               if (part.type === "text") {
                 return message.role === "assistant" ? (
-                  // WARNING: Using dangerouslySetInnerHTML with marked.parse
-                  // Consider using DOMPurify.sanitize() for production:
-                  // import DOMPurify from "dompurify";
-                  // __html: DOMPurify.sanitize(marked.parse(part.text))
                   <div
                     key={i}
                     className="prose"
                     dangerouslySetInnerHTML={{
-                      __html: marked.parse(part.text) as string,
+                      __html: sanitizeMarkdown(part.text),
                     }}
                   />
                 ) : (

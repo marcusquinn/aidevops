@@ -157,15 +157,17 @@ export function useSidebarOptional() {
 interface SidebarProviderProps {
   readonly children: ReactNode;
   readonly defaultOpen?: boolean;
+  readonly defaultWidth?: number;
 }
 
 // Provider
 export function SidebarProvider({
   children,
   defaultOpen = false,
+  defaultWidth = DEFAULT_WIDTH,
 }: SidebarProviderProps) {
   const [open, setOpenState] = useState(defaultOpen);
-  const [width, setWidthState] = useState(DEFAULT_WIDTH);
+  const [width, setWidthState] = useState(defaultWidth);
 
   const setOpen = useCallback((value: boolean) => {
     setOpenState(value);

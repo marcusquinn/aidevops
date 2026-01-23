@@ -5,7 +5,7 @@ tools:
   read: true
   write: true
   edit: true
-  bash: false
+  bash: true
   glob: true
   grep: true
   webfetch: true
@@ -131,6 +131,8 @@ grep -n '"feedback"' packages/i18n/src/translations/*/common.json
 Then add the new key after `feedback` in each file:
 
 ```json
+// Add to each locale's common.json:
+
 // en/common.json
 "feedback": "Feedback",
 "social": "Social",
@@ -206,9 +208,9 @@ import { getTranslation } from "@workspace/i18n/server";
 export default async function Page({ 
   params 
 }: { 
-  params: Promise<{ locale: string }> 
+  params: { locale: string } 
 }) {
-  const { locale } = await params;
+  const { locale } = params;
   const { t } = await getTranslation(locale, "common");
   
   return <h1>{t("title")}</h1>;
@@ -265,7 +267,7 @@ for locale in de es fr; do
   echo "=== Missing in $locale ==="
   diff <(jq -r 'paths | join(".")' en/common.json | sort) \
        <(jq -r 'paths | join(".")' $locale/common.json | sort) \
-       | grep "^<" | sed 's/^< //'
+       | grep "^<" | sed 's/^< //' || true
 done
 ```
 

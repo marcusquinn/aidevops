@@ -165,7 +165,8 @@ pnpm --filter "!web" build
 ### Environment Variables
 
 ```bash
-# Use dotenv-cli for env loading
+# "with-env" is a custom script using dotenv-cli to load .env before turbo
+# Equivalent to: pnpm dotenv -- turbo build
 pnpm with-env turbo build
 
 # In package.json

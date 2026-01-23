@@ -61,6 +61,11 @@ app/
 import { SidebarProvider } from "@/components/sidebar/context";
 import { AISidebarProvider } from "@/components/ai-sidebar/context";
 
+import { cookies } from "next/headers";
+// Import your sidebar components
+import { Sidebar } from "@/components/sidebar";
+import { AISidebar } from "@/components/ai-sidebar";
+
 export default async function DashboardLayout({ children }) {
   const cookieStore = await cookies();
   const sidebarOpen = cookieStore.get("sidebar_state")?.value === "true";
@@ -235,7 +240,7 @@ export default function Layout({
 export default function Loading() {
   return (
     <div className="flex items-center justify-center h-full">
-      <Spinner />
+      <Spinner /> {/* Your loading spinner component */}
     </div>
   );
 }

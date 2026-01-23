@@ -74,7 +74,7 @@ app.post(
 // Server: Define routes with types
 const routes = app
   .get("/api/users", (c) => c.json({ users: [] }))
-  .post("/api/users", zValidator("json", schema), (c) => {
+  .post("/api/users", zValidator("json", createUserSchema), (c) => {
     return c.json({ user: c.req.valid("json") });
   });
 
@@ -129,6 +129,9 @@ app.use("/api/admin/*", async (c, next) => {
   if (!token) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  // TODO: Validate token (JWT verification, session lookup, etc.)
+  // const user = await verifyToken(token.replace("Bearer ", ""));
+  // if (!user) return c.json({ error: "Invalid token" }, 401);
   await next();
 });
 ```
@@ -148,7 +151,7 @@ app.onError((err, c) => {
 
 // Throwing errors
 app.get("/api/users/:id", async (c) => {
-  const user = await getUser(c.req.param("id"));
+  const user = await getUser(c.req.param("id")); // Application-specific user lookup
   if (!user) {
     throw new HTTPException(404, { message: "User not found" });
   }
@@ -176,7 +179,7 @@ app.route("/api/users", users);
 ```tsx
 // Set variables in middleware
 app.use("*", async (c, next) => {
-  const user = await getAuthUser(c.req.header("Authorization"));
+  const user = await getAuthUser(c.req.header("Authorization")); // Verify token and return user
   c.set("user", user);
   await next();
 });
@@ -212,6 +215,18 @@ app.post("/api/upload", async (c) => {
   
   if (!file) {
     return c.json({ error: "No file" }, 400);
+  }
+
+  // Validate file size (10MB limit)
+  const MAX_SIZE = 10 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    return c.json({ error: "File too large" }, 413);
+  }
+
+  // Validate MIME type
+  const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+  if (!ALLOWED_TYPES.includes(file.type)) {
+    return c.json({ error: "Invalid file type" }, 400);
   }
   
   const buffer = await file.arrayBuffer();

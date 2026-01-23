@@ -37,6 +37,14 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@workspace/db";
 
+// Validate required environment variables
+const requiredEnvVars = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'BETTER_AUTH_SECRET'] as const;
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    throw new Error(`Missing required environment variable: ${envVar}`);
+  }
+}
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: "pg",
@@ -46,8 +54,8 @@ export const auth = betterAuth({
   },
   socialProviders: {
     google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     },
   },
 });
@@ -87,6 +95,8 @@ function AuthButton() {
   }
 
   return (
+    // Get from form state
+    const { email, password } = formData;
     <button onClick={() => signIn.email({ email, password })}>
       Sign In
     </button>
@@ -163,6 +173,8 @@ export async function getServerSession() {
 }
 
 // Usage in page
+import { redirect } from "next/navigation";
+
 export default async function DashboardPage() {
   const session = await getServerSession();
   
