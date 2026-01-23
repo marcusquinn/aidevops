@@ -492,7 +492,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `tools/code-review/` | Code quality - linting, security scanning, style enforcement, PR reviews | code-standards, code-simplifier, codacy, coderabbit, qlty, snyk, secretlint, auditing |
 | `tools/context/` | Context optimization - semantic search, codebase indexing, token efficiency | osgrep, augment-context-engine, context-builder, context7, toon, dspy, llm-tldr |
 | `tools/conversion/` | Format conversion - document transformation between formats | pandoc |
-| `tools/video/` | Video creation - programmatic video generation, AI image/video generation, animations | remotion, higgsfield |
+| `tools/video/` | Video creation - programmatic video generation, AI image/video generation, animations, prompt design | remotion, higgsfield, video-prompt-design |
 | `tools/data-extraction/` | Data extraction - scraping business data, Google Maps, reviews | outscraper |
 | `tools/deployment/` | Deployment automation - self-hosted PaaS, serverless, CI/CD | coolify, coolify-cli, vercel |
 | `tools/git/` | Git operations - GitHub/GitLab/Gitea CLIs, Actions, worktrees, AI PR automation | github-cli, gitlab-cli, gitea-cli, github-actions, worktrunk, opencode-github, opencode-gitlab |
@@ -600,6 +600,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | macOS automation | `tools/automation/mac.md` (AppleScript, JXA, app control) |
 | Programmatic video | `tools/video/remotion.md` (React video creation, animations) |
 | AI image/video generation | `tools/video/higgsfield.md` (100+ generative models via unified API) |
+| Video prompt engineering | `tools/video/video-prompt-design.md` (Veo 3 meta prompts, 7-component framework) |
 | Mobile emulators | `tools/mobile/minisim.md` (iOS simulator, Android emulator launcher) |
 | Importing skills | `scripts/commands/add-skill.md` (import, naming, update tracking) |
 
