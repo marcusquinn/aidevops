@@ -451,6 +451,7 @@ aidevops includes curated skills imported from external repositories. Skills fro
 |-------|--------|-------------|
 | **cloudflare-platform** | [dmmulroy/cloudflare-skill](https://github.com/dmmulroy/cloudflare-skill) | 60 Cloudflare products: Workers, Pages, D1, R2, KV, Durable Objects, AI, networking, security |
 | **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
+| **video-prompt-design** | [snubroot/Veo-3-Meta-Framework](https://github.com/snubroot/Veo-3-Meta-Framework) | AI video prompt engineering - 7-component meta prompt framework for Veo 3 |
 | **animejs** | [animejs.com](https://animejs.com) | JavaScript animation library patterns and API (via Context7) |
 
 **CLI Commands:**
@@ -562,6 +563,7 @@ The setup script offers to install these tools automatically.
 ### **Video Creation**
 
 - **[Remotion](https://remotion.dev/)**: Programmatic video creation with React - animations, compositions, media handling, captions
+- **[Video Prompt Design](https://github.com/snubroot/Veo-3-Meta-Framework)**: AI video prompt engineering using the 7-component meta prompt framework for Veo 3 and similar models
 
 ### **WordPress Development**
 
@@ -602,6 +604,7 @@ The setup script offers to install these tools automatically.
 
 - **[Anime.js](https://animejs.com/)**: Lightweight JavaScript animation library for CSS, SVG, DOM attributes, and JS objects
 - **[Remotion](https://remotion.dev/)**: Programmatic video creation with React - create videos using code with 29 specialized rule files
+- **[Video Prompt Design](https://github.com/snubroot/Veo-3-Meta-Framework)**: Structured prompt engineering for AI video generation (Veo 3, 7-component framework, character consistency, audio design)
 
 ### **Performance & Monitoring**
 
