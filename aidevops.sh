@@ -1731,7 +1731,7 @@ cmd_skill() {
             fi
             bash "$generate_script" --clean "$@"
             ;;
-        help|--help|-h|*)
+        help|--help|-h)
             print_header "Agent Skills Management"
             echo ""
             echo "Import and manage reusable AI agent skills from the community."
@@ -1768,6 +1768,11 @@ cmd_skill() {
             echo ""
             echo "Browse community skills: https://skills.sh"
             echo "Agent Skills specification: https://agentskills.io"
+            ;;
+        *)
+            print_error "Unknown skill command: $action"
+            echo "Run 'aidevops skill help' for usage information."
+            return 1
             ;;
     esac
 }

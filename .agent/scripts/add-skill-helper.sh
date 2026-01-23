@@ -785,7 +785,7 @@ cmd_check_updates() {
         # Get latest commit from GitHub API
         local api_url="https://api.github.com/repos/$owner/$repo/commits?per_page=1"
         local latest_commit
-        latest_commit=$(curl -s "$api_url" | jq -r '.[0].sha // empty' 2>/dev/null)
+        latest_commit=$(curl -s --connect-timeout 10 --max-time 30 "$api_url" | jq -r '.[0].sha // empty' 2>/dev/null)
         
         if [[ -z "$latest_commit" ]]; then
             log_warning "Could not fetch latest commit for $name"
