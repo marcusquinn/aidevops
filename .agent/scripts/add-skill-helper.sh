@@ -283,11 +283,14 @@ determine_target_path() {
         category="services/hosting"
     fi
     
-    echo "$category/$skill_name"
+    # Append -skill suffix to distinguish imported skills from native subagents
+    # This enables: glob *-skill.md for imports, update checks, conflict avoidance
+    echo "$category/${skill_name}-skill"
     return 0
 }
 
 # Check for conflicts with existing files
+# Returns conflict info with type: NATIVE (our subagent) or IMPORTED (previous skill)
 check_conflicts() {
     local target_path="$1"
     local agent_dir="$2"
@@ -299,11 +302,28 @@ check_conflicts() {
     local conflicts=()
     
     if [[ -f "$md_path" ]]; then
-        conflicts+=("$md_path")
+        if [[ "$md_path" == *-skill.md ]]; then
+            conflicts+=("IMPORTED: $md_path")
+        else
+            conflicts+=("NATIVE: $md_path")
+        fi
     fi
     
     if [[ -d "$dir_path" ]]; then
-        conflicts+=("$dir_path/")
+        if [[ "$dir_path" == *-skill ]]; then
+            conflicts+=("IMPORTED: $dir_path/")
+        else
+            conflicts+=("NATIVE: $dir_path/")
+        fi
+    fi
+    
+    # Also check for native subagent without -skill suffix (same base name)
+    local base_name="${target_path%-skill}"
+    local native_md="${agent_dir}/${base_name}.md"
+    if [[ "$target_path" == *-skill && -f "$native_md" ]]; then
+        # Native subagent exists with same base name - not a conflict since
+        # -skill suffix differentiates, but inform the user
+        conflicts+=("INFO: Native subagent exists at $native_md (no conflict, -skill suffix differentiates)")
     fi
     
     if [[ ${#conflicts[@]} -gt 0 ]]; then
@@ -491,8 +511,8 @@ cmd_add() {
             local skill_name="${custom_name:-$(basename "${subpath:-$repo}")}"
             skill_name=$(to_kebab_case "$skill_name")
             # openskills installs to ~/.config/opencode/skills/<name>/SKILL.md
-            # Register with .md extension for consistency with other paths
-            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/${skill_name}.md" "skill-md" "" "openskills" "Installed via openskills CLI"
+            # Register with -skill suffix for consistency with direct imports
+            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/${skill_name}-skill.md" "skill-md" "" "openskills" "Installed via openskills CLI"
             return 0
         fi
         log_warning "openskills failed, falling back to direct fetch"
@@ -558,35 +578,62 @@ cmd_add() {
     local conflicts
     conflicts=$(check_conflicts "$target_path" ".agent") || true
     if [[ -n "$conflicts" ]]; then
-        if [[ "$force" != true ]]; then
-            log_warning "Conflicts detected:"
-            echo "$conflicts" | while read -r conflict; do
-                echo "  - $conflict"
+        # Filter out INFO lines (informational, not blocking)
+        local blocking_conflicts
+        blocking_conflicts=$(echo "$conflicts" | grep -v "^INFO:" || true)
+        local info_lines
+        info_lines=$(echo "$conflicts" | grep "^INFO:" || true)
+        
+        # Show info lines (native subagent coexistence)
+        if [[ -n "$info_lines" ]]; then
+            echo "$info_lines" | while read -r info; do
+                log_info "${info#INFO: }"
             done
-            echo ""
+        fi
+        
+        # Handle blocking conflicts
+        if [[ -n "$blocking_conflicts" && "$force" != true ]]; then
+            # Determine conflict type for better messaging
+            if echo "$blocking_conflicts" | grep -q "^NATIVE:"; then
+                log_warning "Conflicts with native aidevops subagent(s):"
+                echo "$blocking_conflicts" | while read -r conflict; do
+                    echo "  - ${conflict#NATIVE: }"
+                done
+                echo ""
+                echo "The -skill suffix should prevent this. If you see this,"
+                echo "the imported skill has the same name as a native subagent."
+                echo ""
+            elif echo "$blocking_conflicts" | grep -q "^IMPORTED:"; then
+                log_warning "Conflicts with previously imported skill(s):"
+                echo "$blocking_conflicts" | while read -r conflict; do
+                    echo "  - ${conflict#IMPORTED: }"
+                done
+                echo ""
+            else
+                log_warning "Conflicts detected:"
+                echo "$blocking_conflicts" | while read -r conflict; do
+                    echo "  - $conflict"
+                done
+                echo ""
+            fi
+            
             echo "Options:"
-            echo "  1. Merge (add new content to existing)"
-            echo "  2. Replace (overwrite existing)"
-            echo "  3. Separate (use different name)"
-            echo "  4. Skip (cancel import)"
+            echo "  1. Replace (overwrite existing)"
+            echo "  2. Separate (use different name)"
+            echo "  3. Skip (cancel import)"
             echo ""
-            read -rp "Choose option [1-4]: " choice
+            read -rp "Choose option [1-3]: " choice
             
             case "$choice" in
                 1)
-                    log_info "Merging with existing..."
-                    # TODO: Implement merge logic
-                    log_warning "Merge not yet implemented, using replace"
-                    ;;
-                2)
                     log_info "Replacing existing..."
                     ;;
-                3)
+                2)
                     read -rp "Enter new name: " new_name
                     skill_name=$(to_kebab_case "$new_name")
                     target_path=$(determine_target_path "$skill_name" "$description" "$source_dir")
                     ;;
-                4|*)
+                3|*)
                     log_info "Import cancelled"
                     return 0
                     ;;

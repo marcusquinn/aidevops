@@ -1713,6 +1713,24 @@ cmd_skill() {
             fi
             bash "$update_skill_script" status "$@"
             ;;
+        generate|gen|g)
+            local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
+            if [[ ! -f "$generate_script" ]]; then
+                print_error "generate-skills.sh not found"
+                print_info "Run 'aidevops update' to get the latest scripts"
+                return 1
+            fi
+            print_info "Generating SKILL.md stubs for cross-tool discovery..."
+            bash "$generate_script" "$@"
+            ;;
+        clean)
+            local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
+            if [[ ! -f "$generate_script" ]]; then
+                print_error "generate-skills.sh not found"
+                return 1
+            fi
+            bash "$generate_script" --clean "$@"
+            ;;
         help|--help|-h|*)
             print_header "Agent Skills Management"
             echo ""
@@ -1723,12 +1741,14 @@ cmd_skill() {
             echo "Usage: aidevops skill <command> [options]"
             echo ""
             echo "Commands:"
-            echo "  add <source>     Import a skill from GitHub"
+            echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
             echo "  list             List all imported skills"
             echo "  check            Check for upstream updates"
             echo "  update [name]    Update specific or all skills"
             echo "  remove <name>    Remove an imported skill"
             echo "  status           Show detailed skill status"
+            echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
+            echo "  clean            Remove generated SKILL.md stubs"
             echo ""
             echo "Source formats:"
             echo "  owner/repo                    GitHub shorthand"
@@ -1741,6 +1761,10 @@ cmd_skill() {
             echo "  aidevops skill add expo/skills --name expo-dev"
             echo "  aidevops skill check"
             echo "  aidevops skill update"
+            echo "  aidevops skill generate --dry-run"
+            echo ""
+            echo "Imported skills are saved with a -skill suffix to distinguish"
+            echo "from native aidevops subagents (e.g., playwright-skill.md vs playwright.md)."
             echo ""
             echo "Browse community skills: https://skills.sh"
             echo "Agent Skills specification: https://agentskills.io"
