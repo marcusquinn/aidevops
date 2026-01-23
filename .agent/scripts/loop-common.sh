@@ -357,6 +357,13 @@ loop_generate_reanchor() {
         memories=$(~/.aidevops/agents/scripts/memory-helper.sh recall "$task_keywords" --limit 5 --format text 2>/dev/null || echo "No relevant memories")
     fi
     
+    # Check mailbox for pending messages
+    local mailbox_messages=""
+    local mail_helper="$HOME/.aidevops/agents/scripts/mail-helper.sh"
+    if [[ -x "$mail_helper" ]]; then
+        mailbox_messages=$("$mail_helper" check --unread-only 2>/dev/null || echo "No mailbox messages")
+    fi
+    
     # Generate guardrails from failures (the "signs" concept)
     # These are actionable rules derived from past failures - "same mistake never happens twice"
     local guardrails
@@ -406,6 +413,10 @@ $todo_in_progress
 ## Guardrails (Do Not Repeat These Mistakes)
 
 $guardrails
+
+## Mailbox (Unread Messages)
+
+$mailbox_messages
 
 ## Relevant Memories
 
@@ -677,6 +688,15 @@ loop_run_external() {
     loop_log_info "Max iterations: $max_iterations"
     loop_log_info "Completion promise: $completion_promise"
     
+    # Register agent in mailbox system (if available)
+    local mail_helper="$HOME/.aidevops/agents/scripts/mail-helper.sh"
+    if [[ -x "$mail_helper" ]]; then
+        "$mail_helper" register \
+            --role "worker" \
+            --branch "$(git branch --show-current 2>/dev/null || echo unknown)" \
+            2>/dev/null || true
+    fi
+    
     local iteration=1
     local output_file
     output_file=$(mktemp)
@@ -719,6 +739,21 @@ loop_run_external() {
             loop_log_success "Completion promise detected!"
             loop_create_receipt "task" "success" '{"promise_fulfilled": true}'
             loop_store_success "Task completed after $iteration iterations"
+            
+            # Send status report via mailbox (if available)
+            local mail_helper="$HOME/.aidevops/agents/scripts/mail-helper.sh"
+            if [[ -x "$mail_helper" ]]; then
+                local agent_id
+                agent_id=$("$mail_helper" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
+                if [[ -n "$agent_id" ]]; then
+                    "$mail_helper" send \
+                        --to "coordinator" \
+                        --type status_report \
+                        --payload "Task completed: $(loop_get_state ".prompt" | head -c 100). Iterations: $iteration. Branch: $(git branch --show-current 2>/dev/null || echo unknown)" \
+                        2>/dev/null || true
+                fi
+            fi
+            
             return 0
         fi
         
