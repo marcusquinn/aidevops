@@ -52,6 +52,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23
+  - [ ] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none
+  - [ ] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1
+  - [ ] t068.3 Lossless AGENTS.md Compression ~3h blocked-by:t068.1
+  - [ ] t068.4 TOON Mailbox System (mail-helper.sh) ~4h blocked-by:none
+  - [ ] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4
+  - [ ] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5
+  - [ ] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3
+  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~6h blocked-by:t068.4,t068.5
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t004 Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
@@ -138,6 +147,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t066 /add-skill System for External Skill Import #plan → [todo/PLANS.md#add-skill-system-for-external-skill-import] ~2d (ai:1d test:0.5d read:0.5d) logged:2026-01-21
   - Notes: Import external AI agent skills (SKILL.md, AGENTS.md) into aidevops with upstream tracking, conflict detection, merge support, and multi-assistant output generation. Research complete - see PLANS.md for full PRD. Branch: feature/add-skill-command
   - Notes: Load up Search Console → Performance → Filter Query → Query Regex → paste `^(?:\S+\s+){6,}\S+$`. You're already ranking for all these and people are finding you on these topics. Copy the first query (or whatever you want to write about) → Google → take the first 3 SERP results → using detailed copy all the headings. Plug it into your favorite LLM and ask it to write for you on this topic. Edit it so it feels natural. Works well because you're already ranking for these terms and people are finding you in LLMs through these channels.
+- [ ] t069 Add Lumen subagent for AI-powered git diffs and commit generation #tools #git #code-review ~2h (ai:1h test:30m read:30m) logged:2026-01-23 ref:https://github.com/jnsahaj/lumen
+  - Notes: Lumen (1.8k stars, Rust, MIT) - Beautiful git diff viewer + AI commit messages + change explanations + git command generation from CLI. Install: `brew install jnsahaj/lumen/lumen` or `cargo install lumen`. Supports OpenAI, Claude, Gemini, Groq, DeepSeek, xAI, Ollama, OpenRouter, Vercel AI Gateway. Config: `~/.config/lumen/lumen.config.json`. Key commands: `lumen diff` (visual diff), `lumen draft` (commit msg), `lumen explain` (change summary), `lumen operate` (natural language git commands). Create subagent at tools/git/lumen.md covering: API key setup (reuse existing keys from mcp-env.sh or per-provider env vars), when to use (pre-commit review, PR diffs, understanding AI-generated changes), integration with aidevops git workflow.
 - [x] t063 Fix secretlint scanning performance #bugfix #secretlint #performance ~30m (ai:15m test:10m read:5m) logged:2026-01-14 completed:2026-01-14
   - Notes: Added python-env, .osgrep, .scannerwork to .secretlintignore. Added bun.lock to .gitignore to maintain subset rule. Increased Docker timeout 30s→60s. Optional: glob whitelist in linters-local.sh for further optimization.
 - [x] t066 Add /add-skill command for external skill import #tools #skills #agents ~4h (ai:3h test:30m read:30m) logged:2026-01-21 started:2026-01-21T00:00Z completed:2026-01-21 actual:4h
@@ -145,7 +156,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
-<!--TOON:backlog[40]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[49]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
+t068,Multi-Agent Orchestration & Token Efficiency,,plan|orchestration|tokens|agents|mailbox|toon|compaction,5d,3d,1d,1d,2026-01-23T00:00Z,pending,,,
+t068.1,Custom System Prompt (prompts/build.txt),,orchestration|tokens,2h,1.5h,30m,,2026-01-23T00:00Z,pending,,,t068
+t068.2,Compaction Plugin (opencode-aidevops-plugin),,orchestration|plugin|compaction,4h,3h,1h,,2026-01-23T00:00Z,pending,t068.1,,t068
+t068.3,Lossless AGENTS.md Compression,,tokens|compression|toon,3h,2h,30m,30m,2026-01-23T00:00Z,pending,t068.1,,t068
+t068.4,TOON Mailbox System (mail-helper.sh),,orchestration|mailbox|toon,4h,3h,1h,,2026-01-23T00:00Z,pending,,,t068
+t068.5,Agent Registry & Worker Mailbox Awareness,,orchestration|agents|mailbox,3h,2h,30m,30m,2026-01-23T00:00Z,pending,t068.4,,t068
+t068.6,Stateless Coordinator (coordinator-helper.sh),,orchestration|coordinator,4h,3h,30m,30m,2026-01-23T00:00Z,pending,t068.4|t068.5,,t068
+t068.7,Model Routing (subagent YAML frontmatter),,agents|models|optimization,2h,1.5h,30m,,2026-01-23T00:00Z,pending,t068.3,,t068
+t068.8,TUI Dashboard (extend bdui or new Ink app),,tui|monitoring|visualization,6h,4h,1h,1h,2026-01-23T00:00Z,pending,t068.4|t068.5,,t068
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
@@ -203,6 +223,7 @@ t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,3h,2h
 t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,2h,1h,,1h,2026-01-14T00:00Z,pending,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20m,,10m,2026-01-15T00:00Z,pending,,,
 t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,
+t069,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|git|code-review,2h,1h,30m,30m,2026-01-23T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
