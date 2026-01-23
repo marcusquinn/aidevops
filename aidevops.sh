@@ -1631,6 +1631,152 @@ cmd_detect() {
     return 0
 }
 
+# Skill command - manage agent skills
+cmd_skill() {
+    local action="${1:-help}"
+    shift || true
+
+    # Disable telemetry for any downstream tools (add-skill, skills CLI)
+    export DISABLE_TELEMETRY=1
+    export DO_NOT_TRACK=1
+    export SKILLS_NO_TELEMETRY=1
+
+    local add_skill_script="$AGENTS_DIR/scripts/add-skill-helper.sh"
+    local update_skill_script="$AGENTS_DIR/scripts/skill-update-helper.sh"
+
+    case "$action" in
+        add|a)
+            if [[ $# -lt 1 ]]; then
+                print_error "Source required (owner/repo or URL)"
+                echo ""
+                echo "Usage: aidevops skill add <source> [options]"
+                echo ""
+                echo "Examples:"
+                echo "  aidevops skill add vercel-labs/agent-skills"
+                echo "  aidevops skill add anthropics/skills/pdf"
+                echo "  aidevops skill add https://github.com/owner/repo"
+                echo ""
+                echo "Options:"
+                echo "  --name <name>   Override the skill name"
+                echo "  --force         Overwrite existing skill"
+                echo "  --dry-run       Preview without making changes"
+                echo ""
+                echo "Browse skills: https://skills.sh"
+                return 1
+            fi
+
+            if [[ ! -f "$add_skill_script" ]]; then
+                print_error "add-skill-helper.sh not found"
+                print_info "Run 'aidevops update' to get the latest scripts"
+                return 1
+            fi
+
+            bash "$add_skill_script" add "$@"
+            ;;
+        list|ls|l)
+            if [[ ! -f "$add_skill_script" ]]; then
+                print_error "add-skill-helper.sh not found"
+                return 1
+            fi
+            bash "$add_skill_script" list
+            ;;
+        check|c)
+            if [[ ! -f "$update_skill_script" ]]; then
+                print_error "skill-update-helper.sh not found"
+                return 1
+            fi
+            bash "$update_skill_script" check "$@"
+            ;;
+        update|u)
+            if [[ ! -f "$update_skill_script" ]]; then
+                print_error "skill-update-helper.sh not found"
+                return 1
+            fi
+            bash "$update_skill_script" update "$@"
+            ;;
+        remove|rm)
+            if [[ $# -lt 1 ]]; then
+                print_error "Skill name required"
+                echo "Usage: aidevops skill remove <name>"
+                return 1
+            fi
+            if [[ ! -f "$add_skill_script" ]]; then
+                print_error "add-skill-helper.sh not found"
+                return 1
+            fi
+            bash "$add_skill_script" remove "$@"
+            ;;
+        status|s)
+            if [[ ! -f "$update_skill_script" ]]; then
+                print_error "skill-update-helper.sh not found"
+                return 1
+            fi
+            bash "$update_skill_script" status "$@"
+            ;;
+        generate|gen|g)
+            local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
+            if [[ ! -f "$generate_script" ]]; then
+                print_error "generate-skills.sh not found"
+                print_info "Run 'aidevops update' to get the latest scripts"
+                return 1
+            fi
+            print_info "Generating SKILL.md stubs for cross-tool discovery..."
+            bash "$generate_script" "$@"
+            ;;
+        clean)
+            local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
+            if [[ ! -f "$generate_script" ]]; then
+                print_error "generate-skills.sh not found"
+                return 1
+            fi
+            bash "$generate_script" --clean "$@"
+            ;;
+        help|--help|-h)
+            print_header "Agent Skills Management"
+            echo ""
+            echo "Import and manage reusable AI agent skills from the community."
+            echo "Skills are converted to aidevops format with upstream tracking."
+            echo "Telemetry is disabled - no data sent to third parties."
+            echo ""
+            echo "Usage: aidevops skill <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
+            echo "  list             List all imported skills"
+            echo "  check            Check for upstream updates"
+            echo "  update [name]    Update specific or all skills"
+            echo "  remove <name>    Remove an imported skill"
+            echo "  status           Show detailed skill status"
+            echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
+            echo "  clean            Remove generated SKILL.md stubs"
+            echo ""
+            echo "Source formats:"
+            echo "  owner/repo                    GitHub shorthand"
+            echo "  owner/repo/path/to/skill      Specific skill in multi-skill repo"
+            echo "  https://github.com/owner/repo Full URL"
+            echo ""
+            echo "Examples:"
+            echo "  aidevops skill add vercel-labs/agent-skills"
+            echo "  aidevops skill add anthropics/skills/pdf"
+            echo "  aidevops skill add expo/skills --name expo-dev"
+            echo "  aidevops skill check"
+            echo "  aidevops skill update"
+            echo "  aidevops skill generate --dry-run"
+            echo ""
+            echo "Imported skills are saved with a -skill suffix to distinguish"
+            echo "from native aidevops subagents (e.g., playwright-skill.md vs playwright.md)."
+            echo ""
+            echo "Browse community skills: https://skills.sh"
+            echo "Agent Skills specification: https://agentskills.io"
+            ;;
+        *)
+            print_error "Unknown skill command: $action"
+            echo "Run 'aidevops skill help' for usage information."
+            return 1
+            ;;
+    esac
+}
+
 # Help command
 cmd_help() {
     local version
@@ -1644,6 +1790,7 @@ cmd_help() {
     echo "  init [features]    Initialize aidevops in current project"
     echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
     echo "  features           List available features for init"
+    echo "  skill <cmd>        Manage agent skills (add/list/check/update/remove)"
     echo "  status             Check installation status of all components"
     echo "  update             Update aidevops to the latest version (alias: upgrade)"
     echo "  upgrade            Alias for update"
@@ -1667,6 +1814,13 @@ cmd_help() {
     echo "  aidevops update-tools        # Check for outdated tools"
     echo "  aidevops update-tools -u     # Update all outdated tools"
     echo "  aidevops uninstall           # Remove aidevops"
+    echo ""
+    echo "Skills:"
+    echo "  aidevops skill add <source>  # Import a skill from GitHub"
+    echo "  aidevops skill list          # List imported skills"
+    echo "  aidevops skill check         # Check for upstream updates"
+    echo "  aidevops skill update [name] # Update skills to latest"
+    echo "  aidevops skill remove <name> # Remove an imported skill"
     echo ""
     echo "Installation:"
     echo "  npm install -g aidevops && aidevops update      # via npm"
@@ -1747,6 +1901,10 @@ main() {
         repos|projects)
             shift
             cmd_repos "$@"
+            ;;
+        skill|skills)
+            shift
+            cmd_skill "$@"
             ;;
         detect|scan)
             cmd_detect
