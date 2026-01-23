@@ -576,33 +576,33 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 
 **When to read subagents:**
 
-| Task Domain | Read These |
-|-------------|------------|
-| Planning complex work | `workflows/plans.md`, `tools/task-management/beads.md` |
-| Code quality/reviews | `tools/code-review/code-standards.md`, then specific tools as needed |
-| External issues/PRs | `workflows/review-issue-pr.md` (triage external contributions) |
-| Git operations | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
-| Release/versioning | `workflows/release.md`, `workflows/version-bump.md` |
-| Browser automation | `tools/browser/stagehand.md` or `tools/browser/playwright.md` |
-| macOS GUI automation | `tools/browser/peekaboo.md` (screen capture, native app control) |
-| Frontend debugging | `tools/ui/frontend-debugging.md` (hydration errors, monorepo gotchas) |
-| WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
-| SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` |
-| Sitemap submission | `seo/gsc-sitemaps.md` |
-| Website analytics | `services/analytics/google-analytics.md` (GA4 reports, traffic, conversions) |
-| CRM/email marketing | `services/crm/fluentcrm.md` |
-| MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` |
-| Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` |
-| Database migrations | `workflows/sql-migrations.md` |
-| Framework internals | `aidevops/architecture.md` (when working in `~/Git/aidevops/`) |
-| Content summarization | `tools/content/summarize.md` |
-| X/Twitter automation | `tools/social-media/bird.md` |
-| macOS automation | `tools/automation/mac.md` (AppleScript, JXA, app control) |
-| Programmatic video | `tools/video/remotion.md` (React video creation, animations) |
-| AI image/video generation | `tools/video/higgsfield.md` (100+ generative models via unified API) |
-| Video prompt engineering | `tools/video/video-prompt-design.md` (Veo 3 meta prompts, 7-component framework) |
-| Mobile emulators | `tools/mobile/minisim.md` (iOS simulator, Android emulator launcher) |
-| Importing skills | `scripts/commands/add-skill.md` (import, naming, update tracking) |
+| Task Domain | Read These | Contains |
+|-------------|------------|----------|
+| Planning complex work | `workflows/plans.md`, `tools/task-management/beads.md` | Plan templates, complexity detection, task dependencies, blocking relationships |
+| Code quality/reviews | `tools/code-review/code-standards.md`, then specific tools as needed | Linter configs, shell patterns, variable conventions, PR review checklists |
+| External issues/PRs | `workflows/review-issue-pr.md` | Triage criteria, contributor response templates, label taxonomy |
+| Git operations | `workflows/git-workflow.md`, `tools/git/github-cli.md` | Branch naming, commit conventions, gh CLI commands, PR workflows |
+| Release/versioning | `workflows/release.md`, `workflows/version-bump.md` | Semver rules, changelog generation, tag creation, npm publish steps |
+| Browser automation | `tools/browser/stagehand.md` or `tools/browser/playwright.md` | Selector strategies, page interaction patterns, screenshot capture, test fixtures |
+| macOS GUI automation | `tools/browser/peekaboo.md` | Screen capture commands, native app control, accessibility API usage |
+| Frontend debugging | `tools/ui/frontend-debugging.md` | Hydration error diagnosis, monorepo gotchas, React/Next.js patterns |
+| WordPress work | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` | LocalWP setup, WP-CLI commands, fleet management, plugin workflows |
+| SEO analysis | `seo/dataforseo.md`, `seo/google-search-console.md` | API endpoints, keyword metrics, ranking data, search performance queries |
+| Sitemap submission | `seo/gsc-sitemaps.md` | GSC API auth, sitemap submit/delete, indexing status checks |
+| Website analytics | `services/analytics/google-analytics.md` | GA4 API queries, traffic reports, conversion tracking, real-time data |
+| CRM/email marketing | `services/crm/fluentcrm.md` | Contact CRUD, email sequences, automation triggers, tag management |
+| MCP development | `tools/build-mcp/build-mcp.md`, `tools/build-mcp/server-patterns.md` | Tool registration, resource handlers, transport configs, deployment patterns |
+| Agent design | `tools/build-agent/build-agent.md`, `tools/build-agent/agent-review.md` | Instruction budgets, progressive disclosure, YAML frontmatter, review checklists |
+| Database migrations | `workflows/sql-migrations.md` | Migration file naming, up/down patterns, rollback procedures |
+| Framework internals | `aidevops/architecture.md` | Extension points, folder conventions, script patterns, naming rules |
+| Content summarization | `tools/content/summarize.md` | Extraction prompts, length targets, format options, multi-doc synthesis |
+| X/Twitter automation | `tools/social-media/bird.md` | Post/reply commands, timeline reading, thread creation, media upload |
+| macOS automation | `tools/automation/mac.md` | AppleScript snippets, JXA patterns, app control, accessibility API |
+| Programmatic video | `tools/video/remotion.md` | React composition, animation timing, render commands, asset management |
+| AI image/video generation | `tools/video/higgsfield.md` | 100+ model APIs, prompt formats, style parameters, generation workflows |
+| Video prompt engineering | `tools/video/video-prompt-design.md` | Veo 3 meta prompts, 7-component framework, style descriptors, motion descriptors |
+| Mobile emulators | `tools/mobile/minisim.md` | iOS simulator launch, Android emulator management, device selection |
+| Importing skills | `scripts/commands/add-skill.md` | Skill import CLI, naming conventions, upstream tracking, update checks |
 
 ## Security
 
