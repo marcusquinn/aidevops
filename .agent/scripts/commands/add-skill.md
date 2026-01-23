@@ -11,14 +11,17 @@ URL/Repo: $ARGUMENTS
 ## Quick Reference
 
 ```bash
-# Import skill from GitHub
+# Import skill from GitHub (saved as *-skill.md)
 /add-skill dmmulroy/cloudflare-skill
+# → .agent/services/hosting/cloudflare-skill.md
 
 # Import specific skill from multi-skill repo
 /add-skill anthropics/skills/pdf
+# → .agent/tools/pdf-skill.md
 
 # Import with custom name
 /add-skill vercel-labs/agent-skills --name vercel-deploy
+# → .agent/tools/deployment/vercel-deploy-skill.md
 
 # List imported skills
 /add-skill list
@@ -26,6 +29,21 @@ URL/Repo: $ARGUMENTS
 # Check for updates
 /add-skill check-updates
 ```
+
+## Naming Convention
+
+Imported skills are saved with a `-skill` suffix to distinguish them from native aidevops subagents:
+
+| Type | Example | Managed by |
+|------|---------|------------|
+| Native subagent | `playwright.md` | aidevops team, evolves with framework |
+| Imported skill | `playwright-skill.md` | Upstream repo, checked for updates |
+
+This means:
+- No name clashes between imports and native subagents
+- `*-skill.md` glob finds all imports instantly
+- `aidevops skill check` knows which files to check for upstream updates
+- Issues with imported skills → check upstream; issues with native → evolve locally
 
 ## Workflow
 
@@ -111,7 +129,7 @@ Imported skills are tracked in `.agent/configs/skill-sources.json`:
       "name": "cloudflare",
       "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
       "upstream_commit": "abc123...",
-      "local_path": ".agent/services/hosting/cloudflare.md",
+      "local_path": ".agent/services/hosting/cloudflare-skill.md",
       "format_detected": "skill-md",
       "imported_at": "2026-01-21T00:00:00Z",
       "last_checked": "2026-01-21T00:00:00Z",

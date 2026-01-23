@@ -511,7 +511,7 @@ Subagents provide specialized capabilities. Read them when tasks require domain 
 | `workflows/` | Development processes - branching, releases, PR reviews, quality gates | git-workflow, plans, release, version-bump, pr, review-issue-pr, preflight, postflight, ralph-loop, session-review |
 | `templates/` | Document templates - PRDs, task lists, planning documents | prd-template, tasks-template, plans-template, todo-template |
 | `workflows/branch/` | Branch conventions - naming, purpose, merge strategies per branch type | feature, bugfix, hotfix, refactor, chore, experiment, release |
-| `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier, humanise and other interactive commands | save-todo, remember, recall, code-simplifier, humanise |
+| `scripts/commands/` | Slash commands - save-todo, remember, recall, code-simplifier, humanise, add-skill and other interactive commands | save-todo, remember, recall, code-simplifier, humanise, add-skill |
 
 <!-- AI-CONTEXT-END -->
 
@@ -554,6 +554,7 @@ aidevops features                # List available features
 | `aidevops upgrade` | Alias for update |
 | `aidevops repos` | List registered projects |
 | `aidevops repos add` | Register current project |
+| `aidevops skill <cmd>` | Manage imported skills (add/list/check/update/remove/generate) |
 | `aidevops detect` | Find unregistered aidevops projects |
 | `aidevops update-tools` | Check for outdated tools |
 | `aidevops uninstall` | Remove aidevops |
@@ -600,6 +601,7 @@ For AI-assisted setup guidance, see `aidevops/setup.md`.
 | Programmatic video | `tools/video/remotion.md` (React video creation, animations) |
 | AI image/video generation | `tools/video/higgsfield.md` (100+ generative models via unified API) |
 | Mobile emulators | `tools/mobile/minisim.md` (iOS simulator, Android emulator launcher) |
+| Importing skills | `scripts/commands/add-skill.md` (import, naming, update tracking) |
 
 ## Security
 
@@ -644,6 +646,47 @@ Never create files in `~/` root for files needed only with the current task.
 | `full-loop-helper.sh` | End-to-end development loop (task → PR → deploy) |
 | `session-review-helper.sh` | Gather session context for completeness review |
 | `humanise-update-helper.sh` | Check for upstream updates to humanise subagent |
+| `add-skill-helper.sh` | Import external skills from GitHub repos |
+| `skill-update-helper.sh` | Check/update imported skills from upstream |
+| `generate-skills.sh` | Generate SKILL.md stubs for cross-tool discovery |
+
+## Imported Skills
+
+Import community [Agent Skills](https://agentskills.io) into aidevops with upstream tracking.
+
+**Naming convention**: Imported skills use a `-skill` suffix to distinguish from native subagents:
+
+| Type | Pattern | Example | Managed by |
+|------|---------|---------|------------|
+| Native subagent | `{name}.md` | `playwright.md` | aidevops team |
+| Imported skill | `{name}-skill.md` | `playwright-skill.md` | Upstream repo |
+
+**CLI commands:**
+
+```bash
+aidevops skill add <source>       # Import from GitHub (→ *-skill.md)
+aidevops skill list                # List imported skills
+aidevops skill check               # Check for upstream updates
+aidevops skill update [name]       # Pull upstream changes
+aidevops skill remove <name>       # Remove imported skill
+aidevops skill generate            # Generate SKILL.md stubs for cross-tool discovery
+aidevops skill clean               # Remove generated SKILL.md stubs
+```
+
+**How it works:**
+1. Clones the source repo, detects format (SKILL.md, AGENTS.md, .cursorrules)
+2. Converts to aidevops subagent format with `-skill.md` suffix
+3. Places in appropriate category folder (auto-detected from content)
+4. Registers in `.agent/configs/skill-sources.json` for update tracking
+5. Telemetry disabled - no data sent to skills.sh or third parties
+
+**When issues arise with a subagent:**
+- `*-skill.md` → Check upstream for updates: `aidevops skill check`
+- Native `.md` → Evolve locally, submit PR to aidevops
+
+**Cross-tool discovery**: `aidevops skill generate` creates lightweight SKILL.md stubs so other tools (Cursor, VS Code Copilot, OpenCode) can discover aidevops subagents without changing our file structure.
+
+**Related scripts:** `add-skill-helper.sh`, `skill-update-helper.sh`, `generate-skills.sh`
 
 ## Quality Workflow
 

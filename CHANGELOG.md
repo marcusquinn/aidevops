@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add `aidevops skill` CLI command for managing agent skills with telemetry disabled (#154)
+- add `-skill` suffix convention for imported skills to distinguish from native subagents
+- add `generate`/`clean` subcommands for SKILL.md cross-tool discovery stubs
+
 ## [2.72.0] - 2026-01-22
 
 ### Added
