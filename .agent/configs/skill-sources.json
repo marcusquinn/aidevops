@@ -29,6 +29,17 @@
       "context7_id": "/remotion-dev/remotion"
     },
     {
+      "name": "video-prompt-design",
+      "upstream_url": "https://github.com/snubroot/Veo-3-Meta-Framework",
+      "upstream_commit": "",
+      "local_path": ".agent/tools/video/video-prompt-design.md",
+      "format_detected": "readme-distilled",
+      "imported_at": "2026-01-23T20:40:00Z",
+      "last_checked": "2026-01-23T20:40:00Z",
+      "merge_strategy": "added",
+      "notes": "Distilled from upstream README into 7-component meta prompt framework subagent"
+    },
+    {
       "name": "cloudflare-platform",
       "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
       "upstream_commit": "c4696d5389f95e9546b075759ff8326deac1fba7",

@@ -4,8 +4,8 @@ mode: subagent
 upstream_url: https://github.com/snubroot/Veo-3-Meta-Framework
 tools:
   read: true
-  write: true
-  edit: true
+  write: false
+  edit: false
   bash: false
   glob: true
   grep: true
@@ -33,7 +33,7 @@ Subject:   [Character with 15+ physical attributes]
 Action:    [Movements, gestures, timing, micro-expressions]
 Scene:     [Environment, props, lighting, weather, time of day]
 Style:     [Camera shot, angle, movement, colour palette, depth of field]
-Dialogue:  [Character]: "Speech" (Tone: descriptor)
+Dialogue:  (Character Name): "Speech" (Tone: descriptor)
 Sounds:    [Ambient, effects, music, environmental audio]
 Technical: [Negative prompt - elements to exclude]
 ```
