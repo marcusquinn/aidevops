@@ -141,23 +141,15 @@ inconsistent character appearance, audio sync issues, amateur quality,
 distorted hands, oversaturation, compression noise, camera shake
 ```
 
-**Domain-specific additions**:
-- Corporate: `no casual attire, no distracting backgrounds, no poor posture`
-- Educational: `no overly dramatic presentation, no artificial staging`
-- Social media: `no outdated trends, no poor mobile optimisation`
+### Movement and Physics
 
-### Physics-Aware Prompting
+**Movement quality modifiers** (add to Action component):
 
-Include physics keywords for realistic movement:
+`natural movement`, `energetic movement`, `slow and deliberate`, `graceful`, `confident`, `fluid`
 
-```text
-"realistic physics governing all actions"
-"natural fluid dynamics"
-"authentic momentum conservation"
-"proper weight and balance"
-```
+**Physics keywords** (for realistic results):
 
-**Movement quality modifiers**: `natural movement`, `energetic movement`, `slow and deliberate`, `graceful`, `confident`, `fluid`.
+`realistic physics governing all actions`, `proper weight and balance`, `natural fluid dynamics`
 
 ### Selfie Video Formula
 
@@ -167,43 +159,6 @@ A selfie video of [CHARACTER]. [He/She] holds the camera at arm's length.
 looks into the camera before [ACTION]. The image is slightly grainy,
 looks very film-like. [He/She] says: "[DIALOGUE_8S_MAX]"
 ```
-
-### Quality Tiers
-
-| Tier | Components | Automation |
-|------|-----------|------------|
-| Advanced | All 7 + physics + meta prompt | Full |
-| Professional | 6-7 with detail | Partial |
-| Intermediate | 4-6 basic | Minimal |
-| Basic | 1-3 (poor results) | None |
-
-### Domain Templates
-
-**Corporate**: Executive presence, brand compliance, three-point lighting, authoritative framing, business formal attire, corporate environments.
-
-**Educational**: Visual-auditory sync, cognitive load management, clear progression, multi-sensory engagement, retention-focused design.
-
-**Social media**: Hook within 2 seconds, emotional engagement, platform-specific formatting, viral mechanics, demographic targeting.
-
-### Meta Prompt Generation
-
-When generating meta prompts (prompts that generate prompts), follow this cognitive architecture:
-
-1. **Identity layer**: Define role and expertise
-2. **Knowledge layer**: Technical specs and best practices
-3. **Analysis layer**: Parse requirements and optimise
-4. **Generation layer**: Apply 7-component format
-5. **Quality layer**: Validate against checklist
-6. **Output layer**: Structured response with alternatives
-
-### Success Metrics
-
-| Metric | Target |
-|--------|--------|
-| Generation success rate | >95% |
-| Character consistency | >98% |
-| Audio-visual sync | >97% |
-| Brand compliance | 100% |
 
 ### Veo 3 Limitations
 
