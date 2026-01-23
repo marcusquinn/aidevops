@@ -189,6 +189,15 @@ AGENT_TEMPS = {
     "Research": 0.3,
 }
 
+# Custom system prompts (by display name)
+# These replace the default Claude Code system prompt, eliminating harness conflicts
+# where the default prompt says "use Glob tool" but we want "use git ls-files"
+AGENT_PROMPTS = {
+    "Build+": "~/.aidevops/agents/prompts/build.txt",
+    "AI-DevOps": "~/.aidevops/agents/prompts/build.txt",
+    "Sisyphus": "~/.aidevops/agents/prompts/build.txt",
+}
+
 # Files to skip (not primary agents)
 SKIP_FILES = {"AGENTS.md", "README.md"}
 
@@ -276,6 +285,12 @@ def get_agent_config(display_name, filename, subagents=None):
         "permission": {},
         "tools": tools
     }
+    
+    # Add custom system prompt for agents that need tool preference enforcement
+    # This replaces the default Claude Code system prompt, eliminating harness conflicts
+    prompt_file = os.path.join(agents_dir, "prompts", "build.txt")
+    if display_name in AGENT_PROMPTS and os.path.exists(prompt_file):
+        config["prompt"] = "{file:" + AGENT_PROMPTS[display_name] + "}"
     
     # Special permissions
     if display_name == "Plan+":
@@ -417,6 +432,11 @@ print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}"
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
 if subagent_filtered_count > 0:
     print(f"  Subagent filtering: {subagent_filtered_count} agents have permission.task rules")
+
+# Count agents with custom prompts
+prompt_count = sum(1 for name in sorted_agents if name in AGENT_PROMPTS and "prompt" in sorted_agents.get(name, {}))
+if prompt_count > 0:
+    print(f"  Custom system prompts: {prompt_count} agents use prompts/build.txt")
 
 # =============================================================================
 # MCP SERVERS - Ensure required MCP servers are configured
