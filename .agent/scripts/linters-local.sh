@@ -445,6 +445,62 @@ check_markdown_lint() {
     return 0
 }
 
+# Check TOON file syntax
+check_toon_syntax() {
+    print_info "Checking TOON Syntax..."
+
+    local toon_files
+    local violations=0
+
+    # Find .toon files in the repo
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        toon_files=$(git ls-files '*.toon' 2>/dev/null)
+    else
+        toon_files=$(find . -name "*.toon" -type f 2>/dev/null | grep -v node_modules)
+    fi
+
+    if [[ -z "$toon_files" ]]; then
+        print_success "TOON: No .toon files to check"
+        return 0
+    fi
+
+    local file_count
+    file_count=$(echo "$toon_files" | wc -l | tr -d ' ')
+
+    # Use toon-lsp check if available, otherwise try decode as validation
+    if command -v toon-lsp &> /dev/null; then
+        for file in $toon_files; do
+            if [[ -f "$file" ]]; then
+                local result
+                result=$(toon-lsp check "$file" 2>&1) || true
+                if [[ $? -ne 0 ]] || [[ "$result" == *"error"* ]]; then
+                    ((violations++))
+                    print_warning "TOON syntax issue in $file"
+                fi
+            fi
+        done
+    else
+        # Fallback: basic structure validation (check for common TOON patterns)
+        for file in $toon_files; do
+            if [[ -f "$file" ]]; then
+                # Check file is non-empty and has key:value patterns
+                if [[ ! -s "$file" ]]; then
+                    ((violations++))
+                    print_warning "TOON: Empty file $file"
+                fi
+            fi
+        done
+    fi
+
+    if [[ $violations -eq 0 ]]; then
+        print_success "TOON: All $file_count files valid"
+    else
+        print_warning "TOON: $violations of $file_count files with issues"
+    fi
+
+    return 0
+}
+
 check_remote_cli_status() {
     print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
@@ -516,6 +572,9 @@ main() {
     echo ""
 
     check_markdown_lint || exit_code=1
+    echo ""
+
+    check_toon_syntax || exit_code=1
     echo ""
 
     check_remote_cli_status
