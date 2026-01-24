@@ -450,7 +450,7 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 
 ## **Imported Skills**
 
-aidevops includes curated skills imported from external repositories. Skills from GitHub repos support automatic update tracking:
+aidevops includes curated skills imported from external sources. Skills support automatic update tracking:
 
 | Skill | Source | Description |
 |-------|--------|-------------|
@@ -459,24 +459,28 @@ aidevops includes curated skills imported from external repositories. Skills fro
 | **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
 | **video-prompt-design** | [snubroot/Veo-3-Meta-Framework](https://github.com/snubroot/Veo-3-Meta-Framework) | AI video prompt engineering - 7-component meta prompt framework for Veo 3 |
 | **animejs** | [animejs.com](https://animejs.com) | JavaScript animation library patterns and API (via Context7) |
+| **caldav-calendar** | [ClawdHub](https://clawdhub.com/Asleep123/caldav-calendar) | CalDAV calendar sync via vdirsyncer + khal (iCloud, Google, Fastmail, Nextcloud) |
+| **proxmox-full** | [ClawdHub](https://clawdhub.com/mSarheed/proxmox-full) | Complete Proxmox VE hypervisor management via REST API |
 
 **CLI Commands:**
 
 ```bash
 aidevops skill add <owner/repo>    # Import a skill from GitHub
+aidevops skill add clawdhub:<slug> # Import a skill from ClawdHub
 aidevops skill list                # List imported skills
 aidevops skill check               # Check for upstream updates
 aidevops skill update [name]       # Update specific or all skills
 aidevops skill remove <name>       # Remove an imported skill
 ```
 
-Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream commit tracking for update detection. Telemetry is disabled - no data is sent to third parties.
+Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream tracking for update detection. Telemetry is disabled - no data is sent to third parties.
 
-**Browse community skills:** [skills.sh](https://skills.sh) | **Specification:** [agentskills.io](https://agentskills.io)
+**Browse community skills:** [skills.sh](https://skills.sh) | [ClawdHub](https://clawdhub.com) | **Specification:** [agentskills.io](https://agentskills.io)
 
 **Reference:**
 - [Agent Skills Specification](https://agentskills.io/specification) - The open format for SKILL.md files
 - [skills.sh Leaderboard](https://skills.sh) - Discover popular community skills
+- [ClawdHub](https://clawdhub.com) - Skill registry with vector search (Clawdbot ecosystem)
 - [vercel-labs/add-skill](https://github.com/vercel-labs/add-skill) - The upstream CLI tool (aidevops uses its own implementation)
 - [anthropics/skills](https://github.com/anthropics/skills) - Official Anthropic example skills
 - [agentskills/agentskills](https://github.com/agentskills/agentskills) - Specification source and reference library
@@ -1140,18 +1144,26 @@ This installs the complete framework: 18 primary agents, 536+ subagents, and 141
 
 ### Importing External Skills
 
-Import skills from any GitHub repository using the `aidevops skill` CLI:
+Import skills from GitHub or ClawdHub using the `aidevops skill` CLI:
 
 ```bash
 # Import from GitHub (auto-detects format)
 aidevops skill add owner/repo
 
-# Examples
+# Import from ClawdHub (skill registry with vector search)
+aidevops skill add clawdhub:caldav-calendar
+aidevops skill add https://clawdhub.com/owner/slug
+
+# More examples
 aidevops skill add anthropics/skills/pdf           # Specific skill from multi-skill repo
 aidevops skill add vercel-labs/agent-skills         # All skills from a repo
 aidevops skill add expo/skills --name expo-dev      # Custom name
 aidevops skill add owner/repo --dry-run             # Preview without changes
 ```
+
+**Supported sources:**
+- GitHub repos (`owner/repo` or full URL) — fetched via `git clone`
+- [ClawdHub](https://clawdhub.com) (`clawdhub:slug` or full URL) — fetched via Playwright browser automation
 
 **Supported formats:**
 - `SKILL.md` - [Agent Skills standard](https://agentskills.io/specification) (preferred)
