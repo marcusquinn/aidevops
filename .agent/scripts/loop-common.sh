@@ -747,7 +747,14 @@ loop_run_external() {
             # Send status report via mailbox (if available)
             if [[ -x "$LOOP_MAIL_HELPER" ]]; then
                 local agent_id
-                agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
+                # Identify current agent by matching worktree path in registry
+                local current_dir
+                current_dir=$(pwd)
+                agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep "$current_dir" | cut -d',' -f1 | head -1 || echo "")
+                # Fallback: use first registered agent if no worktree match
+                if [[ -z "$agent_id" ]]; then
+                    agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
+                fi
                 if [[ -n "$agent_id" ]]; then
                     "$LOOP_MAIL_HELPER" send \
                         --to "coordinator" \

@@ -130,17 +130,18 @@ cmd_pulse() {
             done
         fi
         
-        # Archive processed outbox messages
+        # Move processed outbox status_reports to archive directly
+        # (mail-helper archive only handles inbox, so we move outbox files manually)
         local outbox_dir="$MAIL_DIR/outbox"
+        local archive_dir="$MAIL_DIR/archive"
         if [[ -d "$outbox_dir" ]]; then
+            mkdir -p "$archive_dir"
             for msg_file in "$outbox_dir"/*.toon; do
                 [[ -f "$msg_file" ]] || continue
                 local msg_type
                 msg_type=$(grep -A1 'TOON:message{' "$msg_file" 2>/dev/null | tail -1 | cut -d',' -f4)
                 if [[ "$msg_type" == "status_report" ]]; then
-                    local msg_id
-                    msg_id=$(basename "$msg_file" .toon)
-                    "$MAIL_HELPER" archive "$msg_id" 2>/dev/null || true
+                    mv "$msg_file" "$archive_dir/" 2>/dev/null || true
                 fi
             done
         fi
@@ -195,8 +196,9 @@ cmd_pulse() {
     if [[ -n "$reports" ]]; then
         report_count=$(echo "$reports" | grep -c '.' 2>/dev/null || echo 0)
     fi
-    if [[ -n "$idle_agents" ]]; then
-        dispatch_count=$(echo "$idle_agents" | tr -cd ',' | wc -c | tr -d ' ')
+    # Count actual dispatches (1 if we dispatched, 0 otherwise)
+    if [[ -n "$ready_tasks" && -n "$idle_agents" && -n "${first_idle:-}" && -n "${first_task:-}" ]]; then
+        dispatch_count=1
     fi
     if [[ -n "$ready_tasks" ]]; then
         ready_count=$(echo "$ready_tasks" | grep -c '.' 2>/dev/null || echo 0)
@@ -247,10 +249,10 @@ cmd_dispatch() {
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --task) task="$2"; shift 2 ;;
-            --to) to="$2"; shift 2 ;;
-            --priority) priority="$2"; shift 2 ;;
-            --convoy) convoy="$2"; shift 2 ;;
+            --task) [[ $# -lt 2 ]] && { log_error "--task requires a value"; return 1; }; task="$2"; shift 2 ;;
+            --to) [[ $# -lt 2 ]] && { log_error "--to requires a value"; return 1; }; to="$2"; shift 2 ;;
+            --priority) [[ $# -lt 2 ]] && { log_error "--priority requires a value"; return 1; }; priority="$2"; shift 2 ;;
+            --convoy) [[ $# -lt 2 ]] && { log_error "--convoy requires a value"; return 1; }; convoy="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -265,7 +267,19 @@ cmd_dispatch() {
         local active_agents
         active_agents=$(get_active_agents)
         if [[ -n "$active_agents" ]]; then
-            to=$(echo "$active_agents" | grep ',worker,' | head -1 | cut -d',' -f1)
+            # Find a worker with no unread messages (idle)
+            while IFS=',' read -r agent_id role _rest; do
+                [[ "$role" == "worker" ]] || continue
+                local inbox_dir="$MAIL_DIR/inbox/$agent_id"
+                local unread=0
+                if [[ -d "$inbox_dir" ]]; then
+                    unread=$(find "$inbox_dir" -name "*.toon" -type f 2>/dev/null | wc -l | tr -d ' ')
+                fi
+                if [[ "$unread" -eq 0 ]]; then
+                    to="$agent_id"
+                    break
+                fi
+            done <<< "$active_agents"
         fi
         if [[ -z "$to" ]]; then
             log_error "No idle workers available. Register agents first."
@@ -299,8 +313,8 @@ cmd_convoy() {
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name="$2"; shift 2 ;;
-            --tasks) tasks="$2"; shift 2 ;;
+            --name) [[ $# -lt 2 ]] && { log_error "--name requires a value"; return 1; }; name="$2"; shift 2 ;;
+            --tasks) [[ $# -lt 2 ]] && { log_error "--tasks requires a value"; return 1; }; tasks="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done

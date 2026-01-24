@@ -142,12 +142,12 @@ cmd_send() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --to) to="$2"; shift 2 ;;
-            --type) msg_type="$2"; shift 2 ;;
-            --payload) payload="$2"; shift 2 ;;
-            --priority) priority="$2"; shift 2 ;;
-            --convoy) convoy="$2"; shift 2 ;;
-            --from) from="$2"; shift 2 ;;
+            --to) [[ $# -lt 2 ]] && { log_error "--to requires a value"; return 1; }; to="$2"; shift 2 ;;
+            --type) [[ $# -lt 2 ]] && { log_error "--type requires a value"; return 1; }; msg_type="$2"; shift 2 ;;
+            --payload) [[ $# -lt 2 ]] && { log_error "--payload requires a value"; return 1; }; payload="$2"; shift 2 ;;
+            --priority) [[ $# -lt 2 ]] && { log_error "--priority requires a value"; return 1; }; priority="$2"; shift 2 ;;
+            --convoy) [[ $# -lt 2 ]] && { log_error "--convoy requires a value"; return 1; }; convoy="$2"; shift 2 ;;
+            --from) [[ $# -lt 2 ]] && { log_error "--from requires a value"; return 1; }; from="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -199,7 +199,7 @@ cmd_send() {
                     local agent_inbox="$INBOX_DIR/$agent_id"
                     mkdir -p "$agent_inbox"
                     write_message "$agent_inbox/${msg_id}.toon" "$msg_id" "$from" "$agent_id" "$msg_type" "$priority" "$convoy" "$payload"
-                    ((count++))
+                    count=$((count + 1))
                 fi
             done <<< "$agents"
             log_success "Broadcast sent: $msg_id (to $count agents)"
@@ -268,9 +268,9 @@ cmd_check() {
             convoy=$(echo "$header" | cut -d',' -f6)
             timestamp=$(echo "$header" | cut -d',' -f7)
             echo "${id},${from},${msg_type},${priority},${convoy},${timestamp},${status}"
-            ((count++))
+            count=$((count + 1))
             if [[ "$status" == "unread" ]]; then
-                ((unread++))
+                unread=$((unread + 1))
             fi
         fi
     done
@@ -387,7 +387,7 @@ cmd_prune() {
 
         if [[ "$dry_run" == true ]]; then
             log_info "Would prune: $msg_file"
-            ((pruned++))
+            pruned=$((pruned + 1))
             continue
         fi
 
@@ -403,12 +403,12 @@ cmd_prune() {
                 "$MEMORY_HELPER" store \
                     --content "Mailbox ($msg_type): $payload" \
                     --type CONTEXT \
-                    --tags "mailbox,${msg_type},archived" 2>/dev/null && ((remembered++))
+                    --tags "mailbox,${msg_type},archived" 2>/dev/null && remembered=$((remembered + 1))
             fi
         fi
 
         rm -f "$msg_file"
-        ((pruned++))
+        pruned=$((pruned + 1))
     done < <(find "$ARCHIVE_DIR" -name "*.toon" -mtime +"$older_than_days" 2>/dev/null)
 
     if [[ "$dry_run" == true ]]; then
@@ -454,7 +454,7 @@ cmd_status() {
                 local count
                 count=$(find "$agent_dir" -name "*.toon" 2>/dev/null | wc -l | tr -d ' ')
                 total_inbox=$((total_inbox + count))
-                ((total_agents++))
+                total_agents=$((total_agents + 1))
             done
             # Also count general inbox messages
             local general
@@ -522,7 +522,24 @@ cmd_register() {
     local timestamp
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-    # Create or update registry
+    # Create or update registry (with file locking to prevent race conditions)
+    local lock_file="${REGISTRY_FILE}.lock"
+    local lock_acquired=false
+    for _attempt in 1 2 3 4 5; do
+        if (set -o noclobber; echo $$ > "$lock_file") 2>/dev/null; then
+            lock_acquired=true
+            break
+        fi
+        sleep 0.2
+    done
+    if [[ "$lock_acquired" != "true" ]]; then
+        log_warn "Could not acquire registry lock (stale lock?). Removing and retrying."
+        rm -f "$lock_file"
+        (set -o noclobber; echo $$ > "$lock_file") 2>/dev/null || true
+    fi
+    # shellcheck disable=SC2064
+    trap "rm -f '$lock_file'" RETURN
+
     if [[ ! -f "$REGISTRY_FILE" ]]; then
         cat > "$REGISTRY_FILE" << EOF
 <!--TOON:agents{id,role,branch,worktree,status,registered,last_seen}:
@@ -574,6 +591,23 @@ cmd_deregister() {
         log_warn "No registry file found"
         return 0
     fi
+
+    # Acquire lock before modifying registry
+    local lock_file="${REGISTRY_FILE}.lock"
+    local lock_acquired=false
+    for _attempt in 1 2 3 4 5; do
+        if (set -o noclobber; echo $$ > "$lock_file") 2>/dev/null; then
+            lock_acquired=true
+            break
+        fi
+        sleep 0.2
+    done
+    if [[ "$lock_acquired" != "true" ]]; then
+        rm -f "$lock_file"
+        (set -o noclobber; echo $$ > "$lock_file") 2>/dev/null || true
+    fi
+    # shellcheck disable=SC2064
+    trap "rm -f '$lock_file'" RETURN
 
     # Mark as inactive (don't remove - preserves history)
     if command -v sed &>/dev/null; then

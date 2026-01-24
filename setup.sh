@@ -1453,17 +1453,19 @@ extract_opencode_prompts() {
 check_opencode_prompt_drift() {
     local drift_script=".agent/scripts/opencode-prompt-drift-check.sh"
     if [[ -f "$drift_script" ]]; then
-        local output
-        output=$(bash "$drift_script" --quiet 2>/dev/null) || true
-        if [[ "$output" == PROMPT_DRIFT* ]]; then
+        local output exit_code=0
+        output=$(bash "$drift_script" --quiet 2>/dev/null) || exit_code=$?
+        if [[ "$exit_code" -eq 1 && "$output" == PROMPT_DRIFT* ]]; then
             local local_hash upstream_hash
             local_hash=$(echo "$output" | cut -d'|' -f2)
             upstream_hash=$(echo "$output" | cut -d'|' -f3)
             print_warning "OpenCode upstream prompt has changed (${local_hash} → ${upstream_hash})"
             print_info "  Review: https://github.com/anomalyco/opencode/compare/${local_hash}...${upstream_hash}"
             print_info "  Update .agent/prompts/build.txt if needed"
-        else
+        elif [[ "$exit_code" -eq 0 ]]; then
             print_success "OpenCode prompt in sync with upstream"
+        else
+            print_warning "Could not check prompt drift (network issue or missing dependency)"
         fi
     fi
     return 0
