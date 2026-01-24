@@ -227,7 +227,7 @@ cmd_check() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --agent) agent_id="$2"; shift 2 ;;
+            --agent) [[ $# -lt 2 ]] && { log_error "--agent requires a value"; return 1; }; agent_id="$2"; shift 2 ;;
             --unread-only) unread_only=true; shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
@@ -287,7 +287,7 @@ cmd_read_msg() {
     # Parse args: support both positional and --agent flag
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --agent) agent_id="$2"; shift 2 ;;
+            --agent) [[ $# -lt 2 ]] && { log_error "--agent requires a value"; return 1; }; agent_id="$2"; shift 2 ;;
             -*) log_error "Unknown option: $1"; return 1 ;;
             *) msg_id="$1"; shift ;;
         esac
@@ -328,7 +328,7 @@ cmd_archive() {
     # Parse args: support both positional and --agent flag
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --agent) agent_id="$2"; shift 2 ;;
+            --agent) [[ $# -lt 2 ]] && { log_error "--agent requires a value"; return 1; }; agent_id="$2"; shift 2 ;;
             -*) log_error "Unknown option: $1"; return 1 ;;
             *) msg_id="$1"; shift ;;
         esac
@@ -370,7 +370,7 @@ cmd_prune() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --older-than-days) older_than_days="$2"; shift 2 ;;
+            --older-than-days) [[ $# -lt 2 ]] && { log_error "--older-than-days requires a value"; return 1; }; older_than_days="$2"; shift 2 ;;
             --dry-run) dry_run=true; shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
@@ -426,7 +426,7 @@ cmd_status() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --agent) agent_id="$2"; shift 2 ;;
+            --agent) [[ $# -lt 2 ]] && { log_error "--agent requires a value"; return 1; }; agent_id="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -496,10 +496,10 @@ cmd_register() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --agent) agent_id="$2"; shift 2 ;;
-            --role) role="$2"; shift 2 ;;
-            --branch) branch="$2"; shift 2 ;;
-            --worktree) worktree="$2"; shift 2 ;;
+            --agent) [[ $# -lt 2 ]] && { log_error "--agent requires a value"; return 1; }; agent_id="$2"; shift 2 ;;
+            --role) [[ $# -lt 2 ]] && { log_error "--role requires a value"; return 1; }; role="$2"; shift 2 ;;
+            --branch) [[ $# -lt 2 ]] && { log_error "--branch requires a value"; return 1; }; branch="$2"; shift 2 ;;
+            --worktree) [[ $# -lt 2 ]] && { log_error "--worktree requires a value"; return 1; }; worktree="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -578,7 +578,7 @@ cmd_deregister() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --agent) agent_id="$2"; shift 2 ;;
+            --agent) [[ $# -lt 2 ]] && { log_error "--agent requires a value"; return 1; }; agent_id="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done

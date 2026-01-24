@@ -154,8 +154,10 @@ function getMailboxState() {
   const mailHelper = join(SCRIPTS_DIR, "mail-helper.sh");
   if (!existsSync(mailHelper)) return "";
 
-  const pending = run(`bash "${mailHelper}" check 2>/dev/null`);
-  if (!pending || pending === "0") return "";
+  const rawOutput = run(`bash "${mailHelper}" check 2>/dev/null`);
+  // Validate output is a non-negative integer (mail-helper may output TOON blocks)
+  const pending = parseInt(rawOutput, 10);
+  if (isNaN(pending) || pending <= 0) return "";
 
   return [
     "## Pending Messages",
