@@ -75,7 +75,7 @@ Tested on macOS ARM64, all headless, warm daemon/persistent browser:
 | **Cookie management** | Full API | Persistent | CLI commands | Persistent | Your browser | Per-instance |
 | **Proxy support** | Full | Via launch args | No | Full (ProxyConfig) | Your browser | Via args |
 | **SOCKS5/VPN** | Yes | Possible | No | Yes | Your browser | Via args |
-| **Browser extensions** | No | Yes (profile) | No | No | Yes (yours) | No |
+| **Browser extensions** | Yes (persistent ctx) | Yes (profile) | No | No | Yes (yours) | Possible |
 | **Multi-session** | Per-context | Named pages | --session flag | Per-crawl | Per-tab | Per-instance |
 | **Form filling** | Full API | Full API | CLI fill/click | No | Full API | Natural language |
 | **Screenshots** | Full API | Full API | CLI command | Built-in | Full API | Via page |
@@ -96,6 +96,63 @@ Tested on macOS ARM64, all headless, warm daemon/persistent browser:
 | **Crawl4AI** | Web scraping, bulk extraction, structured data | Fast | `pip install crawl4ai` (venv) |
 | **Playwriter** | Existing browser, extensions, bypass detection | Medium | Chrome extension + `npx playwriter` |
 | **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
+
+## Parallel / Sandboxed Instances
+
+| Tool | Method | Speed (tested) | Isolation |
+|------|--------|----------------|-----------|
+| **Playwright** | Multiple contexts (1 browser) | **5 contexts: 2.1s** | Cookies/storage isolated |
+| **Playwright** | Multiple browsers (separate OS processes) | **3 browsers: 1.9s** | Full process isolation |
+| **Playwright** | Multiple persistent contexts | **3 profiles: 1.6s** | Full profile + extension isolation |
+| **Playwright** | 10 pages (same context) | **10 pages: 1.8s** | Shared session |
+| **agent-browser** | `--session s1/s2/s3` | **3 sessions: 2.0s** | Per-session isolation |
+| **Crawl4AI** | `arun_many(urls)` | **5 pages: 3.0s (1.7x vs sequential)** | Shared browser, parallel tabs |
+| **Crawl4AI** | Multiple AsyncWebCrawler instances | **3 instances: 3.0s** | Fully isolated browsers |
+| **dev-browser** | Named pages (`client.page("name")`) | Fast | Shared profile (not isolated) |
+| **Playwriter** | Multiple connected tabs | N/A | Shared browser session |
+| **Stagehand** | Multiple Stagehand instances | Slow (AI overhead per instance) | Full isolation |
+
+## Extension Support (Password Managers, etc.)
+
+| Tool | Load Extensions? | Interact with Extension UI? | Password Manager Autofill? |
+|------|-----------------|---------------------------|---------------------------|
+| **Playwright** (persistent) | Yes (`--load-extension`) | Yes (open popup via `chrome-extension://` URL) | Partial (needs unlock) |
+| **dev-browser** | Yes (install in profile) | Yes (persistent profile) | Partial (needs unlock) |
+| **Playwriter** | Yes (your browser) | Yes (already there) | **Yes** (already unlocked) |
+| **agent-browser** | No | No | No |
+| **Crawl4AI** | No | No | No |
+| **Stagehand** | Possible (uses Playwright) | Untested | Untested |
+
+**Password manager reality**: Extensions load fine, but password managers need to be **unlocked** before autofill works. Options:
+1. **Playwriter** - uses your already-unlocked browser (easiest)
+2. **Playwright persistent** - load extension + unlock via Bitwarden CLI (`bw unlock`)
+3. **dev-browser** - install extension in profile, unlock once (persists)
+
+## Chrome DevTools MCP (Companion Tool)
+
+Chrome DevTools MCP (`chrome-devtools-mcp`) is **not a browser** - it's a debugging/inspection layer that connects to any running Chrome/Chromium instance. Use it alongside any browser tool for:
+
+- **Performance**: Lighthouse audits, Core Web Vitals (LCP, FID, CLS, TTFB)
+- **Network**: Monitor/throttle requests, individual request throttling (Chrome 136+)
+- **Debugging**: Console capture, CSS coverage, visual regression
+- **SEO**: Meta extraction, structured data validation
+- **Mobile**: Device emulation, touch simulation
+
+```bash
+# Connect to dev-browser
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
+
+# Connect to any Chrome with remote debugging
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
+
+# Launch its own headless Chrome
+npx chrome-devtools-mcp@latest --headless
+
+# With proxy
+npx chrome-devtools-mcp@latest --proxyServer socks5://127.0.0.1:1080
+```
+
+**Pair with**: dev-browser (persistent profile + DevTools inspection), Playwright (speed + DevTools debugging), Playwriter (your browser + DevTools analysis).
 
 **Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only.
 <!-- AI-CONTEXT-END -->

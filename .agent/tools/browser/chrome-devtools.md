@@ -12,23 +12,64 @@ tools:
   task: true
 ---
 
-# Chrome DevTools MCP Usage Examples
+# Chrome DevTools MCP - Debugging & Inspection Companion
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- Chrome DevTools examples for browser debugging and analysis
+- **Purpose**: Debugging/inspection layer that connects to ANY running Chrome/Chromium instance
+- **Not a browser**: Pairs with dev-browser, Playwright, Playwriter, or standalone Chrome
+- **Install**: `npx chrome-devtools-mcp@latest`
+- **Package**: `chrome-devtools-mcp` (v0.13.0+, maintained by Google)
+
+**Connection methods**:
+
+```bash
+# Connect to dev-browser (port 9222)
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
+
+# Connect via WebSocket
+npx chrome-devtools-mcp@latest --wsEndpoint ws://127.0.0.1:9222/devtools/browser/<id>
+
+# Launch its own Chrome (headless)
+npx chrome-devtools-mcp@latest --headless
+
+# With isolated profile (temp, auto-cleaned)
+npx chrome-devtools-mcp@latest --isolated
+
+# With proxy
+npx chrome-devtools-mcp@latest --proxyServer socks5://127.0.0.1:1080
+
+# Use Chrome Beta/Canary/Dev
+npx chrome-devtools-mcp@latest --channel canary
+
+# Auto-connect to user's Chrome (Chrome 145+, requires chrome://inspect/#remote-debugging)
+npx chrome-devtools-mcp@latest --autoConnect
+```
+
+**Capabilities**:
 - Performance: `lighthouse()`, `measureWebVitals()` (LCP, FID, CLS, TTFB)
+- Network: `monitorNetwork()`, `throttleRequest()` (individual request throttling, Chrome 136+)
 - Scraping: `extractData()`, `screenshot()` (fullPage, element)
-- Debug: `captureConsole()`, `monitorNetwork()` (xhr, fetch, document)
-- Throttling: `throttleRequest()`, `throttleRequests()` (individual request throttling - Chrome 136+)
+- Debug: `captureConsole()`, CSS coverage, visual regression
 - Mobile: `emulateDevice()`, `simulateTouch()` (tap, swipe)
 - SEO: `extractSEO()`, `validateStructuredData()`
-- Visual: `visualRegression()`, `analyzeCSSCoverage()`
 - Automation: `comprehensiveAnalysis()`, `comparePages()` (A/B testing)
-- Devices: iPhone 12 Pro, custom viewports
-- Metrics: domContentLoaded, load, FCP, LCP
+
+**Best pairings**:
+- **dev-browser + DevTools**: Persistent profile + deep inspection
+- **Playwright + DevTools**: Speed + performance profiling
+- **Playwriter + DevTools**: Your browser + debugging your extensions
+
+**When to use**: Performance auditing, network debugging, SEO analysis, visual regression testing. Use alongside a browser tool, not instead of one.
+
+**Category toggles** (reduce MCP tool count):
+
+```bash
+npx chrome-devtools-mcp@latest --categoryEmulation false --categoryPerformance false
+```
+
 <!-- AI-CONTEXT-END -->
 
 ## Performance Analysis

@@ -526,6 +526,302 @@ echo "Python: $(python3 --version)"
 - **Crawl4AI N/A**: Cannot do form fill or multi-step (extraction only tool).
 - **Playwriter**: Requires manual extension activation. May skip in automated runs.
 
+## Parallel Instance Benchmarks
+
+### Playwright Parallel Test
+
+```javascript
+// bench-parallel.mjs - Test parallel isolation methods
+import { chromium } from 'playwright';
+
+async function benchParallel() {
+  const results = {};
+
+  // Test 1: Multiple contexts (same browser, cookie-isolated)
+  let start = performance.now();
+  const browser = await chromium.launch({ headless: true });
+  const contexts = await Promise.all(
+    Array.from({ length: 5 }, () => browser.newContext())
+  );
+  await Promise.all(contexts.map(async ctx => {
+    const page = await ctx.newPage();
+    await page.goto('https://the-internet.herokuapp.com/login');
+  }));
+  results.multiContext = `${((performance.now() - start) / 1000).toFixed(2)}s (5 contexts)`;
+  await browser.close();
+
+  // Test 2: Multiple browsers (full OS-level isolation)
+  start = performance.now();
+  const browsers = await Promise.all(
+    Array.from({ length: 3 }, () => chromium.launch({ headless: true }))
+  );
+  await Promise.all(browsers.map(async b => {
+    const page = await b.newPage();
+    await page.goto('https://the-internet.herokuapp.com/');
+  }));
+  results.multiBrowser = `${((performance.now() - start) / 1000).toFixed(2)}s (3 browsers)`;
+  await Promise.all(browsers.map(b => b.close()));
+
+  // Test 3: 10 parallel pages (shared context)
+  start = performance.now();
+  const b2 = await chromium.launch({ headless: true });
+  const ctx = await b2.newContext();
+  await Promise.all(Array.from({ length: 10 }, async () => {
+    const p = await ctx.newPage();
+    await p.goto('https://the-internet.herokuapp.com/');
+  }));
+  results.multiPage = `${((performance.now() - start) / 1000).toFixed(2)}s (10 pages)`;
+  await b2.close();
+
+  console.log(JSON.stringify(results, null, 2));
+}
+
+benchParallel();
+```
+
+### agent-browser Parallel Test
+
+```bash
+#!/bin/bash
+# bench-parallel-ab.sh
+start=$(python3 -c 'import time; print(time.time())')
+agent-browser --session s1 open "https://the-internet.herokuapp.com/login" 2>/dev/null &
+agent-browser --session s2 open "https://the-internet.herokuapp.com/checkboxes" 2>/dev/null &
+agent-browser --session s3 open "https://the-internet.herokuapp.com/dropdown" 2>/dev/null &
+wait
+end=$(python3 -c 'import time; print(time.time())')
+echo "3 parallel sessions: $(python3 -c "print(f'{$end - $start:.2f}')")s"
+
+# Verify isolation
+echo "s1: $(agent-browser --session s1 get url 2>/dev/null)"
+echo "s2: $(agent-browser --session s2 get url 2>/dev/null)"
+echo "s3: $(agent-browser --session s3 get url 2>/dev/null)"
+
+agent-browser --session s1 close 2>/dev/null
+agent-browser --session s2 close 2>/dev/null
+agent-browser --session s3 close 2>/dev/null
+```
+
+### Crawl4AI Parallel Test
+
+```python
+# bench-parallel-crawl4ai.py
+import asyncio, time
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+
+URLS = [
+    "https://the-internet.herokuapp.com/login",
+    "https://the-internet.herokuapp.com/checkboxes",
+    "https://the-internet.herokuapp.com/dropdown",
+    "https://the-internet.herokuapp.com/tables",
+    "https://the-internet.herokuapp.com/frames",
+]
+
+async def run():
+    browser_config = BrowserConfig(headless=True)
+    run_config = CrawlerRunConfig(screenshot=True)
+
+    # Sequential baseline
+    start = time.time()
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        for url in URLS:
+            await crawler.arun(url=url, config=run_config)
+    seq = time.time() - start
+
+    # Parallel with arun_many
+    start = time.time()
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        await crawler.arun_many(urls=URLS, config=run_config)
+    par = time.time() - start
+
+    print(f"Sequential: {seq:.2f}s | Parallel: {par:.2f}s | Speedup: {seq/par:.1f}x")
+
+asyncio.run(run())
+```
+
+## Extension Loading Benchmark
+
+```javascript
+// bench-extension.mjs - Test extension loading and interaction
+import { chromium } from 'playwright';
+import path from 'path';
+import fs from 'fs';
+
+const HOME = process.env.HOME;
+
+// Find Bitwarden extension (adjust path for your setup)
+const EXTENSIONS_DIR = path.join(HOME,
+  'Library/Application Support/BraveSoftware/Brave-Browser/Default/Extensions');
+const BITWARDEN_ID = 'nngceckbapebfimnlniiiahkandclblb';
+
+async function benchExtension() {
+  const extDir = path.join(EXTENSIONS_DIR, BITWARDEN_ID);
+  if (!fs.existsSync(extDir)) {
+    console.log('Bitwarden extension not found. Skipping.');
+    return;
+  }
+
+  // Get latest version
+  const versions = fs.readdirSync(extDir);
+  const extPath = path.join(extDir, versions[versions.length - 1]);
+  console.log(`Extension: ${extPath}\n`);
+
+  const userDataDir = '/tmp/pw-ext-bench';
+  try { fs.rmSync(userDataDir, { recursive: true }); } catch {}
+
+  // Benchmark: Launch with extension
+  const start = performance.now();
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    headless: false,
+    args: [
+      '--no-first-run',
+      `--disable-extensions-except=${extPath}`,
+      `--load-extension=${extPath}`,
+    ],
+  });
+  const launchTime = ((performance.now() - start) / 1000).toFixed(2);
+  console.log(`Launch with extension: ${launchTime}s`);
+
+  // Wait for service worker
+  let sw = context.serviceWorkers()[0];
+  if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 10000 }).catch(() => null);
+
+  if (sw) {
+    const extId = sw.url().split('/')[2];
+    console.log(`Extension ID: ${extId}`);
+
+    // Open popup
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extId}/popup/index.html`);
+    await popup.waitForLoadState('domcontentloaded');
+    await popup.waitForTimeout(2000);
+
+    // Screenshot popup
+    await popup.screenshot({ path: '/tmp/bench-ext-popup.png' });
+    const buttons = await popup.$$('button');
+    const inputs = await popup.$$('input');
+    console.log(`Popup: ${buttons.length} buttons, ${inputs.length} inputs`);
+    await popup.close();
+  }
+
+  // Test content script injection on login page
+  const page = context.pages()[0] || await context.newPage();
+  await page.goto('https://github.com/login');
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: '/tmp/bench-ext-login.png' });
+
+  await context.close();
+  console.log('Screenshots: /tmp/bench-ext-popup.png, /tmp/bench-ext-login.png');
+}
+
+benchExtension().catch(console.error);
+```
+
+## Visual Verification Benchmark
+
+Test the AI's ability to understand page content via screenshots.
+
+```javascript
+// bench-visual.mjs - Screenshot + AI analysis workflow timing
+import { chromium } from 'playwright';
+import fs from 'fs';
+
+const PAGES = [
+  { url: 'https://the-internet.herokuapp.com/login', expect: 'login form' },
+  { url: 'https://the-internet.herokuapp.com/tables', expect: 'data table' },
+  { url: 'https://the-internet.herokuapp.com/checkboxes', expect: 'checkboxes' },
+];
+
+async function benchVisual() {
+  const browser = await chromium.launch({ headless: true });
+  const results = [];
+
+  for (const { url, expect: expected } of PAGES) {
+    const page = await browser.newPage();
+    const start = performance.now();
+
+    // Navigate
+    await page.goto(url);
+    await page.waitForLoadState('networkidle');
+
+    // Take screenshot
+    const screenshotPath = `/tmp/bench-visual-${Date.now()}.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+
+    // Get ARIA snapshot (text representation for AI)
+    const ariaSnapshot = await page.accessibility.snapshot();
+
+    // Get page text content
+    const textContent = await page.evaluate(() => document.body.innerText.substring(0, 500));
+
+    const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+
+    results.push({
+      url,
+      expected,
+      elapsed: `${elapsed}s`,
+      screenshotSize: `${(fs.statSync(screenshotPath).size / 1024).toFixed(0)}KB`,
+      ariaNodes: ariaSnapshot?.children?.length || 0,
+      textPreview: textContent.substring(0, 100),
+    });
+
+    await page.close();
+  }
+
+  await browser.close();
+  console.log(JSON.stringify(results, null, 2));
+}
+
+benchVisual();
+```
+
+**Visual verification workflow** (for AI agents):
+1. Navigate to page
+2. Take screenshot (PNG, full page)
+3. Get ARIA accessibility snapshot (structured text)
+4. AI analyses screenshot + ARIA to understand page state
+5. Decide next action based on visual understanding
+
+**Key metrics to capture**:
+- Screenshot file size (affects token cost if sent to vision API)
+- ARIA snapshot node count (structured alternative to vision)
+- Time from navigate to screenshot-ready
+- Whether ARIA snapshot alone is sufficient vs needing vision
+
+## Chrome DevTools MCP Benchmark
+
+Test DevTools as a companion to other browser tools.
+
+```bash
+#!/bin/bash
+# bench-devtools.sh - Test DevTools MCP capabilities
+
+echo "=== Chrome DevTools MCP Benchmark ==="
+
+# Ensure dev-browser is running (provides the Chrome instance)
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh status >/dev/null 2>&1 || \
+  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-headless
+
+# Test: Performance audit via DevTools connected to dev-browser
+echo "1. Lighthouse audit (via DevTools + dev-browser):"
+start=$(python3 -c 'import time; print(time.time())')
+# DevTools MCP would be called via MCP tool here
+# npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
+end=$(python3 -c 'import time; print(time.time())')
+echo "   (Run via MCP tool - measures Lighthouse audit time)"
+
+echo ""
+echo "2. Network monitoring:"
+echo "   (DevTools captures all network requests during automation)"
+
+echo ""
+echo "3. Best pairing for your use cases:"
+echo "   - Dev testing: dev-browser + DevTools (persistent + inspection)"
+echo "   - AI automation: Playwright + DevTools (speed + debugging)"
+echo "   - Extension testing: Playwriter + DevTools (your browser + profiling)"
+```
+
 ## Adding New Tools
 
 When a new browser tool is added to the framework:
@@ -533,5 +829,7 @@ When a new browser tool is added to the framework:
 1. Add a benchmark script following the pattern above
 2. Add the tool to the prerequisites check
 3. Run the full suite including the new tool
-4. Update `browser-automation.md` tables (Performance, Feature Matrix, Quick Reference)
+4. Update `browser-automation.md` tables (Performance, Feature Matrix, Parallel, Extensions)
 5. Update this file's test methods table
+6. Test parallel capabilities and extension support
+7. Test visual verification (screenshot quality, ARIA snapshot depth)
