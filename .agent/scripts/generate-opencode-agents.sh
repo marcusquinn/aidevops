@@ -299,8 +299,6 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         model_tier: Optional model tier from frontmatter (haiku/sonnet/opus/flash/pro)
     """
     tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
-    # Enabled in all main agents (user request)
-    tools.setdefault("claude-code-mcp_*", True)
     temp = AGENT_TEMPS.get(display_name, 0.2)
     
     config = {
@@ -610,22 +608,6 @@ if platform.system() == 'Darwin':
     if 'macos-automator_*' not in config['tools']:
         config['tools']['macos-automator_*'] = False
         print("  Added macos-automator_* to tools (disabled globally, enabled for @mac subagent)")
-
-# Claude Code MCP - run Claude Code one-shot as MCP
-# Docs: https://github.com/steipete/claude-code-mcp
-# Note: this exposes tools as claude-code-mcp_*
-if 'claude-code-mcp' not in config['mcp']:
-    config['mcp']['claude-code-mcp'] = {
-        "type": "local",
-        "command": ["npx", "-y", "@steipete/claude-code-mcp@1.10.12"],
-        "enabled": True
-    }
-    print("  Added claude-code-mcp MCP server")
-
-# Enabled globally (per user request) so all main agents can access it.
-if 'claude-code-mcp_*' not in config['tools']:
-    config['tools']['claude-code-mcp_*'] = True
-    print("  Added claude-code-mcp_* to tools (enabled globally)")
 
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
