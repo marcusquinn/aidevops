@@ -2229,7 +2229,7 @@ setup_browser_tools() {
             
             if [[ "$install_playwright" == "y" ]]; then
                 print_info "Installing Playwright browsers..."
-                if npx playwright install 2>/dev/null; then
+                if npx playwright install; then
                     print_success "Playwright browsers installed"
                 else
                     print_warning "Playwright browser installation failed"
@@ -2244,7 +2244,11 @@ setup_browser_tools() {
         print_info "Playwright MCP runs via: npx playwright-mcp@latest"
     fi
     
-    print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Playwright (testing), Stagehand (AI)"
+    if [[ "$has_node" == "true" ]]; then
+        print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Playwright (testing), Stagehand (AI)"
+    else
+        print_info "Browser tools: dev-browser (stateful), Stagehand (AI)"
+    fi
     return 0
 }
 
