@@ -1,0 +1,873 @@
+#!/bin/bash
+# shellcheck disable=SC2034,SC2155
+
+# Credential Helper - Multi-Tenant Credential Storage
+# Manage multiple credential sets (tenants) for different accounts/clients
+#
+# Storage: ~/.config/aidevops/tenants/{tenant}/mcp-env.sh
+# Active:  ~/.config/aidevops/active-tenant
+# Project: .aidevops-tenant (per-project override)
+#
+# Author: AI DevOps Framework
+# Version: 1.0.0
+
+set -euo pipefail
+
+# Colors for output
+readonly GREEN='\033[0;32m'
+readonly BLUE='\033[0;34m'
+readonly YELLOW='\033[1;33m'
+readonly RED='\033[0;31m'
+readonly DIM='\033[2m'
+readonly NC='\033[0m'
+
+# Paths
+readonly CONFIG_DIR="$HOME/.config/aidevops"
+readonly TENANTS_DIR="$CONFIG_DIR/tenants"
+readonly ACTIVE_TENANT_FILE="$CONFIG_DIR/active-tenant"
+readonly LEGACY_ENV_FILE="$CONFIG_DIR/mcp-env.sh"
+readonly PROJECT_TENANT_FILE=".aidevops-tenant"
+
+# Common constants
+readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
+
+print_success() {
+    local msg="$1"
+    echo -e "${GREEN}[OK] $msg${NC}"
+    return 0
+}
+
+print_info() {
+    local msg="$1"
+    echo -e "${BLUE}[INFO] $msg${NC}"
+    return 0
+}
+
+print_warning() {
+    local msg="$1"
+    echo -e "${YELLOW}[WARN] $msg${NC}"
+    return 0
+}
+
+print_error() {
+    local msg="$1"
+    echo -e "${RED}[ERROR] $msg${NC}" >&2
+    return 0
+}
+
+# Validate tenant name (alphanumeric, hyphens, underscores)
+validate_tenant_name() {
+    local name="$1"
+    if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+        print_error "Invalid tenant name: '$name'. Use alphanumeric, hyphens, underscores."
+        return 1
+    fi
+    return 0
+}
+
+# Get the active tenant name
+get_active_tenant() {
+    # Priority: 1) Project override, 2) Global active, 3) "default"
+    if [[ -f "$PROJECT_TENANT_FILE" ]]; then
+        local project_tenant
+        project_tenant=$(cat "$PROJECT_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+        if [[ -n "$project_tenant" ]]; then
+            echo "$project_tenant"
+            return 0
+        fi
+    fi
+
+    if [[ -f "$ACTIVE_TENANT_FILE" ]]; then
+        local active
+        active=$(cat "$ACTIVE_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+        if [[ -n "$active" ]]; then
+            echo "$active"
+            return 0
+        fi
+    fi
+
+    echo "default"
+    return 0
+}
+
+# Get the env file path for a tenant
+get_tenant_env_file() {
+    local tenant="$1"
+    echo "$TENANTS_DIR/$tenant/mcp-env.sh"
+    return 0
+}
+
+# Ensure tenant directory exists with proper permissions
+ensure_tenant_dir() {
+    local tenant="$1"
+    local tenant_dir="$TENANTS_DIR/$tenant"
+
+    if [[ ! -d "$tenant_dir" ]]; then
+        mkdir -p "$tenant_dir"
+        chmod 700 "$tenant_dir"
+    fi
+
+    local env_file
+    env_file=$(get_tenant_env_file "$tenant")
+    if [[ ! -f "$env_file" ]]; then
+        cat > "$env_file" << 'HEADER'
+#!/bin/bash
+# ------------------------------------------------------------------------------
+# Multi-Tenant Credential Storage
+# Tenant-specific API keys and tokens
+# File permissions: 600 (owner read/write only)
+# ------------------------------------------------------------------------------
+
+HEADER
+        chmod 600 "$env_file"
+    fi
+
+    return 0
+}
+
+# Migrate legacy mcp-env.sh to default tenant
+migrate_legacy() {
+    if [[ ! -f "$LEGACY_ENV_FILE" ]]; then
+        return 0
+    fi
+
+    # Check if already migrated (tenants dir exists with default)
+    local default_env
+    default_env=$(get_tenant_env_file "default")
+    if [[ -f "$default_env" ]]; then
+        # Already migrated - check if legacy has keys not in default
+        local legacy_keys
+        legacy_keys=$(grep -c "^export " "$LEGACY_ENV_FILE" 2>/dev/null || echo "0")
+        if [[ "$legacy_keys" -eq 0 ]]; then
+            return 0
+        fi
+
+        # Merge any missing keys from legacy to default
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)= ]]; then
+                local key_name="${BASH_REMATCH[1]}"
+                if ! grep -q "^export ${key_name}=" "$default_env" 2>/dev/null; then
+                    echo "$line" >> "$default_env"
+                    print_info "Migrated $key_name to default tenant"
+                fi
+            fi
+        done < "$LEGACY_ENV_FILE"
+        return 0
+    fi
+
+    # First migration: copy legacy to default tenant
+    ensure_tenant_dir "default"
+    cp "$LEGACY_ENV_FILE" "$default_env"
+    chmod 600 "$default_env"
+
+    # Set default as active
+    echo "default" > "$ACTIVE_TENANT_FILE"
+    chmod 600 "$ACTIVE_TENANT_FILE"
+
+    print_success "Migrated existing credentials to 'default' tenant"
+    return 0
+}
+
+# Update the legacy mcp-env.sh to source the active tenant
+update_legacy_sourcing() {
+    local active_tenant="$1"
+    local tenant_env
+    tenant_env=$(get_tenant_env_file "$active_tenant")
+
+    # Rewrite legacy file to source the active tenant
+    cat > "$LEGACY_ENV_FILE" << EOF
+#!/bin/bash
+# ------------------------------------------------------------------------------
+# Multi-Tenant Credential Loader
+# Sources the active tenant's credentials
+# Active tenant: $active_tenant
+# Managed by: credential-helper.sh
+# DO NOT edit manually - use: credential-helper.sh switch <tenant>
+# ------------------------------------------------------------------------------
+
+# Load active tenant credentials
+AIDEVOPS_ACTIVE_TENANT="$active_tenant"
+export AIDEVOPS_ACTIVE_TENANT
+
+if [[ -f "$tenant_env" ]]; then
+    source "$tenant_env"
+fi
+EOF
+    chmod 600 "$LEGACY_ENV_FILE"
+    return 0
+}
+
+# --- Commands ---
+
+# Create a new tenant
+cmd_create() {
+    local tenant="$1"
+
+    if [[ -z "$tenant" ]]; then
+        print_error "Usage: credential-helper.sh create <tenant-name>"
+        return 1
+    fi
+
+    validate_tenant_name "$tenant" || return 1
+
+    local tenant_dir="$TENANTS_DIR/$tenant"
+    if [[ -d "$tenant_dir" ]]; then
+        print_warning "Tenant '$tenant' already exists"
+        return 0
+    fi
+
+    ensure_tenant_dir "$tenant"
+    print_success "Created tenant: $tenant"
+    print_info "Add keys: credential-helper.sh set <key> <value> --tenant $tenant"
+    return 0
+}
+
+# Switch active tenant
+cmd_switch() {
+    local tenant="$1"
+
+    if [[ -z "$tenant" ]]; then
+        print_error "Usage: credential-helper.sh switch <tenant-name>"
+        return 1
+    fi
+
+    local tenant_env
+    tenant_env=$(get_tenant_env_file "$tenant")
+    if [[ ! -f "$tenant_env" ]]; then
+        print_error "Tenant '$tenant' does not exist. Create it first: credential-helper.sh create $tenant"
+        return 1
+    fi
+
+    echo "$tenant" > "$ACTIVE_TENANT_FILE"
+    chmod 600 "$ACTIVE_TENANT_FILE"
+
+    # Update legacy sourcing
+    update_legacy_sourcing "$tenant"
+
+    print_success "Switched to tenant: $tenant"
+    print_info "Run 'source ~/.zshrc' or restart terminal to load new credentials"
+    return 0
+}
+
+# List all tenants
+cmd_list() {
+    migrate_legacy
+
+    if [[ ! -d "$TENANTS_DIR" ]]; then
+        print_info "No tenants configured. Run: credential-helper.sh create <name>"
+        return 0
+    fi
+
+    local active
+    active=$(get_active_tenant)
+
+    print_info "Configured tenants:"
+    echo ""
+
+    for tenant_dir in "$TENANTS_DIR"/*/; do
+        if [[ ! -d "$tenant_dir" ]]; then
+            continue
+        fi
+        local tenant_name
+        tenant_name=$(basename "$tenant_dir")
+        local env_file="$tenant_dir/mcp-env.sh"
+        local key_count=0
+
+        if [[ -f "$env_file" ]]; then
+            key_count=$(grep -c "^export " "$env_file" 2>/dev/null || echo "0")
+        fi
+
+        local marker=""
+        if [[ "$tenant_name" == "$active" ]]; then
+            marker=" ${GREEN}(active)${NC}"
+        fi
+
+        echo -e "  ${BLUE}$tenant_name${NC}${marker} - $key_count keys"
+    done
+
+    echo ""
+    return 0
+}
+
+# Set a key for a tenant
+cmd_set() {
+    local key=""
+    local value=""
+    local tenant=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t)
+                tenant="$2"
+                shift 2
+                ;;
+            *)
+                if [[ -z "$key" ]]; then
+                    key="$1"
+                elif [[ -z "$value" ]]; then
+                    value="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$key" || -z "$value" ]]; then
+        print_error "Usage: credential-helper.sh set <KEY_NAME> <value> [--tenant <name>]"
+        return 1
+    fi
+
+    # Default to active tenant
+    if [[ -z "$tenant" ]]; then
+        tenant=$(get_active_tenant)
+    fi
+
+    migrate_legacy
+    ensure_tenant_dir "$tenant"
+
+    local env_file
+    env_file=$(get_tenant_env_file "$tenant")
+
+    # Convert service name to env var if needed
+    local env_var
+    if [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+        env_var="$key"
+    else
+        env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
+    fi
+
+    # Update or append
+    if grep -q "^export ${env_var}=" "$env_file" 2>/dev/null; then
+        local tmp_file="${env_file}.tmp"
+        sed "s|^export ${env_var}=.*|export ${env_var}=\"${value}\"|" "$env_file" > "$tmp_file"
+        mv "$tmp_file" "$env_file"
+        chmod 600 "$env_file"
+        print_success "Updated $env_var in tenant '$tenant'"
+    else
+        echo "export ${env_var}=\"${value}\"" >> "$env_file"
+        chmod 600 "$env_file"
+        print_success "Added $env_var to tenant '$tenant'"
+    fi
+
+    return 0
+}
+
+# Get a key from a tenant
+cmd_get() {
+    local key=""
+    local tenant=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t)
+                tenant="$2"
+                shift 2
+                ;;
+            *)
+                if [[ -z "$key" ]]; then
+                    key="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$key" ]]; then
+        print_error "Usage: credential-helper.sh get <KEY_NAME> [--tenant <name>]"
+        return 1
+    fi
+
+    if [[ -z "$tenant" ]]; then
+        tenant=$(get_active_tenant)
+    fi
+
+    local env_file
+    env_file=$(get_tenant_env_file "$tenant")
+
+    if [[ ! -f "$env_file" ]]; then
+        print_error "Tenant '$tenant' not found"
+        return 1
+    fi
+
+    # Convert service name to env var if needed
+    local env_var
+    if [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+        env_var="$key"
+    else
+        env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
+    fi
+
+    local result
+    result=$(grep "^export ${env_var}=" "$env_file" 2>/dev/null | sed 's/^export [^=]*="//' | sed 's/"$//' || true)
+
+    if [[ -n "$result" ]]; then
+        echo "$result"
+        return 0
+    else
+        print_error "Key $env_var not found in tenant '$tenant'"
+        return 1
+    fi
+}
+
+# Remove a key from a tenant
+cmd_remove() {
+    local key=""
+    local tenant=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t)
+                tenant="$2"
+                shift 2
+                ;;
+            *)
+                if [[ -z "$key" ]]; then
+                    key="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$key" ]]; then
+        print_error "Usage: credential-helper.sh remove <KEY_NAME> [--tenant <name>]"
+        return 1
+    fi
+
+    if [[ -z "$tenant" ]]; then
+        tenant=$(get_active_tenant)
+    fi
+
+    local env_file
+    env_file=$(get_tenant_env_file "$tenant")
+
+    if [[ ! -f "$env_file" ]]; then
+        print_error "Tenant '$tenant' not found"
+        return 1
+    fi
+
+    local env_var
+    if [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+        env_var="$key"
+    else
+        env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
+    fi
+
+    if grep -q "^export ${env_var}=" "$env_file" 2>/dev/null; then
+        local tmp_file="${env_file}.tmp"
+        grep -v "^export ${env_var}=" "$env_file" > "$tmp_file"
+        mv "$tmp_file" "$env_file"
+        chmod 600 "$env_file"
+        print_success "Removed $env_var from tenant '$tenant'"
+    else
+        print_warning "Key $env_var not found in tenant '$tenant'"
+    fi
+
+    return 0
+}
+
+# Delete a tenant entirely
+cmd_delete() {
+    local tenant="$1"
+
+    if [[ -z "$tenant" ]]; then
+        print_error "Usage: credential-helper.sh delete <tenant-name>"
+        return 1
+    fi
+
+    if [[ "$tenant" == "default" ]]; then
+        print_error "Cannot delete the 'default' tenant"
+        return 1
+    fi
+
+    local tenant_dir="$TENANTS_DIR/$tenant"
+    if [[ ! -d "$tenant_dir" ]]; then
+        print_error "Tenant '$tenant' does not exist"
+        return 1
+    fi
+
+    # Check if this is the active tenant
+    local active
+    active=$(get_active_tenant)
+    if [[ "$active" == "$tenant" ]]; then
+        print_warning "Switching to 'default' tenant first"
+        cmd_switch "default"
+    fi
+
+    rm -rf "$tenant_dir"
+    print_success "Deleted tenant: $tenant"
+    return 0
+}
+
+# Show keys in a tenant (names only, never values)
+cmd_keys() {
+    local tenant=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t)
+                tenant="$2"
+                shift 2
+                ;;
+            *)
+                if [[ -z "$tenant" ]]; then
+                    tenant="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$tenant" ]]; then
+        tenant=$(get_active_tenant)
+    fi
+
+    migrate_legacy
+
+    local env_file
+    env_file=$(get_tenant_env_file "$tenant")
+
+    if [[ ! -f "$env_file" ]]; then
+        print_error "Tenant '$tenant' not found"
+        return 1
+    fi
+
+    print_info "Keys in tenant '$tenant':"
+    echo ""
+    grep "^export " "$env_file" 2>/dev/null | sed 's/=.*//' | sed 's/export /  /' | sort
+    echo ""
+    return 0
+}
+
+# Copy keys between tenants
+cmd_copy() {
+    local source_tenant=""
+    local dest_tenant=""
+    local key_filter=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --key|-k)
+                key_filter="$2"
+                shift 2
+                ;;
+            *)
+                if [[ -z "$source_tenant" ]]; then
+                    source_tenant="$1"
+                elif [[ -z "$dest_tenant" ]]; then
+                    dest_tenant="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$source_tenant" || -z "$dest_tenant" ]]; then
+        print_error "Usage: credential-helper.sh copy <source-tenant> <dest-tenant> [--key KEY_NAME]"
+        return 1
+    fi
+
+    local source_env
+    source_env=$(get_tenant_env_file "$source_tenant")
+    if [[ ! -f "$source_env" ]]; then
+        print_error "Source tenant '$source_tenant' not found"
+        return 1
+    fi
+
+    ensure_tenant_dir "$dest_tenant"
+    local dest_env
+    dest_env=$(get_tenant_env_file "$dest_tenant")
+
+    local copied=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)= ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+
+            # Apply key filter if specified
+            if [[ -n "$key_filter" && "$var_name" != "$key_filter" ]]; then
+                continue
+            fi
+
+            # Skip if already exists in destination
+            if grep -q "^export ${var_name}=" "$dest_env" 2>/dev/null; then
+                print_warning "Skipping $var_name (already exists in '$dest_tenant')"
+                continue
+            fi
+
+            echo "$line" >> "$dest_env"
+            ((copied++))
+        fi
+    done < "$source_env"
+
+    print_success "Copied $copied key(s) from '$source_tenant' to '$dest_tenant'"
+    return 0
+}
+
+# Set project-level tenant override
+cmd_use() {
+    local tenant="$1"
+
+    if [[ -z "$tenant" ]]; then
+        # Show current project tenant
+        if [[ -f "$PROJECT_TENANT_FILE" ]]; then
+            local current
+            current=$(cat "$PROJECT_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+            print_info "Project tenant: $current"
+        else
+            print_info "No project-level tenant set (using global: $(get_active_tenant))"
+        fi
+        return 0
+    fi
+
+    if [[ "$tenant" == "--clear" || "$tenant" == "--reset" ]]; then
+        if [[ -f "$PROJECT_TENANT_FILE" ]]; then
+            rm -f "$PROJECT_TENANT_FILE"
+            print_success "Cleared project-level tenant override"
+        else
+            print_info "No project-level tenant to clear"
+        fi
+        return 0
+    fi
+
+    # Verify tenant exists
+    local tenant_env
+    tenant_env=$(get_tenant_env_file "$tenant")
+    if [[ ! -f "$tenant_env" ]]; then
+        print_error "Tenant '$tenant' does not exist. Create it first."
+        return 1
+    fi
+
+    echo "$tenant" > "$PROJECT_TENANT_FILE"
+    print_success "Set project tenant to: $tenant"
+    print_info "This overrides the global active tenant for this directory"
+
+    # Add to .gitignore if not already there
+    if [[ -f ".gitignore" ]] && ! grep -q "^\.aidevops-tenant$" ".gitignore" 2>/dev/null; then
+        echo ".aidevops-tenant" >> ".gitignore"
+        print_info "Added .aidevops-tenant to .gitignore"
+    fi
+
+    return 0
+}
+
+# Show current status
+cmd_status() {
+    migrate_legacy
+
+    local active
+    active=$(get_active_tenant)
+    local project_tenant=""
+
+    if [[ -f "$PROJECT_TENANT_FILE" ]]; then
+        project_tenant=$(cat "$PROJECT_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+    fi
+
+    echo ""
+    print_info "Multi-Tenant Credential Status"
+    echo "================================"
+    echo ""
+    echo -e "  Active tenant:  ${GREEN}$active${NC}"
+
+    if [[ -n "$project_tenant" ]]; then
+        echo -e "  Project tenant: ${BLUE}$project_tenant${NC} (overrides global)"
+    fi
+
+    local global_active=""
+    if [[ -f "$ACTIVE_TENANT_FILE" ]]; then
+        global_active=$(cat "$ACTIVE_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+    fi
+    if [[ -n "$global_active" && "$global_active" != "$active" ]]; then
+        echo -e "  Global tenant:  ${DIM}$global_active${NC}"
+    fi
+
+    echo ""
+
+    # List tenants with key counts
+    if [[ -d "$TENANTS_DIR" ]]; then
+        print_info "Tenants:"
+        for tenant_dir in "$TENANTS_DIR"/*/; do
+            if [[ ! -d "$tenant_dir" ]]; then
+                continue
+            fi
+            local tenant_name
+            tenant_name=$(basename "$tenant_dir")
+            local env_file="$tenant_dir/mcp-env.sh"
+            local key_count=0
+
+            if [[ -f "$env_file" ]]; then
+                key_count=$(grep -c "^export " "$env_file" 2>/dev/null || echo "0")
+            fi
+
+            local marker=""
+            if [[ "$tenant_name" == "$active" ]]; then
+                marker=" ${GREEN}*${NC}"
+            fi
+
+            echo -e "  ${BLUE}$tenant_name${NC}${marker} ($key_count keys)"
+        done
+    else
+        print_info "No tenants configured"
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Storage: $TENANTS_DIR${NC}"
+    echo ""
+    return 0
+}
+
+# Initialize multi-tenant system
+cmd_init() {
+    print_info "Initializing multi-tenant credential storage..."
+
+    # Ensure base directories
+    mkdir -p "$CONFIG_DIR"
+    chmod 700 "$CONFIG_DIR"
+    mkdir -p "$TENANTS_DIR"
+    chmod 700 "$TENANTS_DIR"
+
+    # Migrate legacy credentials
+    migrate_legacy
+
+    # Ensure default tenant exists
+    ensure_tenant_dir "default"
+
+    # Set default as active if no active tenant
+    if [[ ! -f "$ACTIVE_TENANT_FILE" ]]; then
+        echo "default" > "$ACTIVE_TENANT_FILE"
+        chmod 600 "$ACTIVE_TENANT_FILE"
+    fi
+
+    # Update legacy file to source active tenant
+    local active
+    active=$(get_active_tenant)
+    update_legacy_sourcing "$active"
+
+    print_success "Multi-tenant credential storage initialized"
+    cmd_status
+    return 0
+}
+
+# Export active tenant's credentials to stdout (for eval)
+cmd_export() {
+    local tenant=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t)
+                tenant="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$tenant" ]]; then
+        tenant=$(get_active_tenant)
+    fi
+
+    local env_file
+    env_file=$(get_tenant_env_file "$tenant")
+
+    if [[ ! -f "$env_file" ]]; then
+        print_error "Tenant '$tenant' not found" >&2
+        return 1
+    fi
+
+    # Output export statements for eval
+    grep "^export " "$env_file" 2>/dev/null || true
+    echo "export AIDEVOPS_ACTIVE_TENANT=\"$tenant\""
+    return 0
+}
+
+# Show help
+cmd_help() {
+    echo ""
+    print_info "AI DevOps - Multi-Tenant Credential Storage"
+    echo ""
+    echo "  Manage multiple credential sets for different accounts, clients, or environments."
+    echo ""
+    print_info "Commands:"
+    echo ""
+    echo "  init                              Initialize multi-tenant storage"
+    echo "  status                            Show current tenant status"
+    echo "  create <tenant>                   Create a new tenant"
+    echo "  switch <tenant>                   Switch active tenant globally"
+    echo "  use [<tenant>|--clear]            Set/show project-level tenant"
+    echo "  list                              List all tenants"
+    echo "  keys [--tenant <name>]            Show keys in a tenant"
+    echo ""
+    echo "  set <KEY> <value> [--tenant <n>]  Set a key in a tenant"
+    echo "  get <KEY> [--tenant <name>]       Get a key value"
+    echo "  remove <KEY> [--tenant <name>]    Remove a key from a tenant"
+    echo ""
+    echo "  copy <src> <dest> [--key KEY]     Copy keys between tenants"
+    echo "  delete <tenant>                   Delete a tenant (not 'default')"
+    echo "  export [--tenant <name>]          Output exports for eval"
+    echo ""
+    print_info "Examples:"
+    echo ""
+    echo "  # Initialize (migrates existing credentials to 'default' tenant)"
+    echo "  credential-helper.sh init"
+    echo ""
+    echo "  # Create tenants for different clients"
+    echo "  credential-helper.sh create client-acme"
+    echo "  credential-helper.sh create client-globex"
+    echo ""
+    echo "  # Add keys to a tenant"
+    echo "  credential-helper.sh set GITHUB_TOKEN ghp_xxx --tenant client-acme"
+    echo "  credential-helper.sh set VERCEL_TOKEN xxx --tenant client-acme"
+    echo ""
+    echo "  # Switch between tenants"
+    echo "  credential-helper.sh switch client-acme"
+    echo ""
+    echo "  # Per-project tenant (overrides global)"
+    echo "  cd ~/projects/acme-app"
+    echo "  credential-helper.sh use client-acme"
+    echo ""
+    echo "  # Copy shared keys to new tenant"
+    echo "  credential-helper.sh copy default client-acme --key OPENAI_API_KEY"
+    echo ""
+    echo "  # Load tenant credentials in a script"
+    echo "  eval \$(credential-helper.sh export --tenant client-acme)"
+    echo ""
+    return 0
+}
+
+# Main dispatch
+main() {
+    local command="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$command" in
+        init)       cmd_init "$@" ;;
+        create)     cmd_create "$@" ;;
+        switch)     cmd_switch "$@" ;;
+        list)       cmd_list "$@" ;;
+        set)        cmd_set "$@" ;;
+        get)        cmd_get "$@" ;;
+        remove|rm)  cmd_remove "$@" ;;
+        delete)     cmd_delete "$@" ;;
+        keys)       cmd_keys "$@" ;;
+        copy|cp)    cmd_copy "$@" ;;
+        use)        cmd_use "$@" ;;
+        status)     cmd_status "$@" ;;
+        export)     cmd_export "$@" ;;
+        help|--help|-h)
+            cmd_help
+            ;;
+        *)
+            print_error "$ERROR_UNKNOWN_COMMAND $command"
+            echo ""
+            cmd_help
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
+main "$@"
