@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.80.1] - 2026-01-24
+
+### Fixed
+
+- resolve MCP binary paths to full absolute paths for PATH-independent startup (#179)
 ## [2.80.0] - 2026-01-24
 
 ### Added
