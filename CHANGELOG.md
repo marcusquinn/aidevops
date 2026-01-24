@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - auto-install fd and ripgrep in non-interactive mode (#171)
+
 ## [2.77.2] - 2026-01-24
 
 ### Fixed
