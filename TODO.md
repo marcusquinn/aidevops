@@ -65,7 +65,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t004 Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
 - [ ] t005 Implement multi-tenant credential storage #security ~5d (ai:3d test:1.5d read:0.5d) logged:2025-12-20
-- [ ] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d (ai:0.5d test:0.5d) logged:2025-12-20
+- [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22
+  - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~3d (ai:2d test:1d) logged:2025-12-20
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3d (ai:1.5d test:1d read:0.5d) logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~6h (ai:3h test:2h read:1h) logged:2025-12-21
@@ -171,7 +172,7 @@ t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
 t004,Add Ahrefs MCP server integration,,seo,2d,1d,0.5d,0.5d,2025-12-20T00:00Z,pending,,,
 t005,Implement multi-tenant credential storage,,security,5d,3d,1.5d,0.5d,2025-12-20T00:00Z,pending,,,
-t006,Add Playwright MCP auto-setup to setup.sh,,browser,1d,0.5d,0.5d,,2025-12-20T00:00Z,pending,,,
+t006,Add Playwright MCP auto-setup to setup.sh,,browser,1d,0.5d,0.5d,,2025-12-20T00:00Z,done,,,
 t007,Create MCP server for QuickFile accounting API,,accounting,3d,2d,1d,,2025-12-20T00:00Z,pending,,,
 t012,OCR Invoice/Receipt Extraction Pipeline,,plan|accounting|ocr|automation,3d,1.5d,1d,0.5d,2025-12-21T22:00Z,pending,,,
 t013,Image SEO Enhancement with AI Vision,,plan|seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,pending,,,

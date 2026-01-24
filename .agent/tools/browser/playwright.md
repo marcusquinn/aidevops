@@ -12,15 +12,18 @@ tools:
   task: true
 ---
 
-# Playwright MCP Usage Examples
+# Playwright MCP
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- Playwright examples for cross-browser testing automation
-- Browsers: chromium, firefox, webkit
-- Test types:
+- **Purpose**: Cross-browser testing automation via MCP
+- **MCP command**: `npx playwright-mcp@latest`
+- **Install**: `npx playwright install` (chromium, firefox, webkit)
+- **Setup**: Auto-installed via `setup.sh` → `setup_browser_tools()`
+- **Browsers**: chromium, firefox, webkit
+- **Test types**:
   - Cross-browser: `runTest()`, `testBrowserFeatures()`
   - User flows: `automateFlow()`, `testFormValidation()`
   - Mobile: `testOnDevice()`, `testOrientations()`
@@ -28,10 +31,42 @@ tools:
   - Visual: `visualRegressionSuite()`, `screenshotComponents()`
   - Security: `testXSS()`, `testAuthentication()`
   - API: `testAPIIntegration()`, `testRealTimeFeatures()`
-- Device emulation: iPhone, Samsung, iPad
-- Network throttling: Fast 3G, Slow 3G, Offline
-- Integration: Works with Chrome DevTools MCP
+- **Device emulation**: iPhone, Samsung, iPad
+- **Network throttling**: Fast 3G, Slow 3G, Offline
+- **Integration**: Works with Chrome DevTools MCP, dev-browser, Stagehand
+
 <!-- AI-CONTEXT-END -->
+
+## Installation
+
+Playwright MCP is auto-installed via `setup.sh` when running the browser tools setup:
+
+```bash
+# Via setup.sh (interactive)
+./setup.sh --interactive
+# Select: "Setup browser automation tools"
+
+# Manual installation
+npx playwright install              # Install browsers (chromium, firefox, webkit)
+npx playwright-mcp@latest           # Run MCP server
+```
+
+**Check if installed:**
+
+```bash
+npx --no-install playwright --version
+```
+
+**MCP configuration** (for Claude Code, OpenCode, etc.):
+
+```json
+{
+  "playwright": {
+    "command": "npx",
+    "args": ["playwright-mcp@latest"]
+  }
+}
+```
 
 ## Cross-Browser Testing
 

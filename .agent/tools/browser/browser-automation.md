@@ -98,7 +98,7 @@ Need browser automation?
 | **sweet-cookie** | Cookie extraction for API calls, session reuse | `npm i @steipete/sweet-cookie` |
 | **stagehand** | Natural language automation | `stagehand-helper.sh setup` |
 | **crawl4ai** | Web scraping, content extraction | `crawl4ai-helper.sh setup` |
-| **playwright** | Cross-browser testing | MCP integration |
+| **playwright** | Cross-browser testing | `setup.sh` or `npx playwright install` |
 
 **Full docs**: `tools/browser/agent-browser.md` (default), `tools/browser/dev-browser.md`, `tools/browser/sweet-cookie.md`, etc.
 

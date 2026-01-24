@@ -317,7 +317,7 @@ check_context_tools() {
 check_browser() {
     echo -e "${BLUE}Browser Automation${NC}"
     
-    if is_installed "npx" && npx playwright --version &>/dev/null 2>&1; then
+    if is_installed "npx" && npx --no-install playwright --version &>/dev/null 2>&1; then
         print_service "Playwright" "ready" "installed"
     else
         print_service "Playwright" "optional" "not installed"

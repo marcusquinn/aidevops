@@ -681,7 +681,7 @@ The setup script offers to install these tools automatically.
 | [Outscraper](https://outscraper.com/) | Google Maps & business data extraction | Yes |
 | [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
 | [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
-| [Playwright](https://playwright.dev/) | Cross-browser testing | No |
+| [Playwright](https://playwright.dev/) | Cross-browser testing (auto-installed by setup.sh) | No |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
 | [shadcn/ui](https://ui.shadcn.com/) | UI component library browsing & installation | No |
@@ -705,7 +705,7 @@ The setup script offers to install these tools automatically.
 - [Stagehand (JavaScript)](https://github.com/browserbase/stagehand) - AI-powered browser automation with natural language
 - [Stagehand (Python)](https://github.com/anthropics/stagehand-python) - Python version with Pydantic validation
 - [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser automation, performance analysis, debugging
-- [Playwright](https://playwright.dev/) - Cross-browser testing and automation
+- [Playwright](https://playwright.dev/) - Cross-browser testing and automation (auto-installed via `setup.sh`)
 - [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI
 - [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
 
