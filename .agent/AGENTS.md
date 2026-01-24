@@ -23,7 +23,7 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 **Full details**: Read `workflows/pre-edit.md` for interactive prompts, worktree creation, and edge cases.
 
-**Self-verification**: Your FIRST tool call before any Edit/Write MUST be this script. If you are about to edit a file and have not yet run pre-edit-check.sh in this session, STOP and run it now. No exceptions — including TODO.md and planning files (the script handles exception logic, not you).
+**Self-verification**: Your FIRST step before any Edit/Write MUST be to run this script. If you are about to edit a file and have not yet run pre-edit-check.sh in this session, STOP and run it now. No exceptions — including TODO.md and planning files (the script handles exception logic, not you).
 
 ---
 
