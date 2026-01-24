@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add remote sync verification to release script and tag rollback (#168)
 - add Homebrew PATH detection early in setup.sh requirements check (#169)
 - prefer Homebrew/pyenv python3 over macOS system python in setup.sh (#167)
+
 ## [2.77.1] - 2026-01-24
 
 ### Changed
