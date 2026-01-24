@@ -242,24 +242,22 @@ cleanup_deprecated_mcps() {
 
     for pkg in "${!mcp_migrations[@]}"; do
         local bin_name="${mcp_migrations[$pkg]}"
-        # Check if any MCP entry uses npx/bunx with this package
-        if jq -e ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\"))" "$tmp_config" > /dev/null 2>&1; then
+        # Find MCP key using npx/bunx/pipx for this package (single query)
+        local mcp_key
+        mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
+
+        if [[ -n "$mcp_key" ]]; then
             # Resolve full path for the binary
             local full_path
             full_path=$(resolve_mcp_binary_path "$bin_name")
             if [[ -n "$full_path" ]]; then
-                # Find the MCP key and update its command to full path
-                local mcp_key
-                mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
-                if [[ -n "$mcp_key" ]]; then
-                    # Preserve --mcp flag for repomix
-                    if [[ "$bin_name" == "repomix" ]]; then
-                        jq --arg p "$full_path" ".mcp[\"$mcp_key\"].command = [\$p, \"--mcp\"]" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                    else
-                        jq --arg p "$full_path" ".mcp[\"$mcp_key\"].command = [\$p]" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                    fi
-                    ((cleaned++))
+                # Preserve --mcp flag for repomix
+                if [[ "$bin_name" == "repomix" ]]; then
+                    jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p, "--mcp"]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                else
+                    jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
                 fi
+                ((cleaned++))
             fi
         fi
     done
@@ -2239,12 +2237,13 @@ resolve_mcp_binary_path() {
         fi
     done
 
-    # Fallback: use 'which' if in PATH
+    # Fallback: use command -v if in PATH (portable, POSIX-compliant)
     if [[ -z "$resolved" ]]; then
-        resolved=$(which "$bin_name" 2>/dev/null || true)
+        resolved=$(command -v "$bin_name" 2>/dev/null || true)
     fi
 
     echo "$resolved"
+    return 0
 }
 
 # Update opencode.json MCP commands to use full binary paths
@@ -2294,9 +2293,9 @@ update_mcp_paths_in_opencode() {
             continue
         fi
 
-        # Skip special commands (docker, node, etc.)
+        # Skip docker (container runtime) and node (resolved separately below)
         case "$current_cmd" in
-            docker|node|python|python3|bash|sh) continue ;;
+            docker|node) continue ;;
         esac
 
         # Resolve the full path
