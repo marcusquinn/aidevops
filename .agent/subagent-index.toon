@@ -72,7 +72,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[20]{name,purpose}:
+<!--TOON:scripts[21]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -93,4 +93,5 @@ full-loop-helper.sh,End-to-end development loop (task to PR to deploy)
 session-review-helper.sh,Gather session context for review
 mail-helper.sh,TOON-based inter-agent mailbox system
 memory-helper.sh,Cross-session memory (SQLite FTS5)
+unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 -->

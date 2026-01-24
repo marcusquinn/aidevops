@@ -7,6 +7,6 @@
       "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL=\"$UNSTRACT_API_BASE_URL\" -e DISABLE_TELEMETRY=true unstract/mcp-server unstract"
     ],
     "enabled": false,
-    "_comment": "Disabled globally. Enabled on-demand via services/document-processing/unstract.md subagent. Requires UNSTRACT_API_KEY and UNSTRACT_API_BASE_URL in ~/.config/aidevops/mcp-env.sh"
+    "_comment": "Disabled globally. Enabled on-demand via services/document-processing/unstract.md subagent. Defaults to local self-hosted instance (install: unstract-helper.sh install). Set UNSTRACT_API_BASE_URL to cloud endpoint if preferred."
   }
 }

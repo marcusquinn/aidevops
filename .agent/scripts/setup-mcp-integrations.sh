@@ -42,13 +42,14 @@ get_mcp_command() {
         "stagehand-both") echo "both" ;;
         "dataforseo") echo "npx dataforseo-mcp-server" ;;
         "serper") echo "uvx serper-mcp-server" ;;
+        "unstract") echo "docker:unstract/mcp-server" ;;
         *) echo "" ;;
     esac
     return 0
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel claude-code-mcp stagehand stagehand-python stagehand-both dataforseo serper"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel claude-code-mcp stagehand stagehand-python stagehand-both dataforseo serper unstract"
 
 # Check prerequisites
 check_prerequisites() {
@@ -305,6 +306,31 @@ install_mcp() {
                 print_info "Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
                 print_info "Alternative: pip install serper-mcp-server"
             fi
+            ;;
+        "unstract")
+            print_info "Setting up Unstract self-hosted document processing platform..."
+            print_info "This installs the full Unstract platform locally via Docker Compose"
+            print_info "Requirements: Docker, Docker Compose, Git, 8GB RAM"
+            echo
+
+            # Run the helper script for installation
+            local helper_script="${SCRIPT_DIR}/unstract-helper.sh"
+            if [[ -f "$helper_script" ]]; then
+                bash "$helper_script" install
+            else
+                print_error "unstract-helper.sh not found at ${helper_script}"
+                print_info "Manual install:"
+                print_info "  git clone https://github.com/Zipstack/unstract.git ~/.aidevops/unstract"
+                print_info "  cd ~/.aidevops/unstract && ./run-platform.sh"
+                return 1
+            fi
+
+            echo
+            print_info "Your existing LLM API keys can be used as Unstract adapters:"
+            print_info "  Run: unstract-helper.sh configure-llm"
+            print_info ""
+            print_info "The MCP connects to your local instance by default."
+            print_info "Config template: configs/mcp-templates/unstract.json"
             ;;
         *)
             print_error "Unknown MCP integration: $mcp_name"

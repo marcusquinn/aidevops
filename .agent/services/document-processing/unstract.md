@@ -79,26 +79,51 @@ export UNSTRACT_API_KEY="your_api_key_here"
 export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
 ```
 
-### Option B: Self-Hosted (Local)
+### Option B: Self-Hosted (Local) - Recommended
 
-Run the full Unstract platform locally via Docker Compose (requires 8GB RAM):
+Install and run the full Unstract platform locally (requires Docker, 8GB RAM):
 
 ```bash
-git clone https://github.com/Zipstack/unstract.git
-cd unstract
-./run-platform.sh
-# Visit http://frontend.unstract.localhost (login: unstract/unstract)
+# One-command install via aidevops helper:
+~/.aidevops/agents/scripts/unstract-helper.sh install
+
+# Or via the MCP integrations setup:
+~/.aidevops/agents/scripts/setup-mcp-integrations.sh unstract
 ```
 
-Then create your Prompt Studio project, deploy as API, and configure:
+This clones Unstract to `~/.aidevops/unstract/`, disables analytics, starts Docker Compose, and configures the MCP to point at your local instance.
+
+Visit http://frontend.unstract.localhost (login: unstract/unstract)
+
+**Management commands:**
 
 ```bash
-# Add to ~/.config/aidevops/mcp-env.sh:
-export UNSTRACT_API_KEY="your_local_api_key"
-export UNSTRACT_API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-deployment-id/"
+unstract-helper.sh start          # Start containers
+unstract-helper.sh stop           # Stop containers
+unstract-helper.sh status         # Check status
+unstract-helper.sh logs           # View logs
+unstract-helper.sh configure-llm  # Help adding LLM adapters
+unstract-helper.sh uninstall      # Remove everything
 ```
 
 Self-hosted gives full data privacy - no documents leave your machine.
+
+### Using Your Existing LLM API Keys
+
+Unstract uses "Adapters" to connect to LLM providers. Your existing API keys from `~/.config/aidevops/mcp-env.sh` work directly - just add them as adapters in the Unstract UI (Settings > Adapters):
+
+| Your Key | Unstract Adapter |
+|----------|-----------------|
+| `OPENAI_API_KEY` | OpenAI (GPT-4, GPT-4o) |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) |
+| `GOOGLE_API_KEY` / Vertex credentials | Google VertexAI / Gemini |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI |
+| AWS credentials | AWS Bedrock |
+| Ollama (local, no key) | Ollama (http://host.docker.internal:11434) |
+
+Run `unstract-helper.sh configure-llm` to see which keys you already have configured.
+
+For fully local/offline operation, use **Ollama** as the LLM adapter - no cloud API keys needed.
 
 ### 2. Store Credentials
 
@@ -106,7 +131,7 @@ Whichever option you chose, ensure credentials are in `~/.config/aidevops/mcp-en
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
-export UNSTRACT_API_BASE_URL="https://your-endpoint/deployment/api/your-id/"
+export UNSTRACT_API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
 ```
 
 ### 3. OpenCode Configuration (On-Demand)
