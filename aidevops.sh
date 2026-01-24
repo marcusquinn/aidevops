@@ -1124,7 +1124,17 @@ cmd_upgrade_planning() {
             needs_upgrade=true
             print_warning "TODO.md uses minimal template (missing TOON markers)"
         else
-            print_success "TODO.md already has TOON markers"
+            # Check TOON meta version against template version
+            local current_version template_version
+            current_version=$(grep -A1 "TOON:meta" "$todo_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+            template_version=$(grep -A1 "TOON:meta" "$todo_template" 2>/dev/null | tail -1 | cut -d',' -f1)
+            if [[ -n "$template_version" ]] && [[ "$current_version" != "$template_version" ]]; then
+                todo_needs_upgrade=true
+                needs_upgrade=true
+                print_warning "TODO.md format version $current_version -> $template_version (adds risk field, updated estimates)"
+            else
+                print_success "TODO.md already up to date (v${current_version})"
+            fi
         fi
     else
         print_info "TODO.md not found - will create from template"
@@ -1140,7 +1150,17 @@ cmd_upgrade_planning() {
             needs_upgrade=true
             print_warning "todo/PLANS.md uses minimal template (missing TOON markers)"
         else
-            print_success "todo/PLANS.md already has TOON markers"
+            # Check TOON meta version against template version
+            local current_plans_version template_plans_version
+            current_plans_version=$(grep -A1 "TOON:meta" "$plans_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+            template_plans_version=$(grep -A1 "TOON:meta" "$plans_template" 2>/dev/null | tail -1 | cut -d',' -f1)
+            if [[ -n "$template_plans_version" ]] && [[ "$current_plans_version" != "$template_plans_version" ]]; then
+                plans_needs_upgrade=true
+                needs_upgrade=true
+                print_warning "todo/PLANS.md format version $current_plans_version -> $template_plans_version"
+            else
+                print_success "todo/PLANS.md already up to date (v${current_plans_version})"
+            fi
         fi
     else
         print_info "todo/PLANS.md not found - will create from template"
