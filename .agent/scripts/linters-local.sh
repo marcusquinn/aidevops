@@ -467,29 +467,29 @@ check_toon_syntax() {
     local file_count
     file_count=$(echo "$toon_files" | wc -l | tr -d ' ')
 
-    # Use toon-lsp check if available, otherwise try decode as validation
+    # Use toon-lsp check if available, otherwise basic validation
     if command -v toon-lsp &> /dev/null; then
-        for file in $toon_files; do
+        while IFS= read -r file; do
             if [[ -f "$file" ]]; then
                 local result
-                result=$(toon-lsp check "$file" 2>&1) || true
-                if [[ $? -ne 0 ]] || [[ "$result" == *"error"* ]]; then
+                result=$(toon-lsp check "$file" 2>&1)
+                local exit_code=$?
+                if [[ $exit_code -ne 0 ]] || [[ "$result" == *"error"* ]]; then
                     ((violations++))
                     print_warning "TOON syntax issue in $file"
                 fi
             fi
-        done
+        done <<< "$toon_files"
     else
-        # Fallback: basic structure validation (check for common TOON patterns)
-        for file in $toon_files; do
+        # Fallback: basic structure validation (non-empty check)
+        while IFS= read -r file; do
             if [[ -f "$file" ]]; then
-                # Check file is non-empty and has key:value patterns
                 if [[ ! -s "$file" ]]; then
                     ((violations++))
                     print_warning "TOON: Empty file $file"
                 fi
             fi
-        done
+        done <<< "$toon_files"
     fi
 
     if [[ $violations -eq 0 ]]; then
