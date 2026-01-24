@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - replace bc version comparison with integer arithmetic in crawl4ai-helper (#164)
+
 ## [2.76.1] - 2026-01-24
 
 ### Changed
