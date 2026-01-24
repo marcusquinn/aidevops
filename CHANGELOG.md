@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.77.0] - 2026-01-24
+
+### Added
+
+- add Playwright MCP auto-setup to setup.sh (#150)
+
+### Changed
+
+- Documentation: update browser tool docs with benchmarks and add benchmark agent (#163)
+
+### Fixed
+
+- replace bc version comparison with integer arithmetic in crawl4ai-helper (#164)
 ## [2.76.1] - 2026-01-24
 
 ### Changed
