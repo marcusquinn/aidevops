@@ -70,6 +70,22 @@ What do you need?
     |       --> Chrome DevTools MCP (companion, pairs with any browser tool)
     |       --> Best with: dev-browser (:9222) or Playwright
     |
+    +-> ANTI-DETECT (avoid bot detection, multi-account)?
+    |       |
+    |       +-> Quick stealth (hide automation signals)?
+    |       |       |
+    |       |       +-> Chromium? --> stealth-patches.md (rebrowser-patches)
+    |       |       +-> Firefox? --> fingerprint-profiles.md (Camoufox)
+    |       |
+    |       +-> Full anti-detect (fingerprint + proxy + profiles)?
+    |       |       --> anti-detect-browser.md (decision tree for full stack)
+    |       |
+    |       +-> Multi-account management?
+    |       |       --> browser-profiles.md (persistent/clean/warm profiles)
+    |       |
+    |       +-> Proxy per profile / geo-targeting?
+    |               --> proxy-integration.md (residential, SOCKS5, rotation)
+    |
     +-> TEST your own app (dev server)?
             |
             +-> Need to stay logged in across restarts? --> dev-browser (profile)
@@ -127,6 +143,9 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Natural language** | No | No | No | LLM extraction | No | act/extract/observe |
 | **Self-healing** | No | No | No | No | No | Yes |
 | **AI-optimized output** | No | ARIA snapshots | Snapshot + refs | Markdown/JSON | No | Structured schemas |
+| **Anti-detect** | rebrowser-patches | Via launch args | No | No | Your browser | Via Playwright |
+| **Fingerprint rotation** | No (add Camoufox) | No | No | No | No | No |
+| **Multi-profile** | storageState dirs | Profile dir | --session | user_data_dir | No | No |
 | **Setup required** | npm install | Server running | npm install | pip/Docker | Extension click | npm + API key |
 | **Interface** | JS/TS API | TS scripts | CLI | Python API | JS API | JS/Python SDK |
 
@@ -140,6 +159,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Crawl4AI** | Web scraping, bulk extraction, structured data | Fast | `pip install crawl4ai` (venv) |
 | **Playwriter** | Existing browser, extensions, bypass detection | Medium | Chrome extension + `npx playwriter` |
 | **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
+| **Anti-detect** | Bot evasion, multi-account, fingerprint rotation | Medium | `anti-detect-helper.sh setup` |
 
 ## AI Page Understanding (Visual Verification)
 

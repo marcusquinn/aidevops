@@ -101,8 +101,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Fixed CLI commands in coderabbit-cli.sh - changed `coderabbit review` to `coderabbit --plain --type uncommitted`. Added --prompt-only mode, --type flag, --base flag. Replaced setup_api_key() with auth_login() (browser OAuth). Rewrote coderabbit.md with comprehensive CLI docs. PR #124 merged.
 - [ ] t037 Review ALwrity for SEO/marketing capabilities or inspiration #research #seo #marketing ~30m (ai:20m read:10m) logged:2025-01-03
 - [ ] t038 Add CDN origin IP leak detection subagent (Cloudmare-inspired) #security #dns #hosting ~1h (ai:40m test:10m read:10m) logged:2025-01-03
-- [ ] t039 Add anti-detect browser subagent for multi-account automation #tools #browser #privacy ~2h (ai:1h test:30m read:30m) logged:2025-01-03 ref:https://github.com/daijro/camoufox
-  - Notes: Camoufox (4.6k stars) - FOSS Firefox anti-detect with Playwright, fingerprint rotation, WebRTC spoofing, passes DataDome/Cloudflare/Imperva. See also: https://github.com/TheGP/untidetect-tools (comprehensive list). Needs residential proxy integration for multi-account (DataImpulse $1/GB, WebShare $6/GB).
+- [x] t039 Add anti-detect browser subagent for multi-account automation #tools #browser #privacy ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-24T19:37Z completed:2026-01-24 ref:https://github.com/daijro/camoufox
+  - Notes: Implemented full anti-detect stack: anti-detect-browser.md (main decision tree), stealth-patches.md (rebrowser-patches for Chromium), fingerprint-profiles.md (Camoufox for Firefox), browser-profiles.md (multi-profile management), proxy-integration.md (residential/SOCKS5/VPN), anti-detect-helper.sh (CLI for setup/profiles/launch/test/warmup). Replicates AdsPower/GoLogin/OctoBrowser features. Supports persistent, clean, warm, and disposable profile types.
 - [ ] t040 Add Reddit CLI/API integration for reading and posting #tools #social-media ~1h (ai:40m test:10m read:10m) logged:2025-01-05 ref:https://github.com/praw-dev/praw
   - Notes: PRAW (Python Reddit API Wrapper) 4k stars. JSON endpoints (.json suffix) still work but rate-limited: 96 calls/10min unauthenticated (per IP), 996/10min authenticated (per account). CORS now enforced so web frontends blocked. For heavy scraping: use OAuth + rotating residential proxies, or anti-detect browser with account rotation.
 - [ ] t041 Document curl-copy authenticated scraping workflow #tools #browser #scraping ~15m (ai:10m read:5m) logged:2025-01-05
@@ -202,7 +202,7 @@ t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media
 t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,done,,,
 t037,Review ALwrity for SEO/marketing capabilities or inspiration,,research|seo|marketing,3h,1.5h,30m,1h,2025-01-03T00:00Z,pending,,,
 t038,Add CDN origin IP leak detection subagent (Cloudmare-inspired),,security|dns|hosting,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
-t039,Add anti-detect browser subagent for multi-account automation,,tools|browser|privacy,8h,4h,2h,2h,2025-01-03T00:00Z,pending,,,
+t039,Add anti-detect browser subagent for multi-account automation,,tools|browser|privacy,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t040,Add Reddit CLI/API integration for reading and posting,,tools|social-media,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
 t041,Document curl-copy authenticated scraping workflow,,tools|browser|scraping,1h,30m,15m,15m,2025-01-05T00:00Z,pending,,,
 t042,Create email-health-check /command and @subagent,,services|email|deliverability,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
