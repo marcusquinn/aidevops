@@ -335,7 +335,8 @@ cmd_archive() {
     fi
 
     ensure_dirs
-    local archive_subdir="$ARCHIVE_DIR/$(date +%Y-%m)"
+    local archive_subdir
+    archive_subdir="$ARCHIVE_DIR/$(date +%Y-%m)"
     mkdir -p "$archive_subdir"
 
     mv "$msg_file" "$archive_subdir/"
@@ -585,7 +586,7 @@ cmd_agents() {
 
     if [[ "$active_only" == true ]]; then
         echo "Active Agents:"
-        grep ',active,' "$REGISTRY_FILE" 2>/dev/null | while IFS=',' read -r id role branch worktree status registered last_seen; do
+        grep ',active,' "$REGISTRY_FILE" 2>/dev/null | while IFS=',' read -r id role branch _worktree _status _registered last_seen; do
             echo "  ${CYAN}$id${NC} ($role) on $branch - last seen: $last_seen"
         done
     else

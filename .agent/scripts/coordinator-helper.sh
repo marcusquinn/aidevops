@@ -147,7 +147,7 @@ cmd_pulse() {
     # 3. Check for idle agents that could take new work
     local idle_agents=""
     if [[ -n "$active_agents" ]]; then
-        while IFS=',' read -r agent_id role branch worktree status registered last_seen; do
+        while IFS=',' read -r agent_id role _branch _worktree _status _registered _last_seen; do
             # Check if agent has unread messages (busy) or not (idle)
             local inbox_dir="$MAIL_DIR/inbox/$agent_id"
             local unread=0
@@ -217,7 +217,7 @@ cmd_status() {
     # Agent registry
     if [[ -f "$REGISTRY_FILE" ]]; then
         echo "Registered Agents:"
-        while IFS=',' read -r agent_id role branch worktree status registered last_seen; do
+        while IFS=',' read -r agent_id role branch _worktree status _registered last_seen; do
             [[ "$agent_id" == "<!--"* || "$agent_id" == "-->"* || -z "$agent_id" ]] && continue
             local inbox_count=0
             if [[ -d "$MAIL_DIR/inbox/$agent_id" ]]; then
@@ -271,9 +271,9 @@ cmd_dispatch() {
         fi
     fi
     
-    local convoy_flag=""
+    local -a extra_args=()
     if [[ -n "$convoy" ]]; then
-        convoy_flag="--convoy $convoy"
+        extra_args+=(--convoy "$convoy")
     fi
     
     "$MAIL_HELPER" send \
@@ -282,7 +282,7 @@ cmd_dispatch() {
         --type task_dispatch \
         --payload "$task" \
         --priority "$priority" \
-        $convoy_flag
+        "${extra_args[@]}"
 }
 
 #######################################
