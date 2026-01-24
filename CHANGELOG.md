@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.76.0] - 2026-01-24
+
+### Added
+
+- add Video main agent for AI video generation and prompt engineering (#161)
+
+### Changed
+
+- Documentation: add PR #159, #160, #157 features to README
+
+### Fixed
+
+- remove hardcoded model IDs from agent config generation
+- correct tools frontmatter format in pre-edit.md
 ## [2.75.0] - 2026-01-24
 
 ### Added
