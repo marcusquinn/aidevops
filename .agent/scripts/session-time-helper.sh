@@ -36,7 +36,16 @@ LIMIT=10
 OUTPUT_JSON=false
 PROJECT_PATH=""
 
-# (Options parsed in main function)
+# Escape string for JSON output
+json_escape() {
+    local str="$1"
+    str="${str//\\/\\\\}"
+    str="${str//\"/\\\"}"
+    str="${str//$'\n'/\\n}"
+    str="${str//$'\r'/\\r}"
+    str="${str//$'\t'/\\t}"
+    printf '%s' "$str"
+}
 
 # Get project sessions directory from project path
 get_sessions_dir() {
@@ -112,9 +121,11 @@ ts_to_epoch() {
 # Extract timestamps from a session JSONL file (user + assistant messages only)
 extract_timestamps() {
     local session_file="$1"
-    grep -o '"timestamp":"[^"]*"' "$session_file" 2>/dev/null \
+    # Only extract from user/assistant message lines (skip file-history-snapshot, etc.)
+    grep -E '"type":"(user|assistant)"' "$session_file" 2>/dev/null \
+        | grep -o '"timestamp":"[^"]*"' \
         | sed 's/"timestamp":"//;s/"//' \
-        | sort -u
+        | sort
 }
 
 # Calculate active time for a session file
@@ -254,8 +265,10 @@ cmd_list() {
 
         if [[ "$OUTPUT_JSON" == "true" ]]; then
             [[ "$first" == "true" ]] && first=false || echo ","
+            local escaped_title
+            escaped_title=$(json_escape "$title")
             printf '  {"session_id":"%s","started":"%s","active_seconds":%d,"wall_seconds":%d,"messages":%d,"afk_seconds":%d,"title":"%s"}' \
-                "$session_id" "$first_ts" "$active" "$wall" "$msgs" "$afk" "${title//\"/\\\"}"
+                "$session_id" "$first_ts" "$active" "$wall" "$msgs" "$afk" "$escaped_title"
         else
             local short_id="${session_id:0:8}"
             printf "%-10s %-18s ${GREEN}%-10s${NC} ${DIM}%-10s${NC} %-5s %s\n" \
@@ -423,29 +436,35 @@ cmd_calibrate() {
     local total_est_min=0 total_act_min=0 count=0
 
     while IFS= read -r line; do
-        # Match: - [x] tNNN description ~Xh ... actual:Xh
-        if [[ "$line" =~ \[x\].*\ (t[0-9]+)\ (.+)~([0-9]+[hm][0-9]*[m]?) ]] && [[ "$line" =~ actual:([0-9]+[hm][0-9]*[m]?) ]]; then
-            local task_id="${BASH_REMATCH[1]}"
-            local estimate actual
-            # Re-extract with separate matches
-            estimate=$(echo "$line" | grep -o '~[0-9]*[hm][0-9]*[m]*' | head -1 | sed 's/~//')
-            actual=$(echo "$line" | grep -o 'actual:[0-9]*[hm][0-9]*[m]*' | head -1 | sed 's/actual://')
-            local title
-            title=$(echo "$line" | sed 's/.*\] //' | sed 's/ ~.*//' | cut -c1-35)
+        # Skip non-completed tasks
+        [[ "$line" != *"[x]"* ]] && continue
+        # Must have both ~estimate and actual:
+        [[ "$line" != *"~"* ]] && continue
+        [[ "$line" != *"actual:"* ]] && continue
 
-            local est_min act_min
-            est_min=$(duration_to_minutes "$estimate")
-            act_min=$(duration_to_minutes "$actual")
+        # Extract fields using grep (avoids BASH_REMATCH clobbering)
+        local task_id estimate actual title
+        task_id=$(echo "$line" | grep -o 't[0-9]\+' | head -1 || true)
+        estimate=$(echo "$line" | grep -oE '~[0-9]+\.?[0-9]*[hm][0-9]*[m]?' | head -1 | sed 's/~//' || true)
+        actual=$(echo "$line" | grep -oE 'actual:[0-9]+\.?[0-9]*[hm][0-9]*[m]?' | head -1 | sed 's/actual://' || true)
+        title=$(echo "$line" | sed 's/.*\] //;s/ ~.*//' | cut -c1-35 || true)
 
-            if [[ $act_min -gt 0 ]] && [[ $est_min -gt 0 ]]; then
-                local ratio
-                ratio=$(awk "BEGIN {printf \"%.1f\", $est_min / $act_min}")
-                printf "%-8s %-10s %-10s ${YELLOW}%-7s${NC} %s\n" \
-                    "$task_id" "~$estimate" "$actual" "${ratio}x" "$title"
-                total_est_min=$((total_est_min + est_min))
-                total_act_min=$((total_act_min + act_min))
-                count=$((count + 1))
-            fi
+        [[ -z "$task_id" ]] && continue
+        [[ -z "$estimate" ]] && continue
+        [[ -z "$actual" ]] && continue
+
+        local est_min act_min
+        est_min=$(duration_to_minutes "$estimate")
+        act_min=$(duration_to_minutes "$actual")
+
+        if [[ $act_min -gt 0 ]] && [[ $est_min -gt 0 ]]; then
+            local ratio
+            ratio=$(awk "BEGIN {printf \"%.1f\", $est_min / $act_min}")
+            printf "%-8s %-10s %-10s ${YELLOW}%-7s${NC} %s\n" \
+                "$task_id" "~$estimate" "$actual" "${ratio}x" "$title"
+            total_est_min=$((total_est_min + est_min))
+            total_act_min=$((total_act_min + act_min))
+            count=$((count + 1))
         fi
     done < "$todo_file"
 
@@ -460,15 +479,21 @@ cmd_calibrate() {
     fi
 }
 
-# Convert duration string (4h, 30m, 1h30m) to minutes
+# Convert duration string (4h, 30m, 1h30m, 1.5h) to minutes
 duration_to_minutes() {
     local dur="$1"
     local minutes=0
 
-    if [[ "$dur" =~ ([0-9]+)h ]]; then
+    # Handle decimal hours (e.g., 1.5h -> 90m)
+    if [[ "$dur" =~ ([0-9]+)\.([0-9]+)h ]]; then
+        local whole="${BASH_REMATCH[1]}"
+        local frac="${BASH_REMATCH[2]}"
+        minutes=$(awk "BEGIN {printf \"%d\", ($whole + 0.$frac) * 60}")
+    elif [[ "$dur" =~ ([0-9]+)h ]]; then
         minutes=$((minutes + BASH_REMATCH[1] * 60))
     fi
-    if [[ "$dur" =~ ([0-9]+)m ]]; then
+    # Minutes component (handles both "30m" and "1h30m")
+    if [[ "$dur" =~ ([0-9]+)m$ ]] || [[ "$dur" =~ h([0-9]+)m ]]; then
         minutes=$((minutes + BASH_REMATCH[1]))
     fi
     # Bare number defaults to hours
@@ -481,38 +506,23 @@ duration_to_minutes() {
 
 # Main
 main() {
-    # Separate command and session-id from options
     local command="list"
     local session_arg=""
-    local pass_through=()
 
-    for arg in "$@"; do
-        case "$arg" in
-            list|analyse|analyze|summary|calibrate|help|--help|-h)
-                command="$arg"
-                ;;
-            --project|--threshold|--limit)
-                pass_through+=("$arg")
-                ;;
-            --json)
-                OUTPUT_JSON=true
-                ;;
+    # Parse all arguments with standard while/shift pattern
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)  PROJECT_PATH="$2"; shift 2 ;;
+            --threshold) AFK_THRESHOLD="$2"; shift 2 ;;
+            --limit)    LIMIT="$2"; shift 2 ;;
+            --json)     OUTPUT_JSON=true; shift ;;
+            list|analyse|analyze|summary|calibrate)
+                command="$1"; shift ;;
+            help|--help|-h)
+                command="help"; shift ;;
             *)
-                # If previous arg was a flag expecting a value, it's the value
-                if [[ ${#pass_through[@]} -gt 0 ]]; then
-                    local last="${pass_through[-1]}"
-                    case "$last" in
-                        --project) PROJECT_PATH="$arg" ;;
-                        --threshold) AFK_THRESHOLD="$arg" ;;
-                        --limit) LIMIT="$arg" ;;
-                        *) session_arg="$arg" ;;
-                    esac
-                    # Remove the flag from pass_through since we consumed it
-                    unset 'pass_through[-1]'
-                else
-                    session_arg="$arg"
-                fi
-                ;;
+                # Positional arg (session ID for analyse)
+                session_arg="$1"; shift ;;
         esac
     done
 
@@ -536,7 +546,7 @@ main() {
         calibrate)
             cmd_calibrate
             ;;
-        help|--help|-h)
+        help)
             head -19 "$0" | tail -17
             ;;
         *)

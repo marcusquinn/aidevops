@@ -1116,54 +1116,39 @@ cmd_upgrade_planning() {
     local todo_needs_upgrade=false
     local plans_needs_upgrade=false
     
-    # Check TODO.md
-    if [[ -f "$todo_file" ]]; then
-        # Check if it's using the minimal template (no TOON markers)
-        if ! grep -q "TOON:meta" "$todo_file" 2>/dev/null; then
-            todo_needs_upgrade=true
-            needs_upgrade=true
-            print_warning "TODO.md uses minimal template (missing TOON markers)"
-        else
-            # Check TOON meta version against template version
-            local current_version template_version
-            current_version=$(grep -A1 "TOON:meta" "$todo_file" 2>/dev/null | tail -1 | cut -d',' -f1)
-            template_version=$(grep -A1 "TOON:meta" "$todo_template" 2>/dev/null | tail -1 | cut -d',' -f1)
-            if [[ -n "$template_version" ]] && [[ "$current_version" != "$template_version" ]]; then
-                todo_needs_upgrade=true
-                needs_upgrade=true
-                print_warning "TODO.md format version $current_version -> $template_version (adds risk field, updated estimates)"
-            else
-                print_success "TODO.md already up to date (v${current_version})"
+    # Check a planning file against its template for version/marker upgrades
+    # Usage: check_planning_file <file> <template> <label>
+    # Returns 0 if upgrade needed, 1 if up to date
+    check_planning_file_version() {
+        local file="$1" template="$2" label="$3"
+        if [[ -f "$file" ]]; then
+            if ! grep -q "TOON:meta" "$file" 2>/dev/null; then
+                print_warning "$label uses minimal template (missing TOON markers)"
+                return 0
             fi
+            local current_ver template_ver
+            current_ver=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
+            template_ver=$(grep -A1 "TOON:meta" "$template" 2>/dev/null | tail -1 | cut -d',' -f1)
+            if [[ -n "$template_ver" ]] && [[ "$current_ver" != "$template_ver" ]]; then
+                print_warning "$label format version $current_ver -> $template_ver (adds risk field, updated estimates)"
+                return 0
+            fi
+            print_success "$label already up to date (v${current_ver})"
+            return 1
+        else
+            print_info "$label not found - will create from template"
+            return 0
         fi
-    else
-        print_info "TODO.md not found - will create from template"
+    }
+
+    # Check TODO.md
+    if check_planning_file_version "$todo_file" "$todo_template" "TODO.md"; then
         todo_needs_upgrade=true
         needs_upgrade=true
     fi
     
     # Check PLANS.md
-    if [[ -f "$plans_file" ]]; then
-        # Check if it's using the minimal template (no TOON markers)
-        if ! grep -q "TOON:meta" "$plans_file" 2>/dev/null; then
-            plans_needs_upgrade=true
-            needs_upgrade=true
-            print_warning "todo/PLANS.md uses minimal template (missing TOON markers)"
-        else
-            # Check TOON meta version against template version
-            local current_plans_version template_plans_version
-            current_plans_version=$(grep -A1 "TOON:meta" "$plans_file" 2>/dev/null | tail -1 | cut -d',' -f1)
-            template_plans_version=$(grep -A1 "TOON:meta" "$plans_template" 2>/dev/null | tail -1 | cut -d',' -f1)
-            if [[ -n "$template_plans_version" ]] && [[ "$current_plans_version" != "$template_plans_version" ]]; then
-                plans_needs_upgrade=true
-                needs_upgrade=true
-                print_warning "todo/PLANS.md format version $current_plans_version -> $template_plans_version"
-            else
-                print_success "todo/PLANS.md already up to date (v${current_plans_version})"
-            fi
-        fi
-    else
-        print_info "todo/PLANS.md not found - will create from template"
+    if check_planning_file_version "$plans_file" "$plans_template" "todo/PLANS.md"; then
         plans_needs_upgrade=true
         needs_upgrade=true
     fi
