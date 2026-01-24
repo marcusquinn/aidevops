@@ -36,6 +36,20 @@ tools:
 - CAPTCHA solving via CapSolver
 - Parallel async crawling
 - Session management & browser pool
+- Full proxy support (HTTP, SOCKS5, residential)
+- Persistent context with `user_data_dir`
+
+**Performance**: Structured extraction 2.5s (30 items), multi-page 3.8s (3 URLs), reliability 0.52s avg (fastest).
+Benchmarked 2026-01-24, macOS ARM64, headless, median of 3 runs. Reproduce via `browser-benchmark.md`.
+Purpose-built for extraction. Limited interaction via `js_code` parameter or C4A-Script DSL (CLICK, TYPE, PRESS). For complex interactive flows, use Playwright.
+
+**Parallel**: `arun_many(urls)` for built-in parallel crawling (tested: 1.7x speedup over sequential). Multiple `AsyncWebCrawler` instances for fully isolated browsers.
+
+**AI Page Understanding**: Returns LLM-ready markdown by default. Use `JsonCssExtractionStrategy` for structured data or `LLMExtractionStrategy` for AI-parsed content. No need for screenshots or ARIA - output is already AI-optimized.
+
+**Limitations**: No extensions, no form filling, no interactive automation. No Chrome DevTools MCP pairing.
+
+**Install**: `python3 -m venv ~/.aidevops/crawl4ai-venv && source ~/.aidevops/crawl4ai-venv/bin/activate && pip install crawl4ai && crawl4ai-setup`
 
 **Env Vars**: `OPENAI_API_KEY`, `CAPSOLVER_API_KEY`, `CRAWL4AI_MAX_PAGES=50`
 <!-- AI-CONTEXT-END -->

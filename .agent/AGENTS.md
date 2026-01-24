@@ -145,7 +145,7 @@ See `subagent-index.toon` for complete listing of agents, subagents, workflows, 
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
-| Browser | `tools/browser/stagehand.md` or `tools/browser/playwright.md` |
+| Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
@@ -212,6 +212,28 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 ├── mail/              # Inter-agent mailbox (TOON)
 └── memory/            # Cross-session patterns (SQLite FTS5)
 ```
+
+## Browser Automation
+
+**When to use a browser** (proactively, without being asked):
+- Verifying a dev server works after changes (navigate, check content, screenshot if errors)
+- Testing forms, auth flows, or UI after code changes
+- Logging into websites to submit content, manage accounts, or extract data
+- Verifying deployments are live and rendering correctly
+- Debugging frontend issues (check console errors, network requests)
+
+**How to choose a tool**: Read `tools/browser/browser-automation.md` for the full decision tree. Quick defaults:
+- **Dev testing** (your app): Playwright direct (fastest) or dev-browser (persistent login)
+- **Website interaction** (login, submit, manage): dev-browser (persistent) or Playwriter (your extensions/passwords)
+- **Data extraction**: Crawl4AI (bulk) or Playwright (interactive first)
+- **Debugging**: Chrome DevTools MCP paired with dev-browser
+
+**AI page understanding** (how to "see" the page without vision tokens):
+- Use ARIA snapshots (~0.01s, 50-200 tokens) for forms, navigation, interactive elements
+- Use text extraction (~0.002s) for reading content
+- Use screenshots only for visual debugging or when layout matters
+
+**Benchmarks**: Read `tools/browser/browser-benchmark.md` to re-run if tools are updated.
 
 ## Localhost Standards
 

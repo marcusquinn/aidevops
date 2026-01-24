@@ -29,12 +29,26 @@ tools:
 - **Your existing browser** - Reuse extensions, sessions, cookies
 - **Bypass detection** - Disconnect extension to bypass automation detection
 - **Collaborate with AI** - Work alongside it in the same browser
+- **Proxy via browser** - Uses whatever proxy your browser is configured with
+
+**Performance**: Navigate 2.95s, form fill 2.24s, reliability 1.96s avg.
+Always headed (uses your visible browser). Proxy support via browser settings or extensions (FoxyProxy etc.).
+
+**Extensions**: Full access to all your installed extensions. Password managers already unlocked. This is the only tool where password manager autofill works without extra setup.
+
+**Parallel**: Multiple connected tabs (click extension on each). Shared browser session (not isolated). For isolated parallel work, use Playwright direct.
+
+**AI Page Understanding**: Standard Playwright API - use `page.locator('body').ariaSnapshot()` or element queries. Screenshots also work since it's your visible browser.
+
+**Chrome DevTools MCP**: Your browser needs remote debugging enabled (`chrome://inspect/#remote-debugging`), then use `npx chrome-devtools-mcp@latest --autoConnect`.
 
 **Icon States**:
-- Gray: Not connected
+- Gray/Black: Not connected
 - Green: Connected and ready
 - Orange (...): Connecting
 - Red (!): Error
+
+**When to use**: When you need your existing logged-in sessions, browser extensions (especially password managers), or want to collaborate with AI on a page you're viewing.
 
 <!-- AI-CONTEXT-END -->
 
