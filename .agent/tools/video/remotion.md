@@ -245,6 +245,25 @@ npx remotion still src/index.ts MyStill out/thumbnail.png
 npx remotion render src/index.ts MyComposition out/video.mp4 --props='{"title":"Custom"}'
 ```
 
+## Examples & Inspiration
+
+Open-source Remotion projects to study for patterns and ideas:
+
+| Repository | Description | Key Patterns |
+|-----------|-------------|--------------|
+| [trycua/launchpad](https://github.com/trycua/launchpad) | Product launch video monorepo (Turborepo + Next.js + Tailwind) | Scene-based architecture, shared packages, scaffolding CLI, word-by-word text animations, code editor scenes, spring physics, sound effects, blur transitions |
+| [remotion-dev/trailer](https://github.com/remotion-dev/trailer) | Official Remotion trailer | Advanced compositions, transitions, brand animation |
+| [remotion-dev/github-unwrapped](https://github.com/remotion-dev/github-unwrapped) | GitHub Wrapped annual recap videos | Data-driven video, dynamic props, SSR rendering at scale |
+| [remotion-dev/template-helloworld](https://github.com/remotion-dev/template-helloworld) | Official starter template | Minimal project structure, basic patterns |
+
+**Architectural patterns from examples:**
+
+- **Scene composition**: Break videos into scene components, each exporting a duration constant (e.g. `INTRO_DURATION = 90`)
+- **Shared packages**: Monorepo with reusable animations (`FadeIn`, `SlideUp`, `TextReveal`) and brand assets (colors, fonts, sounds)
+- **Constants file**: Centralize `VIDEO_WIDTH`, `VIDEO_HEIGHT`, `VIDEO_FPS` in `types/constants.ts`
+- **Scaffolding CLI**: Script to generate new video projects from a template with dimension presets
+- **Series composition**: Use `<Series>` to chain scenes sequentially in a `FullVideo` component
+
 ## Related
 
 - [Remotion Docs](https://www.remotion.dev/docs)
