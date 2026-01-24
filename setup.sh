@@ -228,10 +228,57 @@ cleanup_deprecated_mcps() {
         jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
     fi
     
+    # Migrate npx/pipx commands to bare binary names (faster startup)
+    # Maps: package-name -> binary-name
+    local -A mcp_migrations=(
+        ["chrome-devtools-mcp"]="chrome-devtools-mcp"
+        ["mcp-server-gsc"]="mcp-server-gsc"
+        ["repomix"]="repomix"
+        ["playwriter"]="playwriter"
+        ["@steipete/macos-automator-mcp"]="macos-automator-mcp"
+        ["@steipete/claude-code-mcp"]="claude-code-mcp"
+        ["analytics-mcp"]="analytics-mcp"
+    )
+
+    for pkg in "${!mcp_migrations[@]}"; do
+        local bin_name="${mcp_migrations[$pkg]}"
+        # Check if any MCP entry uses npx/bunx with this package
+        if jq -e ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\"))" "$tmp_config" > /dev/null 2>&1; then
+            if command -v "$bin_name" &> /dev/null; then
+                # Find the MCP key and update its command to bare binary
+                local mcp_key
+                mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
+                if [[ -n "$mcp_key" ]]; then
+                    # Preserve --mcp flag for repomix
+                    if [[ "$bin_name" == "repomix" ]]; then
+                        jq ".mcp[\"$mcp_key\"].command = [\"$bin_name\", \"--mcp\"]" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                    else
+                        jq ".mcp[\"$mcp_key\"].command = [\"$bin_name\"]" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                    fi
+                    ((cleaned++))
+                fi
+            fi
+        fi
+    done
+
+    # Migrate outscraper from bash -c wrapper to bare binary
+    if jq -e '.mcp.outscraper.command | join(" ") | test("bash.*outscraper")' "$tmp_config" > /dev/null 2>&1; then
+        if command -v outscraper-mcp-server &> /dev/null; then
+            # Source the API key and set it in environment
+            local outscraper_key=""
+            if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+                # shellcheck source=/dev/null
+                outscraper_key=$(source "$HOME/.config/aidevops/mcp-env.sh" && echo "${OUTSCRAPER_API_KEY:-}")
+            fi
+            jq --arg key "$outscraper_key" '.mcp.outscraper.command = ["outscraper-mcp-server"] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((cleaned++))
+        fi
+    fi
+
     if [[ $cleaned -gt 0 ]]; then
         create_backup_with_rotation "$opencode_config" "opencode"
         mv "$tmp_config" "$opencode_config"
-        print_info "Removed $cleaned deprecated MCP(s) from opencode.json (replaced by curl subagents)"
+        print_info "Updated $cleaned MCP entry/entries in opencode.json (removed npx overhead, using global binaries)"
     else
         rm -f "$tmp_config"
     fi
@@ -2085,6 +2132,89 @@ setup_nodejs_env() {
     fi
 }
 
+# Install MCP servers globally for fast startup (no npx/pipx overhead)
+install_mcp_packages() {
+    print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
+
+    # Node.js MCP packages (prefer bun, fallback to npm)
+    local node_mcps=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
+    )
+
+    local installer=""
+    local install_cmd=""
+
+    if command -v bun &> /dev/null; then
+        installer="bun"
+        install_cmd="bun install -g"
+    elif command -v npm &> /dev/null; then
+        installer="npm"
+        install_cmd="npm install -g"
+    else
+        print_warning "Neither bun nor npm found - cannot install MCP packages"
+        print_info "Install bun (recommended): curl -fsSL https://bun.sh/install | bash"
+        return 0
+    fi
+
+    print_info "Using $installer for Node.js MCP packages..."
+
+    local installed=0
+    local skipped=0
+    for pkg in "${node_mcps[@]}"; do
+        # Extract binary name from package name (strip @scope/ prefix)
+        local bin_name
+        bin_name="${pkg##*/}"
+        if command -v "$bin_name" &> /dev/null; then
+            ((skipped++))
+            continue
+        fi
+        if $install_cmd "$pkg" > /dev/null 2>&1; then
+            ((installed++))
+        else
+            print_warning "Failed to install $pkg"
+        fi
+    done
+
+    if [[ $installed -gt 0 ]]; then
+        print_success "Installed $installed Node.js MCP packages via $installer"
+    fi
+    if [[ $skipped -gt 0 ]]; then
+        print_info "$skipped Node.js MCP packages already installed"
+    fi
+
+    # Python MCP packages
+    if command -v pipx &> /dev/null; then
+        if ! command -v analytics-mcp &> /dev/null; then
+            print_info "Installing analytics-mcp via pipx..."
+            if pipx install analytics-mcp > /dev/null 2>&1; then
+                print_success "analytics-mcp installed"
+            else
+                print_warning "Failed to install analytics-mcp"
+            fi
+        fi
+    fi
+
+    if command -v uv &> /dev/null; then
+        if ! command -v outscraper-mcp-server &> /dev/null; then
+            print_info "Installing outscraper-mcp-server via uv..."
+            if uv tool install outscraper-mcp-server > /dev/null 2>&1; then
+                print_success "outscraper-mcp-server installed"
+            else
+                print_warning "Failed to install outscraper-mcp-server"
+            fi
+        fi
+    fi
+
+    print_info "MCP servers will start instantly (no registry lookups on each launch)"
+    print_info "Run 'aidevops update-tools' to check for updates"
+    return 0
+}
+
 # Setup LocalWP MCP server for AI database access
 setup_localwp_mcp() {
     print_info "Setting up LocalWP MCP server..."
@@ -2843,7 +2973,7 @@ setup_google_analytics_mcp() {
     if jq --arg creds "$creds_path" --arg proj "$project_id" --argjson enabled "$enable_mcp" \
         '.mcp["google-analytics-mcp"] = {
         "type": "local",
-        "command": ["pipx", "run", "analytics-mcp"],
+        "command": ["analytics-mcp"],
         "environment": {
             "GOOGLE_APPLICATION_CREDENTIALS": $creds,
             "GOOGLE_PROJECT_ID": $proj
@@ -3026,6 +3156,7 @@ main() {
     confirm_step "Update OpenCode configuration" && update_opencode_config
     confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
     confirm_step "Setup Node.js environment" && setup_nodejs_env
+    confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
     confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
     confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
     confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
