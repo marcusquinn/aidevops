@@ -462,6 +462,46 @@ update_version_in_files() {
     return 0
 }
 
+# Function to verify local branch is in sync with remote
+# Prevents release failures when local has diverged (e.g., after squash merge)
+verify_remote_sync() {
+    local branch="$1"
+    branch="${branch:-main}"
+    
+    cd "$REPO_ROOT" || exit 1
+    
+    print_info "Verifying local/$branch is in sync with origin/$branch..."
+    
+    # Fetch latest from remote
+    if ! git fetch origin "$branch" --quiet 2>/dev/null; then
+        print_warning "Could not fetch from remote - proceeding without sync check"
+        return 0
+    fi
+    
+    local local_sha
+    local_sha=$(git rev-parse HEAD 2>/dev/null)
+    local remote_sha
+    remote_sha=$(git rev-parse "origin/$branch" 2>/dev/null)
+    
+    if [[ -z "$local_sha" || -z "$remote_sha" ]]; then
+        print_warning "Could not determine local/remote SHA - proceeding without sync check"
+        return 0
+    fi
+    
+    if [[ "$local_sha" != "$remote_sha" ]]; then
+        print_error "Local $branch has diverged from origin/$branch"
+        print_info "  Local:  $local_sha"
+        print_info "  Remote: $remote_sha"
+        echo ""
+        print_info "This commonly happens after a squash merge on GitHub."
+        print_info "Fix with: git fetch origin && git reset --hard origin/$branch"
+        return 1
+    fi
+    
+    print_success "Local $branch is in sync with origin/$branch"
+    return 0
+}
+
 # Function to check for uncommitted changes
 check_working_tree_clean() {
     local uncommitted
@@ -696,6 +736,17 @@ main() {
 
             print_info "Creating release with $bump_type version bump..."
 
+            # Verify local branch is in sync with remote (prevents post-squash-merge failures)
+            if ! verify_remote_sync "main"; then
+                if [[ "$force_flag" != "--force" ]]; then
+                    print_error "Cannot release when local/remote are out of sync."
+                    print_info "Use --force to bypass (not recommended)"
+                    exit 1
+                else
+                    print_warning "Bypassing remote sync check with --force"
+                fi
+            fi
+
             # Check for uncommitted changes
             if [[ "$allow_dirty" != "--allow-dirty" ]]; then
                 if ! check_working_tree_clean; then
@@ -746,7 +797,13 @@ main() {
                     print_success "Version validation passed"
                     commit_version_changes "$new_version"
                     create_git_tag "$new_version"
-                    push_changes
+                    if ! push_changes; then
+                        # Rollback: delete local tag if push failed to prevent inconsistent state
+                        print_warning "Rolling back local tag v$new_version due to push failure"
+                        git tag -d "v$new_version" 2>/dev/null
+                        print_info "Fix the push issue and re-run: $0 release $bump_type"
+                        exit 1
+                    fi
                     create_github_release "$new_version"
                     print_success "Release $new_version created successfully!"
                 else
