@@ -39,6 +39,17 @@ tools:
 
 This file provides comprehensive context for AI assistants to understand, manage, and extend the AI DevOps Framework.
 
+## Preferred Tool
+
+**[OpenCode](https://opencode.ai/)** is the recommended and primary-tested AI coding agent for aidevops. All features, agents, workflows, LSP configurations, and MCP integrations are designed and tested for OpenCode first. Other AI assistants (Cursor, Claude Code, Zed, etc.) are supported as a courtesy for users evaluating aidevops capabilities, but may not receive the same level of testing or integration depth.
+
+Key OpenCode integrations:
+- **Agents**: Generated via `generate-opencode-agents.sh` with per-agent MCP tool filtering
+- **Commands**: 41 slash commands deployed to `~/.config/opencode/commands/`
+- **Plugins**: Compaction plugin at `.agent/plugins/opencode-aidevops/`
+- **LSP**: Built-in support for 35+ languages, extensible via `opencode.json` for Markdown and TOON
+- **Prompts**: Custom system prompt at `.agent/prompts/build.txt`
+
 ## Agent Design Patterns
 
 aidevops implements proven agent design patterns identified by Lance Martin (LangChain) and validated across successful agents like Claude Code, Manus, and Cursor. These patterns optimize for context efficiency and long-running autonomous operation.
