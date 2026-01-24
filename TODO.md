@@ -65,6 +65,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-21
 - [ ] t004 Add Ahrefs MCP server integration #seo ~2d (ai:1d test:0.5d read:0.5d) logged:2025-12-20
 - [ ] t005 Implement multi-tenant credential storage #security ~5d (ai:3d test:1.5d read:0.5d) logged:2025-12-20
+- [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~4h (ai:2h test:1h read:1h) logged:2026-01-24
+  - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
 - [ ] t069 Fix toon-helper.sh validate command - positional args not passed to case statement #bugfix ~1h (ai:30m test:30m) logged:2026-01-24
 - [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
