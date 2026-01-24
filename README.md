@@ -453,6 +453,7 @@ aidevops includes curated skills imported from external repositories. Skills fro
 | Skill | Source | Description |
 |-------|--------|-------------|
 | **cloudflare-platform** | [dmmulroy/cloudflare-skill](https://github.com/dmmulroy/cloudflare-skill) | 60 Cloudflare products: Workers, Pages, D1, R2, KV, Durable Objects, AI, networking, security |
+| **heygen** | [heygen-com/skills](https://github.com/heygen-com/skills) | AI avatar video creation API: avatars, voices, video generation, streaming, webhooks |
 | **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
 | **video-prompt-design** | [snubroot/Veo-3-Meta-Framework](https://github.com/snubroot/Veo-3-Meta-Framework) | AI video prompt engineering - 7-component meta prompt framework for Veo 3 |
 | **animejs** | [animejs.com](https://animejs.com) | JavaScript animation library patterns and API (via Context7) |
