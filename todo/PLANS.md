@@ -1134,6 +1134,294 @@ d021,p011,Implement ourselves rather than depend on claude-mem,claude-mem is Cla
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
+### [2026-01-23] Multi-Agent Orchestration & Token Efficiency
+
+**Status:** Planning
+**Estimate:** ~5d (ai:3d test:1d read:1d)
+**Source:** [steveyegge/gastown](https://github.com/steveyegge/gastown) (inspiration, not wholesale adoption)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p013,Multi-Agent Orchestration & Token Efficiency,planning,0,8,,orchestration|tokens|agents|mailbox|toon|compaction,5d,3d,1d,1d,2026-01-23T00:00Z,
+-->
+
+#### Purpose
+
+Evolve aidevops from single-session workflows to scalable multi-agent orchestration with:
+- Inter-agent communication (TOON mailbox with lifecycle cleanup)
+- Token-efficient AGENTS.md (lossless compression, ~60% reduction)
+- Custom system prompt (eliminates harness tool preference conflicts)
+- Compaction-surviving rules (OpenCode plugin hook)
+- Stateless coordinator pattern (never hits context limits)
+- Agent specialization with model routing
+- TUI dashboard for zero-token monitoring
+- User feedback loop pipeline for continuous improvement
+
+**Key principles (user preferences):**
+- Shell scripts over compiled binaries (transparency, editability)
+- TOON format for structured data (token efficiency)
+- TUI over web UI for visualization
+- Lossless compression only (no knowledge/detail removed)
+- Sessions must complete within context before compaction
+- Memory system as long-term brain
+- Specialized agents/models per task type
+- Extend existing systems, don't re-implement
+
+**Inspiration from Gas Town (cherry-picked, not wholesale):**
+- Mailbox pattern for inter-agent communication
+- Convoy concept for grouping related tasks
+- Stateless coordinator (but NOT persistent Mayor - avoids context bloat)
+- Agent registry with identity
+- Formulas for repeatable workflows
+
+**What we already have (extend, don't rebuild):**
+- Worktrees: `worktree-helper.sh`, `wt` (Worktrunk)
+- Task tracking: Beads + TODO.md + PLANS.md
+- Iterative loops: Ralph Loop v2 + Full Loop
+- Session management: `session-manager.md`, handoff pattern
+- Memory: SQLite FTS5 (`memory-helper.sh`)
+- Context guardrails: `context-guardrails.md`
+- Re-anchor system: `loop-common.sh` (fresh context per iteration)
+- TUI viewers: `beads_viewer`, `bdui`, `perles`
+
+#### Context from Discussion
+
+**The harness conflict problem:**
+- OpenCode's anthropic-auth plugin enables `claude-code-20250219` beta flag
+- This activates Claude Code's system prompt which says "use specialized tools"
+- Our AGENTS.md says "NEVER use mcp_glob, use git ls-files/fd/rg instead"
+- After compaction, the system prompt wins (negative constraints lost first)
+- Solution: Custom `prompt` field replaces default system prompt entirely
+
+**The compaction problem:**
+- Sessions routinely hit 200K tokens with multiple compactions
+- Critical rules (tool preferences, git check) lost after compaction
+- OpenCode's `experimental.session.compacting` hook can inject rules
+- Solution: aidevops plugin injects critical rules into every compaction
+
+**Token efficiency analysis (current AGENTS.md):**
+- 778 lines (~10K tokens) loaded every session
+- Violates "50-100 instructions" principle from build-agent.md
+- ~360 lines are duplicated content (already in subagents)
+- ~41 lines of tables convertible to TOON (~50% savings)
+- Target: ~300 lines (~3.5K tokens) with zero content loss
+
+**Multi-agent scaling design:**
+- Coordinator is STATELESS (pulse, not persistent) - reads state, dispatches, exits
+- Workers are Ralph Loops with mailbox awareness
+- Mailbox is TOON files with archive→remember→prune lifecycle
+- Memory is the only persistent brain (everything else ephemeral)
+- TUI dashboard reads files directly (zero AI token cost)
+
+#### Decision Log
+
+- **Decision:** Shell scripts for orchestration, not Go binary
+  **Rationale:** Transparency, editability, no compile step; bottleneck is model inference not script speed
+  **Date:** 2026-01-23
+
+- **Decision:** Stateless coordinator (pulse) not persistent Mayor
+  **Rationale:** Persistent coordinator accumulates context → compaction → drift. Stateless reads files, dispatches, exits (~20K tokens per pulse)
+  **Date:** 2026-01-23
+
+- **Decision:** TOON format for mailbox messages
+  **Rationale:** 40-60% token savings vs JSON; human-readable; schema-aware
+  **Date:** 2026-01-23
+
+- **Decision:** Custom system prompt via OpenCode `prompt` field
+  **Rationale:** Eliminates harness conflict entirely; our rules become highest priority
+  **Date:** 2026-01-23
+
+- **Decision:** Compaction plugin to preserve critical rules
+  **Rationale:** Rules lost after compaction can be re-injected via `experimental.session.compacting` hook
+  **Date:** 2026-01-23
+
+- **Decision:** Lossless AGENTS.md compression (structural, not content removal)
+  **Rationale:** User preference - all session learnings and detail must be preserved
+  **Date:** 2026-01-23
+
+- **Decision:** TUI for monitoring, not web UI
+  **Rationale:** User preference; zero AI token cost; extend existing bdui/beads_viewer ecosystem
+  **Date:** 2026-01-23
+
+- **Decision:** Archive→remember→prune lifecycle for mailbox
+  **Rationale:** Nothing lost (memory captures notable outcomes); context stays lean
+  **Date:** 2026-01-23
+
+- **Decision:** Model routing via subagent YAML frontmatter
+  **Rationale:** Cheap models (Haiku) for routing/triage; capable models (Sonnet) for code; zero overhead
+  **Date:** 2026-01-23
+
+<!--TOON:decisions[9]{id,plan_id,decision,rationale,date,impact}:
+d026,p013,Shell scripts for orchestration not Go binary,Transparency editability no compile step,2026-01-23,None
+d027,p013,Stateless coordinator not persistent Mayor,Persistent coordinator accumulates context and drifts,2026-01-23,Architecture
+d028,p013,TOON format for mailbox messages,40-60% token savings vs JSON,2026-01-23,None
+d029,p013,Custom system prompt via OpenCode prompt field,Eliminates harness conflict entirely,2026-01-23,Architecture
+d030,p013,Compaction plugin to preserve critical rules,Rules re-injected after every compaction,2026-01-23,Architecture
+d031,p013,Lossless AGENTS.md compression,All session learnings and detail preserved,2026-01-23,None
+d032,p013,TUI for monitoring not web UI,Zero AI token cost; extend existing ecosystem,2026-01-23,None
+d033,p013,Archive-remember-prune lifecycle for mailbox,Nothing lost; context stays lean,2026-01-23,None
+d034,p013,Model routing via subagent YAML frontmatter,Cheap models for routing; capable for code,2026-01-23,None
+-->
+
+#### Progress
+
+- [ ] (2026-01-23) Phase 1: Custom System Prompt ~2h
+  - Create `prompts/build.txt` with tool preferences and context rules
+  - Update `opencode.json` to use `"prompt": "{file:./prompts/build.txt}"`
+  - Move file discovery rules from AGENTS.md to system prompt
+  - Move context budget rules to system prompt
+  - Move security rules to system prompt
+  - Test: verify tool preferences are enforced (glob never used)
+  - **Session budget: ~40K tokens (small, focused)**
+
+- [ ] (2026-01-23) Phase 2: Compaction Plugin ~4h
+  - Create `opencode-aidevops-plugin/` package (TypeScript)
+  - Implement `experimental.session.compacting` hook
+  - Inject: tool preferences, git check trigger, context budget, security rules
+  - Inject: current agent state from registry.toon (if exists)
+  - Inject: guardrails from loop state (if exists)
+  - Inject: relevant memories via memory-helper.sh recall
+  - Test: verify rules survive compaction in long session
+  - **Session budget: ~60K tokens (plugin dev + testing)**
+
+- [ ] (2026-01-23) Phase 3: Lossless AGENTS.md Compression ~3h
+  - Create `subagent-index.toon` (replaces 41-line markdown table)
+  - Move pre-edit git check detail to `workflows/pre-edit.md` (keep 20-line trigger)
+  - Remove duplicated content (planning, memory, quality, session sections)
+  - Convert remaining markdown tables to TOON inline
+  - Verify: every line removed exists in a subagent or system prompt
+  - Update progressive disclosure instruction to reference index
+  - Target: 778 lines → ~300 lines (~3.5K tokens)
+  - **Session budget: ~50K tokens (careful restructuring)**
+
+- [ ] (2026-01-23) Phase 4: TOON Mailbox System ~4h
+  - Create `mail-helper.sh` with send|check|archive|prune|status|watch commands
+  - Define message format (TOON): id, from, to, type, priority, convoy, timestamp, payload
+  - Create directory structure: `~/.aidevops/.agent-workspace/mail/{inbox,outbox,archive}/`
+  - Implement cleanup lifecycle: read→archive, 7-day prune, remember-before-prune
+  - Create `registry.toon` format for active agent tracking
+  - Test: send/receive between two terminal sessions
+  - **Session budget: ~60K tokens (new script + testing)**
+
+- [ ] (2026-01-23) Phase 5: Agent Registry & Worker Mailbox Awareness ~3h
+  - Extend `worktree-sessions.sh` with agent identity (id, role, status)
+  - Add mailbox check to Ralph Loop startup (read inbox before re-anchor)
+  - Add status report to Ralph Loop completion (write outbox on finish)
+  - Update `loop-common.sh` re-anchor to include pending messages
+  - Create agent registration on worktree creation
+  - Create agent deregistration on worktree cleanup
+  - **Session budget: ~50K tokens (extending existing scripts)**
+
+- [ ] (2026-01-23) Phase 6: Stateless Coordinator ~4h
+  - Create `coordinator-helper.sh` (pulse script, not persistent)
+  - Reads: registry.toon + outbox/*.toon + TODO.md
+  - Writes: inbox/*.toon (dispatch instructions)
+  - Stores: /remember (notable outcomes from worker reports)
+  - Trigger: manual, cron, or fswatch on outbox/
+  - Context budget per pulse: ~20K tokens (reads state, dispatches, exits)
+  - Convoy grouping: bundle related beads for batch assignment
+  - **Session budget: ~60K tokens (new orchestration logic)**
+
+- [ ] (2026-01-23) Phase 7: Model Routing ~2h
+  - Add `model:` field to subagent YAML frontmatter
+  - Define model tiers: haiku (triage/routing), sonnet (code/review), opus (architecture)
+  - Update `generate-opencode-agents.sh` to set model per agent
+  - Create routing table in subagent-index.toon
+  - Update coordinator to dispatch with model preference
+  - **Session budget: ~30K tokens (config changes)**
+
+- [ ] (2026-01-23) Phase 8: TUI Dashboard ~6h
+  - Extend bdui or create new React/Ink TUI app
+  - Display: agent registry (status, branch, last-seen)
+  - Display: convoy progress (beads complete/total)
+  - Display: mailbox status (unread count per agent)
+  - Display: memory stats (entry count, last distill)
+  - Reads: registry.toon, inbox/, outbox/, beads DB, memory.db
+  - Zero AI token cost (separate process, reads files directly)
+  - **Session budget: ~80K tokens (new TUI app)**
+
+<!--TOON:milestones[8]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m064,p013,Phase 1: Custom System Prompt,2h,,2026-01-23T00:00Z,,pending
+m065,p013,Phase 2: Compaction Plugin,4h,,2026-01-23T00:00Z,,pending
+m066,p013,Phase 3: Lossless AGENTS.md Compression,3h,,2026-01-23T00:00Z,,pending
+m067,p013,Phase 4: TOON Mailbox System,4h,,2026-01-23T00:00Z,,pending
+m068,p013,Phase 5: Agent Registry & Worker Mailbox Awareness,3h,,2026-01-23T00:00Z,,pending
+m069,p013,Phase 6: Stateless Coordinator,4h,,2026-01-23T00:00Z,,pending
+m070,p013,Phase 7: Model Routing,2h,,2026-01-23T00:00Z,,pending
+m071,p013,Phase 8: TUI Dashboard,6h,,2026-01-23T00:00Z,,pending
+-->
+
+#### Surprises & Discoveries
+
+- **Observation:** OpenCode's `prompt` field completely replaces default system prompt
+  **Evidence:** Context7 docs show `"prompt": "{file:./prompts/build.txt}"` on build agent
+  **Impact:** Eliminates harness conflict entirely - our rules become highest priority
+  **Date:** 2026-01-23
+
+- **Observation:** OpenCode has `experimental.session.compacting` plugin hook
+  **Evidence:** Context7 docs show output.context.push() and output.prompt replacement
+  **Impact:** Critical rules can survive every compaction - solves instruction drift
+  **Date:** 2026-01-23
+
+- **Observation:** Anthropic auth plugin's `claude-code-20250219` beta flag activates Claude Code system prompt
+  **Evidence:** Plugin code adds beta flag to anthropic-beta header
+  **Impact:** This is root cause of tool preference conflicts (glob vs git ls-files)
+  **Date:** 2026-01-23
+
+- **Observation:** Gas Town uses same Beads ecosystem we already integrate
+  **Evidence:** `.beads/` directory, `bd` CLI, convoy concept built on beads
+  **Impact:** Validates our architecture; convoy is just a grouping layer on existing beads
+  **Date:** 2026-01-23
+
+<!--TOON:discoveries[4]{id,plan_id,observation,evidence,impact,date}:
+disc002,p013,OpenCode prompt field replaces default system prompt,Context7 docs show file reference syntax,Eliminates harness conflict,2026-01-23
+disc003,p013,OpenCode has experimental.session.compacting hook,Context7 docs show context injection,Rules survive compaction,2026-01-23
+disc004,p013,Anthropic auth beta flag activates Claude Code prompt,Plugin code adds claude-code-20250219,Root cause of tool preference conflicts,2026-01-23
+disc005,p013,Gas Town uses same Beads ecosystem,beads directory and bd CLI in gastown repo,Validates our architecture,2026-01-23
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `prompts/build.txt` | Custom system prompt (tool prefs, context budget, security) | 1 |
+| `opencode-aidevops-plugin/index.ts` | Compaction hook plugin | 2 |
+| `opencode-aidevops-plugin/package.json` | Plugin package manifest | 2 |
+| `subagent-index.toon` | Compressed subagent discovery index | 3 |
+| `workflows/pre-edit.md` | Detailed pre-edit git check (moved from AGENTS.md) | 3 |
+| `scripts/mail-helper.sh` | Mailbox send/check/archive/prune/status/watch | 4 |
+| `scripts/coordinator-helper.sh` | Stateless coordinator pulse script | 6 |
+| TUI app (bdui extension or new) | Agent/convoy/mailbox dashboard | 8 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `opencode.json` | Add `"prompt": "{file:./prompts/build.txt}"` to build agent | 1 |
+| `AGENTS.md` | Compress to ~300 lines (pointers only, TOON tables) | 3 |
+| `scripts/loop-common.sh` | Add mailbox check to re-anchor, status report on completion | 5 |
+| `scripts/worktree-sessions.sh` | Add agent identity and registration | 5 |
+| `scripts/ralph-loop-helper.sh` | Add mailbox awareness to worker startup/completion | 5 |
+| `scripts/generate-opencode-agents.sh` | Add model routing from frontmatter | 7 |
+
+#### User Feedback Loop (Future Phase 9+)
+
+Once phases 1-8 are complete, the orchestration layer enables:
+
+```text
+User Feedback (email, form, GitHub issue)
+    → Feedback Processor (Haiku - categorize, extract actionable items)
+    → Triage Agent (Haiku - priority, route to correct domain)
+    → Coordinator pulse (Sonnet - plan response, create convoy)
+    → Worker(s) (Sonnet - implement fix/feature via Ralph Loop)
+    → PR → Review → Merge → Deploy (Full Loop)
+    → Notify user (automated via mail-helper.sh)
+    → /remember outcome (Memory captures pattern for future)
+```
+
+This reuses all infrastructure from phases 1-8 and adds only an ingestion pipeline.
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
