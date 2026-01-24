@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.81.0] - 2026-01-24
+
+### Added
+
+- add anti-detect browser automation stack
+
+### Changed
+
+- Documentation: update README with anti-detect browser section and counts
+
+### Fixed
+
+- resolve merge conflict with main and address CodeRabbit review
 ## [2.80.1] - 2026-01-24
 
 ### Fixed
