@@ -60,7 +60,9 @@ Tested on macOS ARM64, all headless, warm daemon/persistent browser:
 | **Multi-step** (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
 | **Reliability** (avg, 3 runs) | **0.64s** | 1.07s | 0.66s | 0.52s | 1.96s | 1.74s |
 
-**Key insight**: Playwright is the underlying engine for all tools except Crawl4AI. Overhead comes from wrappers:
+**Key insight**: Playwright is the underlying engine for all tools except Crawl4AI. Screenshots are near-instant (~0.05s, 24-107KB) but rarely needed for AI automation - ARIA snapshots (~0.01s, 50-200 tokens) provide sufficient page understanding for form filling, clicking, and navigation. Use screenshots only for visual debugging or regression testing.
+
+**Overhead from wrappers**:
 - dev-browser: +0.1-0.4s (Bun TSX + WebSocket)
 - agent-browser: +0.5-1.5s (Rust CLI + Node daemon), cold-start penalty on first run
 - Stagehand: +1-5s (AI model calls for natural language)
@@ -96,6 +98,31 @@ Tested on macOS ARM64, all headless, warm daemon/persistent browser:
 | **Crawl4AI** | Web scraping, bulk extraction, structured data | Fast | `pip install crawl4ai` (venv) |
 | **Playwriter** | Existing browser, extensions, bypass detection | Medium | Chrome extension + `npx playwriter` |
 | **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
+
+## AI Page Understanding (Visual Verification)
+
+For AI agents to understand page state, prefer lightweight methods over screenshots:
+
+| Method | Speed | Token Cost | Best For |
+|--------|-------|-----------|----------|
+| **ARIA snapshot** | ~0.01s | ~50-200 tokens | Forms, navigation, interactive elements |
+| **Text content** | ~0.002s | ~text length | Reading content, extraction |
+| **Element scan** | ~0.002s | ~20/element | Form filling, clicking |
+| **Screenshot** | ~0.05s | ~1K tokens (vision) | Visual debugging, regression, complex UIs |
+
+**Recommendation**: Use ARIA snapshot + element scan for automation. Add screenshots only when debugging or when visual layout matters (charts, drag-and-drop, image-heavy pages).
+
+```javascript
+// Fast page understanding (no vision model needed)
+const aria = await page.locator('body').ariaSnapshot();  // Structured tree
+const text = await page.evaluate(() => document.body.innerText);  // Raw text
+const elements = await page.evaluate(() => {
+  return [...document.querySelectorAll('input, select, button, a')].map(el => ({
+    tag: el.tagName.toLowerCase(), type: el.type, name: el.name || el.id,
+    text: el.textContent?.trim().substring(0, 50),
+  }));
+});
+```
 
 ## Parallel / Sandboxed Instances
 
