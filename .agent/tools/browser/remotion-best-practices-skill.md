@@ -5,7 +5,6 @@ imported_from: external
 ---
 # remotion-best-practices
 
-
 ## When to use
 
 Use this skills whenever you are dealing with Remotion code to obtain the domain-specific knowledge.
