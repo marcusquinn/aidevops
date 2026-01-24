@@ -1,15 +1,13 @@
 ---
-description: Outscraper MCP for business data extraction
+description: Outscraper business data extraction via REST API (no MCP needed)
 mode: subagent
 tools:
   read: true
   write: false
   edit: false
-  bash: false
+  bash: true
   glob: true
   grep: true
-  webfetch: true
-  task: true
 ---
 
 # Outscraper MCP Server
@@ -19,11 +17,11 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Business intelligence extraction from Google Maps, Amazon, reviews, contacts
-- **Install**: `uv tool run outscraper-mcp-server` or `pip install outscraper-mcp-server`
 - **Auth**: API key from <https://auth.outscraper.com/profile>
-- **Env Var**: `OUTSCRAPER_API_KEY`
+- **Env Var**: `OUTSCRAPER_API_KEY` in `~/.config/aidevops/mcp-env.sh`
 - **API Base**: `https://api.app.outscraper.com`
 - **Docs**: <https://app.outscraper.com/api-docs>
+- **No MCP required** - uses curl directly
 
 **OpenCode Config**:
 

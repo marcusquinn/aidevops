@@ -8,6 +8,7 @@ subagents:
   - gsc-sitemaps
   - dataforseo
   - serper
+  - ahrefs
   - site-crawler
   - eeat-score
   - domain-research
@@ -70,27 +71,16 @@ subagents:
 /keyword-research-extended --gap mysite.com,competitor.com
 ```
 
-**MCP Integration**:
+**API Access** (via curl in subagents, no MCP needed):
 
-```bash
-# GSC queries via MCP
-gsc_search_analytics [site] [query]
-gsc_index_status [site] [url]
+| Subagent | API | What it provides |
+|----------|-----|-----------------|
+| `google-search-console` | Google Search Console API | Search analytics, indexing, sitemaps |
+| `dataforseo` | DataForSEO REST API | SERP data, keywords, backlinks, on-page |
+| `serper` | Serper.dev API | Google search results (web, images, news, places) |
+| `ahrefs` | Ahrefs REST API v3 | Backlinks, organic keywords, domain rating |
 
-# DataForSEO via MCP
-dataforseo.serp [keyword] [location]
-dataforseo.keywords_data [keywords]
-dataforseo.backlinks [domain]
-
-# Serper via MCP
-serper.google_search [query]
-serper.google_search_news [query]
-
-# Google Analytics via MCP (when google-analytics subagent loaded)
-get_account_summaries
-run_report [property_id] [dimensions] [metrics] [date_range]
-run_realtime_report [property_id] [dimensions] [metrics]
-```
+Each subagent has curl examples. Load the relevant one when needed.
 
 **Testing**: Use OpenCode CLI to test SEO commands without restarting TUI:
 

@@ -1,70 +1,58 @@
 {
   "mcpServers": {
     "hostinger-api": {
-      "command": "mcp-hostinger",
-      "args": ["--transport", "sse", "--port", "8080"],
+      "command": "hostinger-api-mcp",
       "env": {
-        "HOSTINGER_API_TOKEN": "YOUR_HOSTINGER_API_TOKEN_HERE"
+        "APITOKEN": "YOUR_HOSTINGER_API_TOKEN_HERE"
       },
       "description": "Hostinger API MCP server for managing shared hosting"
     },
     "hetzner-main": {
-      "command": "mcp-hetzner", 
-      "args": ["--transport", "sse", "--port", "8081"],
+      "command": "mcp-hetzner",
       "env": {
         "HCLOUD_TOKEN": "YOUR_MAIN_HETZNER_API_TOKEN_HERE"
       },
-      "description": "Hetzner Cloud MCP server for main project"
-    },
-    "hetzner-dev": {
-      "command": "mcp-hetzner",
-      "args": ["--transport", "sse", "--port", "8082"], 
-      "env": {
-        "HCLOUD_TOKEN": "YOUR_DEV_HETZNER_API_TOKEN_HERE"
-      },
-      "description": "Hetzner Cloud MCP server for development project"
-    },
-    "aws-main": {
-      "command": "mcp-aws",
-      "args": ["--transport", "sse", "--port", "8083"],
-      "env": {
-        "AWS_ACCESS_KEY_ID": "YOUR_AWS_ACCESS_KEY_HERE",
-        "AWS_SECRET_ACCESS_KEY": "YOUR_AWS_SECRET_KEY_HERE",
-        "AWS_DEFAULT_REGION": "us-east-1"
-      },
-      "description": "AWS MCP server for cloud infrastructure"
-    },
-    "digitalocean-main": {
-      "command": "mcp-digitalocean",
-      "args": ["--transport", "sse", "--port", "8084"],
-      "env": {
-        "DO_API_TOKEN": "YOUR_DIGITALOCEAN_API_TOKEN_HERE"
-      },
-      "description": "DigitalOcean MCP server for droplet management"
-    },
-    "localwp": {
-      "command": "mcp-local-wp",
-      "args": ["--transport", "sse", "--port", "8085"],
-      "env": {
-        "DEBUG": "false"
-      },
-      "description": "LocalWP MCP server for WordPress database access via Local by Flywheel"
+      "description": "Hetzner Cloud MCP server (install: uv tool install 'mcp-hetzner @ git+https://github.com/dkruyt/mcp-hetzner.git')"
     },
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@context7/mcp-server@latest"],
-      "env": {
-        "DEBUG": "false"
-      },
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
       "description": "Context7 MCP server for accessing latest documentation of development tools and frameworks"
     },
-    "peekaboo": {
+    "repomix": {
       "command": "npx",
-      "args": ["-y", "@steipete/peekaboo"],
-      "env": {
-        "PEEKABOO_AI_PROVIDERS": "openai/gpt-4o"
-      },
-      "description": "Peekaboo MCP server for macOS screen capture, AI vision analysis, and GUI automation"
+      "args": ["-y", "repomix@latest", "--mcp"],
+      "description": "Repomix MCP server for AI-optimized codebase analysis"
+    },
+    "augment-context-engine": {
+      "command": "auggie",
+      "args": ["--mcp"],
+      "description": "Augment Context Engine for semantic codebase search"
+    },
+    "osgrep": {
+      "command": "osgrep",
+      "args": ["mcp"],
+      "description": "Semantic code search MCP (concept-based, not string-based)"
+    },
+    "claude-code-mcp": {
+      "command": "npx",
+      "args": ["-y", "@steipete/claude-code-mcp@latest"],
+      "description": "Claude Code one-shot execution MCP server"
+    },
+    "sentry": {
+      "type": "remote",
+      "url": "https://mcp.sentry.dev/mcp",
+      "description": "Sentry error tracking MCP (requires OAuth)"
+    },
+    "socket": {
+      "type": "remote",
+      "url": "https://mcp.socket.dev/",
+      "description": "Socket.dev dependency security scanning MCP"
+    },
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "description": "GitHub code search via grep.app"
     },
     "google-analytics-mcp": {
       "command": "pipx",
@@ -73,7 +61,7 @@
         "GOOGLE_APPLICATION_CREDENTIALS": "YOUR_CREDENTIALS_JSON_PATH_HERE",
         "GOOGLE_PROJECT_ID": "YOUR_GCP_PROJECT_ID_HERE"
       },
-      "description": "Google Analytics MCP server for GA4 reporting, account management, and real-time analytics. Requires pipx and Google Cloud ADC setup."
+      "description": "Google Analytics MCP server for GA4 reporting (requires pipx and Google Cloud ADC)"
     }
   }
 }
