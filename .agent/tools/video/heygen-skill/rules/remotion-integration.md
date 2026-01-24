@@ -609,6 +609,7 @@ const localPath = await downloadVideoWithRetry(avatarVideoUrl, "./public/avatar.
 ```
 
 **Hybrid approach** (recommended for production):
+
 ```typescript
 // Save both URL and local path in metadata
 const metadata = {
@@ -638,11 +639,13 @@ const AVATAR_POSITIONS = {
 ## Output Formats
 
 ### HeyGen Output
+
 - Format: MP4 (H.264)
 - Audio: AAC
 - Resolution: As specified in request
 
 ### Remotion Output
+
 - Codec: H.264 (default), VP8, VP9, ProRes
 - Match or exceed HeyGen quality settings
 
@@ -687,6 +690,7 @@ If avatar video appears jittery or stuttery in rendered output:
 
 1. **Use `OffthreadVideo` instead of `Video`** - The basic `Video` component uses the browser's video decoder which isn't frame-accurate
 2. Update imports (no additional install needed - it's in core `remotion`):
+
    ```tsx
    // Before (causes jitter)
    import { Video } from "remotion";
@@ -694,7 +698,9 @@ If avatar video appears jittery or stuttery in rendered output:
    // After (frame-accurate)
    import { OffthreadVideo } from "remotion";
    ```
+
 3. For WebM with transparency, add the `transparent` prop:
+
    ```tsx
    <OffthreadVideo src={avatarWebmUrl} transparent />
    ```
