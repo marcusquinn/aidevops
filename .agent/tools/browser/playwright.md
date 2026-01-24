@@ -45,13 +45,13 @@ This is the underlying engine used by dev-browser, agent-browser, and Stagehand.
 **Chrome DevTools MCP**: Connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage alongside Playwright automation.
 
 **Test types**:
-  - Cross-browser: `runTest()`, `testBrowserFeatures()`
-  - User flows: `automateFlow()`, `testFormValidation()`
-  - Mobile: `testOnDevice()`, `testOrientations()`
-  - Performance: `measurePerformance()`, `testWithNetwork()`
-  - Visual: `visualRegressionSuite()`, `screenshotComponents()`
-  - Security: `testXSS()`, `testAuthentication()`
-  - API: `testAPIIntegration()`, `testRealTimeFeatures()`
+- Cross-browser: `runTest()`, `testBrowserFeatures()`
+- User flows: `automateFlow()`, `testFormValidation()`
+- Mobile: `testOnDevice()`, `testOrientations()`
+- Performance: `measurePerformance()`, `testWithNetwork()`
+- Visual: `visualRegressionSuite()`, `screenshotComponents()`
+- Security: `testXSS()`, `testAuthentication()`
+- API: `testAPIIntegration()`, `testRealTimeFeatures()`
 
 <!-- AI-CONTEXT-END -->
 
