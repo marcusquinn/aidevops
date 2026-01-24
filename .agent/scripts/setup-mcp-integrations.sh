@@ -41,7 +41,7 @@ get_mcp_command() {
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
         "stagehand-both") echo "both" ;;
         "dataforseo") echo "npx dataforseo-mcp-server" ;;
-        "serper") echo "uvx serper-mcp-server" ;;
+        "serper") echo "uv tool run serper-mcp-server" ;;
         *) echo "" ;;
     esac
     return 0
@@ -292,17 +292,17 @@ install_mcp() {
             print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
             print_info '  "serper": {'
             print_info '    "type": "local",'
-            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=\$SERPER_API_KEY uvx serper-mcp-server"],'
+            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=\$SERPER_API_KEY uv tool run serper-mcp-server"],'
             print_info '    "enabled": true'
             print_info '  }'
             print_info ""
             print_info "Available tools: google_search, google_search_images, google_search_videos, google_search_places, google_search_maps, google_search_reviews, google_search_news, google_search_shopping, google_search_lens, google_search_scholar, google_search_patents, google_search_autocomplete, webpage_scrape"
             print_info "GitHub: https://github.com/garylab/serper-mcp-server"
             
-            # Check if uv is installed
-            if ! command -v uvx &> /dev/null && ! command -v uv &> /dev/null; then
-                print_warning "uv (Python package manager) not found"
-                print_info "Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+            # Check if uv is installed and supports 'tool' subcommand
+            if ! command -v uv &> /dev/null || ! uv tool --help &> /dev/null; then
+                print_warning "uv (Python package manager) not found or too old"
+                print_info "Install/update with: curl -LsSf https://astral.sh/uv/install.sh | sh"
                 print_info "Alternative: pip install serper-mcp-server"
             fi
             ;;

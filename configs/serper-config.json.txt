@@ -12,7 +12,7 @@
       "command": [
         "/bin/bash",
         "-c",
-        "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY uvx serper-mcp-server"
+        "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY uv tool run serper-mcp-server"
       ],
       "enabled": true
     }
@@ -21,8 +21,8 @@
     "_note": "Add to ~/Library/Application Support/Claude/claude_desktop_config.json",
     "mcpServers": {
       "serper": {
-        "command": "uvx",
-        "args": ["serper-mcp-server"],
+        "command": "uv",
+        "args": ["tool", "run", "serper-mcp-server"],
         "env": {
           "SERPER_API_KEY": "YOUR_SERPER_API_KEY"
         }
@@ -33,8 +33,8 @@
     "_note": "Add to ~/.cursor/mcp.json",
     "mcpServers": {
       "serper": {
-        "command": "uvx",
-        "args": ["serper-mcp-server"],
+        "command": "uv",
+        "args": ["tool", "run", "serper-mcp-server"],
         "env": {
           "SERPER_API_KEY": "YOUR_SERPER_API_KEY"
         }
@@ -45,8 +45,8 @@
     "_note": "Add to ~/.codeium/windsurf/mcp_config.json",
     "mcpServers": {
       "serper": {
-        "command": "uvx",
-        "args": ["serper-mcp-server"],
+        "command": "uv",
+        "args": ["tool", "run", "serper-mcp-server"],
         "env": {
           "SERPER_API_KEY": "YOUR_SERPER_API_KEY"
         }
@@ -54,7 +54,7 @@
     }
   },
   "pip_alternative": {
-    "_note": "Use this if you prefer pip over uv",
+    "_note": "Use this if you prefer pip over uv (fallback if uv not installed)",
     "mcpServers": {
       "serper": {
         "command": "python3",
