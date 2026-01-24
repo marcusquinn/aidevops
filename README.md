@@ -71,7 +71,7 @@ The result: AI agents that work *with* your development process, not around it.
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20+-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-18-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 <!-- AI-CONTEXT-START -->
@@ -667,32 +667,45 @@ The setup script offers to install these tools automatically.
 
 **Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs primarily for **[OpenCode](https://opencode.ai/)** (recommended). Configuration support is also available for 17 other AI assistants including Cursor, Claude Code/Desktop, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Warp AI, Aider, and Qwen.
 
-### **All Supported MCPs**
+### **All Supported MCPs (18 active)**
 
-| MCP | Purpose | API Key Required |
-|-----|---------|------------------|
+MCP packages are installed globally via `bun install -g` for instant startup (no `npx` registry lookups). Run `setup.sh` or `aidevops update-tools` to update to latest versions.
+
+| MCP | Purpose | Tier | API Key Required |
+|-----|---------|------|------------------|
+| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Global | Yes (Augment account) |
+| [Claude Code MCP](https://github.com/steipete/claude-code-mcp) | Claude as sub-agent | Global | No |
+| [osgrep](https://github.com/Ryandonofrio3/osgrep) | Local semantic search | Global | No |
+| [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) | Order data extraction | Per-agent | No |
+| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | Per-agent | No |
+| [Context7](https://context7.com/) | Library documentation lookup | Per-agent | No |
+| [Docker MCP](https://docs.docker.com/ai/mcp-catalog/) | Container management | Per-agent | No |
+| [Google Analytics](https://developers.google.com/analytics) | Analytics data | Per-agent | Yes (Google API) |
+| [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Per-agent | Yes (Google API) |
+| [Grep by Vercel](https://grep.app/) | GitHub code search | Per-agent | No |
+| [LocalWP](https://localwp.com/) | WordPress database access | Per-agent | No (local) |
+| [macOS Automator](https://github.com/steipete/macos-automator-mcp) | macOS automation | Per-agent | No |
+| [Outscraper](https://outscraper.com/) | Google Maps & business data | Per-agent | Yes |
+| [Playwriter](https://github.com/nicholasgriffintn/playwriter) | Browser with extensions | Per-agent | No |
+| [QuickFile](https://github.com/marcusquinn/quickfile-mcp) | Accounting API | Per-agent | Yes |
+| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | Per-agent | No |
+| [Sentry](https://sentry.io/) | Error tracking | Per-agent | Yes |
+| [Socket](https://socket.dev/) | Dependency security | Per-agent | No |
+
+**Tier explanation:**
+- **Global** - Tools always available (loaded into every session)
+- **Per-agent** - Tools disabled globally, enabled per-agent via config (zero context overhead when unused)
+
+### **SEO Integrations (curl subagents - no MCP overhead)**
+
+These use direct API calls via curl, avoiding MCP server startup entirely:
+
+| Integration | Purpose | API Key Required |
+|-------------|---------|------------------|
 | [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
-| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
 | [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
-| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
-| [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
-| [Context7](https://context7.com/) | Library documentation lookup | No |
-| [Crawl4AI](https://github.com/unclecode/crawl4ai) | Web crawling & scraping | No |
-| [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Yes (Google API) |
-| [Grep by Vercel](https://grep.app/) | GitHub code search | No |
-| [LocalWP](https://localwp.com/) | WordPress database access | No (local) |
-| [Next.js DevTools](https://nextjs.org/docs) | React/Next.js assistance | No |
-| [Outscraper](https://outscraper.com/) | Google Maps & business data extraction | Yes |
-| [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
-| [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
-| [Playwright](https://playwright.dev/) | Cross-browser testing (auto-installed by setup.sh) | No |
-| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
-| [shadcn/ui](https://ui.shadcn.com/) | UI component library browsing & installation | No |
-| [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
-| [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
-| [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
-| [llm-tldr](https://github.com/parcadei/llm-tldr) | Semantic code analysis (95% token savings) | No |
+| [Hostinger](https://developers.hostinger.com/) | Hosting management | Yes |
 
 ### **By Category**
 
@@ -717,12 +730,11 @@ The setup script offers to install these tools automatically.
 
 **SEO & Research:**
 
-- [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data
-- [DataForSEO](https://dataforseo.com/) - Comprehensive SEO data APIs (SERP, keywords, backlinks, on-page)
-- [Serper](https://serper.dev/) - Google Search API (web, images, news, places, shopping)
-- [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
-- [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
-- [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
+- [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights (MCP)
+- [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories (MCP)
+- [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data (curl subagent)
+- [DataForSEO](https://dataforseo.com/) - Comprehensive SEO data APIs (curl subagent)
+- [Serper](https://serper.dev/) - Google Search API (curl subagent)
 - **Keyword Research** - Strategic keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
 - **Site Crawler** - Screaming Frog-like SEO auditing: broken links, redirects, meta issues, structured data
 - **Domain Research** - DNS intelligence via THC (4.51B records) and Reconeer APIs: rDNS, subdomains, CNAMEs
@@ -741,9 +753,10 @@ The setup script offers to install these tools automatically.
 - [LocalWP](https://localwp.com/) - Direct WordPress database access
 - [Next.js DevTools](https://nextjs.org/docs) - React/Next.js development assistance
 
-**UI Components:**
+**Accounts & Finance:**
 
-- [shadcn/ui](https://ui.shadcn.com/) - Browse, search, and install shadcn/ui components directly via MCP
+- [QuickFile](https://github.com/marcusquinn/quickfile-mcp) - Accounting API integration (MCP)
+- [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) - Order data extraction (MCP)
 
 ### **Quick Setup**
 
@@ -890,11 +903,13 @@ Repomix runs as an MCP server for direct AI assistant integration:
 {
   "repomix": {
     "type": "local",
-    "command": ["npx", "-y", "repomix@latest", "--mcp"],
+    "command": ["repomix", "--mcp"],
     "enabled": true
   }
 }
 ```
+
+> Install globally first: `bun install -g repomix` (done automatically by `setup.sh`)
 
 See `.agent/tools/context/context-builder.md` for complete documentation.
 
