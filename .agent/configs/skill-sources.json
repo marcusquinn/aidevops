@@ -49,6 +49,17 @@
       "last_checked": "2026-01-21T05:12:00Z",
       "merge_strategy": "added",
       "notes": "Includes 60 product reference directories in .agent/services/hosting/cloudflare-platform/references/"
+    },
+    {
+      "name": "heygen",
+      "upstream_url": "https://github.com/heygen-com/skills",
+      "upstream_commit": "f11988dc81a6deed557f3d547b24f73627b59ebc",
+      "local_path": ".agent/tools/video/heygen-skill.md",
+      "format_detected": "skill-md-nested",
+      "imported_at": "2026-01-24T12:00:00Z",
+      "last_checked": "2026-01-24T12:00:00Z",
+      "merge_strategy": "added",
+      "notes": "Includes 18 rule files in .agent/tools/video/heygen-skill/rules/"
     }
   ]
 }
