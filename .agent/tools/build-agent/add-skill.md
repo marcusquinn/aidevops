@@ -5,25 +5,32 @@ mode: subagent
 
 # Add Skill - External Skill Import System
 
-Import skills from external sources (GitHub repos, gists) and convert them to aidevops format while preserving knowledge and handling conflicts intelligently.
+Import skills from external sources (GitHub repos, ClawdHub registry) and convert them to aidevops format while preserving knowledge and handling conflicts intelligently.
 
 ## Quick Reference
 
 | Command | Purpose |
 |---------|---------|
-| `/add-skill <url>` | Import skill from GitHub |
+| `/add-skill <url>` | Import skill from GitHub or ClawdHub |
+| `/add-skill clawdhub:<slug>` | Import skill from ClawdHub registry |
 | `/add-skill list` | List imported skills |
 | `/add-skill check-updates` | Check for upstream changes |
 | `/add-skill remove <name>` | Remove imported skill |
 
-**Helper script:** `~/.aidevops/agents/scripts/add-skill-helper.sh`
+**Helper scripts:**
+- `~/.aidevops/agents/scripts/add-skill-helper.sh` — Main import logic
+- `~/.aidevops/agents/scripts/clawdhub-helper.sh` — ClawdHub browser-based fetcher
 
 ## Architecture
 
 ```text
-External Skill (GitHub)
+External Skill (GitHub or ClawdHub)
+        ↓
+    Detect Source (GitHub URL / clawdhub: prefix / clawdhub.com URL)
         ↓
     Fetch & Detect Format
+    ├── GitHub: git clone --depth 1
+    └── ClawdHub: Playwright browser extraction (SPA)
         ↓
     Check Conflicts with .agent/
         ↓
@@ -154,6 +161,8 @@ The helper script analyzes skill content to determine placement:
 |----------|----------|
 | deploy, vercel, coolify, docker, kubernetes | `tools/deployment/` |
 | cloudflare, dns, hosting, domain | `services/hosting/` |
+| proxmox, hypervisor, virtualization | `services/hosting/` |
+| calendar, caldav, ical, scheduling | `tools/productivity/` |
 | browser, playwright, puppeteer | `tools/browser/` |
 | seo, search, ranking, keyword | `seo/` |
 | git, github, gitlab | `tools/git/` |
@@ -232,6 +241,8 @@ create_skill_symlinks() {
 
 ## Popular Skills to Import
 
+### GitHub
+
 | Skill | Repository | Description |
 |-------|------------|-------------|
 | Cloudflare | `dmmulroy/cloudflare-skill` | 60+ Cloudflare products |
@@ -242,14 +253,25 @@ create_skill_symlinks() {
 
 Browse more at [skills.sh](https://skills.sh) leaderboard.
 
+### ClawdHub
+
+| Skill | Slug | Description |
+|-------|------|-------------|
+| CalDAV Calendar | `clawdhub:caldav-calendar` | CalDAV sync via vdirsyncer + khal |
+| Proxmox Full | `clawdhub:proxmox-full` | Complete Proxmox VE management |
+
+Browse more at [clawdhub.com](https://clawdhub.com) — vector search for agent skills.
+
 ## Troubleshooting
 
-### "Could not parse GitHub URL"
+### "Could not parse source URL"
 
-Ensure URL is in format:
-- `owner/repo`
-- `owner/repo/subpath`
+Ensure URL is in one of these formats:
+- `owner/repo` (GitHub)
+- `owner/repo/subpath` (GitHub)
 - `https://github.com/owner/repo`
+- `clawdhub:slug` (ClawdHub)
+- `https://clawdhub.com/owner/slug` (ClawdHub)
 
 ### "Failed to clone repository"
 
@@ -278,6 +300,7 @@ It does NOT check for semantic duplicates. Use `/add-skill list` to review.
 
 - `scripts/commands/add-skill.md` - Slash command definition
 - `scripts/add-skill-helper.sh` - Main implementation
+- `scripts/clawdhub-helper.sh` - ClawdHub browser-based fetcher
 - `scripts/skill-update-helper.sh` - Automated update checking
 - `scripts/generate-skills.sh` - SKILL.md generation for aidevops agents
 - `build-agent.md` - Agent design patterns
