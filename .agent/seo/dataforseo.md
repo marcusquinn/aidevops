@@ -1,5 +1,5 @@
 ---
-description: DataForSEO MCP for comprehensive SEO data APIs
+description: DataForSEO comprehensive SEO data via REST API (no MCP needed)
 mode: subagent
 tools:
   read: true
@@ -8,20 +8,20 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: true
 ---
 
-# DataForSEO MCP Integration
+# DataForSEO Integration
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: Comprehensive SEO data via DataForSEO APIs
-- **MCP Package**: `dataforseo-mcp-server` (npm, official)
-- **Auth**: Username + Password (stored in `~/.config/aidevops/mcp-env.sh`)
+- **API**: REST at `https://api.dataforseo.com/v3/`
+- **Auth**: Basic auth (username:password) in `~/.config/aidevops/mcp-env.sh`
 - **Env Vars**: `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD`
 - **Docs**: https://docs.dataforseo.com/v3/
+- **No MCP required** - uses curl directly
 
 **Available Modules**:
 
@@ -39,7 +39,51 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Direct API Access
+
+```bash
+source ~/.config/aidevops/mcp-env.sh
+export DFS_AUTH=$(echo -n "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" | base64)
+```
+
+### SERP Results
+
+```bash
+curl -s -X POST "https://api.dataforseo.com/v3/serp/google/organic/live/advanced" \
+  -H "Authorization: Basic $DFS_AUTH" \
+  -H "Content-Type: application/json" \
+  -d '[{"keyword": "your keyword", "location_code": 2840, "language_code": "en"}]'
+```
+
+### Keyword Data
+
+```bash
+curl -s -X POST "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live" \
+  -H "Authorization: Basic $DFS_AUTH" \
+  -H "Content-Type: application/json" \
+  -d '[{"keywords": ["keyword1", "keyword2"], "location_code": 2840, "language_code": "en"}]'
+```
+
+### Backlinks
+
+```bash
+curl -s -X POST "https://api.dataforseo.com/v3/backlinks/summary/live" \
+  -H "Authorization: Basic $DFS_AUTH" \
+  -H "Content-Type: application/json" \
+  -d '[{"target": "example.com"}]'
+```
+
+### On-Page Crawl
+
+```bash
+# Start crawl task
+curl -s -X POST "https://api.dataforseo.com/v3/on_page/task_post" \
+  -H "Authorization: Basic $DFS_AUTH" \
+  -H "Content-Type: application/json" \
+  -d '[{"target": "example.com", "max_crawl_pages": 100}]'
+```
+
+## Installation (MCP alternative)
 
 ### Via setup.sh (Recommended)
 

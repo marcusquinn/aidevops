@@ -1,31 +1,27 @@
 ---
-description: Google Search Console MCP setup and usage
+description: Google Search Console via REST API (no MCP needed)
 mode: subagent
 tools:
   read: true
-  write: true
-  edit: true
+  write: false
+  edit: false
   bash: true
   glob: true
   grep: true
-  webfetch: true
-  task: true
 ---
 
-# Google Search Console MCP Setup & Usage
+# Google Search Console Integration
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **MCP Integration**: Google Search Console API for AI assistants
-- **Credentials**: `~/.config/aidevops/gsc-credentials.json` (service account JSON key)
-- **Setup**: Google Cloud Project → Enable Search Console API → Service Account → Add to GSC properties
+- **API**: REST at `https://searchconsole.googleapis.com/v1/`
+- **Auth**: Service account JSON at `~/.config/aidevops/gsc-credentials.json`
 - **Capabilities**: Search analytics, URL inspection, indexing requests, sitemap management
-- **Key Methods**: `getSearchAnalytics()`, `getTopPages()`, `getTopQueries()`, `getCoreWebVitals()`
 - **Metrics**: clicks, impressions, ctr, position
 - **Dimensions**: query, page, country, device, searchAppearance
-- **Bulk Setup**: Use Playwright to add service account to all GSC properties automatically
+- **No MCP required** - uses curl with OAuth2 token from service account
 
 ## Setup Steps
 
