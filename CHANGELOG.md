@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.0] - 2026-01-24
+
+### Added
+
+- multi-agent orchestration & token efficiency (p013/t068) (#158)
+- aidevops update now checks planning template versions (#160)
+- add session-time-helper and risk field to task format (#159)
+- add content summaries to subagent routing table (#157)
+- add video-prompt-design subagent for Veo 3 meta prompt framework (#156)
+
+### Changed
+
+- Documentation: add multi-agent orchestration section to README
 ## [2.74.1] - 2026-01-23
 
 ### Fixed
