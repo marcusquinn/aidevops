@@ -29,12 +29,18 @@ tools:
 - **Your existing browser** - Reuse extensions, sessions, cookies
 - **Bypass detection** - Disconnect extension to bypass automation detection
 - **Collaborate with AI** - Work alongside it in the same browser
+- **Proxy via browser** - Uses whatever proxy your browser is configured with
+
+**Performance**: Navigate 2.95s, form fill 2.24s, reliability 1.96s avg.
+Always headed (uses your visible browser). Proxy support via browser settings or extensions (FoxyProxy etc.).
 
 **Icon States**:
-- Gray: Not connected
+- Gray/Black: Not connected
 - Green: Connected and ready
 - Orange (...): Connecting
 - Red (!): Error
+
+**When to use**: When you need your existing logged-in sessions, browser extensions, or want to collaborate with AI on a page you're viewing.
 
 <!-- AI-CONTEXT-END -->
 

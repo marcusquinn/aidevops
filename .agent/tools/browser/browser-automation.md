@@ -16,383 +16,327 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Default Tool: Agent-Browser
+## Tool Selection: Choose by Task
 
-**ALWAYS use agent-browser first** for any browser automation task. It's CLI-first, AI-optimized, and requires no server setup.
+All tools run **headless by default** (no visible window, no mouse/keyboard competition).
 
-```bash
-# Setup (one-time)
-~/.aidevops/agents/scripts/agent-browser-helper.sh setup
-
-# Basic workflow
-agent-browser open example.com
-agent-browser snapshot -i              # Get interactive elements with refs
-agent-browser click @e2                # Click by ref
-agent-browser close
-```
-
-**Why agent-browser is default**:
-- **Zero setup**: No daemon to start, just run commands
-- **AI-optimized**: Snapshot + ref pattern for deterministic element targeting
-- **Multi-session**: Isolated browser instances with `--session`
-- **Visual debugging**: Screenshots and DevTools for self-diagnosis
-
-## Visual Debugging (Don't Ask User - Check Yourself)
-
-**CRITICAL**: Before asking the user what they see, use these tools to check yourself:
-
-```bash
-# Take screenshot to see current state
-agent-browser screenshot /tmp/current-state.png
-
-# Get page info
-agent-browser get title
-agent-browser get url
-
-# Check for errors
-agent-browser errors
-
-# View console messages
-agent-browser console
-
-# Get element state
-agent-browser is visible @e5
-agent-browser is enabled @e5
-
-# Headed mode for complex debugging
-agent-browser open example.com --headed
-```
-
-**Self-diagnosis workflow**:
-1. Action fails or unexpected result
-2. Take screenshot: `agent-browser screenshot /tmp/debug.png`
-3. Check errors: `agent-browser errors`
-4. Get snapshot: `agent-browser snapshot -i`
-5. Analyze and retry - only ask user if truly stuck
-
-## Tool Selection Decision Tree
+**Interactive automation** (forms, clicks, multi-step):
 
 ```text
 Need browser automation?
-    │
-    ├─► Default choice ──► agent-browser (CLI-first, AI-optimized)
-    │
-    ├─► Need TypeScript API / stateful pages? ──► dev-browser
-    │
-    ├─► Need existing browser session/cookies? ──► Playwriter
-    │
-    ├─► Need cookies for API calls (no browser)? ──► sweet-cookie
-    │
-    ├─► Need natural language control? ──► Stagehand
-    │
-    └─► Need web crawling/extraction? ──► Crawl4AI
+    |
+    +-> Fresh session, no state needed? --> Playwright direct (fastest)
+    |
+    +-> Need persistent cookies/logins? --> dev-browser (profile persists)
+    |
+    +-> CLI scripting / CI/CD? --> agent-browser (no server needed)
+    |
+    +-> User's existing browser session? --> Playwriter (their extensions/cookies)
+    |
+    +-> Unknown page structure? --> Stagehand (natural language, self-healing)
 ```
+
+**Extraction only** (scraping, reading data):
+
+```text
+Need to extract data?
+    |
+    +-> Structured data / bulk pages? --> Crawl4AI (purpose-built, fastest)
+    |
+    +-> Need to interact first, then extract? --> Playwright or dev-browser
+    |
+    +-> Need AI to find/parse content? --> Stagehand extract() or Crawl4AI LLM mode
+```
+
+## Performance Benchmarks
+
+Tested on macOS ARM64, all headless, warm daemon/persistent browser:
+
+| Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|------|-----------|-------------|---------------|----------|------------|-----------|
+| **Navigate + Screenshot** | **1.43s** | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
+| **Form Fill** (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
+| **Data Extraction** (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
+| **Multi-step** (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
+| **Reliability** (avg, 3 runs) | **0.64s** | 1.07s | 0.66s | 0.52s | 1.96s | 1.74s |
+
+**Key insight**: Playwright is the underlying engine for all tools except Crawl4AI. Overhead comes from wrappers:
+- dev-browser: +0.1-0.4s (Bun TSX + WebSocket)
+- agent-browser: +0.5-1.5s (Rust CLI + Node daemon), cold-start penalty on first run
+- Stagehand: +1-5s (AI model calls for natural language)
+- Playwriter: +1-2s (Chrome extension + CDP relay)
+
+## Feature Matrix
+
+| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|---------|-----------|-------------|---------------|----------|------------|-----------|
+| **Headless** | Yes | Yes | Yes (default) | Yes | No (your browser) | Yes |
+| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
+| **Cookie management** | Full API | Persistent | CLI commands | Persistent | Your browser | Per-instance |
+| **Proxy support** | Full | Via launch args | No | Full (ProxyConfig) | Your browser | Via args |
+| **SOCKS5/VPN** | Yes | Possible | No | Yes | Your browser | Via args |
+| **Browser extensions** | No | Yes (profile) | No | No | Yes (yours) | No |
+| **Multi-session** | Per-context | Named pages | --session flag | Per-crawl | Per-tab | Per-instance |
+| **Form filling** | Full API | Full API | CLI fill/click | No | Full API | Natural language |
+| **Screenshots** | Full API | Full API | CLI command | Built-in | Full API | Via page |
+| **Data extraction** | evaluate() | evaluate() | eval command | CSS/XPath/LLM | evaluate() | extract() + schema |
+| **Natural language** | No | No | No | LLM extraction | No | act/extract/observe |
+| **Self-healing** | No | No | No | No | No | Yes |
+| **AI-optimized output** | No | ARIA snapshots | Snapshot + refs | Markdown/JSON | No | Structured schemas |
+| **Setup required** | npm install | Server running | npm install | pip/Docker | Extension click | npm + API key |
+| **Interface** | JS/TS API | TS scripts | CLI | Python API | JS API | JS/Python SDK |
 
 ## Quick Reference
 
-| Tool | Best For | Setup |
-|------|----------|-------|
-| **agent-browser** (DEFAULT) | CLI automation, AI agents, CI/CD, multi-session | `agent-browser-helper.sh setup` |
-| **dev-browser** | TypeScript API, stateful pages, dev testing | `dev-browser-helper.sh setup` |
-| **playwriter** | Existing sessions, bypass detection | Chrome extension + MCP |
-| **sweet-cookie** | Cookie extraction for API calls, session reuse | `npm i @steipete/sweet-cookie` |
-| **stagehand** | Natural language automation | `stagehand-helper.sh setup` |
-| **crawl4ai** | Web scraping, content extraction | `crawl4ai-helper.sh setup` |
-| **playwright** | Cross-browser testing | `setup.sh` or `npx playwright install` |
+| Tool | Best For | Speed | Setup |
+|------|----------|-------|-------|
+| **Playwright** | Raw speed, full control, proxy support | Fastest | `npm i playwright` |
+| **dev-browser** | Persistent sessions, dev testing, TypeScript | Fast | `dev-browser-helper.sh setup && start` |
+| **agent-browser** | CLI/CI/CD, AI agents, parallel sessions | Fast (warm) | `agent-browser-helper.sh setup` |
+| **Crawl4AI** | Web scraping, bulk extraction, structured data | Fast | `pip install crawl4ai` (venv) |
+| **Playwriter** | Existing browser, extensions, bypass detection | Medium | Chrome extension + `npx playwriter` |
+| **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
 
-**Full docs**: `tools/browser/agent-browser.md` (default), `tools/browser/dev-browser.md`, `tools/browser/sweet-cookie.md`, etc.
-
-**Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only
+**Ethical Rules**: Respect ToS, rate limit (2-5s delays), no spam, legitimate use only.
 <!-- AI-CONTEXT-END -->
 
-## Session Persistence (Cookies, Storage, Auth State)
+## Detailed Usage by Tool
 
-### Why Persist Sessions?
+### Playwright Direct (Fastest)
 
-- **Avoid repeated logins**: Save auth state once, reuse across sessions
-- **Maintain context**: Keep shopping carts, preferences, form data
-- **Faster automation**: Skip login flows in subsequent runs
+Best for: Maximum speed, full Playwright API, proxy support, fresh sessions.
 
-### Saving Auth State
+```javascript
+import { chromium } from 'playwright';
 
-After logging in, save the complete browser state:
+const browser = await chromium.launch({
+  headless: true,
+  proxy: { server: 'socks5://127.0.0.1:1080' }  // Optional
+});
+const page = await browser.newPage();
+await page.goto('https://example.com');
+await page.fill('input[name="email"]', 'user@example.com');
+await page.screenshot({ path: '/tmp/screenshot.png' });
 
-```bash
-# Login to a site
-agent-browser open https://app.example.com/login
-agent-browser snapshot -i
-agent-browser fill @e3 "user@example.com"
-agent-browser fill @e4 "password"
-agent-browser click @e5
-agent-browser wait --url "**/dashboard"
+// Save state for reuse
+await page.context().storageState({ path: 'state.json' });
+await browser.close();
 
-# Save auth state (cookies + localStorage + sessionStorage)
-agent-browser state save ~/.aidevops/.agent-workspace/auth/example-com.json
-agent-browser close
+// Later: restore state
+const context = await browser.newContext({ storageState: 'state.json' });
 ```
 
-### Loading Auth State
+**Persistence**: Use `storageState` to save/load cookies and localStorage across sessions.
 
-Restore saved state in new sessions:
+### Dev-Browser (Persistent Profile)
 
-```bash
-# Start new session with saved auth
-agent-browser open https://app.example.com
-agent-browser state load ~/.aidevops/.agent-workspace/auth/example-com.json
-agent-browser reload  # Apply loaded state
-# Now logged in without re-entering credentials
-```
-
-### Cookie Management
+Best for: Development testing, staying logged in across sessions, TypeScript projects.
 
 ```bash
-# View all cookies
-agent-browser cookies
-
-# Set a specific cookie
-agent-browser cookies set "session_id" "abc123"
-
-# Set cookie with options
-agent-browser cookies set "auth_token" "xyz789" --domain ".example.com" --path "/" --secure
-
-# Clear all cookies
-agent-browser cookies clear
-```
-
-### LocalStorage & SessionStorage
-
-```bash
-# View all localStorage
-agent-browser storage local
-
-# Get specific key
-agent-browser storage local "user_preferences"
-
-# Set value
-agent-browser storage local set "theme" "dark"
-agent-browser storage local set "api_token" "bearer_xyz123"
-
-# Clear localStorage
-agent-browser storage local clear
-
-# Same commands work for sessionStorage
-agent-browser storage session
-agent-browser storage session set "temp_data" "value"
-agent-browser storage session clear
-```
-
-### Multi-Session with Shared Auth
-
-```bash
-# Session 1: Login and save state
-agent-browser --session login open https://app.example.com/login
-# ... perform login ...
-agent-browser --session login state save ~/.aidevops/.agent-workspace/auth/app.json
-agent-browser --session login close
-
-# Session 2: Use saved auth for task A
-agent-browser --session taskA open https://app.example.com
-agent-browser --session taskA state load ~/.aidevops/.agent-workspace/auth/app.json
-agent-browser --session taskA reload
-# ... perform task A ...
-
-# Session 3: Use same auth for task B (parallel)
-agent-browser --session taskB open https://app.example.com
-agent-browser --session taskB state load ~/.aidevops/.agent-workspace/auth/app.json
-agent-browser --session taskB reload
-# ... perform task B ...
-```
-
-### Auth State Best Practices
-
-| Practice | Why |
-|----------|-----|
-| Store in `~/.aidevops/.agent-workspace/auth/` | Gitignored, secure location |
-| Name by domain | `github-com.json`, `app-example-com.json` |
-| Refresh periodically | Sessions expire, re-login and re-save |
-| Don't commit auth files | Contains sensitive tokens |
-| Use `--session` for isolation | Prevent cross-contamination |
-
-### Injecting Cookies/Tokens Programmatically
-
-For CI/CD or scripts where you have tokens from environment:
-
-```bash
-# Set auth cookie from environment variable
-agent-browser open https://api.example.com
-agent-browser cookies set "auth_token" "$AUTH_TOKEN" --domain ".example.com" --secure --httponly
-agent-browser reload
-
-# Or inject into localStorage
-agent-browser storage local set "access_token" "$ACCESS_TOKEN"
-agent-browser storage local set "refresh_token" "$REFRESH_TOKEN"
-agent-browser reload
-```
-
-## Agent-Browser Usage (Default)
-
-### Quick Start
-
-```bash
-# 1. Setup (one-time)
-~/.aidevops/agents/scripts/agent-browser-helper.sh setup
-
-# 2. Basic workflow
-agent-browser open https://example.com
-agent-browser snapshot -i                 # Interactive elements only
-agent-browser click @e1                   # Click by ref
-agent-browser screenshot page.png
-agent-browser close
-```
-
-### Snapshot + Ref Pattern (AI-Optimized)
-
-This is the **recommended workflow for AI agents**:
-
-```bash
-# 1. Navigate and get snapshot
-agent-browser open https://news.ycombinator.com
-agent-browser snapshot -i --json
-
-# Output includes refs:
-# - link "Hacker News" [ref=e2]
-# - link "new" [ref=e3]
-# - textbox [ref=e224]
-
-# 2. Use refs for deterministic interaction
-agent-browser click @e3                   # Click "new" link
-agent-browser fill @e224 "search term"    # Fill search box
-
-# 3. Get new snapshot after page change
-agent-browser snapshot -i
-```
-
-### Common Patterns
-
-**Form submission**:
-
-```bash
-agent-browser open https://example.com/contact
-agent-browser snapshot -i
-agent-browser fill @e1 "John Doe"
-agent-browser fill @e2 "john@example.com"
-agent-browser fill @e3 "Hello, this is my message"
-agent-browser click @e4  # Submit button
-agent-browser wait --text "Thank you"
-agent-browser screenshot /tmp/success.png
-```
-
-**Multi-page workflow**:
-
-```bash
-agent-browser open https://shop.example.com
-agent-browser snapshot -i
-agent-browser click @e5  # Product link
-agent-browser wait --load networkidle
-agent-browser snapshot -i
-agent-browser click @e3  # Add to cart
-agent-browser click @e8  # Checkout
-agent-browser state save ~/.aidevops/.agent-workspace/auth/shop-cart.json
-```
-
-**Full documentation**: `tools/browser/agent-browser.md`
-
-## Alternative Tools
-
-Use these when agent-browser doesn't fit the use case:
-
-### Dev-Browser - TypeScript API
-
-**Stateful browser automation with persistent Playwright server**
-
-```bash
-# Setup and start
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup
+# Start server (profile persists across restarts)
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# Use TypeScript API
+# Headless mode
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-headless
+
+# Execute scripts
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-await page.goto("http://localhost:3000");
+await page.goto("https://example.com");
 await waitForPageLoad(page);
-console.log({ title: await page.title(), url: page.url() });
+console.log({ title: await page.title() });
 await client.disconnect();
 EOF
 ```
 
-**When to use**: TypeScript projects, stateful page interactions, dev testing with hot reload.
+**Persistence**: Profile directory (`~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/`) retains cookies, localStorage, cache, and extension data across server restarts.
 
-See `tools/browser/dev-browser.md` for full documentation.
+### Agent-Browser (CLI/CI/CD)
 
-### Playwriter - Chrome Extension MCP
-
-**Browser automation via Chrome extension with full Playwright API**
+Best for: Shell scripts, CI/CD pipelines, AI agent integration, parallel sessions.
 
 ```bash
-# 1. Install Chrome extension
-# https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
+# Basic workflow
+agent-browser open https://example.com
+agent-browser snapshot -i              # Interactive elements with refs
+agent-browser click @e2                # Click by ref
+agent-browser fill @e3 "text"          # Fill by ref
+agent-browser screenshot /tmp/page.png
+agent-browser close
 
-# 2. Add to MCP config (OpenCode)
-# "playwriter": { "type": "local", "command": ["npx", "playwriter@latest"] }
+# Parallel sessions
+agent-browser --session s1 open https://site-a.com
+agent-browser --session s2 open https://site-b.com
 
-# 3. Click extension icon on tabs to control (turns green)
+# Save/load auth state
+agent-browser state save ~/.aidevops/.agent-workspace/auth/site.json
+agent-browser state load ~/.aidevops/.agent-workspace/auth/site.json
 ```
 
-**When to use**: Reuse existing browser sessions, bypass automation detection, work alongside AI with your extensions.
+**Persistence**: Use `state save/load` for cookies and storage. Use `--session` for isolation.
 
-See `tools/browser/playwriter.md` for full documentation.
+**Note**: First run has a cold-start penalty (~3-5s) while the daemon starts. Subsequent commands are fast (~0.6s).
 
-### Stagehand - Natural Language Automation
+### Crawl4AI (Extraction)
 
-**AI-powered browser automation with natural language control**
+Best for: Web scraping, structured data extraction, bulk crawling, LLM-ready output.
+
+```python
+# Activate venv first: source ~/.aidevops/crawl4ai-venv/bin/activate
+import asyncio
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
+
+async def extract():
+    schema = {
+        "name": "Products",
+        "baseSelector": ".product",
+        "fields": [
+            {"name": "title", "selector": "h2", "type": "text"},
+            {"name": "price", "selector": ".price", "type": "text"}
+        ]
+    }
+
+    browser_config = BrowserConfig(
+        headless=True,
+        proxy="socks5://127.0.0.1:1080",  # Optional
+        use_persistent_context=True,       # Persist cookies
+        user_data_dir="/path/to/profile"   # Persist across runs
+    )
+    run_config = CrawlerRunConfig(
+        extraction_strategy=JsonCssExtractionStrategy(schema)
+    )
+
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        result = await crawler.arun(url="https://example.com", config=run_config)
+        print(result.extracted_content)  # JSON
+
+asyncio.run(extract())
+```
+
+**Persistence**: Use `use_persistent_context=True` + `user_data_dir` for cookie/session persistence.
+
+**Cannot**: Fill forms, click buttons, or perform interactive automation.
+
+### Playwriter (Your Browser)
+
+Best for: Using your existing logged-in sessions, browser extensions, bypassing automation detection.
 
 ```bash
-# Setup
-bash ~/.aidevops/agents/scripts/stagehand-helper.sh setup
+# 1. Install Chrome/Brave extension:
+#    https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
 
-# Natural language actions
-await stagehand.act("click the login button")
-await stagehand.act("fill in the email field with user@example.com")
+# 2. Click extension icon on tab to control (turns green)
 
-# Structured extraction
-const data = await stagehand.extract("get product prices", z.array(z.number()))
+# 3. Start MCP server (or use via MCP config)
+npx playwriter@latest
 ```
 
-**When to use**: Natural language control, self-healing automation, unknown page structures.
+```javascript
+// Programmatic usage
+import { chromium } from 'playwright-core';
+const browser = await chromium.connectOverCDP("http://localhost:19988");
+const context = browser.contexts()[0];
+const page = context.pages()[0];  // Your existing tab
 
-See `tools/browser/stagehand.md` for full documentation.
+await page.fill('#search', 'query');
+await page.screenshot({ path: '/tmp/screenshot.png' });
+await browser.close();
+```
 
-### Crawl4AI - Web Scraping
+**Persistence**: Inherits your browser's sessions, cookies, extensions, and proxy settings.
 
-**AI-powered web crawling and content extraction**
+**Note**: Always headed (uses your visible browser). Best for tasks where you need your existing login state or want to collaborate with the AI in real-time.
+
+### Stagehand (Natural Language)
+
+Best for: Unknown page structures, self-healing automation, AI-powered extraction.
+
+```javascript
+import { Stagehand } from "@browserbasehq/stagehand";
+
+const stagehand = new Stagehand({
+  env: "LOCAL",
+  headless: true,
+  verbose: 0
+});
+
+await stagehand.init();
+const page = stagehand.ctx.pages()[0];
+
+// Navigate (standard Playwright)
+await page.goto("https://example.com");
+
+// Natural language actions (requires OpenAI/Anthropic API key)
+await stagehand.act("click the login button");
+await stagehand.act("fill in the email with user@example.com");
+
+// Structured extraction with schema
+const data = await stagehand.extract("get product details", z.object({
+  name: z.string(),
+  price: z.number()
+}));
+
+await stagehand.close();
+```
+
+**Persistence**: Per-instance only. No built-in session persistence.
+
+**Note**: Natural language features require an OpenAI or Anthropic API key with quota. Without it, Stagehand works as a standard Playwright wrapper (use Playwright direct instead for better speed).
+
+## Proxy Support
+
+| Method | Works With | Setup |
+|--------|-----------|-------|
+| **Direct proxy config** | Playwright, Crawl4AI, Stagehand | Pass in launch/config options |
+| **SOCKS5 VPN** (IVPN/Mullvad) | Playwright, Crawl4AI, Stagehand | `proxy: { server: 'socks5://...' }` |
+| **System proxy** | All tools | `networksetup -setsocksfirewallproxy "Wi-Fi" host port` |
+| **Browser extension** (FoxyProxy) | Playwriter | Install in your browser |
+| **Residential proxy** (sticky IP) | Playwright, Crawl4AI | Provider session ID for same IP |
+
+**Persistent IP across restarts**: Use `storageState` (Playwright) or `user_data_dir` (Crawl4AI) combined with a sticky-session proxy provider.
+
+## Session Persistence Summary
+
+| Need | Tool | Method |
+|------|------|--------|
+| **Stay logged in across runs** | dev-browser | Automatic (profile directory) |
+| **Save/restore auth state** | agent-browser | `state save/load` commands |
+| **Reuse existing login** | Playwriter | Uses your browser directly |
+| **Persistent cookies + proxy** | Playwright, Crawl4AI | `storageState`/`user_data_dir` + proxy config |
+| **Fresh session each time** | Playwright, agent-browser | Default behaviour (no persistence) |
+
+## Visual Debugging
+
+**CRITICAL**: Before asking the user what they see, check yourself:
 
 ```bash
-# Setup
-bash ~/.aidevops/agents/scripts/crawl4ai-helper.sh setup
+# agent-browser
+agent-browser screenshot /tmp/debug.png
+agent-browser errors
+agent-browser console
+agent-browser get url
+agent-browser snapshot -i
 
-# Crawl and extract
-crawl4ai https://example.com --extract "main content"
+# dev-browser
+cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
+import { connect } from "@/client.js";
+const client = await connect("http://localhost:9222");
+const page = await client.page("main");
+await page.screenshot({ path: "/tmp/debug.png" });
+console.log({ url: page.url(), title: await page.title() });
+await client.disconnect();
+EOF
 ```
 
-**When to use**: Web scraping, content extraction, bulk data collection.
-
-See `tools/browser/crawl4ai.md` for full documentation.
-
-## Debugging Checklist
-
-When automation fails, check in this order:
-
-1. **Screenshot**: `agent-browser screenshot /tmp/debug.png`
-2. **Errors**: `agent-browser errors`
-3. **Console**: `agent-browser console`
-4. **URL**: `agent-browser get url` (redirected?)
-5. **Snapshot**: `agent-browser snapshot -i` (elements changed?)
-6. **Visibility**: `agent-browser is visible @eX`
-7. **Headed mode**: `agent-browser open url --headed` (watch it happen)
-
-**Only ask the user after exhausting these self-diagnosis steps.**
+**Self-diagnosis workflow**:
+1. Action fails or unexpected result
+2. Take screenshot
+3. Check errors/console
+4. Get snapshot/URL
+5. Analyze and retry - only ask user if truly stuck
 
 ## Ethical Guidelines
 

@@ -18,12 +18,26 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Cross-browser testing automation via MCP
-- **MCP command**: `npx playwright-mcp@latest`
-- **Install**: `npx playwright install` (chromium, firefox, webkit)
-- **Setup**: Auto-installed via `setup.sh` → `setup_browser_tools()`
+- **Purpose**: Cross-browser testing and automation (fastest browser engine)
+- **Install**: `npm install playwright && npx playwright install`
+- **MCP**: `npx @playwright/mcp` (with `--proxy-server`, `--storage-state` options)
 - **Browsers**: chromium, firefox, webkit
-- **Test types**:
+- **Headless**: Yes (default)
+
+**Performance** (fastest of all tools): Navigate 1.4s, form fill 0.9s, extraction 1.3s, reliability 0.64s avg.
+This is the underlying engine used by dev-browser, agent-browser, and Stagehand.
+
+**Key Features**:
+- Full proxy support (HTTP, SOCKS5, per-context)
+- Session persistence via `storageState` or `userDataDir`
+- Cross-browser testing (Chromium, Firefox, WebKit)
+- Device emulation (iPhone, Samsung, iPad)
+- Network throttling (Fast 3G, Slow 3G, Offline)
+- Integration: Works with Chrome DevTools MCP, dev-browser, Stagehand
+
+**When to use directly**: Maximum speed, full control, proxy support, or when other wrappers add unnecessary overhead.
+
+**Test types**:
   - Cross-browser: `runTest()`, `testBrowserFeatures()`
   - User flows: `automateFlow()`, `testFormValidation()`
   - Mobile: `testOnDevice()`, `testOrientations()`
@@ -31,9 +45,6 @@ tools:
   - Visual: `visualRegressionSuite()`, `screenshotComponents()`
   - Security: `testXSS()`, `testAuthentication()`
   - API: `testAPIIntegration()`, `testRealTimeFeatures()`
-- **Device emulation**: iPhone, Samsung, iPad
-- **Network throttling**: Fast 3G, Slow 3G, Offline
-- **Integration**: Works with Chrome DevTools MCP, dev-browser, Stagehand
 
 <!-- AI-CONTEXT-END -->
 

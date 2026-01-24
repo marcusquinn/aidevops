@@ -36,6 +36,13 @@ tools:
 - CAPTCHA solving via CapSolver
 - Parallel async crawling
 - Session management & browser pool
+- Full proxy support (HTTP, SOCKS5, residential)
+- Persistent context with `user_data_dir`
+
+**Performance**: Structured extraction 2.5s (30 items), multi-page 3.8s (3 URLs), reliability 0.52s avg (fastest).
+Purpose-built for extraction - cannot fill forms or click buttons.
+
+**Install**: `python3 -m venv ~/.aidevops/crawl4ai-venv && source ~/.aidevops/crawl4ai-venv/bin/activate && pip install crawl4ai && crawl4ai-setup`
 
 **Env Vars**: `OPENAI_API_KEY`, `CAPSOLVER_API_KEY`, `CRAWL4AI_MAX_PAGES=50`
 <!-- AI-CONTEXT-END -->

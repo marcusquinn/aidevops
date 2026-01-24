@@ -34,6 +34,11 @@ tools:
 **Env Vars**: `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, `STAGEHAND_ENV=LOCAL`, `STAGEHAND_HEADLESS=false`
 
 **Key Advantage**: Self-healing automation that adapts when websites change
+
+**Performance**: Navigate 7.7s, form fill 2.6s, extraction 3.5s, reliability 1.7s avg.
+Slowest tool due to AI model overhead. Without API key, works as a Playwright wrapper (use Playwright direct instead for speed).
+
+**Headless**: Set `headless: true` in config (default for benchmarks).
 <!-- AI-CONTEXT-END -->
 
 **AI-powered browser automation with natural language control - Available in both JavaScript and Python**
