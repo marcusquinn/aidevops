@@ -2161,57 +2161,47 @@ install_mcp_packages() {
         return 0
     fi
 
-    print_info "Using $installer for Node.js MCP packages..."
+    print_info "Using $installer to install/update Node.js MCP packages..."
 
-    local installed=0
-    local skipped=0
+    # Always install latest (bun install -g is fast and idempotent)
+    local updated=0
+    local failed=0
     for pkg in "${node_mcps[@]}"; do
-        # Extract binary name from package name (strip @scope/ prefix)
-        local bin_name
-        bin_name="${pkg##*/}"
-        if command -v "$bin_name" &> /dev/null; then
-            ((skipped++))
-            continue
-        fi
-        if $install_cmd "$pkg" > /dev/null 2>&1; then
-            ((installed++))
+        if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
+            ((updated++))
         else
-            print_warning "Failed to install $pkg"
+            ((failed++))
+            print_warning "Failed to install/update $pkg"
         fi
     done
 
-    if [[ $installed -gt 0 ]]; then
-        print_success "Installed $installed Node.js MCP packages via $installer"
+    if [[ $updated -gt 0 ]]; then
+        print_success "$updated Node.js MCP packages installed/updated to latest via $installer"
     fi
-    if [[ $skipped -gt 0 ]]; then
-        print_info "$skipped Node.js MCP packages already installed"
+    if [[ $failed -gt 0 ]]; then
+        print_warning "$failed packages failed (check network or package names)"
     fi
 
-    # Python MCP packages
+    # Python MCP packages (install or upgrade)
     if command -v pipx &> /dev/null; then
-        if ! command -v analytics-mcp &> /dev/null; then
-            print_info "Installing analytics-mcp via pipx..."
-            if pipx install analytics-mcp > /dev/null 2>&1; then
-                print_success "analytics-mcp installed"
-            else
-                print_warning "Failed to install analytics-mcp"
-            fi
+        print_info "Installing/updating analytics-mcp via pipx..."
+        if command -v analytics-mcp &> /dev/null; then
+            pipx upgrade analytics-mcp > /dev/null 2>&1 || true
+        else
+            pipx install analytics-mcp > /dev/null 2>&1 || print_warning "Failed to install analytics-mcp"
         fi
     fi
 
     if command -v uv &> /dev/null; then
-        if ! command -v outscraper-mcp-server &> /dev/null; then
-            print_info "Installing outscraper-mcp-server via uv..."
-            if uv tool install outscraper-mcp-server > /dev/null 2>&1; then
-                print_success "outscraper-mcp-server installed"
-            else
-                print_warning "Failed to install outscraper-mcp-server"
-            fi
+        print_info "Installing/updating outscraper-mcp-server via uv..."
+        if command -v outscraper-mcp-server &> /dev/null; then
+            uv tool upgrade outscraper-mcp-server > /dev/null 2>&1 || true
+        else
+            uv tool install outscraper-mcp-server > /dev/null 2>&1 || print_warning "Failed to install outscraper-mcp-server"
         fi
     fi
 
     print_info "MCP servers will start instantly (no registry lookups on each launch)"
-    print_info "Run 'aidevops update-tools' to check for updates"
     return 0
 }
 
