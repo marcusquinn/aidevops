@@ -111,6 +111,7 @@ MCPs disabled globally, enabled per-agent via YAML frontmatter.
 3. Read `workflows/git-workflow.md` for full guidance
 
 **Worktrees** (preferred for parallel work):
+
 ```bash
 wt switch -c feature/my-feature   # Worktrunk (preferred)
 worktree-helper.sh add feature/x  # Fallback

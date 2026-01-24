@@ -24,7 +24,7 @@ set -euo pipefail
 # =============================================================================
 
 # Resolve script directory for sibling script references
-LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly LOOP_COMMON_DIR
 readonly LOOP_MAIL_HELPER="${LOOP_COMMON_DIR}/mail-helper.sh"
 readonly LOOP_MEMORY_HELPER="${LOOP_COMMON_DIR}/memory-helper.sh"

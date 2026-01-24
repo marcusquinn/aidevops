@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # Configuration - resolve relative to this script's location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"
 readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"

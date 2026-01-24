@@ -12,8 +12,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROMPTS_DIR="$(cd "$SCRIPT_DIR/../prompts" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+PROMPTS_DIR="$(cd "$SCRIPT_DIR/../prompts" && pwd)" || exit
 BUILD_TXT="$PROMPTS_DIR/build.txt"
 
 UPSTREAM_REPO="anomalyco/opencode"
