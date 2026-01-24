@@ -153,6 +153,48 @@ check_repo_needs_upgrade() {
     return 1  # up to date
 }
 
+# Check if a planning file needs upgrading (version mismatch or missing TOON markers)
+# Usage: check_planning_file_version <file> <template>
+# Returns 0 if upgrade needed, 1 if up to date
+check_planning_file_version() {
+    local file="$1" template="$2"
+    if [[ -f "$file" ]]; then
+        if ! grep -q "TOON:meta" "$file" 2>/dev/null; then
+            return 0
+        fi
+        local current_ver template_ver
+        current_ver=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
+        template_ver=$(grep -A1 "TOON:meta" "$template" 2>/dev/null | tail -1 | cut -d',' -f1)
+        if [[ -n "$template_ver" ]] && [[ "$current_ver" != "$template_ver" ]]; then
+            return 0
+        fi
+        return 1
+    else
+        # No file = no upgrade needed (init would create it)
+        return 1
+    fi
+}
+
+# Check if a repo's planning templates need upgrading
+# Returns 0 if any planning file needs upgrade
+check_planning_needs_upgrade() {
+    local repo_path="$1"
+    local todo_file="$repo_path/TODO.md"
+    local plans_file="$repo_path/todo/PLANS.md"
+    local todo_template="$AGENTS_DIR/templates/todo-template.md"
+    local plans_template="$AGENTS_DIR/templates/plans-template.md"
+
+    [[ ! -f "$todo_template" ]] && return 1
+
+    if check_planning_file_version "$todo_file" "$todo_template"; then
+        return 0
+    fi
+    if [[ -f "$plans_template" ]] && check_planning_file_version "$plans_file" "$plans_template"; then
+        return 0
+    fi
+    return 1
+}
+
 # Detect if current directory has aidevops but isn't registered
 detect_unregistered_repo() {
     local project_root
@@ -569,12 +611,59 @@ cmd_update() {
                         features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
                         register_repo "$repo" "$current_ver" "$features"
                         
-                        print_success "Updated $(basename "$repo")"
+                         print_success "Updated $(basename "$repo")"
                     else
                         print_warning "jq not installed - manual update needed for $repo"
                     fi
                 fi
             done
+        fi
+    fi
+    
+    # Check planning templates in registered repos
+    echo ""
+    print_header "Checking Planning Templates"
+    
+    local repos_needing_planning=()
+    while IFS= read -r repo_path; do
+        [[ -z "$repo_path" ]] && continue
+        [[ ! -d "$repo_path" ]] && continue
+        # Only check repos with planning enabled
+        if [[ -f "$repo_path/.aidevops.json" ]]; then
+            local has_planning
+            has_planning=$(grep -o '"planning": *true' "$repo_path/.aidevops.json" 2>/dev/null || true)
+            if [[ -n "$has_planning" ]] && check_planning_needs_upgrade "$repo_path"; then
+                repos_needing_planning+=("$repo_path")
+            fi
+        fi
+    done < <(get_registered_repos)
+    
+    if [[ ${#repos_needing_planning[@]} -eq 0 ]]; then
+        print_success "All planning templates are up to date"
+    else
+        echo ""
+        print_warning "${#repos_needing_planning[@]} project(s) have outdated planning templates:"
+        for repo in "${repos_needing_planning[@]}"; do
+            local repo_name
+            repo_name=$(basename "$repo")
+            local todo_ver
+            todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+            echo "  - $repo_name (v${todo_ver:-none})"
+        done
+        local template_ver
+        template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+        echo ""
+        echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"
+        echo ""
+        read -r -p "Upgrade planning templates in these projects? [y/N] " response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            for repo in "${repos_needing_planning[@]}"; do
+                print_info "Upgrading $(basename "$repo")..."
+                # Run upgrade-planning in the repo context
+                (cd "$repo" && cmd_upgrade_planning --force) || print_warning "Failed to upgrade $(basename "$repo")"
+            done
+        else
+            print_info "Run 'aidevops upgrade-planning' in each project to upgrade manually"
         fi
     fi
 }
@@ -1116,41 +1205,48 @@ cmd_upgrade_planning() {
     local todo_needs_upgrade=false
     local plans_needs_upgrade=false
     
-    # Check a planning file against its template for version/marker upgrades
-    # Usage: check_planning_file <file> <template> <label>
-    # Returns 0 if upgrade needed, 1 if up to date
-    check_planning_file_version() {
-        local file="$1" template="$2" label="$3"
-        if [[ -f "$file" ]]; then
-            if ! grep -q "TOON:meta" "$file" 2>/dev/null; then
-                print_warning "$label uses minimal template (missing TOON markers)"
-                return 0
-            fi
-            local current_ver template_ver
-            current_ver=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
-            template_ver=$(grep -A1 "TOON:meta" "$template" 2>/dev/null | tail -1 | cut -d',' -f1)
-            if [[ -n "$template_ver" ]] && [[ "$current_ver" != "$template_ver" ]]; then
-                print_warning "$label format version $current_ver -> $template_ver (adds risk field, updated estimates)"
-                return 0
-            fi
-            print_success "$label already up to date (v${current_ver})"
-            return 1
-        else
-            print_info "$label not found - will create from template"
-            return 0
-        fi
-    }
-
     # Check TODO.md
-    if check_planning_file_version "$todo_file" "$todo_template" "TODO.md"; then
+    if check_planning_file_version "$todo_file" "$todo_template"; then
+        if [[ -f "$todo_file" ]]; then
+            if ! grep -q "TOON:meta" "$todo_file" 2>/dev/null; then
+                print_warning "TODO.md uses minimal template (missing TOON markers)"
+            else
+                local current_ver template_ver
+                current_ver=$(grep -A1 "TOON:meta" "$todo_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+                template_ver=$(grep -A1 "TOON:meta" "$todo_template" 2>/dev/null | tail -1 | cut -d',' -f1)
+                print_warning "TODO.md format version $current_ver -> $template_ver (adds risk field, updated estimates)"
+            fi
+        else
+            print_info "TODO.md not found - will create from template"
+        fi
         todo_needs_upgrade=true
         needs_upgrade=true
+    else
+        local current_ver
+        current_ver=$(grep -A1 "TOON:meta" "$todo_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+        print_success "TODO.md already up to date (v${current_ver})"
     fi
     
     # Check PLANS.md
-    if check_planning_file_version "$plans_file" "$plans_template" "todo/PLANS.md"; then
+    if check_planning_file_version "$plans_file" "$plans_template"; then
+        if [[ -f "$plans_file" ]]; then
+            if ! grep -q "TOON:meta" "$plans_file" 2>/dev/null; then
+                print_warning "todo/PLANS.md uses minimal template (missing TOON markers)"
+            else
+                local current_plans_ver template_plans_ver
+                current_plans_ver=$(grep -A1 "TOON:meta" "$plans_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+                template_plans_ver=$(grep -A1 "TOON:meta" "$plans_template" 2>/dev/null | tail -1 | cut -d',' -f1)
+                print_warning "todo/PLANS.md format version $current_plans_ver -> $template_plans_ver"
+            fi
+        else
+            print_info "todo/PLANS.md not found - will create from template"
+        fi
         plans_needs_upgrade=true
         needs_upgrade=true
+    else
+        local current_plans_ver
+        current_plans_ver=$(grep -A1 "TOON:meta" "$plans_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+        print_success "todo/PLANS.md already up to date (v${current_plans_ver})"
     fi
     
     if [[ "$needs_upgrade" == "false" ]]; then
