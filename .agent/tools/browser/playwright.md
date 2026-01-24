@@ -66,7 +66,7 @@ Playwright MCP is auto-installed via `setup.sh` when running the browser tools s
 
 # Manual installation
 npx playwright install              # Install browsers (chromium, firefox, webkit)
-npx playwright-mcp@latest           # Run MCP server
+npx @playwright/mcp@latest          # Run MCP server
 ```
 
 **Check if installed:**
@@ -81,7 +81,7 @@ npx --no-install playwright --version
 {
   "playwright": {
     "command": "npx",
-    "args": ["playwright-mcp@latest"]
+    "args": ["@playwright/mcp@latest"]
   }
 }
 ```

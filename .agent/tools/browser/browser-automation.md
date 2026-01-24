@@ -18,7 +18,7 @@ tools:
 
 ## Tool Selection: Decision Tree
 
-All tools run **headless by default** (no visible window, no mouse/keyboard competition).
+Most tools run **headless by default** (no visible window, no mouse/keyboard competition). Playwriter is always headed because it attaches to your existing browser session.
 
 **Preferences** (apply in order):
 1. Fastest tool that meets requirements
@@ -92,7 +92,7 @@ How should AI understand the page?
 
 ## Performance Benchmarks
 
-Tested on macOS ARM64, all headless, warm daemon/persistent browser:
+Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of 3 runs. Reproduce via `browser-benchmark.md`.
 
 | Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
 |------|-----------|-------------|---------------|----------|------------|-----------|
@@ -327,9 +327,9 @@ async def extract():
 
     browser_config = BrowserConfig(
         headless=True,
-        proxy="socks5://127.0.0.1:1080",  # Optional
+        proxy_config={"server": "socks5://127.0.0.1:1080"},  # Optional
         use_persistent_context=True,       # Persist cookies
-        user_data_dir="/path/to/profile"   # Persist across runs
+        user_data_dir="~/.aidevops/.agent-workspace/work/crawl4ai-profile"
     )
     run_config = CrawlerRunConfig(
         extraction_strategy=JsonCssExtractionStrategy(schema)
@@ -344,7 +344,9 @@ asyncio.run(extract())
 
 **Persistence**: Use `use_persistent_context=True` + `user_data_dir` for cookie/session persistence.
 
-**Cannot**: Fill forms, click buttons, or perform interactive automation.
+**Interactions**: Limited form/click support via `CrawlerRunConfig(js_code="...")` for custom JS or C4A-Script DSL (CLICK, TYPE, PRESS commands). For complex interactive flows, use Playwright or dev-browser instead.
+
+**Note**: `use_persistent_context=True` can cause crashes with concurrent `arun_many` - use separate crawler instances for parallel persistent sessions.
 
 ### Playwriter (Your Browser)
 
@@ -382,6 +384,7 @@ Best for: Unknown page structures, self-healing automation, AI-powered extractio
 
 ```javascript
 import { Stagehand } from "@browserbasehq/stagehand";
+import { z } from "zod";
 
 const stagehand = new Stagehand({
   env: "LOCAL",
@@ -418,7 +421,7 @@ await stagehand.close();
 |--------|-----------|-------|
 | **Direct proxy config** | Playwright, Crawl4AI, Stagehand | Pass in launch/config options |
 | **SOCKS5 VPN** (IVPN/Mullvad) | Playwright, Crawl4AI, Stagehand | `proxy: { server: 'socks5://...' }` |
-| **System proxy** | All tools | `networksetup -setsocksfirewallproxy "Wi-Fi" host port` |
+| **System proxy** (macOS) | All tools | `networksetup -setsocksfirewallproxy "Wi-Fi" host port` |
 | **Browser extension** (FoxyProxy) | Playwriter | Install in your browser |
 | **Residential proxy** (sticky IP) | Playwright, Crawl4AI | Provider session ID for same IP |
 

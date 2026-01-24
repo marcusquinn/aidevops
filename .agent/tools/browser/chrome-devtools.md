@@ -151,70 +151,30 @@ await chromeDevTools.monitorNetwork({
 
 ## **Network Conditions & Throttling**
 
-### **Individual Request Throttling** (New in Chrome 136+)
+### **Global Network Throttling**
 
-Chrome DevTools now supports throttling individual network requests rather than the entire page. This enables precise testing of how your application handles slow-loading specific resources.
-
-**Use cases:**
-- Test lazy-loading behavior when specific images load slowly
-- Simulate slow API responses without affecting other requests
-- Debug race conditions when certain scripts load out of order
-- Test error handling for slow third-party resources
+Use the `emulate` tool with `networkConditions` to simulate slow networks:
 
 ```javascript
-// Throttle a specific API endpoint
-await chromeDevTools.throttleRequest({
+// Simulate slow network globally
+await chromeDevTools.emulate({
   url: "https://your-website.com",
-  requestPattern: "**/api/slow-endpoint",
-  latency: 3000,  // Add 3 second delay
-  downloadThroughput: 50 * 1024  // 50 KB/s
+  networkConditions: {
+    offline: false,
+    latency: 200,           // 200ms latency
+    downloadThroughput: 50 * 1024,  // 50 KB/s
+    uploadThroughput: 20 * 1024     // 20 KB/s
+  }
 });
 
-// Throttle specific image requests
-await chromeDevTools.throttleRequest({
+// Preset network conditions
+await chromeDevTools.emulate({
   url: "https://your-website.com",
-  requestPattern: "*.jpg",
-  latency: 2000,
-  downloadThroughput: 100 * 1024  // 100 KB/s
-});
-
-// Throttle multiple patterns with different conditions
-await chromeDevTools.throttleRequests({
-  url: "https://your-website.com",
-  rules: [
-    {
-      pattern: "**/api/critical",
-      latency: 0,
-      downloadThroughput: -1  // No throttling (priority)
-    },
-    {
-      pattern: "**/api/*",
-      latency: 1500,
-      downloadThroughput: 200 * 1024
-    },
-    {
-      pattern: "*.woff2",
-      latency: 500,
-      downloadThroughput: 50 * 1024
-    }
-  ]
+  networkConditions: "Slow 3G"  // or "Fast 3G", "Offline"
 });
 ```
 
-**Manual DevTools usage:**
-1. Open DevTools (F12) → Network panel
-2. Right-click any request → "Throttle request"
-3. Choose preset (Slow 3G, Fast 3G) or custom values
-4. Request-specific throttling persists until cleared
-
-**Comparison with page-level throttling:**
-
-| Feature | Page-Level | Individual Request |
-|---------|------------|-------------------|
-| Scope | All requests | Specific URL patterns |
-| Use case | General slow network testing | Targeted resource testing |
-| Precision | Low | High |
-| Real-world simulation | Broad conditions | Specific failure scenarios |
+**Note**: Per-request throttling is available in Chrome DevTools UI (right-click request → "Throttle request") but is not exposed via the MCP tool API. Use global network throttling above for programmatic testing.
 
 ## 📱 **Mobile Testing**
 

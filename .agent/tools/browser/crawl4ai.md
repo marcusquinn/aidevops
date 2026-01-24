@@ -40,7 +40,8 @@ tools:
 - Persistent context with `user_data_dir`
 
 **Performance**: Structured extraction 2.5s (30 items), multi-page 3.8s (3 URLs), reliability 0.52s avg (fastest).
-Purpose-built for extraction - cannot fill forms or click buttons.
+Benchmarked 2026-01-24, macOS ARM64, headless, median of 3 runs. Reproduce via `browser-benchmark.md`.
+Purpose-built for extraction. Limited interaction via `js_code` parameter or C4A-Script DSL (CLICK, TYPE, PRESS). For complex interactive flows, use Playwright.
 
 **Parallel**: `arun_many(urls)` for built-in parallel crawling (tested: 1.7x speedup over sequential). Multiple `AsyncWebCrawler` instances for fully isolated browsers.
 

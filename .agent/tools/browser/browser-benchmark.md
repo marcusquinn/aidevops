@@ -120,7 +120,7 @@ fi
 
 # dev-browser
 if [ -d ~/.aidevops/dev-browser/skills/dev-browser ]; then
-  if curl -s http://localhost:9222/json/version &>/dev/null; then
+  if curl -s --max-time 2 http://localhost:9222/json/version &>/dev/null; then
     echo "[OK] dev-browser (server running)"
   else
     echo "[!!] dev-browser (installed, server not running - run: dev-browser-helper.sh start-headless)"
@@ -224,14 +224,15 @@ run();
 ```typescript
 // Run via: cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx bench.ts
 import { connect, waitForPageLoad } from "@/client.js";
+import type { Page } from "playwright";
 
 const TESTS = {
-  async navigate(page: any) {
+  async navigate(page: Page) {
     await page.goto('https://the-internet.herokuapp.com/');
     await waitForPageLoad(page);
     await page.screenshot({ path: '/tmp/bench-dev-nav.png' });
   },
-  async formFill(page: any) {
+  async formFill(page: Page) {
     await page.goto('https://the-internet.herokuapp.com/login');
     await waitForPageLoad(page);
     await page.fill('#username', 'tomsmith');
@@ -239,15 +240,15 @@ const TESTS = {
     await page.click('button[type="submit"]');
     await page.waitForURL('**/secure');
   },
-  async extract(page: any) {
+  async extract(page: Page) {
     await page.goto('https://the-internet.herokuapp.com/challenging_dom');
     await waitForPageLoad(page);
-    const rows = await page.$$eval('table tbody tr', (trs: any[]) =>
-      trs.slice(0, 5).map(tr => tr.textContent.trim())
+    const rows = await page.$$eval('table tbody tr', (trs: Element[]) =>
+      trs.slice(0, 5).map(tr => tr.textContent?.trim() ?? '')
     );
     if (rows.length < 5) throw new Error('Expected 5+ rows');
   },
-  async multiStep(page: any) {
+  async multiStep(page: Page) {
     await page.goto('https://the-internet.herokuapp.com/');
     await waitForPageLoad(page);
     await page.click('a[href="/abtest"]');
