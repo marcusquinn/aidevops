@@ -413,6 +413,16 @@ install_packages() {
 check_requirements() {
     print_info "Checking system requirements..."
     
+    # Ensure Homebrew is in PATH (macOS Apple Silicon)
+    if [[ -x "/opt/homebrew/bin/brew" ]] && ! echo "$PATH" | grep -q "/opt/homebrew/bin"; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+        print_warning "Homebrew not in PATH - added for this session"
+        echo ""
+        echo "  To fix permanently, add to ~/.bash_profile or ~/.zshrc:"
+        echo "    eval \"\$(/opt/homebrew/bin/brew shellenv)\""
+        echo ""
+    fi
+    
     local missing_deps=()
     
     # Check for required commands
