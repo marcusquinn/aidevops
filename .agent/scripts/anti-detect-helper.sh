@@ -88,7 +88,7 @@ setup_all() {
     echo -e "${BLUE}Setting up anti-detect tools (engine: $engine)...${NC}"
 
     # Create directories
-    mkdir -p "$PROFILES_DIR"/{persistent,clean/default,warmup}
+    mkdir -p "$PROFILES_DIR"/{persistent,clean/default,warmup,disposable}
     mkdir -p "$VENV_DIR"
 
     if [[ "$engine" == "all" || "$engine" == "firefox" ]]; then
@@ -160,6 +160,31 @@ setup_rebrowser() {
 
 # ─── Profile Management ─────────────────────────────────────────────────────
 
+validate_profile_name() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        echo -e "${RED}Error: Profile name cannot be empty.${NC}"
+        return 1
+    fi
+    if [[ "$name" =~ [/\\] || "$name" == *..* ]]; then
+        echo -e "${RED}Error: Profile name cannot contain '/', '\\', or '..'.${NC}"
+        return 1
+    fi
+    if [[ "$name" == -* ]]; then
+        echo -e "${RED}Error: Profile name cannot start with '-'.${NC}"
+        return 1
+    fi
+    if ! [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo -e "${RED}Error: Profile name must only contain letters, numbers, '.', '_', or '-'.${NC}"
+        return 1
+    fi
+    if [[ ${#name} -gt 64 ]]; then
+        echo -e "${RED}Error: Profile name must be 64 characters or fewer.${NC}"
+        return 1
+    fi
+    return 0
+}
+
 profile_create() {
     local name="$1"
     local profile_type="persistent"
@@ -179,6 +204,8 @@ profile_create() {
             *) shift ;;
         esac
     done
+
+    validate_profile_name "$name" || return 1
 
     # Map profile type to directory name
     local dir_type="$profile_type"
@@ -238,7 +265,7 @@ profile_list() {
     printf "%-20s %-12s %-10s %-10s %s\n" "NAME" "TYPE" "OS" "ENGINE" "PROXY"
     echo "─────────────────────────────────────────────────────────────"
 
-    for type_dir in "$PROFILES_DIR"/{persistent,clean,warmup}/*/; do
+    for type_dir in "$PROFILES_DIR"/{persistent,clean,warmup,disposable}/*/; do
         [[ -d "$type_dir" ]] || continue
         local name
         name=$(basename "$type_dir")
@@ -303,6 +330,7 @@ profile_show() {
 
 profile_delete() {
     local name="$1"
+    validate_profile_name "$name" || return 1
     local profile_dir
     profile_dir=$(find_profile_dir "$name")
 
@@ -390,11 +418,13 @@ profile_update() {
                 shift 2
                 ;;
             --notes)
-                python3 -c "
-import json
-with open('$profile_dir/metadata.json', 'r+') as f:
+                PROFILE_NOTES="$2" PROFILE_META="$profile_dir/metadata.json" python3 -c "
+import json, os
+meta_path = os.environ['PROFILE_META']
+notes_val = os.environ['PROFILE_NOTES']
+with open(meta_path, 'r+') as f:
     d = json.load(f)
-    d['notes'] = '$2'
+    d['notes'] = notes_val
     f.seek(0)
     json.dump(d, f, indent=2)
     f.truncate()
@@ -434,7 +464,7 @@ launch_browser() {
     fi
 
     if [[ "$engine" == "random" ]]; then
-        engine=$(shuf -e chromium firefox -n 1)
+        engine=$(python3 -c "import random; print(random.choice(['chromium','firefox']))")
     fi
 
     # Update last_used timestamp
@@ -581,6 +611,8 @@ launch_chromium_stealth() {
         fi
         if [[ -n "$profile_dir" && -f "$profile_dir/proxy.json" ]]; then
             proxy_server=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('server',''))" 2>/dev/null)
+            proxy_username=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('username',''))" 2>/dev/null)
+            proxy_password=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('password',''))" 2>/dev/null)
         fi
     fi
 
@@ -609,8 +641,13 @@ const { chromium } = require('playwright');
     };
 
     const proxyServer = '$proxy_server';
+    const proxyUsername = '${proxy_username:-}';
+    const proxyPassword = '${proxy_password:-}';
     if (proxyServer) {
-        launchOpts.proxy = { server: proxyServer };
+        const proxyConfig = { server: proxyServer };
+        if (proxyUsername) proxyConfig.username = proxyUsername;
+        if (proxyPassword) proxyConfig.password = proxyPassword;
+        launchOpts.proxy = proxyConfig;
     }
 
     const userDataDir = '$user_data_dir';
@@ -1076,7 +1113,7 @@ cookies_clear() {
 
 find_profile_dir() {
     local name="$1"
-    for type in persistent clean warmup; do
+    for type in persistent clean warmup disposable; do
         local dir="$PROFILES_DIR/$type/$name"
         if [[ -d "$dir" ]]; then
             echo "$dir"
