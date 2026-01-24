@@ -168,6 +168,77 @@ cleanup_deprecated_paths() {
     return 0
 }
 
+# Remove deprecated MCP entries from opencode.json
+# These MCPs have been replaced by curl-based subagents (zero context cost)
+cleanup_deprecated_mcps() {
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    if [[ ! -f "$opencode_config" ]]; then
+        return 0
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        return 0
+    fi
+    
+    # MCPs replaced by curl subagents in v2.79.0
+    local deprecated_mcps=(
+        "hetzner-awardsapp"
+        "hetzner-brandlight"
+        "hetzner-marcusquinn"
+        "hetzner-storagebox"
+        "ahrefs"
+        "serper"
+        "dataforseo"
+        "hostinger-api"
+        "shadcn"
+    )
+    
+    # Tool rules to remove (for MCPs that no longer exist)
+    local deprecated_tools=(
+        "hetzner-*"
+        "hostinger-api_*"
+        "ahrefs_*"
+        "dataforseo_*"
+        "serper_*"
+        "shadcn_*"
+    )
+    
+    local cleaned=0
+    local tmp_config
+    tmp_config=$(mktemp)
+    
+    cp "$opencode_config" "$tmp_config"
+    
+    for mcp in "${deprecated_mcps[@]}"; do
+        if jq -e ".mcp[\"$mcp\"]" "$tmp_config" > /dev/null 2>&1; then
+            jq "del(.mcp[\"$mcp\"])" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((cleaned++))
+        fi
+    done
+    
+    for tool in "${deprecated_tools[@]}"; do
+        if jq -e ".tools[\"$tool\"]" "$tmp_config" > /dev/null 2>&1; then
+            jq "del(.tools[\"$tool\"])" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+        fi
+    done
+    
+    # Also remove deprecated tool refs from SEO agent
+    if jq -e '.agent.SEO.tools["dataforseo_*"]' "$tmp_config" > /dev/null 2>&1; then
+        jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+    fi
+    
+    if [[ $cleaned -gt 0 ]]; then
+        create_backup_with_rotation "$opencode_config" "opencode"
+        mv "$tmp_config" "$opencode_config"
+        print_info "Removed $cleaned deprecated MCP(s) from opencode.json (replaced by curl subagents)"
+    else
+        rm -f "$tmp_config"
+    fi
+    
+    return 0
+}
+
 # Migrate old config-backups to new per-type backup structure
 # This runs once to clean up the legacy backup directory
 migrate_old_backups() {
@@ -2662,98 +2733,48 @@ EOF
 }
 
 setup_seo_mcps() {
-    print_info "Setting up SEO MCP servers..."
-
-    local has_node=false
-    local has_python=false
-    local has_uv=false
-
-    # Check Node.js
-    if command -v node &> /dev/null; then
-        has_node=true
-    fi
-
-    # Check Python (prefer Homebrew/pyenv over system)
-    if find_python3 &> /dev/null; then
-        has_python=true
-    fi
-
-    # Check uv (Python package manager)
-    if command -v uv &> /dev/null; then
-        has_uv=true
-    elif command -v uvx &> /dev/null; then
-        has_uv=true
-    fi
-
-    # DataForSEO MCP (Node.js based)
-    if [[ "$has_node" == "true" ]]; then
-        print_info "DataForSEO MCP available via: npx dataforseo-mcp-server"
-        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
-        print_info "  DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD"
-    else
-        print_warning "Node.js not found - DataForSEO MCP requires Node.js"
-    fi
-
-    # Serper MCP (Python based, uses uv/uvx)
-    if [[ "$has_uv" == "true" ]]; then
-        print_info "Serper MCP available via: uvx serper-mcp-server"
-        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
-        print_info "  SERPER_API_KEY"
-    elif [[ "$has_python" == "true" ]]; then
-        print_info "Serper MCP available via: pip install serper-mcp-server"
-        print_info "Then run: python3 -m serper_mcp_server"
-        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
-        print_info "  SERPER_API_KEY"
-        
-        # Offer to install uv for better experience
-        read -r -p "Install uv (recommended Python package manager)? (y/n): " install_uv
-        if [[ "$install_uv" == "y" ]]; then
-            print_info "Installing uv..."
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            if [[ $? -eq 0 ]]; then
-                print_success "uv installed successfully"
-                print_info "Restart your terminal or run: source ~/.bashrc (or ~/.zshrc)"
-            else
-                print_warning "Failed to install uv"
-            fi
-        fi
-    else
-        print_warning "Python not found - Serper MCP requires Python 3.11+"
-    fi
-
+    print_info "Setting up SEO integrations..."
+    
+    # SEO services use curl-based subagents (no MCP needed)
+    # Subagents: serper.md, dataforseo.md, ahrefs.md, google-search-console.md
+    print_info "SEO uses curl-based subagents (zero context cost until invoked)"
+    
     # Check if credentials are configured
     if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
         # shellcheck source=/dev/null
         source "$HOME/.config/aidevops/mcp-env.sh"
         
-        if [[ -n "$DATAFORSEO_USERNAME" && -n "$DATAFORSEO_PASSWORD" ]]; then
-            print_success "DataForSEO credentials configured"
-        else
-            print_info "DataForSEO: Set credentials with:"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
-        fi
+        [[ -n "$DATAFORSEO_USERNAME" ]] && print_success "DataForSEO credentials configured" || \
+            print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in mcp-env.sh"
         
-        if [[ -n "$SERPER_API_KEY" ]]; then
-            print_success "Serper API key configured"
-        else
-            print_info "Serper: Set API key with:"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY your_key"
-        fi
+        [[ -n "$SERPER_API_KEY" ]] && print_success "Serper API key configured" || \
+            print_info "Serper: set SERPER_API_KEY in mcp-env.sh"
+        
+        [[ -n "$AHREFS_API_KEY" ]] && print_success "Ahrefs API key configured" || \
+            print_info "Ahrefs: set AHREFS_API_KEY in mcp-env.sh"
     else
-        print_info "Configure SEO API credentials:"
-        print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh setup"
+        print_info "Configure SEO API credentials in ~/.config/aidevops/mcp-env.sh"
+    fi
+    
+    # GSC uses MCP (OAuth2 complexity warrants it)
+    local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+    if [[ -f "$gsc_creds" ]]; then
+        print_success "Google Search Console credentials configured"
+    else
+        print_info "GSC: Create service account JSON at $gsc_creds"
+        print_info "  See: ~/.aidevops/agents/seo/google-search-console.md"
     fi
 
-    print_info "SEO MCP documentation: ~/.aidevops/agents/seo/"
+    print_info "SEO documentation: ~/.aidevops/agents/seo/"
     return 0
 }
 
-# Setup Google Analytics MCP (disabled by default)
+# Setup Google Analytics MCP (uses shared GSC service account credentials)
 setup_google_analytics_mcp() {
     print_info "Setting up Google Analytics MCP..."
     
     local opencode_config="$HOME/.config/opencode/opencode.json"
+    local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
     
     # Check if opencode.json exists
     if [[ ! -f "$opencode_config" ]]; then
@@ -2776,28 +2797,66 @@ setup_google_analytics_mcp() {
         return 0
     fi
     
+    # Auto-detect credentials from shared GSC service account
+    local creds_path=""
+    local project_id=""
+    local enable_mcp="false"
+    
+    if [[ -f "$gsc_creds" ]]; then
+        creds_path="$gsc_creds"
+        # Extract project_id from service account JSON
+        project_id=$(jq -r '.project_id // empty' "$gsc_creds" 2>/dev/null)
+        if [[ -n "$project_id" ]]; then
+            enable_mcp="true"
+            print_success "Found GSC credentials - sharing with Google Analytics MCP"
+            print_info "Project: $project_id"
+        fi
+    fi
+    
     # Check if google-analytics-mcp already exists in config
     if jq -e '.mcp["google-analytics-mcp"]' "$opencode_config" > /dev/null 2>&1; then
-        print_info "Google Analytics MCP already configured in OpenCode"
+        # Update existing entry if we have credentials now
+        if [[ "$enable_mcp" == "true" ]]; then
+            local tmp_config
+            tmp_config=$(mktemp)
+            if jq --arg creds "$creds_path" --arg proj "$project_id" \
+                '.mcp["google-analytics-mcp"].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
+                 .mcp["google-analytics-mcp"].environment.GOOGLE_PROJECT_ID = $proj |
+                 .mcp["google-analytics-mcp"].enabled = true' \
+                "$opencode_config" > "$tmp_config" 2>/dev/null; then
+                mv "$tmp_config" "$opencode_config"
+                print_success "Updated Google Analytics MCP with GSC credentials (enabled)"
+            else
+                rm -f "$tmp_config"
+                print_warning "Failed to update Google Analytics MCP config"
+            fi
+        else
+            print_info "Google Analytics MCP already configured in OpenCode"
+        fi
         return 0
     fi
     
-    # Add google-analytics-mcp to opencode.json (disabled by default)
+    # Add google-analytics-mcp to opencode.json
     local tmp_config
     tmp_config=$(mktemp)
     
-    if jq '.mcp["google-analytics-mcp"] = {
+    if jq --arg creds "$creds_path" --arg proj "$project_id" --argjson enabled "$enable_mcp" \
+        '.mcp["google-analytics-mcp"] = {
         "type": "local",
         "command": ["pipx", "run", "analytics-mcp"],
         "environment": {
-            "GOOGLE_APPLICATION_CREDENTIALS": "",
-            "GOOGLE_PROJECT_ID": ""
+            "GOOGLE_APPLICATION_CREDENTIALS": $creds,
+            "GOOGLE_PROJECT_ID": $proj
         },
-        "enabled": false
+        "enabled": $enabled
     }' "$opencode_config" > "$tmp_config" 2>/dev/null; then
         mv "$tmp_config" "$opencode_config"
-        print_success "Added Google Analytics MCP to OpenCode (disabled by default)"
-        print_info "To enable: Set credentials and change enabled to true in opencode.json"
+        if [[ "$enable_mcp" == "true" ]]; then
+            print_success "Added Google Analytics MCP to OpenCode (enabled with GSC credentials)"
+        else
+            print_success "Added Google Analytics MCP to OpenCode (disabled - no credentials found)"
+            print_info "To enable: Create service account JSON at $gsc_creds"
+        fi
         print_info "Or use the google-analytics subagent which enables it automatically"
     else
         rm -f "$tmp_config"
@@ -2956,6 +3015,7 @@ main() {
     confirm_step "Migrate old backups to new structure" && migrate_old_backups
     confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
+    confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
@@ -2970,7 +3030,7 @@ main() {
     confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
     confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
     confirm_step "Setup Beads task management" && setup_beads
-    confirm_step "Setup SEO MCP servers (DataForSEO, Serper)" && setup_seo_mcps
+    confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
     confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
     confirm_step "Setup browser automation tools" && setup_browser_tools
     confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
@@ -3017,8 +3077,13 @@ echo "  aidevops uninstall    - Remove aidevops"
     echo "• Augment Context Engine - Cloud semantic codebase retrieval"
     echo "• Context7               - Real-time library documentation"
     echo "• osgrep                 - Local semantic search (100% private)"
+    echo "• GSC                    - Google Search Console (MCP + OAuth2)"
+    echo "• Google Analytics       - Analytics data (shared GSC credentials)"
+    echo ""
+    echo "SEO Integrations (curl subagents - no MCP overhead):"
     echo "• DataForSEO             - Comprehensive SEO data APIs"
     echo "• Serper                 - Google Search API"
+    echo "• Ahrefs                 - Backlink and keyword data"
     echo ""
     echo "DSPy & DSPyGround Integration:"
     echo "• ./.agent/scripts/dspy-helper.sh        - DSPy prompt optimization toolkit"
