@@ -1,7 +1,7 @@
 ---
 mode: subagent
 tools:
-  - bash
+  bash: true
 ---
 # Pre-Edit Git Check - Detailed Workflow
 
