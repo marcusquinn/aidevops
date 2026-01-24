@@ -30,6 +30,9 @@ tools:
 - Perplexity MCP: `PERPLEXITY_API_KEY` required
 - Google Search Console: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON)
 
+**Document Processing**:
+- Unstract MCP: `UNSTRACT_API_KEY` + `UNSTRACT_API_BASE_URL` required (Docker-based)
+
 **Development**:
 - Claude Code MCP: Claude Code automation (forked server)
 - Next.js DevTools MCP
@@ -59,6 +62,10 @@ This document provides comprehensive setup and usage instructions for advanced M
 
 - **Claude Code MCP**: Run Claude Code as an MCP server for automation
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
+
+### **📄 Document Processing**
+
+- **Unstract MCP**: LLM-powered structured data extraction from unstructured documents (PDF, images, DOCX)
 
 ### **📧 CRM & Marketing**
 
@@ -201,6 +208,57 @@ export FLUENTCRM_API_PASSWORD="your_application_password"
 **Available Tools**: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
 
 See `services/crm/fluentcrm.md` for detailed documentation.
+
+### **Unstract MCP**
+
+```bash
+# 1. Sign up at https://unstract.com/start-for-free/ (14-day free trial)
+# 2. Create a Prompt Studio project, define schema, deploy as API
+# 3. Store credentials in ~/.config/aidevops/mcp-env.sh:
+export UNSTRACT_API_KEY="your_api_key_here"
+export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
+```
+
+**For OpenCode** - Docker-based, disabled globally, enabled on-demand:
+
+```json
+{
+  "unstract": {
+    "type": "local",
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL=\"$UNSTRACT_API_BASE_URL\" unstract/mcp-server unstract"],
+    "enabled": false
+  }
+}
+```
+
+**For Claude Desktop** (Docker):
+
+```json
+{
+  "mcpServers": {
+    "unstract_tool": {
+      "command": "/usr/local/bin/docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "/tmp:/tmp",
+        "-e", "UNSTRACT_API_KEY",
+        "-e", "API_BASE_URL",
+        "unstract/mcp-server", "unstract"
+      ],
+      "env": {
+        "UNSTRACT_API_KEY": "your_api_key",
+        "API_BASE_URL": "https://us-central.unstract.com/deployment/api/.../"
+      }
+    }
+  }
+}
+```
+
+**Per-Agent Enablement**: The `services/document-processing/unstract.md` subagent has `unstract_tool: true` in its tools section. Agents needing document extraction reference this subagent.
+
+**Available Tools**: `unstract_tool` - submits files, polls for completion, returns structured JSON. Supports optional metadata and metrics.
+
+See `services/document-processing/unstract.md` for detailed documentation.
 
 ## 🔧 **Configuration Examples**
 

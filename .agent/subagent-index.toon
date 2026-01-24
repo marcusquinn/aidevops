@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[31]{folder,purpose,key_files}:
+<!--TOON:subagents[32]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|google-search-console|gsc-sitemaps|site-crawler|eeat-score
@@ -54,6 +54,7 @@ services/communications/,Communications - SMS and voice,twilio|telfon
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/accounting/,Accounting integration - invoicing,quickfile
+services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->
 
 <!--TOON:workflows[12]{name,file,purpose}:
