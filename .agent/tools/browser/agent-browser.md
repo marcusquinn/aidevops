@@ -45,7 +45,11 @@ agent-browser close
 **Performance** (warm daemon): Navigate+screenshot 1.9s, form fill 1.4s, reliability 0.6s avg.
 Cold-start penalty ~3-5s on first command while daemon launches.
 
-**Limitations**: No proxy support, no browser extensions.
+**Parallel**: `--session s1/s2/s3` for isolated sessions (tested: 3 parallel in 2.0s). Each session has its own browser context.
+
+**AI Page Understanding**: `agent-browser snapshot -i` returns ARIA tree with interactive refs. Use refs (`@e1`, `@e2`) for deterministic element targeting. Faster than screenshots for AI decision-making.
+
+**Limitations**: No proxy support, no browser extensions, no Chrome DevTools MCP pairing.
 
 <!-- AI-CONTEXT-END -->
 

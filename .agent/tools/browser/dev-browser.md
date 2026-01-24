@@ -38,7 +38,15 @@ tools:
 - Cookies (stay logged into sites)
 - localStorage and sessionStorage
 - Browser cache
-- Extension data (install extensions manually in the browser window)
+- Extension data (install extensions in headed mode, persists across restarts)
+
+**Extensions**: Install in headed mode (`start` not `start-headless`), then extensions persist in profile. Password managers need manual unlock once per session.
+
+**Parallel**: Named pages (`client.page("name")`) share the same profile (not isolated). For isolation, use Playwright direct with multiple contexts.
+
+**AI Page Understanding**: Use ARIA snapshots (`client.getAISnapshot("main")`) - returns structured element tree with refs. Faster and cheaper than screenshots for AI automation.
+
+**Chrome DevTools MCP**: Already on port 9222 - connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage.
 
 **When to Use**:
 - Testing local dev servers (localhost:3000, etc.)
@@ -46,9 +54,11 @@ tools:
 - Iterative debugging with visual feedback
 - When you need to stay logged into sites across sessions
 - When you have source code access for selectors
+- When you want Chrome DevTools MCP inspection alongside automation
 
 **When NOT to Use**:
 - Need to use YOUR existing Chrome profile -> use Playwriter
+- Need parallel isolated sessions -> use Playwright direct
 - Natural language automation -> use Stagehand
 
 <!-- AI-CONTEXT-END -->

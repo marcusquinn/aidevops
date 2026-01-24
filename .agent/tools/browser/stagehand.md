@@ -38,6 +38,14 @@ tools:
 **Performance**: Navigate 7.7s, form fill 2.6s, extraction 3.5s, reliability 1.7s avg.
 Slowest tool due to AI model overhead. Without API key, works as a Playwright wrapper (use Playwright direct instead for speed).
 
+**Parallel**: Multiple Stagehand instances (each launches own browser). Full isolation but slow due to AI overhead per instance. For parallel speed, use Playwright direct.
+
+**Extensions**: Possible via Playwright's `launchPersistentContext` (Stagehand uses Playwright underneath), but untested. Use Playwriter instead for extension access.
+
+**AI Page Understanding**: Built-in - `observe()` returns available actions, `extract()` returns structured data with schemas. Stagehand IS the AI understanding layer. No need for separate ARIA/screenshot analysis.
+
+**Chrome DevTools MCP**: Possible (Stagehand launches Chromium), but adds overhead to an already slow tool. Use Playwright direct + DevTools instead.
+
 **Headless**: Set `headless: true` in config (default for benchmarks).
 <!-- AI-CONTEXT-END -->
 

@@ -33,9 +33,16 @@ This is the underlying engine used by dev-browser, agent-browser, and Stagehand.
 - Cross-browser testing (Chromium, Firefox, WebKit)
 - Device emulation (iPhone, Samsung, iPad)
 - Network throttling (Fast 3G, Slow 3G, Offline)
+- Browser extensions via `launchPersistentContext` + `--load-extension`
+- Parallel: 5 isolated contexts in 2.1s, 3 browsers in 1.9s, 10 pages in 1.8s
+- AI page understanding: `page.locator('body').ariaSnapshot()` (~0.01s, 50-200 tokens)
 - Integration: Works with Chrome DevTools MCP, dev-browser, Stagehand
 
-**When to use directly**: Maximum speed, full control, proxy support, or when other wrappers add unnecessary overhead.
+**When to use directly**: Maximum speed, full control, proxy support, parallel instances, extensions, or when other wrappers add unnecessary overhead.
+
+**Extensions**: Use `launchPersistentContext` with `--load-extension` arg. Requires bundled Chromium (not Chrome/Brave channel). Password managers load but need manual unlock.
+
+**Chrome DevTools MCP**: Connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage alongside Playwright automation.
 
 **Test types**:
   - Cross-browser: `runTest()`, `testBrowserFeatures()`
