@@ -54,7 +54,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
-  - [ ] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1
+  - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
   - [x] t068.3 Lossless AGENTS.md Compression ~3h blocked-by:t068.1 completed:2026-01-24
   - [x] t068.4 TOON Mailbox System (mail-helper.sh) ~4h blocked-by:none completed:2026-01-24
   - [x] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4 completed:2026-01-24
@@ -159,7 +159,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:backlog[49]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status,blocked_by,blocks,parent}:
 t068,Multi-Agent Orchestration & Token Efficiency,,plan|orchestration|tokens|agents|mailbox|toon|compaction,5d,3d,1d,1d,2026-01-23T00:00Z,in_progress,,,
 t068.1,Custom System Prompt (prompts/build.txt),,orchestration|tokens,2h,1.5h,30m,,2026-01-23T00:00Z,completed,,,t068
-t068.2,Compaction Plugin (opencode-aidevops-plugin),,orchestration|plugin|compaction,4h,3h,1h,,2026-01-23T00:00Z,pending,t068.1,,t068
+t068.2,Compaction Plugin (opencode-aidevops-plugin),,orchestration|plugin|compaction,4h,3h,1h,,2026-01-23T00:00Z,completed,t068.1,,t068
 t068.3,Lossless AGENTS.md Compression,,tokens|compression|toon,3h,2h,30m,30m,2026-01-23T00:00Z,completed,t068.1,,t068
 t068.4,TOON Mailbox System (mail-helper.sh),,orchestration|mailbox|toon,4h,3h,1h,,2026-01-23T00:00Z,completed,,,t068
 t068.5,Agent Registry & Worker Mailbox Awareness,,orchestration|agents|mailbox,3h,2h,30m,30m,2026-01-23T00:00Z,completed,t068.4,,t068
