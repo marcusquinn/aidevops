@@ -31,10 +31,20 @@ source ~/.config/aidevops/mcp-env.sh
 
 ## API Endpoints
 
-### Site Explorer - Overview
+All Site Explorer endpoints require `date` (YYYY-MM-DD) and most list endpoints require `select` (comma-separated fields).
+
+### Domain Rating
 
 ```bash
-curl -s "https://api.ahrefs.com/v3/site-explorer/overview?target=example.com&mode=domain" \
+curl -s "https://api.ahrefs.com/v3/site-explorer/domain-rating?target=example.com&date=$(date +%Y-%m-%d)" \
+  -H "Authorization: Bearer $AHREFS_API_KEY" \
+  -H "Accept: application/json"
+```
+
+### Metrics (Overview)
+
+```bash
+curl -s "https://api.ahrefs.com/v3/site-explorer/metrics?target=example.com&mode=domain&date=$(date +%Y-%m-%d)" \
   -H "Authorization: Bearer $AHREFS_API_KEY" \
   -H "Accept: application/json"
 ```
@@ -42,28 +52,28 @@ curl -s "https://api.ahrefs.com/v3/site-explorer/overview?target=example.com&mod
 ### Backlinks
 
 ```bash
-curl -s "https://api.ahrefs.com/v3/site-explorer/backlinks?target=example.com&mode=domain&limit=50" \
+curl -s "https://api.ahrefs.com/v3/site-explorer/all-backlinks?target=example.com&mode=domain&date=$(date +%Y-%m-%d)&limit=50&select=url_from,ahrefs_rank,anchor,first_seen" \
   -H "Authorization: Bearer $AHREFS_API_KEY"
 ```
 
 ### Referring Domains
 
 ```bash
-curl -s "https://api.ahrefs.com/v3/site-explorer/refdomains?target=example.com&mode=domain&limit=50" \
+curl -s "https://api.ahrefs.com/v3/site-explorer/refdomains?target=example.com&mode=domain&date=$(date +%Y-%m-%d)&limit=50&select=domain,domain_rating,backlinks" \
   -H "Authorization: Bearer $AHREFS_API_KEY"
 ```
 
 ### Organic Keywords
 
 ```bash
-curl -s "https://api.ahrefs.com/v3/site-explorer/organic-keywords?target=example.com&mode=domain&country=us&limit=50" \
+curl -s "https://api.ahrefs.com/v3/site-explorer/organic-keywords?target=example.com&mode=domain&country=us&date=$(date +%Y-%m-%d)&limit=50&select=keyword,position,volume,traffic" \
   -H "Authorization: Bearer $AHREFS_API_KEY"
 ```
 
-### Organic Pages
+### Top Pages
 
 ```bash
-curl -s "https://api.ahrefs.com/v3/site-explorer/top-pages?target=example.com&mode=domain&country=us&limit=50" \
+curl -s "https://api.ahrefs.com/v3/site-explorer/top-pages?target=example.com&mode=domain&country=us&date=$(date +%Y-%m-%d)&limit=50&select=url,sum_traffic,keywords" \
   -H "Authorization: Bearer $AHREFS_API_KEY"
 ```
 
@@ -79,26 +89,21 @@ curl -s -X POST "https://api.ahrefs.com/v3/keywords-explorer/google/volume" \
 ### Keywords Explorer - Suggestions
 
 ```bash
-curl -s "https://api.ahrefs.com/v3/keywords-explorer/google/keyword-ideas?keyword=seed+keyword&country=us&limit=50" \
-  -H "Authorization: Bearer $AHREFS_API_KEY"
-```
-
-### Domain Rating
-
-```bash
-curl -s "https://api.ahrefs.com/v3/site-explorer/domain-rating?target=example.com" \
+curl -s "https://api.ahrefs.com/v3/keywords-explorer/google/keyword-ideas?keyword=seed+keyword&country=us&limit=50&select=keyword,volume,difficulty" \
   -H "Authorization: Bearer $AHREFS_API_KEY"
 ```
 
 ## Parameters
 
-| Param | Description | Values |
-|-------|-------------|--------|
-| `target` | Domain or URL to analyze | `example.com` |
-| `mode` | Analysis scope | `domain`, `prefix`, `exact` |
-| `country` | Country for organic data | `us`, `gb`, `de`, etc. |
-| `limit` | Results per page | `10`-`1000` |
-| `offset` | Pagination offset | `0`, `50`, `100` |
+| Param | Description | Values | Required |
+|-------|-------------|--------|----------|
+| `target` | Domain or URL to analyze | `example.com` | Yes |
+| `date` | Data snapshot date | `YYYY-MM-DD` | Yes (most endpoints) |
+| `mode` | Analysis scope | `domain`, `prefix`, `exact` | Yes (most) |
+| `select` | Fields to return | Comma-separated field names | Yes (list endpoints) |
+| `country` | Country for organic data | `us`, `gb`, `de`, etc. | For organic endpoints |
+| `limit` | Results per page | `10`-`1000` | No (default varies) |
+| `offset` | Pagination offset | `0`, `50`, `100` | No |
 
 ## Setup
 

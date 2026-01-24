@@ -51,10 +51,11 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 **Critical Rules**:
 - Git check before edits (see above)
 - File discovery via Bash (see above)
+- **ALWAYS Read before Edit/Write** - Edit and Write tools FAIL if the file hasn't been Read in this conversation. Read the file first, then edit. No exceptions.
+- Re-read files immediately before editing (stale reads cause errors)
 - Context budget: Never >100K tokens per operation
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - NEVER expose credentials in output/logs
-- Re-read files immediately before editing (stale reads cause errors)
 - Confirm destructive operations before execution
 
 **Quality**: SonarCloud A-grade, ShellCheck zero violations, `local var="$1"` pattern, explicit returns.
