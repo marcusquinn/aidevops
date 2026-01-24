@@ -828,7 +828,7 @@ cmd_help() {
     echo "  credential-helper.sh switch client-acme"
     echo ""
     echo "  # Per-project tenant (overrides global)"
-    echo "  cd ~/projects/acme-app"
+    echo "  cd ~/projects/acme-app" || exit
     echo "  credential-helper.sh use client-acme"
     echo ""
     echo "  # Copy shared keys to new tenant"

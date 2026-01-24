@@ -317,7 +317,7 @@ main() {
         "tenant"|"tenants")
             # Delegate to multi-tenant credential helper
             local script_dir
-            script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
             bash "$script_dir/credential-helper.sh" "$@"
             ;;
         "help"|"--help"|"-h"|"")
