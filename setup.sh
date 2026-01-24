@@ -28,6 +28,27 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Find best python3 binary (prefer Homebrew/pyenv over system)
+find_python3() {
+    local candidates=(
+        "/opt/homebrew/bin/python3"
+        "/usr/local/bin/python3"
+        "$HOME/.pyenv/shims/python3"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    # Fallback to PATH
+    if command -v python3 &> /dev/null; then
+        command -v python3
+        return 0
+    fi
+    return 1
+}
+
 # Confirm step in interactive mode
 # Usage: confirm_step "Step description" && function_to_run
 # Returns: 0 if confirmed or not interactive, 1 if skipped
@@ -1890,14 +1911,17 @@ setup_python_env() {
     print_info "Setting up Python environment for DSPy..."
 
     # Check if Python 3 is available
-    if ! command -v python3 &> /dev/null; then
+    local python3_bin
+    if ! python3_bin=$(find_python3); then
         print_warning "Python 3 not found - DSPy setup skipped"
         print_info "Install Python 3.8+ to enable DSPy integration"
         return
     fi
 
-    local python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
-    local version_check=$(python3 -c "import sys; print(1 if sys.version_info >= (3, 8) else 0)")
+    local python_version
+    python_version=$("$python3_bin" --version | cut -d' ' -f2 | cut -d'.' -f1-2)
+    local version_check
+    version_check=$("$python3_bin" -c "import sys; print(1 if sys.version_info >= (3, 8) else 0)")
 
     if [[ "$version_check" != "1" ]]; then
         print_warning "Python 3.8+ required for DSPy, found $python_version - DSPy setup skipped"
@@ -2364,10 +2388,11 @@ setup_ai_orchestration() {
     
     local has_python=false
     
-    # Check Python
-    if command -v python3 &> /dev/null; then
+    # Check Python (prefer Homebrew/pyenv over system)
+    local python3_bin
+    if python3_bin=$(find_python3); then
         local python_version
-        python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
+        python_version=$("$python3_bin" --version 2>&1 | cut -d' ' -f2)
         local major minor
         major=$(echo "$python_version" | cut -d. -f1)
         minor=$(echo "$python_version" | cut -d. -f2)
@@ -2635,8 +2660,8 @@ setup_seo_mcps() {
         has_node=true
     fi
 
-    # Check Python
-    if command -v python3 &> /dev/null; then
+    # Check Python (prefer Homebrew/pyenv over system)
+    if find_python3 &> /dev/null; then
         has_python=true
     fi
 
