@@ -1033,7 +1033,7 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Ordered as they appear in OpenCode Tab selector and other AI assistants (14 total):
+Ordered as they appear in OpenCode Tab selector and other AI assistants (15 total):
 
 | Name | File | Purpose | MCPs Enabled |
 |------|------|---------|--------------|
@@ -1050,6 +1050,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (14 tota
 | Research | `research.md` | Research and analysis tasks | context7, augment |
 | Sales | `sales.md` | Sales operations and CRM | augment |
 | SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, dataforseo, serper, context7, augment |
+| Video | `video.md` | AI video generation, prompt engineering, programmatic video | augment |
 | WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
 
 ### **Example Subagents with MCP Integration**
