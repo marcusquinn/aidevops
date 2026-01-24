@@ -669,26 +669,31 @@ The setup script offers to install these tools automatically.
 |-----|---------|------------------|
 | [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
 | [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
-| [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
 | [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
 | [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
 | [Context7](https://context7.com/) | Library documentation lookup | No |
 | [Crawl4AI](https://github.com/unclecode/crawl4ai) | Web crawling & scraping | No |
+| [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
+| [FluentCRM](https://fluentcrm.com/) | WordPress CRM - contacts, campaigns, automations | Yes (WP REST API) |
 | [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Yes (Google API) |
 | [Grep by Vercel](https://grep.app/) | GitHub code search | No |
+| [llm-tldr](https://github.com/parcadei/llm-tldr) | Semantic code analysis (95% token savings) | No |
 | [LocalWP](https://localwp.com/) | WordPress database access | No (local) |
 | [Next.js DevTools](https://nextjs.org/docs) | React/Next.js assistance | No |
+| [osgrep](https://github.com/Ryandonofrio3/osgrep) | Local semantic code search (100% private) | No |
 | [Outscraper](https://outscraper.com/) | Google Maps & business data extraction | Yes |
 | [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
+| [Peekaboo](https://github.com/steipete/Peekaboo) | macOS screen capture & GUI automation | Optional (AI vision) |
 | [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
 | [Playwright](https://playwright.dev/) | Cross-browser testing | No |
+| [Playwriter](https://github.com/remorses/playwriter) | Browser automation via Chrome extension | No |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
 | [shadcn/ui](https://ui.shadcn.com/) | UI component library browsing & installation | No |
 | [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
 | [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
 | [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
-| [llm-tldr](https://github.com/parcadei/llm-tldr) | Semantic code analysis (95% token savings) | No |
+| [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) | WordPress content & site management | Yes (WP credentials) |
 
 ### **By Category**
 
@@ -705,6 +710,7 @@ The setup script offers to install these tools automatically.
 - [Agent Browser](https://github.com/vercel-labs/agent-browser) - **DEFAULT** - CLI-first headless automation optimized for AI agents (Rust CLI + Node.js daemon, snapshot+ref pattern for deterministic element targeting, multi-session isolation, zero setup)
 - [Dev-Browser](https://github.com/SawyerHood/dev-browser) - Stateful TypeScript API with persistent Playwright server (14% faster, 39% cheaper than Playwright MCP; pages/cookies/auth survive across script executions; ideal for local dev testing)
 - [Playwriter](https://github.com/remorses/playwriter) - Chrome extension MCP with full Playwright API (reuse existing browser sessions/extensions/cookies, bypass automation detection, single `execute` tool vs 17+ for minimal context bloat)
+- [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screen capture and GUI automation (pixel-accurate captures, AI vision analysis, natural language agent for chained automation)
 - [Sweet Cookie](https://github.com/steipete/sweet-cookie) - Browser cookie extraction for API calls without launching a browser (TypeScript cross-platform + Swift macOS native; reads cookies directly from browser profile DBs)
 - [Stagehand](https://github.com/browserbase/stagehand) - AI-powered natural language browser automation with self-healing selectors (JavaScript + [Python](https://github.com/anthropics/stagehand-python) versions; `act`/`extract`/`observe`/`agent` primitives)
 - [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI content extraction and bulk scraping
@@ -712,7 +718,7 @@ The setup script offers to install these tools automatically.
 - [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser debugging, performance analysis, DOM inspection
 - [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping via Cloudflare Workers
 
-**Why this order**: Agent Browser's snapshot+ref pattern proved most reliable for AI agents in testing - deterministic element targeting without brittle CSS selectors or expensive AI inference. Dev-Browser adds persistent state for multi-step workflows. Playwriter excels when you need existing browser sessions. Sweet Cookie fills the gap when you only need cookies for API calls. Stagehand's natural language approach is powerful but adds AI inference latency and cost. Traditional Playwright/Chrome DevTools remain useful for specific cross-browser or debugging scenarios.
+**Why this order**: Agent Browser's snapshot+ref pattern proved most reliable for AI agents in testing - deterministic element targeting without brittle CSS selectors or expensive AI inference. Dev-Browser adds persistent state for multi-step workflows. Playwriter excels when you need existing browser sessions. Peekaboo is macOS-specific but powerful for GUI automation beyond the browser. Sweet Cookie fills the gap when you only need cookies for API calls. Stagehand's natural language approach is powerful but adds AI inference latency and cost. Traditional Playwright/Chrome DevTools remain useful for specific cross-browser or debugging scenarios.
 
 **SEO & Research:**
 
@@ -738,7 +744,12 @@ The setup script offers to install these tools automatically.
 **WordPress & Development:**
 
 - [LocalWP](https://localwp.com/) - Direct WordPress database access
+- [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) - Official WordPress MCP for content management (STDIO, HTTP, and SSH transports)
 - [Next.js DevTools](https://nextjs.org/docs) - React/Next.js development assistance
+
+**CRM & Marketing:**
+
+- [FluentCRM](https://fluentcrm.com/) - WordPress CRM: contacts, tags, lists, campaigns, automations, smart links, webhooks
 
 **UI Components:**
 
