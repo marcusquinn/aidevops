@@ -64,19 +64,49 @@ Submits a file to the Unstract API, polls for completion, and returns structured
 
 ## Setup
 
-### 1. Get API Credentials
+The MCP server is a thin client that connects to any Unstract API endpoint - cloud or self-hosted.
+
+### Option A: Cloud (Quick Start)
 
 1. Sign up at https://unstract.com/start-for-free/ (14-day free trial)
 2. Create a Prompt Studio project and define your extraction schema
 3. Deploy as an API endpoint
 4. Copy the API key and deployment URL
 
-### 2. Store Credentials
-
 ```bash
 # Add to ~/.config/aidevops/mcp-env.sh:
 export UNSTRACT_API_KEY="your_api_key_here"
 export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
+```
+
+### Option B: Self-Hosted (Local)
+
+Run the full Unstract platform locally via Docker Compose (requires 8GB RAM):
+
+```bash
+git clone https://github.com/Zipstack/unstract.git
+cd unstract
+./run-platform.sh
+# Visit http://frontend.unstract.localhost (login: unstract/unstract)
+```
+
+Then create your Prompt Studio project, deploy as API, and configure:
+
+```bash
+# Add to ~/.config/aidevops/mcp-env.sh:
+export UNSTRACT_API_KEY="your_local_api_key"
+export UNSTRACT_API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-deployment-id/"
+```
+
+Self-hosted gives full data privacy - no documents leave your machine.
+
+### 2. Store Credentials
+
+Whichever option you chose, ensure credentials are in `~/.config/aidevops/mcp-env.sh`:
+
+```bash
+export UNSTRACT_API_KEY="your_api_key_here"
+export UNSTRACT_API_BASE_URL="https://your-endpoint/deployment/api/your-id/"
 ```
 
 ### 3. OpenCode Configuration (On-Demand)
@@ -116,6 +146,19 @@ See `configs/mcp-templates/unstract.json` for the configuration template.
 - **Insurance claims**: Extract claim details from forms and supporting documents
 - **KYC/onboarding**: Parse identity documents and application forms
 - **Contract analysis**: Extract key terms, dates, parties from legal documents
+
+## Analytics / Telemetry
+
+The MCP server itself (`unstract/mcp-server` Docker image) contains **no analytics or telemetry code** - it is a clean API client that submits files and returns results.
+
+For **self-hosted** Unstract deployments, disable frontend analytics:
+
+```bash
+# In frontend/.env of your self-hosted Unstract instance:
+REACT_APP_ENABLE_POSTHOG=false
+```
+
+The **cloud API** (`us-central.unstract.com`) may collect server-side usage metrics as part of their platform. Use self-hosted if this is a concern.
 
 ## Integration with aidevops
 
