@@ -700,13 +700,15 @@ The setup script offers to install these tools automatically.
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-**Browser Automation:**
+**Browser Automation** (6 tools, [benchmarked](#browser-automation)):
 
-- [Stagehand (JavaScript)](https://github.com/browserbase/stagehand) - AI-powered browser automation with natural language
-- [Stagehand (Python)](https://github.com/anthropics/stagehand-python) - Python version with Pydantic validation
-- [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser automation, performance analysis, debugging
-- [Playwright](https://playwright.dev/) - Cross-browser testing and automation (auto-installed via `setup.sh`)
-- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI
+- [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
+- [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
+- [agent-browser](https://github.com/vercel-labs/agent-browser) - CLI/CI/CD, `--session` parallel, ref-based element targeting
+- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Bulk extraction, `arun_many` parallel (1.7x), LLM-ready markdown
+- [Playwriter](https://github.com/nicholasgriffintn/playwriter) - Your browser's extensions/passwords/proxy, already unlocked
+- [Stagehand](https://github.com/browserbase/stagehand) - Natural language automation, self-healing selectors
+- [Chrome DevTools MCP](https://github.com/nicholasgriffintn/chrome-devtools-mcp) - Companion: Lighthouse, network throttling, CSS coverage (pairs with any tool)
 - [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
 
 **SEO & Research:**
@@ -751,6 +753,60 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand-python   # Python versio
 bash .agent/scripts/setup-mcp-integrations.sh stagehand-both     # Both versions
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ```
+
+## **Browser Automation**
+
+6 browser tools benchmarked and integrated for AI-assisted web automation, dev testing, and data extraction. Agents automatically select the optimal tool based on task requirements.
+
+### Performance Benchmarks
+
+Tested on macOS ARM64, all headless, warm daemon:
+
+| Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|------|-----------|-------------|---------------|----------|------------|-----------|
+| **Navigate + Screenshot** | **1.43s** | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
+| **Form Fill** (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
+| **Data Extraction** (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
+| **Multi-step** (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
+| **Parallel** (3 sessions) | **1.6s** | N/A | 2.0s | 3.0s | N/A | Slow |
+
+### Feature Matrix
+
+| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|---------|-----------|-------------|---------------|----------|------------|-----------|
+| **Headless** | Yes | Yes | Yes | Yes | No (your browser) | Yes |
+| **Proxy/VPN** | Full | Via args | No | Full | Your browser | Via args |
+| **Extensions** | Yes (persistent) | Yes (profile) | No | No | Yes (yours) | Possible |
+| **Password managers** | Partial (needs unlock) | Partial | No | No | **Yes** (unlocked) | No |
+| **Parallel sessions** | 5 ctx/2.1s | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance |
+| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
+| **Natural language** | No | No | No | LLM extraction | No | Yes |
+| **Self-healing** | No | No | No | No | No | Yes |
+
+### Tool Selection
+
+| Need | Tool | Why |
+|------|------|-----|
+| **Fastest automation** | Playwright | 0.9s form fill, parallel contexts |
+| **Stay logged in** | dev-browser | Profile persists across restarts |
+| **Your extensions/passwords** | Playwriter | Already unlocked in your browser |
+| **Bulk extraction** | Crawl4AI | Purpose-built, parallel, LLM-ready output |
+| **CLI/CI/CD** | agent-browser | No server needed, `--session` isolation |
+| **Unknown pages** | Stagehand | Natural language, self-healing |
+| **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
+
+### AI Page Understanding
+
+Agents use lightweight methods instead of expensive vision API calls:
+
+| Method | Speed | Token Cost | Use For |
+|--------|-------|-----------|---------|
+| ARIA snapshot | ~0.01s | 50-200 tokens | Forms, navigation, interactive elements |
+| Text extraction | ~0.002s | Text length | Reading content |
+| Element scan | ~0.002s | ~20/element | Form filling, clicking |
+| Screenshot | ~0.05s | ~1K tokens (vision) | Visual debugging only |
+
+See [`.agent/tools/browser/browser-automation.md`](.agent/tools/browser/browser-automation.md) for the full decision tree and [`browser-benchmark.md`](.agent/tools/browser/browser-benchmark.md) for reproducible benchmark scripts.
 
 ## **Repomix - AI Context Generation**
 
@@ -1591,7 +1647,7 @@ bash .agent/scripts/continue-cli.sh review
 **Agent Guides** (in `.agent/`):
 
 - **[API Integrations](.agent/aidevops/api-integrations.md)** - Service APIs
-- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - Web scraping and automation
+- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 6 tools benchmarked: decision tree, parallel, extensions, AI understanding
 - **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Performance auditing
 - **[Pandoc](.agent/tools/conversion/pandoc.md)** - Document format conversion
 - **[Security](.agent/aidevops/security.md)** - Enterprise security standards
