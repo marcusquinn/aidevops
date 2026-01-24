@@ -10,7 +10,7 @@ PROFILES_DIR="$HOME/.aidevops/.agent-workspace/browser-profiles"
 VENV_DIR="$HOME/.aidevops/anti-detect-venv"
 # Script directory (for relative path references)
 # shellcheck disable=SC2034
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
 # Colors
 RED='\033[0;31m'
