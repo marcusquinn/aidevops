@@ -228,7 +228,7 @@ cleanup_deprecated_mcps() {
         jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
     fi
     
-    # Migrate npx/pipx commands to bare binary names (faster startup)
+    # Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
     # Maps: package-name -> binary-name
     local -A mcp_migrations=(
         ["chrome-devtools-mcp"]="chrome-devtools-mcp"
@@ -242,35 +242,38 @@ cleanup_deprecated_mcps() {
 
     for pkg in "${!mcp_migrations[@]}"; do
         local bin_name="${mcp_migrations[$pkg]}"
-        # Check if any MCP entry uses npx/bunx with this package
-        if jq -e ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\"))" "$tmp_config" > /dev/null 2>&1; then
-            if command -v "$bin_name" &> /dev/null; then
-                # Find the MCP key and update its command to bare binary
-                local mcp_key
-                mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
-                if [[ -n "$mcp_key" ]]; then
-                    # Preserve --mcp flag for repomix
-                    if [[ "$bin_name" == "repomix" ]]; then
-                        jq ".mcp[\"$mcp_key\"].command = [\"$bin_name\", \"--mcp\"]" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                    else
-                        jq ".mcp[\"$mcp_key\"].command = [\"$bin_name\"]" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                    fi
-                    ((cleaned++))
+        # Find MCP key using npx/bunx/pipx for this package (single query)
+        local mcp_key
+        mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
+
+        if [[ -n "$mcp_key" ]]; then
+            # Resolve full path for the binary
+            local full_path
+            full_path=$(resolve_mcp_binary_path "$bin_name")
+            if [[ -n "$full_path" ]]; then
+                # Preserve --mcp flag for repomix
+                if [[ "$bin_name" == "repomix" ]]; then
+                    jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p, "--mcp"]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                else
+                    jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
                 fi
+                ((cleaned++))
             fi
         fi
     done
 
-    # Migrate outscraper from bash -c wrapper to bare binary
+    # Migrate outscraper from bash -c wrapper to full binary path
     if jq -e '.mcp.outscraper.command | join(" ") | test("bash.*outscraper")' "$tmp_config" > /dev/null 2>&1; then
-        if command -v outscraper-mcp-server &> /dev/null; then
+        local outscraper_path
+        outscraper_path=$(resolve_mcp_binary_path "outscraper-mcp-server")
+        if [[ -n "$outscraper_path" ]]; then
             # Source the API key and set it in environment
             local outscraper_key=""
             if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
                 # shellcheck source=/dev/null
                 outscraper_key=$(source "$HOME/.config/aidevops/mcp-env.sh" && echo "${OUTSCRAPER_API_KEY:-}")
             fi
-            jq --arg key "$outscraper_key" '.mcp.outscraper.command = ["outscraper-mcp-server"] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
             ((cleaned++))
         fi
     fi
@@ -278,10 +281,13 @@ cleanup_deprecated_mcps() {
     if [[ $cleaned -gt 0 ]]; then
         create_backup_with_rotation "$opencode_config" "opencode"
         mv "$tmp_config" "$opencode_config"
-        print_info "Updated $cleaned MCP entry/entries in opencode.json (removed npx overhead, using global binaries)"
+        print_info "Updated $cleaned MCP entry/entries in opencode.json (using full binary paths)"
     else
         rm -f "$tmp_config"
     fi
+
+    # Always resolve bare binary names to full paths (fixes PATH-dependent startup)
+    update_mcp_paths_in_opencode
     
     return 0
 }
@@ -2136,14 +2142,14 @@ setup_nodejs_env() {
 install_mcp_packages() {
     print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
 
-    # Node.js MCP packages (prefer bun, fallback to npm)
-    local node_mcps=(
-        "chrome-devtools-mcp"
-        "mcp-server-gsc"
-        "repomix"
-        "playwriter"
-        "@steipete/macos-automator-mcp"
-        "@steipete/claude-code-mcp"
+    # Node.js MCP packages: package-name -> binary-name
+    local -A node_mcps=(
+        ["chrome-devtools-mcp"]="chrome-devtools-mcp"
+        ["mcp-server-gsc"]="mcp-server-gsc"
+        ["repomix"]="repomix"
+        ["playwriter"]="playwriter"
+        ["@steipete/macos-automator-mcp"]="macos-automator-mcp"
+        ["@steipete/claude-code-mcp"]="claude-code-mcp"
     )
 
     local installer=""
@@ -2166,7 +2172,7 @@ install_mcp_packages() {
     # Always install latest (bun install -g is fast and idempotent)
     local updated=0
     local failed=0
-    for pkg in "${node_mcps[@]}"; do
+    for pkg in "${!node_mcps[@]}"; do
         if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
             ((updated++))
         else
@@ -2201,7 +2207,129 @@ install_mcp_packages() {
         fi
     fi
 
+    # Update opencode.json with resolved full paths for all MCP binaries
+    update_mcp_paths_in_opencode
+
     print_info "MCP servers will start instantly (no registry lookups on each launch)"
+    return 0
+}
+
+# Resolve full path for an MCP binary, checking common install locations
+# Usage: resolve_mcp_binary_path "binary-name"
+# Returns: full path on stdout, or empty string if not found
+resolve_mcp_binary_path() {
+    local bin_name="$1"
+    local resolved=""
+
+    # Check common locations in priority order
+    local search_paths=(
+        "$HOME/.bun/bin/$bin_name"
+        "/opt/homebrew/bin/$bin_name"
+        "/usr/local/bin/$bin_name"
+        "$HOME/.local/bin/$bin_name"
+        "$HOME/.npm-global/bin/$bin_name"
+    )
+
+    for path in "${search_paths[@]}"; do
+        if [[ -x "$path" ]]; then
+            resolved="$path"
+            break
+        fi
+    done
+
+    # Fallback: use command -v if in PATH (portable, POSIX-compliant)
+    if [[ -z "$resolved" ]]; then
+        resolved=$(command -v "$bin_name" 2>/dev/null || true)
+    fi
+
+    echo "$resolved"
+    return 0
+}
+
+# Update opencode.json MCP commands to use full binary paths
+# This ensures MCPs start regardless of PATH configuration
+update_mcp_paths_in_opencode() {
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+
+    if [[ ! -f "$opencode_config" ]]; then
+        return 0
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        return 0
+    fi
+
+    local tmp_config
+    tmp_config=$(mktemp)
+    cp "$opencode_config" "$tmp_config"
+
+    local updated=0
+
+    # Get all MCP entries with local commands
+    local mcp_keys
+    mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | .key' "$tmp_config" 2>/dev/null)
+
+    while IFS= read -r mcp_key; do
+        [[ -z "$mcp_key" ]] && continue
+
+        # Get the first element of the command array (the binary)
+        local current_cmd
+        current_cmd=$(jq -r --arg k "$mcp_key" '.mcp[$k].command[0]' "$tmp_config" 2>/dev/null)
+
+        # Skip if already a full path
+        if [[ "$current_cmd" == /* ]]; then
+            # Verify the path still exists
+            if [[ ! -x "$current_cmd" ]]; then
+                # Path is stale, try to resolve
+                local bin_name
+                bin_name=$(basename "$current_cmd")
+                local new_path
+                new_path=$(resolve_mcp_binary_path "$bin_name")
+                if [[ -n "$new_path" && "$new_path" != "$current_cmd" ]]; then
+                    jq --arg k "$mcp_key" --arg p "$new_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                    ((updated++))
+                fi
+            fi
+            continue
+        fi
+
+        # Skip docker (container runtime) and node (resolved separately below)
+        case "$current_cmd" in
+            docker|node) continue ;;
+        esac
+
+        # Resolve the full path
+        local full_path
+        full_path=$(resolve_mcp_binary_path "$current_cmd")
+
+        if [[ -n "$full_path" && "$full_path" != "$current_cmd" ]]; then
+            jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((updated++))
+        fi
+    done <<< "$mcp_keys"
+
+    # Also resolve 'node' commands (e.g., quickfile, amazon-order-history)
+    # These use ["node", "/path/to/index.js"] - node itself should be resolved
+    local node_path
+    node_path=$(resolve_mcp_binary_path "node")
+    if [[ -n "$node_path" ]]; then
+        local node_mcp_keys
+        node_mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | select(.value.command[0] == "node") | .key' "$tmp_config" 2>/dev/null)
+        while IFS= read -r mcp_key; do
+            [[ -z "$mcp_key" ]] && continue
+            jq --arg k "$mcp_key" --arg p "$node_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((updated++))
+        done <<< "$node_mcp_keys"
+    fi
+
+    if [[ $updated -gt 0 ]]; then
+        create_backup_with_rotation "$opencode_config" "opencode"
+        mv "$tmp_config" "$opencode_config"
+        print_success "Updated $updated MCP commands to use full binary paths in opencode.json"
+    else
+        rm -f "$tmp_config"
+    fi
+
     return 0
 }
 
