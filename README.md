@@ -92,8 +92,8 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - 18 primary agents (Plan+, Build+, SEO, WordPress, etc.)
-- 530+ subagent markdown files organized by domain
-- 139+ helper scripts in `.agent/scripts/`
+- 536+ subagent markdown files organized by domain
+- 141+ helper scripts in `.agent/scripts/`
 - 41 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
@@ -487,7 +487,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 139+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 141+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -717,7 +717,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-**Browser Automation** (6 tools, [benchmarked](#browser-automation)):
+**Browser Automation** (6 tools + anti-detect stack, [benchmarked](#browser-automation)):
 
 - [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
 - [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
@@ -727,6 +727,11 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Stagehand](https://github.com/browserbase/stagehand) - Natural language automation, self-healing selectors
 - [Chrome DevTools MCP](https://github.com/nicholasgriffintn/chrome-devtools-mcp) - Companion: Lighthouse, network throttling, CSS coverage (pairs with any tool)
 - [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
+- **Anti-Detect Stack** ([details](#anti-detect-browser)):
+  - [Camoufox](https://github.com/daijro/camoufox) (4.9k stars) - Firefox anti-detect, C++ fingerprint injection, WebRTC/Canvas/WebGL spoofing
+  - [rebrowser-patches](https://github.com/nicedayfor/rebrowser-patches) (1.2k stars) - Chromium CDP leak prevention, automation signal removal
+  - Multi-profile management - Persistent/clean/warm/disposable profiles (like AdsPower/GoLogin)
+  - Proxy integration - Residential, SOCKS5, VPN per profile with geo-targeting
 
 **SEO & Research:**
 
@@ -801,7 +806,7 @@ These catch formatting and syntax issues during editing, reducing preflight/post
 
 ## **Browser Automation**
 
-6 browser tools benchmarked and integrated for AI-assisted web automation, dev testing, and data extraction. Agents automatically select the optimal tool based on task requirements.
+6 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
 
 ### Performance Benchmarks
 
@@ -839,6 +844,8 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **CLI/CI/CD** | agent-browser | No server needed, `--session` isolation |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
+| **Bot detection evasion** | Anti-detect stack | Camoufox (full) or rebrowser-patches (quick) |
+| **Multi-account** | Browser profiles | Persistent fingerprint + proxy per account |
 
 ### AI Page Understanding
 
@@ -852,6 +859,57 @@ Agents use lightweight methods instead of expensive vision API calls:
 | Screenshot | ~0.05s | ~1K tokens (vision) | Visual debugging only |
 
 See [`.agent/tools/browser/browser-automation.md`](.agent/tools/browser/browser-automation.md) for the full decision tree and [`browser-benchmark.md`](.agent/tools/browser/browser-benchmark.md) for reproducible benchmark scripts.
+
+### Anti-Detect Browser
+
+Open-source alternative to AdsPower, GoLogin, and OctoBrowser for multi-account automation and bot detection evasion.
+
+**Architecture:**
+
+```text
+Layer 4: CAPTCHA Solving    → CapSolver (existing)
+Layer 3: Network Identity   → Proxies (residential/SOCKS5/VPN per profile)
+Layer 2: Browser Identity   → Camoufox (C++ fingerprint injection)
+Layer 1: Automation Stealth → rebrowser-patches (CDP leak prevention)
+Layer 0: Browser Engine     → Playwright (existing)
+```
+
+**Profile Types:**
+
+| Type | Cookies | Fingerprint | Use Case |
+|------|---------|-------------|----------|
+| **Persistent** | Saved | Fixed per profile | Account management, stay logged in |
+| **Clean** | None | Random each launch | Scraping, one-off tasks |
+| **Warm** | Saved | Fixed | Pre-warmed accounts (browsing history) |
+| **Disposable** | None | Random | Single-use, maximum anonymity |
+
+**Quick Start:**
+
+```bash
+# Setup
+anti-detect-helper.sh setup
+
+# Create profile with proxy
+anti-detect-helper.sh profile create "my-account" --type persistent --os macos
+
+# Launch (Camoufox with auto-generated fingerprint)
+anti-detect-helper.sh launch --profile "my-account" --headless
+
+# Test detection (BrowserScan, SannyBot)
+anti-detect-helper.sh test --profile "my-account"
+
+# Warm up profile with browsing history
+anti-detect-helper.sh warmup "my-account" --duration 30m
+```
+
+**Engine Selection:**
+
+| Engine | Stealth Level | Speed | Best For |
+|--------|---------------|-------|----------|
+| **Camoufox** (Firefox) | High (C++ level) | Medium | Full anti-detect, fingerprint rotation |
+| **rebrowser-patches** (Chromium) | Medium (CDP patches) | Fast | Quick stealth on existing Playwright code |
+
+See [`.agent/tools/browser/anti-detect-browser.md`](.agent/tools/browser/anti-detect-browser.md) for the full decision tree and subagent index.
 
 ## **Repomix - AI Context Generation**
 
@@ -1078,7 +1136,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 18 primary agents, 530+ subagents, and 139+ helper scripts.
+This installs the complete framework: 18 primary agents, 536+ subagents, and 141+ helper scripts.
 
 ### Importing External Skills
 
@@ -1158,7 +1216,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 530+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 536+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1694,7 +1752,8 @@ bash .agent/scripts/continue-cli.sh review
 **Agent Guides** (in `.agent/`):
 
 - **[API Integrations](.agent/aidevops/api-integrations.md)** - Service APIs
-- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 6 tools benchmarked: decision tree, parallel, extensions, AI understanding
+- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 6 tools + anti-detect stack: decision tree, parallel, extensions, fingerprinting
+- **[Anti-Detect Browser](.agent/tools/browser/anti-detect-browser.md)** - Multi-profile management, fingerprint rotation, proxy integration
 - **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Performance auditing
 - **[Pandoc](.agent/tools/conversion/pandoc.md)** - Document format conversion
 - **[Security](.agent/aidevops/security.md)** - Enterprise security standards
@@ -1710,7 +1769,7 @@ aidevops/
 ├── .agent/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
 │   ├── *.md                       # 18 primary agents
-│   ├── scripts/                   # 139+ helper scripts
+│   ├── scripts/                   # 141+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
