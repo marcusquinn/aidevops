@@ -1,10 +1,10 @@
 ---
-description: Import external skills from GitHub repositories into aidevops
+description: Import external skills from GitHub or ClawdHub into aidevops
 agent: Build+
 mode: subagent
 ---
 
-Import an external skill from a GitHub repository, convert it to aidevops format, and register it for update tracking.
+Import an external skill from GitHub or ClawdHub, convert it to aidevops format, and register it for update tracking.
 
 URL/Repo: $ARGUMENTS
 
@@ -18,6 +18,13 @@ URL/Repo: $ARGUMENTS
 # Import specific skill from multi-skill repo
 /add-skill anthropics/skills/pdf
 # → .agent/tools/pdf-skill.md
+
+# Import from ClawdHub (shorthand)
+/add-skill clawdhub:caldav-calendar
+# → .agent/tools/productivity/caldav-calendar-skill.md
+
+# Import from ClawdHub (full URL)
+/add-skill https://clawdhub.com/Asleep123/caldav-calendar
 
 # Import with custom name
 /add-skill vercel-labs/agent-skills --name vercel-deploy
@@ -51,7 +58,9 @@ This means:
 
 Determine if the input is:
 - A GitHub shorthand: `owner/repo` or `owner/repo/subpath`
-- A full URL: `https://github.com/owner/repo`
+- A full GitHub URL: `https://github.com/owner/repo`
+- A ClawdHub shorthand: `clawdhub:<slug>`
+- A ClawdHub URL: `https://clawdhub.com/owner/slug`
 - A command: `list`, `check-updates`, `remove <name>`
 
 ### Step 2: Run Helper Script
@@ -90,11 +99,16 @@ After successful import:
 2. Registered in `.agent/configs/skill-sources.json` for update tracking
 3. Run `./setup.sh` to create symlinks for other AI assistants
 
-## Supported Formats
+## Supported Sources & Formats
+
+| Source | Detection | Fetch Method |
+|--------|-----------|--------------|
+| GitHub | `owner/repo` or github.com URL | `git clone --depth 1` |
+| ClawdHub | `clawdhub:slug` or clawdhub.com URL | Playwright browser extraction |
 
 | Format | Detection | Conversion |
 |--------|-----------|------------|
-| SKILL.md | OpenSkills/Claude Code | Frontmatter preserved, content adapted |
+| SKILL.md | OpenSkills/Claude Code/ClawdHub | Frontmatter preserved, content adapted |
 | AGENTS.md | aidevops/Windsurf | Direct copy with mode: subagent |
 | .cursorrules | Cursor | Wrapped in markdown with frontmatter |
 | README.md | Generic | Copied as-is |
@@ -110,6 +124,11 @@ After successful import:
 
 # Import Vercel deployment skill
 /add-skill vercel-labs/agent-skills
+
+# Import from ClawdHub
+/add-skill clawdhub:caldav-calendar
+/add-skill clawdhub:proxmox-full
+/add-skill https://clawdhub.com/mSarheed/proxmox-full
 
 # Import with force (overwrite existing)
 /add-skill dmmulroy/cloudflare-skill --force
@@ -144,5 +163,7 @@ Run `/add-skill check-updates` periodically to see if upstream skills have chang
 ## Related
 
 - `tools/build-agent/add-skill.md` - Detailed conversion logic and merge strategies
+- `scripts/add-skill-helper.sh` - Main import implementation
+- `scripts/clawdhub-helper.sh` - ClawdHub browser-based fetcher (Playwright)
 - `scripts/skill-update-helper.sh` - Automated update checking
 - `scripts/generate-skills.sh` - SKILL.md stub generation for aidevops agents

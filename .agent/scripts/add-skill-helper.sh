@@ -2,11 +2,11 @@
 # =============================================================================
 # Add External Skill Helper
 # =============================================================================
-# Import external skills from GitHub repos, convert to aidevops format,
-# handle conflicts, and track upstream sources for update detection.
+# Import external skills from GitHub repos or ClawdHub, convert to aidevops
+# format, handle conflicts, and track upstream sources for update detection.
 #
 # Usage:
-#   add-skill-helper.sh add <url|owner/repo> [--name <name>] [--force]
+#   add-skill-helper.sh add <url|owner/repo|clawdhub:slug> [--name <name>] [--force]
 #   add-skill-helper.sh list
 #   add-skill-helper.sh check-updates
 #   add-skill-helper.sh remove <name>
@@ -16,6 +16,8 @@
 #   add-skill-helper.sh add dmmulroy/cloudflare-skill
 #   add-skill-helper.sh add https://github.com/anthropics/skills/pdf
 #   add-skill-helper.sh add vercel-labs/agent-skills --name vercel
+#   add-skill-helper.sh add clawdhub:caldav-calendar
+#   add-skill-helper.sh add https://clawdhub.com/Asleep123/caldav-calendar
 #   add-skill-helper.sh check-updates
 # =============================================================================
 
@@ -59,17 +61,17 @@ log_error() {
 
 show_help() {
     cat << 'EOF'
-Add External Skill Helper - Import skills from GitHub to aidevops
+Add External Skill Helper - Import skills from GitHub or ClawdHub to aidevops
 
 USAGE:
     add-skill-helper.sh <command> [options]
 
 COMMANDS:
-    add <url|owner/repo>    Import a skill from GitHub
-    list                    List all imported skills
-    check-updates           Check for upstream updates
-    remove <name>           Remove an imported skill
-    help                    Show this help message
+    add <url|owner/repo|clawdhub:slug>    Import a skill
+    list                                   List all imported skills
+    check-updates                          Check for upstream updates
+    remove <name>                          Remove an imported skill
+    help                                   Show this help message
 
 OPTIONS:
     --name <name>           Override the skill name
@@ -86,11 +88,21 @@ EXAMPLES:
     # Import with custom name
     add-skill-helper.sh add vercel-labs/agent-skills --name vercel-deploy
 
+    # Import from ClawdHub (shorthand)
+    add-skill-helper.sh add clawdhub:caldav-calendar
+
+    # Import from ClawdHub (full URL)
+    add-skill-helper.sh add https://clawdhub.com/Asleep123/caldav-calendar
+
     # Check all imported skills for updates
     add-skill-helper.sh check-updates
 
+SUPPORTED SOURCES:
+    - GitHub repos (owner/repo or full URL)
+    - ClawdHub registry (clawdhub:slug or clawdhub.com URL)
+
 SUPPORTED FORMATS:
-    - SKILL.md (OpenSkills/Claude Code format)
+    - SKILL.md (OpenSkills/Claude Code/ClawdHub format)
     - AGENTS.md (aidevops/Windsurf format)
     - .cursorrules (Cursor format)
     - Raw markdown files
@@ -279,6 +291,10 @@ determine_target_path() {
         category="tools/credentials"
     elif echo "$content" | grep -qi "vercel\|coolify\|docker\|kubernetes"; then
         category="tools/deployment"
+    elif echo "$content" | grep -qi "proxmox\|hypervisor\|virtualization\|vm.management"; then
+        category="services/hosting"
+    elif echo "$content" | grep -qi "calendar\|caldav\|ical\|scheduling"; then
+        category="tools/productivity"
     elif echo "$content" | grep -qi "dns\|hosting\|domain"; then
         category="services/hosting"
     fi
@@ -483,7 +499,31 @@ cmd_add() {
         esac
     done
     
-    log_info "Parsing URL: $url"
+    log_info "Parsing source: $url"
+    
+    # Detect ClawdHub source (clawdhub:slug or clawdhub.com URL)
+    local is_clawdhub=false
+    local clawdhub_slug=""
+    
+    if [[ "$url" == clawdhub:* ]]; then
+        is_clawdhub=true
+        clawdhub_slug="${url#clawdhub:}"
+    elif [[ "$url" == *clawdhub.com* ]]; then
+        is_clawdhub=true
+        # Strip URL prefix and extract slug (last path segment)
+        clawdhub_slug="${url#*clawdhub.com/}"
+        clawdhub_slug="${clawdhub_slug#/}"
+        clawdhub_slug="${clawdhub_slug%/}"
+        # If format is owner/slug, take just the slug
+        if [[ "$clawdhub_slug" == */* ]]; then
+            clawdhub_slug="${clawdhub_slug##*/}"
+        fi
+    fi
+    
+    if [[ "$is_clawdhub" == true ]]; then
+        cmd_add_clawdhub "$clawdhub_slug" "$custom_name" "$force" "$dry_run"
+        return $?
+    fi
     
     # Parse GitHub URL
     local parsed
@@ -491,8 +531,8 @@ cmd_add() {
     IFS='|' read -r owner repo subpath <<< "$parsed"
     
     if [[ -z "$owner" || -z "$repo" ]]; then
-        log_error "Could not parse GitHub URL: $url"
-        log_info "Expected format: owner/repo or https://github.com/owner/repo"
+        log_error "Could not parse source URL: $url"
+        log_info "Expected: owner/repo, https://github.com/owner/repo, or clawdhub:slug"
         return 1
     fi
     
@@ -718,6 +758,161 @@ cmd_add() {
     rm -rf "$TEMP_DIR"
     
     # Remind about setup.sh
+    echo ""
+    log_info "Run './setup.sh' to create symlinks for other AI assistants"
+    
+    return 0
+}
+
+# Import a skill from ClawdHub registry
+cmd_add_clawdhub() {
+    local slug="$1"
+    local custom_name="$2"
+    local force="$3"
+    local dry_run="$4"
+    
+    if [[ -z "$slug" ]]; then
+        log_error "ClawdHub slug required"
+        return 1
+    fi
+    
+    log_info "Importing from ClawdHub: $slug"
+    
+    # Get skill metadata from API
+    local api_response
+    api_response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API:-https://clawdhub.com/api/v1}/skills/${slug}" 2>/dev/null)
+    
+    if [[ -z "$api_response" ]] || ! echo "$api_response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+        log_error "Could not fetch skill info from ClawdHub API: $slug"
+        return 1
+    fi
+    
+    # Extract metadata
+    local display_name summary owner_handle version
+    display_name=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('skill',{}).get('displayName',''))" 2>/dev/null)
+    summary=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('skill',{}).get('summary',''))" 2>/dev/null)
+    owner_handle=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('owner',{}).get('handle',''))" 2>/dev/null)
+    version=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('latestVersion',{}).get('version',''))" 2>/dev/null)
+    
+    log_info "Found: $display_name v${version} by @${owner_handle}"
+    
+    # Determine skill name
+    local skill_name
+    if [[ -n "$custom_name" ]]; then
+        skill_name=$(to_kebab_case "$custom_name")
+    else
+        skill_name=$(to_kebab_case "$slug")
+    fi
+    
+    # Determine target path
+    local target_path
+    target_path=$(determine_target_path "$skill_name" "$summary" ".")
+    log_info "Target path: .agent/$target_path"
+    
+    # Check for conflicts
+    local conflicts
+    conflicts=$(check_conflicts "$target_path" ".agent") || true
+    if [[ -n "$conflicts" ]]; then
+        local blocking_conflicts
+        blocking_conflicts=$(echo "$conflicts" | grep -v "^INFO:" || true)
+        
+        if [[ -n "$blocking_conflicts" && "$force" != true ]]; then
+            log_warning "Conflicts detected:"
+            echo "$blocking_conflicts" | while read -r conflict; do
+                echo "  - ${conflict#*: }"
+            done
+            echo ""
+            echo "Options:"
+            echo "  1. Replace (overwrite existing)"
+            echo "  2. Separate (use different name)"
+            echo "  3. Skip (cancel import)"
+            echo ""
+            read -rp "Choose option [1-3]: " choice
+            
+            case "$choice" in
+                1) log_info "Replacing existing..." ;;
+                2)
+                    read -rp "Enter new name: " new_name
+                    skill_name=$(to_kebab_case "$new_name")
+                    target_path=$(determine_target_path "$skill_name" "$summary" ".")
+                    ;;
+                3|*) log_info "Import cancelled"; return 0 ;;
+            esac
+        fi
+    fi
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "DRY RUN - Would create:"
+        echo "  .agent/${target_path}.md"
+        return 0
+    fi
+    
+    # Fetch SKILL.md content using clawdhub-helper.sh (Playwright-based)
+    local helper_script
+    helper_script="$(dirname "$0")/clawdhub-helper.sh"
+    local fetch_dir="${TMPDIR:-/tmp}/clawdhub-fetch/${slug}"
+    
+    rm -rf "$fetch_dir"
+    
+    if [[ -x "$helper_script" ]]; then
+        if ! "$helper_script" fetch "$slug" --output "$fetch_dir"; then
+            log_error "Failed to fetch SKILL.md from ClawdHub"
+            return 1
+        fi
+    else
+        log_error "clawdhub-helper.sh not found at: $helper_script"
+        return 1
+    fi
+    
+    # Verify SKILL.md was fetched
+    if [[ ! -f "$fetch_dir/SKILL.md" || ! -s "$fetch_dir/SKILL.md" ]]; then
+        log_error "SKILL.md not found or empty after fetch"
+        return 1
+    fi
+    
+    # Create target directory
+    local target_dir
+    target_dir=".agent/$(dirname "$target_path")"
+    mkdir -p "$target_dir"
+    
+    # Convert to aidevops format
+    local target_file=".agent/${target_path}.md"
+    
+    # Write aidevops-style header
+    local safe_summary
+    safe_summary=$(printf '%s' "${summary:-Imported from ClawdHub}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    
+    cat > "$target_file" << EOF
+---
+description: "${safe_summary}"
+mode: subagent
+imported_from: clawdhub
+clawdhub_slug: "${slug}"
+clawdhub_version: "${version}"
+---
+# ${display_name:-$skill_name}
+
+EOF
+    
+    # Append the fetched SKILL.md content (skip any existing frontmatter)
+    awk '
+        BEGIN { in_frontmatter = 0; after_frontmatter = 0; has_frontmatter = 0 }
+        NR == 1 && /^---$/ { in_frontmatter = 1; has_frontmatter = 1; next }
+        in_frontmatter && /^---$/ { in_frontmatter = 0; after_frontmatter = 1; next }
+        in_frontmatter { next }
+        !has_frontmatter || after_frontmatter { print }
+    ' "$fetch_dir/SKILL.md" >> "$target_file"
+    
+    log_success "Created: $target_file"
+    
+    # Register in skill-sources.json
+    local upstream_url="https://clawdhub.com/${owner_handle}/${slug}"
+    register_skill "$skill_name" "$upstream_url" ".agent/${target_path}.md" "clawdhub" "$version" "added" "ClawdHub v${version} by @${owner_handle}"
+    
+    # Cleanup
+    rm -rf "$fetch_dir"
+    
+    log_success "Skill '$skill_name' imported from ClawdHub successfully"
     echo ""
     log_info "Run './setup.sh' to create symlinks for other AI assistants"
     
