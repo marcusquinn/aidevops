@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.82.0] - 2026-01-24
+
+### Added
+
+- add Examples & Inspiration section to Remotion agent (#182)
 ## [2.81.0] - 2026-01-24
 
 ### Added
