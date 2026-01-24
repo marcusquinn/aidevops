@@ -67,6 +67,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20
 - [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~45m (ai:30m test:10m read:5m) logged:2026-01-24
   - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
+- [ ] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~4h (ai:2h test:1h read:1h) logged:2026-01-24 related:t027
+  - Notes: Add support for voice AI models covering both TTS (speech generation) and STT (transcription). API providers: Hugging Face Inference API (TTS/STT endpoints), ElevenLabs, OpenAI TTS/Whisper. Local models: Qwen3-TTS (0.6B/1.7B, Apache-2.0, 10 languages, voice clone/design/custom, streaming, vLLM support - https://github.com/QwenLM/Qwen3-TTS), Whisper (transcription), Bark, Coqui TTS. Create subagent at tools/voice/ or tools/ai/voice.md covering: model selection (local vs API, quality vs speed), installation (pip install qwen-tts, HF download), usage patterns (TTS generation, voice cloning, voice design, transcription), streaming support, GPU requirements. Related to t027 (hyprwhspr speech-to-text).
 - [ ] t069 Fix toon-helper.sh validate command - positional args not passed to case statement #bugfix ~15m (ai:10m test:5m) logged:2026-01-24
 - [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
@@ -228,6 +230,7 @@ t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20m,,10m,2026-01-15T00:00Z,pending,,,
 t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,
 t069,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|git|code-review,2h,1h,30m,30m,2026-01-23T00:00Z,pending,,,
+t071,Voice AI models for speech generation and transcription,,tools|voice|ai,4h,2h,1h,1h,2026-01-24T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
