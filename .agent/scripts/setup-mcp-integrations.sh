@@ -299,10 +299,10 @@ install_mcp() {
             print_info "Available tools: google_search, google_search_images, google_search_videos, google_search_places, google_search_maps, google_search_reviews, google_search_news, google_search_shopping, google_search_lens, google_search_scholar, google_search_patents, google_search_autocomplete, webpage_scrape"
             print_info "GitHub: https://github.com/garylab/serper-mcp-server"
             
-            # Check if uv is installed
-            if ! command -v uv &> /dev/null; then
-                print_warning "uv (Python package manager) not found"
-                print_info "Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+            # Check if uv is installed and supports 'tool' subcommand
+            if ! command -v uv &> /dev/null || ! uv tool --help &> /dev/null; then
+                print_warning "uv (Python package manager) not found or too old"
+                print_info "Install/update with: curl -LsSf https://astral.sh/uv/install.sh | sh"
                 print_info "Alternative: pip install serper-mcp-server"
             fi
             ;;
