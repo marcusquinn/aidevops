@@ -223,7 +223,18 @@ is_on_feature_branch() {
 run_task_phase() {
     local prompt="$1"
     local max_iterations="${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}"
-    local tool="${RALPH_TOOL:-opencode}"
+    
+    # Auto-detect AI tool environment if RALPH_TOOL not explicitly set
+    local tool="${RALPH_TOOL:-}"
+    if [[ -z "$tool" ]]; then
+        if [[ -n "${CLAUDE_CODE:-}" ]] || command -v claude &>/dev/null; then
+            tool="claude"
+        elif command -v opencode &>/dev/null; then
+            tool="opencode"
+        else
+            tool="opencode"  # Default fallback name (will trigger legacy mode)
+        fi
+    fi
     
     print_phase "Task Development" "Running Ralph loop for task implementation"
     
@@ -247,8 +258,8 @@ run_task_phase() {
             --max-iterations "$max_iterations" \
             --completion-promise "TASK_COMPLETE"
     else
-        # Legacy: Same-session loop
-        print_warning "Using legacy mode (same session). Consider installing $tool for v2."
+        # Legacy: Same-session loop (tool not available or no v2 infrastructure)
+        print_warning "Using legacy mode (same session). $tool CLI not found for v2 external loop."
         "$SCRIPT_DIR/ralph-loop-helper.sh" setup "$prompt" \
             --max-iterations "$max_iterations" \
             --completion-promise "TASK_COMPLETE"
