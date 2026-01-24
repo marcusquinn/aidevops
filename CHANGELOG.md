@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.77.1] - 2026-01-24
+
+### Changed
+
+- Documentation: add worktree path re-read instruction to AGENTS.md (#166)
+- Documentation: update README metrics to match actual counts (#165)
 ## [2.77.0] - 2026-01-24
 
 ### Added
