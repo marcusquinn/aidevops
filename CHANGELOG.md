@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add HeyGen AI avatar video creation skill (#170)
+
 ## [2.77.3] - 2026-01-24
 
 ### Fixed
