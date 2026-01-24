@@ -206,6 +206,8 @@ aidevops upgrade-planning --force   # Skip confirmation prompt
 
 This preserves your existing tasks while adding TOON-enhanced parsing, dependency tracking, and better structure.
 
+**Automatic detection:** `aidevops update` now scans all registered projects for outdated planning templates (comparing TOON meta version numbers) and offers to upgrade them in-place with backups.
+
 ### Task Graph Visualization with Beads
 
 [Beads](https://github.com/steveyegge/beads) provides task dependency tracking and graph visualization:
@@ -483,7 +485,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 |---------|-------------|------------------------|
 | **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 130+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
-| **Progressive Disclosure** | Load context on-demand | Subagent tables, YAML frontmatter, read-on-demand |
+| **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
 | **Cache Context** | Prompt caching for cost | Stable instruction prefixes |
 | **Isolate Context** | Sub-agents with separate windows | Subagent files with specific tool permissions |
@@ -1177,7 +1179,17 @@ Plans are tracked in `TODO.md` (all tasks) and `todo/PLANS.md` (complex executio
 | `--plans` | `/list-todo --plans` | Include full plan details |
 | `--compact` | `/list-todo --compact` | One-line per task |
 
-**Time Tracking**: Tasks support time estimates and actuals with the format `~4h (ai:2h test:1h) started:2025-01-15T10:30Z`. Configure per-repo via `.aidevops.json`.
+**Time Tracking**: Tasks support time estimates as active session time (excluding AFK gaps) with the format `~4h started:2025-01-15T10:30Z`. The `session-time-helper.sh` analyses real session data to calibrate estimates vs actuals.
+
+**Risk Levels**: Tasks support `risk:low/med/high` indicating human oversight needed:
+
+| Risk | Oversight | Example |
+|------|-----------|---------|
+| `low` | Autonomous | Docs, formatting, simple refactors |
+| `med` | Supervised | Feature implementation, API changes |
+| `high` | Engaged | Security, data migrations, infrastructure |
+
+Configure time tracking per-repo via `.aidevops.json`.
 
 **Development Workflow** (typical order):
 
