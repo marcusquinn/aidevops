@@ -638,7 +638,10 @@ setup_file_discovery_tools() {
         pkg_manager=$(detect_package_manager)
         
         if [[ "$pkg_manager" != "unknown" ]]; then
-            read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_fd_tools
+            local install_fd_tools="y"
+            if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+                read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_fd_tools
+            fi
             
             if [[ "$install_fd_tools" == "y" ]]; then
                 print_info "Installing ${missing_packages[*]}..."
