@@ -339,8 +339,11 @@ cmd_set() {
 
     # Update or append
     if grep -q "^export ${env_var}=" "$env_file" 2>/dev/null; then
+        # Rewrite file excluding the old key, then append new value
+        # Avoids sed delimiter injection with arbitrary values
         local tmp_file="${env_file}.tmp"
-        sed "s|^export ${env_var}=.*|export ${env_var}=\"${value}\"|" "$env_file" > "$tmp_file"
+        grep -v "^export ${env_var}=" "$env_file" > "$tmp_file"
+        echo "export ${env_var}=\"${value}\"" >> "$tmp_file"
         mv "$tmp_file" "$env_file"
         chmod 600 "$env_file"
         print_success "Updated $env_var in tenant '$tenant'"
@@ -400,7 +403,7 @@ cmd_get() {
     fi
 
     local result
-    result=$(grep "^export ${env_var}=" "$env_file" 2>/dev/null | sed 's/^export [^=]*="//' | sed 's/"$//' || true)
+    result=$(grep "^export ${env_var}=" "$env_file" 2>/dev/null | sed -n 's/^export [^=]*="\(.*\)"$/\1/p' || true)
 
     if [[ -n "$result" ]]; then
         echo "$result"
