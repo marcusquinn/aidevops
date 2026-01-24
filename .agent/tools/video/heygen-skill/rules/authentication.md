@@ -116,7 +116,7 @@ class HeyGenClient {
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.message || `HTTP ${response.status}`);
+      throw new Error(error.error || `HTTP ${response.status}`);
     }
 
     return response.json();

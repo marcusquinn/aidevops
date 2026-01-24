@@ -698,7 +698,7 @@ const videoId = await fetch("https://api.heygen.com/v1/video.webm", {
 Apply circular masking in Remotion:
 
 ```tsx
-import { Video, AbsoluteFill } from "remotion";
+import { OffthreadVideo, AbsoluteFill } from "remotion";
 
 export const LoomStyleVideo: React.FC<{
   screenRecordingUrl: string;
@@ -707,10 +707,10 @@ export const LoomStyleVideo: React.FC<{
   return (
     <AbsoluteFill>
       {/* Screen recording as base layer */}
-      <Video src={screenRecordingUrl} style={{ width: "100%", height: "100%" }} />
+      <OffthreadVideo src={screenRecordingUrl} style={{ width: "100%", height: "100%" }} />
 
       {/* Avatar with circular mask applied in CSS */}
-      <Video
+      <OffthreadVideo
         src={avatarWebmUrl}
         style={{
           position: "absolute",

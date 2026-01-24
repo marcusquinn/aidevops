@@ -278,7 +278,7 @@ function createVideoConfig(options: VideoConfigOptions) {
     linkedin: { width: 1920, height: 1080 },
   };
 
-  const dimension = platformDimensions[options.platform];
+  const dimension = { ...platformDimensions[options.platform] };
 
   // Scale down for 720p if requested
   if (options.quality === "720p") {

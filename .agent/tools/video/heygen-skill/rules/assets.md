@@ -202,18 +202,24 @@ If your asset is already hosted online:
 
 ```typescript
 async function uploadFromUrl(sourceUrl: string, contentType: string): Promise<string> {
-  // 1. Download the file
-  const sourceResponse = await fetch(sourceUrl);
-  const buffer = await sourceResponse.arrayBuffer();
-
-  // 2. Get HeyGen upload URL
+  // 1. Get HeyGen upload URL
   const { url, asset_id } = await getUploadUrl(contentType);
 
-  // 3. Upload to HeyGen
+  // 2. Fetch the source as a stream
+  const sourceResponse = await fetch(sourceUrl);
+  if (!sourceResponse.ok || !sourceResponse.body) {
+    throw new Error(`Failed to download from source: ${sourceResponse.status}`);
+  }
+
+  // 3. Upload to HeyGen as a stream (avoids loading entire file into memory)
   await fetch(url, {
     method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: buffer,
+    headers: {
+      "Content-Type": contentType,
+    },
+    body: sourceResponse.body,
+    // @ts-expect-error duplex is needed for streaming uploads
+    duplex: "half",
   });
 
   return asset_id;
@@ -296,7 +302,7 @@ async function createVideoWithCustomBackground(
 ): Promise<string> {
   // 1. Upload background
   console.log("Uploading background...");
-  const backgroundId = await uploadFile(backgroundPath, "image/jpeg");
+  const backgroundId = await uploadLargeFile(backgroundPath, "image/jpeg");
 
   // 2. Create video config
   const config = {
