@@ -2447,6 +2447,14 @@ setup_opencode_plugins() {
         return 0
     fi
     
+    # Setup aidevops compaction plugin (local file plugin)
+    local aidevops_plugin_path="$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+    if [[ -f "$aidevops_plugin_path" ]]; then
+        print_info "Setting up aidevops compaction plugin..."
+        add_opencode_plugin "file://$HOME/.aidevops" "file://${aidevops_plugin_path}" "$opencode_config"
+        print_success "aidevops compaction plugin registered (preserves context across compaction)"
+    fi
+
     # Setup Antigravity OAuth plugin (Google OAuth)
     print_info "Setting up Antigravity OAuth plugin..."
     add_opencode_plugin "opencode-antigravity-auth" "opencode-antigravity-auth@latest" "$opencode_config"
