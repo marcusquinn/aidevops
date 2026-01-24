@@ -2220,10 +2220,11 @@ setup_browser_tools() {
     if [[ "$has_node" == "true" ]]; then
         print_info "Setting up Playwright MCP..."
         
-        # Check if Playwright browsers are installed
-        if npx playwright --version &> /dev/null 2>&1; then
+        # Check if Playwright browsers are installed (--no-install prevents auto-download)
+        if npx --no-install playwright --version &> /dev/null 2>&1; then
             print_success "Playwright already installed"
         else
+            local install_playwright
             read -r -p "Install Playwright MCP with browsers (chromium, firefox, webkit)? (y/n): " install_playwright
             
             if [[ "$install_playwright" == "y" ]]; then
@@ -2244,6 +2245,7 @@ setup_browser_tools() {
     fi
     
     print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Playwright (testing), Stagehand (AI)"
+    return 0
 }
 
 # Setup AI Orchestration Frameworks (Langflow, CrewAI, AutoGen)
