@@ -16,36 +16,78 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Tool Selection: Choose by Task
+## Tool Selection: Decision Tree
 
 All tools run **headless by default** (no visible window, no mouse/keyboard competition).
 
-**Interactive automation** (forms, clicks, multi-step):
+**Preferences** (apply in order):
+1. Fastest tool that meets requirements
+2. ARIA snapshots over screenshots for AI understanding (50-200 tokens vs ~1K)
+3. Headless over headed (no mouse/window competition)
+4. Playwright direct as default unless a specific feature is needed elsewhere
 
 ```text
-Need browser automation?
+What do you need?
     |
-    +-> Fresh session, no state needed? --> Playwright direct (fastest)
+    +-> EXTRACT data (scraping, reading)?
+    |       |
+    |       +-> Bulk pages / structured CSS/XPath? --> Crawl4AI (fastest extraction, parallel)
+    |       +-> Need to login/interact first? --> Playwright or dev-browser, then extract
+    |       +-> Unknown structure, need AI to parse? --> Crawl4AI LLM mode or Stagehand extract()
     |
-    +-> Need persistent cookies/logins? --> dev-browser (profile persists)
+    +-> AUTOMATE (forms, clicks, multi-step)?
+    |       |
+    |       +-> Need password manager / extensions?
+    |       |       |
+    |       |       +-> Already unlocked in your browser? --> Playwriter (only option that works)
+    |       |       +-> Can unlock manually once? --> dev-browser (persists in profile)
+    |       |       +-> Need programmatic unlock? --> Playwright persistent + Bitwarden CLI
+    |       |
+    |       +-> Need parallel isolated sessions?
+    |       |       |
+    |       |       +-> Maximum speed? --> Playwright (5 contexts in 2.1s)
+    |       |       +-> CLI/shell scripting? --> agent-browser --session (3 in 2.0s)
+    |       |       +-> Extraction parallel? --> Crawl4AI arun_many (1.7x speedup)
+    |       |
+    |       +-> Need persistent login across sessions?
+    |       |       |
+    |       |       +-> With extensions? --> dev-browser (profile persists)
+    |       |       +-> Without extensions? --> Playwright storageState or dev-browser
+    |       |
+    |       +-> Need proxy / VPN / residential IP?
+    |       |       |
+    |       |       +-> Direct config? --> Playwright or Crawl4AI (full proxy support)
+    |       |       +-> Via browser extension (FoxyProxy)? --> Playwriter
+    |       |       +-> System-wide? --> Any tool (inherits system proxy)
+    |       |
+    |       +-> Unknown page structure / self-healing?
+    |       |       --> Stagehand (natural language, adapts to changes, slowest)
+    |       |
+    |       +-> None of the above (just fast automation)?
+    |               --> Playwright direct (fastest, 0.9s form fill)
     |
-    +-> CLI scripting / CI/CD? --> agent-browser (no server needed)
+    +-> DEBUG / INSPECT (performance, network, SEO)?
+    |       --> Chrome DevTools MCP (companion, pairs with any browser tool)
+    |       --> Best with: dev-browser (:9222) or Playwright
     |
-    +-> User's existing browser session? --> Playwriter (their extensions/cookies)
-    |
-    +-> Unknown page structure? --> Stagehand (natural language, self-healing)
+    +-> TEST your own app (dev server)?
+            |
+            +-> Need to stay logged in across restarts? --> dev-browser (profile)
+            +-> Need parallel test contexts? --> Playwright (isolated contexts)
+            +-> Need visual debugging? --> dev-browser (headed) + DevTools MCP
+            +-> CI/CD pipeline? --> Playwright or agent-browser
 ```
 
-**Extraction only** (scraping, reading data):
+**AI page understanding** (how the AI "sees" the page):
 
 ```text
-Need to extract data?
+How should AI understand the page?
     |
-    +-> Structured data / bulk pages? --> Crawl4AI (purpose-built, fastest)
-    |
-    +-> Need to interact first, then extract? --> Playwright or dev-browser
-    |
-    +-> Need AI to find/parse content? --> Stagehand extract() or Crawl4AI LLM mode
+    +-> Forms, navigation, clicking? --> ARIA snapshot (0.01s, 50-200 tokens)
+    +-> Reading content? --> Text extraction (0.002s, raw text)
+    +-> Finding interactive elements? --> Element scan (0.002s, tag/type/name)
+    +-> Visual layout matters (charts, images)? --> Screenshot (0.05s, ~1K vision tokens)
+    +-> All of the above? --> ARIA + element scan (skip vision unless stuck)
 ```
 
 ## Performance Benchmarks
