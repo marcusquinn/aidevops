@@ -588,10 +588,9 @@ config['mcp']['claude-code-mcp'] = {
 }
 print("  Ensured claude-code-mcp MCP server (forked)")
 
-# Claude Code MCP tools disabled globally (enable per-agent if needed)
-if 'claude-code-mcp_*' not in config['tools']:
-    config['tools']['claude-code-mcp_*'] = False
-    print("  Added claude-code-mcp_* to tools (disabled globally, enabled for Build+/AI-DevOps)")
+# Claude Code MCP tools disabled globally (enable per-agent in AGENT_TOOLS if needed)
+config['tools']['claude-code-mcp_*'] = False
+print("  Set claude-code-mcp_* tools disabled globally (enabled for Build+/AI-DevOps only)")
 
 # macOS Automator MCP - AppleScript and JXA automation (macOS only)
 # Docs: https://github.com/steipete/macos-automator-mcp
