@@ -470,6 +470,15 @@ verify_remote_sync() {
     
     cd "$REPO_ROOT" || exit 1
     
+    # Verify we're actually on the expected branch
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null)
+    if [[ "$current_branch" != "$branch" ]]; then
+        print_error "Not on $branch branch (currently on: ${current_branch:-detached HEAD})"
+        print_info "Switch to $branch first: git checkout $branch"
+        return 1
+    fi
+    
     print_info "Verifying local/$branch is in sync with origin/$branch..."
     
     # Fetch latest from remote
@@ -479,7 +488,7 @@ verify_remote_sync() {
     fi
     
     local local_sha
-    local_sha=$(git rev-parse HEAD 2>/dev/null)
+    local_sha=$(git rev-parse "$branch" 2>/dev/null)
     local remote_sha
     remote_sha=$(git rev-parse "origin/$branch" 2>/dev/null)
     
@@ -552,7 +561,8 @@ push_changes() {
     
     print_info "Pushing changes to remote..."
     
-    if git push origin main --tags; then
+    # Use --atomic to ensure commit and tag are pushed together (all-or-nothing)
+    if git push --atomic origin main --tags; then
         print_success "Pushed changes and tags to remote"
         return 0
     else
@@ -798,10 +808,15 @@ main() {
                     commit_version_changes "$new_version"
                     create_git_tag "$new_version"
                     if ! push_changes; then
-                        # Rollback: delete local tag if push failed to prevent inconsistent state
+                        # Rollback: delete local tag since --atomic ensures nothing was pushed
                         print_warning "Rolling back local tag v$new_version due to push failure"
                         git tag -d "v$new_version" 2>/dev/null
-                        print_info "Fix the push issue and re-run: $0 release $bump_type"
+                        echo ""
+                        print_info "The version commit exists locally. To complete the release:"
+                        print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
+                        print_info "  2. Re-create tag: git tag -a v$new_version -m 'Release v$new_version'"
+                        print_info "  3. Push: git push --atomic origin main --tags"
+                        print_info "  4. Create release: $0 github-release"
                         exit 1
                     fi
                     create_github_release "$new_version"
