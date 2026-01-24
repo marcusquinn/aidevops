@@ -229,22 +229,33 @@ cleanup_deprecated_mcps() {
     fi
     
     # Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
-    # Maps: package-name -> binary-name
-    local -A mcp_migrations=(
-        ["chrome-devtools-mcp"]="chrome-devtools-mcp"
-        ["mcp-server-gsc"]="mcp-server-gsc"
-        ["repomix"]="repomix"
-        ["playwriter"]="playwriter"
-        ["@steipete/macos-automator-mcp"]="macos-automator-mcp"
-        ["@steipete/claude-code-mcp"]="claude-code-mcp"
-        ["analytics-mcp"]="analytics-mcp"
+    # Parallel arrays avoid bash associative array issues with @ in package names
+    local -a mcp_pkgs=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
+        "analytics-mcp"
+    )
+    local -a mcp_bins=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "macos-automator-mcp"
+        "claude-code-mcp"
+        "analytics-mcp"
     )
 
-    for pkg in "${!mcp_migrations[@]}"; do
-        local bin_name="${mcp_migrations[$pkg]}"
+    local i
+    for i in "${!mcp_pkgs[@]}"; do
+        local pkg="${mcp_pkgs[$i]}"
+        local bin_name="${mcp_bins[$i]}"
         # Find MCP key using npx/bunx/pipx for this package (single query)
         local mcp_key
-        mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
+        mcp_key=$(jq -r --arg pkg "$pkg" '.mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(" ") | test("npx.*" + $pkg + "|bunx.*" + $pkg + "|pipx.*run.*" + $pkg)) | .key' "$tmp_config" 2>/dev/null | head -1)
 
         if [[ -n "$mcp_key" ]]; then
             # Resolve full path for the binary
