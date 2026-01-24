@@ -59,9 +59,9 @@ get_sessions_dir() {
         return 0
     fi
 
-    # For worktrees, try the main repo path
+    # For worktrees, try the main repo path (best-effort, don't fail if git unavailable)
     local main_worktree
-    main_worktree=$(git -C "$project_path" worktree list 2>/dev/null | head -1 | awk '{print $1}')
+    main_worktree=$(git -C "$project_path" worktree list 2>/dev/null | head -1 | awk '{print $1}' || true)
     if [[ -n "$main_worktree" ]] && [[ "$main_worktree" != "$project_path" ]]; then
         encoded="${main_worktree//\//-}"
         sessions_dir="${CLAUDE_DIR}/projects/${encoded}"
