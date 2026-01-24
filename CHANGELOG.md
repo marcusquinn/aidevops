@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.80.0] - 2026-01-24
+
 ### Added
 
-- implement multi-tenant credential storage with setup.sh integration (#178)
-- add list-keys subagent documentation
+- implement multi-tenant credential storage (#178)
 
+### Changed
+
+- Documentation: add changelog entries for multi-tenant credentials
+- Documentation: add list-keys subagent documentation
 ## [2.78.0] - 2026-01-24
 
 ### Added
