@@ -513,7 +513,7 @@ Many avatars have a `default_voice_id` that's pre-matched for natural results. *
 
 ### Recommended Flow
 
-```
+```text
 1. GET /v2/avatars           → Get list of avatar_ids
 2. GET /v2/avatar/{id}/details → Get default_voice_id for chosen avatar
 3. POST /v2/video/generate   → Use avatar_id + default_voice_id

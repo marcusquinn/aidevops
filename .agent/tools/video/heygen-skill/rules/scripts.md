@@ -61,7 +61,7 @@ function estimateFrames(script: string, fps: number = 30, speed: number = 1.0): 
 
 Use SSML-style `<break>` tags for precise pause control:
 
-```
+```xml
 <break time="Xs"/>
 ```
 

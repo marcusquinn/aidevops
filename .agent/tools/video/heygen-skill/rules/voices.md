@@ -196,7 +196,7 @@ HeyGen supports SSML-style `<break>` tags to add pauses in scripts.
 
 ### Break Tag Format
 
-```
+```xml
 <break time="Xs"/>
 ```
 

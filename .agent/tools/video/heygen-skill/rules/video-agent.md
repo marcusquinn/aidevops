@@ -22,7 +22,7 @@ The Video Agent API generates complete videos from a single text prompt. Unlike 
 
 ## Endpoint
 
-```
+```text
 POST https://api.heygen.com/v1/video_agent/generate
 ```
 
@@ -257,7 +257,7 @@ const response = await fetch(
 ### Example Prompts
 
 **Product Demo:**
-```
+```text
 Create a 90-second product demo for our project management tool.
 Target audience: startup founders and small team leads.
 Highlight: Kanban boards, time tracking, and Slack integration.
@@ -265,7 +265,7 @@ Tone: Professional but approachable.
 ```
 
 **Educational:**
-```
+```text
 Explain how blockchain technology works in simple terms.
 Duration: 2 minutes.
 Audience: Complete beginners with no technical background.
@@ -273,7 +273,7 @@ Use analogies and avoid jargon.
 ```
 
 **Marketing:**
-```
+```text
 Create an energetic 30-second ad for our fitness app launch.
 Target: Health-conscious millennials.
 Key message: AI-powered personalized workouts.

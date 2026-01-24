@@ -25,7 +25,7 @@ export HEYGEN_API_KEY="your-api-key-here"
 
 For `.env` files:
 
-```
+```text
 HEYGEN_API_KEY=your-api-key-here
 ```
 
