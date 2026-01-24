@@ -189,6 +189,37 @@ AGENT_TEMPS = {
     "Research": 0.3,
 }
 
+# Custom system prompts (by display name)
+# These replace the default Claude Code system prompt, eliminating harness conflicts
+# where the default prompt says "use Glob tool" but we want "use git ls-files"
+AGENT_PROMPTS = {
+    "Build+": "~/.aidevops/agents/prompts/build.txt",
+    "AI-DevOps": "~/.aidevops/agents/prompts/build.txt",
+    "Sisyphus": "~/.aidevops/agents/prompts/build.txt",
+}
+
+# Model routing tiers (from subagent YAML frontmatter 'model:' field)
+# Maps tier names to actual model identifiers
+# Agents declare their tier; the coordinator uses this for cost-effective routing
+MODEL_TIERS = {
+    "haiku": "claude-3-5-haiku-20241022",      # Triage, routing, simple tasks
+    "sonnet": "claude-sonnet-4-20250514",      # Code, review, implementation
+    "opus": "claude-opus-4-20250514",          # Architecture, complex reasoning
+    "flash": "gemini-2.5-flash",               # Fast, cheap, large context
+    "pro": "gemini-2.5-pro",                   # Capable, large context
+}
+
+# Default model tier per agent (overridden by frontmatter 'model:' field)
+AGENT_MODEL_TIERS = {
+    "Plan+": "sonnet",
+    "Build+": "sonnet",
+    "AI-DevOps": "sonnet",
+    "Research": "flash",
+    "Content": "sonnet",
+    "Sisyphus": "opus",
+    "Planner-Sisyphus": "sonnet",
+}
+
 # Files to skip (not primary agents)
 SKIP_FILES = {"AGENTS.md", "README.md"}
 
@@ -256,13 +287,14 @@ def filename_to_display(filename):
     # Convert kebab-case to Title-Case
     return "-".join(word.capitalize() for word in name.split("-"))
 
-def get_agent_config(display_name, filename, subagents=None):
+def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     """Generate agent configuration.
     
     Args:
         display_name: Agent display name
         filename: Agent markdown filename
         subagents: Optional list of allowed subagent names (from frontmatter)
+        model_tier: Optional model tier from frontmatter (haiku/sonnet/opus/flash/pro)
     """
     tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
     # Enabled in all main agents (user request)
@@ -276,6 +308,23 @@ def get_agent_config(display_name, filename, subagents=None):
         "permission": {},
         "tools": tools
     }
+    
+    # Add custom system prompt for agents that need tool preference enforcement
+    # This replaces the default Claude Code system prompt, eliminating harness conflicts
+    if display_name in AGENT_PROMPTS:
+        prompt_rel = AGENT_PROMPTS[display_name]
+        prompt_file = os.path.expanduser(prompt_rel) if prompt_rel.startswith("~") else os.path.join(agents_dir, prompt_rel)
+        if os.path.exists(prompt_file):
+            config["prompt"] = "{file:" + prompt_rel + "}"
+        else:
+            import sys
+            print(f"Warning: Prompt file not found for {display_name}: {prompt_file}", file=sys.stderr)
+    
+    # Add model routing (from frontmatter or defaults)
+    # Resolves tier name to actual model identifier
+    effective_tier = model_tier or AGENT_MODEL_TIERS.get(display_name)
+    if effective_tier and effective_tier in MODEL_TIERS:
+        config["model"] = MODEL_TIERS[effective_tier]
     
     # Special permissions
     if display_name == "Plan+":
@@ -338,13 +387,14 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
     
     display_name = filename_to_display(filename)
     
-    # Parse frontmatter for subagents list
+    # Parse frontmatter for subagents list and model tier
     frontmatter = parse_frontmatter(filepath)
     subagents = frontmatter.get('subagents', None)
+    model_tier = frontmatter.get('model', None)
     if subagents:
         subagent_filtered_count += 1
     
-    primary_agents[display_name] = get_agent_config(display_name, filename, subagents)
+    primary_agents[display_name] = get_agent_config(display_name, filename, subagents, model_tier)
     discovered.append(display_name)
 
 # Sort agents: ordered ones first, then alphabetical
@@ -417,6 +467,16 @@ print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}"
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
 if subagent_filtered_count > 0:
     print(f"  Subagent filtering: {subagent_filtered_count} agents have permission.task rules")
+
+# Count agents with custom prompts
+prompt_count = sum(1 for name in sorted_agents if name in AGENT_PROMPTS and "prompt" in sorted_agents.get(name, {}))
+if prompt_count > 0:
+    print(f"  Custom system prompts: {prompt_count} agents use prompts/build.txt")
+
+# Count agents with model routing
+model_count = sum(1 for name, cfg in sorted_agents.items() if "model" in cfg)
+if model_count > 0:
+    print(f"  Model routing: {model_count} agents have model tier assignments")
 
 # =============================================================================
 # MCP SERVERS - Ensure required MCP servers are configured

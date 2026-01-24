@@ -1449,6 +1449,28 @@ extract_opencode_prompts() {
     return 0
 }
 
+# Check if upstream OpenCode prompts have drifted from our synced version
+check_opencode_prompt_drift() {
+    local drift_script=".agent/scripts/opencode-prompt-drift-check.sh"
+    if [[ -f "$drift_script" ]]; then
+        local output exit_code=0
+        output=$(bash "$drift_script" --quiet 2>/dev/null) || exit_code=$?
+        if [[ "$exit_code" -eq 1 && "$output" == PROMPT_DRIFT* ]]; then
+            local local_hash upstream_hash
+            local_hash=$(echo "$output" | cut -d'|' -f2)
+            upstream_hash=$(echo "$output" | cut -d'|' -f3)
+            print_warning "OpenCode upstream prompt has changed (${local_hash} → ${upstream_hash})"
+            print_info "  Review: https://github.com/anomalyco/opencode/compare/${local_hash}...${upstream_hash}"
+            print_info "  Update .agent/prompts/build.txt if needed"
+        elif [[ "$exit_code" -eq 0 ]]; then
+            print_success "OpenCode prompt in sync with upstream"
+        else
+            print_warning "Could not check prompt drift (network issue or missing dependency)"
+        fi
+    fi
+    return 0
+}
+
 # Deploy aidevops agents to user location
 deploy_aidevops_agents() {
     print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
@@ -2427,6 +2449,14 @@ setup_opencode_plugins() {
         return 0
     fi
     
+    # Setup aidevops compaction plugin (local file plugin)
+    local aidevops_plugin_path="$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+    if [[ -f "$aidevops_plugin_path" ]]; then
+        print_info "Setting up aidevops compaction plugin..."
+        add_opencode_plugin "file://$HOME/.aidevops" "file://${aidevops_plugin_path}" "$opencode_config"
+        print_success "aidevops compaction plugin registered (preserves context across compaction)"
+    fi
+
     # Setup Antigravity OAuth plugin (Google OAuth)
     print_info "Setting up Antigravity OAuth plugin..."
     add_opencode_plugin "opencode-antigravity-auth" "opencode-antigravity-auth@latest" "$opencode_config"
@@ -2856,6 +2886,7 @@ main() {
     confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
+    confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
     confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
     confirm_step "Create symlinks for imported skills" && create_skill_symlinks
