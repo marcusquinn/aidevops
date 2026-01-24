@@ -91,9 +91,10 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- ~15 main agents (Plan+, Build+, SEO, WordPress, etc.)
-- 230+ subagent markdown files organized by domain
-- 130+ helper scripts in `.agent/scripts/`
+- 18 primary agents (Plan+, Build+, SEO, WordPress, etc.)
+- 530+ subagent markdown files organized by domain
+- 139+ helper scripts in `.agent/scripts/`
+- 41 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -483,7 +484,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 130+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 139+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -1031,7 +1032,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 13 domain agents, 225+ subagents, and 130+ helper scripts.
+This installs the complete framework: 18 primary agents, 530+ subagents, and 139+ helper scripts.
 
 ### Importing External Skills
 
@@ -1111,7 +1112,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 225+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 530+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1662,8 +1663,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agent/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 13 main agents
-│   ├── scripts/                   # 130+ helper scripts
+│   ├── *.md                       # 18 primary agents
+│   ├── scripts/                   # 139+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
