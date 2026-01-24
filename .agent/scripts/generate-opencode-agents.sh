@@ -210,14 +210,16 @@ MODEL_TIERS = {
 }
 
 # Default model tier per agent (overridden by frontmatter 'model:' field)
+# Empty by default - agents use whatever model the user has authenticated with.
+# Uncomment entries to pin specific agents to specific models if needed.
 AGENT_MODEL_TIERS = {
-    "Plan+": "sonnet",
-    "Build+": "sonnet",
-    "AI-DevOps": "sonnet",
-    "Research": "flash",
-    "Content": "sonnet",
-    "Sisyphus": "opus",
-    "Planner-Sisyphus": "sonnet",
+    # "Plan+": "sonnet",
+    # "Build+": "sonnet",
+    # "AI-DevOps": "sonnet",
+    # "Research": "flash",
+    # "Content": "sonnet",
+    # "Sisyphus": "opus",
+    # "Planner-Sisyphus": "sonnet",
 }
 
 # Files to skip (not primary agents)
