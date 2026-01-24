@@ -269,6 +269,7 @@ show_help() {
     echo "  add 'export X=\"y\"'   - Parse and store from export command"
     echo "  get <service>          - Retrieve API key for service"
     echo "  list                   - List configured services"
+    echo "  tenant <subcommand>    - Multi-tenant management (see: credential-helper.sh help)"
     echo ""
     print_info "Examples:"
     echo "  $0 setup"
@@ -312,6 +313,12 @@ main() {
             print_success "Secure API key storage ready"
             echo ""
             show_help
+            ;;
+        "tenant"|"tenants")
+            # Delegate to multi-tenant credential helper
+            local script_dir
+            script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            bash "$script_dir/credential-helper.sh" "$@"
             ;;
         "help"|"--help"|"-h"|"")
             show_help

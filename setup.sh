@@ -2994,6 +2994,70 @@ setup_google_analytics_mcp() {
     return 0
 }
 
+# Setup multi-tenant credential storage
+setup_multi_tenant_credentials() {
+    print_info "Multi-tenant credential storage..."
+    
+    local credential_helper="$HOME/.aidevops/agents/scripts/credential-helper.sh"
+    
+    if [[ ! -f "$credential_helper" ]]; then
+        # Try local script if deployed version not available yet
+        credential_helper=".agent/scripts/credential-helper.sh"
+    fi
+    
+    if [[ ! -f "$credential_helper" ]]; then
+        print_warning "credential-helper.sh not found - skipping"
+        return 0
+    fi
+    
+    # Check if already initialized
+    if [[ -d "$HOME/.config/aidevops/tenants" ]]; then
+        local tenant_count
+        tenant_count=$(find "$HOME/.config/aidevops/tenants" -maxdepth 1 -type d | wc -l)
+        # Subtract 1 for the tenants/ dir itself
+        tenant_count=$((tenant_count - 1))
+        print_success "Multi-tenant already initialized ($tenant_count tenant(s))"
+        bash "$credential_helper" status
+        return 0
+    fi
+    
+    # Check if there are existing credentials to migrate
+    if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+        local key_count
+        key_count=$(grep -c "^export " "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || echo "0")
+        print_info "Found $key_count existing API keys in mcp-env.sh"
+        print_info "Multi-tenant enables managing separate credential sets for:"
+        echo "  - Multiple clients (agency/freelance work)"
+        echo "  - Multiple environments (production, staging)"
+        echo "  - Multiple accounts (personal, work)"
+        echo ""
+        print_info "Your existing keys will be migrated to a 'default' tenant."
+        print_info "Everything continues to work as before - this is non-breaking."
+        echo ""
+        
+        read -r -p "Enable multi-tenant credential storage? (y/n): " enable_mt
+        enable_mt=$(echo "$enable_mt" | tr '[:upper:]' '[:lower:]')
+        
+        if [[ "$enable_mt" == "y" || "$enable_mt" == "yes" ]]; then
+            bash "$credential_helper" init
+            print_success "Multi-tenant credential storage enabled"
+            echo ""
+            print_info "Quick start:"
+            echo "  credential-helper.sh create client-name    # Create a tenant"
+            echo "  credential-helper.sh switch client-name    # Switch active tenant"
+            echo "  credential-helper.sh set KEY val --tenant X  # Add key to tenant"
+            echo "  credential-helper.sh status                # Show current state"
+        else
+            print_info "Skipped. Enable later: credential-helper.sh init"
+        fi
+    else
+        print_info "No existing credentials found. Multi-tenant available when needed."
+        print_info "Enable later: credential-helper.sh init"
+    fi
+    
+    return 0
+}
+
 # Check for tool updates after setup
 check_tool_updates() {
     print_info "Checking for tool updates..."
@@ -3139,6 +3203,7 @@ main() {
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+    confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
     confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
     confirm_step "Create symlinks for imported skills" && create_skill_symlinks
     confirm_step "Check for skill updates from upstream" && check_skill_updates

@@ -215,10 +215,30 @@ source ~/.zshrc  # or ~/.bashrc
 bash .agent/scripts/setup-local-api-keys.sh setup
 ```
 
+## Multi-Tenant Support
+
+For managing multiple accounts (clients, environments, organizations):
+
+```bash
+# Initialize multi-tenant storage
+credential-helper.sh init
+
+# Create per-client tenants
+credential-helper.sh create client-acme
+credential-helper.sh set GITHUB_TOKEN ghp_xxx --tenant client-acme
+
+# Switch globally or per-project
+credential-helper.sh switch client-acme
+credential-helper.sh use client-acme  # per-project override
+```
+
+See `multi-tenant.md` for full documentation.
+
 ## Best Practices
 
-1. **Single source** - Always add keys via `setup-local-api-keys.sh`, never paste directly into `.zshrc`
+1. **Single source** - Always add keys via `setup-local-api-keys.sh` or `credential-helper.sh`
 2. **Regular rotation** - Rotate API keys every 90 days
 3. **Minimal permissions** - Use tokens with minimal required scopes
 4. **Monitor usage** - Check API usage in provider dashboards
 5. **Never commit** - API keys should never appear in git history
+6. **Use tenants** - Separate client/environment credentials with multi-tenant storage
