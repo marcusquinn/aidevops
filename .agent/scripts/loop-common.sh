@@ -23,6 +23,12 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
+# Resolve script directory for sibling script references
+LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly LOOP_COMMON_DIR
+readonly LOOP_MAIL_HELPER="${LOOP_COMMON_DIR}/mail-helper.sh"
+readonly LOOP_MEMORY_HELPER="${LOOP_COMMON_DIR}/memory-helper.sh"
+
 readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.agent/loop-state}"
 readonly LOOP_STATE_FILE="${LOOP_STATE_DIR}/loop-state.json"
 readonly LOOP_RECEIPTS_DIR="${LOOP_STATE_DIR}/receipts"
@@ -260,14 +266,14 @@ loop_generate_guardrails() {
     task_id=$(loop_get_state ".task_id")
     
     # Check if memory helper is available
-    if ! command -v ~/.aidevops/agents/scripts/memory-helper.sh &>/dev/null; then
+    if ! command -v "$LOOP_MEMORY_HELPER" &>/dev/null; then
         echo "No guardrails (memory system unavailable)"
         return 0
     fi
     
     # Query memory for FAILED_APPROACH entries from this loop
     local failures
-    failures=$(~/.aidevops/agents/scripts/memory-helper.sh recall \
+    failures=$("$LOOP_MEMORY_HELPER" recall \
         "failure retry loop $task_id" \
         --limit "$max_signs" \
         --format json 2>/dev/null || echo "[]")
@@ -353,15 +359,14 @@ loop_generate_reanchor() {
     
     # Get relevant memories
     local memories=""
-    if [[ -n "$task_keywords" ]] && command -v ~/.aidevops/agents/scripts/memory-helper.sh &>/dev/null; then
-        memories=$(~/.aidevops/agents/scripts/memory-helper.sh recall "$task_keywords" --limit 5 --format text 2>/dev/null || echo "No relevant memories")
+    if [[ -n "$task_keywords" ]] && command -v "$LOOP_MEMORY_HELPER" &>/dev/null; then
+        memories=$("$LOOP_MEMORY_HELPER" recall "$task_keywords" --limit 5 --format text 2>/dev/null || echo "No relevant memories")
     fi
     
     # Check mailbox for pending messages
     local mailbox_messages=""
-    local mail_helper="$HOME/.aidevops/agents/scripts/mail-helper.sh"
-    if [[ -x "$mail_helper" ]]; then
-        mailbox_messages=$("$mail_helper" check --unread-only 2>/dev/null || echo "No mailbox messages")
+    if [[ -x "$LOOP_MAIL_HELPER" ]]; then
+        mailbox_messages=$("$LOOP_MAIL_HELPER" check --unread-only 2>/dev/null || echo "No mailbox messages")
     fi
     
     # Generate guardrails from failures (the "signs" concept)
@@ -557,8 +562,8 @@ loop_store_memory() {
     local task_id
     task_id=$(loop_get_state ".task_id")
     
-    if command -v ~/.aidevops/agents/scripts/memory-helper.sh &>/dev/null; then
-        ~/.aidevops/agents/scripts/memory-helper.sh store \
+    if command -v "$LOOP_MEMORY_HELPER" &>/dev/null; then
+        "$LOOP_MEMORY_HELPER" store \
             --type "$memory_type" \
             --content "$content" \
             --tags "$tags,loop,$task_id" \
@@ -689,9 +694,8 @@ loop_run_external() {
     loop_log_info "Completion promise: $completion_promise"
     
     # Register agent in mailbox system (if available)
-    local mail_helper="$HOME/.aidevops/agents/scripts/mail-helper.sh"
-    if [[ -x "$mail_helper" ]]; then
-        "$mail_helper" register \
+    if [[ -x "$LOOP_MAIL_HELPER" ]]; then
+        "$LOOP_MAIL_HELPER" register \
             --role "worker" \
             --branch "$(git branch --show-current 2>/dev/null || echo unknown)" \
             2>/dev/null || true
@@ -741,12 +745,11 @@ loop_run_external() {
             loop_store_success "Task completed after $iteration iterations"
             
             # Send status report via mailbox (if available)
-            local mail_helper="$HOME/.aidevops/agents/scripts/mail-helper.sh"
-            if [[ -x "$mail_helper" ]]; then
+            if [[ -x "$LOOP_MAIL_HELPER" ]]; then
                 local agent_id
-                agent_id=$("$mail_helper" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
+                agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
                 if [[ -n "$agent_id" ]]; then
-                    "$mail_helper" send \
+                    "$LOOP_MAIL_HELPER" send \
                         --to "coordinator" \
                         --type status_report \
                         --payload "Task completed: $(loop_get_state ".prompt" | head -c 100). Iterations: $iteration. Branch: $(git branch --show-current 2>/dev/null || echo unknown)" \

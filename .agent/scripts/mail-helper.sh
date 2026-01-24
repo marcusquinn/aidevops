@@ -283,14 +283,23 @@ cmd_check() {
 # Read a specific message (marks as read)
 #######################################
 cmd_read_msg() {
-    local msg_id="${1:-}"
+    local msg_id="" agent_id=""
+    # Parse args: support both positional and --agent flag
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent) agent_id="$2"; shift 2 ;;
+            -*) log_error "Unknown option: $1"; return 1 ;;
+            *) msg_id="$1"; shift ;;
+        esac
+    done
     if [[ -z "$msg_id" ]]; then
-        log_error "Usage: mail-helper.sh read <message-id>"
+        log_error "Usage: mail-helper.sh read <message-id> [--agent <id>]"
         return 1
     fi
 
-    local agent_id
-    agent_id=$(get_agent_id)
+    if [[ -z "$agent_id" ]]; then
+        agent_id=$(get_agent_id)
+    fi
     local msg_file="$INBOX_DIR/$agent_id/${msg_id}.toon"
 
     if [[ ! -f "$msg_file" ]]; then
@@ -315,14 +324,23 @@ cmd_read_msg() {
 # Archive a message
 #######################################
 cmd_archive() {
-    local msg_id="${1:-}"
+    local msg_id="" agent_id=""
+    # Parse args: support both positional and --agent flag
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --agent) agent_id="$2"; shift 2 ;;
+            -*) log_error "Unknown option: $1"; return 1 ;;
+            *) msg_id="$1"; shift ;;
+        esac
+    done
     if [[ -z "$msg_id" ]]; then
-        log_error "Usage: mail-helper.sh archive <message-id>"
+        log_error "Usage: mail-helper.sh archive <message-id> [--agent <id>]"
         return 1
     fi
 
-    local agent_id
-    agent_id=$(get_agent_id)
+    if [[ -z "$agent_id" ]]; then
+        agent_id=$(get_agent_id)
+    fi
     local msg_file="$INBOX_DIR/$agent_id/${msg_id}.toon"
 
     if [[ ! -f "$msg_file" ]]; then

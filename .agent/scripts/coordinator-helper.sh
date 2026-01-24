@@ -21,9 +21,11 @@
 
 set -euo pipefail
 
-# Configuration
-readonly MAIL_HELPER="$HOME/.aidevops/agents/scripts/mail-helper.sh"
-readonly MEMORY_HELPER="$HOME/.aidevops/agents/scripts/memory-helper.sh"
+# Configuration - resolve relative to this script's location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"
+readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"
 readonly MAIL_DIR="${AIDEVOPS_MAIL_DIR:-$HOME/.aidevops/.agent-workspace/mail}"
 readonly REGISTRY_FILE="$MAIL_DIR/registry.toon"
 readonly COORDINATOR_ID="coordinator"
@@ -271,18 +273,22 @@ cmd_dispatch() {
         fi
     fi
     
-    local -a extra_args=()
     if [[ -n "$convoy" ]]; then
-        extra_args+=(--convoy "$convoy")
+        "$MAIL_HELPER" send \
+            --from "$COORDINATOR_ID" \
+            --to "$to" \
+            --type task_dispatch \
+            --payload "$task" \
+            --priority "$priority" \
+            --convoy "$convoy"
+    else
+        "$MAIL_HELPER" send \
+            --from "$COORDINATOR_ID" \
+            --to "$to" \
+            --type task_dispatch \
+            --payload "$task" \
+            --priority "$priority"
     fi
-    
-    "$MAIL_HELPER" send \
-        --from "$COORDINATOR_ID" \
-        --to "$to" \
-        --type task_dispatch \
-        --payload "$task" \
-        --priority "$priority" \
-        "${extra_args[@]}"
 }
 
 #######################################

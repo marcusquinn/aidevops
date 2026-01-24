@@ -1,4 +1,4 @@
-<!--TOON:agents[14]{name,file,purpose,model_tier}:
+<!--TOON:agents[13]{name,file,purpose,model_tier}:
 Plan+,plan-plus.md,Read-only planning with semantic codebase search,sonnet
 Build+,build-plus.md,Enhanced Build with context tools,sonnet
 AI-DevOps,aidevops.md,Framework operations and meta-agents,sonnet
@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[30]{folder,purpose,key_files}:
+<!--TOON:subagents[31]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|google-search-console|gsc-sitemaps|site-crawler|eeat-score
