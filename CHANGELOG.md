@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.83.0] - 2026-01-24
+
+### Added
+
+- add ClawdHub skill registry as import source with browser automation (#183)
+
+### Changed
+
+- Documentation: add ClawdHub skills and import source to README
 ## [2.82.0] - 2026-01-24
 
 ### Added
