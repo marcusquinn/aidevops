@@ -311,9 +311,14 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     
     # Add custom system prompt for agents that need tool preference enforcement
     # This replaces the default Claude Code system prompt, eliminating harness conflicts
-    prompt_file = os.path.join(agents_dir, "prompts", "build.txt")
-    if display_name in AGENT_PROMPTS and os.path.exists(prompt_file):
-        config["prompt"] = "{file:" + AGENT_PROMPTS[display_name] + "}"
+    if display_name in AGENT_PROMPTS:
+        prompt_rel = AGENT_PROMPTS[display_name]
+        prompt_file = os.path.expanduser(prompt_rel) if prompt_rel.startswith("~") else os.path.join(agents_dir, prompt_rel)
+        if os.path.exists(prompt_file):
+            config["prompt"] = "{file:" + prompt_rel + "}"
+        else:
+            import sys
+            print(f"Warning: Prompt file not found for {display_name}: {prompt_file}", file=sys.stderr)
     
     # Add model routing (from frontmatter or defaults)
     # Resolves tier name to actual model identifier
