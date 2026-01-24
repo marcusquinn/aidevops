@@ -700,14 +700,19 @@ The setup script offers to install these tools automatically.
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-**Browser Automation:**
+**Browser Automation** (in order of preference, tested in OpenCode sessions):
 
-- [Stagehand (JavaScript)](https://github.com/browserbase/stagehand) - AI-powered browser automation with natural language
-- [Stagehand (Python)](https://github.com/anthropics/stagehand-python) - Python version with Pydantic validation
-- [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser automation, performance analysis, debugging
-- [Playwright](https://playwright.dev/) - Cross-browser testing and automation
-- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI
-- [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
+- [Agent Browser](https://github.com/vercel-labs/agent-browser) - **DEFAULT** - CLI-first headless automation optimized for AI agents (Rust CLI + Node.js daemon, snapshot+ref pattern for deterministic element targeting, multi-session isolation, zero setup)
+- [Dev-Browser](https://github.com/SawyerHood/dev-browser) - Stateful TypeScript API with persistent Playwright server (14% faster, 39% cheaper than Playwright MCP; pages/cookies/auth survive across script executions; ideal for local dev testing)
+- [Playwriter](https://github.com/remorses/playwriter) - Chrome extension MCP with full Playwright API (reuse existing browser sessions/extensions/cookies, bypass automation detection, single `execute` tool vs 17+ for minimal context bloat)
+- [Sweet Cookie](https://github.com/steipete/sweet-cookie) - Browser cookie extraction for API calls without launching a browser (TypeScript cross-platform + Swift macOS native; reads cookies directly from browser profile DBs)
+- [Stagehand](https://github.com/browserbase/stagehand) - AI-powered natural language browser automation with self-healing selectors (JavaScript + [Python](https://github.com/anthropics/stagehand-python) versions; `act`/`extract`/`observe`/`agent` primitives)
+- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI content extraction and bulk scraping
+- [Playwright](https://playwright.dev/) - Cross-browser testing and automation (traditional selector-based approach)
+- [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser debugging, performance analysis, DOM inspection
+- [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping via Cloudflare Workers
+
+**Why this order**: Agent Browser's snapshot+ref pattern proved most reliable for AI agents in testing - deterministic element targeting without brittle CSS selectors or expensive AI inference. Dev-Browser adds persistent state for multi-step workflows. Playwriter excels when you need existing browser sessions. Sweet Cookie fills the gap when you only need cookies for API calls. Stagehand's natural language approach is powerful but adds AI inference latency and cost. Traditional Playwright/Chrome DevTools remain useful for specific cross-browser or debugging scenarios.
 
 **SEO & Research:**
 
