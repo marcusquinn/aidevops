@@ -2153,14 +2153,14 @@ setup_nodejs_env() {
 install_mcp_packages() {
     print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
 
-    # Node.js MCP packages: package-name -> binary-name
-    local -A node_mcps=(
-        ["chrome-devtools-mcp"]="chrome-devtools-mcp"
-        ["mcp-server-gsc"]="mcp-server-gsc"
-        ["repomix"]="repomix"
-        ["playwriter"]="playwriter"
-        ["@steipete/macos-automator-mcp"]="macos-automator-mcp"
-        ["@steipete/claude-code-mcp"]="claude-code-mcp"
+    # Node.js MCP packages to install globally
+    local -a node_mcps=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
     )
 
     local installer=""
@@ -2183,7 +2183,8 @@ install_mcp_packages() {
     # Always install latest (bun install -g is fast and idempotent)
     local updated=0
     local failed=0
-    for pkg in "${!node_mcps[@]}"; do
+    local pkg
+    for pkg in "${node_mcps[@]}"; do
         if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
             ((updated++))
         else
