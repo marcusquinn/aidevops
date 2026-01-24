@@ -487,12 +487,53 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
 | **Cache Context** | Prompt caching for cost | Stable instruction prefixes |
 | **Isolate Context** | Sub-agents with separate windows | Subagent files with specific tool permissions |
+| **Multi-Agent Orchestration** | Coordinate parallel agents | TOON mailbox, agent registry, stateless coordinator |
+| **Compaction Resilience** | Preserve context across compaction | OpenCode plugin injects dynamic state at compaction time |
 | **Ralph Loop** | Iterative execution until complete | `ralph-loop-helper.sh`, `full-loop-helper.sh` |
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 |
 
 **Key insight**: Context is a finite resource with diminishing returns. aidevops treats every token as precious - loading only what's needed, when it's needed.
 
 See `.agent/aidevops/architecture.md` for detailed implementation notes and references.
+
+### Multi-Agent Orchestration
+
+Run multiple AI agents in parallel on separate branches, coordinated through a lightweight mailbox system. Each agent works independently in its own git worktree while a stateless coordinator manages task distribution and status reporting.
+
+**Architecture:**
+
+```text
+Coordinator (pulse loop)
+├── Agent Registry (TOON format - who's active, what branch, idle/busy)
+├── Mailbox System (file-based, per-agent inbox/outbox)
+│   ├── task_assignment → worker inbox
+│   ├── status_report → coordinator outbox
+│   └── broadcast → all agents
+└── Model Routing (tier-based: haiku/sonnet/opus/flash/pro)
+```
+
+**Key components:**
+
+| Component | Script | Purpose |
+|-----------|--------|---------|
+| Mailbox | `mail-helper.sh` | TOON-based inter-agent messaging (send, check, broadcast, archive) |
+| Coordinator | `coordinator-helper.sh` | Stateless pulse loop: collect reports, dispatch tasks, track idle workers |
+| Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
+| Model routing | `generate-opencode-agents.sh` | Maps agent tiers to cost-effective models |
+
+**How it works:**
+
+1. Each agent registers on startup (`mail-helper.sh register --role worker`)
+2. Coordinator runs periodic pulses (`coordinator-helper.sh pulse`)
+3. Pulse collects status reports, dispatches queued tasks to idle workers
+4. Agents send completion reports back via outbox
+5. File locking (`noclobber` + retry) prevents race conditions
+
+**Compaction plugin** (`.agent/plugins/opencode-aidevops/`): When OpenCode compacts context (at ~200K tokens), the plugin injects current session state - agent registry, pending mailbox messages, git context, and relevant memories - ensuring continuity across compaction boundaries.
+
+**Custom system prompt** (`.agent/prompts/build.txt`): Based on upstream OpenCode with aidevops-specific overrides for tool preferences, professional objectivity, and per-model reinforcements for weaker models.
+
+**Subagent index** (`.agent/subagent-index.toon`): Compressed TOON routing table listing all agents, subagents, workflows, and scripts with model tier assignments - enables fast agent discovery without loading full markdown files.
 
 ## **Requirements**
 
