@@ -170,6 +170,24 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Inspired by ALwrity persona system. Extend content/guidelines.md with platform-specific sections for LinkedIn, Instagram, YouTube. Define voice, tone, structure, and best practices per platform.
 - [ ] t077 LinkedIn Content Subagent #tools #social-media ~1h (ai:45m test:15m) logged:2026-01-25 ref:t037
   - Notes: Create tools/social-media/linkedin.md. Support post types: text posts, articles, carousels, documents. Follow bird.md pattern. Include LinkedIn-specific best practices (hashtags, timing, engagement).
+- [ ] t079 Consolidate Plan+ and AI-DevOps into Build+ #refactor #agents #architecture ~4h (ai:3h test:1h) logged:2026-01-25
+  - Notes: Remove Plan+ and AI-DevOps as separate primary agents. Build+ becomes the single coding/devops agent.
+  - [ ] t079.1 Audit AI-DevOps for unique knowledge to merge into Build+ ~30m
+    - Notes: AI-DevOps has: framework operations (setup, troubleshooting, architecture), MCP integrations, OpenCode plugins, credential management. Most already accessible via subagents. Merge any unique content into Build+ or ensure subagent coverage.
+  - [ ] t079.2 Add intent detection to Build+ (deliberation vs execution) ~1h
+    - Notes: Build+ should detect message intent: "What do you think..." / "How should we..." → research/discuss mode (don't code yet). "Implement X" / "Fix Y" / "Add Z" → execution mode. Ambiguous → ask "implement now or discuss first?"
+  - [ ] t079.3 Merge Plan+ planning workflow into Build+ ~1h
+    - Notes: Plan+ has: parallel explore agents, investigation phases, synthesis, handoff protocol. Build+ should incorporate these as modes, not separate agent. Keep pre-edit git check as the safety gate (not agent separation).
+  - [ ] t079.4 Remove Plan+ from primary agents ~30m
+    - Notes: Remove from opencode.json agent list, delete plan-plus.md, update generate-opencode-agents.sh, remove Plan+ specific permissions/tools config.
+  - [ ] t079.5 Remove AI-DevOps from primary agents ~30m
+    - Notes: Keep aidevops.md as subagent (@aidevops) for framework-specific tasks. Remove from primary agent list. Users invoke via @aidevops when needed.
+  - [ ] t079.6 Update AGENTS.md and documentation ~30m
+    - Notes: Update greeting workflow (no Plan+ fallback needed), update agent switching docs, update onboarding to reflect single-agent model.
+  - [ ] t079.7 Test Build+ handles planning and execution modes ~30m
+    - Notes: Test: "What's the best approach for X?" (should research, not code). "Implement X" (should code). "Review this" (should analyze). Verify pre-edit check still prevents accidental main branch edits.
+  - [ ] t079.8 Update setup.sh and aidevops update to cleanup removed agents ~30m
+    - Notes: setup.sh must: 1) Remove Plan+ from opencode.json agent list, 2) Remove AI-DevOps from primary agents (keep as subagent), 3) Delete orphaned agent files from ~/.config/opencode/agent/, 4) Update default_agent to Build+. This ensures existing installs get cleaned up on `aidevops update`.
 - [x] t063 Fix secretlint scanning performance #bugfix #secretlint #performance ~30m (ai:15m test:10m read:5m) logged:2026-01-14 completed:2026-01-14
   - Notes: Added python-env, .osgrep, .scannerwork to .secretlintignore. Added bun.lock to .gitignore to maintain subset rule. Increased Docker timeout 30s→60s. Optional: glob whitelist in linters-local.sh for further optimization.
 - [x] t066 Add /add-skill command for external skill import #tools #skills #agents ~4h (ai:3h test:30m read:30m) logged:2026-01-21 started:2026-01-21T00:00Z completed:2026-01-21 actual:4h
