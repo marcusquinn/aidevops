@@ -75,7 +75,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t073.1 Implementation (all subagents + scripts) ~1h
   - [ ] t073.2 Integration Testing ~2h
   - Notes: Privacy-preserving document extraction with Docling (parsing), ExtractThinker (LLM extraction), Presidio (PII). Supports fully local processing via Ollama or Cloudflare Workers AI. PRD: todo/tasks/prd-document-extraction.md
-- [ ] t069 Fix toon-helper.sh validate command - positional args not passed to case statement #bugfix ~15m (ai:10m test:5m) logged:2026-01-24
+- [x] t069 Fix toon-helper.sh validate command - positional args not passed to case statement #bugfix ~15m actual:10m (ai:10m test:5m) logged:2026-01-24 completed:2026-01-25
+  - Notes: Fixed - validate command now correctly receives input_file via $arg2 from case statement. Verified code at lines 437-442 properly passes arguments.
 - [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~6h (ai:3h test:2h read:1h) logged:2025-12-20
@@ -157,10 +158,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~30m (ai:20m read:10m) logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
   - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem.
 - [ ] t064 Add seo-regex subagent with Search Console regex workflow #seo #tools ~10m (ai:8m read:2m) logged:2026-01-15
-- [ ] t066 /add-skill System for External Skill Import #plan → [todo/PLANS.md#add-skill-system-for-external-skill-import] ~3h (ai:2h test:30m read:30m) logged:2026-01-21
-  - Notes: Import external AI agent skills (SKILL.md, AGENTS.md) into aidevops with upstream tracking, conflict detection, merge support, and multi-assistant output generation. Research complete - see PLANS.md for full PRD. Branch: feature/add-skill-command
-  - Notes: Load up Search Console → Performance → Filter Query → Query Regex → paste `^(?:\S+\s+){6,}\S+$`. You're already ranking for all these and people are finding you on these topics. Copy the first query (or whatever you want to write about) → Google → take the first 3 SERP results → using detailed copy all the headings. Plug it into your favorite LLM and ask it to write for you on this topic. Edit it so it feels natural. Works well because you're already ranking for these terms and people are finding you in LLMs through these channels.
-- [ ] t069 Add Lumen subagent for AI-powered git diffs and commit generation #tools #git #code-review ~20m (ai:15m read:5m) logged:2026-01-23 ref:https://github.com/jnsahaj/lumen
+
+- [ ] t078 Add Lumen subagent for AI-powered git diffs and commit generation #tools #git #code-review ~20m (ai:15m read:5m) logged:2026-01-23 ref:https://github.com/jnsahaj/lumen
   - Notes: Lumen (1.8k stars, Rust, MIT) - Beautiful git diff viewer + AI commit messages + change explanations + git command generation from CLI. Install: `brew install jnsahaj/lumen/lumen` or `cargo install lumen`. Supports OpenAI, Claude, Gemini, Groq, DeepSeek, xAI, Ollama, OpenRouter, Vercel AI Gateway. Config: `~/.config/lumen/lumen.config.json`. Key commands: `lumen diff` (visual diff), `lumen draft` (commit msg), `lumen explain` (change summary), `lumen operate` (natural language git commands). Create subagent at tools/git/lumen.md covering: API key setup (reuse existing keys from mcp-env.sh or per-provider env vars), when to use (pre-commit review, PR diffs, understanding AI-generated changes), integration with aidevops git workflow.
 - [ ] t074 Review DocStrange for document structured data extraction #research #tools #document-extraction ~30m (ai:20m read:10m) logged:2026-01-25 ref:https://github.com/NanoNets/docstrange
   - Notes: NanoNets DocStrange - document structured data extraction tool. Evaluate for: 1) Integration with existing document-extraction workflow (t073) 2) Comparison with Docling/ExtractThinker/Unstract 3) Potential as alternative or complement to current tools 4) Local vs cloud processing options 5) Output format compatibility with aidevops pipelines.
@@ -247,7 +246,8 @@ t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,3h,2h
 t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,2h,1h,,1h,2026-01-14T00:00Z,pending,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,30m,20m,,10m,2026-01-15T00:00Z,pending,,,
 t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,
-t069,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|git|code-review,2h,1h,30m,30m,2026-01-23T00:00Z,pending,,,
+t069,Fix toon-helper.sh validate command,,bugfix,15m,10m,2026-01-24T00:00Z,,2026-01-25,done
+t078,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|git|code-review,20m,15m,,5m,2026-01-23T00:00Z,pending,,,
 t071,Voice AI models for speech generation and transcription,,tools|voice|ai,4h,2h,1h,1h,2026-01-24T00:00Z,pending,,,
 t072,Audio/Video Transcription subagent,,tools|voice|transcription|ai,6h,3h,2h,1h,2026-01-24T00:00Z,pending,,,
 -->
@@ -274,6 +274,8 @@ t072,Audio/Video Transcription subagent,,tools|voice|transcription|ai,6h,3h,2h,1
 
 ## Done
 
+- [x] t069 Fix toon-helper.sh validate command #bugfix ~15m actual:10m logged:2026-01-24 completed:2026-01-25
+  - Notes: Fixed - validate command now correctly receives input_file via $arg2 from case statement. Verified code at lines 437-442 properly passes arguments.
 - [x] t010 Evaluate Merging build-agent and build-mcp into aidevops #plan ~4h actual:1h logged:2025-12-21 completed:2026-01-18
   - Notes: Decision: Keep as subagents in tools/ (not merge into aidevops.md). Implemented in v2.41.0 - generate-opencode-agents.sh cleans up old files, architecture.md documents the pattern.
 - [x] t018 Enhance Plan+ and Build+ with OpenCode's Latest Features #plan ~3h actual:1h logged:2025-12-21 completed:2026-01-18
