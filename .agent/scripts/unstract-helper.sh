@@ -124,7 +124,7 @@ do_start() {
     fi
 
     print_info "Starting Unstract platform..."
-    cd "$UNSTRACT_DIR"
+    cd "$UNSTRACT_DIR" || exit
 
     if [[ -f "run-platform.sh" ]]; then
         bash run-platform.sh
@@ -156,7 +156,7 @@ do_stop() {
     fi
 
     print_info "Stopping Unstract platform..."
-    cd "$UNSTRACT_DIR"
+    cd "$UNSTRACT_DIR" || exit
     docker compose down
     print_success "Unstract stopped"
     return 0
@@ -172,7 +172,7 @@ do_status() {
 
     print_info "Unstract installation: ${UNSTRACT_DIR}"
 
-    cd "$UNSTRACT_DIR"
+    cd "$UNSTRACT_DIR" || exit
     local running
     running=$(docker compose ps --format json 2>/dev/null | grep -c '"running"' 2>/dev/null || echo "0")
 
@@ -204,7 +204,7 @@ do_logs() {
         return 1
     fi
 
-    cd "$UNSTRACT_DIR"
+    cd "$UNSTRACT_DIR" || exit
     local service="${1:-}"
     if [[ -n "$service" ]]; then
         docker compose logs -f "$service"
@@ -230,9 +230,9 @@ do_uninstall() {
         return 0
     fi
 
-    cd "$UNSTRACT_DIR"
+    cd "$UNSTRACT_DIR" || exit
     docker compose down -v 2>/dev/null || true
-    cd "$HOME"
+    cd "$HOME" || exit
     rm -rf "$UNSTRACT_DIR"
 
     # Remove MCP env entries
