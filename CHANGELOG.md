@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - replace remaining associative array in install_mcp_packages
 - replace associative array with parallel arrays in MCP migration
 - unconditionally disable claude-code-mcp tools globally in setup
+
 ## [2.83.0] - 2026-01-24
 
 ### Added
