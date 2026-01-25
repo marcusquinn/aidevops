@@ -100,7 +100,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t029 Review @penberg post for aidevops inclusion or similar approach #research #tools ~15m (ai:10m read:5m) logged:2025-01-03 ref:https://x.com/penberg/status/2007533204622770214
 - [ ] t030 Evaluate @irl_danB post for useful advantages #research #tools ~15m (ai:10m read:5m) logged:2025-01-03 ref:https://x.com/irl_danB/status/2007259356103094523
 - [ ] t031 Company orchestration agent/workflow inspired by @DanielleMorrill #plan #agents #business ~1h (ai:40m test:10m read:10m) logged:2025-01-03 ref:https://x.com/DanielleMorrill/status/2007508036584341899
-- [ ] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~30m (ai:20m test:5m read:5m) logged:2025-01-03 ref:https://x.com/elithrar/status/2007455910218871067
+- [x] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~30m actual:25m (ai:20m test:5m read:5m) logged:2025-01-03 started:2026-01-25T15:00Z completed:2026-01-25 ref:https://x.com/elithrar/status/2007455910218871067
+  - Notes: Created tools/performance/performance.md subagent and /performance command. Uses Chrome DevTools MCP for Core Web Vitals (FCP, LCP, CLS, FID, TTFB), network dependency analysis, and accessibility auditing. Actionable output format with file:line references. PR #209 merged.
 - [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~20m (ai:15m test:5m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
 - [x] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
   - Notes: Created tools/content/summarize.md subagent. steipete/summarize (726+ stars) - CLI for URL/YouTube/podcast summarization with AI. Supports multiple providers (OpenAI, Anthropic, Google, xAI, OpenRouter). Install: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`.
@@ -214,7 +215,7 @@ t028,Setup sisyphus-dev-ai style GitHub collaborator for autonomous issue resolu
 t029,Review @penberg post for aidevops inclusion or similar approach,,research|tools,1h,30m,,30m,2025-01-03T00:00Z,pending,,,
 t030,Evaluate @irl_danB post for useful advantages,,research|tools,1h,30m,,30m,2025-01-03T00:00Z,pending,,,
 t031,Company orchestration agent/workflow inspired by @DanielleMorrill,,plan|agents|business,4h,2h,1h,1h,2025-01-03T00:00Z,pending,,,
-t032,Create performance skill/subagent/command inspired by @elithrar,,tools|performance,3h,1.5h,1h,30m,2025-01-03T00:00Z,pending,,,
+t032,Create performance skill/subagent/command inspired by @elithrar,,tools|performance,30m,20m,5m,5m,2025-01-03T00:00Z,done,,,
 t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
 t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
