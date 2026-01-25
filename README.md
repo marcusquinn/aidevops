@@ -92,7 +92,7 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - 15 primary agents (Plan+, Build+, SEO, Marketing, etc.)
-- 550+ subagent markdown files organized by domain
+- 552+ subagent markdown files organized by domain
 - 147 helper scripts in `.agent/scripts/`
 - 14 slash commands for common workflows
 
@@ -1168,7 +1168,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 15 primary agents, 535+ subagents, and 146 helper scripts.
+This installs the complete framework: 15 primary agents, 552+ subagents, and 147 helper scripts.
 
 ### Importing External Skills
 
@@ -1256,7 +1256,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 540+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 552+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1270,6 +1270,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@list-keys` | List all configured API keys and storage locations | (read-only) |
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
+| `@performance` | Core Web Vitals, network analysis, accessibility | chrome-devtools |
 | `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
 | `@agent-review` | Session analysis, agent improvement (under build-agent/) | (read/write only) |
 
@@ -1810,7 +1811,8 @@ bash .agent/scripts/continue-cli.sh review
 - **[API Integrations](.agent/aidevops/api-integrations.md)** - Service APIs
 - **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 6 tools + anti-detect stack: decision tree, parallel, extensions, fingerprinting
 - **[Anti-Detect Browser](.agent/tools/browser/anti-detect-browser.md)** - Multi-profile management, fingerprint rotation, proxy integration
-- **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Performance auditing
+- **[Web Performance](.agent/tools/performance/performance.md)** - Core Web Vitals, network dependencies, accessibility (Chrome DevTools MCP)
+- **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Lighthouse CLI and PageSpeed Insights API
 - **[Pandoc](.agent/tools/conversion/pandoc.md)** - Document format conversion
 - **[Security](.agent/aidevops/security.md)** - Enterprise security standards
 
