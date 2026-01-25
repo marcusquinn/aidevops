@@ -154,7 +154,7 @@ AGENT_TOOLS = {
     },
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
-        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True, "serper_*": True,
+        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
     },
     "WordPress": {
@@ -534,18 +534,8 @@ if 'dataforseo_*' not in config['tools']:
     config['tools']['dataforseo_*'] = False
     print("  Added dataforseo_* to tools (disabled globally, enabled for SEO agent)")
 
-# Serper MCP - for Google Search API
-if 'serper' not in config['mcp']:
-    config['mcp']['serper'] = {
-        "type": "local",
-        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY {pkg_runner} serper-mcp-server"],
-        "enabled": True
-    }
-    print("  Added serper MCP server")
-
-if 'serper_*' not in config['tools']:
-    config['tools']['serper_*'] = False
-    print("  Added serper_* to tools (disabled globally, enabled for SEO agent)")
+# Serper - REMOVED: Now uses curl-based subagent (.agent/seo/serper.md)
+# No MCP overhead, same functionality via direct API calls
 
 # Playwriter MCP - browser automation via Chrome extension
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
@@ -653,9 +643,7 @@ while IFS= read -r f; do
         dataforseo)
             extra_tools=$'  dataforseo_*: true\n  webfetch: true'
             ;;
-        serper)
-            extra_tools=$'  serper_*: true\n  webfetch: true'
-            ;;
+        # serper - REMOVED: Uses curl subagent now, no MCP tools
         playwriter)
             extra_tools=$'  playwriter_*: true'
             ;;
