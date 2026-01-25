@@ -57,8 +57,9 @@ echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 
 # Remove old primary agent markdown files (they're now in JSON, auto-discovered)
 # This cleans up any legacy files from before auto-discovery
-# Also removes demoted agents that are now subagents in tools/
-for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md; do
+# Also removes demoted agents that are now subagents
+# Plan+ and AI-DevOps consolidated into Build+ as of v2.50.0
+for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md plan-plus.md aidevops.md; do
     rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
@@ -104,44 +105,33 @@ except:
 # Agent display name mappings (filename -> display name)
 # If not in this map, derive from filename (e.g., build-agent.md -> Build-Agent)
 DISPLAY_NAMES = {
-    "plan-plus": "Plan+",
     "build-plus": "Build+",
-    "aidevops": "AI-DevOps",
     "seo": "SEO",
     "social-media": "Social-Media",
 }
 
 # Agent ordering (agents listed here appear first in this order, rest alphabetical)
-# Note: Build-Agent and Build-MCP demoted to subagents in tools/ as of v2.41.0
-AGENT_ORDER = ["Plan+", "Build+", "AI-DevOps"]
+# Note: Build+ is now the single unified coding agent (Plan+ and AI-DevOps consolidated)
+# Plan+ removed: planning workflow merged into Build+ with intent detection
+# AI-DevOps removed: framework operations accessible via @aidevops subagent
+AGENT_ORDER = ["Build+"]
+
+# Files to skip (not primary agents - includes demoted agents)
+# plan-plus.md and aidevops.md are now subagents, not primary agents
+SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md"}
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
 # Note: playwriter_* is ONLY enabled for agents with browser subagents
 # to reduce context bloat from verbose tool descriptions
 AGENT_TOOLS = {
-    "Plan+": {
-        # Planning agent - read all, write only to planning files (via permissions)
-        # Bash enabled with granular permissions for read-only file discovery commands
-        # No playwriter - planning doesn't need browser automation
-        "write": True, "edit": True, "bash": True,
-        "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
-        "gh_grep_*": True
-    },
     "Build+": {
-        # Build agent has browser subagents (playwright, stagehand) so needs playwriter
+        # Unified coding agent - planning, implementation, and DevOps
+        # Has browser subagents (playwright, stagehand) so needs playwriter
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
         "gh_grep_*": True, "playwriter_*": True
-    },
-    "AI-DevOps": {
-        # Framework agent
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
-        "gh_grep_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
@@ -189,7 +179,7 @@ DEFAULT_TOOLS = {
 
 # Temperature settings (by display name, default 0.2)
 AGENT_TEMPS = {
-    "Plan+": 0.2,
+    "Build+": 0.2,
     "Accounts": 0.1,
     "Legal": 0.1,
     "Content": 0.3,
@@ -221,9 +211,7 @@ MODEL_TIERS = {
 # Empty by default - agents use whatever model the user has authenticated with.
 # Uncomment entries to pin specific agents to specific models if needed.
 AGENT_MODEL_TIERS = {
-    # "Plan+": "sonnet",
     # "Build+": "sonnet",
-    # "AI-DevOps": "sonnet",
     # "Research": "flash",
     # "Content": "sonnet",
     # "Sisyphus": "opus",
@@ -231,7 +219,8 @@ AGENT_MODEL_TIERS = {
 }
 
 # Files to skip (not primary agents)
-SKIP_FILES = {"AGENTS.md", "README.md"}
+# Includes SKIP_PRIMARY_AGENTS (demoted agents that are now subagents)
+SKIP_FILES = {"AGENTS.md", "README.md"} | SKIP_PRIMARY_AGENTS
 
 def parse_frontmatter(filepath):
     """Parse YAML frontmatter from markdown file."""
@@ -331,52 +320,9 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     if effective_tier and effective_tier in MODEL_TIERS:
         config["model"] = MODEL_TIERS[effective_tier]
     
-    # Special permissions
-    if display_name == "Plan+":
-        # Plan+ can read all files, but only write/edit planning files
-        # Bash has granular permissions for read-only file discovery commands
-        # Path-based permissions: deny by default, allow specific paths
-        config["permission"] = {
-            # Allow reading from external directories (e.g., ~/.aidevops/agents/)
-            # Required for version check greeting and reading agent documentation
-            "external_directory": "allow",
-            "bash": {
-                # File discovery commands (fast alternatives to mcp_glob)
-                "git ls-files*": "allow",
-                "git status*": "allow",
-                "git log*": "allow",
-                "git diff*": "allow",
-                "git branch*": "allow",
-                "git show*": "allow",
-                "fd *": "allow",
-                "fd -e *": "allow",
-                "fd -g *": "allow",
-                "rg --files*": "allow",
-                # Version check for initial greeting
-                "~/.aidevops/agents/scripts/aidevops-update-check.sh": "allow",
-                "bash ~/.aidevops/agents/scripts/aidevops-update-check.sh": "allow",
-                # Planning file commit helper (for auto-committing TODO.md and todo/ changes)
-                "~/.aidevops/agents/scripts/planning-commit-helper.sh*": "allow",
-                "bash ~/.aidevops/agents/scripts/planning-commit-helper.sh*": "allow",
-                # Deny everything else
-                "*": "deny"
-            },
-            "read": "allow",
-            "write": {
-                "*": "deny",
-                "TODO.md": "allow",
-                "todo/*": "allow",
-                "todo/**": "allow",
-            },
-            "edit": {
-                "*": "deny",
-                "TODO.md": "allow",
-                "todo/*": "allow",
-                "todo/**": "allow",
-            }
-        }
-    else:
-        config["permission"] = {"external_directory": "allow"}
+    # All primary agents get external_directory permission
+    # (Plan+ special permissions removed - it's now a subagent)
+    config["permission"] = {"external_directory": "allow"}
     
     # Add subagent filtering via permission.task if subagents specified
     # This generates deny-all + allow-specific rules
@@ -468,20 +414,23 @@ if os.path.exists(omo_config_path):
         pass  # OmO config not readable, skip
 
 # =============================================================================
-# DISABLE DEFAULT BUILD/PLAN AGENTS
-# Build+ and Plan+ inherit and enhance the default agents, so we disable the
-# originals to avoid confusion in the Tab cycle
+# DISABLE DEFAULT BUILD/PLAN AGENTS AND DEMOTED AGENTS
+# Build+ is now the unified coding agent (Plan+ and AI-DevOps consolidated)
 # =============================================================================
 
 sorted_agents["build"] = {"disable": True}
 sorted_agents["plan"] = {"disable": True}
-print("  Disabled default 'build' and 'plan' agents (replaced by Build+ and Plan+)")
+# Disable Plan+ and AI-DevOps as primary agents (now subagents)
+sorted_agents["Plan+"] = {"disable": True}
+sorted_agents["AI-DevOps"] = {"disable": True}
+print("  Disabled default 'build' and 'plan' agents")
+print("  Disabled 'Plan+' and 'AI-DevOps' (consolidated into Build+, available as @subagents)")
 
 config['agent'] = sorted_agents
 
-# Set Plan+ as the default agent (first in Tab cycle, auto-selected on startup)
-config['default_agent'] = "Plan+"
-print("  Set Plan+ as default agent")
+# Set Build+ as the default agent (first in Tab cycle, auto-selected on startup)
+config['default_agent'] = "Build+"
+print("  Set Build+ as default agent")
 
 print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
@@ -590,7 +539,7 @@ if 'playwriter' not in config['mcp']:
 # playwriter_* enabled globally (used by all main agents)
 config['tools']['playwriter_*'] = True
 
-# gh_grep MCP - GitHub code search (used by Plan+, Build+, AI-DevOps)
+# gh_grep MCP - GitHub code search (used by Build+)
 # This is a remote MCP, no local process to start
 if 'gh_grep' not in config['mcp']:
     config['mcp']['gh_grep'] = {
@@ -598,12 +547,12 @@ if 'gh_grep' not in config['mcp']:
         "url": "https://mcp.grep.app",
         "enabled": True
     }
-    print("  Added gh_grep MCP (eager load - used by Plan+/Build+/AI-DevOps)")
+    print("  Added gh_grep MCP (eager load - used by Build+)")
 
 # gh_grep tools disabled globally, enabled for specific agents
 if 'gh_grep_*' not in config['tools']:
     config['tools']['gh_grep_*'] = False
-    print("  Set gh_grep_* disabled globally (enabled for Plan+/Build+/AI-DevOps)")
+    print("  Set gh_grep_* disabled globally (enabled for Build+)")
 
 # -----------------------------------------------------------------------------
 # LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand
@@ -807,7 +756,8 @@ echo "  Primary agents: Auto-discovered from ~/.aidevops/agents/*.md (Tab-switch
 echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable)"
 echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
 echo ""
-echo "Tab order: Plan+ → Build+ → AI-DevOps → (alphabetical)"
+echo "Tab order: Build+ → (alphabetical)"
+echo "  Note: Plan+ and AI-DevOps consolidated into Build+ (available as @plan-plus, @aidevops)"
 echo ""
 echo "MCP Loading Strategy:"
 echo "  - MCPs disabled globally, enabled per-agent (reduces context tokens)"

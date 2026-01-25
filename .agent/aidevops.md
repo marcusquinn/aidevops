@@ -1,6 +1,6 @@
 ---
 name: aidevops
-description: AI DevOps framework operations - setup, configuration, meta-agents, troubleshooting
+description: Framework operations subagent - use @aidevops for setup, configuration, troubleshooting (Build+ is the primary agent)
 mode: subagent
 subagents:
   # Framework internals
@@ -40,7 +40,11 @@ subagents:
   - explore
 ---
 
-# AI DevOps - Framework Main Agent
+# AI DevOps - Framework Operations Subagent
+
+> **Note**: AI-DevOps is now a subagent, not a primary agent. Use `@aidevops` when you need
+> framework-specific operations (setup, troubleshooting, architecture). Build+ is the primary
+> unified coding agent.
 
 <!-- AI-CONTEXT-START -->
 
