@@ -530,7 +530,11 @@ check_working_tree_clean() {
 }
 
 # Function to extract task IDs from commit messages since last tag
-# Supports formats: t001, t001.1, feat(t001):, fix(t002):, closes t003, completes t004
+# Only extracts from commits that indicate task COMPLETION, not mere mentions
+# Completion patterns:
+#   - Conventional commits with task scope: feat(t001):, fix(t002):, docs(t003):
+#   - Explicit completion phrases: "mark t001 done", "complete t002", "closes t003"
+#   - Multi-task with explicit marker: "mark t001, t002 done" (tasks before "done")
 extract_task_ids_from_commits() {
     local prev_tag
     prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -542,9 +546,47 @@ extract_task_ids_from_commits() {
         commits=$(git log --oneline -50 --pretty=format:"%s" 2>/dev/null)
     fi
     
-    # Extract task IDs (t001, t001.1, etc.) from commit messages
-    # Patterns: t001, feat(t001):, fix(t002):, closes t003, completes t004, mark t005
-    echo "$commits" | grep -oE '\bt[0-9]{3}(\.[0-9]+)*\b' | sort -u
+    local task_ids=""
+    
+    while IFS= read -r commit; do
+        [[ -z "$commit" ]] && continue
+        
+        # Pattern 1: Conventional commits with task ID in scope
+        # e.g., feat(t001):, fix(t002):, docs(t003.1):, refactor(t004):
+        if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\(t[0-9]{3}(\.[0-9]+)*\): ]]; then
+            local id
+            id=$(echo "$commit" | grep -oE '\(t[0-9]{3}(\.[0-9]+)*\)' | tr -d '()')
+            task_ids="$task_ids $id"
+        fi
+        
+        # Pattern 2: "mark tXXX done/complete" - extract task IDs between "mark" and "done/complete"
+        # e.g., "mark t004, t048, t069 done" -> t004, t048, t069
+        if [[ "$commit" =~ mark[[:space:]]+(.*)[[:space:]]+(done|complete) ]]; then
+            local segment="${BASH_REMATCH[1]}"
+            local ids
+            ids=$(echo "$segment" | grep -oE '\bt[0-9]{3}(\.[0-9]+)*\b')
+            task_ids="$task_ids $ids"
+        fi
+        
+        # Pattern 3: "complete/completes/closes tXXX" - task ID immediately after keyword
+        # e.g., "complete t037", "closes t001"
+        local ids
+        ids=$(echo "$commit" | grep -oE '(completes?|closes?)[[:space:]]+t[0-9]{3}(\.[0-9]+)*' | grep -oE 't[0-9]{3}(\.[0-9]+)*')
+        if [[ -n "$ids" ]]; then
+            task_ids="$task_ids $ids"
+        fi
+        
+        # Pattern 4: "tXXX complete/done/finished" - task ID before completion word
+        # e.g., "t001 complete", "t002 done"
+        ids=$(echo "$commit" | grep -oE 't[0-9]{3}(\.[0-9]+)*[[:space:]]+(complete|done|finished)' | grep -oE 't[0-9]{3}(\.[0-9]+)*')
+        if [[ -n "$ids" ]]; then
+            task_ids="$task_ids $ids"
+        fi
+        
+    done <<< "$commits"
+    
+    # Deduplicate and sort
+    echo "$task_ids" | tr ' ' '\n' | grep -E '^t[0-9]{3}' | sort -u
     return 0
 }
 
