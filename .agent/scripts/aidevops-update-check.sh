@@ -18,6 +18,33 @@ get_version() {
     return 0
 }
 
+detect_app() {
+    # Detect which AI coding assistant is running this script
+    # Check environment variables set by various tools
+    if [[ "${OPENCODE:-}" == "1" ]]; then
+        echo "OpenCode"
+    elif [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+        echo "Claude Code"
+    elif [[ -n "${CURSOR_SESSION:-}" ]] || [[ "${TERM_PROGRAM:-}" == "cursor" ]]; then
+        echo "Cursor"
+    elif [[ -n "${WINDSURF_SESSION:-}" ]]; then
+        echo "Windsurf"
+    elif [[ -n "${CONTINUE_SESSION:-}" ]]; then
+        echo "Continue"
+    else
+        # Fallback: check parent process name
+        local parent
+        parent=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || echo "")
+        case "$parent" in
+            *opencode*) echo "OpenCode" ;;
+            *claude*) echo "Claude Code" ;;
+            *cursor*) echo "Cursor" ;;
+            *) echo "unknown" ;;
+        esac
+    fi
+    return 0
+}
+
 get_remote_version() {
     local version
     if command -v jq &>/dev/null; then
@@ -48,18 +75,31 @@ check_ralph_upstream() {
 }
 
 main() {
-    local current remote
+    local current remote app
     current=$(get_version)
     remote=$(get_remote_version)
+    app=$(detect_app)
     
+    # Build version string
+    local version_str
     if [[ "$current" == "unknown" ]]; then
-        echo "aidevops not installed"
+        version_str="aidevops not installed"
     elif [[ "$remote" == "unknown" ]]; then
-        echo "aidevops v$current (unable to check for updates)"
+        version_str="aidevops v$current (unable to check for updates)"
     elif [[ "$current" != "$remote" ]]; then
-        echo "UPDATE_AVAILABLE|$current|$remote"
+        # Special format for update available - parsed by AGENTS.md
+        echo "UPDATE_AVAILABLE|$current|$remote|$app"
+        check_ralph_upstream
+        return 0
     else
-        echo "aidevops v$current"
+        version_str="aidevops v$current"
+    fi
+    
+    # Include app in output if detected
+    if [[ "$app" != "unknown" ]]; then
+        echo "$version_str running in $app"
+    else
+        echo "$version_str"
     fi
     
     # Check ralph upstream when in aidevops repo
