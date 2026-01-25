@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.87.3] - 2026-01-25
+
+### Fixed
+
+- pass positional args correctly to case statement (#205)
 ## [2.87.2] - 2026-01-25
 
 ### Fixed
