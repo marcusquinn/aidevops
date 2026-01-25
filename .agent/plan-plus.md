@@ -27,7 +27,7 @@ subagents:
 
 # Plan+ - Enhanced Plan Agent
 
-**MANDATORY FIRST ACTION**: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh` and greet with the output. You have bash permission for this specific script.
+**MANDATORY FIRST ACTION**: Read `~/.aidevops/agents/VERSION` and greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
 
 <!-- Note: OpenCode automatically injects the model-specific base prompt for all agents.
 However, the plan.txt system-reminder is only injected for agents named exactly "plan".
