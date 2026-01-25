@@ -197,14 +197,14 @@ AGENT_TEMPS = {
     "Research": 0.3,
 }
 
-# Custom system prompts (by display name)
-# These replace the default Claude Code system prompt, eliminating harness conflicts
-# where the default prompt says "use Glob tool" but we want "use git ls-files"
-AGENT_PROMPTS = {
-    "Build+": "~/.aidevops/agents/prompts/build.txt",
-    "AI-DevOps": "~/.aidevops/agents/prompts/build.txt",
-    "Sisyphus": "~/.aidevops/agents/prompts/build.txt",
-}
+# Custom system prompts
+# ALL primary agents use the custom prompt by default to ensure consistent identity
+# and tool preferences (e.g., "use git ls-files" instead of host tool's "use Glob")
+# This prevents identity confusion when running in different host tools (OpenCode vs Claude Code)
+DEFAULT_PROMPT = "~/.aidevops/agents/prompts/build.txt"
+
+# Agents that should NOT use the custom prompt (empty by default - all agents use it)
+SKIP_CUSTOM_PROMPT = set()
 
 # Model routing tiers (from subagent YAML frontmatter 'model:' field)
 # Maps tier names to actual model identifiers
@@ -317,16 +317,13 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         "tools": tools
     }
     
-    # Add custom system prompt for agents that need tool preference enforcement
-    # This replaces the default Claude Code system prompt, eliminating harness conflicts
-    if display_name in AGENT_PROMPTS:
-        prompt_rel = AGENT_PROMPTS[display_name]
-        prompt_file = os.path.expanduser(prompt_rel) if prompt_rel.startswith("~") else os.path.join(agents_dir, prompt_rel)
+    # Add custom system prompt for ALL primary agents (ensures consistent identity)
+    # This replaces the host tool's default system prompt, preventing identity confusion
+    # when running in different tools (OpenCode vs Claude Code) and enforcing tool preferences
+    if display_name not in SKIP_CUSTOM_PROMPT:
+        prompt_file = os.path.expanduser(DEFAULT_PROMPT)
         if os.path.exists(prompt_file):
-            config["prompt"] = "{file:" + prompt_rel + "}"
-        else:
-            import sys
-            print(f"Warning: Prompt file not found for {display_name}: {prompt_file}", file=sys.stderr)
+            config["prompt"] = "{file:" + DEFAULT_PROMPT + "}"
     
     # Add model routing (from frontmatter or defaults)
     # Resolves tier name to actual model identifier
@@ -432,6 +429,10 @@ if os.path.exists(omo_config_path):
         # Only add if omo_agent is disabled (we're taking control of ordering)
         if omo_config.get('omo_agent', {}).get('disabled', False):
             # Add Sisyphus after all other agents
+            # Include custom prompt for consistent identity (same as other primary agents)
+            prompt_file = os.path.expanduser(DEFAULT_PROMPT)
+            prompt_config = {"{file:" + DEFAULT_PROMPT + "}"} if os.path.exists(prompt_file) else {}
+            
             sorted_agents["Sisyphus"] = {
                 "description": "OmO orchestrator - aggressive parallel execution with background agents (Claude Opus 4.5)",
                 "mode": "primary",
@@ -441,7 +442,8 @@ if os.path.exists(omo_config_path):
                     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
                     "webfetch": True, "task": True, "todoread": True, "todowrite": True,
                     "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
-                }
+                },
+                "prompt": "{file:" + DEFAULT_PROMPT + "}"
             }
             sorted_agents["Planner-Sisyphus"] = {
                 "description": "OmO planning agent - analysis and architecture without modifications",
@@ -452,7 +454,8 @@ if os.path.exists(omo_config_path):
                     "write": False, "edit": False, "bash": False,
                     "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
                     "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
-                }
+                },
+                "prompt": "{file:" + DEFAULT_PROMPT + "}"
             }
             print("  Added OmO agents: Sisyphus, Planner-Sisyphus (after WordPress)")
     except:
@@ -479,8 +482,8 @@ print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
 if subagent_filtered_count > 0:
     print(f"  Subagent filtering: {subagent_filtered_count} agents have permission.task rules")
 
-# Count agents with custom prompts
-prompt_count = sum(1 for name in sorted_agents if name in AGENT_PROMPTS and "prompt" in sorted_agents.get(name, {}))
+# Count agents with custom prompts (all agents except those in SKIP_CUSTOM_PROMPT)
+prompt_count = sum(1 for name, cfg in sorted_agents.items() if "prompt" in cfg)
 if prompt_count > 0:
     print(f"  Custom system prompts: {prompt_count} agents use prompts/build.txt")
 
