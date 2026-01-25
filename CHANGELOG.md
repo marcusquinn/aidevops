@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - remove .opencode/agent symlink causing Services/ entries in tab completion (#228)
+
 ## [2.89.0] - 2026-01-25
 
 ### Changed
