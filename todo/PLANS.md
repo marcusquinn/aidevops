@@ -1422,6 +1422,232 @@ This reuses all infrastructure from phases 1-8 and adds only an ingestion pipeli
 
 ---
 
+### [2026-01-25] Document Extraction Subagent & Workflow
+
+**Status:** Planning
+**Estimate:** ~3h (ai:1h test:2h)
+**PRD:** [todo/tasks/prd-document-extraction.md](tasks/prd-document-extraction.md)
+**Source:** [On-Premise Document Intelligence Stack](https://pub.towardsai.net/building-an-on-premise-document-intelligence-stack-with-docling-ollama-phi-4-extractthinker-6ab60b495751)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,logged,started}:
+p014,Document Extraction Subagent & Workflow,planning,0,2,,document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,
+-->
+
+#### Purpose
+
+Create a comprehensive document extraction capability in aidevops that:
+1. Supports fully local/on-premise processing for sensitive documents (GDPR/HIPAA compliance)
+2. Integrates PII detection and anonymization (Microsoft Presidio)
+3. Uses advanced document parsing (Docling) for layout understanding
+4. Provides LLM-powered extraction (ExtractThinker) with contract-based schemas
+5. Supports multiple LLM backends (Ollama local, Cloudflare Workers AI, cloud APIs)
+
+**Key components:**
+- **Docling** (51k stars): Parse PDF, DOCX, PPTX, XLSX, HTML, images with layout understanding
+- **ExtractThinker** (1.5k stars): LLM-powered extraction with Pydantic contracts
+- **Presidio** (6.7k stars): PII detection and anonymization (Microsoft)
+- **Local LLMs**: Ollama (Phi-4, Llama 3.x, Qwen 2.5) or Cloudflare Workers AI
+
+**Pipeline flow:**
+```
+Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract) → Structured JSON
+```
+
+**Relationship to existing Unstract subagent:**
+- Unstract = cloud/self-hosted platform with visual Prompt Studio
+- This = code-first, fully local, privacy-preserving alternative
+- Both can coexist - Unstract for complex workflows, this for quick local extraction
+
+#### Context from Discussion
+
+**Why build this:**
+- Existing Unstract integration requires Docker and platform setup
+- Need lightweight, code-first extraction for quick tasks
+- Privacy requirements demand fully local processing option
+- PII detection should happen BEFORE any cloud API calls
+
+**Technology choices:**
+
+| Component | Tool | Why |
+|-----------|------|-----|
+| Document Parsing | Docling | Best layout understanding, 51k stars, LF AI project |
+| LLM Extraction | ExtractThinker | ORM-style contracts, multi-loader support |
+| PII Detection | Presidio | Microsoft-backed, extensible, MIT license |
+| Local LLM | Ollama | Easy setup, wide model support |
+| Cloud LLM (private) | Cloudflare Workers AI | Data doesn't leave Cloudflare, no logging |
+
+**Architecture:**
+```
+tools/document-extraction/
+├── document-extraction.md      # Main orchestrator subagent
+├── docling.md                  # Document parsing subagent
+├── extractthinker.md           # LLM extraction subagent
+├── presidio.md                 # PII detection/anonymization subagent
+├── local-llm.md                # Local LLM configuration subagent
+└── contracts/                  # Example extraction contracts
+    ├── invoice.md
+    ├── receipt.md
+    ├── driver-license.md
+    └── contract.md
+
+scripts/
+├── document-extraction-helper.sh  # CLI wrapper
+├── docling-helper.sh              # Docling operations
+├── presidio-helper.sh             # PII operations
+└── extractthinker-helper.sh       # Extraction operations
+```
+
+#### Progress
+
+- [ ] (2026-01-25) Phase 1: Research & Environment Setup ~4h
+  - Create Python venv at `~/.aidevops/.agent-workspace/python-env/document-extraction/`
+  - Install dependencies: docling, extract-thinker, presidio-analyzer, presidio-anonymizer
+  - Test basic imports and verify versions
+  - Document hardware requirements and compatibility
+
+- [ ] (2026-01-25) Phase 2: Docling Subagent ~5.5h
+  - Create `tools/document-extraction/docling.md` subagent
+  - Create `scripts/docling-helper.sh` with commands: parse, convert, ocr, info
+  - Support formats: PDF, DOCX, PPTX, XLSX, HTML, PNG, JPEG, TIFF
+  - Export to: Markdown, JSON, DocTags
+  - Test with sample documents (invoice, receipt, contract)
+
+- [ ] (2026-01-25) Phase 3: Presidio Subagent (PII) ~5.5h
+  - Create `tools/document-extraction/presidio.md` subagent
+  - Create `scripts/presidio-helper.sh` with commands: analyze, anonymize, deanonymize, entities
+  - Support entities: names, SSN, credit cards, phone, email, addresses, etc.
+  - Support operators: redact, replace, hash, encrypt, mask
+  - Add custom recognizer examples for domain-specific PII
+  - Test with PII-laden sample documents
+
+- [ ] (2026-01-25) Phase 4: ExtractThinker Subagent ~7.5h
+  - Create `tools/document-extraction/extractthinker.md` subagent
+  - Create `scripts/extractthinker-helper.sh` with commands: extract, classify, batch
+  - Create example contracts in `contracts/` folder
+  - Support document loaders: DocumentLoaderDocling, DocumentLoaderPyPdf
+  - Support LLM backends: Ollama, OpenAI, Anthropic, Azure
+  - Implement splitting strategies: lazy, eager
+  - Implement pagination for small context windows
+  - Test extraction accuracy on sample documents
+
+- [ ] (2026-01-25) Phase 5: Local LLM Subagent ~3.5h
+  - Create `tools/document-extraction/local-llm.md` subagent
+  - Document Ollama setup and model recommendations
+  - Document Cloudflare Workers AI setup (privacy-preserving cloud)
+  - Create model selection guide (text vs vision, context window, speed)
+  - Test with Phi-4, Llama 3.x, Moondream (vision)
+
+- [ ] (2026-01-25) Phase 6: Orchestrator & Main Script ~8h
+  - Create `tools/document-extraction/document-extraction.md` main subagent
+  - Create `scripts/document-extraction-helper.sh` with commands:
+    - `extract <file> <contract>` - Full pipeline
+    - `extract --local <file> <contract>` - Force local LLM
+    - `extract --no-pii <file> <contract>` - Skip PII scan
+    - `batch <folder> <contract>` - Batch processing
+    - `pii-scan <file>` - PII detection only
+    - `parse <file>` - Document parsing only
+    - `models` - List available LLM backends
+    - `contracts` - List available contracts
+  - Implement configurable pipeline stages
+  - Add progress tracking for batch operations
+  - Add error handling and retry logic
+
+- [ ] (2026-01-25) Phase 7: Integration Testing ~4h
+  - Test full pipeline with various document types
+  - Test PII detection accuracy (target: >98% recall)
+  - Test extraction accuracy (target: >95% on invoices)
+  - Test local-only mode (no network calls)
+  - Test batch processing performance
+  - Document known limitations
+
+- [ ] (2026-01-25) Phase 8: Documentation & Integration ~3h
+  - Update `subagent-index.toon` with new subagents
+  - Add to AGENTS.md progressive disclosure table
+  - Create usage examples in subagent docs
+  - Document relationship with existing Unstract subagent
+  - Add to setup.sh (optional Python env setup)
+
+<!--TOON:milestones[8]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m072,p014,Phase 1: Research & Environment Setup,4h,,2026-01-25T01:00Z,,pending
+m073,p014,Phase 2: Docling Subagent,5.5h,,2026-01-25T01:00Z,,pending
+m074,p014,Phase 3: Presidio Subagent (PII),5.5h,,2026-01-25T01:00Z,,pending
+m075,p014,Phase 4: ExtractThinker Subagent,7.5h,,2026-01-25T01:00Z,,pending
+m076,p014,Phase 5: Local LLM Subagent,3.5h,,2026-01-25T01:00Z,,pending
+m077,p014,Phase 6: Orchestrator & Main Script,8h,,2026-01-25T01:00Z,,pending
+m078,p014,Phase 7: Integration Testing,4h,,2026-01-25T01:00Z,,pending
+m079,p014,Phase 8: Documentation & Integration,3h,,2026-01-25T01:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Create separate subagent ecosystem rather than extending Unstract
+  **Rationale:** Unstract is a platform (Docker, UI, API); this is code-first for quick local extraction
+  **Date:** 2026-01-25
+
+- **Decision:** Use Docling over MarkItDown for document parsing
+  **Rationale:** Docling has superior layout understanding, multi-OCR support, 51k stars, LF AI project
+  **Date:** 2026-01-25
+
+- **Decision:** Presidio for PII detection over custom regex
+  **Rationale:** Microsoft-backed, extensible, supports 50+ entity types, MIT license
+  **Date:** 2026-01-25
+
+- **Decision:** ExtractThinker over direct LLM calls
+  **Rationale:** ORM-style contracts, handles pagination/splitting, supports multiple loaders
+  **Date:** 2026-01-25
+
+- **Decision:** Python venv in agent-workspace rather than global install
+  **Rationale:** Isolation prevents dependency conflicts; easy cleanup; reproducible
+  **Date:** 2026-01-25
+
+- **Decision:** Cloudflare Workers AI as privacy-preserving cloud option
+  **Rationale:** Data processed at edge, no logging, GDPR-friendly alternative to OpenAI
+  **Date:** 2026-01-25
+
+<!--TOON:decisions[6]{id,plan_id,decision,rationale,date,impact}:
+d035,p014,Create separate subagent ecosystem rather than extending Unstract,Unstract is a platform; this is code-first for quick local extraction,2026-01-25,Architecture
+d036,p014,Use Docling over MarkItDown for document parsing,Superior layout understanding; 51k stars; LF AI project,2026-01-25,None
+d037,p014,Presidio for PII detection over custom regex,Microsoft-backed; extensible; 50+ entity types,2026-01-25,None
+d038,p014,ExtractThinker over direct LLM calls,ORM-style contracts; handles pagination/splitting,2026-01-25,None
+d039,p014,Python venv in agent-workspace,Isolation prevents conflicts; easy cleanup,2026-01-25,None
+d040,p014,Cloudflare Workers AI as privacy-preserving cloud,Data at edge; no logging; GDPR-friendly,2026-01-25,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `tools/document-extraction/document-extraction.md` | Main orchestrator subagent | 6 |
+| `tools/document-extraction/docling.md` | Document parsing subagent | 2 |
+| `tools/document-extraction/extractthinker.md` | LLM extraction subagent | 4 |
+| `tools/document-extraction/presidio.md` | PII detection/anonymization subagent | 3 |
+| `tools/document-extraction/local-llm.md` | Local LLM configuration subagent | 5 |
+| `tools/document-extraction/contracts/invoice.md` | Invoice extraction contract | 4 |
+| `tools/document-extraction/contracts/receipt.md` | Receipt extraction contract | 4 |
+| `tools/document-extraction/contracts/driver-license.md` | ID extraction contract | 4 |
+| `tools/document-extraction/contracts/contract.md` | Legal contract extraction | 4 |
+| `scripts/document-extraction-helper.sh` | Main CLI wrapper | 6 |
+| `scripts/docling-helper.sh` | Docling operations | 2 |
+| `scripts/presidio-helper.sh` | PII operations | 3 |
+| `scripts/extractthinker-helper.sh` | Extraction operations | 4 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `subagent-index.toon` | Add document-extraction subagents | 8 |
+| `AGENTS.md` | Add to progressive disclosure table | 8 |
+| `setup.sh` | Add optional Python env setup | 8 |
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
