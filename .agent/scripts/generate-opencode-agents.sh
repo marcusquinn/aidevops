@@ -130,7 +130,8 @@ AGENT_TOOLS = {
         "gh_grep_*": True
     },
     "Build+": {
-        # Build agent has browser subagents (playwright, stagehand) so needs playwriter
+        # Build agent needs playwriter for existing browser sessions (extensions/passwords)
+        # For headless automation, use playwright-cli (CLI, no MCP needed)
         # Also needs repomix for codebase context operations
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
@@ -523,12 +524,13 @@ pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 # MCP LOADING POLICY - Enforce enabled states for all MCPs
 # -----------------------------------------------------------------------------
 # Eager-loaded (enabled: True): Used by all main agents, start at launch
-EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'repomix', 'playwriter', 'gh_grep', 'sentry', 'socket'}
+EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'repomix', 'gh_grep', 'sentry', 'socket'}
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
+# playwriter: Only needed when using existing browser sessions (not for playwright-cli)
 LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
-             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs'}
+             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs', 'playwriter'}
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
@@ -562,25 +564,27 @@ if 'osgrep' not in config['mcp']:
 # osgrep_* enabled globally (used by all main agents)
 config['tools']['osgrep_*'] = True
 
-# Playwriter MCP - browser automation via Chrome extension (used by all main agents)
+# Playwriter MCP - browser automation via Chrome extension (lazy-loaded)
+# Only needed when using existing browser sessions with extensions/passwords
+# For headless automation, use playwright-cli instead (no MCP needed)
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
 if 'playwriter' not in config['mcp']:
     if bun_path:
         config['mcp']['playwriter'] = {
             "type": "local",
             "command": ["bun", "x", "playwriter@latest"],
-            "enabled": True
+            "enabled": False
         }
     else:
         config['mcp']['playwriter'] = {
             "type": "local",
             "command": ["npx", "playwriter@latest"],
-            "enabled": True
+            "enabled": False
         }
-    print("  Added playwriter MCP (eager load - used by all agents)")
+    print("  Added playwriter MCP (lazy load - enabled per-agent when needed)")
 
-# playwriter_* enabled globally (used by all main agents)
-config['tools']['playwriter_*'] = True
+# playwriter_* disabled globally (enabled per-agent via playwriter.md subagent)
+config['tools']['playwriter_*'] = False
 
 # gh_grep MCP - GitHub code search (used by Plan+, Build+, AI-DevOps)
 # This is a remote MCP, no local process to start

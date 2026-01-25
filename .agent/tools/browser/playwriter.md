@@ -50,6 +50,8 @@ Always headed (uses your visible browser). Proxy support via browser settings or
 
 **When to use**: When you need your existing logged-in sessions, browser extensions (especially password managers), or want to collaborate with AI on a page you're viewing.
 
+**vs playwright-cli**: Use `playwright-cli` for headless automation (no MCP needed, just CLI). Use Playwriter when you need your existing browser state, extensions, or passwords.
+
 <!-- AI-CONTEXT-END -->
 
 ## Installation
