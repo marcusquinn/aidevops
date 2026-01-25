@@ -34,6 +34,7 @@ tools:
 5. App receives HTTP (not HTTPS) - Cloudron's nginx terminates SSL
 
 **File Structure**:
+
 ```text
 my-app/
   CloudronManifest.json    # App metadata and addon requirements
@@ -43,6 +44,7 @@ my-app/
 ```
 
 **Quick Start**:
+
 ```bash
 # Initialize new app package
 cloudron init
@@ -135,6 +137,7 @@ Single process app (Node.js, Go, Rust)?
 When apps expect to write to paths under `/app/code`:
 
 **Build Time (Dockerfile)**:
+
 ```dockerfile
 # Preserve defaults for first-run initialization
 RUN mkdir -p /app/code/defaults && \
@@ -143,6 +146,7 @@ RUN mkdir -p /app/code/defaults && \
 ```
 
 **Runtime (start.sh)**:
+
 ```bash
 # Create persistent directories
 mkdir -p /app/data/config /app/data/storage /app/data/logs
@@ -272,6 +276,7 @@ chown -R www-data:www-data /run/php
 ```
 
 PHP-FPM pool config:
+
 ```ini
 php_value[session.save_path] = /run/php/sessions
 php_value[upload_tmp_dir] = /run/php/uploads
@@ -318,6 +323,7 @@ server {
 ```
 
 In start.sh:
+
 ```bash
 mkdir -p /run/nginx/client_body /run/nginx/proxy /run/nginx/fastcgi
 ```
@@ -453,6 +459,7 @@ stderr_logfile_maxbytes=0
 ```
 
 End of start.sh for multi-process:
+
 ```bash
 exec /usr/bin/supervisord --configuration /app/code/supervisord.conf
 ```
@@ -747,6 +754,7 @@ See: https://docs.cloudron.io/packaging/publishing/
 ### Common Issues
 
 **App won't start**:
+
 ```bash
 cloudron logs --app testapp
 cloudron debug --app testapp
@@ -754,6 +762,7 @@ cloudron debug --app testapp
 ```
 
 **Permission denied errors**:
+
 ```bash
 # Ensure proper ownership
 chown -R cloudron:cloudron /app/data
@@ -761,6 +770,7 @@ chown -R cloudron:cloudron /app/data
 ```
 
 **Database connection fails**:
+
 ```bash
 # Verify addon is declared in manifest
 # Check environment variables are being read correctly
@@ -769,6 +779,7 @@ env | grep CLOUDRON
 ```
 
 **Health check fails**:
+
 ```bash
 # Verify healthCheckPath returns 200
 curl -v http://localhost:8000/health
@@ -776,6 +787,7 @@ curl -v http://localhost:8000/health
 ```
 
 **Memory limit exceeded**:
+
 ```bash
 # Increase memoryLimit in manifest
 # Check for memory leaks

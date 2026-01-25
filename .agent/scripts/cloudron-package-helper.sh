@@ -66,7 +66,7 @@ cmd_init() {
     
     if [[ -n "$name" ]]; then
         mkdir -p "$name"
-        cd "$name"
+        cd "$name" || exit
         log_info "Created directory: $name"
     fi
     
