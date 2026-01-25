@@ -639,10 +639,12 @@ if 'shadcn_*' not in config['tools']:
 # Claude Code MCP - spawn Claude as sub-agent (subagent only)
 # Source: https://github.com/steipete/claude-code-mcp
 # Use @claude-code subagent to invoke this MCP
-# Note: Always overwrite to ensure correct upstream package is used
+# Fork: https://github.com/marcusquinn/claude-code-mcp (until PR #40 merged upstream)
+# Upstream: https://github.com/steipete/claude-code-mcp
+# Note: Always overwrite to ensure correct fork is used
 config['mcp']['claude-code-mcp'] = {
     "type": "local",
-    "command": ["npx", "-y", "@steipete/claude-code-mcp"],
+    "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
     "enabled": False
 }
 print("  Set claude-code-mcp to lazy load (@claude-code subagent only)")
