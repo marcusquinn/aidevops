@@ -1,7 +1,7 @@
 {
   "_comment": "Claude Code MCP (fork) configuration snippets for various AI tools",
   "_documentation": "https://github.com/marcusquinn/claude-code-mcp",
-  "_upstream": "https://github.com/steipete/claude-code-mcp (revert if merged)",
+  "_upstream": "https://github.com/steipete/claude-code-mcp (revert when PR #40 merged)",
   "_note": "Requires Claude CLI with --dangerously-skip-permissions accepted (swap to ./start.sh for local dev)",
   "_install": "npx -y github:marcusquinn/claude-code-mcp",
 
@@ -11,7 +11,7 @@
     "claude-code-mcp": {
       "type": "local",
       "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
-      "enabled": true
+      "enabled": false
     }
   },
 
