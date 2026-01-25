@@ -103,10 +103,34 @@ Need anti-detection?
 ~/.aidevops/agents/scripts/anti-detect-helper.sh profile clean "my-account"
 ```
 
+## Integration with playwright-cli
+
+playwright-cli uses Playwright's Chromium under the hood. For stealth:
+
+| Stealth Level | Setup | Use Case |
+|---------------|-------|----------|
+| **None** | `playwright-cli open <url>` | Dev testing, trusted sites |
+| **Medium** | Apply rebrowser-patches, then use playwright-cli | Hide automation signals |
+| **High** | Use Camoufox + Playwright API directly | Bot detection evasion |
+
+**Medium stealth with playwright-cli**:
+
+```bash
+# 1. Patch Playwright's Chromium (one-time)
+npx rebrowser-patches@latest patch
+
+# 2. Use playwright-cli normally - it uses patched browser
+playwright-cli open https://bot-detection-test.com
+playwright-cli snapshot
+```
+
+**High stealth** requires Camoufox with Playwright API (not playwright-cli) for fingerprint rotation. See `fingerprint-profiles.md`.
+
 ## Subagent Index
 
 | Subagent | Purpose | When to Read |
 |----------|---------|--------------|
+| `playwright-cli.md` | CLI automation (works with rebrowser-patches) | AI agent automation |
 | `stealth-patches.md` | Chromium automation signal removal | Quick stealth, existing Playwright code |
 | `fingerprint-profiles.md` | Camoufox fingerprint rotation & spoofing | Full anti-detect, unique identities |
 | `browser-profiles.md` | Multi-profile management (persistent/clean) | Account management, session persistence |
