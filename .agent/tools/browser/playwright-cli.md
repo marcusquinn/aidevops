@@ -337,6 +337,54 @@ playwright-cli screenshot
 - **Stagehand** - Natural language automation, self-healing selectors
 - **Playwright direct** - Maximum speed, full API control, TypeScript projects
 
+## Integration with Other Tools
+
+### Chrome DevTools MCP
+
+playwright-cli exposes a CDP endpoint that Chrome DevTools MCP can connect to for debugging:
+
+```bash
+# Start playwright-cli with remote debugging
+playwright-cli open https://example.com --headed
+
+# In another terminal, connect DevTools MCP to the browser
+# (playwright-cli uses Chromium on port 9222 by default)
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
+```
+
+**Use cases**:
+- Performance profiling with Lighthouse while automating
+- Network monitoring during form submissions
+- CSS coverage analysis
+- Console error capture
+
+See `tools/browser/chrome-devtools.md` for full DevTools capabilities.
+
+### Anti-Detect Browser Stack
+
+playwright-cli uses Playwright under the hood, so it works with the anti-detect stack:
+
+**Quick stealth (rebrowser-patches)**:
+
+```bash
+# Install rebrowser-patches for Chromium
+# See tools/browser/stealth-patches.md for setup
+
+# playwright-cli will use the patched Chromium automatically
+# if installed in the Playwright browsers directory
+playwright-cli open https://bot-detection-test.com
+```
+
+**Full anti-detect (Camoufox)**:
+
+For maximum stealth with fingerprint rotation, use Camoufox directly with Playwright API rather than playwright-cli. See `tools/browser/anti-detect-browser.md`.
+
+| Stealth Level | Tool | Use Case |
+|---------------|------|----------|
+| None | playwright-cli (default) | Dev testing, trusted sites |
+| Medium | rebrowser-patches + playwright-cli | Hide automation signals |
+| High | Camoufox + Playwright API | Bot detection evasion, multi-account |
+
 ## Resources
 
 - **GitHub**: https://github.com/microsoft/playwright-cli

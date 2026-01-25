@@ -58,6 +58,7 @@ npx chrome-devtools-mcp@latest --autoConnect
 - Automation: `comprehensiveAnalysis()`, `comparePages()` (A/B testing)
 
 **Best pairings**:
+- **playwright-cli + DevTools**: CLI automation + performance profiling (AI agents)
 - **dev-browser + DevTools**: Persistent profile + deep inspection
 - **Playwright + DevTools**: Speed + performance profiling
 - **Playwriter + DevTools**: Your browser + debugging your extensions

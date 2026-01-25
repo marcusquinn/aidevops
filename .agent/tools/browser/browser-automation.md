@@ -320,6 +320,11 @@ playwright-cli tracing-stop
 
 **vs agent-browser**: Simpler ref syntax (`e5` vs `@e5`), built-in tracing, Microsoft-maintained. agent-browser has Rust CLI for faster cold starts and more commands.
 
+**Integrations**:
+- **Chrome DevTools MCP**: Connect to playwright-cli's browser for Lighthouse, network monitoring
+- **Anti-detect (rebrowser-patches)**: Apply patches to Playwright's Chromium, then use playwright-cli normally
+- See `playwright-cli.md` for detailed integration examples
+
 **Skill installation** (Claude Code):
 
 ```bash
