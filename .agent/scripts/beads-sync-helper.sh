@@ -184,7 +184,7 @@ parse_todo_md() {
 
 # Push TODO.md to Beads
 cmd_push() {
-    local force="${1:-false}"
+    local _force="${1:-false}"  # Reserved for future force-push support
     local dry_run="${2:-false}"
     local verbose="${3:-false}"
     

@@ -835,10 +835,8 @@ pr_review_loop() {
             WAITING)
                 print_info "Waiting for review..."
                 # Check if review is stale and trigger re-review if enabled
-                if [[ "$auto_trigger_review" == "true" ]]; then
-                    if check_and_trigger_review "$pr_number"; then
-                        print_info "Re-review triggered, waiting for response..."
-                    fi
+                if [[ "$auto_trigger_review" == "true" ]] && check_and_trigger_review "$pr_number"; then
+                    print_info "Re-review triggered, waiting for response..."
                 fi
                 ;;
             *)

@@ -483,11 +483,9 @@ check_toon_syntax() {
     else
         # Fallback: basic structure validation (non-empty check)
         while IFS= read -r file; do
-            if [[ -f "$file" ]]; then
-                if [[ ! -s "$file" ]]; then
-                    ((violations++))
-                    print_warning "TOON: Empty file $file"
-                fi
+            if [[ -f "$file" ]] && [[ ! -s "$file" ]]; then
+                ((violations++))
+                print_warning "TOON: Empty file $file"
             fi
         done <<< "$toon_files"
     fi

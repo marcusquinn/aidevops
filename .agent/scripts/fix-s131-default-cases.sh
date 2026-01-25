@@ -174,7 +174,6 @@ process_file() {
     local file="$1"
     local violations
     local count=0
-    local offset=0
     
     print_info "Processing: $file"
     
@@ -204,7 +203,6 @@ process_file() {
 
 # Main execution
 main() {
-    local total_fixed=0
     local files_processed=0
     
     print_info "SonarCloud S131 Fixer - Add default case to case statements"

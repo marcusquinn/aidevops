@@ -259,7 +259,7 @@ to_kebab_case() {
 # Determine target path in .agent/ based on skill content
 determine_target_path() {
     local skill_name="$1"
-    local description="$2"
+    local _description="$2"  # Reserved for future category detection
     local source_dir="$3"
     
     # Analyze content to determine category

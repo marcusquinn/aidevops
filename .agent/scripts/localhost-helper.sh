@@ -78,10 +78,8 @@ is_port_free() {
     fi
     
     # Double-check with nc if available
-    if command -v nc >/dev/null 2>&1; then
-        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
-            return 1  # Port is in use
-        fi
+    if command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 "$port" 2>/dev/null; then
+        return 1  # Port is in use
     fi
     
     return 0  # Port is free

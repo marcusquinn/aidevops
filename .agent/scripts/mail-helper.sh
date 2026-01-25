@@ -398,13 +398,11 @@ cmd_prune() {
         payload=$(sed -n '/^-->$/,$ { /^-->$/d; p; }' "$msg_file" | sed '/^$/d')
 
         # Remember discoveries and important status reports
-        if [[ "$msg_type" == "discovery" || "$msg_type" == "status_report" ]]; then
-            if [[ -x "$MEMORY_HELPER" && -n "$payload" ]]; then
-                "$MEMORY_HELPER" store \
-                    --content "Mailbox ($msg_type): $payload" \
-                    --type CONTEXT \
-                    --tags "mailbox,${msg_type},archived" 2>/dev/null && remembered=$((remembered + 1))
-            fi
+        if [[ ("$msg_type" == "discovery" || "$msg_type" == "status_report") && -x "$MEMORY_HELPER" && -n "$payload" ]]; then
+            "$MEMORY_HELPER" store \
+                --content "Mailbox ($msg_type): $payload" \
+                --type CONTEXT \
+                --tags "mailbox,${msg_type},archived" 2>/dev/null && remembered=$((remembered + 1))
         fi
 
         rm -f "$msg_file"
