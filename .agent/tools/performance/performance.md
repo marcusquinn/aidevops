@@ -378,7 +378,7 @@ npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
       --chrome-flags="--headless"
 
     # Check performance score
-    SCORE=$(jq '.categories.performance.score * 100' lighthouse.json)
+    SCORE=$(jq '.categories.performance.score * 100 | round' lighthouse.json)
     if [ "$SCORE" -lt 90 ]; then
       echo "Performance score $SCORE is below threshold (90)"
       exit 1

@@ -15,7 +15,7 @@ URL/Target: $ARGUMENTS
 ```text
 Default: Full audit (performance + accessibility + network)
 Options:
-  --categories=perf,a11y,network  Specific categories
+  --categories=performance,accessibility,network  Specific categories
   --device=mobile|desktop         Device emulation (default: mobile)
   --iterations=N                  Number of runs for averaging (default: 3)
   --compare=baseline.json         Compare against baseline
@@ -26,7 +26,7 @@ Options:
 
 ```bash
 # Verify Chrome DevTools MCP is available
-which npx && npx chrome-devtools-mcp@latest --version 2>/dev/null || echo "Install: npm i -g chrome-devtools-mcp"
+which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"
 ```
 
 ### Step 3: Read Performance Subagent
