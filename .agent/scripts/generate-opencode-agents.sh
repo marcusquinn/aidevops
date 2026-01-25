@@ -42,10 +42,9 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 ## aidevops Framework Status
 
 **On conversation start**:
-1. If Bash tool available: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh`
-2. If Bash unavailable: Use Read tool on `~/.aidevops/agents/VERSION` to get version
-3. Greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
-4. Then respond to the user's actual message
+1. Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh` (ALL agents have permission for this specific script)
+2. Greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
+3. Then respond to the user's actual message
 
 If update check output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|current|latest`), inform user: "Update available (current → latest). Run `aidevops update` to update."
 
