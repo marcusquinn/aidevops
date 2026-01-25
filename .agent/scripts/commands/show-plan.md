@@ -1,6 +1,6 @@
 ---
 description: Show detailed information about a specific plan from PLANS.md
-agent: Plan+
+agent: Build+
 mode: subagent
 ---
 

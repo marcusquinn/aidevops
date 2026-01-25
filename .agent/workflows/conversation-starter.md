@@ -3,7 +3,7 @@ mode: subagent
 ---
 # Conversation Starter Prompts
 
-Shared prompts for Plan+ and Build+ agents to ensure consistent UX.
+Shared prompts for Build+ agent to ensure consistent UX.
 
 ## Inside Git Repository
 
@@ -22,7 +22,7 @@ If on `main` branch, include this note in the prompt:
 
 What are you working on?
 
-**Planning & Analysis** (Plan+):
+**Planning & Analysis** (Build+ deliberation mode):
 >
 > 1. Architecture Analysis
 > 2. Code Review (`workflows/code-audit-remote.md`)

@@ -91,7 +91,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- 15 primary agents (Plan+, Build+, SEO, Marketing, etc.)
+- Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
 - 552+ subagent markdown files organized by domain
 - 147 helper scripts in `.agent/scripts/`
 - 14 slash commands for common workflows
@@ -1238,7 +1238,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 | Name | File | Purpose | MCPs Enabled |
 |------|------|---------|--------------|
-| Plan+ | `plan-plus.md` | Planning with semantic search, writes to TODO.md/todo/ | context7, augment, repomix |
+| @plan-plus | `plan-plus.md` | Planning-only subagent (Build+ handles planning by default) | context7, augment, repomix |
 | Build+ | `build-plus.md` | Enhanced Build with context tools | context7, augment, repomix |
 | Build-Agent | `build-agent.md` | Design and improve AI agents | context7, augment, repomix |
 | Build-MCP | `build-mcp.md` | Build MCP servers with TS+Bun+ElysiaJS | context7, augment, repomix |
