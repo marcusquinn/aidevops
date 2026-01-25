@@ -445,7 +445,9 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 **Quality Control & Monitoring:**
 
 - **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Gemini Code Assist, Snyk
-- **Performance Auditing**: PageSpeed Insights and Lighthouse integration
+- **Performance Auditing**: PageSpeed Insights, Lighthouse, Core Web Vitals (`/performance` command)
+- **SEO Debugging**: Open Graph validation, favicon checker, social preview testing
+- **Email Deliverability**: SPF/DKIM/DMARC/MX validation, blacklist checking
 - **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
 
 ## **Imported Skills**
@@ -1404,6 +1406,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/code-standards` | Check against documented quality standards |
 | `/code-simplifier` | Simplify and refine code for clarity and maintainability |
 | `/list-keys` | List all configured API keys and their storage locations |
+| `/performance` | Web performance audit (Core Web Vitals, Lighthouse, PageSpeed) |
 | `/pr` | Unified PR workflow (orchestrates all checks) |
 
 **Content Workflow**:
@@ -1421,6 +1424,19 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/keyword-research-extended` | Full SERP analysis with weakness detection |
 | `/webmaster-keywords` | Keywords from GSC + Bing for your verified sites |
 
+**SEO Debugging** (subagents in `seo/`):
+
+| Subagent | Purpose |
+|----------|---------|
+| `@debug-opengraph` | Validate Open Graph meta tags, preview social sharing |
+| `@debug-favicon` | Validate favicon setup across platforms (ico, apple-touch, manifest) |
+
+**Email Deliverability**:
+
+| Command | Purpose |
+|---------|---------|
+| `/email-health-check` | Check SPF/DKIM/DMARC/MX records and blacklist status |
+
 **Release Workflow** (in order):
 
 | Command | Purpose |
@@ -1430,6 +1446,8 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/version-bump` | Bump version following semver |
 | `/release` | Full release workflow (bump, tag, GitHub release, auto-changelog) |
 | `/postflight` | Verify release health after deployment |
+
+**Auto-Task Completion**: The release workflow automatically marks tasks as complete when commit messages reference them (e.g., `Closes t037`, `Fixes t042`). Tasks in `TODO.md` are updated with `completed:` timestamps.
 
 **Documentation**:
 
