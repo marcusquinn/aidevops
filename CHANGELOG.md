@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.89.0] - 2026-01-25
+
+### Changed
+
+- Documentation: mark t079 as complete
+- Refactor: consolidate Plan+ and AI-DevOps into Build+ (#226)
 ## [2.88.5] - 2026-01-25
 
 ### Added
