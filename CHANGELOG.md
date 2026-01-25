@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - insist all agents run update check script (all have permission) (#221)
 - insist all agents run update check script (all have permission)
+
 ## [2.88.2] - 2026-01-25
 
 ### Fixed
