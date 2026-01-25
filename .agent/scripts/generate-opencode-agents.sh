@@ -418,13 +418,15 @@ if os.path.exists(omo_config_path):
 # Build+ is now the unified coding agent (Plan+ and AI-DevOps consolidated)
 # =============================================================================
 
+# Disable OpenCode's built-in default agents so only our custom agents appear
 sorted_agents["build"] = {"disable": True}
 sorted_agents["plan"] = {"disable": True}
-# Disable Plan+ and AI-DevOps as primary agents (now subagents)
-sorted_agents["Plan+"] = {"disable": True}
-sorted_agents["AI-DevOps"] = {"disable": True}
+# Note: Plan+ and AI-DevOps are no longer emitted as disabled primary agents.
+# They were consolidated into Build+ (v2.50.0) and exist only as subagents
+# (@plan-plus, @aidevops). Emitting {"disable": True} without a model caused
+# OpenCode TypeError on input.model.providerID.
 print("  Disabled default 'build' and 'plan' agents")
-print("  Disabled 'Plan+' and 'AI-DevOps' (consolidated into Build+, available as @subagents)")
+print("  Plan+ and AI-DevOps available as @subagents (not in primary agent list)")
 
 config['agent'] = sorted_agents
 
