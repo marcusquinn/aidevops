@@ -63,7 +63,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~3h blocked-by:t068.4,t068.5
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~1h (ai:30m test:20m read:10m) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
-- [ ] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20
+- [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [ ] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20
 - [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~45m (ai:30m test:10m read:5m) logged:2026-01-24
   - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
@@ -87,7 +87,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~2h (ai:1h test:30m read:30m) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~1d (ai:4h test:4h read:2h) logged:2025-12-21
-- [ ] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~30m (ai:20m test:10m) logged:2025-12-22
+- [x] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~30m (ai:20m test:10m) logged:2025-12-22 completed:2026-01-25
 - [ ] t023 Evaluate Shannon AI pentester for security testing integration #security #tools ~30m (ai:20m read:10m) logged:2025-01-03
 - [ ] t024 Evaluate Dexter autonomous financial research agent #research #finance #agents ~30m (ai:20m read:10m) logged:2025-01-03
 - [ ] t025 Create terminal optimization /command and @subagent using Claude #tools #terminal #productivity ~1h (ai:40m test:10m read:10m) logged:2025-01-03 ref:https://x.com/deedydas/status/2007342412335927400

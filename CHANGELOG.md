@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.88.0] - 2026-01-25
+
+### Added
+
+- improve session titles to include task descriptions (#211)
+- add email-health-check command and subagent (#213)
+- add web performance subagent and /performance command (#209)
+- auto-mark tasks complete from commit messages in release (#208)
+- add debug-opengraph and debug-favicon subagents (#206)
+
+### Changed
+
+- Refactor: use 'AI DevOps' identity in system prompt
+- Refactor: standardize Claude Code naming across documentation (#217)
+- Documentation: update README with performance subagent and fix counts
+- Documentation: update agent structure counts after email-health-check addition
+- Documentation: add recent features to README (#215)
+- Documentation: update README counts to reflect current state (#214)
+- Documentation: complete t037 ALwrity review for SEO/marketing inspiration (#207)
+
+### Fixed
+
+- add planning-commit-helper.sh to Plan+ bash permissions
+- prevent false positive task marking in auto-complete (#216)
 ## [2.87.3] - 2026-01-25
 
 ### Fixed
