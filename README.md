@@ -71,7 +71,7 @@ The result: AI agents that work *with* your development process, not around it.
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-18-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-19-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 <!-- AI-CONTEXT-START -->
@@ -92,8 +92,8 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - 18 primary agents (Plan+, Build+, SEO, WordPress, etc.)
-- 536+ subagent markdown files organized by domain
-- 141+ helper scripts in `.agent/scripts/`
+- 560+ subagent markdown files organized by domain
+- 146+ helper scripts in `.agent/scripts/`
 - 41 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
@@ -584,7 +584,7 @@ The setup script offers to install these tools automatically.
 - **[Hetzner Cloud](https://www.hetzner.com/cloud)**: VPS servers, networking, load balancers
 - **[Closte](https://closte.com/)**: Managed hosting, application deployment
 - **[Coolify](https://coolify.io/)** *Enhanced with CLI*: Self-hosted PaaS with CLI integration
-- **[Cloudron](https://www.cloudron.io/)**: Server and app management platform
+- **[Cloudron](https://www.cloudron.io/)** *Enhanced with packaging guide*: Server and app management platform with custom app packaging support
 - **[Vercel](https://vercel.com/)** *Enhanced with CLI*: Modern web deployment platform with CLI integration
 - **[AWS](https://aws.amazon.com/)**: Cloud infrastructure support via standard protocols
 - **[DigitalOcean](https://www.digitalocean.com/)**: Cloud infrastructure support via standard protocols
@@ -646,6 +646,11 @@ The setup script offers to install these tools automatically.
 - **[DSPyGround](https://dspyground.com/)**: Interactive playground for prompt optimization
 - **[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)**: Token-Oriented Object Notation - 20-60% token reduction for LLM prompts
 
+### **Document Processing**
+
+- **[LibPDF](https://libpdf.dev/)**: PDF form filling, digital signatures (PAdES B-B/T/LT/LTA), encryption, merge/split, text extraction
+- **[Unstract](https://github.com/Zipstack/unstract)**: LLM-powered structured data extraction from unstructured documents (PDF, images, DOCX)
+
 ### **Communications**
 
 - **[Twilio](https://www.twilio.com/)**: SMS, voice calls, WhatsApp, phone verification (Verify API), call recording & transcription
@@ -671,7 +676,7 @@ The setup script offers to install these tools automatically.
 
 **Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs primarily for **[OpenCode](https://opencode.ai/)** (recommended). Configuration support is also available for 17 other AI assistants including Cursor, Claude Code/Desktop, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Warp AI, Aider, and Qwen.
 
-### **All Supported MCPs (18 active)**
+### **All Supported MCPs (19 active)**
 
 MCP packages are installed globally via `bun install -g` for instant startup (no `npx` registry lookups). Run `setup.sh` or `aidevops update-tools` to update to latest versions.
 
@@ -695,10 +700,13 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | Per-agent | No |
 | [Sentry](https://sentry.io/) | Error tracking | Per-agent | Yes |
 | [Socket](https://socket.dev/) | Dependency security | Per-agent | No |
+| [Unstract](https://github.com/Zipstack/unstract) | Document data extraction | Per-agent | Yes |
 
 **Tier explanation:**
 - **Global** - Tools always available (loaded into every session)
 - **Per-agent** - Tools disabled globally, enabled per-agent via config (zero context overhead when unused)
+
+**Performance optimization:** MCP packages are installed globally via `bun install -g` for instant startup (~0.1s vs 2-3s with `npx`). The framework uses a three-tier loading strategy: 8 MCPs load eagerly at startup, 12 MCPs load on-demand when their subagent is invoked. This reduces OpenCode startup time by 12-24 seconds.
 
 ### **SEO Integrations (curl subagents - no MCP overhead)**
 
@@ -721,12 +729,13 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-**Browser Automation** (6 tools + anti-detect stack, [benchmarked](#browser-automation)):
+**Browser Automation** (7 tools + anti-detect stack, [benchmarked](#browser-automation)):
 
 - [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
 - [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
 - [agent-browser](https://github.com/vercel-labs/agent-browser) - CLI/CI/CD, `--session` parallel, ref-based element targeting
 - [Crawl4AI](https://github.com/unclecode/crawl4ai) - Bulk extraction, `arun_many` parallel (1.7x), LLM-ready markdown
+- [WaterCrawl](https://github.com/watercrawl/watercrawl) - Self-hosted crawling with web search, sitemap generation, JS rendering, proxy support
 - [Playwriter](https://github.com/nicholasgriffintn/playwriter) - Your browser's extensions/passwords/proxy, already unlocked
 - [Stagehand](https://github.com/browserbase/stagehand) - Natural language automation, self-healing selectors
 - [Chrome DevTools MCP](https://github.com/nicholasgriffintn/chrome-devtools-mcp) - Companion: Lighthouse, network throttling, CSS coverage (pairs with any tool)
@@ -774,6 +783,11 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [QuickFile](https://github.com/marcusquinn/quickfile-mcp) - Accounting API integration (MCP)
 - [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) - Order data extraction (MCP)
 
+**Document Processing:**
+
+- [LibPDF](https://libpdf.dev/) - PDF form filling, digital signatures, encryption, merge/split (via helper script)
+- [Unstract](https://github.com/Zipstack/unstract) - LLM-powered structured data extraction from PDFs, images, DOCX (MCP)
+
 ### **Quick Setup**
 
 ```bash
@@ -817,7 +831,7 @@ These catch formatting and syntax issues during editing, reducing preflight/post
 
 ## **Browser Automation**
 
-6 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
+7 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
 
 ### Performance Benchmarks
 
@@ -852,6 +866,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **Stay logged in** | dev-browser | Profile persists across restarts |
 | **Your extensions/passwords** | Playwriter | Already unlocked in your browser |
 | **Bulk extraction** | Crawl4AI | Purpose-built, parallel, LLM-ready output |
+| **Self-hosted crawling** | WaterCrawl | Docker deployment, web search, sitemap generation |
 | **CLI/CI/CD** | agent-browser | No server needed, `--session` isolation |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
@@ -1820,6 +1835,31 @@ bash .agent/scripts/setup-mcp-integrations.sh all
 - Use Ed25519 SSH keys (modern, secure, fast)
 - Set proper file permissions (600 for configs)
 - Regular key rotation and access audits
+
+### Multi-Tenant Credential Storage
+
+Manage multiple accounts/clients per service with isolated credential sets:
+
+```bash
+# Create a new tenant
+credential-helper.sh create client-acme
+
+# Switch active tenant
+credential-helper.sh switch client-acme
+
+# Set credentials for current tenant
+credential-helper.sh set GITHUB_TOKEN ghp_xxx
+
+# Per-project override (gitignored)
+echo "client-acme" > .aidevops-tenant
+
+# Export for scripts
+eval $(credential-helper.sh export)
+```
+
+**Resolution priority:** Project `.aidevops-tenant` → Global active tenant → Default
+
+See `.agent/tools/credentials/multi-tenant.md` for complete documentation.
 
 **Quality Assurance:**
 
