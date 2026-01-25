@@ -729,9 +729,10 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-**Browser Automation** (7 tools + anti-detect stack, [benchmarked](#browser-automation)):
+**Browser Automation** (8 tools + anti-detect stack, [benchmarked](#browser-automation)):
 
 - [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
+- [playwright-cli](https://github.com/microsoft/playwright-cli) - Microsoft official CLI for AI agents, `--session` isolation, built-in tracing
 - [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
 - [agent-browser](https://github.com/vercel-labs/agent-browser) - CLI/CI/CD, `--session` parallel, ref-based element targeting
 - [Crawl4AI](https://github.com/unclecode/crawl4ai) - Bulk extraction, `arun_many` parallel (1.7x), LLM-ready markdown
@@ -831,43 +832,46 @@ These catch formatting and syntax issues during editing, reducing preflight/post
 
 ## **Browser Automation**
 
-7 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
+8 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
 
 ### Performance Benchmarks
 
 Tested on macOS ARM64, all headless, warm daemon:
 
-| Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
-|------|-----------|-------------|---------------|----------|------------|-----------|
-| **Navigate + Screenshot** | **1.43s** | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
-| **Form Fill** (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
-| **Data Extraction** (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
-| **Multi-step** (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
-| **Parallel** (3 sessions) | **1.6s** | N/A | 2.0s | 3.0s | N/A | Slow |
+| Test | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|------|-----------|----------------|-------------|---------------|----------|------------|-----------|
+| **Navigate + Screenshot** | **1.43s** | ~1.9s | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
+| **Form Fill** (4 fields) | **0.90s** | ~1.4s | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
+| **Data Extraction** (5 items) | 1.33s | ~1.5s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
+| **Multi-step** (click + nav) | **1.49s** | ~2.0s | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
+| **Parallel** (3 sessions) | **1.6s** | ~2.0s | N/A | 2.0s | 3.0s | N/A | Slow |
 
 ### Feature Matrix
 
-| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
-|---------|-----------|-------------|---------------|----------|------------|-----------|
-| **Headless** | Yes | Yes | Yes | Yes | No (your browser) | Yes |
-| **Proxy/VPN** | Full | Via args | No | Full | Your browser | Via args |
-| **Extensions** | Yes (persistent) | Yes (profile) | No | No | Yes (yours) | Possible |
-| **Password managers** | Partial (needs unlock) | Partial | No | No | **Yes** (unlocked) | No |
-| **Parallel sessions** | 5 ctx/2.1s | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance |
-| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
-| **Natural language** | No | No | No | LLM extraction | No | Yes |
-| **Self-healing** | No | No | No | No | No | Yes |
+| Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|---------|-----------|----------------|-------------|---------------|----------|------------|-----------|
+| **Headless** | Yes | Yes (default) | Yes | Yes | Yes | No (your browser) | Yes |
+| **Proxy/VPN** | Full | No | Via args | No | Full | Your browser | Via args |
+| **Extensions** | Yes (persistent) | No | Yes (profile) | No | No | Yes (yours) | Possible |
+| **Password managers** | Partial (needs unlock) | No | Partial | No | No | **Yes** (unlocked) | No |
+| **Parallel sessions** | 5 ctx/2.1s | --session | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance |
+| **Session persistence** | storageState | Profile dir | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
+| **Tracing** | Full API | Built-in CLI | Via Playwright | Via Playwright | No | Via CDP | Via Playwright |
+| **Natural language** | No | No | No | No | LLM extraction | No | Yes |
+| **Self-healing** | No | No | No | No | No | No | Yes |
+| **Maintainer** | Microsoft | Microsoft | Community | Vercel | Community | Community | Browserbase |
 
 ### Tool Selection
 
 | Need | Tool | Why |
 |------|------|-----|
 | **Fastest automation** | Playwright | 0.9s form fill, parallel contexts |
+| **AI agent (CLI)** | playwright-cli | Microsoft official, `--session` isolation, built-in tracing |
 | **Stay logged in** | dev-browser | Profile persists across restarts |
 | **Your extensions/passwords** | Playwriter | Already unlocked in your browser |
 | **Bulk extraction** | Crawl4AI | Purpose-built, parallel, LLM-ready output |
 | **Self-hosted crawling** | WaterCrawl | Docker deployment, web search, sitemap generation |
-| **CLI/CI/CD** | agent-browser | No server needed, `--session` isolation |
+| **CLI/CI/CD** | playwright-cli or agent-browser | No server needed, `--session` isolation |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
 | **Bot detection evasion** | Anti-detect stack | Camoufox (full) or rebrowser-patches (quick) |

@@ -24,7 +24,8 @@ Most tools run **headless by default** (no visible window, no mouse/keyboard com
 1. Fastest tool that meets requirements
 2. ARIA snapshots over screenshots for AI understanding (50-200 tokens vs ~1K)
 3. Headless over headed (no mouse/window competition)
-4. Playwright direct as default unless a specific feature is needed elsewhere
+4. CLI tools (playwright-cli, agent-browser) for AI agents - simpler tool restriction
+5. Playwright direct for TypeScript projects needing full API control
 
 ```text
 What do you need?
@@ -48,13 +49,13 @@ What do you need?
     |       +-> Need parallel isolated sessions?
     |       |       |
     |       |       +-> Maximum speed? --> Playwright (5 contexts in 2.1s)
-    |       |       +-> CLI/shell scripting? --> agent-browser --session (3 in 2.0s)
+    |       |       +-> CLI/shell scripting? --> playwright-cli or agent-browser --session
     |       |       +-> Extraction parallel? --> Crawl4AI arun_many (1.7x speedup)
     |       |
     |       +-> Need persistent login across sessions?
     |       |       |
     |       |       +-> With extensions? --> dev-browser (profile persists)
-    |       |       +-> Without extensions? --> Playwright storageState or dev-browser
+    |       |       +-> Without extensions? --> playwright-cli (session profiles) or Playwright storageState
     |       |
     |       +-> Need proxy / VPN / residential IP?
     |       |       |
@@ -64,6 +65,10 @@ What do you need?
     |       |
     |       +-> Unknown page structure / self-healing?
     |       |       --> Stagehand (natural language, adapts to changes, slowest)
+    |       |
+    |       +-> AI agent (CLI-first, simple tool restriction)?
+    |       |       --> playwright-cli (Microsoft official, `Bash(playwright-cli:*)`)
+    |       |       --> agent-browser (Vercel, more CLI commands, Rust binary)
     |       |
     |       +-> None of the above (just fast automation)?
     |               --> Playwright direct (fastest, 0.9s form fill)
@@ -93,7 +98,7 @@ What do you need?
             +-> Need to stay logged in across restarts? --> dev-browser (profile)
             +-> Need parallel test contexts? --> Playwright (isolated contexts)
             +-> Need visual debugging? --> dev-browser (headed) + DevTools MCP
-            +-> CI/CD pipeline? --> Playwright or agent-browser
+            +-> CI/CD pipeline? --> playwright-cli, agent-browser, or Playwright
 ```
 
 **AI page understanding** (how the AI "sees" the page):
@@ -130,34 +135,37 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 
 ## Feature Matrix
 
-| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | WaterCrawl | Playwriter | Stagehand |
-|---------|-----------|-------------|---------------|----------|------------|------------|-----------|
-| **Headless** | Yes | Yes | Yes (default) | Yes | Cloud API | No (your browser) | Yes |
-| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | API sessions | Your browser | Per-instance |
-| **Cookie management** | Full API | Persistent | CLI commands | Persistent | Via API | Your browser | Per-instance |
-| **Proxy support** | Full | Via launch args | No | Full (ProxyConfig) | Datacenter+Residential | Your browser | Via args |
-| **SOCKS5/VPN** | Yes | Possible | No | Yes | No | Your browser | Via args |
-| **Browser extensions** | Yes (persistent ctx) | Yes (profile) | No | No | No | Yes (yours) | Possible |
-| **Multi-session** | Per-context | Named pages | --session flag | Per-crawl | Per-request | Per-tab | Per-instance |
-| **Form filling** | Full API | Full API | CLI fill/click | No | No | Full API | Natural language |
-| **Screenshots** | Full API | Full API | CLI command | Built-in | PDF/Screenshot | Full API | Via page |
-| **Data extraction** | evaluate() | evaluate() | eval command | CSS/XPath/LLM | Markdown/JSON | evaluate() | extract() + schema |
-| **Natural language** | No | No | No | LLM extraction | No | No | act/extract/observe |
-| **Self-healing** | No | No | No | No | No | No | Yes |
-| **AI-optimized output** | No | ARIA snapshots | Snapshot + refs | Markdown/JSON | Markdown/JSON | No | Structured schemas |
-| **Web search** | No | No | No | No | Yes | No | No |
-| **Sitemap generation** | No | No | No | No | Yes | No | No |
-| **Anti-detect** | rebrowser-patches | Via launch args | No | No | No | Your browser | Via Playwright |
-| **Fingerprint rotation** | No (add Camoufox) | No | No | No | No | No | No |
-| **Multi-profile** | storageState dirs | Profile dir | --session | user_data_dir | N/A | No | No |
-| **Setup required** | npm install | Server running | npm install | pip/Docker | API key | Extension click | npm + API key |
-| **Interface** | JS/TS API | TS scripts | CLI | Python API | REST/SDK | JS API | JS/Python SDK |
+| Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | WaterCrawl | Playwriter | Stagehand |
+|---------|-----------|----------------|-------------|---------------|----------|------------|------------|-----------|
+| **Headless** | Yes | Yes (default) | Yes | Yes (default) | Yes | Cloud API | No (your browser) | Yes |
+| **Session persistence** | storageState | Profile dir | Profile dir | state save/load | user_data_dir | API sessions | Your browser | Per-instance |
+| **Cookie management** | Full API | Persistent | Persistent | CLI commands | Persistent | Via API | Your browser | Per-instance |
+| **Proxy support** | Full | No | Via launch args | No | Full (ProxyConfig) | Datacenter+Residential | Your browser | Via args |
+| **SOCKS5/VPN** | Yes | No | Possible | No | Yes | No | Your browser | Via args |
+| **Browser extensions** | Yes (persistent ctx) | No | Yes (profile) | No | No | No | Yes (yours) | Possible |
+| **Multi-session** | Per-context | --session flag | Named pages | --session flag | Per-crawl | Per-request | Per-tab | Per-instance |
+| **Form filling** | Full API | CLI fill/type | Full API | CLI fill/click | No | No | Full API | Natural language |
+| **Screenshots** | Full API | CLI command | Full API | CLI command | Built-in | PDF/Screenshot | Full API | Via page |
+| **Data extraction** | evaluate() | eval command | evaluate() | eval command | CSS/XPath/LLM | Markdown/JSON | evaluate() | extract() + schema |
+| **Natural language** | No | No | No | No | LLM extraction | No | No | act/extract/observe |
+| **Self-healing** | No | No | No | No | No | No | No | Yes |
+| **AI-optimized output** | No | Snapshot + refs | ARIA snapshots | Snapshot + refs | Markdown/JSON | Markdown/JSON | No | Structured schemas |
+| **Tracing** | Full API | Built-in CLI | Via Playwright | Via Playwright | No | No | Via CDP | Via Playwright |
+| **Web search** | No | No | No | No | No | Yes | No | No |
+| **Sitemap generation** | No | No | No | No | No | Yes | No | No |
+| **Anti-detect** | rebrowser-patches | No | Via launch args | No | No | No | Your browser | Via Playwright |
+| **Fingerprint rotation** | No (add Camoufox) | No | No | No | No | No | No | No |
+| **Multi-profile** | storageState dirs | --session | Profile dir | --session | user_data_dir | N/A | No | No |
+| **Setup required** | npm install | npm install -g | Server running | npm install | pip/Docker | API key | Extension click | npm + API key |
+| **Interface** | JS/TS API | CLI | TS scripts | CLI | Python API | REST/SDK | JS API | JS/Python SDK |
+| **Maintainer** | Microsoft | Microsoft | Community | Vercel | Community | WaterCrawl | Community | Browserbase |
 
 ## Quick Reference
 
 | Tool | Best For | Speed | Setup |
 |------|----------|-------|-------|
 | **Playwright** | Raw speed, full control, proxy support | Fastest | `npm i playwright` |
+| **playwright-cli** | AI agents, CLI automation, session isolation | Fast | `bun i -g @playwright/mcp` |
 | **dev-browser** | Persistent sessions, dev testing, TypeScript | Fast | `dev-browser-helper.sh setup && start` |
 | **agent-browser** | CLI/CI/CD, AI agents, parallel sessions | Fast (warm) | `agent-browser-helper.sh setup` |
 | **Crawl4AI** | Web scraping, bulk extraction, structured data | Fast | `pip install crawl4ai` (venv) |
@@ -278,6 +286,46 @@ const context = await browser.newContext({ storageState: 'state.json' });
 ```
 
 **Persistence**: Use `storageState` to save/load cookies and localStorage across sessions.
+
+### Playwright CLI (AI Agents)
+
+Best for: AI agent automation, CLI-first workflows, session isolation, Microsoft-maintained.
+
+```bash
+# Install (bun preferred for speed)
+bun install -g @playwright/mcp@latest
+
+# Basic workflow
+playwright-cli open https://example.com
+playwright-cli snapshot                    # Get accessibility tree with refs
+playwright-cli click e2                    # Click by ref (note: no @ prefix)
+playwright-cli fill e3 "user@example.com"  # Fill by ref
+playwright-cli type "search query"         # Type into focused element
+playwright-cli screenshot
+playwright-cli close
+
+# Parallel sessions
+playwright-cli --session=s1 open https://site-a.com
+playwright-cli --session=s2 open https://site-b.com
+playwright-cli session-list
+
+# Tracing for debugging
+playwright-cli tracing-start
+playwright-cli click e4
+playwright-cli fill e7 "test"
+playwright-cli tracing-stop
+```
+
+**Persistence**: Sessions preserve cookies/storage between calls. Use `--session=name` for isolation.
+
+**vs agent-browser**: Simpler ref syntax (`e5` vs `@e5`), built-in tracing, Microsoft-maintained. agent-browser has Rust CLI for faster cold starts and more commands.
+
+**Skill installation** (Claude Code):
+
+```bash
+/plugin marketplace add microsoft/playwright-cli
+/plugin install playwright-cli
+```
 
 ### Dev-Browser (Persistent Profile)
 
