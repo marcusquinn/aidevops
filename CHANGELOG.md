@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.88.2] - 2026-01-25
+
+### Fixed
+
+- use placeholder versions in AGENTS.md example to prevent hallucination (#220)
+- use placeholder versions in AGENTS.md example to prevent hallucination
 ## [2.88.1] - 2026-01-25
 
 ### Added
