@@ -1449,6 +1449,7 @@ Create a comprehensive document extraction capability in aidevops that:
 - **Local LLMs**: Ollama (Phi-4, Llama 3.x, Qwen 2.5) or Cloudflare Workers AI
 
 **Pipeline flow:**
+
 ```
 Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract) → Structured JSON
 ```
@@ -1477,6 +1478,7 @@ Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract
 | Cloud LLM (private) | Cloudflare Workers AI | Data doesn't leave Cloudflare, no logging |
 
 **Architecture:**
+
 ```
 tools/document-extraction/
 ├── document-extraction.md      # Main orchestrator subagent
