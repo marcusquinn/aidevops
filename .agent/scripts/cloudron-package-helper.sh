@@ -49,6 +49,15 @@ check_app_dir() {
     return 0
 }
 
+# Check if jq is installed
+check_jq() {
+    if ! command -v jq &> /dev/null; then
+        log_error "jq not found. Install with: brew install jq (macOS) or apt-get install jq (Linux)"
+        return 1
+    fi
+    return 0
+}
+
 # Initialize new Cloudron app package
 cmd_init() {
     local name="${1:-}"
@@ -169,6 +178,7 @@ GITIGNORE
 # Validate CloudronManifest.json
 cmd_validate() {
     check_app_dir || return 1
+    check_jq || return 1
     
     log_info "Validating CloudronManifest.json..."
     
@@ -181,7 +191,7 @@ cmd_validate() {
     for field in "${required_fields[@]}"; do
         if ! echo "$manifest" | jq -e ".$field" > /dev/null 2>&1; then
             log_error "Missing required field: $field"
-            ((errors++))
+            errors=$((errors + 1))
         fi
     done
     
@@ -190,7 +200,7 @@ cmd_validate() {
     manifest_version=$(echo "$manifest" | jq -r '.manifestVersion // 0')
     if [[ "$manifest_version" != "2" ]]; then
         log_error "manifestVersion must be 2 (got: $manifest_version)"
-        ((errors++))
+        errors=$((errors + 1))
     fi
     
     # Check httpPort is a number
@@ -198,7 +208,7 @@ cmd_validate() {
     http_port=$(echo "$manifest" | jq -r '.httpPort // "null"')
     if ! [[ "$http_port" =~ ^[0-9]+$ ]]; then
         log_error "httpPort must be a positive integer"
-        ((errors++))
+        errors=$((errors + 1))
     fi
     
     # Check localstorage addon if app likely needs persistence
@@ -214,7 +224,7 @@ cmd_validate() {
     # Check start.sh exists and is executable
     if [[ ! -f "start.sh" ]]; then
         log_error "start.sh not found"
-        ((errors++))
+        errors=$((errors + 1))
     elif [[ ! -x "start.sh" ]]; then
         log_warn "start.sh is not executable (run: chmod +x start.sh)"
     fi
@@ -222,7 +232,7 @@ cmd_validate() {
     # Check Dockerfile exists
     if [[ ! -f "Dockerfile" ]] && [[ ! -f "Dockerfile.cloudron" ]]; then
         log_error "Dockerfile not found"
-        ((errors++))
+        errors=$((errors + 1))
     fi
     
     if [[ $errors -eq 0 ]]; then
@@ -792,6 +802,7 @@ EOF
 # Show current package status
 cmd_status() {
     check_app_dir || return 1
+    check_jq || return 1
     
     log_info "Package Status"
     echo ""
