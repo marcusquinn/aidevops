@@ -246,8 +246,8 @@ cmd_list() {
         local result
         result=$(calculate_active_time "$session_file")
 
-        local active wall msgs _afk first_ts _last_ts
-        IFS='|' read -r active wall msgs _afk first_ts _last_ts <<< "$result"
+        local active wall msgs afk first_ts _last_ts
+        IFS='|' read -r active wall msgs afk first_ts _last_ts <<< "$result"
 
         # Skip empty/trivial sessions
         [[ $msgs -lt 3 ]] && continue

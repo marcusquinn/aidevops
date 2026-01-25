@@ -543,18 +543,18 @@ cmd_add() {
     mkdir -p "$TEMP_DIR"
     
     # Try to use openskills if available
-    if command -v openskills &>/dev/null \
-        && openskills install "$owner/$repo${subpath:+/$subpath}" --yes --universal 2>/dev/null; then
+    if command -v openskills &>/dev/null; then
         log_info "Using openskills to fetch skill..."
-        log_success "Skill installed via openskills"
-        # openskills handles everything, just register it
-        local skill_name="${custom_name:-$(basename "${subpath:-$repo}")}"
-        skill_name=$(to_kebab_case "$skill_name")
-        # openskills installs to ~/.config/opencode/skills/<name>/SKILL.md
-        # Register with -skill suffix for consistency with direct imports
-        register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/${skill_name}-skill.md" "skill-md" "" "openskills" "Installed via openskills CLI"
-        return 0
-    elif command -v openskills &>/dev/null; then
+        if openskills install "$owner/$repo${subpath:+/$subpath}" --yes --universal 2>/dev/null; then
+            log_success "Skill installed via openskills"
+            # openskills handles everything, just register it
+            local skill_name="${custom_name:-$(basename "${subpath:-$repo}")}"
+            skill_name=$(to_kebab_case "$skill_name")
+            # openskills installs to ~/.config/opencode/skills/<name>/SKILL.md
+            # Register with -skill suffix for consistency with direct imports
+            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/${skill_name}-skill.md" "skill-md" "" "openskills" "Installed via openskills CLI"
+            return 0
+        fi
         log_warning "openskills failed, falling back to direct fetch"
     fi
     
