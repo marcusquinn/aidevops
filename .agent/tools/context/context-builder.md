@@ -96,11 +96,13 @@ npx repomix@latest . --stdout | pbcopy
 | > 2000 | > 200K | **NEVER full pack** - targeted files only |
 
 4. **Use patterns**:
+
 ```bash
 npx repomix@latest --remote user/repo --include "README.md,src/**/*.ts,docs/**" --compress
 ```
 
 **What NOT to do:**
+
 ```bash
 # DANGEROUS - packs entire repo without size check
 npx repomix@latest --remote https://github.com/some/large-repo
