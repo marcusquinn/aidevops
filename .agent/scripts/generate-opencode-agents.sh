@@ -154,7 +154,7 @@ AGENT_TOOLS = {
     },
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
-        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True, "serper_*": True,
+        "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
     },
     "WordPress": {
@@ -299,8 +299,6 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         model_tier: Optional model tier from frontmatter (haiku/sonnet/opus/flash/pro)
     """
     tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
-    # Enabled in all main agents (user request)
-    tools.setdefault("claude-code-mcp_*", True)
     temp = AGENT_TEMPS.get(display_name, 0.2)
     
     config = {
@@ -536,18 +534,8 @@ if 'dataforseo_*' not in config['tools']:
     config['tools']['dataforseo_*'] = False
     print("  Added dataforseo_* to tools (disabled globally, enabled for SEO agent)")
 
-# Serper MCP - for Google Search API
-if 'serper' not in config['mcp']:
-    config['mcp']['serper'] = {
-        "type": "local",
-        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=$SERPER_API_KEY {pkg_runner} serper-mcp-server"],
-        "enabled": True
-    }
-    print("  Added serper MCP server")
-
-if 'serper_*' not in config['tools']:
-    config['tools']['serper_*'] = False
-    print("  Added serper_* to tools (disabled globally, enabled for SEO agent)")
+# Serper - REMOVED: Now uses curl-based subagent (.agent/seo/serper.md)
+# No MCP overhead, same functionality via direct API calls
 
 # Playwriter MCP - browser automation via Chrome extension
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
@@ -590,10 +578,9 @@ config['mcp']['claude-code-mcp'] = {
 }
 print("  Ensured claude-code-mcp MCP server (forked)")
 
-# Claude Code MCP tools disabled globally (enable per-agent if needed)
-if 'claude-code-mcp_*' not in config['tools']:
-    config['tools']['claude-code-mcp_*'] = False
-    print("  Added claude-code-mcp_* to tools (disabled globally, enabled for Build+/AI-DevOps)")
+# Claude Code MCP tools disabled globally (enable per-agent in AGENT_TOOLS if needed)
+config['tools']['claude-code-mcp_*'] = False
+print("  Set claude-code-mcp_* tools disabled globally (enabled for Build+/AI-DevOps only)")
 
 # macOS Automator MCP - AppleScript and JXA automation (macOS only)
 # Docs: https://github.com/steipete/macos-automator-mcp
@@ -610,22 +597,6 @@ if platform.system() == 'Darwin':
     if 'macos-automator_*' not in config['tools']:
         config['tools']['macos-automator_*'] = False
         print("  Added macos-automator_* to tools (disabled globally, enabled for @mac subagent)")
-
-# Claude Code MCP - run Claude Code one-shot as MCP
-# Docs: https://github.com/steipete/claude-code-mcp
-# Note: this exposes tools as claude-code-mcp_*
-if 'claude-code-mcp' not in config['mcp']:
-    config['mcp']['claude-code-mcp'] = {
-        "type": "local",
-        "command": ["npx", "-y", "@steipete/claude-code-mcp@1.10.12"],
-        "enabled": True
-    }
-    print("  Added claude-code-mcp MCP server")
-
-# Enabled globally (per user request) so all main agents can access it.
-if 'claude-code-mcp_*' not in config['tools']:
-    config['tools']['claude-code-mcp_*'] = True
-    print("  Added claude-code-mcp_* to tools (enabled globally)")
 
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
@@ -672,9 +643,7 @@ while IFS= read -r f; do
         dataforseo)
             extra_tools=$'  dataforseo_*: true\n  webfetch: true'
             ;;
-        serper)
-            extra_tools=$'  serper_*: true\n  webfetch: true'
-            ;;
+        # serper - REMOVED: Uses curl subagent now, no MCP tools
         playwriter)
             extra_tools=$'  playwriter_*: true'
             ;;

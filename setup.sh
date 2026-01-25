@@ -229,22 +229,33 @@ cleanup_deprecated_mcps() {
     fi
     
     # Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
-    # Maps: package-name -> binary-name
-    local -A mcp_migrations=(
-        ["chrome-devtools-mcp"]="chrome-devtools-mcp"
-        ["mcp-server-gsc"]="mcp-server-gsc"
-        ["repomix"]="repomix"
-        ["playwriter"]="playwriter"
-        ["@steipete/macos-automator-mcp"]="macos-automator-mcp"
-        ["@steipete/claude-code-mcp"]="claude-code-mcp"
-        ["analytics-mcp"]="analytics-mcp"
+    # Parallel arrays avoid bash associative array issues with @ in package names
+    local -a mcp_pkgs=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
+        "analytics-mcp"
+    )
+    local -a mcp_bins=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "macos-automator-mcp"
+        "claude-code-mcp"
+        "analytics-mcp"
     )
 
-    for pkg in "${!mcp_migrations[@]}"; do
-        local bin_name="${mcp_migrations[$pkg]}"
+    local i
+    for i in "${!mcp_pkgs[@]}"; do
+        local pkg="${mcp_pkgs[$i]}"
+        local bin_name="${mcp_bins[$i]}"
         # Find MCP key using npx/bunx/pipx for this package (single query)
         local mcp_key
-        mcp_key=$(jq -r ".mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(\" \") | test(\"npx.*${pkg}|bunx.*${pkg}|pipx.*run.*${pkg}\")) | .key" "$tmp_config" 2>/dev/null | head -1)
+        mcp_key=$(jq -r --arg pkg "$pkg" '.mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(" ") | test("npx.*" + $pkg + "|bunx.*" + $pkg + "|pipx.*run.*" + $pkg)) | .key' "$tmp_config" 2>/dev/null | head -1)
 
         if [[ -n "$mcp_key" ]]; then
             # Resolve full path for the binary
@@ -2142,14 +2153,14 @@ setup_nodejs_env() {
 install_mcp_packages() {
     print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
 
-    # Node.js MCP packages: package-name -> binary-name
-    local -A node_mcps=(
-        ["chrome-devtools-mcp"]="chrome-devtools-mcp"
-        ["mcp-server-gsc"]="mcp-server-gsc"
-        ["repomix"]="repomix"
-        ["playwriter"]="playwriter"
-        ["@steipete/macos-automator-mcp"]="macos-automator-mcp"
-        ["@steipete/claude-code-mcp"]="claude-code-mcp"
+    # Node.js MCP packages to install globally
+    local -a node_mcps=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "repomix"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
     )
 
     local installer=""
@@ -2172,7 +2183,8 @@ install_mcp_packages() {
     # Always install latest (bun install -g is fast and idempotent)
     local updated=0
     local failed=0
-    for pkg in "${!node_mcps[@]}"; do
+    local pkg
+    for pkg in "${node_mcps[@]}"; do
         if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
             ((updated++))
         else
