@@ -64,7 +64,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~1h (ai:30m test:20m read:10m) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
-- [ ] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20
+- [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
 - [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~45m (ai:30m test:10m read:5m) logged:2026-01-24
   - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
 - [ ] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~4h (ai:2h test:1h read:1h) logged:2026-01-24 related:t027
@@ -204,7 +204,7 @@ t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture
 t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,pending,,,
 t008,aidevops-opencode Plugin,,plan,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,pending,,,
 t004,Add Ahrefs MCP server integration,,seo,2d,1d,0.5d,0.5d,2025-12-20T00:00Z,pending,,,
-t005,Implement multi-tenant credential storage,,security,5d,3d,1.5d,0.5d,2025-12-20T00:00Z,pending,,,
+t005,Implement multi-tenant credential storage,,security,5d,3d,1.5d,0.5d,2025-12-20T00:00Z,done,2026-01-24,,
 t006,Add Playwright MCP auto-setup to setup.sh,,browser,1d,0.5d,0.5d,,2025-12-20T00:00Z,done,,,
 t007,Create MCP server for QuickFile accounting API,,accounting,3d,2d,1d,,2025-12-20T00:00Z,pending,,,
 t012,OCR Invoice/Receipt Extraction Pipeline,,plan|accounting|ocr|automation,3d,1.5d,1d,0.5d,2025-12-21T22:00Z,pending,,,
