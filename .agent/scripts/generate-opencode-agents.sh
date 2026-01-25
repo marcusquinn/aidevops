@@ -337,6 +337,9 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         # Bash has granular permissions for read-only file discovery commands
         # Path-based permissions: deny by default, allow specific paths
         config["permission"] = {
+            # Allow reading from external directories (e.g., ~/.aidevops/agents/)
+            # Required for version check greeting and reading agent documentation
+            "external_directory": "allow",
             "bash": {
                 # File discovery commands (fast alternatives to mcp_glob)
                 "git ls-files*": "allow",
