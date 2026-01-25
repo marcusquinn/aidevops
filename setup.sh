@@ -192,6 +192,7 @@ cleanup_deprecated_mcps() {
         "dataforseo"
         "hostinger-api"
         "shadcn"
+        "repomix"
     )
     
     # Tool rules to remove (for MCPs that no longer exist)
@@ -202,6 +203,7 @@ cleanup_deprecated_mcps() {
         "dataforseo_*"
         "serper_*"
         "shadcn_*"
+        "repomix_*"
     )
     
     local cleaned=0
@@ -233,7 +235,6 @@ cleanup_deprecated_mcps() {
     local -a mcp_pkgs=(
         "chrome-devtools-mcp"
         "mcp-server-gsc"
-        "repomix"
         "playwriter"
         "@steipete/macos-automator-mcp"
         "@steipete/claude-code-mcp"
@@ -242,7 +243,6 @@ cleanup_deprecated_mcps() {
     local -a mcp_bins=(
         "chrome-devtools-mcp"
         "mcp-server-gsc"
-        "repomix"
         "playwriter"
         "macos-automator-mcp"
         "claude-code-mcp"
@@ -262,12 +262,7 @@ cleanup_deprecated_mcps() {
             local full_path
             full_path=$(resolve_mcp_binary_path "$bin_name")
             if [[ -n "$full_path" ]]; then
-                # Preserve --mcp flag for repomix
-                if [[ "$bin_name" == "repomix" ]]; then
-                    jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p, "--mcp"]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                else
-                    jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                fi
+                jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
                 ((cleaned++))
             fi
         fi
@@ -2157,7 +2152,6 @@ install_mcp_packages() {
     local -a node_mcps=(
         "chrome-devtools-mcp"
         "mcp-server-gsc"
-        "repomix"
         "playwriter"
         "@steipete/macos-automator-mcp"
         "@steipete/claude-code-mcp"

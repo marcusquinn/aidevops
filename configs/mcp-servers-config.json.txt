@@ -19,11 +19,6 @@
       "url": "https://mcp.context7.com/mcp",
       "description": "Context7 MCP server for accessing latest documentation of development tools and frameworks"
     },
-    "repomix": {
-      "command": "npx",
-      "args": ["-y", "repomix@latest", "--mcp"],
-      "description": "Repomix MCP server for AI-optimized codebase analysis"
-    },
     "augment-context-engine": {
       "command": "auggie",
       "args": ["--mcp"],
