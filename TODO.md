@@ -127,8 +127,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added Clawdbot integration to aidevops. Created tools/ai-assistants/clawdbot.md subagent with full documentation. Updated overview.md and onboarding.md with Clawdbot recommendations. Clawdbot provides mobile AI access via WhatsApp/Telegram/Slack/Discord/Signal/iMessage/Teams with local gateway, voice wake, and skills system compatible with aidevops agents.
 - [ ] t047 TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research #git #sync #planning ~2h (ai:1h test:30m read:30m) logged:2025-01-09
   - Notes: Evaluate bi-directional sync between TODO.md/PLANS.md and git platform issues. Research tools for syncing issues/PRs across multiple git platforms (GitHub, GitLab, Gitea). Related to t020 (Git Issues Bi-directional Sync). Consider: gitea-github-migrator, gitlab-github-sync, issue-sync tools, Allspice Hub, Linear/Jira integrations. Key questions: 1) Should tasks auto-create issues? 2) Should issue updates sync back to TODO.md? 3) How to handle cross-platform mirroring for multi-platform projects?
-- [ ] t048 Add worktree cleanup reminder to postflight workflow #workflow #git ~10m (ai:8m test:2m) logged:2025-01-10
-  - Notes: After PR merge, postflight.md should remind to clean up worktrees for merged branches. Add section with `worktree-helper.sh list` and `worktree-helper.sh clean` commands.
+- [x] t048 Add worktree cleanup reminder to postflight workflow #workflow #git ~10m actual:0m (ai:8m test:2m) logged:2025-01-10 completed:2026-01-25
+  - Notes: Already implemented. Worktree Cleanup section exists in postflight.md at lines 584-596 with `worktree-helper.sh list` and `worktree-helper.sh clean` commands.
 - [ ] t049 Add timing analysis commands to ralph-loop workflow #workflow #automation ~15m (ai:10m test:5m) logged:2025-01-10
   - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
 - [ ] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~10m (ai:8m test:2m) logged:2025-01-11
@@ -224,7 +224,7 @@ t044,Enhance Vaultwarden agent with bitwarden-cli MCP integration,,tools|credent
 t045,Create Enpass agent using enpass-cli,,tools|credentials|security,4h,2h,1h,1h,2025-01-08T00:00Z,pending,,,
 t046,Review Clawdbot for inspiration and incorporation into aidevops,,research|agents|messaging,4h,2h,1h,1h,2025-01-09T00:00Z,completed,2026-01-18T10:00Z,2026-01-18,2h
 t047,TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research,,git|sync|planning,4h,2h,1h,1h,2025-01-09T00:00Z,pending,,,
-t048,Add worktree cleanup reminder to postflight workflow,,workflow|git,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
+t048,Add worktree cleanup reminder to postflight workflow,,workflow|git,30m,0m,10m,5m,2025-01-10T00:00Z,done,,,2026-01-25
 t049,Add timing analysis commands to ralph-loop workflow,,workflow|automation,30m,15m,10m,5m,2025-01-10T00:00Z,pending,,,
 t050,Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent,,refactor|docs,30m,15m,10m,5m,2025-01-11T00:00Z,pending,,,
 t052,Agent Design Pattern Improvements,,plan|architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,pending,,,
