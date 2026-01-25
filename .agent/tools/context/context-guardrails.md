@@ -160,7 +160,7 @@ Before attempting edits, verify you have the required tools:
 ```text
 Self-check: "Do I have Edit/Write/Bash tools for this task?"
 
-If NO (e.g., in Plan+ agent):
+If NO (e.g., in @plan-plus subagent or read-only mode):
   -> Suggest: "This task requires edits. Please switch to Build+ agent."
 
 If YES:

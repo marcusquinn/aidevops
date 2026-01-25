@@ -148,14 +148,14 @@ Before proceeding, ask:
 > "Which main agents and subagents should have this MCP enabled?
 >
 > **Main Agents Available**:
-> Plan+, Build+, Accounts, AI-DevOps, Content, Health, Legal, Marketing,
+> Build+, Accounts, AI-DevOps, Content, Health, Legal, Marketing,
 > Research, Sales, SEO, WordPress
 >
 > **Recommendation**: Enable globally disabled, then enable per-agent only
 > where needed for context efficiency.
 >
 > **Common patterns**:
-> - Codebase/context tools → Plan+, Build+, AI-DevOps, WordPress, Research
+> - Codebase/context tools → Build+, AI-DevOps, WordPress, Research
 > - Documentation tools → All development agents
 > - Domain-specific → Only relevant domain agents
 >
@@ -170,7 +170,7 @@ Record which agents and why:
 
 | Agent | Enabled | Rationale |
 |-------|---------|-----------|
-| Plan+ | Yes | Needs codebase context for planning |
+| @plan-plus | Optional | Subagent for planning-only mode (Build+ handles planning by default) |
 | Build+ | Yes | Primary development agent |
 | AI-DevOps | Yes | Infrastructure development |
 | WordPress | No | Not relevant to WordPress tasks |
@@ -246,12 +246,6 @@ Edit `.agent/scripts/generate-opencode-agents.sh`:
 Based on the agent enablement decision from Step 2:
 
 ```python
-"Plan+": {
-    "tools": {
-        # ... existing tools ...
-        "{mcp-name}_*": True  # Only if enabled for this agent
-    }
-},
 "Build+": {
     "tools": {
         # ... existing tools ...

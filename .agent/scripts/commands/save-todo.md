@@ -1,6 +1,6 @@
 ---
 description: Save current discussion as task or plan (auto-detects complexity)
-agent: Plan+
+agent: Build+
 mode: subagent
 ---
 

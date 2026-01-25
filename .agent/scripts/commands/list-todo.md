@@ -1,6 +1,6 @@
 ---
 description: List tasks from TODO.md with sorting and filtering options
-agent: Plan+
+agent: Build+
 mode: subagent
 ---
 
