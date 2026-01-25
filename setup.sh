@@ -2862,18 +2862,13 @@ setup_opencode_plugins() {
     print_info "See: https://github.com/NoeFabris/opencode-antigravity-auth"
     echo ""
     
-    # Setup Anthropic OAuth plugin (Claude OAuth)
-    print_info "Setting up Anthropic OAuth plugin..."
-    add_opencode_plugin "opencode-anthropic-auth" "opencode-anthropic-auth@latest" "$opencode_config"
-    
-    print_info "Anthropic OAuth plugin enables Claude Pro/Max authentication"
-    print_info "Zero cost for Claude subscribers, auto token refresh, beta features"
-    print_info "See: https://github.com/anomalyco/opencode-anthropic-auth"
-    echo ""
+    # Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
+    # Adding it as an external plugin causes TypeError due to double-loading.
+    # Removed in v2.90.0 - see PR #230.
     
     print_info "After setup, authenticate with: opencode auth login"
     print_info "  • For Google OAuth: Select 'Google' → 'OAuth with Google (Antigravity)'"
-    print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max'"
+    print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max' (built-in)"
     
     return 0
 }
