@@ -62,6 +62,27 @@ git status --short
 
 ### Step 2: Start Full Loop
 
+**Recommended: Background mode** (avoids timeout issues):
+
+```bash
+~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background
+```
+
+This starts the loop in the background and returns immediately. Use these commands to monitor:
+
+```bash
+# Check status
+~/.aidevops/agents/scripts/full-loop-helper.sh status
+
+# View logs
+~/.aidevops/agents/scripts/full-loop-helper.sh logs
+
+# Cancel if needed
+~/.aidevops/agents/scripts/full-loop-helper.sh cancel
+```
+
+**Foreground mode** (may timeout in MCP tools):
+
 ```bash
 ~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"
 ```
@@ -70,6 +91,8 @@ This will:
 1. Initialize the Ralph loop for task development
 2. Set up state tracking in `.agent/loop-state/full-loop.local.md`
 3. Begin iterating on the task
+
+**Note**: Foreground mode may timeout when called via MCP Bash tool (default 120s timeout). Use `--background` for long-running tasks.
 
 ### Step 3: Task Development (Ralph Loop)
 
@@ -147,6 +170,7 @@ Pass options after the prompt:
 
 | Option | Description |
 |--------|-------------|
+| `--background`, `--bg` | Run in background (recommended for long tasks) |
 | `--max-task-iterations N` | Max iterations for task (default: 50) |
 | `--max-preflight-iterations N` | Max iterations for preflight (default: 5) |
 | `--max-pr-iterations N` | Max iterations for PR review (default: 20) |
@@ -158,17 +182,23 @@ Pass options after the prompt:
 ## Examples
 
 ```bash
-# Basic feature implementation
+# Basic feature implementation (background mode recommended)
+/full-loop "Add user authentication with JWT tokens" --background
+
+# Foreground mode (may timeout for long tasks)
 /full-loop "Add user authentication with JWT tokens"
 
 # Bug fix with limited iterations
-/full-loop "Fix memory leak in connection pool" --max-task-iterations 20
+/full-loop "Fix memory leak in connection pool" --max-task-iterations 20 --background
 
 # Skip postflight for quick iteration
 /full-loop "Update documentation" --skip-postflight
 
 # Manual PR creation
-/full-loop "Refactor database layer" --no-auto-pr
+/full-loop "Refactor database layer" --no-auto-pr --background
+
+# View background loop progress
+~/.aidevops/agents/scripts/full-loop-helper.sh logs
 ```
 
 ## Documentation & Changelog

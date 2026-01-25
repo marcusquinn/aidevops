@@ -225,16 +225,23 @@ run_task_phase() {
     local max_iterations="${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}"
     
     # Auto-detect AI tool environment if RALPH_TOOL not explicitly set
+    # Priority: RALPH_TOOL env > OPENCODE env > CLAUDE_CODE env > command availability
     local tool="${RALPH_TOOL:-}"
     if [[ -z "$tool" ]]; then
-        if [[ -n "${CLAUDE_CODE:-}" ]] || command -v claude &>/dev/null; then
+        if [[ -n "${OPENCODE:-}" ]] || [[ "${TERM_PROGRAM:-}" == "opencode" ]]; then
+            tool="opencode"
+        elif [[ -n "${CLAUDE_CODE:-}" ]]; then
             tool="claude"
         elif command -v opencode &>/dev/null; then
             tool="opencode"
+        elif command -v claude &>/dev/null; then
+            tool="claude"
         else
             tool="opencode"  # Default fallback name (will trigger legacy mode)
         fi
     fi
+    
+    print_info "Detected AI tool: $tool"
     
     print_phase "Task Development" "Running Ralph loop for task implementation"
     
@@ -466,6 +473,8 @@ cmd_start() {
     local prompt="$1"
     shift
     
+    local background=false
+    
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -499,6 +508,10 @@ cmd_start() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                shift
+                ;;
+            --background|--bg)
+                background=true
                 shift
                 ;;
             *)
@@ -554,9 +567,42 @@ cmd_start() {
     save_state "$PHASE_TASK" "$prompt"
     SAVED_PROMPT="$prompt"
     
-    # Start task phase
+    # Background mode: run in background with nohup
+    if [[ "$background" == "true" ]]; then
+        local log_file="${STATE_DIR}/full-loop.log"
+        local pid_file="${STATE_DIR}/full-loop.pid"
+        
+        mkdir -p "$STATE_DIR"
+        
+        print_info "Starting full loop in background..."
+        
+        # Export variables for background process
+        export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
+        export SKIP_PREFLIGHT SKIP_POSTFLIGHT NO_AUTO_PR NO_AUTO_DEPLOY
+        export SAVED_PROMPT="$prompt"
+        
+        # Start background process
+        nohup "$0" _run_foreground "$prompt" > "$log_file" 2>&1 &
+        local pid=$!
+        echo "$pid" > "$pid_file"
+        
+        print_success "Full loop started in background (PID: $pid)"
+        print_info "Check status: full-loop-helper.sh status"
+        print_info "View logs: full-loop-helper.sh logs"
+        print_info "Or: tail -f $log_file"
+        return 0
+    fi
+    
+    # Start task phase (foreground)
     run_task_phase "$prompt"
     
+    return 0
+}
+
+# Internal command for background execution
+cmd_run_foreground() {
+    local prompt="$1"
+    run_task_phase "$prompt"
     return 0
 }
 
@@ -651,6 +697,20 @@ cmd_cancel() {
         return 0
     fi
     
+    # Kill background process if running
+    local pid_file="${STATE_DIR}/full-loop.pid"
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            print_info "Stopping background process (PID: $pid)..."
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
+    fi
+    
     clear_state
     
     # Also cancel any sub-loops (both new and legacy locations)
@@ -660,6 +720,35 @@ cmd_cancel() {
     rm -f ".claude/quality-loop.local.state" 2>/dev/null
     
     print_success "Full loop cancelled"
+    return 0
+}
+
+cmd_logs() {
+    local log_file="${STATE_DIR}/full-loop.log"
+    local lines="${1:-50}"
+    
+    if [[ ! -f "$log_file" ]]; then
+        print_warning "No log file found. Start a loop with --background first."
+        return 1
+    fi
+    
+    # Check if background process is still running
+    local pid_file="${STATE_DIR}/full-loop.pid"
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            print_info "Background process running (PID: $pid)"
+        else
+            print_warning "Background process not running (was PID: $pid)"
+        fi
+    fi
+    
+    echo ""
+    echo -e "${BOLD}Full Loop Logs (last $lines lines)${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    tail -n "$lines" "$log_file"
+    
     return 0
 }
 
@@ -716,6 +805,7 @@ OPTIONS:
     --no-auto-pr                  Don't auto-create PR, pause for human
     --no-auto-deploy              Don't auto-run setup.sh (aidevops only)
     --dry-run                     Show what would happen without executing
+    --background, --bg            Run in background (returns immediately)
 
 PHASES:
     1. Task Development   - Ralph loop for implementation
@@ -734,8 +824,14 @@ EXAMPLES:
     # Start full loop for a feature
     full-loop-helper.sh start "Implement user authentication with JWT"
 
+    # Start in background (recommended for long-running tasks)
+    full-loop-helper.sh start "Implement feature X" --background
+
     # Start with custom iterations
     full-loop-helper.sh start "Fix all TypeScript errors" --max-task-iterations 30
+
+    # View background loop logs
+    full-loop-helper.sh logs
 
     # Resume after manual intervention
     full-loop-helper.sh resume
@@ -767,6 +863,13 @@ main() {
             ;;
         cancel)
             cmd_cancel
+            ;;
+        logs)
+            cmd_logs "$@"
+            ;;
+        _run_foreground)
+            # Internal command for background execution
+            cmd_run_foreground "$@"
             ;;
         help|--help|-h)
             show_help
