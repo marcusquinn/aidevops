@@ -706,7 +706,7 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 - **Global** - Tools always available (loaded into every session)
 - **Per-agent** - Tools disabled globally, enabled per-agent via config (zero context overhead when unused)
 
-**Performance optimization:** MCP packages are installed globally via `bun install -g` for instant startup (~0.1s vs 2-3s with `npx`). The framework uses a three-tier loading strategy: 8 MCPs load eagerly at startup, 12 MCPs load on-demand when their subagent is invoked. This reduces OpenCode startup time by 12-24 seconds.
+**Performance optimization:** MCP packages are installed globally via `bun install -g` for instant startup (~0.1s vs 2-3s with `npx`). The framework uses a three-tier loading strategy: 7 MCPs load eagerly at startup, 13 MCPs load on-demand when their subagent is invoked. This reduces OpenCode startup time by 12-24 seconds.
 
 ### **SEO Integrations (curl subagents - no MCP overhead)**
 
