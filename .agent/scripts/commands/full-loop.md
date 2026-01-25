@@ -8,6 +8,31 @@ Start a full development loop that chains all phases from task implementation to
 
 Task/Prompt: $ARGUMENTS
 
+## Step 0: Resolve Task ID and Set Session Title
+
+**IMPORTANT**: Before proceeding, check if the argument is a task ID (matches pattern `t\d+` like `t061`).
+
+If the argument is a task ID:
+
+1. Look up the task description from TODO.md:
+   ```bash
+   grep "^- \[ \] $ARGUMENTS " TODO.md 2>/dev/null | head -1 | sed 's/^- \[ \] [^ ]* //'
+   ```
+
+2. Use the task description (not just the ID) for the session title. Call the `session-rename` tool with a descriptive title like:
+   - Good: `"t061: Improve session title to include task description"`
+   - Bad: `"Full loop development for t061"`
+
+3. Store the full task description for use in subsequent steps.
+
+If the argument is NOT a task ID (it's a description):
+- Use the description directly for the session title
+- Call `session-rename` with a concise version if the description is very long (truncate to ~60 chars)
+
+**Example session titles:**
+- Task ID `t061` with description "Improve session title format" → `"t061: Improve session title format"`
+- Description "Add JWT authentication" → `"Add JWT authentication"`
+
 ## Full Loop Phases
 
 ```text
