@@ -105,7 +105,7 @@ claude mcp add playwright npx playwright-mcp@latest
 ### **Claude Code MCP (Fork)**
 
 ```bash
-# Add forked MCP server via Claude CLI
+# Add forked MCP server via Claude Code CLI
 claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
 ```
 

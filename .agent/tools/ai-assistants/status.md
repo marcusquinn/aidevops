@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - 7 AI CLI tools integrated with automatic AGENTS.md reading
-- Primary: Aider (v0.86.1), Claude CLI (v2.0.36), Qwen CLI (v0.2.0), OpenAI CLI (v2.7.2)
+- Primary: Aider (v0.86.1), Claude Code (v2.0.36), Qwen CLI (v0.2.0), OpenAI CLI (v2.7.2)
 - Supporting: AI Shell (v1.0.12), LiteLLM (v1.79.3), Hugging Face CLI
 - Universal wrapper: `~/.local/bin/ai-with-context <tool> [args]`
 - Config files: ~/.aider.conf.yml, ~/.claude/config.json, ~/.qwen/config.json, ~/.openai/config.yaml
@@ -44,14 +44,15 @@ tools:
 - **Status**: **VERIFIED WORKING** - Successfully loads AGENTS.md files
 - **Usage**: `aider` (automatic) or `aider-guided` (explicit)
 
-### **2. Claude CLI** - **FULLY CONFIGURED** ✅
+### **2. Claude Code** - **FULLY CONFIGURED** ✅
 
-- **Version**: 2.0.36 (Claude Code)
+- **Version**: 2.0.36
 - **Model**: `claude-3-sonnet-20240229`
 - **Auto-context**: Both AGENTS.md files
 - **Config**: `~/.claude/config.json`
 - **Status**: **READY FOR USE**
 - **Usage**: `claude` or `claude-guided` or `ai-with-context claude`
+- **Note**: Claude Code is Anthropic's official CLI tool (the `claude` command)
 
 ### **3. Qwen CLI** - **NEWLY INTEGRATED** ✅
 
@@ -131,9 +132,9 @@ alias cdai='cd ~/Git/aidevops'
 **Q: Does that include Qwen and Claude?**
 **A: YES - BOTH FULLY INTEGRATED!** ✅
 
-### **Claude CLI Integration:**
+### **Claude Code Integration:**
 
-- ✅ **Installed**: Version 2.0.36 (Claude Code)
+- ✅ **Installed**: Version 2.0.36
 - ✅ **Configured**: Auto-reads AGENTS.md files
 - ✅ **Aliases**: `claude-guided` available
 - ✅ **Universal Wrapper**: `ai-with-context claude` works
@@ -152,7 +153,7 @@ alias cdai='cd ~/Git/aidevops'
 ### **Total AI CLI Tools Integrated: 7**
 
 1. **Aider AI** - AI pair programming
-2. **Claude CLI** - Anthropic's Claude assistant
+2. **Claude Code** - Anthropic's official CLI tool
 3. **Qwen CLI** - Alibaba's Qwen model
 4. **OpenAI CLI** - GPT models access
 5. **AI Shell** - AI-powered shell commands

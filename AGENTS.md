@@ -8,10 +8,14 @@
 - **User Guide**: `.agent/AGENTS.md` (deployed to `~/.aidevops/agents/`)
 - **Repo**: `~/Git/aidevops/`
 
-**OpenCode Paths** (commonly needed):
+**OpenCode Paths** (aidevops recommends OpenCode as primary tool):
 - Config: `~/.config/opencode/opencode.json`
 - Agents: `~/.config/opencode/agent/`
 - Alternative: `~/.opencode/`
+
+**Claude Code Paths** (also supported):
+- Config: `~/.claude/`
+- Settings: `~/.claude/settings.json`
 
 **Development Commands**:
 
