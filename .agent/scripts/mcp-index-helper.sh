@@ -201,7 +201,6 @@ for mcp_name, mcp_config in mcp_servers.items():
         'context7': ['query-docs', 'resolve-library-id'],
         'osgrep': ['search', 'trace', 'skeleton'],
         'augment-context-engine': ['codebase-retrieval'],
-        'repomix': ['pack_codebase', 'pack_remote_repository', 'generate_skill', 'attach_packed_output', 'read_repomix_output', 'grep_repomix_output', 'file_system_read_file', 'file_system_read_directory'],
         'dataforseo': ['serp', 'keywords', 'backlinks', 'domain-analytics'],
         # serper - REMOVED: Uses curl subagent (.agent/seo/serper.md)
         'gsc': ['query', 'sitemaps', 'inspect'],
@@ -224,7 +223,7 @@ for mcp_name, mcp_config in mcp_servers.items():
             # Derive category from MCP name
             if 'seo' in mcp_name.lower() or pattern in ['dataforseo', 'gsc']:
                 category = 'seo'
-            elif pattern in ['context7', 'osgrep', 'augment-context-engine', 'repomix']:
+            elif pattern in ['context7', 'osgrep', 'augment-context-engine']:
                 category = 'context'
             elif pattern in ['shadcn', 'playwriter']:
                 category = 'browser'

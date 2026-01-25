@@ -123,52 +123,52 @@ AGENT_TOOLS = {
         # Bash enabled with granular permissions for read-only file discovery commands
         "write": True, "edit": True, "bash": True,
         "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
         "gh_grep_*": True, "playwriter_*": True
     },
     "Build+": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
         "gh_grep_*": True, "playwriter_*": True
     },
     "AI-DevOps": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
         "gh_grep_*": True, "playwriter_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True,
-        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
     "Accounts": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "quickfile_*": True,
-        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
     "Social-Media": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True,
-        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
         "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
     "WordPress": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "localwp_*": True, "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "localwp_*": True, "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
     "Content": {
         "write": True, "edit": True, "read": True, "webfetch": True,
-        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
     "Research": {
         "read": True, "webfetch": True, "bash": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
     },
 }
 
@@ -177,7 +177,7 @@ AGENT_TOOLS = {
 DEFAULT_TOOLS = {
     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
     "webfetch": True, "task": True,
-    "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
+    "osgrep_*": True, "augment-context-engine_*": True, "playwriter_*": True
 }
 
 # Temperature settings (by display name, default 0.2)
@@ -433,7 +433,7 @@ if os.path.exists(omo_config_path):
                 "tools": {
                     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
                     "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
                 }
             }
             sorted_agents["Planner-Sisyphus"] = {
@@ -444,7 +444,7 @@ if os.path.exists(omo_config_path):
                 "tools": {
                     "write": False, "edit": False, "bash": False,
                     "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
-                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
                 }
             }
             print("  Added OmO agents: Sisyphus, Planner-Sisyphus (after WordPress)")
@@ -490,7 +490,7 @@ if model_count > 0:
 #   - enabled: False = Server starts on-demand when subagent invokes it (lazy loading)
 #
 # MCPs enabled at startup (used by main agents):
-#   - osgrep, augment-context-engine, context7, repomix, playwriter, gh_grep
+#   - osgrep, augment-context-engine, context7, playwriter, gh_grep
 #
 # MCPs lazy-loaded (subagent-only):
 #   - claude-code-mcp, outscraper, dataforseo, shadcn, macos-automator, gsc, localwp, etc.
@@ -515,7 +515,7 @@ pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 # MCP LOADING POLICY - Enforce enabled states for all MCPs
 # -----------------------------------------------------------------------------
 # Eager-loaded (enabled: True): Used by all main agents, start at launch
-EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'repomix', 'playwriter', 'gh_grep', 'sentry', 'socket'}
+EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'playwriter', 'gh_grep', 'sentry', 'socket'}
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
 LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
@@ -588,9 +588,6 @@ if 'gh_grep' not in config['mcp']:
 if 'gh_grep_*' not in config['tools']:
     config['tools']['gh_grep_*'] = False
     print("  Set gh_grep_* disabled globally (enabled for Plan+/Build+/AI-DevOps)")
-
-# repomix_* enabled globally (used by all main agents)
-config['tools']['repomix_*'] = True
 
 # -----------------------------------------------------------------------------
 # LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand
