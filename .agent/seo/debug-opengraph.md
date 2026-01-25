@@ -128,7 +128,7 @@ fi
 | `twitter:site` | No | @username of website |
 | `twitter:creator` | No | @username of content creator |
 
-**Image requirements**: 
+**Image requirements**:
 - `summary`: 144x144px min, 4096x4096px max, 1:1 ratio
 - `summary_large_image`: 300x157px min, 4096x4096px max, 2:1 ratio
 
