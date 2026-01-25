@@ -501,9 +501,12 @@ if 'tools' not in config:
 
 import shutil
 import platform
+import sys
 bun_path = shutil.which('bun')
-npx_path = shutil.which('npx') or '/opt/homebrew/bin/npx'
-pkg_runner = f"{bun_path} x" if bun_path else npx_path
+npx_path = shutil.which('npx')
+if not npx_path and not bun_path:
+    print("  Warning: Neither bun nor npx found in PATH", file=sys.stderr)
+pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 
 # -----------------------------------------------------------------------------
 # MCP LOADING POLICY - Enforce enabled states for all MCPs
@@ -516,12 +519,18 @@ LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-aut
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
              'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs'}
 
-# Apply loading policy to existing MCPs
+# Apply loading policy to existing MCPs and warn about uncategorized ones
+uncategorized = []
 for mcp_name in list(config.get('mcp', {}).keys()):
     if mcp_name in EAGER_MCPS:
         config['mcp'][mcp_name]['enabled'] = True
     elif mcp_name in LAZY_MCPS:
         config['mcp'][mcp_name]['enabled'] = False
+    else:
+        uncategorized.append(mcp_name)
+
+if uncategorized:
+    print(f"  Warning: Uncategorized MCPs (add to EAGER_MCPS or LAZY_MCPS): {uncategorized}", file=sys.stderr)
 
 print(f"  Applied MCP loading policy: {len(EAGER_MCPS)} eager, {len(LAZY_MCPS)} lazy")
 
@@ -585,6 +594,7 @@ config['tools']['repomix_*'] = True
 # -----------------------------------------------------------------------------
 
 # Outscraper MCP - for business intelligence extraction (subagent only)
+# Note: enabled state is set by MCP loading policy above
 if 'outscraper' not in config['mcp']:
     config['mcp']['outscraper'] = {
         "type": "local",
@@ -592,15 +602,13 @@ if 'outscraper' not in config['mcp']:
         "enabled": False
     }
     print("  Added outscraper MCP (lazy load - @outscraper subagent only)")
-else:
-    # Ensure existing config is set to lazy load
-    config['mcp']['outscraper']['enabled'] = False
 
 if 'outscraper_*' not in config['tools']:
     config['tools']['outscraper_*'] = False
     print("  Set outscraper_* disabled globally")
 
 # DataForSEO MCP - for comprehensive SEO data (SEO agent and @dataforseo subagent)
+# Note: enabled state is set by MCP loading policy above
 if 'dataforseo' not in config['mcp']:
     config['mcp']['dataforseo'] = {
         "type": "local",
@@ -608,8 +616,6 @@ if 'dataforseo' not in config['mcp']:
         "enabled": False
     }
     print("  Added dataforseo MCP (lazy load - SEO agent/@dataforseo subagent)")
-else:
-    config['mcp']['dataforseo']['enabled'] = False
 
 if 'dataforseo_*' not in config['tools']:
     config['tools']['dataforseo_*'] = False
@@ -617,6 +623,7 @@ if 'dataforseo_*' not in config['tools']:
 
 # shadcn MCP - UI component library (subagent only)
 # Docs: https://ui.shadcn.com/docs/mcp
+# Note: enabled state is set by MCP loading policy above
 if 'shadcn' not in config['mcp']:
     config['mcp']['shadcn'] = {
         "type": "local",
@@ -624,8 +631,6 @@ if 'shadcn' not in config['mcp']:
         "enabled": False
     }
     print("  Added shadcn MCP (lazy load - @shadcn subagent only)")
-else:
-    config['mcp']['shadcn']['enabled'] = False
 
 if 'shadcn_*' not in config['tools']:
     config['tools']['shadcn_*'] = False
@@ -634,6 +639,7 @@ if 'shadcn_*' not in config['tools']:
 # Claude Code MCP - spawn Claude as sub-agent (subagent only)
 # Source: https://github.com/steipete/claude-code-mcp
 # Use @claude-code subagent to invoke this MCP
+# Note: Always overwrite to ensure correct upstream package is used
 config['mcp']['claude-code-mcp'] = {
     "type": "local",
     "command": ["npx", "-y", "@steipete/claude-code-mcp"],
@@ -647,6 +653,7 @@ print("  Set claude-code-mcp_* disabled globally")
 
 # macOS Automator MCP - AppleScript and JXA automation (macOS only, subagent only)
 # Docs: https://github.com/steipete/macos-automator-mcp
+# Note: enabled state is set by MCP loading policy above
 if platform.system() == 'Darwin':
     if 'macos-automator' not in config['mcp']:
         config['mcp']['macos-automator'] = {
@@ -655,8 +662,6 @@ if platform.system() == 'Darwin':
             "enabled": False
         }
         print("  Added macos-automator MCP (lazy load - @mac subagent only)")
-    else:
-        config['mcp']['macos-automator']['enabled'] = False
 
     if 'macos-automator_*' not in config['tools']:
         config['tools']['macos-automator_*'] = False

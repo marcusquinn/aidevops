@@ -1,28 +1,27 @@
 {
-  "_comment": "Claude Code MCP (fork) configuration snippets for various AI tools",
-  "_documentation": "https://github.com/marcusquinn/claude-code-mcp",
-  "_upstream": "https://github.com/steipete/claude-code-mcp (revert if merged)",
+  "_comment": "Claude Code MCP configuration snippets for various AI tools",
+  "_documentation": "https://github.com/steipete/claude-code-mcp",
   "_note": "Requires Claude CLI with --dangerously-skip-permissions accepted (swap to ./start.sh for local dev)",
-  "_install": "npx -y github:marcusquinn/claude-code-mcp",
+  "_install": "npx -y @steipete/claude-code-mcp",
 
   "opencode": {
     "_file": "~/.config/opencode/opencode.json",
     "_section": "mcp",
     "claude-code-mcp": {
       "type": "local",
-      "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
-      "enabled": true
+      "command": ["npx", "-y", "@steipete/claude-code-mcp"],
+      "enabled": false
     }
   },
 
-  "claude_code_command": "claude mcp add claude-code-mcp \"npx -y github:marcusquinn/claude-code-mcp\"",
+  "claude_code_command": "claude mcp add claude-code-mcp \"npx -y @steipete/claude-code-mcp\"",
 
   "cursor": {
     "_file": "~/.cursor/mcp.json",
     "mcpServers": {
       "claude-code-mcp": {
         "command": "npx",
-        "args": ["-y", "github:marcusquinn/claude-code-mcp"]
+        "args": ["-y", "@steipete/claude-code-mcp"]
       }
     }
   },
@@ -32,7 +31,7 @@
     "mcpServers": {
       "claude-code-mcp": {
         "command": "npx",
-        "args": ["-y", "github:marcusquinn/claude-code-mcp"]
+        "args": ["-y", "@steipete/claude-code-mcp"]
       }
     }
   },
@@ -42,7 +41,7 @@
     "mcpServers": {
       "claude-code-mcp": {
         "command": "npx",
-        "args": ["-y", "github:marcusquinn/claude-code-mcp"]
+        "args": ["-y", "@steipete/claude-code-mcp"]
       }
     }
   },
@@ -53,7 +52,7 @@
       "claude-code-mcp": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "github:marcusquinn/claude-code-mcp"]
+        "args": ["-y", "@steipete/claude-code-mcp"]
       }
     }
   }
