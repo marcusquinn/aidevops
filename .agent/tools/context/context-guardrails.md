@@ -36,7 +36,7 @@ Claude's context window is 200K tokens. Context-heavy operations can easily exce
 
 | Tool | Typical Output | Risk Level |
 |------|----------------|------------|
-| `repomix_pack_remote_repository` | 100K - 5M+ tokens | **EXTREME** |
+| `npx repomix --remote` | 100K - 5M+ tokens | **EXTREME** |
 | `mcp_grep` on large output | 10K - 500K tokens | **HIGH** |
 | `webfetch` on docs site | 5K - 50K tokens | Medium |
 | `mcp_read` single file | 1K - 20K tokens | Low |
@@ -82,36 +82,38 @@ GitHub API `.size` is in KB. Rough token estimate:
 
 ## Tool-Specific Guardrails
 
-### mcp_repomix_pack_remote_repository
+### npx repomix --remote
 
-MCP tool name: `mcp_repomix_pack_remote_repository`
-Helper script: `context-builder-helper.sh remote user/repo [branch]`
+CLI command for packing remote repositories.
 
 ```bash
 # BAD - no size check, no patterns
-mcp_repomix_pack_remote_repository(remote="https://github.com/large/repo")
+npx repomix@latest --remote https://github.com/large/repo
 
 # GOOD - size check first
 gh api repos/large/repo --jq '.size'  # Check KB
 # If < 500 KB:
-mcp_repomix_pack_remote_repository(remote="https://github.com/small/repo", compress=true)
+npx repomix@latest --remote https://github.com/small/repo --compress
 # If > 500 KB:
-mcp_repomix_pack_remote_repository(remote="https://github.com/large/repo", includePatterns="README.md,src/**/*.ts,docs/**")
+npx repomix@latest --remote https://github.com/large/repo --include "README.md,src/**/*.ts,docs/**" --compress
 
 # Or use helper script:
 context-builder-helper.sh remote large/repo main  # Auto-compresses
 ```
 
-### mcp_grep on large outputs
+### Searching packed output
+
+After packing, use standard tools to search the output file:
 
 ```bash
-# BAD - grepping on potentially huge output
-mcp_repomix_grep_repomix_output(outputId="...", pattern="install")
+# Search for patterns in output
+grep -n "install" context.xml
 
-# GOOD - limit context lines, be specific
-mcp_repomix_grep_repomix_output(outputId="...", pattern="^## Install", contextLines=5)
-# Or read specific line ranges after finding matches
-mcp_repomix_read_repomix_output(outputId="...", startLine=100, endLine=200)
+# Search with context
+grep -B2 -A5 "## Install" context.xml
+
+# Read specific line ranges
+sed -n '100,200p' context.xml
 ```
 
 ### webfetch on documentation sites

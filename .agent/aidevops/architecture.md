@@ -76,7 +76,7 @@ aidevops implements proven agent design patterns identified by Lance Martin (Lan
 GLOBAL_TOOLS = {"gsc_*": False, "outscraper_*": False, "osgrep_*": True, ...}
 AGENT_TOOLS = {
     "Plan+": {"write": False, "edit": False, "bash": False, ...},
-    "Build+": {"write": True, "context7_*": True, "repomix_*": True, ...},
+    "Build+": {"write": True, "context7_*": True, "bash": True, ...},
     "SEO": {"gsc_*": True, "google-analytics-mcp_*": True, ...},
 }
 ```

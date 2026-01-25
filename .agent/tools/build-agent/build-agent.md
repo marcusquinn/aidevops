@@ -647,7 +647,7 @@ Before using tools, verify you're using the optimal choice:
 | Read file contents | `mcp_read` | `cat` via bash | Better error handling |
 | Edit files | `mcp_edit` | `sed` via bash | Safer, atomic |
 | Web content | `mcp_webfetch` | `curl` via bash | Handles redirects |
-| Remote repo research | `mcp_webfetch` README first | `mcp_repomix_pack_remote_repository` | Prevents context overload |
+| Remote repo research | `mcp_webfetch` README first | `npx repomix --remote` | Prevents context overload |
 
 **Self-check prompt**: Before calling any MCP tool, ask:
 > "Is there a faster CLI alternative I should use via Bash?"
