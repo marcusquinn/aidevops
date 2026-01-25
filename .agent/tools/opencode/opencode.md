@@ -77,9 +77,9 @@ opencode auth login
 
 **Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution. Run `opencode auth login` again to add more accounts.
 
-## Anthropic OAuth Plugin
+## Anthropic OAuth (Built-in)
 
-The aidevops setup automatically installs the [opencode-anthropic-auth](https://github.com/anomalyco/opencode-anthropic-auth) plugin, enabling OAuth authentication for Claude Pro/Max accounts.
+OpenCode v1.1.36+ includes Anthropic OAuth authentication natively. No external plugin is needed.
 
 **Authenticate after setup:**
 
@@ -104,7 +104,7 @@ opencode auth login
 - Zero cost for Pro/Max subscribers
 - No manual API key management
 
-**See also:** `tools/opencode/opencode-anthropic-auth.md` for detailed setup and troubleshooting.
+> **Note:** The external `opencode-anthropic-auth` plugin is no longer needed and should be removed from `opencode.json` plugins if present. Adding it alongside the built-in version causes a TypeError due to double-loading.
 
 ## Installation
 

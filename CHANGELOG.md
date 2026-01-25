@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- remove opencode-anthropic-auth external plugin from setup.sh — built into OpenCode v1.1.36+, external plugin causes TypeError from double-loading (#230)
+
 ## [2.89.1] - 2026-01-25
 
 ### Fixed

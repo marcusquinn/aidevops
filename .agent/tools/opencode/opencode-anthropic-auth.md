@@ -9,14 +9,19 @@ tools:
 
 # OpenCode Anthropic Auth Plugin
 
+> **DEPRECATED**: As of OpenCode v1.1.36+, Anthropic OAuth is built into OpenCode natively.
+> The external `opencode-anthropic-auth` plugin is no longer needed and must NOT be added
+> to `opencode.json` plugins — doing so causes a TypeError due to double-loading.
+> Use `opencode auth login` directly. This document is retained for historical reference.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: OAuth authentication for Claude Pro/Max accounts in OpenCode
+- **Status**: **DEPRECATED** — built into OpenCode v1.1.36+, do not install as external plugin
 - **Repository**: https://github.com/anomalyco/opencode-anthropic-auth
-- **Installation**: `npm install -g opencode-anthropic-auth` (auto-installed by setup.sh)
-- **Alternative to**: Manual API key management, requires Claude subscription
+- **Installation**: Built-in to OpenCode v1.1.36+ (no installation needed)
 
 **Authentication Methods**:
 
@@ -55,24 +60,22 @@ The `opencode-anthropic-auth` plugin enables OAuth authentication for Anthropic'
 
 ## Installation
 
-### Automatic Installation (Recommended)
+### Built-in (OpenCode v1.1.36+)
 
-The aidevops `setup.sh` script automatically installs this plugin:
+Anthropic OAuth is built into OpenCode v1.1.36+. No installation needed — just run:
 
 ```bash
-cd ~/Git/aidevops
-./setup.sh
+opencode auth login
+# Select: Anthropic → Claude Pro/Max
 ```
 
-This installs the plugin globally and configures OpenCode to use it.
+### Legacy Installation (pre-v1.1.36 only)
 
-### Manual Installation
+> **Do not use on OpenCode v1.1.36+** — causes TypeError from double-loading.
 
 ```bash
-# Install via npm
+# Only for OpenCode versions before v1.1.36
 npm install -g opencode-anthropic-auth
-
-# Plugin is automatically discovered by OpenCode
 ```
 
 ## Authentication Methods
@@ -397,17 +400,11 @@ cat ~/.config/opencode/auth.json | jq '.anthropic'
 
 ### Automatic Setup
 
-The aidevops `setup.sh` installs and configures this plugin:
-
-```bash
-cd ~/Git/aidevops
-./setup.sh
-```
+As of aidevops v2.90.0, `setup.sh` no longer installs this plugin (it's built into OpenCode v1.1.36+).
 
 After setup:
-1. Plugin is installed globally via npm
-2. OpenCode automatically discovers it
-3. Authentication is ready to use with `opencode auth login`
+1. OpenCode's built-in Anthropic OAuth is ready to use
+2. Authenticate with `opencode auth login`
 
 ### Recommended Configuration
 
