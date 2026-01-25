@@ -41,14 +41,22 @@ This file provides comprehensive context for AI assistants to understand, manage
 
 ## Preferred Tool
 
-**[OpenCode](https://opencode.ai/)** is the recommended and primary-tested AI coding agent for aidevops. All features, agents, workflows, LSP configurations, and MCP integrations are designed and tested for OpenCode first. Other AI assistants (Cursor, Claude Code, Zed, etc.) are supported as a courtesy for users evaluating aidevops capabilities, but may not receive the same level of testing or integration depth.
+**[Claude Code](https://Claude.ai/)** is the recommended and primary-tested AI coding agent for aidevops. All features, agents, workflows, and MCP integrations are designed and tested for Claude Code first. Other AI assistants (OpenCode, Cursor, Zed, etc.) are supported as a courtesy for users evaluating aidevops capabilities, but may not receive the same level of testing or integration depth.
 
-Key OpenCode integrations:
+Key integrations:
 - **Agents**: Generated via `generate-opencode-agents.sh` with per-agent MCP tool filtering
 - **Commands**: 41 slash commands deployed to `~/.config/opencode/commands/`
 - **Plugins**: Compaction plugin at `.agent/plugins/opencode-aidevops/`
-- **LSP**: Built-in support for 35+ languages, extensible via `opencode.json` for Markdown and TOON
 - **Prompts**: Custom system prompt at `.agent/prompts/build.txt`
+
+## Agent Architecture
+
+**Build+** is the unified coding agent for planning and implementation. It consolidates the former Plan+ and AI-DevOps agents:
+
+- **Intent detection**: Automatically detects deliberation vs execution mode
+- **Planning workflow**: Parallel explore agents, investigation phases, synthesis
+- **Execution workflow**: Pre-edit git check, quality gates, autonomous iteration
+- **Specialist subagents**: `@aidevops` for framework ops, `@plan-plus` for planning-only mode
 
 ## Agent Design Patterns
 
@@ -75,8 +83,7 @@ aidevops implements proven agent design patterns identified by Lance Martin (Lan
 # Tools disabled globally, enabled per-agent
 GLOBAL_TOOLS = {"gsc_*": False, "outscraper_*": False, "osgrep_*": True, ...}
 AGENT_TOOLS = {
-    "Plan+": {"write": False, "edit": False, "bash": False, ...},
-    "Build+": {"write": True, "context7_*": True, "bash": True, ...},
+    "Build+": {"write": True, "context7_*": True, "bash": True, "playwriter_*": True, ...},
     "SEO": {"gsc_*": True, "google-analytics-mcp_*": True, ...},
 }
 ```

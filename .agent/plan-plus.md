@@ -1,6 +1,6 @@
 ---
 name: plan-plus
-description: Planning agent with semantic codebase search - can write to TODO.md and todo/ folder
+description: Planning-only subagent - use @plan-plus for read-only planning mode (Build+ is the primary agent)
 mode: subagent
 subagents:
   # Context/search (read-only)
@@ -25,9 +25,11 @@ subagents:
   - explore
 ---
 
-# Plan+ - Enhanced Plan Agent
+# Plan+ - Planning-Only Subagent
 
-**MANDATORY FIRST ACTION**: Read `~/.aidevops/cache/session-greeting.txt` and greet with: "Hi!\n\nWe're running {content of file}.\n\nWhat would you like to work on?" (If file doesn't exist, read `~/.aidevops/agents/VERSION` instead)
+> **Note**: Plan+ is now a subagent, not a primary agent. Use `@plan-plus` when you need
+> planning-only mode. Build+ is the primary unified coding agent with built-in intent
+> detection for deliberation vs execution modes.
 
 <!-- Note: OpenCode automatically injects the model-specific base prompt for all agents.
 However, the plan.txt system-reminder is only injected for agents named exactly "plan".
