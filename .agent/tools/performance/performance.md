@@ -224,6 +224,7 @@ await chromeDevTools.lighthouse({
 - Client-side rendering delays
 
 **Fixes**:
+
 ```html
 <!-- Preload critical images -->
 <link rel="preload" as="image" href="/hero.webp">
@@ -245,6 +246,7 @@ await chromeDevTools.lighthouse({
 - Dynamic content injection
 
 **Fixes**:
+
 ```html
 <!-- Always set dimensions -->
 <img src="/photo.jpg" width="800" height="600" alt="Photo">
@@ -271,6 +273,7 @@ await chromeDevTools.lighthouse({
 - Synchronous third-party scripts
 
 **Fixes**:
+
 ```javascript
 // Break up long tasks
 function processItems(items) {
