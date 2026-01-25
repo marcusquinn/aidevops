@@ -731,6 +731,8 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Stagehand](https://github.com/browserbase/stagehand) - Natural language automation, self-healing selectors
 - [Chrome DevTools MCP](https://github.com/nicholasgriffintn/chrome-devtools-mcp) - Companion: Lighthouse, network throttling, CSS coverage (pairs with any tool)
 - [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
+- [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screen capture and GUI automation (pixel-accurate captures, AI vision analysis)
+- [Sweet Cookie](https://github.com/steipete/sweet-cookie) - Browser cookie extraction for API calls without launching a browser
 - **Anti-Detect Stack** ([details](#anti-detect-browser)):
   - [Camoufox](https://github.com/daijro/camoufox) (4.9k stars) - Firefox anti-detect, C++ fingerprint injection, WebRTC/Canvas/WebGL spoofing
   - [rebrowser-patches](https://github.com/nicedayfor/rebrowser-patches) (1.2k stars) - Chromium CDP leak prevention, automation signal removal
@@ -760,7 +762,12 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 **WordPress & Development:**
 
 - [LocalWP](https://localwp.com/) - Direct WordPress database access
+- [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) - Official WordPress MCP for content management (STDIO, HTTP, and SSH transports)
 - [Next.js DevTools](https://nextjs.org/docs) - React/Next.js development assistance
+
+**CRM & Marketing:**
+
+- [FluentCRM](https://fluentcrm.com/) - WordPress CRM: contacts, tags, lists, campaigns, automations, smart links, webhooks
 
 **Accounts & Finance:**
 
