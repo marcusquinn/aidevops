@@ -15,6 +15,7 @@ Task/Prompt: $ARGUMENTS
 If the first argument is a task ID:
 
 1. Look up the task description from TODO.md (matches open, completed, or declined tasks):
+
    ```bash
    grep -E "^- \[( |x|-)\] $TASK_ID " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //'
    ```
