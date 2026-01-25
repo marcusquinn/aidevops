@@ -203,10 +203,10 @@ check_github_workflow() {
 # Check if AI provider API key is configured in repository secrets
 # Looks for ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY
 # Arguments:
-#   $1 - Repository path in "owner/repo" format
+#   $1 - Repository path in "owner/repo" format (reserved for future multi-repo support)
 # Returns: 0 if at least one AI key is configured, 1 otherwise
 check_github_secrets() {
-    local repo_path="$1"
+    local _repo_path="$1"  # Reserved for future multi-repo support
     
     if ! command -v gh &> /dev/null; then
         return 1
@@ -231,11 +231,9 @@ check_github_secrets() {
 # Arguments: None
 # Returns: 0 if OpenCode is configured in GitLab CI, 1 otherwise
 check_gitlab_ci() {
-    if [[ -f ".gitlab-ci.yml" ]]; then
-        # Check if it contains opencode configuration
-        if grep -q "opencode" ".gitlab-ci.yml" 2>/dev/null; then
-            return 0
-        fi
+    # Check if gitlab-ci.yml exists and contains opencode configuration
+    if [[ -f ".gitlab-ci.yml" ]] && grep -q "opencode" ".gitlab-ci.yml" 2>/dev/null; then
+        return 0
     fi
     return 1
 }
@@ -502,7 +500,6 @@ cmd_create_secure_workflow() {
     fi
     
     # Check if aidevops has the template
-    local template_path="$HOME/.aidevops/agents/scripts/../../../.github/workflows/opencode-agent.yml"
     local aidevops_template="$HOME/Git/aidevops/.github/workflows/opencode-agent.yml"
     
     mkdir -p .github/workflows

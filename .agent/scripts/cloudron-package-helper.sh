@@ -348,7 +348,7 @@ cmd_debug_off() {
 
 # Run validation checklist
 cmd_test() {
-    local app="${1:-}"
+    # Note: app parameter reserved for future use (specific app testing)
     
     check_cloudron_cli || return 1
     

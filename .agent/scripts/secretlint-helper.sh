@@ -105,21 +105,17 @@ check_rules_installed() {
     local missing_rules=()
     
     # Check for preset-recommend (most common)
-    if grep -q "secretlint-rule-preset-recommend" "$config_file"; then
-        if ! npm list @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
-            if ! npm list -g @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
-                missing_rules+=("@secretlint/secretlint-rule-preset-recommend")
-            fi
-        fi
+    if grep -q "secretlint-rule-preset-recommend" "$config_file" \
+        && ! npm list @secretlint/secretlint-rule-preset-recommend &>/dev/null \
+        && ! npm list -g @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
+        missing_rules+=("@secretlint/secretlint-rule-preset-recommend")
     fi
     
     # Check for pattern rule
-    if grep -q "secretlint-rule-pattern" "$config_file"; then
-        if ! npm list @secretlint/secretlint-rule-pattern &>/dev/null; then
-            if ! npm list -g @secretlint/secretlint-rule-pattern &>/dev/null; then
-                missing_rules+=("@secretlint/secretlint-rule-pattern")
-            fi
-        fi
+    if grep -q "secretlint-rule-pattern" "$config_file" \
+        && ! npm list @secretlint/secretlint-rule-pattern &>/dev/null \
+        && ! npm list -g @secretlint/secretlint-rule-pattern &>/dev/null; then
+        missing_rules+=("@secretlint/secretlint-rule-pattern")
     fi
     
     if [[ ${#missing_rules[@]} -gt 0 ]]; then

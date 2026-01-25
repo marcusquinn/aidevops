@@ -183,7 +183,7 @@ find_matching_sessions() {
     local branch="$1"
     local project_id="$2"
     local branch_start_epoch="$3"
-    local worktree_path="$4"
+    local _worktree_path="$4"  # Reserved for future path-based filtering
     
     local session_dir="$SESSION_BASE/$project_id"
     
@@ -431,11 +431,10 @@ cmd_open() {
         elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
             worktree_branch="${BASH_REMATCH[1]}"
         elif [[ -z "$line" ]]; then
-            if [[ -n "$worktree_path" ]] && [[ -n "$worktree_branch" ]]; then
-                if [[ "$worktree_branch" != "main" ]] && [[ "$worktree_branch" != "master" ]]; then
-                    worktrees+=("$worktree_path")
-                    branches+=("$worktree_branch")
-                fi
+            if [[ -n "$worktree_path" ]] && [[ -n "$worktree_branch" ]] \
+                && [[ "$worktree_branch" != "main" ]] && [[ "$worktree_branch" != "master" ]]; then
+                worktrees+=("$worktree_path")
+                branches+=("$worktree_branch")
             fi
             worktree_path=""
             worktree_branch=""
