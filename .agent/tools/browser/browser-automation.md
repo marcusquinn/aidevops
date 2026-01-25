@@ -31,9 +31,11 @@ What do you need?
     |
     +-> EXTRACT data (scraping, reading)?
     |       |
+    |       +-> Need web search + crawl? --> WaterCrawl (cloud API with search)
     |       +-> Bulk pages / structured CSS/XPath? --> Crawl4AI (fastest extraction, parallel)
     |       +-> Need to login/interact first? --> Playwright or dev-browser, then extract
     |       +-> Unknown structure, need AI to parse? --> Crawl4AI LLM mode or Stagehand extract()
+    |       +-> Quick API without infrastructure? --> WaterCrawl (managed service)
     |
     +-> AUTOMATE (forms, clicks, multi-step)?
     |       |
@@ -128,26 +130,28 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 
 ## Feature Matrix
 
-| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
-|---------|-----------|-------------|---------------|----------|------------|-----------|
-| **Headless** | Yes | Yes | Yes (default) | Yes | No (your browser) | Yes |
-| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
-| **Cookie management** | Full API | Persistent | CLI commands | Persistent | Your browser | Per-instance |
-| **Proxy support** | Full | Via launch args | No | Full (ProxyConfig) | Your browser | Via args |
-| **SOCKS5/VPN** | Yes | Possible | No | Yes | Your browser | Via args |
-| **Browser extensions** | Yes (persistent ctx) | Yes (profile) | No | No | Yes (yours) | Possible |
-| **Multi-session** | Per-context | Named pages | --session flag | Per-crawl | Per-tab | Per-instance |
-| **Form filling** | Full API | Full API | CLI fill/click | No | Full API | Natural language |
-| **Screenshots** | Full API | Full API | CLI command | Built-in | Full API | Via page |
-| **Data extraction** | evaluate() | evaluate() | eval command | CSS/XPath/LLM | evaluate() | extract() + schema |
-| **Natural language** | No | No | No | LLM extraction | No | act/extract/observe |
-| **Self-healing** | No | No | No | No | No | Yes |
-| **AI-optimized output** | No | ARIA snapshots | Snapshot + refs | Markdown/JSON | No | Structured schemas |
-| **Anti-detect** | rebrowser-patches | Via launch args | No | No | Your browser | Via Playwright |
-| **Fingerprint rotation** | No (add Camoufox) | No | No | No | No | No |
-| **Multi-profile** | storageState dirs | Profile dir | --session | user_data_dir | No | No |
-| **Setup required** | npm install | Server running | npm install | pip/Docker | Extension click | npm + API key |
-| **Interface** | JS/TS API | TS scripts | CLI | Python API | JS API | JS/Python SDK |
+| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | WaterCrawl | Playwriter | Stagehand |
+|---------|-----------|-------------|---------------|----------|------------|------------|-----------|
+| **Headless** | Yes | Yes | Yes (default) | Yes | Cloud API | No (your browser) | Yes |
+| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | API sessions | Your browser | Per-instance |
+| **Cookie management** | Full API | Persistent | CLI commands | Persistent | Via API | Your browser | Per-instance |
+| **Proxy support** | Full | Via launch args | No | Full (ProxyConfig) | Datacenter+Residential | Your browser | Via args |
+| **SOCKS5/VPN** | Yes | Possible | No | Yes | No | Your browser | Via args |
+| **Browser extensions** | Yes (persistent ctx) | Yes (profile) | No | No | No | Yes (yours) | Possible |
+| **Multi-session** | Per-context | Named pages | --session flag | Per-crawl | Per-request | Per-tab | Per-instance |
+| **Form filling** | Full API | Full API | CLI fill/click | No | No | Full API | Natural language |
+| **Screenshots** | Full API | Full API | CLI command | Built-in | PDF/Screenshot | Full API | Via page |
+| **Data extraction** | evaluate() | evaluate() | eval command | CSS/XPath/LLM | Markdown/JSON | evaluate() | extract() + schema |
+| **Natural language** | No | No | No | LLM extraction | No | No | act/extract/observe |
+| **Self-healing** | No | No | No | No | No | No | Yes |
+| **AI-optimized output** | No | ARIA snapshots | Snapshot + refs | Markdown/JSON | Markdown/JSON | No | Structured schemas |
+| **Web search** | No | No | No | No | Yes | No | No |
+| **Sitemap generation** | No | No | No | No | Yes | No | No |
+| **Anti-detect** | rebrowser-patches | Via launch args | No | No | No | Your browser | Via Playwright |
+| **Fingerprint rotation** | No (add Camoufox) | No | No | No | No | No | No |
+| **Multi-profile** | storageState dirs | Profile dir | --session | user_data_dir | N/A | No | No |
+| **Setup required** | npm install | Server running | npm install | pip/Docker | API key | Extension click | npm + API key |
+| **Interface** | JS/TS API | TS scripts | CLI | Python API | REST/SDK | JS API | JS/Python SDK |
 
 ## Quick Reference
 
@@ -157,6 +161,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **dev-browser** | Persistent sessions, dev testing, TypeScript | Fast | `dev-browser-helper.sh setup && start` |
 | **agent-browser** | CLI/CI/CD, AI agents, parallel sessions | Fast (warm) | `agent-browser-helper.sh setup` |
 | **Crawl4AI** | Web scraping, bulk extraction, structured data | Fast | `pip install crawl4ai` (venv) |
+| **WaterCrawl** | Cloud API, web search, sitemap generation | Fast | `watercrawl-helper.sh setup` + API key |
 | **Playwriter** | Existing browser, extensions, bypass detection | Medium | Chrome extension + `npx playwriter` |
 | **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
 | **Anti-detect** | Bot evasion, multi-account, fingerprint rotation | Medium | `anti-detect-helper.sh setup` |
