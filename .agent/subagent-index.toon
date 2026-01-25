@@ -33,7 +33,7 @@ tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-r
 tools/build-mcp/,MCP development - creating MCP servers,build-mcp|server-patterns|api-wrapper|transports|deployment
 tools/ai-assistants/,AI tool integration - configuring assistants,agno|capsolver|windsurf|claude-code|configuration
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
-tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|pagespeed|peekaboo
+tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo
 tools/mobile/,Mobile development - iOS/Android emulators,minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
@@ -73,7 +73,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[23]{name,purpose}:
+<!--TOON:scripts[24]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -83,6 +83,7 @@ github-cli-helper.sh,GitHub operations
 coolify-helper.sh,Coolify deployment management
 stagehand-helper.sh,Browser automation with Stagehand
 crawl4ai-helper.sh,Web crawling and extraction
+watercrawl-helper.sh,WaterCrawl cloud API for web crawling and search
 domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
 toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
