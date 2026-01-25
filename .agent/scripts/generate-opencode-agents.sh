@@ -345,6 +345,9 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
                 "fd -e *": "allow",
                 "fd -g *": "allow",
                 "rg --files*": "allow",
+                # Version check for initial greeting
+                "~/.aidevops/agents/scripts/aidevops-update-check.sh": "allow",
+                "bash ~/.aidevops/agents/scripts/aidevops-update-check.sh": "allow",
                 # Deny everything else
                 "*": "deny"
             },
