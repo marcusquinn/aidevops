@@ -123,60 +123,61 @@ AGENT_TOOLS = {
         # Bash enabled with granular permissions for read-only file discovery commands
         "write": True, "edit": True, "bash": True,
         "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
+        "gh_grep_*": True, "playwriter_*": True
     },
     "Build+": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
-        "claude-code-mcp_*": True
+        "gh_grep_*": True, "playwriter_*": True
     },
     "AI-DevOps": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True,
-        "claude-code-mcp_*": True
+        "gh_grep_*": True, "playwriter_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
     "Accounts": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "quickfile_*": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
     "Social-Media": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
         "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
     "WordPress": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "localwp_*": True, "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+        "localwp_*": True, "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
     "Content": {
         "write": True, "edit": True, "read": True, "webfetch": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
     "Research": {
         "read": True, "webfetch": True, "bash": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
     },
 }
 
 # Default tools for agents not in AGENT_TOOLS
+# Note: claude-code-mcp_* NOT included - use @claude-code subagent instead
 DEFAULT_TOOLS = {
     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
     "webfetch": True, "task": True,
-    "osgrep_*": True, "augment-context-engine_*": True,
-    "claude-code-mcp_*": False
+    "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True, "playwriter_*": True
 }
 
 # Temperature settings (by display name, default 0.2)
@@ -481,12 +482,52 @@ if model_count > 0:
 # =============================================================================
 # MCP SERVERS - Ensure required MCP servers are configured
 # =============================================================================
+# Loading strategy:
+#   - enabled: True  = Server starts at OpenCode launch (for MCPs used by all main agents)
+#   - enabled: False = Server starts on-demand when subagent invokes it (lazy loading)
+#
+# MCPs enabled at startup (used by main agents):
+#   - osgrep, augment-context-engine, context7, repomix, playwriter, gh_grep
+#
+# MCPs lazy-loaded (subagent-only):
+#   - claude-code-mcp, outscraper, dataforseo, shadcn, macos-automator, gsc, localwp, etc.
+# =============================================================================
 
 if 'mcp' not in config:
     config['mcp'] = {}
 
 if 'tools' not in config:
     config['tools'] = {}
+
+import shutil
+import platform
+bun_path = shutil.which('bun')
+npx_path = shutil.which('npx') or '/opt/homebrew/bin/npx'
+pkg_runner = f"{bun_path} x" if bun_path else npx_path
+
+# -----------------------------------------------------------------------------
+# MCP LOADING POLICY - Enforce enabled states for all MCPs
+# -----------------------------------------------------------------------------
+# Eager-loaded (enabled: True): Used by all main agents, start at launch
+EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'repomix', 'playwriter', 'gh_grep', 'sentry', 'socket'}
+
+# Lazy-loaded (enabled: False): Subagent-only, start on-demand
+LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
+             'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
+             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs'}
+
+# Apply loading policy to existing MCPs
+for mcp_name in list(config.get('mcp', {}).keys()):
+    if mcp_name in EAGER_MCPS:
+        config['mcp'][mcp_name]['enabled'] = True
+    elif mcp_name in LAZY_MCPS:
+        config['mcp'][mcp_name]['enabled'] = False
+
+print(f"  Applied MCP loading policy: {len(EAGER_MCPS)} eager, {len(LAZY_MCPS)} lazy")
+
+# -----------------------------------------------------------------------------
+# EAGER-LOADED MCPs (enabled: True) - Used by all main agents
+# -----------------------------------------------------------------------------
 
 # osgrep MCP - local semantic search (primary, try first)
 # Install: npm install -g osgrep && osgrep install-opencode
@@ -496,48 +537,12 @@ if 'osgrep' not in config['mcp']:
         "command": ["osgrep", "mcp"],
         "enabled": True
     }
+    print("  Added osgrep MCP (eager load - used by all agents)")
 
-# Ensure osgrep_* is disabled globally (enabled per-agent)
-if 'osgrep_*' not in config['tools']:
-    config['tools']['osgrep_*'] = False
+# osgrep_* enabled globally (used by all main agents)
+config['tools']['osgrep_*'] = True
 
-# Outscraper MCP - for business intelligence extraction (subagent only)
-if 'outscraper' not in config['mcp']:
-    config['mcp']['outscraper'] = {
-        "type": "local",
-        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
-        "enabled": True
-    }
-    print("  Added outscraper MCP server")
-
-if 'outscraper_*' not in config['tools']:
-    config['tools']['outscraper_*'] = False
-    print("  Added outscraper_* to tools (disabled globally, enabled for @outscraper subagent)")
-
-# DataForSEO MCP - for comprehensive SEO data
-# Uses bun x if available, falls back to npx
-import shutil
-import platform
-bun_path = shutil.which('bun')
-npx_path = shutil.which('npx') or '/opt/homebrew/bin/npx'
-pkg_runner = f"{bun_path} x" if bun_path else npx_path
-
-if 'dataforseo' not in config['mcp']:
-    config['mcp']['dataforseo'] = {
-        "type": "local",
-        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD {pkg_runner} dataforseo-mcp-server"],
-        "enabled": True
-    }
-    print("  Added dataforseo MCP server")
-
-if 'dataforseo_*' not in config['tools']:
-    config['tools']['dataforseo_*'] = False
-    print("  Added dataforseo_* to tools (disabled globally, enabled for SEO agent)")
-
-# Serper - REMOVED: Now uses curl-based subagent (.agent/seo/serper.md)
-# No MCP overhead, same functionality via direct API calls
-
-# Playwriter MCP - browser automation via Chrome extension
+# Playwriter MCP - browser automation via Chrome extension (used by all main agents)
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
 if 'playwriter' not in config['mcp']:
     if bun_path:
@@ -552,51 +557,110 @@ if 'playwriter' not in config['mcp']:
             "command": ["npx", "playwriter@latest"],
             "enabled": True
         }
-    print("  Added playwriter MCP server (install Chrome extension separately)")
+    print("  Added playwriter MCP (eager load - used by all agents)")
 
-# shadcn MCP - UI component library for browsing, searching, and installing components
+# playwriter_* enabled globally (used by all main agents)
+config['tools']['playwriter_*'] = True
+
+# gh_grep MCP - GitHub code search (used by Plan+, Build+, AI-DevOps)
+# This is a remote MCP, no local process to start
+if 'gh_grep' not in config['mcp']:
+    config['mcp']['gh_grep'] = {
+        "type": "remote",
+        "url": "https://mcp.grep.app",
+        "enabled": True
+    }
+    print("  Added gh_grep MCP (eager load - used by Plan+/Build+/AI-DevOps)")
+
+# gh_grep tools disabled globally, enabled for specific agents
+if 'gh_grep_*' not in config['tools']:
+    config['tools']['gh_grep_*'] = False
+    print("  Set gh_grep_* disabled globally (enabled for Plan+/Build+/AI-DevOps)")
+
+# repomix_* enabled globally (used by all main agents)
+config['tools']['repomix_*'] = True
+
+# -----------------------------------------------------------------------------
+# LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand
+# -----------------------------------------------------------------------------
+
+# Outscraper MCP - for business intelligence extraction (subagent only)
+if 'outscraper' not in config['mcp']:
+    config['mcp']['outscraper'] = {
+        "type": "local",
+        "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
+        "enabled": False
+    }
+    print("  Added outscraper MCP (lazy load - @outscraper subagent only)")
+else:
+    # Ensure existing config is set to lazy load
+    config['mcp']['outscraper']['enabled'] = False
+
+if 'outscraper_*' not in config['tools']:
+    config['tools']['outscraper_*'] = False
+    print("  Set outscraper_* disabled globally")
+
+# DataForSEO MCP - for comprehensive SEO data (SEO agent and @dataforseo subagent)
+if 'dataforseo' not in config['mcp']:
+    config['mcp']['dataforseo'] = {
+        "type": "local",
+        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD {pkg_runner} dataforseo-mcp-server"],
+        "enabled": False
+    }
+    print("  Added dataforseo MCP (lazy load - SEO agent/@dataforseo subagent)")
+else:
+    config['mcp']['dataforseo']['enabled'] = False
+
+if 'dataforseo_*' not in config['tools']:
+    config['tools']['dataforseo_*'] = False
+    print("  Set dataforseo_* disabled globally")
+
+# shadcn MCP - UI component library (subagent only)
 # Docs: https://ui.shadcn.com/docs/mcp
 if 'shadcn' not in config['mcp']:
     config['mcp']['shadcn'] = {
         "type": "local",
         "command": ["npx", "shadcn@latest", "mcp"],
-        "enabled": True
+        "enabled": False
     }
-    print("  Added shadcn MCP server")
+    print("  Added shadcn MCP (lazy load - @shadcn subagent only)")
+else:
+    config['mcp']['shadcn']['enabled'] = False
 
 if 'shadcn_*' not in config['tools']:
     config['tools']['shadcn_*'] = False
-    print("  Added shadcn_* to tools (disabled globally, enabled for @shadcn subagent)")
+    print("  Set shadcn_* disabled globally")
 
-# Claude Code MCP - forked for local automation
-# Source: https://github.com/marcusquinn/claude-code-mcp
-# Upstream: https://github.com/steipete/claude-code-mcp (revert if merged)
+# Claude Code MCP - spawn Claude as sub-agent (subagent only)
+# Source: https://github.com/steipete/claude-code-mcp
+# Use @claude-code subagent to invoke this MCP
 config['mcp']['claude-code-mcp'] = {
     "type": "local",
-    "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
-    "enabled": True
+    "command": ["npx", "-y", "@steipete/claude-code-mcp"],
+    "enabled": False
 }
-print("  Ensured claude-code-mcp MCP server (forked)")
+print("  Set claude-code-mcp to lazy load (@claude-code subagent only)")
 
-# Claude Code MCP tools disabled globally (enable per-agent in AGENT_TOOLS if needed)
+# Claude Code MCP tools disabled globally
 config['tools']['claude-code-mcp_*'] = False
-print("  Set claude-code-mcp_* tools disabled globally (enabled for Build+/AI-DevOps only)")
+print("  Set claude-code-mcp_* disabled globally")
 
-# macOS Automator MCP - AppleScript and JXA automation (macOS only)
+# macOS Automator MCP - AppleScript and JXA automation (macOS only, subagent only)
 # Docs: https://github.com/steipete/macos-automator-mcp
-# Note: import platform is at line 412 with other imports
 if platform.system() == 'Darwin':
     if 'macos-automator' not in config['mcp']:
         config['mcp']['macos-automator'] = {
             "type": "local",
             "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
-            "enabled": True
+            "enabled": False
         }
-        print("  Added macos-automator MCP server (macOS only)")
+        print("  Added macos-automator MCP (lazy load - @mac subagent only)")
+    else:
+        config['mcp']['macos-automator']['enabled'] = False
 
     if 'macos-automator_*' not in config['tools']:
         config['tools']['macos-automator_*'] = False
-        print("  Added macos-automator_* to tools (disabled globally, enabled for @mac subagent)")
+        print("  Set macos-automator_* disabled globally")
 
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
@@ -642,6 +706,9 @@ while IFS= read -r f; do
             ;;
         dataforseo)
             extra_tools=$'  dataforseo_*: true\n  webfetch: true'
+            ;;
+        claude-code)
+            extra_tools=$'  claude-code-mcp_*: true'
             ;;
         # serper - REMOVED: Uses curl subagent now, no MCP tools
         playwriter)
