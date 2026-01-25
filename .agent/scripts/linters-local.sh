@@ -445,6 +445,62 @@ check_markdown_lint() {
     return 0
 }
 
+# Check TOON file syntax
+check_toon_syntax() {
+    print_info "Checking TOON Syntax..."
+
+    local toon_files
+    local violations=0
+
+    # Find .toon files in the repo
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        toon_files=$(git ls-files '*.toon' 2>/dev/null)
+    else
+        toon_files=$(find . -name "*.toon" -type f 2>/dev/null | grep -v node_modules)
+    fi
+
+    if [[ -z "$toon_files" ]]; then
+        print_success "TOON: No .toon files to check"
+        return 0
+    fi
+
+    local file_count
+    file_count=$(echo "$toon_files" | wc -l | tr -d ' ')
+
+    # Use toon-lsp check if available, otherwise basic validation
+    if command -v toon-lsp &> /dev/null; then
+        while IFS= read -r file; do
+            if [[ -f "$file" ]]; then
+                local result
+                result=$(toon-lsp check "$file" 2>&1)
+                local exit_code=$?
+                if [[ $exit_code -ne 0 ]] || [[ "$result" == *"error"* ]]; then
+                    ((violations++))
+                    print_warning "TOON syntax issue in $file"
+                fi
+            fi
+        done <<< "$toon_files"
+    else
+        # Fallback: basic structure validation (non-empty check)
+        while IFS= read -r file; do
+            if [[ -f "$file" ]]; then
+                if [[ ! -s "$file" ]]; then
+                    ((violations++))
+                    print_warning "TOON: Empty file $file"
+                fi
+            fi
+        done <<< "$toon_files"
+    fi
+
+    if [[ $violations -eq 0 ]]; then
+        print_success "TOON: All $file_count files valid"
+    else
+        print_warning "TOON: $violations of $file_count files with issues"
+    fi
+
+    return 0
+}
+
 check_remote_cli_status() {
     print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
@@ -516,6 +572,9 @@ main() {
     echo ""
 
     check_markdown_lint || exit_code=1
+    echo ""
+
+    check_toon_syntax || exit_code=1
     echo ""
 
     check_remote_cli_status

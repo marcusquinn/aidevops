@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[31]{folder,purpose,key_files}:
+<!--TOON:subagents[34]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|google-search-console|gsc-sitemaps|site-crawler|eeat-score
@@ -35,13 +35,14 @@ tools/ai-assistants/,AI tool integration - configuring assistants,agno|capsolver
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|pagespeed|peekaboo
 tools/mobile/,Mobile development - iOS/Android emulators,minisim
+tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/video/,Video creation - programmatic generation,remotion|higgsfield|video-prompt-design
 tools/data-extraction/,Data extraction - scraping business data,outscraper
-tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel
+tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
 tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden
 tools/task-management/,Task tracking - dependency graphs,beads
@@ -54,6 +55,7 @@ services/communications/,Communications - SMS and voice,twilio|telfon
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/accounting/,Accounting integration - invoicing,quickfile
+services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->
 
 <!--TOON:workflows[12]{name,file,purpose}:
@@ -71,7 +73,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[20]{name,purpose}:
+<!--TOON:scripts[23]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -92,4 +94,7 @@ full-loop-helper.sh,End-to-end development loop (task to PR to deploy)
 session-review-helper.sh,Gather session context for review
 mail-helper.sh,TOON-based inter-agent mailbox system
 memory-helper.sh,Cross-session memory (SQLite FTS5)
+pdf-helper.sh,PDF operations (info fields fill merge text)
+unstract-helper.sh,Unstract self-hosted document processing (install start stop)
+cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 -->

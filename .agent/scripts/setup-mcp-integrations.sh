@@ -41,14 +41,15 @@ get_mcp_command() {
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
         "stagehand-both") echo "both" ;;
         "dataforseo") echo "npx dataforseo-mcp-server" ;;
-        "serper") echo "uvx serper-mcp-server" ;;
+        # serper - REMOVED: Uses curl subagent (.agent/seo/serper.md), no MCP needed
+        "unstract") echo "docker:unstract/mcp-server" ;;
         *) echo "" ;;
     esac
     return 0
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel claude-code-mcp stagehand stagehand-python stagehand-both dataforseo serper"
+MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel claude-code-mcp stagehand stagehand-python stagehand-both dataforseo unstract"
 
 # Check prerequisites
 check_prerequisites() {
@@ -278,33 +279,32 @@ install_mcp() {
             print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
             print_info "Docs: https://docs.dataforseo.com/v3/"
             ;;
-        "serper")
-            print_info "Setting up Serper MCP for Google Search API..."
-            print_warning "Serper MCP requires API key"
-            print_info "Get API key from: https://serper.dev/"
-            print_info ""
-            print_info "Store in ~/.config/aidevops/mcp-env.sh:"
-            print_info "  export SERPER_API_KEY=\"your_api_key\""
-            print_info ""
-            print_info "Or use the helper script:"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY your_key"
-            print_info ""
-            print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
-            print_info '  "serper": {'
-            print_info '    "type": "local",'
-            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && SERPER_API_KEY=\$SERPER_API_KEY uvx serper-mcp-server"],'
-            print_info '    "enabled": true'
-            print_info '  }'
-            print_info ""
-            print_info "Available tools: google_search, google_search_images, google_search_videos, google_search_places, google_search_maps, google_search_reviews, google_search_news, google_search_shopping, google_search_lens, google_search_scholar, google_search_patents, google_search_autocomplete, webpage_scrape"
-            print_info "GitHub: https://github.com/garylab/serper-mcp-server"
-            
-            # Check if uv is installed
-            if ! command -v uvx &> /dev/null && ! command -v uv &> /dev/null; then
-                print_warning "uv (Python package manager) not found"
-                print_info "Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
-                print_info "Alternative: pip install serper-mcp-server"
+        # "serper" - REMOVED: Uses curl subagent (.agent/seo/serper.md), no MCP needed
+        # Get API key from https://serper.dev/ and set SERPER_API_KEY in mcp-env.sh
+        "unstract")
+            print_info "Setting up Unstract self-hosted document processing platform..."
+            print_info "This installs the full Unstract platform locally via Docker Compose"
+            print_info "Requirements: Docker, Docker Compose, Git, 8GB RAM"
+            echo
+
+            # Run the helper script for installation
+            local helper_script="${SCRIPT_DIR}/unstract-helper.sh"
+            if [[ -f "$helper_script" ]]; then
+                bash "$helper_script" install
+            else
+                print_error "unstract-helper.sh not found at ${helper_script}"
+                print_info "Manual install:"
+                print_info "  git clone https://github.com/Zipstack/unstract.git ~/.aidevops/unstract"
+                print_info "  cd ~/.aidevops/unstract && ./run-platform.sh"
+                return 1
             fi
+
+            echo
+            print_info "Your existing LLM API keys can be used as Unstract adapters:"
+            print_info "  Run: unstract-helper.sh configure-llm"
+            print_info ""
+            print_info "The MCP connects to your local instance by default."
+            print_info "Config template: configs/mcp-templates/unstract.json"
             ;;
         *)
             print_error "Unknown MCP integration: $mcp_name"

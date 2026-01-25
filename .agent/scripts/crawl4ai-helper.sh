@@ -105,10 +105,12 @@ check_python() {
         return 1
     fi
     
-    local python_version
+    local python_version python_major python_minor
     python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    python_major=${python_version%.*}
+    python_minor=${python_version#*.}
     
-    if [[ $(echo "$python_version < 3.8" | bc -l) -eq 1 ]]; then
+    if [[ "$python_major" -lt 3 ]] || { [[ "$python_major" -eq 3 ]] && [[ "$python_minor" -lt 8 ]]; }; then
         print_error "Python 3.8+ is required. Current version: $python_version"
         return 1
     fi

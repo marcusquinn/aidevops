@@ -1,31 +1,28 @@
 ---
-description: Google Search Console MCP setup and usage
+description: Google Search Console via MCP (gsc_* tools) with curl fallback
 mode: subagent
 tools:
   read: true
-  write: true
-  edit: true
+  write: false
+  edit: false
   bash: true
   glob: true
   grep: true
-  webfetch: true
-  task: true
 ---
 
-# Google Search Console MCP Setup & Usage
+# Google Search Console Integration
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **MCP Integration**: Google Search Console API for AI assistants
-- **Credentials**: `~/.config/aidevops/gsc-credentials.json` (service account JSON key)
-- **Setup**: Google Cloud Project → Enable Search Console API → Service Account → Add to GSC properties
+- **Primary access**: MCP tools (`gsc_*`) - enabled for SEO agent
+- **Fallback**: curl with OAuth2 token from service account
+- **API**: REST at `https://searchconsole.googleapis.com/v1/`
+- **Auth**: Service account JSON at `~/.config/aidevops/gsc-credentials.json`
 - **Capabilities**: Search analytics, URL inspection, indexing requests, sitemap management
-- **Key Methods**: `getSearchAnalytics()`, `getTopPages()`, `getTopQueries()`, `getCoreWebVitals()`
 - **Metrics**: clicks, impressions, ctr, position
 - **Dimensions**: query, page, country, device, searchAppearance
-- **Bulk Setup**: Use Playwright to add service account to all GSC properties automatically
 
 ## Setup Steps
 
@@ -51,9 +48,51 @@ The service account email (e.g., `aidevops@project-id.iam.gserviceaccount.com`) 
 ### 3. Verify Access
 
 ```bash
-# Test GSC MCP connection
-opencode mcp list | grep -i search
+# Verify credentials file
+python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(f'Service account: {d[\"client_email\"]}')"
 ```
+
+## Direct API Access (curl fallback)
+
+When the MCP is unavailable, use curl with OAuth2 token exchange:
+
+```bash
+# Get OAuth2 access token from service account
+ACCESS_TOKEN=$(python3 -c "
+import json, time, jwt, requests
+creds = json.load(open('$HOME/.config/aidevops/gsc-credentials.json'))
+now = int(time.time())
+payload = {'iss': creds['client_email'], 'scope': 'https://www.googleapis.com/auth/webmasters.readonly',
+           'aud': creds['token_uri'], 'iat': now, 'exp': now + 3600}
+signed = jwt.encode(payload, creds['private_key'], algorithm='RS256')
+r = requests.post(creds['token_uri'], data={'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': signed})
+print(r.json()['access_token'])
+")
+
+# List sites
+curl -s "https://searchconsole.googleapis.com/v1/sites" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# Search analytics query
+curl -s -X POST "https://searchconsole.googleapis.com/v1/sites/https%3A%2F%2Fexample.com/searchAnalytics/query" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startDate": "2025-01-01",
+    "endDate": "2025-01-20",
+    "dimensions": ["query", "page"],
+    "rowLimit": 25
+  }'
+
+# Submit URL for indexing
+curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
+```
+
+**Requirements for curl fallback**: `pip install PyJWT requests`
+
 <!-- AI-CONTEXT-END -->
 
 ## Automated Bulk Setup with Playwright

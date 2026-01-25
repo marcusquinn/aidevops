@@ -12,26 +12,79 @@ tools:
   task: true
 ---
 
-# Playwright MCP Usage Examples
+# Playwright MCP
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- Playwright examples for cross-browser testing automation
-- Browsers: chromium, firefox, webkit
-- Test types:
-  - Cross-browser: `runTest()`, `testBrowserFeatures()`
-  - User flows: `automateFlow()`, `testFormValidation()`
-  - Mobile: `testOnDevice()`, `testOrientations()`
-  - Performance: `measurePerformance()`, `testWithNetwork()`
-  - Visual: `visualRegressionSuite()`, `screenshotComponents()`
-  - Security: `testXSS()`, `testAuthentication()`
-  - API: `testAPIIntegration()`, `testRealTimeFeatures()`
-- Device emulation: iPhone, Samsung, iPad
-- Network throttling: Fast 3G, Slow 3G, Offline
-- Integration: Works with Chrome DevTools MCP
+- **Purpose**: Cross-browser testing and automation (fastest browser engine)
+- **Install**: `npm install playwright && npx playwright install`
+- **MCP**: `npx @playwright/mcp` (with `--proxy-server`, `--storage-state` options)
+- **Browsers**: chromium, firefox, webkit
+- **Headless**: Yes (default)
+
+**Performance** (fastest of all tools): Navigate 1.4s, form fill 0.9s, extraction 1.3s, reliability 0.64s avg.
+This is the underlying engine used by dev-browser, agent-browser, and Stagehand.
+
+**Key Features**:
+- Full proxy support (HTTP, SOCKS5, per-context)
+- Session persistence via `storageState` or `userDataDir`
+- Cross-browser testing (Chromium, Firefox, WebKit)
+- Device emulation (iPhone, Samsung, iPad)
+- Network throttling (Fast 3G, Slow 3G, Offline)
+- Browser extensions via `launchPersistentContext` + `--load-extension`
+- Parallel: 5 isolated contexts in 2.1s, 3 browsers in 1.9s, 10 pages in 1.8s
+- AI page understanding: `page.locator('body').ariaSnapshot()` (~0.01s, 50-200 tokens)
+- Integration: Works with Chrome DevTools MCP, dev-browser, Stagehand
+
+**When to use directly**: Maximum speed, full control, proxy support, parallel instances, extensions, or when other wrappers add unnecessary overhead.
+
+**Extensions**: Use `launchPersistentContext` with `--load-extension` arg. Requires bundled Chromium (not Chrome/Brave channel). Password managers load but need manual unlock.
+
+**Chrome DevTools MCP**: Connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage alongside Playwright automation.
+
+**Test types**:
+- Cross-browser: `runTest()`, `testBrowserFeatures()`
+- User flows: `automateFlow()`, `testFormValidation()`
+- Mobile: `testOnDevice()`, `testOrientations()`
+- Performance: `measurePerformance()`, `testWithNetwork()`
+- Visual: `visualRegressionSuite()`, `screenshotComponents()`
+- Security: `testXSS()`, `testAuthentication()`
+- API: `testAPIIntegration()`, `testRealTimeFeatures()`
+
 <!-- AI-CONTEXT-END -->
+
+## Installation
+
+Playwright MCP is auto-installed via `setup.sh` when running the browser tools setup:
+
+```bash
+# Via setup.sh (interactive)
+./setup.sh --interactive
+# Select: "Setup browser automation tools"
+
+# Manual installation
+npx playwright install              # Install browsers (chromium, firefox, webkit)
+npx @playwright/mcp@latest          # Run MCP server
+```
+
+**Check if installed:**
+
+```bash
+npx --no-install playwright --version
+```
+
+**MCP configuration** (for Claude Code, OpenCode, etc.):
+
+```json
+{
+  "playwright": {
+    "command": "npx",
+    "args": ["@playwright/mcp@latest"]
+  }
+}
+```
 
 ## Cross-Browser Testing
 

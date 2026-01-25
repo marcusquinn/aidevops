@@ -1,5 +1,5 @@
 ---
-description: Hostinger web hosting provider integration
+description: Hostinger hosting management via REST API and SSH
 mode: subagent
 tools:
   read: true
@@ -8,7 +8,6 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: true
 ---
 
 # Hostinger Provider Guide
@@ -18,13 +17,12 @@ tools:
 ## Quick Reference
 
 - **Type**: Shared/VPS/Cloud hosting, budget-friendly
+- **API**: REST at `https://developers.hostinger.com`
+- **Auth**: Bearer token in `~/.config/aidevops/mcp-env.sh` as `HOSTINGER_API_TOKEN`
 - **SSH**: Port 65002, password auth (no SSH keys on shared)
 - **Panel**: Custom hPanel
-- **Config**: `configs/hostinger-config.json`
-- **Commands**: `hostinger-helper.sh [list|connect|upload|download|exec] [site] [args]`
-- **Username format**: `u[0-9]+`
-- **Password file**: `~/.ssh/hostinger_password` (chmod 600)
-- **Requires**: `sshpass` for password authentication
+- **No MCP required** - uses curl for API, sshpass for SSH
+
 <!-- AI-CONTEXT-END -->
 
 Hostinger is a popular web hosting provider offering shared hosting, VPS, and cloud hosting solutions with competitive pricing and good performance.

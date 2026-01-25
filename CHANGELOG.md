@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.83.1] - 2026-01-25
+
+### Changed
+
+- Refactor: remove serper MCP, use curl subagent instead (#187)
+- Refactor: move claude-code-mcp to on-demand loading (#184)
+
+### Fixed
+
+- replace broken uvx command with uv tool run for serper MCP (#186)
+- replace remaining associative array in install_mcp_packages
+- replace associative array with parallel arrays in MCP migration
+- unconditionally disable claude-code-mcp tools globally in setup
+
+## [2.83.0] - 2026-01-24
+
+### Added
+
+- add ClawdHub skill registry as import source with browser automation (#183)
+
+### Changed
+
+- Documentation: add ClawdHub skills and import source to README
+
+## [2.82.0] - 2026-01-24
+
+### Added
+
+- add Examples & Inspiration section to Remotion agent (#182)
+
+## [2.81.0] - 2026-01-24
+
+### Added
+
+- add anti-detect browser automation stack
+
+### Changed
+
+- Documentation: update README with anti-detect browser section and counts
+
+### Fixed
+
+- resolve merge conflict with main and address CodeRabbit review
+
+## [2.80.1] - 2026-01-24
+
+### Fixed
+
+- resolve MCP binary paths to full absolute paths for PATH-independent startup (#179)
+
+## [2.80.0] - 2026-01-24
+
+### Added
+
+- implement multi-tenant credential storage (#178)
+
+### Changed
+
+- Documentation: add changelog entries for multi-tenant credentials
+- Documentation: add list-keys subagent documentation
+
+## [2.78.0] - 2026-01-24
+
+### Added
+
+- add HeyGen AI avatar video creation skill (#170)
+
+## [2.77.3] - 2026-01-24
+
+### Fixed
+
+- auto-install fd and ripgrep in non-interactive mode (#171)
+
+## [2.77.2] - 2026-01-24
+
+### Fixed
+
+- add remote sync verification to release script and tag rollback (#168)
+- add Homebrew PATH detection early in setup.sh requirements check (#169)
+- prefer Homebrew/pyenv python3 over macOS system python in setup.sh (#167)
+
+## [2.77.1] - 2026-01-24
+
+### Changed
+
+- Documentation: add worktree path re-read instruction to AGENTS.md (#166)
+- Documentation: update README metrics to match actual counts (#165)
+
+## [2.77.0] - 2026-01-24
+
+### Added
+
+- add Playwright MCP auto-setup to setup.sh (#150)
+
+### Changed
+
+- Documentation: update browser tool docs with benchmarks and add benchmark agent (#163)
+
+### Fixed
+
+- replace bc version comparison with integer arithmetic in crawl4ai-helper (#164)
+
+## [2.76.1] - 2026-01-24
+
+### Changed
+
+- Version bump and maintenance updates
+
 ## [2.76.0] - 2026-01-24
 
 ### Added
@@ -21,6 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - remove hardcoded model IDs from agent config generation
 - correct tools frontmatter format in pre-edit.md
+
 ## [2.75.0] - 2026-01-24
 
 ### Added

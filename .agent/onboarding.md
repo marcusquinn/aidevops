@@ -53,7 +53,11 @@ Would you like me to explain what aidevops can help you with? (yes/no)
 If yes, provide a brief overview:
 
 ```text
-aidevops gives your AI assistant superpowers for DevOps and infrastructure management:
+aidevops gives your AI assistant superpowers for DevOps and infrastructure management.
+
+**Recommended tool:** You should be running this in [OpenCode](https://opencode.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. If you're using a different tool, most features will still work, but OpenCode provides the best experience.
+
+**Capabilities:**
 
 - **Infrastructure**: Manage servers across Hetzner, Hostinger, Cloudron, Coolify
 - **Domains & DNS**: Purchase domains, manage DNS via Cloudflare, Spaceship, 101domains

@@ -26,17 +26,27 @@ tools:
 - **Install**: `bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup`
 
 **Key Advantages**:
-- **14% faster, 39% cheaper** than Playwright MCP (fewer round-trips)
+- **Near-Playwright speed**: Navigate 1.4s, form fill 1.3s, extraction 1.1s
 - **Persistent profile**: Cookies, localStorage, extensions survive server restarts
 - **Stateful pages**: Pages persist across script executions within a session
+- **Highly consistent**: 1.07s avg reliability with only ±0.02s variance
 - **Codebase-aware**: Read source code to write selectors directly
 - **LLM-friendly**: ARIA snapshots for element discovery
+- **Headless mode**: `start-headless` for no visible window
 
 **Profile Persistence** (survives server restarts):
 - Cookies (stay logged into sites)
 - localStorage and sessionStorage
 - Browser cache
-- Extension data (install extensions manually in the browser window)
+- Extension data (install extensions in headed mode, persists across restarts)
+
+**Extensions**: Install in headed mode (`start` not `start-headless`), then extensions persist in profile. Password managers need manual unlock once per session.
+
+**Parallel**: Named pages (`client.page("name")`) share the same profile (not isolated). For isolation, use Playwright direct with multiple contexts.
+
+**AI Page Understanding**: Use ARIA snapshots (`client.getAISnapshot("main")`) - returns structured element tree with refs. Faster and cheaper than screenshots for AI automation.
+
+**Chrome DevTools MCP**: Already on port 9222 - connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage.
 
 **When to Use**:
 - Testing local dev servers (localhost:3000, etc.)
@@ -44,9 +54,11 @@ tools:
 - Iterative debugging with visual feedback
 - When you need to stay logged into sites across sessions
 - When you have source code access for selectors
+- When you want Chrome DevTools MCP inspection alongside automation
 
 **When NOT to Use**:
 - Need to use YOUR existing Chrome profile -> use Playwriter
+- Need parallel isolated sessions -> use Playwright direct
 - Natural language automation -> use Stagehand
 
 <!-- AI-CONTEXT-END -->

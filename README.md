@@ -71,7 +71,7 @@ The result: AI agents that work *with* your development process, not around it.
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20+-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-18-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 <!-- AI-CONTEXT-START -->
@@ -91,9 +91,10 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- ~15 main agents (Plan+, Build+, SEO, WordPress, etc.)
-- 230+ subagent markdown files organized by domain
-- 130+ helper scripts in `.agent/scripts/`
+- 18 primary agents (Plan+, Build+, SEO, WordPress, etc.)
+- 536+ subagent markdown files organized by domain
+- 141+ helper scripts in `.agent/scripts/`
+- 41 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -152,7 +153,7 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 - Configure your AI assistants automatically
 - Guide you through recommended tools (Tabby, Zed, Git CLIs)
 
-**New users: Start OpenCode and type `/onboarding`** to configure your services interactively. The onboarding wizard will:
+**New users: Start [OpenCode](https://opencode.ai/) and type `/onboarding`** to configure your services interactively. OpenCode is the recommended tool for aidevops - all features, agents, and workflows are designed and tested for it first. The onboarding wizard will:
 - Explain what **[aidevops](https://aidevops.sh)** can do
 - Ask about your work to give personalized recommendations
 - Show which services are configured vs need setup
@@ -373,13 +374,13 @@ The secure workflow is included at `.github/workflows/opencode-agent.yml`.
 
 See `.agent/tools/git/opencode-github-security.md` for the full security documentation.
 
-**Supported AI Assistants:** (OpenCode & Zed are our daily drivers and preferred tools, so will have the most continual testing. All 18 assistants below have MCP configuration support.)
+**Supported AI Assistants:** OpenCode is the recommended and primary-tested tool. All 18 assistants below have MCP configuration support, but only OpenCode receives continual testing and first-class integration. Other tools are supported as a courtesy for users evaluating aidevops capabilities.
 
-**Preferred:**
+**Recommended:**
 
-- **[Tabby](https://tabby.sh/)** - Modern terminal with colour-coded Profiles. Use different profile colours per project/repo to visually distinguish which codebase you're working in. **Auto-syncs tab title with git repo/branch.**
-- **[OpenCode](https://opencode.ai/)** - Primary choice. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, and excellent DX.
-- **[Zed](https://zed.dev/)** - High-performance editor with AI (Preferred, with the OpenCode Agent Extension)
+- **[OpenCode](https://opencode.ai/)** - The recommended AI coding agent. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, LSP integration, plugin ecosystem, and excellent DX. All aidevops features are designed and tested for OpenCode first.
+- **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab title with git repo/branch.**
+- **[Zed](https://zed.dev/)** - Recommended editor. High-performance with AI integration (use with the OpenCode Agent Extension).
 
 ### Terminal Tab Title Sync
 
@@ -392,6 +393,8 @@ Your terminal tab/window title automatically shows `repo/branch` context when wo
 **Example format:** `{repo}/{branch-type}/{description}`
 
 See `.agent/tools/terminal/terminal-title.md` for customization options.
+
+**Also Supported (community-tested):**
 
 **IDE-Based:**
 
@@ -447,32 +450,37 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 
 ## **Imported Skills**
 
-aidevops includes curated skills imported from external repositories. Skills from GitHub repos support automatic update tracking:
+aidevops includes curated skills imported from external sources. Skills support automatic update tracking:
 
 | Skill | Source | Description |
 |-------|--------|-------------|
 | **cloudflare-platform** | [dmmulroy/cloudflare-skill](https://github.com/dmmulroy/cloudflare-skill) | 60 Cloudflare products: Workers, Pages, D1, R2, KV, Durable Objects, AI, networking, security |
+| **heygen** | [heygen-com/skills](https://github.com/heygen-com/skills) | AI avatar video creation API: avatars, voices, video generation, streaming, webhooks |
 | **remotion** | [remotion-dev/skills](https://github.com/remotion-dev/skills) | Programmatic video creation with React, animations, rendering |
 | **video-prompt-design** | [snubroot/Veo-3-Meta-Framework](https://github.com/snubroot/Veo-3-Meta-Framework) | AI video prompt engineering - 7-component meta prompt framework for Veo 3 |
 | **animejs** | [animejs.com](https://animejs.com) | JavaScript animation library patterns and API (via Context7) |
+| **caldav-calendar** | [ClawdHub](https://clawdhub.com/Asleep123/caldav-calendar) | CalDAV calendar sync via vdirsyncer + khal (iCloud, Google, Fastmail, Nextcloud) |
+| **proxmox-full** | [ClawdHub](https://clawdhub.com/mSarheed/proxmox-full) | Complete Proxmox VE hypervisor management via REST API |
 
 **CLI Commands:**
 
 ```bash
 aidevops skill add <owner/repo>    # Import a skill from GitHub
+aidevops skill add clawdhub:<slug> # Import a skill from ClawdHub
 aidevops skill list                # List imported skills
 aidevops skill check               # Check for upstream updates
 aidevops skill update [name]       # Update specific or all skills
 aidevops skill remove <name>       # Remove an imported skill
 ```
 
-Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream commit tracking for update detection. Telemetry is disabled - no data is sent to third parties.
+Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream tracking for update detection. Telemetry is disabled - no data is sent to third parties.
 
-**Browse community skills:** [skills.sh](https://skills.sh) | **Specification:** [agentskills.io](https://agentskills.io)
+**Browse community skills:** [skills.sh](https://skills.sh) | [ClawdHub](https://clawdhub.com) | **Specification:** [agentskills.io](https://agentskills.io)
 
 **Reference:**
 - [Agent Skills Specification](https://agentskills.io/specification) - The open format for SKILL.md files
 - [skills.sh Leaderboard](https://skills.sh) - Discover popular community skills
+- [ClawdHub](https://clawdhub.com) - Skill registry with vector search (Clawdbot ecosystem)
 - [vercel-labs/add-skill](https://github.com/vercel-labs/add-skill) - The upstream CLI tool (aidevops uses its own implementation)
 - [anthropics/skills](https://github.com/anthropics/skills) - Official Anthropic example skills
 - [agentskills/agentskills](https://github.com/agentskills/agentskills) - Specification source and reference library
@@ -483,7 +491,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 130+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 141+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -661,39 +669,47 @@ The setup script offers to install these tools automatically.
 
 ## **MCP Integrations**
 
-**Model Context Protocol servers for real-time AI assistant integration.** The framework helps configure these MCPs for **18 AI assistants** including OpenCode (preferred), Cursor, Claude Code/Desktop, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Warp AI, Aider, and Qwen.
+**Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs primarily for **[OpenCode](https://opencode.ai/)** (recommended). Configuration support is also available for 17 other AI assistants including Cursor, Claude Code/Desktop, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Warp AI, Aider, and Qwen.
 
-### **All Supported MCPs**
+### **All Supported MCPs (18 active)**
 
-| MCP | Purpose | API Key Required |
-|-----|---------|------------------|
+MCP packages are installed globally via `bun install -g` for instant startup (no `npx` registry lookups). Run `setup.sh` or `aidevops update-tools` to update to latest versions.
+
+| MCP | Purpose | Tier | API Key Required |
+|-----|---------|------|------------------|
+| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Global | Yes (Augment account) |
+| [Claude Code MCP](https://github.com/steipete/claude-code-mcp) | Claude as sub-agent | Global | No |
+| [osgrep](https://github.com/Ryandonofrio3/osgrep) | Local semantic search | Global | No |
+| [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) | Order data extraction | Per-agent | No |
+| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | Per-agent | No |
+| [Context7](https://context7.com/) | Library documentation lookup | Per-agent | No |
+| [Docker MCP](https://docs.docker.com/ai/mcp-catalog/) | Container management | Per-agent | No |
+| [Google Analytics](https://developers.google.com/analytics) | Analytics data | Per-agent | Yes (Google API) |
+| [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Per-agent | Yes (Google API) |
+| [Grep by Vercel](https://grep.app/) | GitHub code search | Per-agent | No |
+| [LocalWP](https://localwp.com/) | WordPress database access | Per-agent | No (local) |
+| [macOS Automator](https://github.com/steipete/macos-automator-mcp) | macOS automation | Per-agent | No |
+| [Outscraper](https://outscraper.com/) | Google Maps & business data | Per-agent | Yes |
+| [Playwriter](https://github.com/nicholasgriffintn/playwriter) | Browser with extensions | Per-agent | No |
+| [QuickFile](https://github.com/marcusquinn/quickfile-mcp) | Accounting API | Per-agent | Yes |
+| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | Per-agent | No |
+| [Sentry](https://sentry.io/) | Error tracking | Per-agent | Yes |
+| [Socket](https://socket.dev/) | Dependency security | Per-agent | No |
+
+**Tier explanation:**
+- **Global** - Tools always available (loaded into every session)
+- **Per-agent** - Tools disabled globally, enabled per-agent via config (zero context overhead when unused)
+
+### **SEO Integrations (curl subagents - no MCP overhead)**
+
+These use direct API calls via curl, avoiding MCP server startup entirely:
+
+| Integration | Purpose | API Key Required |
+|-------------|---------|------------------|
 | [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
-| [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) | Semantic codebase retrieval | Yes (Augment account) |
-| [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) | Browser debugging & automation | No |
-| [Cloudflare Browser](https://developers.cloudflare.com/browser-rendering/) | Server-side rendering | Yes (Cloudflare) |
-| [Context7](https://context7.com/) | Library documentation lookup | No |
-| [Crawl4AI](https://github.com/unclecode/crawl4ai) | Web crawling & scraping | No |
 | [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
-| [FluentCRM](https://fluentcrm.com/) | WordPress CRM - contacts, campaigns, automations | Yes (WP REST API) |
-| [Google Search Console](https://developers.google.com/webmaster-tools) | Search performance data | Yes (Google API) |
-| [Grep by Vercel](https://grep.app/) | GitHub code search | No |
-| [llm-tldr](https://github.com/parcadei/llm-tldr) | Semantic code analysis (95% token savings) | No |
-| [LocalWP](https://localwp.com/) | WordPress database access | No (local) |
-| [Next.js DevTools](https://nextjs.org/docs) | React/Next.js assistance | No |
-| [osgrep](https://github.com/Ryandonofrio3/osgrep) | Local semantic code search (100% private) | No |
-| [Outscraper](https://outscraper.com/) | Google Maps & business data extraction | Yes |
-| [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | Performance auditing | Yes (Google API) |
-| [Peekaboo](https://github.com/steipete/Peekaboo) | macOS screen capture & GUI automation | Optional (AI vision) |
-| [Perplexity](https://docs.perplexity.ai/) | AI-powered research | Yes |
-| [Playwright](https://playwright.dev/) | Cross-browser testing | No |
-| [Playwriter](https://github.com/remorses/playwriter) | Browser automation via Chrome extension | No |
-| [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | No |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
-| [shadcn/ui](https://ui.shadcn.com/) | UI component library browsing & installation | No |
-| [Snyk](https://snyk.io/) | Security vulnerability scanning | Yes |
-| [Stagehand (JS)](https://github.com/browserbase/stagehand) | AI browser automation | Optional (Browserbase) |
-| [Stagehand (Python)](https://github.com/anthropics/stagehand-python) | AI browser automation | Optional (Browserbase) |
-| [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) | WordPress content & site management | Yes (WP credentials) |
+| [Hostinger](https://developers.hostinger.com/) | Hosting management | Yes |
 
 ### **By Category**
 
@@ -705,29 +721,31 @@ The setup script offers to install these tools automatically.
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 
-**Browser Automation** (in order of preference, tested in OpenCode sessions):
+**Browser Automation** (6 tools + anti-detect stack, [benchmarked](#browser-automation)):
 
-- [Agent Browser](https://github.com/vercel-labs/agent-browser) - **DEFAULT** - CLI-first headless automation optimized for AI agents (Rust CLI + Node.js daemon, snapshot+ref pattern for deterministic element targeting, multi-session isolation, zero setup)
-- [Dev-Browser](https://github.com/SawyerHood/dev-browser) - Stateful TypeScript API with persistent Playwright server (14% faster, 39% cheaper than Playwright MCP; pages/cookies/auth survive across script executions; ideal for local dev testing)
-- [Playwriter](https://github.com/remorses/playwriter) - Chrome extension MCP with full Playwright API (reuse existing browser sessions/extensions/cookies, bypass automation detection, single `execute` tool vs 17+ for minimal context bloat)
-- [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screen capture and GUI automation (pixel-accurate captures, AI vision analysis, natural language agent for chained automation)
-- [Sweet Cookie](https://github.com/steipete/sweet-cookie) - Browser cookie extraction for API calls without launching a browser (TypeScript cross-platform + Swift macOS native; reads cookies directly from browser profile DBs)
-- [Stagehand](https://github.com/browserbase/stagehand) - AI-powered natural language browser automation with self-healing selectors (JavaScript + [Python](https://github.com/anthropics/stagehand-python) versions; `act`/`extract`/`observe`/`agent` primitives)
-- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawler optimized for AI content extraction and bulk scraping
-- [Playwright](https://playwright.dev/) - Cross-browser testing and automation (traditional selector-based approach)
-- [Chrome DevTools](https://chromedevtools.github.io/devtools-protocol/) - Browser debugging, performance analysis, DOM inspection
-- [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping via Cloudflare Workers
-
-**Why this order**: Agent Browser's snapshot+ref pattern proved most reliable for AI agents in testing - deterministic element targeting without brittle CSS selectors or expensive AI inference. Dev-Browser adds persistent state for multi-step workflows. Playwriter excels when you need existing browser sessions. Peekaboo is macOS-specific but powerful for GUI automation beyond the browser. Sweet Cookie fills the gap when you only need cookies for API calls. Stagehand's natural language approach is powerful but adds AI inference latency and cost. Traditional Playwright/Chrome DevTools remain useful for specific cross-browser or debugging scenarios.
+- [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
+- [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
+- [agent-browser](https://github.com/vercel-labs/agent-browser) - CLI/CI/CD, `--session` parallel, ref-based element targeting
+- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Bulk extraction, `arun_many` parallel (1.7x), LLM-ready markdown
+- [Playwriter](https://github.com/nicholasgriffintn/playwriter) - Your browser's extensions/passwords/proxy, already unlocked
+- [Stagehand](https://github.com/browserbase/stagehand) - Natural language automation, self-healing selectors
+- [Chrome DevTools MCP](https://github.com/nicholasgriffintn/chrome-devtools-mcp) - Companion: Lighthouse, network throttling, CSS coverage (pairs with any tool)
+- [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
+- [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screen capture and GUI automation (pixel-accurate captures, AI vision analysis)
+- [Sweet Cookie](https://github.com/steipete/sweet-cookie) - Browser cookie extraction for API calls without launching a browser
+- **Anti-Detect Stack** ([details](#anti-detect-browser)):
+  - [Camoufox](https://github.com/daijro/camoufox) (4.9k stars) - Firefox anti-detect, C++ fingerprint injection, WebRTC/Canvas/WebGL spoofing
+  - [rebrowser-patches](https://github.com/nicedayfor/rebrowser-patches) (1.2k stars) - Chromium CDP leak prevention, automation signal removal
+  - Multi-profile management - Persistent/clean/warm/disposable profiles (like AdsPower/GoLogin)
+  - Proxy integration - Residential, SOCKS5, VPN per profile with geo-targeting
 
 **SEO & Research:**
 
-- [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data
-- [DataForSEO](https://dataforseo.com/) - Comprehensive SEO data APIs (SERP, keywords, backlinks, on-page)
-- [Serper](https://serper.dev/) - Google Search API (web, images, news, places, shopping)
-- [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights
-- [Perplexity](https://docs.perplexity.ai/) - AI-powered web search and research
-- [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories
+- [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights (MCP)
+- [Grep by Vercel](https://grep.app/) - Search code snippets across GitHub repositories (MCP)
+- [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data (curl subagent)
+- [DataForSEO](https://dataforseo.com/) - Comprehensive SEO data APIs (curl subagent)
+- [Serper](https://serper.dev/) - Google Search API (curl subagent)
 - **Keyword Research** - Strategic keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
 - **Site Crawler** - Screaming Frog-like SEO auditing: broken links, redirects, meta issues, structured data
 - **Domain Research** - DNS intelligence via THC (4.51B records) and Reconeer APIs: rDNS, subdomains, CNAMEs
@@ -751,9 +769,10 @@ The setup script offers to install these tools automatically.
 
 - [FluentCRM](https://fluentcrm.com/) - WordPress CRM: contacts, tags, lists, campaigns, automations, smart links, webhooks
 
-**UI Components:**
+**Accounts & Finance:**
 
-- [shadcn/ui](https://ui.shadcn.com/) - Browse, search, and install shadcn/ui components directly via MCP
+- [QuickFile](https://github.com/marcusquinn/quickfile-mcp) - Accounting API integration (MCP)
+- [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) - Order data extraction (MCP)
 
 ### **Quick Setup**
 
@@ -767,6 +786,141 @@ bash .agent/scripts/setup-mcp-integrations.sh stagehand-python   # Python versio
 bash .agent/scripts/setup-mcp-integrations.sh stagehand-both     # Both versions
 bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
 ```
+
+### OpenCode LSP Configuration
+
+OpenCode includes [built-in LSP servers](https://opencode.ai/docs/lsp/) for 35+ languages. For aidevops projects that use Markdown and TOON extensively, add these optional LSP servers to your `opencode.json` for real-time diagnostics during editing:
+
+```json
+{
+  "lsp": {
+    "markdownlint": {
+      "command": ["markdownlint-language-server", "--stdio"],
+      "extensions": [".md"]
+    },
+    "toon-lsp": {
+      "command": ["toon-lsp"],
+      "extensions": [".toon"]
+    }
+  }
+}
+```
+
+**Install the servers:**
+
+```bash
+npm install -g markdownlint-language-server  # Markdown diagnostics
+cargo install toon-lsp                        # TOON syntax validation
+```
+
+These catch formatting and syntax issues during editing, reducing preflight/postflight fix cycles.
+
+## **Browser Automation**
+
+6 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
+
+### Performance Benchmarks
+
+Tested on macOS ARM64, all headless, warm daemon:
+
+| Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|------|-----------|-------------|---------------|----------|------------|-----------|
+| **Navigate + Screenshot** | **1.43s** | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
+| **Form Fill** (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
+| **Data Extraction** (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
+| **Multi-step** (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
+| **Parallel** (3 sessions) | **1.6s** | N/A | 2.0s | 3.0s | N/A | Slow |
+
+### Feature Matrix
+
+| Feature | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
+|---------|-----------|-------------|---------------|----------|------------|-----------|
+| **Headless** | Yes | Yes | Yes | Yes | No (your browser) | Yes |
+| **Proxy/VPN** | Full | Via args | No | Full | Your browser | Via args |
+| **Extensions** | Yes (persistent) | Yes (profile) | No | No | Yes (yours) | Possible |
+| **Password managers** | Partial (needs unlock) | Partial | No | No | **Yes** (unlocked) | No |
+| **Parallel sessions** | 5 ctx/2.1s | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance |
+| **Session persistence** | storageState | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
+| **Natural language** | No | No | No | LLM extraction | No | Yes |
+| **Self-healing** | No | No | No | No | No | Yes |
+
+### Tool Selection
+
+| Need | Tool | Why |
+|------|------|-----|
+| **Fastest automation** | Playwright | 0.9s form fill, parallel contexts |
+| **Stay logged in** | dev-browser | Profile persists across restarts |
+| **Your extensions/passwords** | Playwriter | Already unlocked in your browser |
+| **Bulk extraction** | Crawl4AI | Purpose-built, parallel, LLM-ready output |
+| **CLI/CI/CD** | agent-browser | No server needed, `--session` isolation |
+| **Unknown pages** | Stagehand | Natural language, self-healing |
+| **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
+| **Bot detection evasion** | Anti-detect stack | Camoufox (full) or rebrowser-patches (quick) |
+| **Multi-account** | Browser profiles | Persistent fingerprint + proxy per account |
+
+### AI Page Understanding
+
+Agents use lightweight methods instead of expensive vision API calls:
+
+| Method | Speed | Token Cost | Use For |
+|--------|-------|-----------|---------|
+| ARIA snapshot | ~0.01s | 50-200 tokens | Forms, navigation, interactive elements |
+| Text extraction | ~0.002s | Text length | Reading content |
+| Element scan | ~0.002s | ~20/element | Form filling, clicking |
+| Screenshot | ~0.05s | ~1K tokens (vision) | Visual debugging only |
+
+See [`.agent/tools/browser/browser-automation.md`](.agent/tools/browser/browser-automation.md) for the full decision tree and [`browser-benchmark.md`](.agent/tools/browser/browser-benchmark.md) for reproducible benchmark scripts.
+
+### Anti-Detect Browser
+
+Open-source alternative to AdsPower, GoLogin, and OctoBrowser for multi-account automation and bot detection evasion.
+
+**Architecture:**
+
+```text
+Layer 4: CAPTCHA Solving    → CapSolver (existing)
+Layer 3: Network Identity   → Proxies (residential/SOCKS5/VPN per profile)
+Layer 2: Browser Identity   → Camoufox (C++ fingerprint injection)
+Layer 1: Automation Stealth → rebrowser-patches (CDP leak prevention)
+Layer 0: Browser Engine     → Playwright (existing)
+```
+
+**Profile Types:**
+
+| Type | Cookies | Fingerprint | Use Case |
+|------|---------|-------------|----------|
+| **Persistent** | Saved | Fixed per profile | Account management, stay logged in |
+| **Clean** | None | Random each launch | Scraping, one-off tasks |
+| **Warm** | Saved | Fixed | Pre-warmed accounts (browsing history) |
+| **Disposable** | None | Random | Single-use, maximum anonymity |
+
+**Quick Start:**
+
+```bash
+# Setup
+anti-detect-helper.sh setup
+
+# Create profile with proxy
+anti-detect-helper.sh profile create "my-account" --type persistent --os macos
+
+# Launch (Camoufox with auto-generated fingerprint)
+anti-detect-helper.sh launch --profile "my-account" --headless
+
+# Test detection (BrowserScan, SannyBot)
+anti-detect-helper.sh test --profile "my-account"
+
+# Warm up profile with browsing history
+anti-detect-helper.sh warmup "my-account" --duration 30m
+```
+
+**Engine Selection:**
+
+| Engine | Stealth Level | Speed | Best For |
+|--------|---------------|-------|----------|
+| **Camoufox** (Firefox) | High (C++ level) | Medium | Full anti-detect, fingerprint rotation |
+| **rebrowser-patches** (Chromium) | Medium (CDP patches) | Fast | Quick stealth on existing Playwright code |
+
+See [`.agent/tools/browser/anti-detect-browser.md`](.agent/tools/browser/anti-detect-browser.md) for the full decision tree and subagent index.
 
 ## **Repomix - AI Context Generation**
 
@@ -818,11 +972,13 @@ Repomix runs as an MCP server for direct AI assistant integration:
 {
   "repomix": {
     "type": "local",
-    "command": ["npx", "-y", "repomix@latest", "--mcp"],
+    "command": ["repomix", "--mcp"],
     "enabled": true
   }
 }
 ```
+
+> Install globally first: `bun install -g repomix` (done automatically by `setup.sh`)
 
 See `.agent/tools/context/context-builder.md` for complete documentation.
 
@@ -991,22 +1147,30 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 13 domain agents, 225+ subagents, and 130+ helper scripts.
+This installs the complete framework: 18 primary agents, 536+ subagents, and 141+ helper scripts.
 
 ### Importing External Skills
 
-Import skills from any GitHub repository using the `aidevops skill` CLI:
+Import skills from GitHub or ClawdHub using the `aidevops skill` CLI:
 
 ```bash
 # Import from GitHub (auto-detects format)
 aidevops skill add owner/repo
 
-# Examples
+# Import from ClawdHub (skill registry with vector search)
+aidevops skill add clawdhub:caldav-calendar
+aidevops skill add https://clawdhub.com/owner/slug
+
+# More examples
 aidevops skill add anthropics/skills/pdf           # Specific skill from multi-skill repo
 aidevops skill add vercel-labs/agent-skills         # All skills from a repo
 aidevops skill add expo/skills --name expo-dev      # Custom name
 aidevops skill add owner/repo --dry-run             # Preview without changes
 ```
+
+**Supported sources:**
+- GitHub repos (`owner/repo` or full URL) — fetched via `git clone`
+- [ClawdHub](https://clawdhub.com) (`clawdhub:slug` or full URL) — fetched via Playwright browser automation
 
 **Supported formats:**
 - `SKILL.md` - [Agent Skills standard](https://agentskills.io/specification) (preferred)
@@ -1071,7 +1235,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 225+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 536+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1607,7 +1771,8 @@ bash .agent/scripts/continue-cli.sh review
 **Agent Guides** (in `.agent/`):
 
 - **[API Integrations](.agent/aidevops/api-integrations.md)** - Service APIs
-- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - Web scraping and automation
+- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 6 tools + anti-detect stack: decision tree, parallel, extensions, fingerprinting
+- **[Anti-Detect Browser](.agent/tools/browser/anti-detect-browser.md)** - Multi-profile management, fingerprint rotation, proxy integration
 - **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Performance auditing
 - **[Pandoc](.agent/tools/conversion/pandoc.md)** - Document format conversion
 - **[Security](.agent/aidevops/security.md)** - Enterprise security standards
@@ -1622,8 +1787,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agent/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 13 main agents
-│   ├── scripts/                   # 130+ helper scripts
+│   ├── *.md                       # 18 primary agents
+│   ├── scripts/                   # 141+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides

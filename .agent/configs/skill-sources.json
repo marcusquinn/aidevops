@@ -49,6 +49,39 @@
       "last_checked": "2026-01-21T05:12:00Z",
       "merge_strategy": "added",
       "notes": "Includes 60 product reference directories in .agent/services/hosting/cloudflare-platform/references/"
+    },
+    {
+      "name": "heygen",
+      "upstream_url": "https://github.com/heygen-com/skills",
+      "upstream_commit": "f11988dc81a6deed557f3d547b24f73627b59ebc",
+      "local_path": ".agent/tools/video/heygen-skill.md",
+      "format_detected": "skill-md-nested",
+      "imported_at": "2026-01-24T12:00:00Z",
+      "last_checked": "2026-01-24T12:00:00Z",
+      "merge_strategy": "added",
+      "notes": "Includes 18 rule files in .agent/tools/video/heygen-skill/rules/"
+    },
+    {
+      "name": "caldav-calendar",
+      "upstream_url": "https://clawdhub.com/Asleep123/caldav-calendar",
+      "upstream_commit": "1.0.1",
+      "local_path": ".agent/tools/productivity/caldav-calendar-skill.md",
+      "format_detected": "clawdhub",
+      "imported_at": "2026-01-24T22:20:00Z",
+      "last_checked": "2026-01-24T22:20:00Z",
+      "merge_strategy": "added",
+      "notes": "ClawdHub v1.0.1 by @Asleep123 - CalDAV calendar sync via vdirsyncer + khal"
+    },
+    {
+      "name": "proxmox-full",
+      "upstream_url": "https://clawdhub.com/mSarheed/proxmox-full",
+      "upstream_commit": "1.0.0",
+      "local_path": ".agent/services/hosting/proxmox-full-skill.md",
+      "format_detected": "clawdhub",
+      "imported_at": "2026-01-24T22:20:00Z",
+      "last_checked": "2026-01-24T22:20:00Z",
+      "merge_strategy": "added",
+      "notes": "ClawdHub v1.0.0 by @mSarheed - Complete Proxmox VE management via REST API"
     }
   ]
 }
