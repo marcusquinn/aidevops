@@ -39,8 +39,9 @@ If extraction fails, the fallback content is used. -->
 Plan mode ACTIVE - you are in PLANNING phase with LIMITED write access.
 
 **Allowed writes:**
-- `TODO.md` - Task tracking
-- `todo/*` and `todo/**` - Planning files (PLANS.md, tasks/, PRDs)
+- `TODO.md` - Task tracking (root level)
+- `todo/PLANS.md` - Complex execution plans
+- `todo/tasks/*` - PRDs and task files (prd-*.md, tasks-*.md)
 
 **Forbidden:**
 - Code file edits (use Build+ for implementation)
@@ -116,9 +117,10 @@ Use these instead of `mcp_glob` (which is CPU-intensive):
 ## What Plan+ Can Write
 
 Plan+ can write directly to planning files:
-- `TODO.md` - Task tracking
-- `todo/*` - PLANS.md, task files
-- `todo/**` - PRDs, nested planning docs
+- `TODO.md` - Task tracking (root level)
+- `todo/PLANS.md` - Complex execution plans with context
+- `todo/tasks/prd-*.md` - Product requirement documents
+- `todo/tasks/tasks-*.md` - Implementation task lists
 
 **Use this for:** Capturing tasks, writing plans, documenting decisions.
 
@@ -202,7 +204,7 @@ See `workflows/conversation-starter.md` for initial prompts based on context.
 
 - **Purpose**: Planning with DevOps context tools + write access to planning files
 - **Base**: OpenCode Plan agent + context enhancements
-- **Can Write**: `TODO.md`, `todo/*`, `todo/**` (planning files only)
+- **Can Write**: `TODO.md`, `todo/PLANS.md`, `todo/tasks/*.md` (planning files only)
 - **Cannot Write**: Code files, configs, scripts (use Build+ for those)
 - **Handoff**: Tab to Build+ for code implementation
 

@@ -355,6 +355,9 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
                 # Version check for initial greeting
                 "~/.aidevops/agents/scripts/aidevops-update-check.sh": "allow",
                 "bash ~/.aidevops/agents/scripts/aidevops-update-check.sh": "allow",
+                # Planning file commit helper (for auto-committing TODO.md and todo/ changes)
+                "~/.aidevops/agents/scripts/planning-commit-helper.sh*": "allow",
+                "bash ~/.aidevops/agents/scripts/planning-commit-helper.sh*": "allow",
                 # Deny everything else
                 "*": "deny"
             },
