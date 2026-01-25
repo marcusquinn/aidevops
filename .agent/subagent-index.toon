@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[32]{folder,purpose,key_files}:
+<!--TOON:subagents[33]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|google-search-console|gsc-sitemaps|site-crawler|eeat-score
@@ -55,6 +55,7 @@ services/communications/,Communications - SMS and voice,twilio|telfon
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
 services/accounting/,Accounting integration - invoicing,quickfile
+services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->
 
 <!--TOON:workflows[12]{name,file,purpose}:
@@ -72,7 +73,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[21]{name,purpose}:
+<!--TOON:scripts[22]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -94,4 +95,5 @@ session-review-helper.sh,Gather session context for review
 mail-helper.sh,TOON-based inter-agent mailbox system
 memory-helper.sh,Cross-session memory (SQLite FTS5)
 pdf-helper.sh,PDF operations (info fields fill merge text)
+unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 -->
