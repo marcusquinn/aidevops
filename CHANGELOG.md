@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.88.4] - 2026-01-25
+
+### Fixed
+
+- add mandatory version check instruction directly to Plan+ agent (#222)
+- add mandatory version check instruction directly to Plan+ agent
 ## [2.88.3] - 2026-01-25
 
 ### Fixed
