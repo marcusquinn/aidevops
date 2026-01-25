@@ -7,7 +7,6 @@
 #   fields <file>            - List form field names and types
 #   fill <file> <json>       - Fill form fields from JSON
 #   merge <output> <files..> - Merge multiple PDFs
-#   extract <file> <pages>   - Extract pages (e.g., "1-3,5,7-9")
 #   text <file>              - Extract text content
 #   install                  - Install @libpdf/core
 #   help                     - Show this help
@@ -90,17 +89,22 @@ import { readFileSync } from "fs";
 const file = process.env.PDF_FILE;
 const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
-const pages = await pdf.getPages();
-const form = await pdf.getForm();
-const fields = form.getFieldNames();
+const pages = pdf.getPages();
+const form = pdf.getForm();
 
 console.log("File:", file);
 console.log("Pages:", pages.length);
-console.log("Form fields:", fields.length);
+
+if (form) {
+    const fields = form.getFields();
+    console.log("Form fields:", fields.length);
+} else {
+    console.log("Form fields: 0 (no form)");
+}
 
 if (pages.length > 0) {
-    const { width, height } = pages[0].getSize();
-    console.log("Page size:", Math.round(width), "x", Math.round(height), "points");
+    const page = pages[0];
+    console.log("Page size:", Math.round(page.width), "x", Math.round(page.height), "points");
 }
 '
 }
@@ -123,17 +127,21 @@ import { readFileSync } from "fs";
 const file = process.env.PDF_FILE;
 const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
-const form = await pdf.getForm();
-const fields = form.getFields();
+const form = pdf.getForm();
 
-if (fields.length === 0) {
-    console.log("No form fields found.");
+if (!form) {
+    console.log("No form found in this PDF.");
 } else {
-    console.log("Form fields:");
-    for (const field of fields) {
-        const name = field.getName();
-        const type = field.constructor.name.replace("PDF", "").replace("Field", "");
-        console.log("  -", name, "(" + type + ")");
+    const fields = form.getFields();
+    if (fields.length === 0) {
+        console.log("No form fields found.");
+    } else {
+        console.log("Form fields:");
+        for (const field of fields) {
+            const name = field.getName();
+            const type = field.constructor.name.replace("PDF", "").replace("Field", "");
+            console.log("  -", name, "(" + type + ")");
+        }
     }
 }
 '
@@ -162,10 +170,19 @@ const outputFile = process.env.PDF_OUTPUT;
 
 const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
-const form = await pdf.getForm();
+const form = pdf.getForm();
+
+if (!form) {
+    console.error("Error: No form found in this PDF.");
+    process.exit(1);
+}
 
 const data = JSON.parse(jsonData);
-form.fill(data);
+const result = form.fill(data);
+console.log("Filled fields:", result.filled.join(", ") || "none");
+if (result.skipped.length > 0) {
+    console.log("Skipped fields:", result.skipped.join(", "));
+}
 
 const output = await pdf.save();
 writeFileSync(outputFile, output);
@@ -227,14 +244,14 @@ import { readFileSync } from "fs";
 const file = process.env.PDF_FILE;
 const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
-const pages = await pdf.getPages();
+const pages = pdf.getPages();
 
 for (let i = 0; i < pages.length; i++) {
-    const text = await pages[i].getTextContent();
+    const result = pages[i].extractText();
     if (pages.length > 1) {
         console.log("--- Page", i + 1, "---");
     }
-    console.log(text);
+    console.log(result.text);
 }
 '
 }

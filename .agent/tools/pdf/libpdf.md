@@ -216,7 +216,8 @@ const pages = await pdf.getPages();
 console.log(`${pages.length} pages`);
 
 const firstPage = pages[0];
-const { width, height } = firstPage.getSize();
+const width = firstPage.width;  // e.g., 612 for US Letter
+const height = firstPage.height; // e.g., 792 for US Letter
 ```
 
 ### Add Pages
@@ -332,7 +333,7 @@ const pdf = await PDF.load(bytes);
 
 // Copy pages to new document
 const newPdf = PDF.create();
-const [page1, page2] = await newPdf.copyPages(pdf, [0, 1]);
+const [page1, page2] = await newPdf.copyPagesFrom(pdf, [0, 1]);
 newPdf.addPage(page1);
 newPdf.addPage(page2);
 
@@ -343,11 +344,11 @@ const output = await newPdf.save();
 
 ```typescript
 const pdf = await PDF.load(bytes);
-const pages = await pdf.getPages();
+const pages = pdf.getPages();
 
 for (const page of pages) {
-  const text = await page.getTextContent();
-  console.log(text);
+  const result = page.extractText();
+  console.log(result.text);
 }
 ```
 
@@ -484,10 +485,10 @@ import { PDF, rgb, StandardFonts, degrees } from '@libpdf/core';
 async function addWatermark(pdfBytes: Uint8Array, text: string): Promise<Uint8Array> {
   const pdf = await PDF.load(pdfBytes);
   const font = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const pages = await pdf.getPages();
+  const pages = pdf.getPages();
   
   for (const page of pages) {
-    const { width, height } = page.getSize();
+    const { width, height } = page;
     
     page.drawText(text, {
       x: width / 2 - 100,
