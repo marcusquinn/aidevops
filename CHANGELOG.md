@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - add planning-commit-helper.sh to Plan+ bash permissions
 - prevent false positive task marking in auto-complete (#216)
+
 ## [2.87.3] - 2026-01-25
 
 ### Fixed
