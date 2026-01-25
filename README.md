@@ -91,7 +91,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- 15 primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
+- Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
 - 552+ subagent markdown files organized by domain
 - 147 helper scripts in `.agent/scripts/`
 - 14 slash commands for common workflows
