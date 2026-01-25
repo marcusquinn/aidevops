@@ -91,10 +91,10 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- 18 primary agents (Plan+, Build+, SEO, WordPress, etc.)
-- 540+ subagent markdown files organized by domain
-- 145+ helper scripts in `.agent/scripts/`
-- 41 slash commands for common workflows
+- 15 primary agents (Plan+, Build+, SEO, Marketing, etc.)
+- 535+ subagent markdown files organized by domain
+- 146 helper scripts in `.agent/scripts/`
+- 13 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -491,7 +491,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 145+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 146 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -1166,7 +1166,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 18 primary agents, 540+ subagents, and 145+ helper scripts.
+This installs the complete framework: 15 primary agents, 535+ subagents, and 146 helper scripts.
 
 ### Importing External Skills
 
@@ -1806,8 +1806,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agent/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 18 primary agents
-│   ├── scripts/                   # 145+ helper scripts
+│   ├── *.md                       # 15 primary agents
+│   ├── scripts/                   # 146 helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
