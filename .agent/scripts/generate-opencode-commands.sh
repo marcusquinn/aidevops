@@ -1113,6 +1113,8 @@ Start a Ralph loop for iterative development.
 
 Arguments: $ARGUMENTS
 
+**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task` which sets `"t042: description"`). If no task-prefixed title exists, use `session-rename` with a concise version of the prompt (truncate to ~60 chars if needed).
+
 **Usage:**
 ```bash
 /ralph-loop "<prompt>" --max-iterations <n> --completion-promise "<text>"
@@ -1358,7 +1360,8 @@ Task ID: $ARGUMENTS
 **Workflow:**
 1. Find task in TODO.md by ID (e.g., t042)
 2. Extract ralph metadata (promise, verify command, max iterations)
-3. Start Ralph loop with extracted parameters
+3. **Set session title** using `session-rename` tool with format: `"t042: Task description here"`
+4. Start Ralph loop with extracted parameters
 
 **Task format in TODO.md:**
 ```markdown
@@ -1381,7 +1384,8 @@ Task ID: $ARGUMENTS
 This will:
 1. Read TODO.md and find task t042
 2. Extract the ralph-promise, ralph-verify, ralph-max values
-3. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
+3. Set session title to `"t042: {task description}"` using `session-rename` tool
+4. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
 
 **Requirements:**
 - Task must have `#ralph` tag
@@ -1414,6 +1418,7 @@ Task Development → Preflight → PR Create → PR Review → Postflight → De
 ```bash
 /full-loop "Implement feature X with tests"
 /full-loop "Fix bug Y" --max-task-iterations 30
+/full-loop t061  # Will look up task description from TODO.md
 ```
 
 **Options:**

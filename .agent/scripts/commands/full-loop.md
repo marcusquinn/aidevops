@@ -8,6 +8,45 @@ Start a full development loop that chains all phases from task implementation to
 
 Task/Prompt: $ARGUMENTS
 
+## Step 0: Resolve Task ID and Set Session Title
+
+**IMPORTANT**: Before proceeding, extract the first positional argument from `$ARGUMENTS` (ignoring flags like `--max-task-iterations`). Check if it matches the task ID pattern `t\d+` (e.g., `t061`).
+
+If the first argument is a task ID (e.g., `t061`):
+
+1. Extract the task ID and look up its description from TODO.md:
+
+   ```bash
+   # Extract first argument (the task ID)
+   TASK_ID=$(echo "$ARGUMENTS" | awk '{print $1}')
+   
+   # Look up description (matches open, completed, or declined tasks)
+   TASK_DESC=$(grep -E "^- \[( |x|-)\] $TASK_ID " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //')
+   ```
+
+2. Set the session title using the `session-rename` MCP tool:
+
+   ```text
+   # Call the session-rename tool with the title parameter
+   session-rename(title: "t061: Improve session title to include task description")
+   ```
+
+   - Good: `"t061: Improve session title to include task description"`
+   - Bad: `"Full loop development for t061"`
+
+3. **Fallback**: If `$TASK_DESC` is empty (task not found in TODO.md), use: `"t061: (task not found in TODO.md)"`
+
+4. Store the full task description for use in subsequent steps.
+
+If the first argument is NOT a task ID (it's a description):
+- Use the description directly for the session title
+- Call `session-rename` tool with a concise version if the description is very long (truncate to ~60 chars)
+
+**Example session titles:**
+- Task ID `t061` with description "Improve session title format" → `"t061: Improve session title format"`
+- Task ID `t999` not found → `"t999: (task not found in TODO.md)"`
+- Description "Add JWT authentication" → `"Add JWT authentication"`
+
 ## Full Loop Phases
 
 ```text
