@@ -1,0 +1,12 @@
+{
+  "unstract": {
+    "type": "local",
+    "command": [
+      "/bin/bash",
+      "-c",
+      "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL -e DISABLE_TELEMETRY=true unstract/mcp-server:${UNSTRACT_IMAGE_TAG:-latest} unstract"
+    ],
+    "enabled": false,
+    "_comment": "Disabled globally. Enabled on-demand via services/document-processing/unstract.md. Requires UNSTRACT_API_KEY and API_BASE_URL in mcp-env.sh. Pin image with UNSTRACT_IMAGE_TAG env var for reproducibility."
+  }
+}
