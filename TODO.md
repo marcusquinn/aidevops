@@ -118,8 +118,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: PRAW (Python Reddit API Wrapper) 4k stars. JSON endpoints (.json suffix) still work but rate-limited: 96 calls/10min unauthenticated (per IP), 996/10min authenticated (per account). CORS now enforced so web frontends blocked. For heavy scraping: use OAuth + rotating residential proxies, or anti-detect browser with account rotation.
 - [ ] t041 Document curl-copy authenticated scraping workflow #tools #browser #scraping ~15m (ai:10m read:5m) logged:2025-01-05
   - Notes: Quick method for scraping authenticated pages: DevTools → Network → Copy as cURL → paste to Claude. Copies session cookies with request. Works on dashboards, gated content, private APIs. Caveat: tokens expire, need to recopy for short sessions. Add to tools/browser/ or workflows/.
-- [ ] t042 Create email-health-check /command and @subagent #services #email #deliverability ~1h (ai:40m test:10m read:10m) logged:2025-01-05
-  - Notes: Check SPF/DKIM/DMARC/MX/blacklist status. Tools: checkdmarc (299 stars, Python CLI - pip install checkdmarc), mail-tester.com (send test email, get score), mxtoolbox.com/emailhealth (100+ blacklists, MX/DNS checks). Could wrap checkdmarc CLI + scrape mail-tester results. Add to services/email/.
+- [x] t042 Create email-health-check /command and @subagent #services #email #deliverability ~1h actual:30m (ai:40m test:10m read:10m) logged:2025-01-05 started:2026-01-25T15:02Z completed:2026-01-25
+  - Notes: Implemented email-health-check.md subagent, email-health-check-helper.sh script, and /email-health-check command. Checks SPF/DKIM/DMARC/MX/blacklist status using checkdmarc CLI (optional) or dig fallback. Includes common DKIM selector detection for major providers. PR #213 merged.
 - [ ] t043 Create Bitwarden agent using official Bitwarden CLI #tools #credentials #security ~30m (ai:20m test:5m read:5m) logged:2025-01-08
   - Notes: Official Bitwarden CLI (`bw`) for cloud Bitwarden accounts. Separate from Vaultwarden (self-hosted). Commands: login, unlock, list, get, create, edit, delete, generate, export, import. Install: `npm install -g @bitwarden/cli`. Add to tools/credentials/bitwarden.md.
 - [ ] t044 Enhance Vaultwarden agent with bitwarden-cli MCP integration #tools #credentials #security ~20m (ai:15m read:5m) logged:2025-01-08
@@ -225,7 +225,7 @@ t038,Add CDN origin IP leak detection subagent (Cloudmare-inspired),,security|dn
 t039,Add anti-detect browser subagent for multi-account automation,,tools|browser|privacy,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t040,Add Reddit CLI/API integration for reading and posting,,tools|social-media,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
 t041,Document curl-copy authenticated scraping workflow,,tools|browser|scraping,1h,30m,15m,15m,2025-01-05T00:00Z,pending,,,
-t042,Create email-health-check /command and @subagent,,services|email|deliverability,4h,2h,1h,1h,2025-01-05T00:00Z,pending,,,
+t042,Create email-health-check /command and @subagent,,services|email|deliverability,1h,40m,10m,10m,2025-01-05T00:00Z,done,2026-01-25T15:02Z,2026-01-25,30m
 t043,Create Bitwarden agent using official Bitwarden CLI,,tools|credentials|security,3h,1.5h,1h,30m,2025-01-08T00:00Z,pending,,,
 t044,Enhance Vaultwarden agent with bitwarden-cli MCP integration,,tools|credentials|security,2h,1h,30m,30m,2025-01-08T00:00Z,pending,,,
 t045,Create Enpass agent using enpass-cli,,tools|credentials|security,4h,2h,1h,1h,2025-01-08T00:00Z,pending,,,
