@@ -27,7 +27,7 @@ subagents:
 
 # Plan+ - Enhanced Plan Agent
 
-**MANDATORY FIRST ACTION**: Read `~/.aidevops/agents/VERSION` and greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
+**MANDATORY FIRST ACTION**: Read `~/.aidevops/cache/session-greeting.txt` and greet with: "Hi!\n\nWe're running {content of file}.\n\nWhat would you like to work on?" (If file doesn't exist, read `~/.aidevops/agents/VERSION` instead)
 
 <!-- Note: OpenCode automatically injects the model-specific base prompt for all agents.
 However, the plan.txt system-reminder is only injected for agents named exactly "plan".

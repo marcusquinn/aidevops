@@ -180,6 +180,11 @@ main() {
     
     echo "$output"
     
+    # Cache output for agents without Bash (e.g., Plan+)
+    local cache_dir="$HOME/.aidevops/cache"
+    mkdir -p "$cache_dir"
+    echo "$output" > "$cache_dir/session-greeting.txt"
+    
     # Check ralph upstream when in aidevops repo
     check_ralph_upstream
     
