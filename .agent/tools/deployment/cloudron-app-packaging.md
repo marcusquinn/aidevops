@@ -138,8 +138,8 @@ When apps expect to write to paths under `/app/code`:
 ```dockerfile
 # Preserve defaults for first-run initialization
 RUN mkdir -p /app/code/defaults && \
-    mv /app/code/config /app/code/defaults/config && \
-    mv /app/code/storage /app/code/defaults/storage
+    mv /app/code/config /app/code/defaults/config 2>/dev/null || true && \
+    mv /app/code/storage /app/code/defaults/storage 2>/dev/null || true
 ```
 
 **Runtime (start.sh)**:

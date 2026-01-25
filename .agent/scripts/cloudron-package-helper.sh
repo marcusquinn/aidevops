@@ -413,6 +413,16 @@ cmd_scaffold() {
 scaffold_php() {
     log_info "Generating PHP app scaffold..."
     
+    # Check for existing files
+    if [[ -f "Dockerfile" || -f "start.sh" ]]; then
+        log_warn "This will overwrite existing Dockerfile and start.sh"
+        read -rp "Continue? [y/N] " confirm
+        if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+            log_info "Scaffold cancelled."
+            return 0
+        fi
+    fi
+    
     cat > Dockerfile << 'EOF'
 FROM cloudron/base:5.0.0
 
@@ -437,7 +447,8 @@ COPY --chown=cloudron:cloudron . /app/code/
 
 # Preserve defaults
 RUN mkdir -p /app/code/defaults && \
-    mv /app/code/config /app/code/defaults/config 2>/dev/null || true
+    mv /app/code/config /app/code/defaults/config 2>/dev/null || true && \
+    mv /app/code/storage /app/code/defaults/storage 2>/dev/null || true
 
 COPY start.sh /app/code/start.sh
 RUN chmod +x /app/code/start.sh
@@ -472,6 +483,7 @@ ln -sfn /app/data/storage /app/code/storage
 # First-run initialization
 if [[ "$FIRST_RUN" == "true" ]]; then
     cp -rn /app/code/defaults/config/* /app/data/config/ 2>/dev/null || true
+    cp -rn /app/code/defaults/storage/* /app/data/storage/ 2>/dev/null || true
 fi
 
 # Fix permissions
@@ -493,6 +505,16 @@ EOF
 
 scaffold_node() {
     log_info "Generating Node.js app scaffold..."
+    
+    # Check for existing files
+    if [[ -f "Dockerfile" || -f "start.sh" ]]; then
+        log_warn "This will overwrite existing Dockerfile and start.sh"
+        read -rp "Continue? [y/N] " confirm
+        if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+            log_info "Scaffold cancelled."
+            return 0
+        fi
+    fi
     
     cat > Dockerfile << 'EOF'
 FROM cloudron/base:5.0.0
@@ -552,6 +574,16 @@ EOF
 
 scaffold_python() {
     log_info "Generating Python app scaffold..."
+    
+    # Check for existing files
+    if [[ -f "Dockerfile" || -f "start.sh" ]]; then
+        log_warn "This will overwrite existing Dockerfile and start.sh"
+        read -rp "Continue? [y/N] " confirm
+        if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+            log_info "Scaffold cancelled."
+            return 0
+        fi
+    fi
     
     cat > Dockerfile << 'EOF'
 FROM cloudron/base:5.0.0
@@ -617,6 +649,16 @@ EOF
 scaffold_go() {
     log_info "Generating Go app scaffold..."
     
+    # Check for existing files
+    if [[ -f "Dockerfile" || -f "start.sh" ]]; then
+        log_warn "This will overwrite existing Dockerfile and start.sh"
+        read -rp "Continue? [y/N] " confirm
+        if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+            log_info "Scaffold cancelled."
+            return 0
+        fi
+    fi
+    
     cat > Dockerfile << 'EOF'
 FROM golang:1.21 AS builder
 
@@ -673,6 +715,16 @@ EOF
 
 scaffold_static() {
     log_info "Generating static site scaffold..."
+    
+    # Check for existing files
+    if [[ -f "Dockerfile" || -f "start.sh" ]]; then
+        log_warn "This will overwrite existing Dockerfile and start.sh"
+        read -rp "Continue? [y/N] " confirm
+        if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+            log_info "Scaffold cancelled."
+            return 0
+        fi
+    fi
     
     cat > Dockerfile << 'EOF'
 FROM cloudron/base:5.0.0
