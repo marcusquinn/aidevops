@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactor: replace repomix MCP with CLI (#197)
 - Refactor: remove repomix/playwriter from default agent tools (#195)
 - Documentation: update README with recent PR features (#193)
+
 ## [2.83.1] - 2026-01-25
 
 ### Changed
