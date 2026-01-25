@@ -31,7 +31,7 @@ tools:
 - Google Search Console: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON)
 
 **Document Processing**:
-- Unstract MCP: `UNSTRACT_API_KEY` + `UNSTRACT_API_BASE_URL` required (Docker-based)
+- Unstract MCP: `UNSTRACT_API_KEY` + `API_BASE_URL` required (Docker-based, self-hosted default)
 
 **Development**:
 - Claude Code MCP: Claude Code automation (forked server)
@@ -212,12 +212,16 @@ See `services/crm/fluentcrm.md` for detailed documentation.
 ### **Unstract MCP**
 
 ```bash
-# 1. Sign up at https://unstract.com/start-for-free/ (14-day free trial)
-# 2. Create a Prompt Studio project, define schema, deploy as API
-# 3. Store credentials in ~/.config/aidevops/mcp-env.sh:
+# 1. Self-hosted (recommended): unstract-helper.sh install
+# 2. Or cloud: Sign up at https://unstract.com/start-for-free/
+# 3. Create a Prompt Studio project, define schema, deploy as API
+# 4. Store credentials in ~/.config/aidevops/mcp-env.sh:
 export UNSTRACT_API_KEY="your_api_key_here"
-export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
+export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
+chmod 600 ~/.config/aidevops/mcp-env.sh
 ```
+
+**Note**: The MCP expects `API_BASE_URL` (not prefixed) - this matches the official Unstract spec.
 
 **For OpenCode** - Docker-based, disabled globally, enabled on-demand:
 
@@ -225,7 +229,7 @@ export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/you
 {
   "unstract": {
     "type": "local",
-    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL=\"$UNSTRACT_API_BASE_URL\" unstract/mcp-server unstract"],
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL -e DISABLE_TELEMETRY=true unstract/mcp-server:${UNSTRACT_IMAGE_TAG:-latest} unstract"],
     "enabled": false
   }
 }
@@ -243,11 +247,12 @@ export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/you
         "-v", "/tmp:/tmp",
         "-e", "UNSTRACT_API_KEY",
         "-e", "API_BASE_URL",
+        "-e", "DISABLE_TELEMETRY=true",
         "unstract/mcp-server", "unstract"
       ],
       "env": {
         "UNSTRACT_API_KEY": "your_api_key",
-        "API_BASE_URL": "https://us-central.unstract.com/deployment/api/.../"
+        "API_BASE_URL": "http://backend.unstract.localhost/deployment/api/.../"
       }
     }
   }
@@ -257,6 +262,8 @@ export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/you
 **Per-Agent Enablement**: The `services/document-processing/unstract.md` subagent has `unstract_tool: true` in its tools section. Agents needing document extraction reference this subagent.
 
 **Available Tools**: `unstract_tool` - submits files, polls for completion, returns structured JSON. Supports optional metadata and metrics.
+
+**Image Pinning**: Set `UNSTRACT_IMAGE_TAG` env var to pin a specific version for reproducibility.
 
 See `services/document-processing/unstract.md` for detailed documentation.
 
@@ -335,6 +342,12 @@ export AHREFS_API_KEY="your_40_char_ahrefs_key"
 export PERPLEXITY_API_KEY="your_perplexity_key"
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 export CLOUDFLARE_API_TOKEN="your_api_token"
+
+# Unstract - document processing (see services/document-processing/unstract.md)
+export UNSTRACT_API_KEY="your_unstract_api_key"
+export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
+# Optional: pin image version for reproducibility
+export UNSTRACT_IMAGE_TAG="latest"
 ```
 
 ## 🚀 **Getting Started**

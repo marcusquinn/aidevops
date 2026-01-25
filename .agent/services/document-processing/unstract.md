@@ -23,7 +23,7 @@ mcp:
 - **Purpose**: Extract structured data from unstructured documents (PDFs, images, DOCX, etc.)
 - **MCP Server**: `unstract/mcp-server` (Docker) or `@unstract/mcp-server` (npx)
 - **Tool**: `unstract_tool` - submits files to Unstract API, polls for completion, returns structured JSON
-- **Credentials**: `UNSTRACT_API_KEY` + `API_BASE_URL` in `~/.config/aidevops/mcp-env.sh`
+- **Credentials**: `UNSTRACT_API_KEY` + `API_BASE_URL` in `~/.config/aidevops/mcp-env.sh` (chmod 600)
 - **Docs**: https://docs.unstract.com/unstract/unstract_platform/mcp/unstract_platform_mcp_server/
 - **GitHub**: https://github.com/Zipstack/unstract
 
@@ -76,7 +76,8 @@ The MCP server is a thin client that connects to any Unstract API endpoint - clo
 ```bash
 # Add to ~/.config/aidevops/mcp-env.sh:
 export UNSTRACT_API_KEY="your_api_key_here"
-export UNSTRACT_API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
+export API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
+chmod 600 ~/.config/aidevops/mcp-env.sh
 ```
 
 ### Option B: Self-Hosted (Local) - Recommended
@@ -131,8 +132,11 @@ Whichever option you chose, ensure credentials are in `~/.config/aidevops/mcp-en
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
-export UNSTRACT_API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
+export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
+chmod 600 ~/.config/aidevops/mcp-env.sh
 ```
+
+**Note**: The MCP expects `API_BASE_URL` (not prefixed). This matches the official Unstract spec.
 
 ### 3. OpenCode Configuration (On-Demand)
 

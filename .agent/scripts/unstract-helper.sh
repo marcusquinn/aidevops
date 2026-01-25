@@ -186,9 +186,9 @@ do_status() {
     fi
 
     # Check MCP env
-    if [[ -f "$MCP_ENV_FILE" ]] && grep -q "UNSTRACT_API_BASE_URL" "$MCP_ENV_FILE"; then
+    if [[ -f "$MCP_ENV_FILE" ]] && grep -q "API_BASE_URL" "$MCP_ENV_FILE"; then
         local url
-        url=$(grep "UNSTRACT_API_BASE_URL" "$MCP_ENV_FILE" | sed 's/.*=//' | tr -d '"' | tr -d "'")
+        url=$(grep "^export API_BASE_URL" "$MCP_ENV_FILE" | sed 's/.*=//' | tr -d '"' | tr -d "'")
         print_info "MCP configured: ${url}"
     else
         print_warning "MCP not configured. Run 'unstract-helper.sh configure-llm'"
@@ -238,7 +238,7 @@ do_uninstall() {
     # Remove MCP env entries
     if [[ -f "$MCP_ENV_FILE" ]]; then
         sed -i.bak '/UNSTRACT_API_KEY/d' "$MCP_ENV_FILE"
-        sed -i.bak '/UNSTRACT_API_BASE_URL/d' "$MCP_ENV_FILE"
+        sed -i.bak '/^export API_BASE_URL.*unstract/d' "$MCP_ENV_FILE"
         rm -f "${MCP_ENV_FILE}.bak"
     fi
 
@@ -253,8 +253,8 @@ configure_local_mcp_env() {
     # Set default local URL (user will update deployment ID after creating a project)
     local needs_update=0
 
-    if ! grep -q "UNSTRACT_API_BASE_URL" "$MCP_ENV_FILE" 2>/dev/null; then
-        echo 'export UNSTRACT_API_BASE_URL="http://backend.unstract.localhost/deployment/api/YOUR_DEPLOYMENT_ID/"' >> "$MCP_ENV_FILE"
+    if ! grep -q "^export API_BASE_URL" "$MCP_ENV_FILE" 2>/dev/null; then
+        echo 'export API_BASE_URL="http://backend.unstract.localhost/deployment/api/YOUR_DEPLOYMENT_ID/"' >> "$MCP_ENV_FILE"
         needs_update=1
     fi
 
@@ -265,7 +265,7 @@ configure_local_mcp_env() {
 
     if [[ "$needs_update" -eq 1 ]]; then
         chmod 600 "$MCP_ENV_FILE"
-        print_info "Added UNSTRACT_API_KEY and UNSTRACT_API_BASE_URL to ${MCP_ENV_FILE}"
+        print_info "Added UNSTRACT_API_KEY and API_BASE_URL to ${MCP_ENV_FILE}"
         print_warning "Update these after creating your first API deployment in Prompt Studio"
     fi
 
