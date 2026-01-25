@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[34]{folder,purpose,key_files}:
+<!--TOON:subagents[35]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|google-search-console|gsc-sitemaps|site-crawler|eeat-score
@@ -36,6 +36,7 @@ tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overv
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo
 tools/mobile/,Mobile development - iOS/Android emulators,minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
+tools/performance/,Web performance - Core Web Vitals and network analysis,performance
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery
