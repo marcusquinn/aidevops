@@ -1113,7 +1113,7 @@ Start a Ralph loop for iterative development.
 
 Arguments: $ARGUMENTS
 
-**Session Title**: Set a descriptive session title using `session-rename` tool. Use a concise version of the prompt (truncate to ~60 chars if needed).
+**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task` which sets `"t042: description"`). If no task-prefixed title exists, use `session-rename` with a concise version of the prompt (truncate to ~60 chars if needed).
 
 **Usage:**
 ```bash
@@ -1408,8 +1408,6 @@ agent: Build+
 Read ~/.aidevops/agents/scripts/commands/full-loop.md and follow its instructions.
 
 Start a full development loop for: $ARGUMENTS
-
-**IMPORTANT - Session Title**: If the argument is a task ID (like `t061`), look up the task description from TODO.md and use it for the session title. Call `session-rename` with format: `"t061: Task description here"` instead of just `"Full loop development for t061"`.
 
 **Full Loop Phases:**
 ```text
