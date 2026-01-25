@@ -850,7 +850,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 
 | Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
 |---------|-----------|----------------|-------------|---------------|----------|------------|-----------|
-| **Headless** | Yes | Yes (default) | Yes | Yes | Yes | No (your browser) | Yes |
+| **Headless** | Yes | Yes (default) | Yes | Yes (default) | Yes | No (your browser) | Yes |
 | **Proxy/VPN** | Full | No | Via args | No | Full | Your browser | Via args |
 | **Extensions** | Yes (persistent) | No | Yes (profile) | No | No | Yes (yours) | Possible |
 | **Password managers** | Partial (needs unlock) | No | Partial | No | No | **Yes** (unlocked) | No |

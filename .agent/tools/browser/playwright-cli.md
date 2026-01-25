@@ -47,7 +47,7 @@ playwright-cli close
 
 **Performance**: Similar to agent-browser (both use Playwright engine). Navigate+screenshot ~1.9s, form fill ~1.4s.
 
-**vs agent-browser**: playwright-cli uses simpler ref syntax (`e5` vs `@e5`), has built-in tracing, and is Microsoft-maintained. agent-browser has Rust CLI for faster cold starts.
+**vs agent-browser**: playwright-cli uses simpler ref syntax (`e5` vs `@e5`), has built-in tracing, and is Microsoft-maintained. agent-browser has more CLI commands and a Rust binary (but slower cold start ~3-5s vs ~2s).
 
 **vs Playwriter MCP**: playwright-cli runs headless with isolated sessions. Playwriter uses your existing browser (headed, with your extensions/passwords).
 
@@ -260,7 +260,7 @@ playwright-cli open https://example.com/form
 playwright-cli snapshot
 
 playwright-cli fill e1 "user@example.com"
-playwright-cli fill e2 "password123"
+playwright-cli fill e2 "$PASSWORD"  # Store credentials in env var or secure vault
 playwright-cli click e3
 playwright-cli snapshot
 ```
@@ -304,8 +304,9 @@ playwright-cli type "Buy groceries"
 playwright-cli press Enter
 playwright-cli type "Water flowers"
 playwright-cli press Enter
-playwright-cli check e21
-playwright-cli check e35
+playwright-cli snapshot                    # Get refs for the todo items
+playwright-cli check e21                   # Check first todo (ref from snapshot)
+playwright-cli check e35                   # Check second todo (ref from snapshot)
 playwright-cli screenshot
 ```
 
@@ -331,7 +332,7 @@ playwright-cli screenshot
 
 ### When to Use Other Tools
 
-- **agent-browser** - Faster cold starts (Rust binary), more CLI commands
+- **agent-browser** - More CLI commands, Rust binary (but slower cold start)
 - **Playwriter** - Need your existing browser sessions, extensions, passwords
 - **Stagehand** - Natural language automation, self-healing selectors
 - **Playwright direct** - Maximum speed, full API control, TypeScript projects
