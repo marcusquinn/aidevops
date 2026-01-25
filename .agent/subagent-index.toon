@@ -51,7 +51,7 @@ tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,macOS automation - AppleScript and JXA,mac|macos-automator
 tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|localwp|mainwp|wp-preferred|scf
 services/hosting/,Hosting providers - DNS and cloud servers,hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
-services/email/,Email services - transactional email,ses
+services/email/,Email services - transactional email and deliverability,ses|email-health-check
 services/communications/,Communications - SMS and voice,twilio|telfon
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
@@ -74,7 +74,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[24]{name,purpose}:
+<!--TOON:scripts[25]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -99,4 +99,5 @@ memory-helper.sh,Cross-session memory (SQLite FTS5)
 pdf-helper.sh,PDF operations (info fields fill merge text)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
+email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
 -->
