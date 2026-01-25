@@ -117,33 +117,31 @@ AGENT_ORDER = ["Plan+", "Build+", "AI-DevOps"]
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
-# Note: repomix_* and playwriter_* are ONLY enabled for agents with browser/repomix subagents
-# to reduce context bloat from their verbose tool descriptions (~5,500 tokens saved)
+# Note: playwriter_* is ONLY enabled for agents with browser subagents
+# to reduce context bloat from verbose tool descriptions
 AGENT_TOOLS = {
     "Plan+": {
         # Planning agent - read all, write only to planning files (via permissions)
         # Bash enabled with granular permissions for read-only file discovery commands
-        # No repomix/playwriter - planning doesn't need browser or codebase packing
+        # No playwriter - planning doesn't need browser automation
         "write": True, "edit": True, "bash": True,
         "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
         "gh_grep_*": True
     },
     "Build+": {
-        # Build agent needs playwriter for existing browser sessions (extensions/passwords)
-        # For headless automation, use playwright-cli (CLI, no MCP needed)
-        # Also needs repomix for codebase context operations
+        # Build agent has browser subagents (playwright, stagehand) so needs playwriter
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
-        "gh_grep_*": True, "repomix_*": True, "playwriter_*": True
+        "gh_grep_*": True, "playwriter_*": True
     },
     "AI-DevOps": {
-        # Framework agent - needs repomix for skill generation, no browser needed
+        # Framework agent
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
         "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
-        "gh_grep_*": True, "repomix_*": True
+        "gh_grep_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
@@ -180,7 +178,7 @@ AGENT_TOOLS = {
 }
 
 # Default tools for agents not in AGENT_TOOLS
-# Note: repomix_* and playwriter_* NOT included by default - they add significant
+# Note: playwriter_* NOT included by default - it adds significant
 # context overhead from verbose tool descriptions. Enable per-agent as needed.
 # Note: claude-code-mcp_* NOT included - use @claude-code subagent instead
 DEFAULT_TOOLS = {
@@ -442,7 +440,7 @@ if os.path.exists(omo_config_path):
                 "tools": {
                     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
                     "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
                 }
             }
             sorted_agents["Planner-Sisyphus"] = {
@@ -453,7 +451,7 @@ if os.path.exists(omo_config_path):
                 "tools": {
                     "write": False, "edit": False, "bash": False,
                     "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
-                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True, "repomix_*": True
+                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
                 }
             }
             print("  Added OmO agents: Sisyphus, Planner-Sisyphus (after WordPress)")
@@ -499,7 +497,7 @@ if model_count > 0:
 #   - enabled: False = Server starts on-demand when subagent invokes it (lazy loading)
 #
 # MCPs enabled at startup (used by main agents):
-#   - osgrep, augment-context-engine, context7, repomix, playwriter, gh_grep
+#   - osgrep, augment-context-engine, context7, playwriter, gh_grep
 #
 # MCPs lazy-loaded (subagent-only):
 #   - claude-code-mcp, outscraper, dataforseo, shadcn, macos-automator, gsc, localwp, etc.
@@ -524,13 +522,12 @@ pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 # MCP LOADING POLICY - Enforce enabled states for all MCPs
 # -----------------------------------------------------------------------------
 # Eager-loaded (enabled: True): Used by all main agents, start at launch
-EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'repomix', 'gh_grep', 'sentry', 'socket'}
+EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'playwriter', 'gh_grep', 'sentry', 'socket'}
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
-# playwriter: Only needed when using existing browser sessions (not for playwright-cli)
 LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
-             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs', 'playwriter'}
+             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs'}
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
@@ -564,27 +561,25 @@ if 'osgrep' not in config['mcp']:
 # osgrep_* enabled globally (used by all main agents)
 config['tools']['osgrep_*'] = True
 
-# Playwriter MCP - browser automation via Chrome extension (lazy-loaded)
-# Only needed when using existing browser sessions with extensions/passwords
-# For headless automation, use playwright-cli instead (no MCP needed)
+# Playwriter MCP - browser automation via Chrome extension (used by all main agents)
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
 if 'playwriter' not in config['mcp']:
     if bun_path:
         config['mcp']['playwriter'] = {
             "type": "local",
             "command": ["bun", "x", "playwriter@latest"],
-            "enabled": False
+            "enabled": True
         }
     else:
         config['mcp']['playwriter'] = {
             "type": "local",
             "command": ["npx", "playwriter@latest"],
-            "enabled": False
+            "enabled": True
         }
-    print("  Added playwriter MCP (lazy load - enabled per-agent when needed)")
+    print("  Added playwriter MCP (eager load - used by all agents)")
 
-# playwriter_* disabled globally (enabled per-agent via playwriter.md subagent)
-config['tools']['playwriter_*'] = False
+# playwriter_* enabled globally (used by all main agents)
+config['tools']['playwriter_*'] = True
 
 # gh_grep MCP - GitHub code search (used by Plan+, Build+, AI-DevOps)
 # This is a remote MCP, no local process to start
@@ -600,9 +595,6 @@ if 'gh_grep' not in config['mcp']:
 if 'gh_grep_*' not in config['tools']:
     config['tools']['gh_grep_*'] = False
     print("  Set gh_grep_* disabled globally (enabled for Plan+/Build+/AI-DevOps)")
-
-# repomix_* enabled globally (used by all main agents)
-config['tools']['repomix_*'] = True
 
 # -----------------------------------------------------------------------------
 # LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand
