@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - Objective: Auto-read AGENTS.md at every AI CLI session start
-- Configured tools: Aider, OpenAI CLI, Claude CLI, AI Shell, LiteLLM
+- Configured tools: Aider, OpenAI CLI, Claude Code, AI Shell, LiteLLM
 - Config files: ~/.aider.conf.yml, ~/.openai/config.yaml, ~/.claude/config.json, ~/.ai-shell/config.json, ~/.litellm/config.yaml
 - Aliases: `aider-guided`, `openai-guided`, `claude-guided`, `ai-guided`, `agents`, `agents-home`, `cdai`
 - Universal wrapper: `~/.local/bin/ai-with-context <tool> [args]`
@@ -49,12 +49,13 @@ tools:
 - **Model**: `gpt-4`
 - **Usage**: `openai` or `openai-guided`
 
-### **3. Claude CLI**
+### **3. Claude Code**
 
 - **Config File**: `~/.claude/config.json`
 - **Auto-reads**: Both AGENTS.md files
 - **Model**: `claude-3-sonnet-20240229`
 - **Usage**: `claude` or `claude-guided`
+- **Note**: Claude Code is Anthropic's official CLI tool (the `claude` command)
 
 ### **4. AI Shell**
 
@@ -109,7 +110,7 @@ aider
 # OpenAI CLI with system message including AGENTS.md guidance
 openai api completions.create -m gpt-4 -p "Help with DevOps"
 
-# Claude CLI with auto-context
+# Claude Code with auto-context
 claude -p "Review infrastructure setup"
 ```
 
@@ -153,7 +154,7 @@ cdai
 - Default model: GPT-4
 - Working directory configured
 
-### **3. Claude CLI Configuration** (`~/.claude/config.json`)
+### **3. Claude Code Configuration** (`~/.claude/config.json`)
 
 - Auto-reads both AGENTS.md files
 - System message with framework context

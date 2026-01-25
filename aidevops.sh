@@ -495,7 +495,7 @@ cmd_status() {
         "$HOME/.cursor/rules:Cursor"
         "$HOME/.claude/commands:Claude Code"
         "$HOME/.continue:Continue.dev"
-        "$HOME/CLAUDE.md:Claude CLI memory"
+        "$HOME/CLAUDE.md:Claude Code memory"
         "$HOME/GEMINI.md:Gemini CLI memory"
         "$HOME/.cursorrules:Cursor rules"
     )

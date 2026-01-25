@@ -192,7 +192,7 @@ install_mcp() {
             print_info "Setting up Claude Code MCP (forked) for Claude Code automation..."
             print_info "Source: https://github.com/marcusquinn/claude-code-mcp"
             print_info "Upstream: https://github.com/steipete/claude-code-mcp (revert if merged)"
-            print_warning "Requires Claude CLI and prior acceptance of --dangerously-skip-permissions"
+            print_warning "Requires Claude Code and prior acceptance of --dangerously-skip-permissions"
             print_info "One-time setup: claude --dangerously-skip-permissions"
             if command -v claude &> /dev/null; then
                 claude mcp add claude-code-mcp "$mcp_command"
