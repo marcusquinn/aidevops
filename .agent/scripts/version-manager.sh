@@ -529,6 +529,97 @@ check_working_tree_clean() {
     return 0
 }
 
+# Function to extract task IDs from commit messages since last tag
+# Supports formats: t001, t001.1, feat(t001):, fix(t002):, closes t003, completes t004
+extract_task_ids_from_commits() {
+    local prev_tag
+    prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    
+    local commits
+    if [[ -n "$prev_tag" ]]; then
+        commits=$(git log "$prev_tag"..HEAD --pretty=format:"%s" 2>/dev/null)
+    else
+        commits=$(git log --oneline -50 --pretty=format:"%s" 2>/dev/null)
+    fi
+    
+    # Extract task IDs (t001, t001.1, etc.) from commit messages
+    # Patterns: t001, feat(t001):, fix(t002):, closes t003, completes t004, mark t005
+    echo "$commits" | grep -oE '\bt[0-9]{3}(\.[0-9]+)*\b' | sort -u
+    return 0
+}
+
+# Function to auto-mark tasks complete in TODO.md based on commit messages
+# Parses commits since last tag for task IDs and marks them complete
+auto_mark_tasks_complete() {
+    local todo_file="$REPO_ROOT/TODO.md"
+    local today
+    today=$(date +%Y-%m-%dT%H:%M:%SZ)
+    local today_short
+    today_short=$(date +%Y-%m-%d)
+    
+    if [[ ! -f "$todo_file" ]]; then
+        print_warning "TODO.md not found, skipping task auto-completion"
+        return 0
+    fi
+    
+    print_info "Scanning commits for task IDs to auto-mark complete..."
+    
+    local task_ids
+    task_ids=$(extract_task_ids_from_commits)
+    
+    if [[ -z "$task_ids" ]]; then
+        print_info "No task IDs found in commits since last release"
+        return 0
+    fi
+    
+    local count=0
+    local marked_tasks=""
+    
+    # Process each task ID
+    while IFS= read -r task_id; do
+        [[ -z "$task_id" ]] && continue
+        
+        # Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
+        local unchecked_pattern="^[[:space:]]*- \\[ \\] ${task_id}[[:space:]]"
+        local checked_pattern="^[[:space:]]*- \\[x\\] ${task_id}[[:space:]]"
+        
+        # Check if task exists and is not already complete
+        # Pattern: - [ ] t001 ... (not already checked)
+        if grep -qE "$unchecked_pattern" "$todo_file"; then
+            # Mark task complete: change [ ] to [x] and add completed: timestamp
+            # Use sed to update the line
+            local escaped_id
+            escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
+            
+            # Build sed patterns
+            local sed_unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
+            
+            # Check if line already has completed: field
+            if grep -E "$sed_unchecked_pattern" "$todo_file" | grep -q "completed:"; then
+                # Just change checkbox
+                sed -i '' "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]]\\)/\\1- [x] \\2/" "$todo_file"
+            else
+                # Change checkbox and add completed: timestamp
+                sed -i '' "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2 completed:$today_short/" "$todo_file"
+            fi
+            
+            count=$((count + 1))
+            marked_tasks="$marked_tasks $task_id"
+            print_success "Marked $task_id as complete"
+        elif grep -qE "$checked_pattern" "$todo_file"; then
+            print_info "Task $task_id already marked complete"
+        else
+            print_warning "Task $task_id not found in TODO.md (may be subtask or already moved)"
+        fi
+    done <<< "$task_ids"
+    
+    if [[ $count -gt 0 ]]; then
+        print_success "Auto-marked $count task(s) complete:$marked_tasks"
+    fi
+    
+    return 0
+}
+
 # Function to commit version changes
 commit_version_changes() {
     local version="$1"
@@ -537,8 +628,8 @@ commit_version_changes() {
     
     print_info "Committing version changes..."
     
-    # Stage all version-related files (including CHANGELOG.md and Claude plugin)
-    git add VERSION package.json README.md setup.sh aidevops.sh sonar-project.properties CHANGELOG.md .claude-plugin/marketplace.json 2>/dev/null
+    # Stage all version-related files (including CHANGELOG.md, TODO.md, and Claude plugin)
+    git add VERSION package.json README.md setup.sh aidevops.sh sonar-project.properties CHANGELOG.md TODO.md .claude-plugin/marketplace.json 2>/dev/null
     
     # Check if there are changes to commit
     if git diff --cached --quiet; then
@@ -802,6 +893,9 @@ main() {
                     print_warning "Failed to update CHANGELOG.md automatically"
                 fi
 
+                # Auto-mark tasks complete based on commit messages
+                auto_mark_tasks_complete
+
                 print_info "Validating version consistency..."
                 if validate_version_consistency "$new_version"; then
                     print_success "Version validation passed"
@@ -856,6 +950,14 @@ main() {
             echo ""
             generate_changelog_preview
             ;;
+        "auto-mark-tasks")
+            print_info "Auto-marking tasks complete from commit messages..."
+            auto_mark_tasks_complete
+            ;;
+        "list-task-ids")
+            print_info "Task IDs found in commits since last release:"
+            extract_task_ids_from_commits
+            ;;
         *)
             echo "AI DevOps Framework Version Manager"
             echo ""
@@ -870,6 +972,8 @@ main() {
             echo "  validate                      Validate version consistency across all files"
             echo "  changelog-check               Check CHANGELOG.md has entry for current version"
             echo "  changelog-preview             Generate changelog entry from commits since last tag"
+            echo "  auto-mark-tasks               Auto-mark tasks complete based on commit messages"
+            echo "  list-task-ids                 List task IDs found in commits since last release"
             echo ""
             echo "Options:"
             echo "  --force                       Bypass changelog check (use with release)"
