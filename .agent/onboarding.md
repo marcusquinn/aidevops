@@ -55,7 +55,7 @@ If yes, provide a brief overview:
 ```text
 aidevops gives your AI assistant superpowers for DevOps and infrastructure management.
 
-**Recommended tool:** You should be running this in [OpenCode](https://opencode.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. If you're using a different tool, most features will still work, but OpenCode provides the best experience.
+**Recommended tool:** You should be running this in [Claude Code](https://Claude.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for Claude Code first. If you're using a different tool, most features will still work, but Claude Code provides the best experience.
 
 **Capabilities:**
 
@@ -615,13 +615,18 @@ Main agents are complete AI personas with their own tools and focus areas. In Op
 
 | Agent | Focus | Best For |
 |-------|-------|----------|
-| `Plan+` | Read-only planning | Architecture decisions, research, analysis |
-| `Build+` | Full development | Coding, debugging, file changes |
+| `Build+` | Unified coding agent | Planning, coding, debugging, DevOps |
 | `SEO` | Search optimization | Keyword research, SERP analysis, GSC |
 | `WordPress` | WordPress ecosystem | Theme/plugin dev, MainWP, LocalWP |
-| `AI-DevOps` | Framework operations | Setup, troubleshooting, meta-tasks |
 
-**When to switch agents:** Switch when your task changes focus. Planning? Use `Plan+`. Ready to code? Switch to `Build+`. Need SEO analysis? Switch to `SEO`.
+**Build+ intent detection:** Build+ automatically detects your intent:
+- "What do you think..." / "How should we..." → Deliberation mode (research, discuss)
+- "Implement X" / "Fix Y" / "Add Z" → Execution mode (code changes)
+- Ambiguous → Asks for clarification
+
+**Specialist subagents:** Use `@aidevops` for framework operations, `@plan-plus` for planning-only mode.
+
+**When to switch agents:** Switch when your task changes domain. Need SEO analysis? Switch to `SEO`. WordPress work? Switch to `WordPress`.
 
 ### Subagents (@mention)
 
