@@ -47,8 +47,10 @@ check_libpdf() {
         return 0
     fi
     
-    # Try to import
-    if $runtime -e "require('@libpdf/core')" 2>/dev/null; then
+    # Try to import (use ESM import for consistency)
+    if [[ "$runtime" == "bun" ]] && bun -e "import('@libpdf/core')" &>/dev/null; then
+        return 0
+    elif [[ "$runtime" == "node" ]] && node --input-type=module -e "import('@libpdf/core')" &>/dev/null; then
         return 0
     fi
     
@@ -81,25 +83,26 @@ cmd_info() {
     
     check_libpdf || return 1
     
-    run_script "
-import { PDF } from '@libpdf/core';
-import { readFileSync } from 'fs';
+    PDF_FILE="$file" run_script '
+import { PDF } from "@libpdf/core";
+import { readFileSync } from "fs";
 
-const bytes = readFileSync('$file');
+const file = process.env.PDF_FILE;
+const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
 const pages = await pdf.getPages();
 const form = await pdf.getForm();
 const fields = form.getFieldNames();
 
-console.log('File:', '$file');
-console.log('Pages:', pages.length);
-console.log('Form fields:', fields.length);
+console.log("File:", file);
+console.log("Pages:", pages.length);
+console.log("Form fields:", fields.length);
 
 if (pages.length > 0) {
     const { width, height } = pages[0].getSize();
-    console.log('Page size:', Math.round(width), 'x', Math.round(height), 'points');
+    console.log("Page size:", Math.round(width), "x", Math.round(height), "points");
 }
-"
+'
 }
 
 # List form fields
@@ -113,26 +116,27 @@ cmd_fields() {
     
     check_libpdf || return 1
     
-    run_script "
-import { PDF } from '@libpdf/core';
-import { readFileSync } from 'fs';
+    PDF_FILE="$file" run_script '
+import { PDF } from "@libpdf/core";
+import { readFileSync } from "fs";
 
-const bytes = readFileSync('$file');
+const file = process.env.PDF_FILE;
+const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
 const form = await pdf.getForm();
 const fields = form.getFields();
 
 if (fields.length === 0) {
-    console.log('No form fields found.');
+    console.log("No form fields found.");
 } else {
-    console.log('Form fields:');
+    console.log("Form fields:");
     for (const field of fields) {
         const name = field.getName();
-        const type = field.constructor.name.replace('PDF', '').replace('Field', '');
-        console.log('  -', name, '(' + type + ')');
+        const type = field.constructor.name.replace("PDF", "").replace("Field", "");
+        console.log("  -", name, "(" + type + ")");
     }
 }
-"
+'
 }
 
 # Fill form fields
@@ -148,25 +152,34 @@ cmd_fill() {
     
     check_libpdf || return 1
     
-    run_script "
-import { PDF } from '@libpdf/core';
-import { readFileSync, writeFileSync } from 'fs';
+    PDF_FILE="$file" PDF_JSON="$json" PDF_OUTPUT="$output" run_script '
+import { PDF } from "@libpdf/core";
+import { readFileSync, writeFileSync } from "fs";
 
-const bytes = readFileSync('$file');
+const file = process.env.PDF_FILE;
+const jsonData = process.env.PDF_JSON;
+const outputFile = process.env.PDF_OUTPUT;
+
+const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
 const form = await pdf.getForm();
 
-const data = JSON.parse('$json');
+const data = JSON.parse(jsonData);
 form.fill(data);
 
 const output = await pdf.save();
-writeFileSync('$output', output);
-console.log('Filled PDF saved to:', '$output');
-"
+writeFileSync(outputFile, output);
+console.log("Filled PDF saved to:", outputFile);
+'
 }
 
 # Merge PDFs
 cmd_merge() {
+    if ! command -v jq &>/dev/null; then
+        echo -e "${RED}Error:${NC} 'jq' is not installed. Please install it to use the merge command."
+        return 1
+    fi
+    
     local output="$1"
     shift
     local files=("$@")
@@ -181,18 +194,19 @@ cmd_merge() {
     local files_json
     files_json=$(printf '%s\n' "${files[@]}" | jq -R . | jq -s .)
     
-    run_script "
-import { PDF } from '@libpdf/core';
-import { readFileSync, writeFileSync } from 'fs';
+    PDF_FILES="$files_json" PDF_OUTPUT="$output" run_script '
+import { PDF } from "@libpdf/core";
+import { readFileSync, writeFileSync } from "fs";
 
-const files = $files_json;
+const files = JSON.parse(process.env.PDF_FILES);
+const outputFile = process.env.PDF_OUTPUT;
 const pdfs = files.map(f => readFileSync(f));
 
 const merged = await PDF.merge(pdfs);
 const output = await merged.save();
-writeFileSync('$output', output);
-console.log('Merged', files.length, 'PDFs into:', '$output');
-"
+writeFileSync(outputFile, output);
+console.log("Merged", files.length, "PDFs into:", outputFile);
+'
 }
 
 # Extract text
@@ -206,22 +220,23 @@ cmd_text() {
     
     check_libpdf || return 1
     
-    run_script "
-import { PDF } from '@libpdf/core';
-import { readFileSync } from 'fs';
+    PDF_FILE="$file" run_script '
+import { PDF } from "@libpdf/core";
+import { readFileSync } from "fs";
 
-const bytes = readFileSync('$file');
+const file = process.env.PDF_FILE;
+const bytes = readFileSync(file);
 const pdf = await PDF.load(bytes);
 const pages = await pdf.getPages();
 
 for (let i = 0; i < pages.length; i++) {
     const text = await pages[i].getTextContent();
     if (pages.length > 1) {
-        console.log('--- Page', i + 1, '---');
+        console.log("--- Page", i + 1, "---");
     }
     console.log(text);
 }
-"
+'
 }
 
 # Install @libpdf/core

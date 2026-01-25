@@ -141,9 +141,10 @@ const flattened = await pdf.save();
 
 ```typescript
 import { PDF, P12Signer } from '@libpdf/core';
+import { readFile } from 'fs/promises';
 
 // Load certificate from P12/PFX file
-const p12Bytes = await fs.readFile('certificate.p12');
+const p12Bytes = await readFile('certificate.p12');
 const signer = await P12Signer.create(p12Bytes, 'certificate-password');
 ```
 
@@ -296,8 +297,10 @@ page.drawCircle({
 ### Draw Images
 
 ```typescript
+import { readFile } from 'fs/promises';
+
 // Embed image
-const imageBytes = await fs.readFile('logo.png');
+const imageBytes = await readFile('logo.png');
 const image = await pdf.embedPng(imageBytes);
 // or: const image = await pdf.embedJpg(imageBytes);
 
@@ -329,7 +332,7 @@ const pdf = await PDF.load(bytes);
 
 // Copy pages to new document
 const newPdf = PDF.create();
-const [page1, page2] = await pdf.copyPages(pdf, [0, 1]);
+const [page1, page2] = await newPdf.copyPages(pdf, [0, 1]);
 newPdf.addPage(page1);
 newPdf.addPage(page2);
 
@@ -379,7 +382,9 @@ const output = await pdf.save({
 ### Embed Files
 
 ```typescript
-const fileBytes = await fs.readFile('data.csv');
+import { readFile } from 'fs/promises';
+
+const fileBytes = await readFile('data.csv');
 await pdf.attach(fileBytes, 'data.csv', {
   mimeType: 'text/csv',
   description: 'Exported data',
@@ -389,11 +394,13 @@ await pdf.attach(fileBytes, 'data.csv', {
 ### Extract Attachments
 
 ```typescript
+import { writeFile } from 'fs/promises';
+
 const attachments = await pdf.getAttachments();
 for (const attachment of attachments) {
   console.log(attachment.name);
   const bytes = await attachment.getData();
-  await fs.writeFile(attachment.name, bytes);
+  await writeFile(attachment.name, bytes);
 }
 ```
 
@@ -452,10 +459,11 @@ async function fillAndSign(
 
 ```typescript
 import { PDF } from '@libpdf/core';
+import { readFile, writeFile } from 'fs/promises';
 
 async function processPDFs(files: string[]): Promise<void> {
   for (const file of files) {
-    const bytes = await fs.readFile(file);
+    const bytes = await readFile(file);
     const pdf = await PDF.load(bytes);
     
     // Process...
@@ -463,7 +471,7 @@ async function processPDFs(files: string[]): Promise<void> {
     form.fill({ processedDate: new Date().toISOString() });
     
     const output = await pdf.save();
-    await fs.writeFile(file.replace('.pdf', '-processed.pdf'), output);
+    await writeFile(file.replace('.pdf', '-processed.pdf'), output);
   }
 }
 ```

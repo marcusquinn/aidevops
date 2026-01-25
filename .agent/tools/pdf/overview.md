@@ -121,11 +121,15 @@ const filled = await pdf.save();
 
 ```typescript
 import { PDF, P12Signer } from '@libpdf/core';
+import { readFileSync } from 'fs';
 
-const pdf = await PDF.load(bytes);
+const pdfBytes = readFileSync('document.pdf');
+const p12Bytes = readFileSync('certificate.p12');
+
+const pdf = await PDF.load(pdfBytes);
 const signer = await P12Signer.create(p12Bytes, 'password');
 
-const signed = await pdf.sign({
+const { bytes: signed } = await pdf.sign({
   signer,
   reason: 'I approve this document',
 });
