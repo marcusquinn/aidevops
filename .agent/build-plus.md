@@ -275,11 +275,33 @@ Build+ can write to planning files for task tracking:
 - `todo/tasks/prd-*.md` - Product requirement documents
 - `todo/tasks/tasks-*.md` - Implementation task lists
 
-After modifying planning files, commit with:
+### Auto-Commit Planning Files
+
+After modifying TODO.md or todo/, commit and push immediately:
 
 ```bash
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: {description}"
 ```
+
+**When to auto-commit:**
+- After adding a new task
+- After updating task status
+- After writing or updating a plan
+
+**Commit message conventions:**
+
+| Action | Message |
+|--------|---------|
+| New task | `plan: add {task title}` |
+| Status update | `plan: {task} → done` |
+| New plan | `plan: add {plan name}` |
+| Batch updates | `plan: batch planning updates` |
+
+**Why this bypasses branch/PR workflow:** Planning files are metadata about work,
+not the work itself. They don't need code review - just quick persistence.
+The `pre-edit-check.sh` script already classifies TODO.md and todo/ as docs-only,
+allowing edits on main. The helper script commits with `--no-verify` and pushes
+directly.
 
 ## Context-First Development
 
