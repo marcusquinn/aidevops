@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add /yt-dlp slash command for YouTube downloads (#233)
+
 ## [2.90.0] - 2026-01-26
 
 ### Added
