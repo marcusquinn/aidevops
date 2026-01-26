@@ -513,9 +513,12 @@ download_transcript() {
     print_info "Output: $output_dir"
     print_info "Languages: $SUB_LANGS"
 
-    local cookie_args=()
+    local extra_transcript_args=()
     if [[ "$USE_COOKIES" == true ]]; then
-        cookie_args=(--cookies-from-browser chrome)
+        extra_transcript_args+=(--cookies-from-browser chrome)
+    fi
+    if [[ "$NO_INFO_JSON" != true ]]; then
+        extra_transcript_args+=(--write-info-json)
     fi
 
     yt-dlp \
@@ -524,9 +527,8 @@ download_transcript() {
         --write-subs \
         --sub-langs "$SUB_LANGS" \
         --convert-subs srt \
-        --write-info-json \
         -o "$output_dir/%(title)s.%(ext)s" \
-        "${cookie_args[@]}" \
+        "${extra_transcript_args[@]}" \
         "${EXTRA_ARGS[@]}" \
         "$url"
 
@@ -696,7 +698,8 @@ try:
     print(f\"Channel:     {data.get('channel', data.get('uploader', 'N/A'))}\")
     print(f\"Duration:    {data.get('duration_string', 'N/A')}\")
     print(f\"Upload date: {data.get('upload_date', 'N/A')}\")
-    print(f\"View count:  {data.get('view_count', 'N/A'):,}\")
+    vc = data.get('view_count')
+    print(f\"View count:  {vc:,}\" if isinstance(vc, int) else f\"View count:  {vc or 'N/A'}\")
     print(f\"Like count:  {data.get('like_count', 'N/A')}\")
     print(f\"Description: {(data.get('description', 'N/A') or 'N/A')[:200]}...\")
     print()
@@ -1018,9 +1021,6 @@ main() {
             return 1
             ;;
     esac
-    return 0
 }
 
 main "$@"
-
-exit 0
