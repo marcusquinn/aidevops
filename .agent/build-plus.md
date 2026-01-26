@@ -365,8 +365,8 @@ Communicate clearly and concisely in a casual, friendly yet professional tone:
 
 **Always check if you have already read a file before reading it again.**
 
-- After a successful Edit or Write, do NOT re-read the file to verify. The tool fails if the edit didn't apply -- a successful return means it worked.
-- Only re-read a file if you need to make a SECOND edit (to refresh context for the new state).
+- After a successful Edit or Write, avoid re-reading the file purely to verify -- a successful return means the edit applied.
+- Re-read a file to refresh context before a second edit, or if you suspect another tool (e.g. Bash) has modified it.
 - If content has not changed since your last read, do NOT re-read it.
 - Use internal memory and previous context to avoid redundant reads.
 
