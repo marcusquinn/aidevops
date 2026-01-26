@@ -172,6 +172,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Create tools/social-media/linkedin.md. Support post types: text posts, articles, carousels, documents. Follow bird.md pattern. Include LinkedIn-specific best practices (hashtags, timing, engagement).
 - [ ] t080 Set up Pipecat + NVIDIA Nemotron voice agents for Clawdbot realtime calls #tools #voice #ai #agents ~6h (ai:3h test:2h read:1h) logged:2026-01-26 related:t071,t046 ref:https://www.daily.co/blog/building-voice-agents-with-nvidia-open-models/,https://github.com/pipecat-ai/nemotron-january-2026/
   - Notes: Set up and test Pipecat AI framework with NVIDIA Nemotron open models for building realtime voice agents. Two use cases: 1) Integrate with Clawdbot (t046) for realtime voice call assistance via WhatsApp/Telegram/phone - enabling hands-free AI help during development, debugging, and DevOps tasks. 2) Customer service voice agents for websites and software apps - automated phone/voice support using Pipecat pipelines with Daily.co WebRTC transport. Stack: Pipecat (Python framework for voice/multimodal agents), NVIDIA Nemotron models (open-weight LLMs optimized for agentic tasks), Daily.co (WebRTC transport layer). Steps: clone nemotron-january-2026 repo, configure NVIDIA API keys, test basic voice pipeline, integrate with Clawdbot gateway for messaging platform voice calls, build customer service agent template with configurable personas and knowledge bases.
+- [ ] t081 Set up Pipecat local voice agent with Soniox STT + Cartesia TTS + OpenAI/Anthropic LLM #tools #voice #ai #agents ~4h (ai:2h test:1.5h read:30m) logged:2026-01-26 related:t080,t071,t072 ref:https://github.com/kwindla/macos-local-voice-agents,https://github.com/pipecat-ai/pipecat,https://www.pipecat.ai/,https://soniox.com/,https://cartesia.ai/sonic
+  - Notes: Set up and test Pipecat voice agent pipeline locally on macOS using kwindla/macos-local-voice-agents as reference. **Services stack:** STT: Soniox (https://docs.pipecat.ai/server/services/stt/soniox), TTS: Cartesia Sonic (https://docs.pipecat.ai/server/services/tts/cartesia), LLM: OpenAI (https://docs.pipecat.ai/server/services/llm/openai) and Anthropic (https://docs.pipecat.ai/server/services/llm/anthropic), S2S: OpenAI speech-to-speech (https://docs.pipecat.ai/server/services/s2s/openai). **Local vs Cloud:** Configure to support both local models (whisper.cpp, llama.cpp, local TTS) and cloud APIs (Soniox, Cartesia, OpenAI, Anthropic) with easy switching. **Steps:** 1) Clone pipecat-ai/pipecat and kwindla/macos-local-voice-agents repos. 2) Set up Python env with pipecat dependencies. 3) Configure API keys for Soniox, Cartesia, OpenAI, Anthropic. 4) Test basic voice pipeline: mic input -> Soniox STT -> OpenAI/Anthropic LLM -> Cartesia TTS -> speaker output. 5) Test OpenAI S2S mode. 6) Configure local fallback models for offline use. 7) Document setup in tools/voice/ subagent. **Demo quality:** Soniox + OpenAI + Cartesia Sonic sounded excellent in pipecat.ai demo.
 - [x] t079 Consolidate Plan+ and AI-DevOps into Build+ #refactor #agents #architecture ~4h actual:2h (ai:3h test:1h) logged:2026-01-25 started:2026-01-25T19:42Z completed:2026-01-25
   - Notes: Build+ is now the unified coding agent with intent detection (deliberation vs execution). Plan+ and AI-DevOps demoted to subagents (@plan-plus, @aidevops). PR #226 merged.
   - [x] t079.1 Audit AI-DevOps for unique knowledge to merge into Build+ ~30m completed:2026-01-25
@@ -189,7 +191,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
-<!--TOON:backlog[51]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[52]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t073,Document Extraction Subagent & Workflow,,plan|document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,pending,,,
 t073.1,Implementation (all subagents + scripts),,document-extraction,1h,1h,,2026-01-25T01:00Z,pending,,,t073
 t073.2,Integration Testing,,document-extraction|testing,2h,,2h,2026-01-25T01:00Z,pending,t073.1,,t073
@@ -264,6 +266,7 @@ t078,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|gi
 t071,Voice AI models for speech generation and transcription,,tools|voice|ai,4h,2h,1h,1h,2026-01-24T00:00Z,pending,,,
 t072,Audio/Video Transcription subagent,,tools|voice|transcription|ai,6h,3h,2h,1h,2026-01-24T00:00Z,pending,,,
 t080,Set up Pipecat + NVIDIA Nemotron voice agents for Clawdbot realtime calls,,tools|voice|ai|agents,6h,3h,2h,1h,2026-01-26T00:00Z,pending,,,
+t081,Set up Pipecat local voice agent with Soniox STT + Cartesia TTS + OpenAI/Anthropic LLM,,tools|voice|ai|agents|pipecat|soniox|cartesia,4h,2h,1.5h,30m,2026-01-26T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -358,5 +361,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-59,38,0,0,34,0,8d4h,19h5m,0,38
+60,39,0,0,34,0,8d8h,19h5m,0,39
 -->
