@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documentation: add yt-dlp agent, /yt-dlp command, and NeuronWriter to README (#234)
+
 ## [2.90.1] - 2026-01-26
 
 ### Added
