@@ -41,7 +41,7 @@ tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery
 tools/conversion/,Format conversion - document transformation,pandoc
-tools/video/,Video creation - programmatic generation,remotion|higgsfield|video-prompt-design
+tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
@@ -74,7 +74,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[25]{name,purpose}:
+<!--TOON:scripts[26]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -100,4 +100,5 @@ pdf-helper.sh,PDF operations (info fields fill merge text)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
+yt-dlp-helper.sh,YouTube video/audio download and local file conversion
 -->
