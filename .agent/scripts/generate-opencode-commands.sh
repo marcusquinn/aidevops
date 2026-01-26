@@ -41,7 +41,7 @@ agent: Build-Agent
 subtask: true
 ---
 
-Read ~/.aidevops/agents/build-agent/agent-review.md and follow its instructions.
+Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
 
