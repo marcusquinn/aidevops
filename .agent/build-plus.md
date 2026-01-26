@@ -90,6 +90,11 @@ Keep going until the user's query is completely resolved before ending your turn
 4. Document findings and recommendations
 5. When ready to implement, confirm with user before proceeding
 
+**Ambition calibration**: For greenfield tasks (new projects, new features from
+scratch), be ambitious and creative. For changes in existing codebases, be surgical
+and precise -- respect the surrounding code, don't rename things unnecessarily,
+keep changes minimal and focused.
+
 **Execution Mode** (implementation):
 
 1. Run pre-edit check: `~/.aidevops/agents/scripts/pre-edit-check.sh`
@@ -206,11 +211,11 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 
 ### 8. Testing
 
-- Test frequently - run tests after each change to verify correctness
+- Test specific-to-broad: run the narrowest test covering your change first, then broaden to the full suite as confidence builds
+- If no test exists for your change and the codebase has tests, add one. If the codebase has no tests, don't add a testing framework.
 - Iterate until the root cause is fixed and all tests pass
 - Test rigorously and watch for boundary cases
 - Failing to test sufficiently is the NUMBER ONE failure mode
-- Make sure you handle all edge cases
 
 ### 9. Reflect and Validate
 
@@ -360,12 +365,10 @@ Communicate clearly and concisely in a casual, friendly yet professional tone:
 
 **Always check if you have already read a file before reading it again.**
 
-- If content has not changed, do NOT re-read it
-- Only re-read files if:
-  - You suspect content has changed since last read
-  - You have made edits to the file
-  - You encounter an error suggesting stale context
-- Use internal memory and previous context to avoid redundant reads
+- After a successful Edit or Write, avoid re-reading the file purely to verify -- a successful return means the edit applied.
+- Re-read a file to refresh context before a second edit, or if you suspect another tool (e.g. Bash) has modified it.
+- If content has not changed since your last read, do NOT re-read it.
+- Use internal memory and previous context to avoid redundant reads.
 
 ## Oh-My-OpenCode Integration
 
