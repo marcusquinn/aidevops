@@ -92,9 +92,9 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
-- 552+ subagent markdown files organized by domain
-- 147 helper scripts in `.agent/scripts/`
-- 14 slash commands for common workflows
+- 539+ subagent markdown files organized by domain
+- 148 helper scripts in `.agent/scripts/`
+- 15 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -604,6 +604,7 @@ The setup script offers to install these tools automatically.
 
 - **[Remotion](https://remotion.dev/)**: Programmatic video creation with React - animations, compositions, media handling, captions
 - **[Video Prompt Design](https://github.com/snubroot/Veo-3-Meta-Framework)**: AI video prompt engineering using the 7-component meta prompt framework for Veo 3 and similar models
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**: YouTube video/audio/playlist/channel downloads, transcript extraction, and local file audio conversion via ffmpeg
 
 ### **WordPress Development**
 
@@ -707,6 +708,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 | [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
 | [Hostinger](https://developers.hostinger.com/) | Hosting management | Yes |
+| [NeuronWriter](https://neuronwriter.com/) | Content optimization & NLP analysis | Yes |
 
 ### **By Category**
 
@@ -748,6 +750,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - **Keyword Research** - Strategic keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
 - **Site Crawler** - Screaming Frog-like SEO auditing: broken links, redirects, meta issues, structured data
 - **Domain Research** - DNS intelligence via THC (4.51B records) and Reconeer APIs: rDNS, subdomains, CNAMEs
+- [NeuronWriter](https://neuronwriter.com/) - Content optimization with NLP analysis, competitor research, and content scoring (curl subagent)
 
 **Data Extraction:**
 
@@ -1402,6 +1405,12 @@ Configure time tracking per-repo via `.aidevops.json`.
 | Command | Purpose |
 |---------|---------|
 | `/humanise` | Remove AI writing patterns, make text sound human |
+
+**Media**:
+
+| Command | Purpose |
+|---------|---------|
+| `/yt-dlp` | Download YouTube videos/audio/playlists, extract transcripts, convert local files |
 
 **SEO Workflow**:
 
