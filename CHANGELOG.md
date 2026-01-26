@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - add /neuronwriter slash command for content optimization (#235)
+
 ## [2.90.2] - 2026-01-26
 
 ### Changed
