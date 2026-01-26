@@ -224,17 +224,29 @@ RESULT=$(curl -s -X POST "$NW_API/new-query" "${NW_HEADERS[@]}" \
   -d '{"project": "YOUR_PROJECT_ID", "keyword": "your keyword", "engine": "google.com", "language": "English"}')
 QUERY_ID=$(echo "$RESULT" | jq -r '.query')
 
+if [[ -z "$QUERY_ID" || "$QUERY_ID" == "null" ]]; then
+  echo "Error: Failed to create query. Response: $RESULT" >&2
+  exit 1
+fi
+
 # 2. Poll until ready (check every 15s, max 5 min)
 for i in $(seq 1 20); do
+  PAYLOAD=$(jq -n --arg qid "$QUERY_ID" '{query: $qid}')
   STATUS=$(curl -s -X POST "$NW_API/get-query" "${NW_HEADERS[@]}" \
-    -d "{\"query\": \"$QUERY_ID\"}" | jq -r '.status')
+    -d "$PAYLOAD" | jq -r '.status')
   [ "$STATUS" = "ready" ] && break
   sleep 15
 done
 
+if [ "$STATUS" != "ready" ]; then
+  echo "Error: Query not ready after 5 min. Status: $STATUS" >&2
+  exit 1
+fi
+
 # 3. Get recommendations
+PAYLOAD=$(jq -n --arg qid "$QUERY_ID" '{query: $qid}')
 curl -s -X POST "$NW_API/get-query" "${NW_HEADERS[@]}" \
-  -d "{\"query\": \"$QUERY_ID\"}" | jq '.terms_txt.content_basic'
+  -d "$PAYLOAD" | jq '.terms_txt.content_basic'
 ```
 
 ### Score Existing Content Against a Query
@@ -265,9 +277,11 @@ PROJECT="YOUR_PROJECT_ID"
 
 for kw in "${KEYWORDS[@]}"; do
   echo "Creating query for: $kw"
+  PAYLOAD=$(jq -n --arg project "$PROJECT" --arg keyword "$kw" \
+    --arg engine "google.com" --arg lang "English" \
+    '{project: $project, keyword: $keyword, engine: $engine, language: $lang}')
   curl -s -X POST "$NW_API/new-query" "${NW_HEADERS[@]}" \
-    -d "{\"project\": \"$PROJECT\", \"keyword\": \"$kw\", \"engine\": \"google.com\", \"language\": \"English\"}" \
-    | jq -r '.query'
+    -d "$PAYLOAD" | jq -r '.query'
   sleep 2
 done
 ```
