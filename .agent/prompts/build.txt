@@ -65,6 +65,8 @@ Before ANY file modification (Edit, Write, or Bash that modifies files):
 4. Main repo (`~/Git/{repo}/`) should always stay on `main`
 5. Feature work happens in worktrees (`~/Git/{repo}-{type}-{name}/`)
 For loop mode: `pre-edit-check.sh --loop-mode --task "description"`
+- NEVER revert changes you did not make. If you notice unexpected uncommitted changes in the worktree, STOP and ask the user.
+- NEVER use `git reset --hard` or `git checkout -- <file>` unless the user explicitly requests it.
 
 # Quality Standards
 - SonarCloud A-grade target
