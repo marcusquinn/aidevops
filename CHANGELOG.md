@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.90.4] - 2026-01-26
+
 ### Changed
 
-- Add auto-commit planning instructions to Build+ agent (from Plan+)
-- Add t081 Pipecat local voice agent task (Soniox STT, Cartesia TTS, OpenAI/Anthropic LLM)
-
+- Documentation: add changelog entries for v2.90.4
 ## [2.90.3] - 2026-01-26
 
 ### Added
