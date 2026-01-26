@@ -7,10 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
+## [2.90.0] - 2026-01-26
 
-- remove opencode-anthropic-auth external plugin from setup.sh — built into OpenCode v1.1.36+, external plugin causes TypeError from double-loading (#230)
+### Added
 
+- add yt-dlp agent for YouTube video/audio downloads (#232)
 ## [2.89.1] - 2026-01-25
 
 ### Fixed
