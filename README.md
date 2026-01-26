@@ -94,7 +94,7 @@ The result: AI agents that work *with* your development process, not around it.
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
 - 539+ subagent markdown files organized by domain
 - 148 helper scripts in `.agent/scripts/`
-- 15 slash commands for common workflows
+- 16 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -1420,6 +1420,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/autocomplete-research` | Google autocomplete long-tail discovery |
 | `/keyword-research-extended` | Full SERP analysis with weakness detection |
 | `/webmaster-keywords` | Keywords from GSC + Bing for your verified sites |
+| `/neuronwriter` | Content optimization with NLP term recommendations and scoring |
 
 **SEO Debugging** (subagents in `seo/`):
 
