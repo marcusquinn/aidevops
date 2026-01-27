@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add language specifiers to fenced code blocks (#242)
 - detect fd-find as fdfind on Debian/Ubuntu (#241)
 - correct path to agent-review.md in generate-opencode-commands.sh (#237)
+
 ## [2.90.7] - 2026-01-27
 
 ### Changed
