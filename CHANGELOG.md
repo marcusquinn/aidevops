@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Custom browser engine (Brave, Edge, Chrome) and extension (uBlock Origin) support documentation across 6 browser automation tool docs (#240)
+
 ## [2.90.7] - 2026-01-27
 
 ### Changed
