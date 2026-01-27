@@ -731,15 +731,18 @@ setup_file_discovery_tools() {
     local missing_packages=()
     local missing_names=()
     
-    # Check for fd (fd-find)
-    if ! command -v fd >/dev/null 2>&1; then
+    local fd_version
+    if command -v fd >/dev/null 2>&1; then
+        fd_version=$(fd --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "fd found: $fd_version"
+    elif command -v fdfind >/dev/null 2>&1; then
+        fd_version=$(fdfind --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "fd found (as fdfind): $fd_version"
+        print_warning "Note: 'fd' alias not active in current shell. Restart shell or run: alias fd=fdfind"
+    else
         missing_tools+=("fd")
         missing_packages+=("fd")
         missing_names+=("fd (fast file finder)")
-    else
-        local fd_version
-        fd_version=$(fd --version 2>/dev/null | head -1 || echo "unknown")
-        print_success "fd found: $fd_version"
     fi
     
     # Check for ripgrep
