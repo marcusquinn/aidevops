@@ -104,10 +104,10 @@ This document provides a comprehensive list of CLI AI assistants and tools that 
 
 ### **Multi-Channel Personal Assistants**
 
-#### **[Clawdbot](https://clawdbot.com/)** - Recommended for Mobile Access
+#### **[Moltbot](https://molt.bot/)** - Recommended for Mobile Access
 
 - **Description**: Personal AI assistant accessible via WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams
-- **Installation**: `npm install -g clawdbot@latest && clawdbot onboard --install-daemon`
+- **Installation**: `npm install -g moltbot@latest && moltbot onboard --install-daemon`
 - **Best For**: Mobile AI access, always-on assistant, voice interaction, multi-channel inbox
 - **Framework Integration**: **Excellent** - Skills system compatible with aidevops agents
 - **Key Features**:
@@ -117,7 +117,7 @@ This document provides a comprehensive list of CLI AI assistants and tools that 
   - Local-first Gateway (ws://127.0.0.1:18789)
   - Browser control, cron jobs, webhooks
 - **Configuration**: See `~/.clawdbot/clawdbot.json`
-- **Docs**: https://docs.clawd.bot
+- **Docs**: https://docs.molt.bot
 
 ### **Terminal-Integrated Solutions**
 
@@ -212,7 +212,7 @@ warp-cli workflow create devops-setup \
 ## 🔗 **Official Links**
 
 - **OpenCode**: https://opencode.ai/ (Recommended)
-- **Clawdbot**: https://clawdbot.com/ (Mobile/Multi-channel)
+- **Moltbot**: https://molt.bot/ (Mobile/Multi-channel)
 - **Claude**: https://claude.ai/
 - **Augment Code**: https://www.augmentcode.com/
 - **AmpCode**: https://ampcode.com/
@@ -224,4 +224,4 @@ warp-cli workflow create devops-setup \
 
 ---
 
-**💡 Pro Tip**: Start with **OpenCode** for the best framework integration experience. It has native MCP support, custom tool definitions, and excellent terminal-based workflow for DevOps operations. For GUI-based work, Claude Desktop is also excellent. For mobile access and always-on assistance, add **Clawdbot** - it lets you interact with AI from WhatsApp, Telegram, or any messaging platform.
+**💡 Pro Tip**: Start with **OpenCode** for the best framework integration experience. It has native MCP support, custom tool definitions, and excellent terminal-based workflow for DevOps operations. For GUI-based work, Claude Desktop is also excellent. For mobile access and always-on assistance, add **Moltbot** - it lets you interact with AI from WhatsApp, Telegram, or any messaging platform.
