@@ -1450,7 +1450,7 @@ Create a comprehensive document extraction capability in aidevops that:
 
 **Pipeline flow:**
 
-```
+```text
 Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract) → Structured JSON
 ```
 
@@ -1479,7 +1479,7 @@ Document → Docling (parse) → Presidio (PII scan) → ExtractThinker (extract
 
 **Architecture:**
 
-```
+```text
 tools/document-extraction/
 ├── document-extraction.md      # Main orchestrator subagent
 ├── docling.md                  # Document parsing subagent

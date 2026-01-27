@@ -220,7 +220,7 @@ For comprehensive patterns, read the rule files in `tools/video/remotion/`:
 
 For up-to-date API documentation:
 
-```
+```text
 /context7 remotion [query]
 ```
 

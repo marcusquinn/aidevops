@@ -113,7 +113,7 @@ As a developer working with sensitive documents, I want to extract structured da
 
 ### Architecture
 
-```
+```text
 tools/document-extraction/
 ├── document-extraction.md      # Main orchestrator subagent
 ├── docling.md                  # Document parsing subagent
@@ -135,7 +135,7 @@ scripts/
 
 ### Pipeline Flow
 
-```
+```text
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   Document  │───▶│   Docling   │───▶│  Presidio   │───▶│ExtractThinker│
 │   Input     │    │   Parse     │    │  PII Scan   │    │   Extract   │
