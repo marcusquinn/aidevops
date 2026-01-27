@@ -541,7 +541,7 @@ echo -e "  ${GREEN}✓${NC} Created /pr command (alias for /create-pr)"
 cat > "$OPENCODE_COMMAND_DIR/create-prd.md" << 'EOF'
 ---
 description: Generate a Product Requirements Document for a feature
-agent: Plan+
+agent: Build+
 ---
 
 Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
@@ -579,7 +579,7 @@ echo -e "  ${GREEN}✓${NC} Created /create-prd command"
 cat > "$OPENCODE_COMMAND_DIR/generate-tasks.md" << 'EOF'
 ---
 description: Generate implementation tasks from a PRD
-agent: Plan+
+agent: Build+
 ---
 
 Read ~/.aidevops/agents/workflows/plans.md and follow its task generation instructions.
@@ -619,7 +619,7 @@ echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
 cat > "$OPENCODE_COMMAND_DIR/list-todo.md" << 'EOF'
 ---
 description: List tasks and plans with sorting, filtering, and grouping
-agent: Plan+
+agent: Build+
 ---
 
 Read TODO.md and todo/PLANS.md and display tasks based on arguments.
@@ -707,7 +707,7 @@ echo -e "  ${GREEN}✓${NC} Created /list-todo command"
 cat > "$OPENCODE_COMMAND_DIR/save-todo.md" << 'EOF'
 ---
 description: Save current discussion as task or plan (auto-detects complexity)
-agent: Plan+
+agent: Build+
 ---
 
 Analyze the current conversation and save appropriately based on complexity.
@@ -773,7 +773,7 @@ echo -e "  ${GREEN}✓${NC} Created /save-todo command"
 cat > "$OPENCODE_COMMAND_DIR/plan-status.md" << 'EOF'
 ---
 description: Show active plans and TODO.md status
-agent: Plan+
+agent: Build+
 ---
 
 Read TODO.md and todo/PLANS.md to show current planning status.
@@ -1017,7 +1017,7 @@ echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
 cat > "$OPENCODE_COMMAND_DIR/onboarding.md" << 'EOF'
 ---
 description: Interactive onboarding wizard - discover services, configure integrations
-agent: AI-DevOps
+agent: Build+
 ---
 
 Read ~/.aidevops/agents/onboarding.md and follow its instructions.
