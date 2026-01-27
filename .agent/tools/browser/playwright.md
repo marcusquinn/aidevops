@@ -96,22 +96,33 @@ Use `executablePath` to launch Brave, Edge, or Chrome instead of Playwright's bu
 
 ### Launch with Custom Browser
 
+**Brave** - built-in ad/tracker blocking via Shields:
+
 ```javascript
 import { chromium } from 'playwright';
 
-// Brave - built-in ad/tracker blocking via Shields
 const browser = await chromium.launch({
   executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
   headless: true,
 });
+```
 
-// Microsoft Edge - enterprise SSO, Azure AD
+**Microsoft Edge** - enterprise SSO, Azure AD:
+
+```javascript
+import { chromium } from 'playwright';
+
 const browser = await chromium.launch({
   executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
   headless: true,
 });
+```
 
-// Google Chrome - widest extension compatibility
+**Google Chrome** - widest extension compatibility:
+
+```javascript
+import { chromium } from 'playwright';
+
 const browser = await chromium.launch({
   executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: true,
@@ -122,23 +133,29 @@ const browser = await chromium.launch({
 
 Combine a custom browser engine with extensions (e.g., uBlock Origin):
 
+**Brave + uBlock Origin** (Brave Shields may make uBlock redundant):
+
 ```javascript
 import { chromium } from 'playwright';
 
-// Brave + uBlock Origin (Brave Shields may make uBlock redundant)
 const context = await chromium.launchPersistentContext(
   '/tmp/brave-profile',
   {
     executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-    headless: false,  // Extensions require headed mode in Chromium
+    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
     args: [
       '--load-extension=/path/to/ublock-origin-unpacked',
       '--disable-extensions-except=/path/to/ublock-origin-unpacked',
     ],
   }
 );
+```
 
-// Edge + uBlock Origin
+**Edge + uBlock Origin**:
+
+```javascript
+import { chromium } from 'playwright';
+
 const context = await chromium.launchPersistentContext(
   '/tmp/edge-profile',
   {
@@ -153,6 +170,8 @@ const context = await chromium.launchPersistentContext(
 ```
 
 ### Browser Executable Paths
+
+> **Note**: Paths below are default install locations and may vary by distribution, package manager, or custom install directory.
 
 | Browser | macOS | Linux | Windows |
 |---------|-------|-------|---------|

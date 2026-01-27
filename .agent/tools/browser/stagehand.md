@@ -257,12 +257,13 @@ const stagehand = new Stagehand({
 });
 ```
 
-### **Custom Browser Engine (Brave, Edge, Chrome)**
+### Custom Browser Engine (Brave, Edge, Chrome)
 
 Stagehand uses Playwright underneath, so you can pass `executablePath` via `browserOptions` to use a custom browser:
 
+**Brave** - built-in ad/tracker blocking via Shields:
+
 ```javascript
-// Brave - built-in ad/tracker blocking via Shields
 const stagehand = new Stagehand({
     env: "LOCAL",
     headless: false,
@@ -272,8 +273,11 @@ const stagehand = new Stagehand({
     modelName: "gpt-4o",
     modelClientOptions: { apiKey: process.env.OPENAI_API_KEY }
 });
+```
 
-// Edge - enterprise SSO, Azure AD integration
+**Edge** - enterprise SSO, Azure AD integration:
+
+```javascript
 const stagehand = new Stagehand({
     env: "LOCAL",
     headless: false,

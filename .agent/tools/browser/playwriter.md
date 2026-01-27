@@ -68,9 +68,11 @@ The Playwriter extension works with any Chromium-based browser:
 |---------|-------------|-------------|
 | **Chrome** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Install uBlock Origin separately |
 | **Brave** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Built-in Shields (no extension needed) |
-| **Edge** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Install uBlock Origin separately |
+| **Edge** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Install uBlock Origin separately [^1] |
 
 Install from the Chrome Web Store link above and pin to toolbar. The same extension works in all three browsers.
+
+[^1]: Edge requires "Allow extensions from other stores" enabled in `edge://extensions` before installing from the Chrome Web Store.
 
 ### 2. Connect to Tabs
 

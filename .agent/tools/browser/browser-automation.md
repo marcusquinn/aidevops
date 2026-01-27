@@ -301,7 +301,7 @@ Extensions like uBlock Origin reduce page noise, block trackers, and speed up pa
 
 | Tool | Load uBlock Origin? | How | Notes |
 |------|---------------------|-----|-------|
-| **Playwright** (persistent) | Yes | `--load-extension=/path/to/ublock` | Requires unpacked extension + persistent context |
+| **Playwright** (persistent) | Yes | `--load-extension=/path/to/ublock` | Requires an unpacked extension + persistent context |
 | **dev-browser** | Yes | Install in profile (headed mode) | Persists across restarts |
 | **Playwriter** | Yes | Already installed in your browser | Easiest - just use your browser |
 | **Stagehand** | Possible | Via Playwright's `--load-extension` | Untested, uses Playwright underneath |
@@ -315,10 +315,11 @@ Extensions like uBlock Origin reduce page noise, block trackers, and speed up pa
 **Getting uBlock Origin unpacked** (for Playwright/Stagehand `--load-extension`):
 
 ```bash
-# Clone the uBlock Origin repo
-git clone https://github.com/nicedoc/nicedoc.io ~/.aidevops/extensions/ublock-origin
-# Or download from Chrome Web Store and extract the .crx
-# The unpacked extension directory is what --load-extension expects
+# Clone the official uBlock Origin repo and build
+git clone https://github.com/gorhill/uBlock.git ~/.aidevops/extensions/ublock-origin
+# Then build: cd ~/.aidevops/extensions/ublock-origin && make chromium
+# The built extension is in dist/build/uBlock0.chromium/
+# Alternatively, download from Chrome Web Store and extract the .crx
 ```
 
 **Playwright example with uBlock Origin**:
@@ -329,7 +330,7 @@ import { chromium } from 'playwright';
 const context = await chromium.launchPersistentContext(
   '/tmp/browser-profile',
   {
-    headless: false,  // Extensions require headed mode in Chromium
+    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
     args: [
       '--load-extension=/path/to/ublock-origin-unpacked',
       '--disable-extensions-except=/path/to/ublock-origin-unpacked',
