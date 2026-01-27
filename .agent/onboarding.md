@@ -404,22 +404,22 @@ auggie token print  # Verify
 
 | Service | Requirements | Setup | Purpose |
 |---------|--------------|-------|---------|
-| Clawdbot | Node.js >= 22 | `npm install -g clawdbot@latest && clawdbot onboard` | AI via WhatsApp, Telegram, Slack, Discord |
+| Moltbot | Node.js >= 22 | `npm install -g moltbot@latest && moltbot onboard` | AI via WhatsApp, Telegram, Slack, Discord |
 
-**Clawdbot setup** (recommended for mobile AI access):
+**Moltbot setup** (recommended for mobile AI access):
 
 ```bash
 # Install globally
-npm install -g clawdbot@latest
+npm install -g moltbot@latest
 
 # Run onboarding wizard (installs daemon, connects channels)
-clawdbot onboard --install-daemon
+moltbot onboard --install-daemon
 
 # Verify
-clawdbot doctor
+moltbot doctor
 ```
 
-Clawdbot lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
+Moltbot lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
 
 **Key features:**
 - Multi-channel inbox (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
@@ -427,7 +427,7 @@ Clawdbot lets you interact with AI from your phone via WhatsApp, Telegram, or an
 - Skills system compatible with aidevops agents
 - Browser control, cron jobs, webhooks
 
-**Docs**: https://docs.clawd.bot
+**Docs**: https://docs.molt.bot
 
 ### WordPress
 
@@ -555,11 +555,11 @@ For new users, suggest this order based on their interests:
 4. Hetzner + Cloudflare
 5. All code quality tools
 6. DataForSEO + Serper
-7. Clawdbot (mobile AI access)
+7. Moltbot (mobile AI access)
 
 ### Mobile-First / Always-On
 
-1. Clawdbot (`clawdbot onboard --install-daemon`)
+1. Moltbot (`moltbot onboard --install-daemon`)
 2. OpenAI or Anthropic API key
 3. Connect WhatsApp or Telegram channel
 4. Optional: Voice Wake for hands-free

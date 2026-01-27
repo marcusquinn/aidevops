@@ -469,7 +469,7 @@ Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with up
 **Reference:**
 - [Agent Skills Specification](https://agentskills.io/specification) - The open format for SKILL.md files
 - [skills.sh Leaderboard](https://skills.sh) - Discover popular community skills
-- [ClawdHub](https://clawdhub.com) - Skill registry with vector search (Clawdbot ecosystem)
+- [ClawdHub](https://clawdhub.com) - Skill registry with vector search (Moltbot ecosystem)
 - [vercel-labs/add-skill](https://github.com/vercel-labs/add-skill) - The upstream CLI tool (aidevops uses its own implementation)
 - [anthropics/skills](https://github.com/anthropics/skills) - Official Anthropic example skills
 - [agentskills/agentskills](https://github.com/agentskills/agentskills) - Specification source and reference library

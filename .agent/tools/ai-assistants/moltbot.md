@@ -1,5 +1,5 @@
 ---
-description: Clawdbot - Personal AI assistant for messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
+description: Moltbot - Personal AI assistant for messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
 mode: subagent
 tools:
   read: true
@@ -12,17 +12,17 @@ tools:
   task: true
 ---
 
-# Clawdbot - Personal AI Assistant
+# Moltbot - Personal AI Assistant
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: Personal AI assistant running locally, accessible via messaging channels
-- **Install**: `npm install -g clawdbot@latest && clawdbot onboard --install-daemon`
+- **Install**: `npm install -g moltbot@latest && moltbot onboard --install-daemon`
 - **Runtime**: Node.js >= 22
-- **Docs**: https://docs.clawd.bot
-- **Repo**: https://github.com/clawdbot/clawdbot
+- **Docs**: https://docs.molt.bot
+- **Repo**: https://github.com/moltbot/moltbot
 - **Gateway**: ws://127.0.0.1:18789 (local control plane)
 
 **Supported Channels**: WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, WebChat
@@ -42,11 +42,11 @@ tools:
 
 ```bash
 # Requires Node.js >= 22
-npm install -g clawdbot@latest
-# or: pnpm add -g clawdbot@latest
+npm install -g moltbot@latest
+# or: pnpm add -g moltbot@latest
 
 # Run onboarding wizard (installs daemon)
-clawdbot onboard --install-daemon
+moltbot onboard --install-daemon
 ```
 
 The wizard walks through:
@@ -58,14 +58,14 @@ The wizard walks through:
 ### From Source (Development)
 
 ```bash
-git clone https://github.com/clawdbot/clawdbot.git
-cd clawdbot
+git clone https://github.com/moltbot/moltbot.git
+cd moltbot
 
 pnpm install
 pnpm ui:build
 pnpm build
 
-pnpm clawdbot onboard --install-daemon
+pnpm moltbot onboard --install-daemon
 
 # Dev loop (auto-reload)
 pnpm gateway:watch
@@ -84,7 +84,7 @@ WhatsApp / Telegram / Slack / Discord / Signal / iMessage / Teams / WebChat
 +---------------+---------------+
                |
                +-- Pi agent (RPC)
-               +-- CLI (clawdbot ...)
+               +-- CLI (moltbot ...)
                +-- WebChat UI
                +-- macOS app
                +-- iOS / Android nodes
@@ -102,14 +102,14 @@ Minimal config at `~/.clawdbot/clawdbot.json`:
 }
 ```
 
-Full configuration reference: https://docs.clawd.bot/gateway/configuration
+Full configuration reference: https://docs.molt.bot/gateway/configuration
 
 ### Channel Setup
 
 #### WhatsApp
 
 ```bash
-clawdbot channels login  # Scan QR code
+moltbot channels login  # Scan QR code
 ```
 
 Configure allowlist in `~/.clawdbot/clawdbot.json`:
@@ -160,24 +160,24 @@ Or set `DISCORD_BOT_TOKEN` environment variable.
 
 ```bash
 # Start gateway
-clawdbot gateway --port 18789 --verbose
+moltbot gateway --port 18789 --verbose
 
 # Send a message
-clawdbot message send --to +1234567890 --message "Hello from Clawdbot"
+moltbot message send --to +1234567890 --message "Hello from Moltbot"
 
 # Talk to the assistant
-clawdbot agent --message "Ship checklist" --thinking high
+moltbot agent --message "Ship checklist" --thinking high
 
 # Health check
-clawdbot doctor
+moltbot doctor
 
 # Manage channels
-clawdbot channels login
-clawdbot channels list
+moltbot channels login
+moltbot channels list
 
 # Manage pairings (DM security)
-clawdbot pairing approve <channel> <code>
-clawdbot pairing list
+moltbot pairing approve <channel> <code>
+moltbot pairing list
 ```
 
 ## Chat Commands
@@ -200,7 +200,7 @@ Default DM policy is `pairing` - unknown senders receive a pairing code:
 
 ```bash
 # Approve a sender
-clawdbot pairing approve telegram ABC123
+moltbot pairing approve telegram ABC123
 ```
 
 For open DMs (not recommended), set:
@@ -218,11 +218,11 @@ For open DMs (not recommended), set:
 }
 ```
 
-Run `clawdbot doctor` to check for risky configurations.
+Run `moltbot doctor` to check for risky configurations.
 
 ## Skills (Agent Workspace)
 
-Clawdbot uses a skills system similar to aidevops agents:
+Moltbot uses a skills system similar to aidevops agents:
 
 - Workspace root: `~/clawd` (configurable)
 - Injected prompts: `AGENTS.md`, `SOUL.md`, `TOOLS.md`
@@ -230,7 +230,7 @@ Clawdbot uses a skills system similar to aidevops agents:
 
 ## Integration with aidevops
 
-Clawdbot complements aidevops by providing:
+Moltbot complements aidevops by providing:
 
 1. **Mobile access**: Interact with AI from WhatsApp/Telegram on your phone
 2. **Always-on assistant**: Gateway runs as a daemon, always available
@@ -239,8 +239,8 @@ Clawdbot complements aidevops by providing:
 
 ### Recommended Setup
 
-1. Install Clawdbot: `npm install -g clawdbot@latest`
-2. Run onboarding: `clawdbot onboard --install-daemon`
+1. Install Moltbot: `npm install -g moltbot@latest`
+2. Run onboarding: `moltbot onboard --install-daemon`
 3. Connect your preferred channel (WhatsApp recommended for mobile)
 4. Configure workspace to use aidevops agents:
 
@@ -272,21 +272,21 @@ Clawdbot complements aidevops by providing:
 
 ```bash
 # Check gateway health
-clawdbot doctor
+moltbot doctor
 
 # View logs
-clawdbot gateway --verbose
+moltbot gateway --verbose
 
 # Reset credentials
 rm -rf ~/.clawdbot/credentials
-clawdbot channels login
+moltbot channels login
 ```
 
 ## Resources
 
-- **Docs**: https://docs.clawd.bot
-- **Getting Started**: https://docs.clawd.bot/start/getting-started
-- **Configuration**: https://docs.clawd.bot/gateway/configuration
-- **Security**: https://docs.clawd.bot/gateway/security
+- **Docs**: https://docs.molt.bot
+- **Getting Started**: https://docs.molt.bot/start/getting-started
+- **Configuration**: https://docs.molt.bot/gateway/configuration
+- **Security**: https://docs.molt.bot/gateway/security
 - **Discord**: https://discord.gg/clawd
-- **GitHub**: https://github.com/clawdbot/clawdbot
+- **GitHub**: https://github.com/moltbot/moltbot
