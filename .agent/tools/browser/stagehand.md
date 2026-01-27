@@ -266,7 +266,7 @@ Stagehand uses Playwright underneath, so you can pass `executablePath` via `brow
 ```javascript
 const stagehand = new Stagehand({
     env: "LOCAL",
-    headless: false,
+    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
     browserOptions: {
         executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     },
@@ -280,7 +280,7 @@ const stagehand = new Stagehand({
 ```javascript
 const stagehand = new Stagehand({
     env: "LOCAL",
-    headless: false,
+    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
     browserOptions: {
         executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     },
@@ -294,7 +294,7 @@ const stagehand = new Stagehand({
 ```javascript
 const stagehand = new Stagehand({
     env: "LOCAL",
-    headless: false,
+    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
     browserOptions: {
         executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         args: [
