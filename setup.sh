@@ -152,6 +152,8 @@ cleanup_deprecated_paths() {
         "$agents_dir/build-agent"
         "$agents_dir/build-mcp.md"
         "$agents_dir/build-mcp"
+        # v2.91.0: clawdbot renamed to moltbot
+        "$agents_dir/tools/ai-assistants/clawdbot.md"
     )
     
     for path in "${deprecated_paths[@]}"; do
