@@ -105,3 +105,4 @@ These apply to all models but reinforce behaviours some need more than others:
 - Do not add code comments unless asked. Focus on why, not what.
 - After code changes, run lint/typecheck commands if available (check README or configs).
 - When making changes, read surrounding context first to ensure idiomatic integration.
+- Always find a way to verify your work. Prefer in order: run tests/linters, use browser tools to check UI, read primary sources (docs, APIs), or review the output yourself. If none of these give confidence, ask the user how to verify.

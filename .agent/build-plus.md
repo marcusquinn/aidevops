@@ -222,6 +222,12 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 - After tests pass, think about the original intent
 - Write additional tests to ensure correctness
 - Remember there may be hidden tests that must also pass
+- **Verification hierarchy** -- always find a way to confirm your work:
+  1. Run available tools (tests, linters, type checkers, build commands)
+  2. Use browser tools to visually verify UI changes
+  3. Check primary sources (official docs, API responses, `git log`)
+  4. Review the output yourself and provide user experience commentary
+  5. If none of the above give confidence, ask the user how to verify
 
 ## Planning Workflow (Deliberation Mode)
 
