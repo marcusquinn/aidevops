@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [2.90.8] - 2026-01-27
 
-- Custom browser engine (Brave, Edge, Chrome) and extension (uBlock Origin) support documentation across 6 browser automation tool docs (#240)
+### Changed
 
+- Documentation: add changelog entry for browser custom engine support
+
+### Fixed
+
+- add language specifiers to fenced code blocks (#242)
+- detect fd-find as fdfind on Debian/Ubuntu (#241)
+- correct path to agent-review.md in generate-opencode-commands.sh (#237)
 ## [2.90.7] - 2026-01-27
 
 ### Changed
