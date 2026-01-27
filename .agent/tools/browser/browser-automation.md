@@ -143,6 +143,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Proxy support** | Full | No | Via launch args | No | Full (ProxyConfig) | Datacenter+Residential | Your browser | Via args |
 | **SOCKS5/VPN** | Yes | No | Possible | No | Yes | No | Your browser | Via args |
 | **Browser extensions** | Yes (persistent ctx) | No | Yes (profile) | No | No | No | Yes (yours) | Possible |
+| **Custom browser engine** | Yes (`executablePath`) | No (bundled) | Possible (launch args) | No (bundled) | Yes (`chrome_channel`) | No | Yes (your browser) | Yes (via Playwright) |
 | **Multi-session** | Per-context | --session flag | Named pages | --session flag | Per-crawl | Per-request | Per-tab | Per-instance |
 | **Form filling** | Full API | CLI fill/type | Full API | CLI fill/click | No | No | Full API | Natural language |
 | **Screenshots** | Full API | CLI command | Full API | CLI command | Built-in | PDF/Screenshot | Full API | Via page |
@@ -229,6 +230,115 @@ const elements = await page.evaluate(() => {
 1. **Playwriter** - uses your already-unlocked browser (easiest)
 2. **Playwright persistent** - load extension + unlock via Bitwarden CLI (`bw unlock`)
 3. **dev-browser** - install extension in profile, unlock once (persists)
+
+## Custom Browser Engine Support (Brave, Edge, Chrome)
+
+Tools that use Playwright's bundled Chromium can often be pointed at a different Chromium-based browser instead. This is useful for Brave's built-in Shields (ad/tracker blocking), Edge's enterprise features, or your existing Chrome profile.
+
+| Tool | Brave | Edge | Chrome | How |
+|------|-------|------|--------|-----|
+| **Playwright** | Yes | Yes | Yes | `executablePath` in `launch()` or `launchPersistentContext()` |
+| **Playwriter** | Yes | Yes | Yes | Install extension in whichever browser you use |
+| **Stagehand** | Yes | Yes | Yes | `executablePath` in `browserOptions` (uses Playwright) |
+| **Crawl4AI** | Yes | Yes | Yes | `chrome_channel` or `browser_path` in `BrowserConfig` |
+| **dev-browser** | Possible | Possible | Possible | Modify launch args in server config |
+| **playwright-cli** | No | No | No | Uses bundled Chromium only |
+| **agent-browser** | No | No | No | Uses bundled Chromium only |
+| **WaterCrawl** | No | No | No | Cloud API, no local browser |
+
+**Browser executable paths** (macOS):
+
+```text
+Brave:  /Applications/Brave Browser.app/Contents/MacOS/Brave Browser
+Edge:   /Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge
+Chrome: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+```
+
+**Browser executable paths** (Linux):
+
+```text
+Brave:  /usr/bin/brave-browser
+Edge:   /usr/bin/microsoft-edge
+Chrome: /usr/bin/google-chrome
+```
+
+**Browser executable paths** (Windows):
+
+```text
+Brave:  C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe
+Edge:   C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+Chrome: C:\Program Files\Google\Chrome\Application\chrome.exe
+```
+
+**Why use a custom browser?**
+
+| Browser | Built-in Advantage | Trade-off |
+|---------|-------------------|-----------|
+| **Brave** | Shields (ad/tracker blocking like uBlock Origin), built-in Tor, fingerprint randomization | Some sites detect Brave Shields |
+| **Edge** | Enterprise SSO, Azure AD integration, IE mode for legacy apps | Heavier than Chromium |
+| **Chrome** | Widest extension ecosystem, most tested | No built-in ad blocking |
+| **Chromium** (bundled) | Cleanest automation baseline, no extra features | No ad blocking, no extensions by default |
+
+**First-run preference**: When a tool supports custom browsers, the AI agent should ask the user on first use which browser they prefer. Store the preference in `~/.config/aidevops/browser-prefs.json`:
+
+```json
+{
+  "preferred_browser": "brave",
+  "browser_paths": {
+    "brave": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "edge": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  },
+  "extensions": {
+    "ublock_origin": "/path/to/ublock-origin-unpacked"
+  }
+}
+```
+
+## Ad Blocker / Extension Loading (uBlock Origin)
+
+Extensions like uBlock Origin reduce page noise, block trackers, and speed up page loads. This benefits both scraping (cleaner HTML) and automation (fewer pop-ups, consent banners).
+
+| Tool | Load uBlock Origin? | How | Notes |
+|------|---------------------|-----|-------|
+| **Playwright** (persistent) | Yes | `--load-extension=/path/to/ublock` | Requires unpacked extension + persistent context |
+| **dev-browser** | Yes | Install in profile (headed mode) | Persists across restarts |
+| **Playwriter** | Yes | Already installed in your browser | Easiest - just use your browser |
+| **Stagehand** | Possible | Via Playwright's `--load-extension` | Untested, uses Playwright underneath |
+| **Crawl4AI** | No | N/A | No extension support |
+| **agent-browser** | No | N/A | No extension support |
+| **playwright-cli** | No | N/A | Uses bundled Chromium, no extension loading |
+| **WaterCrawl** | No | N/A | Cloud API |
+
+**Alternative to uBlock Origin**: Use **Brave browser** with Shields enabled - provides equivalent ad/tracker blocking without needing to load an extension. This works with any tool that supports custom browser engines (Playwright, Stagehand, Crawl4AI, Playwriter).
+
+**Getting uBlock Origin unpacked** (for Playwright/Stagehand `--load-extension`):
+
+```bash
+# Clone the uBlock Origin repo
+git clone https://github.com/nicedoc/nicedoc.io ~/.aidevops/extensions/ublock-origin
+# Or download from Chrome Web Store and extract the .crx
+# The unpacked extension directory is what --load-extension expects
+```
+
+**Playwright example with uBlock Origin**:
+
+```javascript
+import { chromium } from 'playwright';
+
+const context = await chromium.launchPersistentContext(
+  '/tmp/browser-profile',
+  {
+    headless: false,  // Extensions require headed mode in Chromium
+    args: [
+      '--load-extension=/path/to/ublock-origin-unpacked',
+      '--disable-extensions-except=/path/to/ublock-origin-unpacked',
+    ],
+  }
+);
+const page = context.pages()[0] || await context.newPage();
+await page.goto('https://example.com');
+```
 
 ## Chrome DevTools MCP (Companion Tool)
 

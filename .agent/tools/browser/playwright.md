@@ -21,7 +21,7 @@ tools:
 - **Purpose**: Cross-browser testing and automation (fastest browser engine)
 - **Install**: `npm install playwright && npx playwright install`
 - **MCP**: `npx @playwright/mcp` (with `--proxy-server`, `--storage-state` options)
-- **Browsers**: chromium, firefox, webkit
+- **Browsers**: chromium, firefox, webkit + custom (Brave, Edge, Chrome via `executablePath`)
 - **Headless**: Yes (default)
 
 **Performance** (fastest of all tools): Navigate 1.4s, form fill 0.9s, extraction 1.3s, reliability 0.64s avg.
@@ -31,16 +31,20 @@ This is the underlying engine used by dev-browser, agent-browser, and Stagehand.
 - Full proxy support (HTTP, SOCKS5, per-context)
 - Session persistence via `storageState` or `userDataDir`
 - Cross-browser testing (Chromium, Firefox, WebKit)
+- Custom browser engines (Brave, Edge, Chrome) via `executablePath`
 - Device emulation (iPhone, Samsung, iPad)
 - Network throttling (Fast 3G, Slow 3G, Offline)
 - Browser extensions via `launchPersistentContext` + `--load-extension`
+- Ad blocking via Brave Shields (no extension needed) or uBlock Origin extension
 - Parallel: 5 isolated contexts in 2.1s, 3 browsers in 1.9s, 10 pages in 1.8s
 - AI page understanding: `page.locator('body').ariaSnapshot()` (~0.01s, 50-200 tokens)
 - Integration: Works with Chrome DevTools MCP, dev-browser, Stagehand
 
-**When to use directly**: Maximum speed, full control, proxy support, parallel instances, extensions, or when other wrappers add unnecessary overhead.
+**When to use directly**: Maximum speed, full control, proxy support, parallel instances, extensions, custom browser engines, or when other wrappers add unnecessary overhead.
 
-**Extensions**: Use `launchPersistentContext` with `--load-extension` arg. Requires bundled Chromium (not Chrome/Brave channel). Password managers load but need manual unlock.
+**Custom browsers**: Use `executablePath` in `launch()` or `launchPersistentContext()` to use Brave, Edge, or Chrome instead of bundled Chromium. Brave provides built-in ad/tracker blocking via Shields. See "Custom Browser Engine" section below.
+
+**Extensions**: Use `launchPersistentContext` with `--load-extension` arg. Works with bundled Chromium and custom browsers (Brave, Edge, Chrome). Password managers load but need manual unlock.
 
 **Chrome DevTools MCP**: Connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage alongside Playwright automation.
 
@@ -83,6 +87,98 @@ npx --no-install playwright --version
     "command": "npx",
     "args": ["@playwright/mcp@latest"]
   }
+}
+```
+
+## Custom Browser Engine (Brave, Edge, Chrome)
+
+Use `executablePath` to launch Brave, Edge, or Chrome instead of Playwright's bundled Chromium. This gives you access to browser-specific features like Brave Shields (ad blocking) or Edge enterprise SSO.
+
+### Launch with Custom Browser
+
+```javascript
+import { chromium } from 'playwright';
+
+// Brave - built-in ad/tracker blocking via Shields
+const browser = await chromium.launch({
+  executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  headless: true,
+});
+
+// Microsoft Edge - enterprise SSO, Azure AD
+const browser = await chromium.launch({
+  executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  headless: true,
+});
+
+// Google Chrome - widest extension compatibility
+const browser = await chromium.launch({
+  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  headless: true,
+});
+```
+
+### Custom Browser with Persistent Context + Extensions
+
+Combine a custom browser engine with extensions (e.g., uBlock Origin):
+
+```javascript
+import { chromium } from 'playwright';
+
+// Brave + uBlock Origin (Brave Shields may make uBlock redundant)
+const context = await chromium.launchPersistentContext(
+  '/tmp/brave-profile',
+  {
+    executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    headless: false,  // Extensions require headed mode in Chromium
+    args: [
+      '--load-extension=/path/to/ublock-origin-unpacked',
+      '--disable-extensions-except=/path/to/ublock-origin-unpacked',
+    ],
+  }
+);
+
+// Edge + uBlock Origin
+const context = await chromium.launchPersistentContext(
+  '/tmp/edge-profile',
+  {
+    executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    headless: false,
+    args: [
+      '--load-extension=/path/to/ublock-origin-unpacked',
+      '--disable-extensions-except=/path/to/ublock-origin-unpacked',
+    ],
+  }
+);
+```
+
+### Browser Executable Paths
+
+| Browser | macOS | Linux | Windows |
+|---------|-------|-------|---------|
+| **Brave** | `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser` | `/usr/bin/brave-browser` | `C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe` |
+| **Edge** | `/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge` | `/usr/bin/microsoft-edge` | `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe` |
+| **Chrome** | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` | `/usr/bin/google-chrome` | `C:\Program Files\Google\Chrome\Application\chrome.exe` |
+| **Chromium** (bundled) | Auto-detected by Playwright | Auto-detected | Auto-detected |
+
+### Parallel Instances with Custom Browser
+
+```javascript
+import { chromium } from 'playwright';
+
+const executablePath = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+
+// 3 parallel persistent contexts with Brave + extensions
+const contexts = await Promise.all([
+  chromium.launchPersistentContext('/tmp/profile-1', { executablePath, headless: false }),
+  chromium.launchPersistentContext('/tmp/profile-2', { executablePath, headless: false }),
+  chromium.launchPersistentContext('/tmp/profile-3', { executablePath, headless: false }),
+]);
+
+// Each context is fully isolated with its own profile
+for (const ctx of contexts) {
+  const page = ctx.pages()[0] || await ctx.newPage();
+  await page.goto('https://example.com');
 }
 ```
 

@@ -40,7 +40,9 @@ tools:
 - Browser cache
 - Extension data (install extensions in headed mode, persists across restarts)
 
-**Extensions**: Install in headed mode (`start` not `start-headless`), then extensions persist in profile. Password managers need manual unlock once per session.
+**Extensions**: Install in headed mode (`start` not `start-headless`), then extensions persist in profile. Password managers need manual unlock once per session. uBlock Origin can be installed in the profile for ad/tracker blocking.
+
+**Custom browser**: Dev-browser uses Playwright's bundled Chromium by default. To use Brave, Edge, or Chrome instead, modify the server launch configuration to pass `executablePath`. Alternatively, use Brave for built-in ad blocking without needing uBlock Origin. See "Custom Browser Engine" section below.
 
 **Parallel**: Named pages (`client.page("name")`) share the same profile (not isolated). For isolation, use Playwright direct with multiple contexts.
 
@@ -285,6 +287,39 @@ console.log("Settings page:", await page.title());
 await client.disconnect();
 EOF
 ```
+
+## Custom Browser Engine (Brave, Edge, Chrome)
+
+Dev-browser uses Playwright's bundled Chromium by default. To use a custom browser, you need to modify the server's launch configuration to pass `executablePath` to Playwright.
+
+### Modifying the Server Launch
+
+The dev-browser server script launches Playwright internally. To use a custom browser, set the `BROWSER_EXECUTABLE` environment variable before starting:
+
+```bash
+# Use Brave (built-in Shields for ad/tracker blocking)
+BROWSER_EXECUTABLE="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
+
+# Use Edge (enterprise SSO, Azure AD)
+BROWSER_EXECUTABLE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
+
+# Use Chrome
+BROWSER_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
+```
+
+**Note**: Custom browser support depends on the dev-browser server accepting `executablePath` in its Playwright launch options. If the server doesn't expose this, use Playwright direct with `launchPersistentContext` for the same persistent profile behaviour with a custom browser.
+
+### Installing Extensions (uBlock Origin)
+
+1. Start dev-browser in **headed mode**: `dev-browser-helper.sh start` (not `start-headless`)
+2. Navigate to the Chrome Web Store in the browser
+3. Install uBlock Origin (or any extension)
+4. The extension persists in the profile directory across restarts
+
+**Alternative**: Use Brave browser instead - Brave Shields provides equivalent ad/tracker blocking without needing uBlock Origin.
 
 ## Comparison with Other Browser Tools
 
