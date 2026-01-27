@@ -38,10 +38,13 @@ tools:
 - Session management & browser pool
 - Full proxy support (HTTP, SOCKS5, residential)
 - Persistent context with `user_data_dir`
+- Custom browser engine (Brave, Edge, Chrome) via `BrowserConfig`
 
 **Performance**: Structured extraction 2.5s (30 items), multi-page 3.8s (3 URLs), reliability 0.52s avg (fastest).
 Benchmarked 2026-01-24, macOS ARM64, headless, median of 3 runs. Reproduce via `browser-benchmark.md`.
 Purpose-built for extraction. Limited interaction via `js_code` parameter or C4A-Script DSL (CLICK, TYPE, PRESS). For complex interactive flows, use Playwright.
+
+**Custom browsers**: Supports Brave, Edge, and Chrome via `chrome_channel` or `browser_path` in `BrowserConfig`. Brave provides built-in ad/tracker blocking via Shields, which can improve extraction quality by removing ads from crawled pages. See "Custom Browser Engine" section below.
 
 **Parallel**: `arun_many(urls)` for built-in parallel crawling (tested: 1.7x speedup over sequential). Multiple `AsyncWebCrawler` instances for fully isolated browsers.
 
@@ -530,6 +533,50 @@ async with AsyncWebCrawler(config=browser_config) as crawler:
     result1 = await crawler.arun("https://site.com/login")
     result2 = await crawler.arun("https://site.com/dashboard")
 ```
+
+### Custom Browser Engine (Brave, Edge, Chrome)
+
+Crawl4AI supports custom Chromium-based browsers via `BrowserConfig`. This is useful for Brave's built-in Shields (ad/tracker blocking improves extraction quality by removing ads from crawled pages).
+
+```python
+from crawl4ai import AsyncWebCrawler, BrowserConfig
+
+# Brave - built-in ad/tracker blocking via Shields
+browser_config = BrowserConfig(
+    browser_type="chromium",
+    chrome_channel="brave",  # or use browser_path for explicit path
+    headless=True,
+)
+
+# Edge - enterprise SSO, Azure AD
+browser_config = BrowserConfig(
+    browser_type="chromium",
+    chrome_channel="msedge",
+    headless=True,
+)
+
+# Chrome
+browser_config = BrowserConfig(
+    browser_type="chromium",
+    chrome_channel="chrome",
+    headless=True,
+)
+
+# Explicit path (any Chromium-based browser)
+browser_config = BrowserConfig(
+    browser_type="chromium",
+    browser_path="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    headless=True,
+)
+
+async with AsyncWebCrawler(config=browser_config) as crawler:
+    result = await crawler.arun(url="https://example.com")
+    print(result.markdown)  # Cleaner output with Brave Shields blocking ads
+```
+
+**Browser channel values**: `chrome`, `msedge`, `brave`, `chromium` (default).
+
+**Note**: Extensions (uBlock Origin) are not supported in Crawl4AI. Use Brave with Shields for equivalent ad blocking during crawling.
 
 ## 🔧 Troubleshooting
 

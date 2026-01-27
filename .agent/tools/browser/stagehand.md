@@ -40,7 +40,9 @@ Slowest tool due to AI model overhead. Without API key, works as a Playwright wr
 
 **Parallel**: Multiple Stagehand instances (each launches own browser). Full isolation but slow due to AI overhead per instance. For parallel speed, use Playwright direct.
 
-**Extensions**: Possible via Playwright's `launchPersistentContext` (Stagehand uses Playwright underneath), but untested. Use Playwriter instead for extension access.
+**Custom browsers**: Supports Brave, Edge, and Chrome via `executablePath` in `browserOptions`. Brave provides built-in ad/tracker blocking via Shields without needing extensions. See "Custom Browser Engine" section below.
+
+**Extensions**: Possible via Playwright's `launchPersistentContext` (Stagehand uses Playwright underneath), but untested. Use Playwriter instead for extension access. uBlock Origin can be loaded via `--load-extension` in `browserOptions.args`.
 
 **AI Page Understanding**: Built-in - `observe()` returns available actions, `extract()` returns structured data with schemas. Stagehand IS the AI understanding layer. No need for separate ARIA/screenshot analysis.
 
@@ -254,6 +256,29 @@ const stagehand = new Stagehand({
     }
 });
 ```
+
+### Custom Browser Engine (Brave, Edge, Chrome)
+
+Stagehand uses Playwright underneath, so you can pass `executablePath` via `browserOptions` to use a custom browser. Extensions may require headed mode in older Chromium; new headless (`--headless=new`) supports extensions.
+
+```javascript
+const stagehand = new Stagehand({
+    env: "LOCAL",
+    headless: false,
+    browserOptions: {
+        executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+        args: [
+            // Optional: load uBlock Origin (Brave Shields may make this redundant)
+            '--load-extension=/path/to/ublock-origin-unpacked',
+            '--disable-extensions-except=/path/to/ublock-origin-unpacked',
+        ],
+    },
+    modelName: "gpt-4o",
+    modelClientOptions: { apiKey: process.env.OPENAI_API_KEY }
+});
+```
+
+See [`browser-automation.md`](browser-automation.md#custom-browser-engine-support) for browser executable paths (macOS, Linux, Windows), additional browser examples (Edge, Chrome), and extension setup instructions.
 
 ## 📚 **Examples**
 

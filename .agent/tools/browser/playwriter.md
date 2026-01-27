@@ -20,6 +20,7 @@ tools:
 
 - **Purpose**: Browser automation via Chrome extension with full Playwright API
 - **Install Extension**: [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe)
+- **Browsers**: Chrome, Brave, Edge (any Chromium-based browser)
 - **MCP**: `npx playwriter@latest`
 - **Single Tool**: `execute` - runs Playwright code snippets
 
@@ -27,6 +28,7 @@ tools:
 - **1 tool vs 17+** - Less context bloat than BrowserMCP/Antigravity
 - **Full Playwright API** - LLMs already know it from training
 - **Your existing browser** - Reuse extensions, sessions, cookies
+- **Works with Brave, Edge, Chrome** - Any Chromium-based browser with extension support
 - **Bypass detection** - Disconnect extension to bypass automation detection
 - **Collaborate with AI** - Work alongside it in the same browser
 - **Proxy via browser** - Uses whatever proxy your browser is configured with
@@ -34,7 +36,9 @@ tools:
 **Performance**: Navigate 2.95s, form fill 2.24s, reliability 1.96s avg.
 Always headed (uses your visible browser). Proxy support via browser settings or extensions (FoxyProxy etc.).
 
-**Extensions**: Full access to all your installed extensions. Password managers already unlocked. This is the only tool where password manager autofill works without extra setup.
+**Browser compatibility**: Works with any Chromium-based browser - Chrome, Brave, and Edge all support the Playwriter extension from the Chrome Web Store. Use Brave for built-in Shields (ad/tracker blocking) or Edge for enterprise SSO. If you have uBlock Origin installed in your browser, it works automatically with Playwriter.
+
+**Extensions**: Full access to all your installed extensions (uBlock Origin, password managers, FoxyProxy, etc.). Password managers already unlocked. This is the only tool where password manager autofill works without extra setup.
 
 **Parallel**: Multiple connected tabs (click extension on each). Shared browser session (not isolated). For isolated parallel work, use Playwright direct.
 
@@ -56,9 +60,19 @@ Always headed (uses your visible browser). Proxy support via browser settings or
 
 ## Installation
 
-### 1. Install Chrome Extension
+### 1. Install Extension in Your Browser
 
-Install from [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) and pin to toolbar.
+The Playwriter extension works with any Chromium-based browser:
+
+| Browser | Install From | Ad Blocking |
+|---------|-------------|-------------|
+| **Chrome** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Install uBlock Origin separately |
+| **Brave** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Built-in Shields (no extension needed) |
+| **Edge** | [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) | Install uBlock Origin separately [^1] |
+
+Install from the Chrome Web Store link above and pin to toolbar. The same extension works in all three browsers.
+
+[^1]: Edge requires "Allow extensions from other stores" enabled in `edge://extensions` before installing from the Chrome Web Store.
 
 ### 2. Connect to Tabs
 
