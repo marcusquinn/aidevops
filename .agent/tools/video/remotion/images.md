@@ -34,7 +34,7 @@ The `<Img>` component ensures images are fully loaded before rendering, preventi
 
 Place images in the `public/` folder and use `staticFile()` to reference them:
 
-```
+```text
 my-video/
 ├─ public/
 │  ├─ logo.png

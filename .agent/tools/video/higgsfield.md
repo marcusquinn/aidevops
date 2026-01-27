@@ -105,7 +105,7 @@ curl -X POST 'https://platform.higgsfield.ai/v1/text2image/soul' \
 
 ### Supported Dimensions
 
-```
+```text
 1152x2048, 2048x1152, 2048x1536, 1536x2048,
 1344x2016, 2016x1344, 960x1696, 1536x1536,
 1536x1152, 1696x960, 1152x1536, 1088x1632, 1632x1088
@@ -363,7 +363,7 @@ The platform auto-scales, but implement exponential backoff for resilience.
 
 For up-to-date API documentation:
 
-```
+```text
 resolve-library-id("higgsfield")
 # Returns: /websites/higgsfield_ai
 
