@@ -59,6 +59,24 @@ cloudron logs -f --app testapp
 ```
 <!-- AI-CONTEXT-END -->
 
+## Pre-Packaging Research
+
+Before starting to package an app, search the Cloudron forum for existing knowledge:
+
+1. **Search by app name**: `https://forum.cloudron.io/search?term=APP_NAME&in=titles`
+   Forum threads with the app name in the title often contain:
+   - Community packaging attempts (partial or complete) you can build on
+   - Known gotchas, workarounds, and platform-specific quirks
+   - Addon requirements and configuration insights from real deployments
+   - User experience reports on complexity, stability, and resource usage
+   - Upstream compatibility issues with Cloudron's read-only filesystem or auth model
+
+2. **Check the packaging category**: [forum.cloudron.io/category/96](https://forum.cloudron.io/category/96/app-packaging-development) for active packaging discussions
+
+3. **Search the app store**: `cloudron appstore search APP_NAME` to check if an official or community package already exists
+
+This research often saves significant trial-and-error, especially for apps with non-standard storage, auth, or process models.
+
 ## Overview
 
 Cloudron app packaging creates Docker containers that integrate with Cloudron's platform features: automatic SSL, user management (LDAP/OIDC), backups, and addon services.
