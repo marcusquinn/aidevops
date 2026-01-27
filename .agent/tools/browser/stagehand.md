@@ -259,45 +259,16 @@ const stagehand = new Stagehand({
 
 ### Custom Browser Engine (Brave, Edge, Chrome)
 
-Stagehand uses Playwright underneath, so you can pass `executablePath` via `browserOptions` to use a custom browser:
-
-**Brave** - built-in ad/tracker blocking via Shields:
+Stagehand uses Playwright underneath, so you can pass `executablePath` via `browserOptions` to use a custom browser. Extensions may require headed mode in older Chromium; new headless (`--headless=new`) supports extensions.
 
 ```javascript
 const stagehand = new Stagehand({
     env: "LOCAL",
-    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
+    headless: false,
     browserOptions: {
         executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-    },
-    modelName: "gpt-4o",
-    modelClientOptions: { apiKey: process.env.OPENAI_API_KEY }
-});
-```
-
-**Edge** - enterprise SSO, Azure AD integration:
-
-```javascript
-const stagehand = new Stagehand({
-    env: "LOCAL",
-    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
-    browserOptions: {
-        executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-    },
-    modelName: "gpt-4o",
-    modelClientOptions: { apiKey: process.env.OPENAI_API_KEY }
-});
-```
-
-**With uBlock Origin extension**:
-
-```javascript
-const stagehand = new Stagehand({
-    env: "LOCAL",
-    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
-    browserOptions: {
-        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         args: [
+            // Optional: load uBlock Origin (Brave Shields may make this redundant)
             '--load-extension=/path/to/ublock-origin-unpacked',
             '--disable-extensions-except=/path/to/ublock-origin-unpacked',
         ],
@@ -307,7 +278,7 @@ const stagehand = new Stagehand({
 });
 ```
 
-**Browser paths**: See `browser-automation.md` for full path reference (macOS, Linux, Windows).
+See [`browser-automation.md`](browser-automation.md#custom-browser-engine-support) for browser executable paths (macOS, Linux, Windows), additional browser examples (Edge, Chrome), and extension setup instructions.
 
 ## 📚 **Examples**
 
