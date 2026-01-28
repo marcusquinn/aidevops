@@ -25,7 +25,7 @@ readonly ERROR_AT_LEAST_ONE_SITE_ID="At least one site ID is required"
 readonly HELP_SHOW_MESSAGE="Show this help"
 
 # Resolve script directory for reliable config path
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CONFIG_FILE="${SCRIPT_DIR}/../configs/mainwp-config.json"
 
 print_info() {
