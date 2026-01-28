@@ -1,29 +1,32 @@
 #!/bin/bash
-# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+# shellcheck disable=SC2034,SC2155
 
 # MainWP WordPress Management Helper Script
 # Comprehensive WordPress site management for AI assistants
+# Uses MainWP REST API v1 with query parameter authentication
+
+set -euo pipefail
 
 # Colors for output
+readonly GREEN='\033[0;32m'
+readonly BLUE='\033[0;34m'
+readonly YELLOW='\033[1;33m'
+readonly RED='\033[0;31m'
+readonly NC='\033[0m' # No Color
+
 # String literal constants
 readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
 readonly ERROR_JQ_REQUIRED="jq is required but not installed"
 readonly INFO_JQ_INSTALL_MACOS="Install with: brew install jq"
 readonly INFO_JQ_INSTALL_UBUNTU="Install with: apt-get install jq"
 readonly ERROR_CURL_REQUIRED="curl is required but not installed"
-
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-# Common message constants
+readonly ERROR_SITE_ID_REQUIRED="Site ID is required"
+readonly ERROR_AT_LEAST_ONE_SITE_ID="At least one site ID is required"
 readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
-# Common constants
-readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
+# Resolve script directory for reliable config path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${SCRIPT_DIR}/../configs/mainwp-config.json"
 
 print_info() {
     local msg="$1"
@@ -49,12 +52,6 @@ print_error() {
     return 0
 }
 
-CONFIG_FILE="../configs/mainwp-config.json"
-
-# Constants for repeated strings
-readonly ERROR_SITE_ID_REQUIRED="Site ID is required"
-readonly ERROR_AT_LEAST_ONE_SITE_ID="At least one site ID is required"
-
 # Check dependencies
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
@@ -74,8 +71,8 @@ check_dependencies() {
 # Load configuration
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "$ERROR_CONFIG_NOT_FOUND"
-        print_info "Copy and customize: cp ../configs/mainwp-config.json.txt $CONFIG_FILE"
+        print_error "$ERROR_CONFIG_NOT_FOUND: $CONFIG_FILE"
+        print_info "Copy and customize: cp ${SCRIPT_DIR}/../configs/mainwp-config.json.txt $CONFIG_FILE"
         exit 1
     fi
     return 0
@@ -83,13 +80,15 @@ load_config() {
 
 # Get instance configuration
 get_instance_config() {
-    local instance_name="$command"
+    local instance_name="$1"
     
     if [[ -z "$instance_name" ]]; then
         print_error "Instance name is required"
         list_instances
         exit 1
     fi
+    
+    load_config
     
     local instance_config
     instance_config=$(jq -r ".instances.\"$instance_name\"" "$CONFIG_FILE")
@@ -103,12 +102,12 @@ get_instance_config() {
     return 0
 }
 
-# Make API request
+# Make API request using query parameter authentication (MainWP REST API v1)
 api_request() {
-    local instance_name="$command"
-    local endpoint="$account_name"
+    local instance_name="$1"
+    local endpoint="$2"
     local method="${3:-GET}"
-    local data="$options"
+    local data="${4:-}"
     
     local config
     config=$(get_instance_config "$instance_name")
@@ -124,18 +123,38 @@ api_request() {
         exit 1
     fi
     
-    local url="$base_url/wp-json/mainwp/v1/$endpoint"
-    local auth_header="Authorization: Basic $(echo -n "$consumer_key:$consumer_secret" | base64)"
+    # MainWP REST API uses query parameter authentication
+    local auth_params="consumer_key=${consumer_key}&consumer_secret=${consumer_secret}"
+    local url="${base_url}/wp-json/mainwp/v1/${endpoint}?${auth_params}"
     
-    if [[ "$method" == "GET" ]]; then
-        curl -s -H "$auth_header" -H "$CONTENT_TYPE_JSON" "$url"
-    elif [[ "$method" == "POST" ]]; then
-        curl -s -X POST -H "$auth_header" -H "$CONTENT_TYPE_JSON" -d "$data" "$url"
-    elif [[ "$method" == "PUT" ]]; then
-        curl -s -X PUT -H "$auth_header" -H "$CONTENT_TYPE_JSON" -d "$data" "$url"
-    elif [[ "$method" == "DELETE" ]]; then
-        curl -s -X DELETE -H "$auth_header" -H "$CONTENT_TYPE_JSON" "$url"
-    fi
+    local curl_opts=(-s -H "Content-Type: application/json")
+    
+    case "$method" in
+        GET)
+            curl "${curl_opts[@]}" "$url"
+            ;;
+        POST)
+            if [[ -n "$data" ]]; then
+                curl "${curl_opts[@]}" -X POST -d "$data" "$url"
+            else
+                curl "${curl_opts[@]}" -X POST "$url"
+            fi
+            ;;
+        PUT)
+            if [[ -n "$data" ]]; then
+                curl "${curl_opts[@]}" -X PUT -d "$data" "$url"
+            else
+                curl "${curl_opts[@]}" -X PUT "$url"
+            fi
+            ;;
+        DELETE)
+            curl "${curl_opts[@]}" -X DELETE "$url"
+            ;;
+        *)
+            print_error "Unknown HTTP method: $method"
+            return 1
+            ;;
+    esac
     return 0
 }
 
@@ -155,25 +174,24 @@ list_instances() {
 
 # List all managed sites
 list_sites() {
-    local instance_name="$command"
+    local instance_name="$1"
 
     print_info "Listing sites for MainWP instance: $instance_name"
     local response
-    if response=$(api_request "$instance_name" "sites"); then
-        echo "$response" | jq -r '.[] | "\(.id): \(.name) - \(.url) (Status: \(.status))"'
+    if response=$(api_request "$instance_name" "sites/all-sites"); then
+        echo "$response" | jq -r '.[] | "\(.id): \(.name) - \(.url) (Status: \(.status // "unknown"))"'
         return 0
     else
         print_error "Failed to retrieve sites"
         echo "$response"
         return 1
     fi
-    return 0
 }
 
 # Get site details
 get_site_details() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -181,8 +199,10 @@ get_site_details() {
     fi
 
     print_info "Getting details for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id"); then
+    if response=$(api_request "$instance_name" "site/site" "POST" "$data"); then
         echo "$response" | jq '.'
         return 0
     else
@@ -190,106 +210,109 @@ get_site_details() {
         echo "$response"
         return 1
     fi
-    return 0
 }
 
-# Get site status
+# Get site status (sync status)
 get_site_status() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
     
-    return 0
     print_info "Getting status for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/status"); then
+    if response=$(api_request "$instance_name" "site/site-sync-data" "POST" "$data"); then
         echo "$response" | jq '.'
+        return 0
     else
         print_error "Failed to get site status"
         echo "$response"
+        return 1
     fi
-    return 0
 }
 
 # List plugins for a site
 list_site_plugins() {
-    return 0
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
     fi
-    return 0
     
     print_info "Listing plugins for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/plugins"); then
-        echo "$response" | jq -r '.[] | "\(.name) - Version: \(.version) (Status: \(.status))"'
+    if response=$(api_request "$instance_name" "site/site-installed-plugins" "POST" "$data"); then
+        echo "$response" | jq -r '.[] | "\(.name) - Version: \(.version // "unknown") (Status: \(.active // "unknown"))"'
+        return 0
     else
         print_error "Failed to retrieve plugins"
         echo "$response"
+        return 1
     fi
-    return 0
 }
 
-    return 0
 # List themes for a site
 list_site_themes() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
-    return 0
     fi
     
     print_info "Listing themes for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/themes"); then
-        echo "$response" | jq -r '.[] | "\(.name) - Version: \(.version) (Status: \(.status))"'
+    if response=$(api_request "$instance_name" "site/site-installed-themes" "POST" "$data"); then
+        echo "$response" | jq -r '.[] | "\(.name) - Version: \(.version // "unknown") (Status: \(.active // "unknown"))"'
+        return 0
     else
         print_error "Failed to retrieve themes"
         echo "$response"
+        return 1
     fi
-    return 0
 }
-    return 0
 
 # Update WordPress core for a site
 update_wordpress_core() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
     
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
-    return 0
     fi
     
     print_info "Updating WordPress core for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/update-core" "POST"); then
+    if response=$(api_request "$instance_name" "site/site-update-wordpress" "PUT" "$data"); then
         print_success "WordPress core update initiated"
         echo "$response" | jq '.'
+        return 0
     else
         print_error "Failed to update WordPress core"
         echo "$response"
-    return 0
+        return 1
     fi
-    return 0
 }
 
 # Update all plugins for a site
 update_site_plugins() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -297,172 +320,76 @@ update_site_plugins() {
     fi
 
     print_info "Updating all plugins for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/update-plugins" "POST"); then
+    if response=$(api_request "$instance_name" "site/site-update-plugins" "PUT" "$data"); then
         print_success "Plugin updates initiated"
         echo "$response" | jq '.'
+        return 0
     else
         print_error "Failed to update plugins"
         echo "$response"
+        return 1
     fi
-    return 0
 }
 
 # Update specific plugin
 update_specific_plugin() {
-    local instance_name="$command"
-    local site_id="$account_name"
-    local plugin_slug="$target"
+    local instance_name="$1"
+    local site_id="$2"
+    local plugin_slug="$3"
 
     if [[ -z "$site_id" || -z "$plugin_slug" ]]; then
         print_error "Site ID and plugin slug are required"
         exit 1
-    return 0
     fi
 
     local data
-    data=$(jq -n --arg plugin "$plugin_slug" '{plugin: $plugin}')
+    data=$(jq -n --argjson site_id "$site_id" --arg plugin "$plugin_slug" '{site_id: $site_id, plugin: $plugin}')
 
     print_info "Updating plugin '$plugin_slug' for site ID: $site_id"
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/update-plugin" "POST" "$data"); then
+    if response=$(api_request "$instance_name" "site/site-update-plugins" "PUT" "$data"); then
         print_success "Plugin update initiated"
         echo "$response" | jq '.'
+        return 0
     else
         print_error "Failed to update plugin"
-    return 0
         echo "$response"
+        return 1
     fi
-    return 0
 }
 
-# Create backup for a site
-create_backup() {
-    local instance_name="$command"
-    local site_id="$account_name"
-    local backup_type="${3:-full}"
+# Update all themes for a site
+update_site_themes() {
+    local instance_name="$1"
+    local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
-    return 0
         exit 1
     fi
 
+    print_info "Updating all themes for site ID: $site_id"
     local data
-    data=$(jq -n --arg type "$backup_type" '{type: $type}')
-
-    print_info "Creating $backup_type backup for site ID: $site_id"
-    return 0
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/backup" "POST" "$data"); then
-        print_success "Backup initiated"
+    if response=$(api_request "$instance_name" "site/site-update-themes" "PUT" "$data"); then
+        print_success "Theme updates initiated"
         echo "$response" | jq '.'
+        return 0
     else
-        print_error "Failed to create backup"
+        print_error "Failed to update themes"
         echo "$response"
+        return 1
     fi
-    return 0
 }
 
-# List backups for a site
-list_backups() {
-    local instance_name="$command"
-    return 0
-    local site_id="$account_name"
-
-    if [[ -z "$site_id" ]]; then
-        print_error "$ERROR_SITE_ID_REQUIRED"
-        exit 1
-    return 0
-    fi
-
-    print_info "Listing backups for site ID: $site_id"
-    local response
-    if response=$(api_request "$instance_name" "sites/$site_id/backups"); then
-        echo "$response" | jq -r '.[] | "\(.date): \(.type) - Size: \(.size) (Status: \(.status))"'
-    else
-        print_error "Failed to retrieve backups"
-        echo "$response"
-    fi
-    return 0
-}
-
-# Get site uptime monitoring
-get_uptime_status() {
-    return 0
-    local instance_name="$command"
-    local site_id="$account_name"
-
-    if [[ -z "$site_id" ]]; then
-        print_error "$ERROR_SITE_ID_REQUIRED"
-    return 0
-        exit 1
-    fi
-
-    print_info "Getting uptime status for site ID: $site_id"
-    local response
-    if response=$(api_request "$instance_name" "sites/$site_id/uptime"); then
-        echo "$response" | jq '.'
-    else
-        print_error "Failed to get uptime status"
-        echo "$response"
-    fi
-    return 0
-}
-
-# Run security scan
-run_security_scan() {
-    return 0
-    local instance_name="$command"
-    local site_id="$account_name"
-
-    return 0
-    if [[ -z "$site_id" ]]; then
-        print_error "$ERROR_SITE_ID_REQUIRED"
-        exit 1
-    fi
-
-    print_info "Running security scan for site ID: $site_id"
-    local response
-    if response=$(api_request "$instance_name" "sites/$site_id/security-scan" "POST"); then
-        print_success "Security scan initiated"
-        echo "$response" | jq '.'
-    else
-        print_error "Failed to run security scan"
-        echo "$response"
-    fi
-    return 0
-}
-
-    return 0
-# Get security scan results
-get_security_scan_results() {
-    local instance_name="$command"
-    return 0
-    local site_id="$account_name"
-
-    if [[ -z "$site_id" ]]; then
-        print_error "$ERROR_SITE_ID_REQUIRED"
-        exit 1
-    fi
-
-    print_info "Getting security scan results for site ID: $site_id"
-    local response
-    if response=$(api_request "$instance_name" "sites/$site_id/security-results"); then
-        echo "$response" | jq '.'
-    else
-        print_error "Failed to get security scan results"
-        echo "$response"
-    fi
-    return 0
-}
-
-    return 0
 # Sync site data
-    return 0
 sync_site() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
 
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
@@ -470,20 +397,73 @@ sync_site() {
     fi
 
     print_info "Syncing site data for site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
     local response
-    if response=$(api_request "$instance_name" "sites/$site_id/sync" "POST"); then
+    if response=$(api_request "$instance_name" "site/site-sync-data" "POST" "$data"); then
         print_success "Site sync initiated"
         echo "$response" | jq '.'
+        return 0
     else
         print_error "Failed to sync site"
         echo "$response"
+        return 1
     fi
-    return 0
+}
+
+# Reconnect a disconnected site
+reconnect_site() {
+    local instance_name="$1"
+    local site_id="$2"
+
+    if [[ -z "$site_id" ]]; then
+        print_error "$ERROR_SITE_ID_REQUIRED"
+        exit 1
+    fi
+
+    print_info "Reconnecting site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
+    local response
+    if response=$(api_request "$instance_name" "site/site-reconnect" "POST" "$data"); then
+        print_success "Site reconnection initiated"
+        echo "$response" | jq '.'
+        return 0
+    else
+        print_error "Failed to reconnect site"
+        echo "$response"
+        return 1
+    fi
+}
+
+# Disconnect a site
+disconnect_site() {
+    local instance_name="$1"
+    local site_id="$2"
+
+    if [[ -z "$site_id" ]]; then
+        print_error "$ERROR_SITE_ID_REQUIRED"
+        exit 1
+    fi
+
+    print_warning "Disconnecting site ID: $site_id"
+    local data
+    data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
+    local response
+    if response=$(api_request "$instance_name" "site/site-disconnect" "DELETE" "$data"); then
+        print_success "Site disconnected"
+        echo "$response" | jq '.'
+        return 0
+    else
+        print_error "Failed to disconnect site"
+        echo "$response"
+        return 1
+    fi
 }
 
 # Bulk operations on multiple sites
 bulk_update_wordpress() {
-    local instance_name="$command"
+    local instance_name="$1"
     shift
     local site_ids=("$@")
 
@@ -504,14 +484,13 @@ bulk_update_wordpress() {
 
 # Bulk plugin updates
 bulk_update_plugins() {
-    local instance_name="$command"
+    local instance_name="$1"
     shift
     local site_ids=("$@")
 
     if [[ ${#site_ids[@]} -eq 0 ]]; then
         print_error "$ERROR_AT_LEAST_ONE_SITE_ID"
         exit 1
-    return 0
     fi
 
     print_info "Performing bulk plugin updates on ${#site_ids[@]} sites"
@@ -526,36 +505,41 @@ bulk_update_plugins() {
 
 # Monitor all sites
 monitor_all_sites() {
-    local instance_name="$command"
+    local instance_name="$1"
 
     print_info "Monitoring all sites for MainWP instance: $instance_name"
     echo ""
 
     print_info "=== SITE STATUS OVERVIEW ==="
-    return 0
     local sites_response
-    if sites_response=$(api_request "$instance_name" "sites"); then
-        echo "$sites_response" | jq -r '.[] | "\(.id): \(.name) - \(.url) (Status: \(.status), WP: \(.wp_version))"'
+    if sites_response=$(api_request "$instance_name" "sites/all-sites"); then
+        echo "$sites_response" | jq -r '.[] | "\(.id): \(.name) - \(.url) (Status: \(.status // "unknown"))"'
     else
         print_error "Failed to retrieve sites overview"
         return 1
     fi
 
-    return 0
     echo ""
     print_info "=== SITES NEEDING UPDATES ==="
 
     # Check each site for available updates
     echo "$sites_response" | jq -r '.[].id' | while read -r site_id; do
+        local data
+        data=$(jq -n --argjson site_id "$site_id" '{site_id: $site_id}')
         local site_status
-        site_status=$(api_request "$instance_name" "sites/$site_id/status")
-        local updates_available
-        updates_available=$(echo "$site_status" | jq -r '.updates_available // 0')
+        site_status=$(api_request "$instance_name" "site/site-sync-data" "POST" "$data")
+        local wp_updates
+        wp_updates=$(echo "$site_status" | jq -r '.wp_upgrades // 0')
+        local plugin_updates
+        plugin_updates=$(echo "$site_status" | jq -r '.plugin_upgrades | length // 0')
+        local theme_updates
+        theme_updates=$(echo "$site_status" | jq -r '.theme_upgrades | length // 0')
 
-        if [[ "$updates_available" -gt 0 ]]; then
+        local total_updates=$((wp_updates + plugin_updates + theme_updates))
+        if [[ "$total_updates" -gt 0 ]]; then
             local site_name
             site_name=$(echo "$sites_response" | jq -r ".[] | select(.id == $site_id) | .name")
-            echo "Site ID $site_id ($site_name): $updates_available updates available"
+            echo "Site ID $site_id ($site_name): WP: $wp_updates, Plugins: $plugin_updates, Themes: $theme_updates"
         fi
     done
     return 0
@@ -563,10 +547,9 @@ monitor_all_sites() {
 
 # Audit site security
 audit_site_security() {
-    local instance_name="$command"
-    local site_id="$account_name"
+    local instance_name="$1"
+    local site_id="$2"
 
-    return 0
     if [[ -z "$site_id" ]]; then
         print_error "$ERROR_SITE_ID_REQUIRED"
         exit 1
@@ -577,10 +560,6 @@ audit_site_security() {
 
     print_info "=== SITE DETAILS ==="
     get_site_details "$instance_name" "$site_id"
-    echo ""
-
-    print_info "=== SECURITY SCAN RESULTS ==="
-    get_security_scan_results "$instance_name" "$site_id"
     echo ""
 
     print_info "=== PLUGIN STATUS ==="
@@ -594,129 +573,115 @@ audit_site_security() {
 
 # Show help
 show_help() {
-    echo "MainWP WordPress Management Helper Script"
-    echo "Usage: $0 [command] [instance] [options]"
-    echo ""
-    echo "Commands:"
-    echo "  instances                                   - List all configured MainWP instances"
-    echo "  sites [instance]                            - List all managed sites"
-    echo "  site-details [instance] [site_id]          - Get site details"
-    echo "  site-status [instance] [site_id]           - Get site status"
-    echo "  plugins [instance] [site_id]               - List site plugins"
-    echo "  themes [instance] [site_id]                - List site themes"
-    echo "  update-core [instance] [site_id]           - Update WordPress core"
-    echo "  update-plugins [instance] [site_id]        - Update all plugins"
-    echo "  update-plugin [instance] [site_id] [slug]  - Update specific plugin"
-    echo "  backup [instance] [site_id] [type]         - Create backup (full/db/files)"
-    echo "  backups [instance] [site_id]               - List backups"
-    echo "  uptime [instance] [site_id]                - Get uptime status"
-    echo "  security-scan [instance] [site_id]         - Run security scan"
-    echo "  security-results [instance] [site_id]      - Get security scan results"
-    echo "  sync [instance] [site_id]                  - Sync site data"
-    echo "  bulk-update-wp [instance] [site_id1] [site_id2...] - Bulk WordPress updates"
-    echo "  bulk-update-plugins [instance] [site_id1] [site_id2...] - Bulk plugin updates"
-    echo "  monitor [instance]                         - Monitor all sites"
-    echo "  audit-security [instance] [site_id]       - Comprehensive security audit"
-    echo "  help                 - $HELP_SHOW_MESSAGE"
-    echo ""
-    echo "Examples:"
-    echo "  $0 instances"
-    echo "  $0 sites production"
-    echo "  $0 site-details production 123"
-    echo "  $0 update-core production 123"
-    echo "  $0 backup production 123 full"
-    echo "  $0 monitor production"
-    echo "  $0 bulk-update-wp production 123 124 125"
+    cat << 'EOF'
+MainWP WordPress Management Helper Script
+
+Usage: mainwp-helper.sh [command] [instance] [options]
+
+Commands:
+  instances                                   - List all configured MainWP instances
+  sites [instance]                            - List all managed sites
+  site-details [instance] [site_id]           - Get site details
+  site-status [instance] [site_id]            - Get site sync status
+  plugins [instance] [site_id]                - List site plugins
+  themes [instance] [site_id]                 - List site themes
+  update-core [instance] [site_id]            - Update WordPress core
+  update-plugins [instance] [site_id]         - Update all plugins
+  update-plugin [instance] [site_id] [slug]   - Update specific plugin
+  update-themes [instance] [site_id]          - Update all themes
+  sync [instance] [site_id]                   - Sync site data
+  reconnect [instance] [site_id]              - Reconnect a disconnected site
+  disconnect [instance] [site_id]             - Disconnect a site
+  bulk-update-wp [instance] [site_ids...]     - Bulk WordPress updates
+  bulk-update-plugins [instance] [site_ids...] - Bulk plugin updates
+  monitor [instance]                          - Monitor all sites
+  audit-security [instance] [site_id]         - Comprehensive security audit
+  help                                        - Show this help
+
+Examples:
+  mainwp-helper.sh instances
+  mainwp-helper.sh sites production
+  mainwp-helper.sh site-details production 123
+  mainwp-helper.sh update-core production 123
+  mainwp-helper.sh update-plugins production 123
+  mainwp-helper.sh monitor production
+  mainwp-helper.sh bulk-update-wp production 123 124 125
+
+Configuration:
+  Config file: ~/.aidevops/agents/configs/mainwp-config.json
+  Template: ~/.aidevops/agents/configs/mainwp-config.json.txt
+
+API Authentication:
+  MainWP REST API v1 uses query parameter authentication.
+  Configure consumer_key and consumer_secret in the config file.
+EOF
     return 0
 }
 
 # Main script logic
 main() {
-    # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    # Assign positional parameters to local variables
-    local instance_name="$account_name"
-    local site_id="$target"
-    local plugin_name="$options"
-    local backup_name="$param6"
+    local instance_name="${2:-}"
+    local site_id="${3:-}"
+    local extra_arg="${4:-}"
 
     check_dependencies
 
     case "$command" in
-        "instances")
+        instances)
             list_instances
             ;;
-        "sites")
+        sites)
             list_sites "$instance_name"
             ;;
-        "site-details")
+        site-details)
             get_site_details "$instance_name" "$site_id"
             ;;
-        "site-status")
+        site-status)
             get_site_status "$instance_name" "$site_id"
             ;;
-        "plugins")
+        plugins)
             list_site_plugins "$instance_name" "$site_id"
             ;;
-        "themes")
+        themes)
             list_site_themes "$instance_name" "$site_id"
             ;;
-        "update-core")
+        update-core)
             update_wordpress_core "$instance_name" "$site_id"
             ;;
-        "update-plugins")
+        update-plugins)
             update_site_plugins "$instance_name" "$site_id"
             ;;
-        "update-plugin")
-            update_specific_plugin "$instance_name" "$site_id" "$plugin_name"
+        update-plugin)
+            update_specific_plugin "$instance_name" "$site_id" "$extra_arg"
             ;;
-        "backup")
-            create_backup "$instance_name" "$site_id" "$backup_name"
+        update-themes)
+            update_site_themes "$instance_name" "$site_id"
             ;;
-        "backups")
-            list_backups "$instance_name" "$site_id"
-            ;;
-        "uptime")
-            get_uptime_status "$instance_name" "$site_id"
-            ;;
-        "security-scan")
-            run_security_scan "$instance_name" "$site_id"
-            ;;
-        "security-results")
-            get_security_scan_results "$instance_name" "$site_id"
-            ;;
-        "sync")
+        sync)
             sync_site "$instance_name" "$site_id"
             ;;
-        "bulk-update-wp")
+        reconnect)
+            reconnect_site "$instance_name" "$site_id"
+            ;;
+        disconnect)
+            disconnect_site "$instance_name" "$site_id"
+            ;;
+        bulk-update-wp)
             shift 2
             bulk_update_wordpress "$instance_name" "$@"
             ;;
-        "bulk-update-plugins")
+        bulk-update-plugins)
             shift 2
             bulk_update_plugins "$instance_name" "$@"
             ;;
-        "monitor")
-            monitor_all_sites "$param2"
+        monitor)
+            monitor_all_sites "$instance_name"
             ;;
-        "audit-security")
-            audit_site_security "$param2" "$param3"
+        audit-security)
+            audit_site_security "$instance_name" "$site_id"
             ;;
-        "help"|*)
+        help|*)
             show_help
             ;;
     esac
@@ -724,5 +689,3 @@ main() {
 }
 
 main "$@"
-
-return 0
