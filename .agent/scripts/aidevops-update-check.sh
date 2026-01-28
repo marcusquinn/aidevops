@@ -15,11 +15,12 @@ VERSION_FILE_LEGACY="$HOME/.aidevops/VERSION"
 VERSION_FILE_DEV="$HOME/Git/aidevops/VERSION"
 
 get_version() {
-    if [[ -f "$VERSION_FILE_AGENTS" ]]; then
+    # Use -r to check readability, not just existence (avoids cat failure under set -e)
+    if [[ -r "$VERSION_FILE_AGENTS" ]]; then
         cat "$VERSION_FILE_AGENTS"
-    elif [[ -f "$VERSION_FILE_LEGACY" ]]; then
+    elif [[ -r "$VERSION_FILE_LEGACY" ]]; then
         cat "$VERSION_FILE_LEGACY"
-    elif [[ -f "$VERSION_FILE_DEV" ]]; then
+    elif [[ -r "$VERSION_FILE_DEV" ]]; then
         cat "$VERSION_FILE_DEV"
     else
         echo "unknown"

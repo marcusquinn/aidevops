@@ -13,15 +13,16 @@ set -euo pipefail
 
 get_aidevops_version() {
     # Check in order: deployed agents, legacy location, dev repo
+    # Use -r to check readability, not just existence (avoids cat failure under set -e)
     local version_file_agents="$HOME/.aidevops/agents/VERSION"
     local version_file_legacy="$HOME/.aidevops/VERSION"
     local version_file_dev="$HOME/Git/aidevops/VERSION"
     
-    if [[ -f "$version_file_agents" ]]; then
+    if [[ -r "$version_file_agents" ]]; then
         cat "$version_file_agents"
-    elif [[ -f "$version_file_legacy" ]]; then
+    elif [[ -r "$version_file_legacy" ]]; then
         cat "$version_file_legacy"
-    elif [[ -f "$version_file_dev" ]]; then
+    elif [[ -r "$version_file_dev" ]]; then
         cat "$version_file_dev"
     else
         echo "unknown"
@@ -167,6 +168,13 @@ check_gh_auth() {
 
 search_issues() {
     local query="$1"
+    
+    # Verify gh CLI is available and authenticated before searching
+    if ! check_gh_auth >/dev/null 2>&1; then
+        check_gh_auth  # Run again to show error message
+        return 1
+    fi
+    
     gh issue list -R marcusquinn/aidevops \
         --state all \
         --search "$query" \
