@@ -12,13 +12,17 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 
 get_aidevops_version() {
-    local version_file="$HOME/.aidevops/VERSION"
-    local fallback="$HOME/Git/aidevops/VERSION"
+    # Check in order: deployed agents, legacy location, dev repo
+    local version_file_agents="$HOME/.aidevops/agents/VERSION"
+    local version_file_legacy="$HOME/.aidevops/VERSION"
+    local version_file_dev="$HOME/Git/aidevops/VERSION"
     
-    if [[ -f "$version_file" ]]; then
-        cat "$version_file"
-    elif [[ -f "$fallback" ]]; then
-        cat "$fallback"
+    if [[ -f "$version_file_agents" ]]; then
+        cat "$version_file_agents"
+    elif [[ -f "$version_file_legacy" ]]; then
+        cat "$version_file_legacy"
+    elif [[ -f "$version_file_dev" ]]; then
+        cat "$version_file_dev"
     else
         echo "unknown"
     fi
@@ -85,9 +89,15 @@ get_install_method() {
 }
 
 get_git_context() {
-    local repo branch
-    repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "none")
-    branch=$(git branch --show-current 2>/dev/null || echo "none")
+    local repo branch toplevel
+    toplevel=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [[ -n "$toplevel" ]]; then
+        repo=$(basename "$toplevel")
+        branch=$(git branch --show-current 2>/dev/null || echo "detached")
+    else
+        repo="none"
+        branch="n/a"
+    fi
     echo "$repo ($branch)"
 }
 
@@ -105,11 +115,10 @@ gather_diagnostics() {
     if [[ "$(uname)" == "Darwin" ]]; then
         os_info="macOS $(sw_vers -productVersion 2>/dev/null || echo 'unknown')"
     elif [[ "$(uname)" == "Linux" ]]; then
-        if [[ -f /etc/os-release ]]; then
-            os_info=$(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2)
-        else
-            os_info="Linux $(uname -r)"
-        fi
+        # Use || true to prevent pipefail from exiting on missing PRETTY_NAME
+        os_info=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || true)
+        # Fallback if PRETTY_NAME not found or empty
+        : "${os_info:=Linux $(uname -r)}"
     else
         os_info="$(uname -s) $(uname -r)"
     fi

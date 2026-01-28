@@ -6,16 +6,21 @@
 
 set -euo pipefail
 
-# VERSION file location - check deployed agents directory first (works for all install methods)
-# Fallback to source repo for developers working in ~/Git/aidevops
-VERSION_FILE="$HOME/.aidevops/VERSION"
-VERSION_FILE_FALLBACK="$HOME/Git/aidevops/VERSION"
+# VERSION file locations - check in order of preference:
+# 1. Deployed agents directory (setup.sh copies here)
+# 2. Legacy location (some older installs)
+# 3. Source repo for developers
+VERSION_FILE_AGENTS="$HOME/.aidevops/agents/VERSION"
+VERSION_FILE_LEGACY="$HOME/.aidevops/VERSION"
+VERSION_FILE_DEV="$HOME/Git/aidevops/VERSION"
 
 get_version() {
-    if [[ -f "$VERSION_FILE" ]]; then
-        cat "$VERSION_FILE"
-    elif [[ -f "$VERSION_FILE_FALLBACK" ]]; then
-        cat "$VERSION_FILE_FALLBACK"
+    if [[ -f "$VERSION_FILE_AGENTS" ]]; then
+        cat "$VERSION_FILE_AGENTS"
+    elif [[ -f "$VERSION_FILE_LEGACY" ]]; then
+        cat "$VERSION_FILE_LEGACY"
+    elif [[ -f "$VERSION_FILE_DEV" ]]; then
+        cat "$VERSION_FILE_DEV"
     else
         echo "unknown"
     fi

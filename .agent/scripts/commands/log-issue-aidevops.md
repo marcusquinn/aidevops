@@ -41,7 +41,7 @@ This collects:
 - AI assistant being used
 - OS and shell info
 - Current repo context
-- Recent error logs (if any)
+- GitHub CLI version
 
 ### Step 2: Understand the Issue
 
