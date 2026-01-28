@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.92.1] - 2026-01-28
+
+### Fixed
+
+- correct MainWP REST API endpoints and auth method (#247)
+
 ## [2.90.8] - 2026-01-27
 
 ### Changed
