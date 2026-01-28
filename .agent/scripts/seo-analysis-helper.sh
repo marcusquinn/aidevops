@@ -35,6 +35,14 @@ readonly STRIKING_DISTANCE_MIN_VOLUME=500
 readonly LOW_CTR_THRESHOLD=0.02  # 2% CTR considered low
 readonly LOW_CTR_MIN_IMPRESSIONS=500
 
+# Scoring constants
+readonly SCORE_IMPRESSION_DIVISOR=100       # Normalize impressions in score calculation
+readonly SCORE_POSITION_WEIGHT=5            # Weight for position proximity to page 1
+readonly SCORE_POSITION_OFFSET=21           # Offset for position scoring (21 - position)
+readonly SCORE_STRIKING_OFFSET=31           # Offset for striking distance scoring
+readonly VOLUME_ESTIMATION_DIVISOR=10       # Estimate volume from impressions when unavailable
+readonly TARGET_CTR_IMPROVEMENT=0.05        # Target CTR (5%) for potential clicks calculation
+
 # Colors
 readonly RED="${COLOR_RED:-\033[0;31m}"
 readonly GREEN="${COLOR_GREEN:-\033[0;32m}"
@@ -115,9 +123,12 @@ analyze_quick_wins() {
             -v min_pos="$QUICK_WIN_MIN_POSITION" \
             -v max_pos="$QUICK_WIN_MAX_POSITION" \
             -v min_imp="$QUICK_WIN_MIN_IMPRESSIONS" \
+            -v imp_div="$SCORE_IMPRESSION_DIVISOR" \
+            -v pos_weight="$SCORE_POSITION_WEIGHT" \
+            -v pos_offset="$SCORE_POSITION_OFFSET" \
             'NF>=6 && $6>=min_pos && $6<=max_pos && $4>=min_imp {
                 # Calculate opportunity score: higher impressions + closer to page 1 = better
-                score = ($4 / 100) + ((21 - $6) * 5)
+                score = ($4 / imp_div) + ((pos_offset - $6) * pos_weight)
                 print $1 "\t" $2 "\t" $4 "\t" $6 "\t" score "\t" src
             }' >> "$temp_file"
     done
@@ -174,11 +185,13 @@ analyze_striking_distance() {
             -v min_pos="$STRIKING_DISTANCE_MIN_POSITION" \
             -v max_pos="$STRIKING_DISTANCE_MAX_POSITION" \
             -v min_vol="$STRIKING_DISTANCE_MIN_VOLUME" \
+            -v vol_div="$VOLUME_ESTIMATION_DIVISOR" \
+            -v strike_offset="$SCORE_STRIKING_OFFSET" \
             'NF>=6 && $6>=min_pos && $6<=max_pos {
-                volume = (NF>=7 && $7>0) ? $7 : ($4 / 10)
+                volume = (NF>=7 && $7>0) ? $7 : ($4 / vol_div)
                 if (volume >= min_vol) {
                     # Score: volume * position proximity to page 1
-                    score = volume * (31 - $6)
+                    score = volume * (strike_offset - $6)
                     print $1 "\t" $2 "\t" volume "\t" $6 "\t" score "\t" src
                 }
             }' >> "$temp_file"
@@ -233,9 +246,10 @@ analyze_low_ctr() {
         parse_toon_data "$toon_file" | awk -F'\t' -v src="$source" \
             -v max_ctr="$LOW_CTR_THRESHOLD" \
             -v min_imp="$LOW_CTR_MIN_IMPRESSIONS" \
+            -v target_ctr="$TARGET_CTR_IMPROVEMENT" \
             'NF>=6 && $5<max_ctr && $4>=min_imp && $6<=10 {
-                # Potential clicks if CTR improved to 5%
-                potential = $4 * 0.05
+                # Potential clicks if CTR improved to target
+                potential = $4 * target_ctr
                 print $1 "\t" $2 "\t" $4 "\t" $5 "\t" $6 "\t" potential "\t" src
             }' >> "$temp_file"
     done

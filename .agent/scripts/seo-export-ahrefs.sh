@@ -27,6 +27,10 @@ readonly DEFAULT_DAYS=90
 readonly ROW_LIMIT=1000
 readonly AHREFS_API_BASE="https://api.ahrefs.com/v3"
 
+# Estimation constants
+# Ahrefs provides search volume but not impressions; estimate impressions as volume * multiplier
+readonly IMPRESSION_VOLUME_MULTIPLIER=10
+
 # Colors
 readonly RED="${COLOR_RED:-\033[0;31m}"
 readonly GREEN="${COLOR_GREEN:-\033[0;32m}"
@@ -116,13 +120,13 @@ query	page	clicks	impressions	ctr	position	volume	difficulty
 EOF
     
     # Data rows - Ahrefs provides: keyword, position, volume, traffic, url, difficulty, cpc
-    # Map to common format: query=keyword, page=url, clicks=traffic, impressions=volume*10 (estimate)
-    echo "$json" | jq -r '.keywords[]? | [
+    # Map to common format: query=keyword, page=url, clicks=traffic, impressions=volume*multiplier (estimate)
+    echo "$json" | jq -r --argjson mult "$IMPRESSION_VOLUME_MULTIPLIER" '.keywords[]? | [
         .keyword,
         .url,
         .traffic,
-        (.volume * 10),
-        (if .volume > 0 then (.traffic / (.volume * 10)) else 0 end),
+        (.volume * $mult),
+        (if .volume > 0 then (.traffic / (.volume * $mult)) else 0 end),
         .position,
         .volume,
         .difficulty

@@ -27,6 +27,10 @@ readonly DEFAULT_DAYS=90
 readonly ROW_LIMIT=1000
 readonly DFS_API_BASE="https://api.dataforseo.com/v3"
 
+# Estimation constants
+# DataForSEO provides search volume but not impressions; estimate impressions as volume * multiplier
+readonly IMPRESSION_VOLUME_MULTIPLIER=10
+
 # Colors
 readonly RED="${COLOR_RED:-\033[0;31m}"
 readonly GREEN="${COLOR_GREEN:-\033[0;32m}"
@@ -128,15 +132,15 @@ EOF
     
     # Data rows - DataForSEO ranked_keywords structure:
     # tasks[0].result[0].items[] contains: keyword_data, ranked_serp_element
-    echo "$json" | jq -r '
+    echo "$json" | jq -r --argjson mult "$IMPRESSION_VOLUME_MULTIPLIER" '
         .tasks[0].result[0].items[]? | 
         [
             .keyword_data.keyword,
             .ranked_serp_element.url,
             (.ranked_serp_element.etv // 0),
-            ((.keyword_data.keyword_info.search_volume // 0) * 10),
+            ((.keyword_data.keyword_info.search_volume // 0) * $mult),
             (if (.keyword_data.keyword_info.search_volume // 0) > 0 
-             then ((.ranked_serp_element.etv // 0) / ((.keyword_data.keyword_info.search_volume // 0) * 10)) 
+             then ((.ranked_serp_element.etv // 0) / ((.keyword_data.keyword_info.search_volume // 0) * $mult)) 
              else 0 end),
             .ranked_serp_element.rank_absolute,
             (.keyword_data.keyword_info.search_volume // 0),
