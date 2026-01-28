@@ -165,22 +165,30 @@ export_gsc() {
     
     print_info "Fetching GSC data for $domain ($start_date to $end_date)..."
     
+    # Check credentials first
+    local token
+    token=$(get_access_token) || return 1
+    
     # Make API request
     local response
-    response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date") || {
-        # Try https:// format if sc-domain fails
+    response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date")
+    
+    # If empty or error, try https:// format
+    if [[ -z "$response" ]] || echo "$response" | jq -e '.error' &>/dev/null; then
         print_warning "sc-domain format failed, trying https:// format..."
         site_url="https://$domain/"
-        response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date") || {
-            print_error "Failed to fetch GSC data"
-            return 1
-        }
-    }
+        response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date")
+    fi
+    
+    if [[ -z "$response" ]]; then
+        print_error "Failed to fetch GSC data"
+        return 1
+    fi
     
     # Check for errors in response
     if echo "$response" | jq -e '.error' &>/dev/null; then
         local error_msg
-        error_msg=$(echo "$response" | jq -r '.error.message // "Unknown error"')
+        error_msg=$(echo "$response" | jq -r 'if .error | type == "string" then .error else (.error.message // "Unknown error") end')
         print_error "GSC API error: $error_msg"
         return 1
     fi

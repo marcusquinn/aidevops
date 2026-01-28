@@ -153,17 +153,24 @@ export_ahrefs() {
     
     print_info "Fetching Ahrefs data for $domain (snapshot: $end_date)..."
     
+    # Check credentials first
+    local api_key
+    api_key=$(get_api_key) || return 1
+    
     # Make API request
     local response
-    response=$(ahrefs_organic_keywords "$domain" "$end_date" "$ROW_LIMIT" "$country") || {
+    response=$(ahrefs_organic_keywords "$domain" "$end_date" "$ROW_LIMIT" "$country")
+    
+    if [[ -z "$response" ]]; then
         print_error "Failed to fetch Ahrefs data"
         return 1
-    }
+    fi
     
     # Check for errors
     if echo "$response" | jq -e '.error' &>/dev/null; then
         local error_msg
-        error_msg=$(echo "$response" | jq -r '.error.message // .error // "Unknown error"')
+        # Handle both string and object error formats
+        error_msg=$(echo "$response" | jq -r 'if .error | type == "string" then .error else (.error.message // "Unknown error") end')
         print_error "Ahrefs API error: $error_msg"
         return 1
     fi

@@ -168,12 +168,18 @@ export_dataforseo() {
     
     print_info "Fetching DataForSEO data for $domain..."
     
+    # Check credentials first
+    local auth
+    auth=$(get_auth_header) || return 1
+    
     # Make API request
     local response
-    response=$(dfs_ranked_keywords "$domain" "$ROW_LIMIT" "$location" "$language") || {
+    response=$(dfs_ranked_keywords "$domain" "$ROW_LIMIT" "$location" "$language")
+    
+    if [[ -z "$response" ]]; then
         print_error "Failed to fetch DataForSEO data"
         return 1
-    }
+    fi
     
     # Check for errors
     local status_code

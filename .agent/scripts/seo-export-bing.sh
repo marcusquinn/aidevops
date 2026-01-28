@@ -146,12 +146,18 @@ export_bing() {
     
     print_info "Fetching Bing data for $domain ($start_date to $end_date)..."
     
+    # Check credentials first
+    local api_key
+    api_key=$(get_api_key) || return 1
+    
     # Get query stats
     local query_response
-    query_response=$(bing_query_stats "$site_url") || {
+    query_response=$(bing_query_stats "$site_url")
+    
+    if [[ -z "$query_response" ]]; then
         print_error "Failed to fetch Bing query stats"
         return 1
-    }
+    fi
     
     # Check for errors
     if echo "$query_response" | jq -e '.ErrorCode' &>/dev/null; then
