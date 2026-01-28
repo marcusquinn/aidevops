@@ -147,7 +147,7 @@ list_exports() {
             local modified
             modified=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$file" 2>/dev/null || stat -c "%y" "$file" 2>/dev/null | cut -d' ' -f1-2)
             echo "$filename  ($size)  $modified"
-            ((count++))
+            count=$((count + 1))
         fi
     done
     
@@ -201,9 +201,9 @@ export_all() {
         fi
         
         if export_platform "$platform" "$domain" "$days"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         else
-            ((fail_count++))
+            fail_count=$((fail_count + 1))
         fi
         echo ""
     done

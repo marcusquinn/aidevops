@@ -57,7 +57,8 @@ get_auth_header() {
         return 1
     fi
     
-    echo -n "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" | base64
+    # Use -w0 on GNU base64 to prevent line wrapping, fall back to no flag on macOS
+    echo -n "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" | base64 -w0 2>/dev/null || echo -n "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" | base64
     return 0
 }
 

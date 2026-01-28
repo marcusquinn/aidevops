@@ -80,8 +80,8 @@ find_latest_toon() {
     local domain_dir="$1"
     local source="$2"
     
-    # Find most recent file matching pattern
-    ls -t "$domain_dir"/${source}-*.toon 2>/dev/null | head -1
+    # Find most recent file matching pattern (use find to avoid set -e issues)
+    find "$domain_dir" -maxdepth 1 -name "${source}-*.toon" -print 2>/dev/null | sort -r | head -1
     return 0
 }
 
@@ -298,7 +298,11 @@ analyze_cannibalization() {
     # Find queries with multiple pages
     if [[ -s "$query_pages" ]]; then
         # Group by query, find those with multiple unique pages
+        # Use delimiter-wrapped matching to avoid substring false positives
         sort -t$'\t' -k1,1 "$query_pages" | awk -F'\t' '
+        BEGIN {
+            DELIM = "|"  # Delimiter for page list
+        }
         {
             query = $1
             page = $2
@@ -308,7 +312,9 @@ analyze_cannibalization() {
             
             if (query != prev_query && prev_query != "") {
                 if (page_count > 1) {
-                    # Output cannibalization
+                    # Output cannibalization (remove leading delimiter)
+                    gsub(/^\|/, "", pages)
+                    gsub(/^,/, "", positions)
                     print prev_query "\t" pages "\t" positions "\t" page_count
                 }
                 pages = ""
@@ -317,12 +323,13 @@ analyze_cannibalization() {
             }
             
             # Check if this page is already seen for this query
-            if (index(pages, page) == 0) {
+            # Use delimiter-wrapped matching to avoid substring false positives
+            if (index(pages, DELIM page DELIM) == 0 && index(pages, DELIM page) != length(pages) - length(page)) {
                 if (pages != "") {
-                    pages = pages "," page
+                    pages = pages DELIM page
                     positions = positions "," pos
                 } else {
-                    pages = page
+                    pages = DELIM page
                     positions = pos
                 }
                 page_count++
@@ -332,6 +339,8 @@ analyze_cannibalization() {
         }
         END {
             if (page_count > 1) {
+                gsub(/^\|/, "", pages)
+                gsub(/^,/, "", positions)
                 print prev_query "\t" pages "\t" positions "\t" page_count
             }
         }' > "$temp_file"
@@ -376,11 +385,11 @@ run_full_analysis() {
         return 1
     fi
     
-    # Check for TOON files
+    # Check for TOON files (use find to avoid set -e issues with ls glob)
     local toon_count
-    toon_count=$(ls "$domain_dir"/*.toon 2>/dev/null | grep -v "analysis-" | wc -l | tr -d ' ')
+    toon_count=$(find "$domain_dir" -maxdepth 1 -name "*.toon" ! -name "analysis-*" 2>/dev/null | wc -l | tr -d ' ')
     
-    if [[ "$toon_count" == "0" ]]; then
+    if [[ "$toon_count" == "0" ]] || [[ -z "$toon_count" ]]; then
         print_error "No export files found for $domain"
         return 1
     fi
