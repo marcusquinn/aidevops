@@ -296,15 +296,27 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --days)
-                days="${2:-$DEFAULT_DAYS}"
+                if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
+                    print_error "--days requires a numeric value"
+                    return 1
+                fi
+                days="$2"
                 shift 2
                 ;;
             --location)
-                location="${2:-2840}"
+                if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
+                    print_error "--location requires a value"
+                    return 1
+                fi
+                location="$2"
                 shift 2
                 ;;
             --language)
-                language="${2:-en}"
+                if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
+                    print_error "--language requires a value"
+                    return 1
+                fi
+                language="$2"
                 shift 2
                 ;;
             --help|-h)

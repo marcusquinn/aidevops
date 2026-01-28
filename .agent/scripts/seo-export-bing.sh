@@ -252,7 +252,11 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --days)
-                days="${2:-$DEFAULT_DAYS}"
+                if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
+                    print_error "--days requires a numeric value"
+                    return 1
+                fi
+                days="$2"
                 shift 2
                 ;;
             --help|-h)
