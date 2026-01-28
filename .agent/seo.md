@@ -14,6 +14,8 @@ subagents:
   - domain-research
   - pagespeed
   - google-analytics
+  - data-export
+  - ranking-opportunities
   - general
   - explore
 ---
@@ -27,7 +29,7 @@ subagents:
 - **Purpose**: SEO optimization and analysis
 - **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
 - **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7 for comprehensive SEO data and library docs
-- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`
+- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`
 
 **Subagents** (`seo/` and `services/analytics/`):
 
@@ -41,6 +43,8 @@ subagents:
 | `site-crawler.md` | SEO site auditing (Screaming Frog-like capabilities) |
 | `eeat-score.md` | E-E-A-T content quality scoring and analysis |
 | `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
+| `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
+| `ranking-opportunities.md` | Analyze data for quick wins, striking distance, cannibalization |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
@@ -51,6 +55,7 @@ subagents:
 - SERP analysis (DataForSEO, Serper)
 - Backlink analysis (Ahrefs, DataForSEO)
 - Page speed optimization (PageSpeed)
+- **Data export and analysis** (`/seo-opportunities`)
 
 **Commands**:
 
@@ -69,6 +74,9 @@ subagents:
 
 # Keyword gap analysis
 /keyword-research-extended --gap mysite.com,competitor.com
+
+# Export and analyze ranking data
+/seo-opportunities example.com --days 90
 ```
 
 **API Access** (via curl in subagents, no MCP needed):
@@ -201,6 +209,31 @@ Use `seo/gsc-sitemaps.md` for automated sitemap submissions:
 ```
 
 Uses Playwright browser automation with persistent Chrome profile. First-time setup requires `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login` to authenticate.
+
+### Data Export & Opportunity Analysis
+
+Export ranking data from multiple platforms and analyze for opportunities:
+
+```bash
+# Export from all platforms (GSC, Bing, Ahrefs, DataForSEO)
+/seo-export all example.com --days 90
+
+# Run full analysis
+/seo-analyze example.com
+
+# Or combine both in one step
+/seo-opportunities example.com --days 90
+```
+
+**Analysis types**:
+- **Quick Wins**: Position 4-20, high impressions (easy improvements)
+- **Striking Distance**: Position 11-30, high volume (page 2 to page 1)
+- **Low CTR**: High impressions, low clicks (title/meta optimization)
+- **Cannibalization**: Same query ranking with multiple URLs
+
+Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`
+
+See `seo/data-export.md` and `seo/ranking-opportunities.md` for details.
 
 ### Content Optimization
 
