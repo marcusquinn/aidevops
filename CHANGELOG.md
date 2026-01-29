@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - improve full-loop workflow reliability (#254)
+
 ## [2.92.4] - 2026-01-29
 
 ### Added
