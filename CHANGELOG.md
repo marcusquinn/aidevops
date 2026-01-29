@@ -7,14 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.92.5] - 2026-01-29
+
+### Changed
+
+- Documentation: add changelog entry for full-loop workflow fixes
+
 ### Fixed
 
 - improve full-loop workflow reliability (#254)
-  - Fix version-manager.sh to detect repo root using git rev-parse
-  - Auto-pull when local is behind remote before release
-  - Handle 'local ahead' case without suggesting destructive reset
-  - Document worktree cleanup after PR merge
-
 ## [2.92.4] - 2026-01-29
 
 ### Added
