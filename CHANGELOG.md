@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.92.3] - 2026-01-29
+
+### Fixed
+
+- make version scripts cross-platform and add validation (#250)
 ## [2.92.1] - 2026-01-28
 
 ### Fixed
