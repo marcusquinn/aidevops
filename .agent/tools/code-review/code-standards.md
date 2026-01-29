@@ -261,6 +261,98 @@ bash /tmp/install.sh
 | Security Issues | 0 |
 | Error Prone | 0 |
 
+## Markdown Standards
+
+All markdown files must pass markdownlint with zero violations.
+
+### MD022 - Headings Surrounded by Blank Lines
+
+Headings MUST have blank lines before AND after them.
+
+```markdown
+<!-- CORRECT - Blank lines around headings -->
+Some content here.
+
+### Heading Title
+
+Content after heading.
+
+<!-- INCORRECT - Missing blank line after heading -->
+Some content here.
+
+### Heading Title
+Content after heading.  <!-- This causes MD022 violation -->
+```
+
+### MD025 - Single Top-Level Heading
+
+Each document should have only ONE H1 (`#`) heading.
+
+```markdown
+<!-- CORRECT - Single H1 -->
+# Document Title
+
+## Section One
+
+## Section Two
+
+<!-- INCORRECT - Multiple H1s -->
+# First Title
+
+# Second Title  <!-- This causes MD025 violation -->
+```
+
+### MD012 - No Multiple Blank Lines
+
+Use only single blank lines between elements.
+
+```markdown
+<!-- CORRECT - Single blank lines -->
+Paragraph one.
+
+Paragraph two.
+
+<!-- INCORRECT - Multiple blank lines -->
+Paragraph one.
+
+
+Paragraph two.  <!-- This causes MD012 violation -->
+```
+
+### MD031 - Fenced Code Blocks Surrounded by Blank Lines
+
+Code blocks MUST have blank lines before AND after them.
+
+````markdown
+<!-- CORRECT - Blank lines around code blocks -->
+Some text.
+
+```bash
+echo "hello"
+```
+
+More text.
+
+<!-- INCORRECT - Missing blank line -->
+Some text.
+```bash
+echo "hello"
+```
+````
+
+**Validation**:
+
+```bash
+# Lint all markdown files
+npx markdownlint-cli2 "**/*.md" --ignore node_modules
+
+# Lint specific file
+npx markdownlint-cli2 "path/to/file.md"
+
+# Auto-fix issues
+npx markdownlint-cli2 "**/*.md" --fix
+```
+
 ## Pre-Commit Checklist
 
 Before committing, verify:
@@ -280,6 +372,9 @@ find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 # 5. Check for secrets
 ~/.aidevops/agents/scripts/secretlint-helper.sh scan
+
+# 6. Lint markdown files
+npx markdownlint-cli2 "**/*.md" --ignore node_modules
 ```
 
 ## Quality Scripts

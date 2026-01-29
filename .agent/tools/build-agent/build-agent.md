@@ -474,6 +474,13 @@ Before adding content to any agent file:
    - Facts cross-referenced?
    - Biases acknowledged?
 
+9. **Does the markdown pass linting?**
+   - Single H1 heading per file (MD025)
+   - Blank lines around headings (MD022)
+   - Blank lines around code blocks (MD031)
+   - No multiple consecutive blank lines (MD012)
+   - Run `npx markdownlint-cli2 "path/to/file.md"` to verify
+
 ### Progressive Disclosure Pattern
 
 Instead of putting everything in AGENTS.md:
