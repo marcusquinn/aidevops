@@ -58,8 +58,8 @@ check_toon() {
 
 # Convert JSON to TOON format
 json_to_toon() {
-    local input_file="$command"
-    local output_file="$account_name"
+    local input_file="$1"
+    local output_file="$2"
     local delimiter="${3:-,}"
     local show_stats="${4:-false}"
     
@@ -106,8 +106,8 @@ json_to_toon() {
 
 # Convert TOON to JSON format
 toon_to_json() {
-    local input_file="$command"
-    local output_file="$account_name"
+    local input_file="$1"
+    local output_file="$2"
     local strict_mode="${3:-true}"
     
     if [[ -z "$input_file" ]]; then
@@ -147,7 +147,7 @@ toon_to_json() {
 
 # Convert from stdin
 convert_stdin() {
-    local format="$command"
+    local format="$1"
     local delimiter="${2:-,}"
     local show_stats="${3:-false}"
     
@@ -188,9 +188,9 @@ convert_stdin() {
 
 # Batch convert directory
 batch_convert() {
-    local source_dir="$command"
-    local target_dir="$account_name"
-    local format="$target"
+    local source_dir="$1"
+    local target_dir="$2"
+    local format="$3"
     local delimiter="${4:-,}"
     
     if [[ -z "$source_dir" || -z "$target_dir" || -z "$format" ]]; then
@@ -249,7 +249,7 @@ batch_convert() {
 
 # Compare token efficiency
 compare_formats() {
-    local input_file="$command"
+    local input_file="$1"
 
     if [[ -z "$input_file" ]]; then
         print_error "Input file is required"
@@ -273,7 +273,7 @@ compare_formats() {
 
 # Validate TOON format
 validate_toon() {
-    local input_file="$command"
+    local input_file="$1"
 
     if [[ -z "$input_file" ]]; then
         print_error "Input file is required"
@@ -378,46 +378,35 @@ show_help() {
 
 # Main script logic
 main() {
-    # Assign positional parameters to local variables
     local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
+    local arg2="$2"
+    local arg3="$3"
+    local arg4="$4"
+    local arg5="$5"
 
     case "$command" in
         "encode"|"json-to-toon")
-            local input_file="$account_name"
-            local output_file="$target"
-            local delimiter="${4:-,}"
-            local show_stats="${5:-false}"
+            local input_file="$arg2"
+            local output_file="$arg3"
+            local delimiter="${arg4:-,}"
+            local show_stats="${arg5:-false}"
 
             if check_toon; then
                 json_to_toon "$input_file" "$output_file" "$delimiter" "$show_stats"
             fi
             ;;
         "decode"|"toon-to-json")
-            local input_file="$account_name"
-            local output_file="$target"
-            local strict_mode="${4:-true}"
+            local input_file="$arg2"
+            local output_file="$arg3"
+            local strict_mode="${arg4:-true}"
 
             if check_toon; then
                 toon_to_json "$input_file" "$output_file" "$strict_mode"
             fi
             ;;
         "stdin-encode")
-            local delimiter="${2:-,}"
-            local show_stats="${3:-false}"
+            local delimiter="${arg2:-,}"
+            local show_stats="${arg3:-false}"
 
             if check_toon; then
                 convert_stdin "encode" "$delimiter" "$show_stats"
@@ -429,24 +418,24 @@ main() {
             fi
             ;;
         "batch")
-            local source_dir="$account_name"
-            local target_dir="$target"
-            local format="$options"
-            local delimiter="${5:-,}"
+            local source_dir="$arg2"
+            local target_dir="$arg3"
+            local format="$arg4"
+            local delimiter="${arg5:-,}"
 
             if check_toon; then
                 batch_convert "$source_dir" "$target_dir" "$format" "$delimiter"
             fi
             ;;
         "compare")
-            local input_file="$account_name"
+            local input_file="$arg2"
 
             if check_toon; then
                 compare_formats "$input_file"
             fi
             ;;
         "validate")
-            local input_file="$account_name"
+            local input_file="$arg2"
 
             if check_toon; then
                 validate_toon "$input_file"
@@ -465,5 +454,3 @@ main() {
 
 # Execute main function with all arguments
 main "$@"
-
-return 0

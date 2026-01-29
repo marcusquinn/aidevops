@@ -34,6 +34,8 @@ tools:
 
 DSPyGround is a visual prompt optimization playground powered by the GEPA (Genetic-Pareto Evolutionary Algorithm) optimizer. It provides an intuitive web interface for iterative prompt optimization with real-time feedback and multi-dimensional metrics.
 
+**Note**: DSPyGround is an optional tool installed separately from the aidevops CLI. Install it when you need visual prompt optimization capabilities.
+
 ## 🚀 **Quick Start**
 
 ### **Prerequisites**

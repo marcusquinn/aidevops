@@ -2,6 +2,20 @@
 name: research
 description: Research and analysis - data gathering, competitive analysis, market research
 mode: subagent
+subagents:
+  # Context/docs
+  - context7
+  - augment-context-engine
+  - osgrep
+  # Web research
+  - crawl4ai
+  - serper
+  - outscraper
+  # Summarization
+  - summarize
+  # Built-in
+  - general
+  - explore
 ---
 
 # Research - Main Agent

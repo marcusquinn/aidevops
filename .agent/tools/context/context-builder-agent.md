@@ -7,8 +7,8 @@ tools:
   read: true
   write: true
   glob: true
-  repomix_*: true
   task: true
+note: Uses repomix CLI directly (not MCP) for better control and reliability
 ---
 
 # Context Builder Agent
@@ -17,18 +17,20 @@ Specialized agent for generating token-efficient context for AI coding assistant
 
 ## Purpose
 
-Generate optimized repository context using Repomix with Tree-sitter compression.
+Generate optimized repository context using Repomix CLI with Tree-sitter compression.
 Achieves ~80% token reduction while preserving code structure understanding.
 
 ## Reference Documentation
 
-Read `~/Git/aidevops/.agent/context-builder.md` for complete operational guidance.
+Read `tools/context/context-builder.md` for complete operational guidance.
 
 ## Available Commands
 
+**Helper Script** (preferred):
+
 ```bash
 # Helper script location
-~/Git/aidevops/.agent/scripts/context-builder-helper.sh
+~/.aidevops/agents/scripts/context-builder-helper.sh
 
 # Compress mode (recommended) - ~80% token reduction
 context-builder-helper.sh compress [path] [style]
@@ -49,18 +51,30 @@ context-builder-helper.sh remote user/repo [branch]
 context-builder-helper.sh compare [path]
 ```
 
-## Available MCP Tools (repomix_*)
+**Direct CLI** (when helper unavailable):
 
-When Repomix MCP is enabled:
-- `repomix_pack_repository` - Pack local or remote repository
-- `repomix_read_repomix_output` - Read generated context file
-- `repomix_file_system_tree` - Get directory structure
+```bash
+# Pack with compression (recommended)
+npx repomix@latest . --compress --output context.xml
+
+# Pack remote repository
+npx repomix@latest --remote user/repo --compress --output context.xml
+
+# Pack with patterns
+npx repomix@latest . --include "src/**/*.ts" --ignore "**/*.test.ts"
+
+# Token analysis
+npx repomix@latest . --token-count-tree 100
+
+# Output to stdout
+npx repomix@latest . --stdout | pbcopy
+```
 
 ## When to Use
 
 | Scenario | Command | Token Impact |
 |----------|---------|--------------|
-| Architecture review | `compress` | ~80% reduction |
+| Architecture review | `compress` or `--compress` | ~80% reduction |
 | Full implementation details | `pack` | Full tokens |
 | Quick file subset | `quick . "**/*.ts"` | Minimal |
 | External repo analysis | `remote user/repo` | Compressed |

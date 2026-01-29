@@ -3,7 +3,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 2.13.0
+# Version: 2.92.3
 
 set -euo pipefail
 
@@ -151,6 +151,48 @@ check_repo_needs_upgrade() {
         return 0  # needs upgrade
     fi
     return 1  # up to date
+}
+
+# Check if a planning file needs upgrading (version mismatch or missing TOON markers)
+# Usage: check_planning_file_version <file> <template>
+# Returns 0 if upgrade needed, 1 if up to date
+check_planning_file_version() {
+    local file="$1" template="$2"
+    if [[ -f "$file" ]]; then
+        if ! grep -q "TOON:meta" "$file" 2>/dev/null; then
+            return 0
+        fi
+        local current_ver template_ver
+        current_ver=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
+        template_ver=$(grep -A1 "TOON:meta" "$template" 2>/dev/null | tail -1 | cut -d',' -f1)
+        if [[ -n "$template_ver" ]] && [[ "$current_ver" != "$template_ver" ]]; then
+            return 0
+        fi
+        return 1
+    else
+        # No file = no upgrade needed (init would create it)
+        return 1
+    fi
+}
+
+# Check if a repo's planning templates need upgrading
+# Returns 0 if any planning file needs upgrade
+check_planning_needs_upgrade() {
+    local repo_path="$1"
+    local todo_file="$repo_path/TODO.md"
+    local plans_file="$repo_path/todo/PLANS.md"
+    local todo_template="$AGENTS_DIR/templates/todo-template.md"
+    local plans_template="$AGENTS_DIR/templates/plans-template.md"
+
+    [[ ! -f "$todo_template" ]] && return 1
+
+    if check_planning_file_version "$todo_file" "$todo_template"; then
+        return 0
+    fi
+    if [[ -f "$plans_template" ]] && check_planning_file_version "$plans_file" "$plans_template"; then
+        return 0
+    fi
+    return 1
 }
 
 # Detect if current directory has aidevops but isn't registered
@@ -453,7 +495,7 @@ cmd_status() {
         "$HOME/.cursor/rules:Cursor"
         "$HOME/.claude/commands:Claude Code"
         "$HOME/.continue:Continue.dev"
-        "$HOME/CLAUDE.md:Claude CLI memory"
+        "$HOME/CLAUDE.md:Claude Code memory"
         "$HOME/GEMINI.md:Gemini CLI memory"
         "$HOME/.cursorrules:Cursor rules"
     )
@@ -569,12 +611,59 @@ cmd_update() {
                         features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
                         register_repo "$repo" "$current_ver" "$features"
                         
-                        print_success "Updated $(basename "$repo")"
+                         print_success "Updated $(basename "$repo")"
                     else
                         print_warning "jq not installed - manual update needed for $repo"
                     fi
                 fi
             done
+        fi
+    fi
+    
+    # Check planning templates in registered repos
+    echo ""
+    print_header "Checking Planning Templates"
+    
+    local repos_needing_planning=()
+    while IFS= read -r repo_path; do
+        [[ -z "$repo_path" ]] && continue
+        [[ ! -d "$repo_path" ]] && continue
+        # Only check repos with planning enabled
+        if [[ -f "$repo_path/.aidevops.json" ]]; then
+            local has_planning
+            has_planning=$(grep -o '"planning": *true' "$repo_path/.aidevops.json" 2>/dev/null || true)
+            if [[ -n "$has_planning" ]] && check_planning_needs_upgrade "$repo_path"; then
+                repos_needing_planning+=("$repo_path")
+            fi
+        fi
+    done < <(get_registered_repos)
+    
+    if [[ ${#repos_needing_planning[@]} -eq 0 ]]; then
+        print_success "All planning templates are up to date"
+    else
+        echo ""
+        print_warning "${#repos_needing_planning[@]} project(s) have outdated planning templates:"
+        for repo in "${repos_needing_planning[@]}"; do
+            local repo_name
+            repo_name=$(basename "$repo")
+            local todo_ver
+            todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+            echo "  - $repo_name (v${todo_ver:-none})"
+        done
+        local template_ver
+        template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+        echo ""
+        echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"
+        echo ""
+        read -r -p "Upgrade planning templates in these projects? [y/N] " response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            for repo in "${repos_needing_planning[@]}"; do
+                print_info "Upgrading $(basename "$repo")..."
+                # Run upgrade-planning in the repo context
+                (cd "$repo" && cmd_upgrade_planning --force) || print_warning "Failed to upgrade $(basename "$repo")"
+            done
+        else
+            print_info "Run 'aidevops upgrade-planning' in each project to upgrade manually"
         fi
     fi
 }
@@ -1117,35 +1206,47 @@ cmd_upgrade_planning() {
     local plans_needs_upgrade=false
     
     # Check TODO.md
-    if [[ -f "$todo_file" ]]; then
-        # Check if it's using the minimal template (no TOON markers)
-        if ! grep -q "TOON:meta" "$todo_file" 2>/dev/null; then
-            todo_needs_upgrade=true
-            needs_upgrade=true
-            print_warning "TODO.md uses minimal template (missing TOON markers)"
+    if check_planning_file_version "$todo_file" "$todo_template"; then
+        if [[ -f "$todo_file" ]]; then
+            if ! grep -q "TOON:meta" "$todo_file" 2>/dev/null; then
+                print_warning "TODO.md uses minimal template (missing TOON markers)"
+            else
+                local current_ver template_ver
+                current_ver=$(grep -A1 "TOON:meta" "$todo_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+                template_ver=$(grep -A1 "TOON:meta" "$todo_template" 2>/dev/null | tail -1 | cut -d',' -f1)
+                print_warning "TODO.md format version $current_ver -> $template_ver (adds risk field, updated estimates)"
+            fi
         else
-            print_success "TODO.md already has TOON markers"
+            print_info "TODO.md not found - will create from template"
         fi
-    else
-        print_info "TODO.md not found - will create from template"
         todo_needs_upgrade=true
         needs_upgrade=true
+    else
+        local current_ver
+        current_ver=$(grep -A1 "TOON:meta" "$todo_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+        print_success "TODO.md already up to date (v${current_ver})"
     fi
     
     # Check PLANS.md
-    if [[ -f "$plans_file" ]]; then
-        # Check if it's using the minimal template (no TOON markers)
-        if ! grep -q "TOON:meta" "$plans_file" 2>/dev/null; then
-            plans_needs_upgrade=true
-            needs_upgrade=true
-            print_warning "todo/PLANS.md uses minimal template (missing TOON markers)"
+    if check_planning_file_version "$plans_file" "$plans_template"; then
+        if [[ -f "$plans_file" ]]; then
+            if ! grep -q "TOON:meta" "$plans_file" 2>/dev/null; then
+                print_warning "todo/PLANS.md uses minimal template (missing TOON markers)"
+            else
+                local current_plans_ver template_plans_ver
+                current_plans_ver=$(grep -A1 "TOON:meta" "$plans_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+                template_plans_ver=$(grep -A1 "TOON:meta" "$plans_template" 2>/dev/null | tail -1 | cut -d',' -f1)
+                print_warning "todo/PLANS.md format version $current_plans_ver -> $template_plans_ver"
+            fi
         else
-            print_success "todo/PLANS.md already has TOON markers"
+            print_info "todo/PLANS.md not found - will create from template"
         fi
-    else
-        print_info "todo/PLANS.md not found - will create from template"
         plans_needs_upgrade=true
         needs_upgrade=true
+    else
+        local current_plans_ver
+        current_plans_ver=$(grep -A1 "TOON:meta" "$plans_file" 2>/dev/null | tail -1 | cut -d',' -f1)
+        print_success "todo/PLANS.md already up to date (v${current_plans_ver})"
     fi
     
     if [[ "$needs_upgrade" == "false" ]]; then
@@ -1631,6 +1732,152 @@ cmd_detect() {
     return 0
 }
 
+# Skill command - manage agent skills
+cmd_skill() {
+    local action="${1:-help}"
+    shift || true
+
+    # Disable telemetry for any downstream tools (add-skill, skills CLI)
+    export DISABLE_TELEMETRY=1
+    export DO_NOT_TRACK=1
+    export SKILLS_NO_TELEMETRY=1
+
+    local add_skill_script="$AGENTS_DIR/scripts/add-skill-helper.sh"
+    local update_skill_script="$AGENTS_DIR/scripts/skill-update-helper.sh"
+
+    case "$action" in
+        add|a)
+            if [[ $# -lt 1 ]]; then
+                print_error "Source required (owner/repo or URL)"
+                echo ""
+                echo "Usage: aidevops skill add <source> [options]"
+                echo ""
+                echo "Examples:"
+                echo "  aidevops skill add vercel-labs/agent-skills"
+                echo "  aidevops skill add anthropics/skills/pdf"
+                echo "  aidevops skill add https://github.com/owner/repo"
+                echo ""
+                echo "Options:"
+                echo "  --name <name>   Override the skill name"
+                echo "  --force         Overwrite existing skill"
+                echo "  --dry-run       Preview without making changes"
+                echo ""
+                echo "Browse skills: https://skills.sh"
+                return 1
+            fi
+
+            if [[ ! -f "$add_skill_script" ]]; then
+                print_error "add-skill-helper.sh not found"
+                print_info "Run 'aidevops update' to get the latest scripts"
+                return 1
+            fi
+
+            bash "$add_skill_script" add "$@"
+            ;;
+        list|ls|l)
+            if [[ ! -f "$add_skill_script" ]]; then
+                print_error "add-skill-helper.sh not found"
+                return 1
+            fi
+            bash "$add_skill_script" list
+            ;;
+        check|c)
+            if [[ ! -f "$update_skill_script" ]]; then
+                print_error "skill-update-helper.sh not found"
+                return 1
+            fi
+            bash "$update_skill_script" check "$@"
+            ;;
+        update|u)
+            if [[ ! -f "$update_skill_script" ]]; then
+                print_error "skill-update-helper.sh not found"
+                return 1
+            fi
+            bash "$update_skill_script" update "$@"
+            ;;
+        remove|rm)
+            if [[ $# -lt 1 ]]; then
+                print_error "Skill name required"
+                echo "Usage: aidevops skill remove <name>"
+                return 1
+            fi
+            if [[ ! -f "$add_skill_script" ]]; then
+                print_error "add-skill-helper.sh not found"
+                return 1
+            fi
+            bash "$add_skill_script" remove "$@"
+            ;;
+        status|s)
+            if [[ ! -f "$update_skill_script" ]]; then
+                print_error "skill-update-helper.sh not found"
+                return 1
+            fi
+            bash "$update_skill_script" status "$@"
+            ;;
+        generate|gen|g)
+            local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
+            if [[ ! -f "$generate_script" ]]; then
+                print_error "generate-skills.sh not found"
+                print_info "Run 'aidevops update' to get the latest scripts"
+                return 1
+            fi
+            print_info "Generating SKILL.md stubs for cross-tool discovery..."
+            bash "$generate_script" "$@"
+            ;;
+        clean)
+            local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
+            if [[ ! -f "$generate_script" ]]; then
+                print_error "generate-skills.sh not found"
+                return 1
+            fi
+            bash "$generate_script" --clean "$@"
+            ;;
+        help|--help|-h)
+            print_header "Agent Skills Management"
+            echo ""
+            echo "Import and manage reusable AI agent skills from the community."
+            echo "Skills are converted to aidevops format with upstream tracking."
+            echo "Telemetry is disabled - no data sent to third parties."
+            echo ""
+            echo "Usage: aidevops skill <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
+            echo "  list             List all imported skills"
+            echo "  check            Check for upstream updates"
+            echo "  update [name]    Update specific or all skills"
+            echo "  remove <name>    Remove an imported skill"
+            echo "  status           Show detailed skill status"
+            echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
+            echo "  clean            Remove generated SKILL.md stubs"
+            echo ""
+            echo "Source formats:"
+            echo "  owner/repo                    GitHub shorthand"
+            echo "  owner/repo/path/to/skill      Specific skill in multi-skill repo"
+            echo "  https://github.com/owner/repo Full URL"
+            echo ""
+            echo "Examples:"
+            echo "  aidevops skill add vercel-labs/agent-skills"
+            echo "  aidevops skill add anthropics/skills/pdf"
+            echo "  aidevops skill add expo/skills --name expo-dev"
+            echo "  aidevops skill check"
+            echo "  aidevops skill update"
+            echo "  aidevops skill generate --dry-run"
+            echo ""
+            echo "Imported skills are saved with a -skill suffix to distinguish"
+            echo "from native aidevops subagents (e.g., playwright-skill.md vs playwright.md)."
+            echo ""
+            echo "Browse community skills: https://skills.sh"
+            echo "Agent Skills specification: https://agentskills.io"
+            ;;
+        *)
+            print_error "Unknown skill command: $action"
+            echo "Run 'aidevops skill help' for usage information."
+            return 1
+            ;;
+    esac
+}
+
 # Help command
 cmd_help() {
     local version
@@ -1644,6 +1891,7 @@ cmd_help() {
     echo "  init [features]    Initialize aidevops in current project"
     echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
     echo "  features           List available features for init"
+    echo "  skill <cmd>        Manage agent skills (add/list/check/update/remove)"
     echo "  status             Check installation status of all components"
     echo "  update             Update aidevops to the latest version (alias: upgrade)"
     echo "  upgrade            Alias for update"
@@ -1668,9 +1916,16 @@ cmd_help() {
     echo "  aidevops update-tools -u     # Update all outdated tools"
     echo "  aidevops uninstall           # Remove aidevops"
     echo ""
+    echo "Skills:"
+    echo "  aidevops skill add <source>  # Import a skill from GitHub"
+    echo "  aidevops skill list          # List imported skills"
+    echo "  aidevops skill check         # Check for upstream updates"
+    echo "  aidevops skill update [name] # Update skills to latest"
+    echo "  aidevops skill remove <name> # Remove an imported skill"
+    echo ""
     echo "Installation:"
-    echo "  npm install -g aidevops      # via npm"
-    echo "  brew install marcusquinn/tap/aidevops  # via Homebrew"
+    echo "  npm install -g aidevops && aidevops update      # via npm"
+    echo "  brew install marcusquinn/tap/aidevops && aidevops update  # via Homebrew"
     echo "  bash <(curl -fsSL https://aidevops.sh) # via curl"
     echo ""
     echo "Documentation: https://github.com/marcusquinn/aidevops"
@@ -1696,10 +1951,30 @@ main() {
     
     # Auto-detect unregistered repo on any command (silent check)
     local unregistered
-    unregistered=$(detect_unregistered_repo 2>/dev/null)
+    unregistered=$(detect_unregistered_repo 2>/dev/null) || true
     if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
         echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
         echo ""
+    fi
+    
+    # Check if agents need updating (skip for update command itself)
+    if [[ "$command" != "update" && "$command" != "upgrade" && "$command" != "u" ]]; then
+        local cli_version agents_version
+        cli_version=$(get_version)
+        if [[ -f "$AGENTS_DIR/VERSION" ]]; then
+            agents_version=$(cat "$AGENTS_DIR/VERSION")
+        else
+            agents_version="not installed"
+        fi
+        
+        if [[ "$agents_version" == "not installed" ]]; then
+            echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"
+            echo ""
+        elif [[ "$cli_version" != "$agents_version" ]]; then
+            echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"
+            echo -e "       Run: aidevops update"
+            echo ""
+        fi
     fi
     
     case "$command" in
@@ -1727,6 +2002,10 @@ main() {
         repos|projects)
             shift
             cmd_repos "$@"
+            ;;
+        skill|skills)
+            shift
+            cmd_skill "$@"
             ;;
         detect|scan)
             cmd_detect

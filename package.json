@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "2.53.3",
+  "version": "2.92.3",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "main": "index.js",
@@ -19,7 +19,7 @@
     "setup:bun": "bun install",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/npm-postinstall.js || true"
+    "postinstall": "node scripts/npm-postinstall.cjs || true"
   },
   "keywords": [
     "ai",
@@ -37,7 +37,6 @@
   "author": "Marcus Quinn <marcus@aidevops.sh>",
   "license": "MIT",
   "dependencies": {
-    "dspyground": "^0.2.0",
     "elysia": "^1.1.0"
   },
   "devDependencies": {
@@ -61,7 +60,7 @@
     "aidevops.sh",
     "setup.sh",
     "VERSION",
-    "scripts/npm-postinstall.js",
+    "scripts/npm-postinstall.cjs",
     "templates/"
   ],
   "repository": {

@@ -8,6 +8,45 @@ Start a full development loop that chains all phases from task implementation to
 
 Task/Prompt: $ARGUMENTS
 
+## Step 0: Resolve Task ID and Set Session Title
+
+**IMPORTANT**: Before proceeding, extract the first positional argument from `$ARGUMENTS` (ignoring flags like `--max-task-iterations`). Check if it matches the task ID pattern `t\d+` (e.g., `t061`).
+
+If the first argument is a task ID (e.g., `t061`):
+
+1. Extract the task ID and look up its description from TODO.md:
+
+   ```bash
+   # Extract first argument (the task ID)
+   TASK_ID=$(echo "$ARGUMENTS" | awk '{print $1}')
+   
+   # Look up description (matches open, completed, or declined tasks)
+   TASK_DESC=$(grep -E "^- \[( |x|-)\] $TASK_ID " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //')
+   ```
+
+2. Set the session title using the `session-rename` MCP tool:
+
+   ```text
+   # Call the session-rename tool with the title parameter
+   session-rename(title: "t061: Improve session title to include task description")
+   ```
+
+   - Good: `"t061: Improve session title to include task description"`
+   - Bad: `"Full loop development for t061"`
+
+3. **Fallback**: If `$TASK_DESC` is empty (task not found in TODO.md), use: `"t061: (task not found in TODO.md)"`
+
+4. Store the full task description for use in subsequent steps.
+
+If the first argument is NOT a task ID (it's a description):
+- Use the description directly for the session title
+- Call `session-rename` tool with a concise version if the description is very long (truncate to ~60 chars)
+
+**Example session titles:**
+- Task ID `t061` with description "Improve session title format" → `"t061: Improve session title format"`
+- Task ID `t999` not found → `"t999: (task not found in TODO.md)"`
+- Description "Add JWT authentication" → `"Add JWT authentication"`
+
 ## Full Loop Phases
 
 ```text
@@ -43,6 +82,11 @@ The loop automatically handles branch setup when on main/master:
 ```bash
 # Generate branch name from task (sanitized, truncated to 40 chars)
 branch_name=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-40)
+
+# Preferred: Use Worktrunk (wt) if installed
+wt switch -c "feature/$branch_name"
+
+# Fallback: Use worktree-helper.sh if wt not available
 ~/.aidevops/agents/scripts/worktree-helper.sh add "feature/$branch_name"
 # Continue in new worktree directory
 ```
@@ -57,6 +101,27 @@ git status --short
 
 ### Step 2: Start Full Loop
 
+**Recommended: Background mode** (avoids timeout issues):
+
+```bash
+~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background
+```
+
+This starts the loop in the background and returns immediately. Use these commands to monitor:
+
+```bash
+# Check status
+~/.aidevops/agents/scripts/full-loop-helper.sh status
+
+# View logs
+~/.aidevops/agents/scripts/full-loop-helper.sh logs
+
+# Cancel if needed
+~/.aidevops/agents/scripts/full-loop-helper.sh cancel
+```
+
+**Foreground mode** (may timeout in MCP tools):
+
 ```bash
 ~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"
 ```
@@ -65,6 +130,8 @@ This will:
 1. Initialize the Ralph loop for task development
 2. Set up state tracking in `.agent/loop-state/full-loop.local.md`
 3. Begin iterating on the task
+
+**Note**: Foreground mode may timeout when called via MCP Bash tool (default 120s timeout). Use `--background` for long-running tasks.
 
 ### Step 3: Task Development (Ralph Loop)
 
@@ -78,8 +145,15 @@ The AI will iterate on the task until outputting:
 - All requirements implemented
 - Tests passing (if applicable)
 - Code quality acceptable
-- README.md updated (if adding features/APIs)
+- README.md updated (if adding features/APIs) - use `/readme --sections` for targeted updates
 - Conventional commits used (for auto-changelog)
+
+**README check (aidevops repo only):**
+
+```bash
+# Check if README counts are stale after adding agents/scripts
+~/.aidevops/agents/scripts/readme-helper.sh check
+```
 
 ### Step 4: Automatic Phase Progression
 
@@ -135,6 +209,7 @@ Pass options after the prompt:
 
 | Option | Description |
 |--------|-------------|
+| `--background`, `--bg` | Run in background (recommended for long tasks) |
 | `--max-task-iterations N` | Max iterations for task (default: 50) |
 | `--max-preflight-iterations N` | Max iterations for preflight (default: 5) |
 | `--max-pr-iterations N` | Max iterations for PR review (default: 20) |
@@ -146,17 +221,23 @@ Pass options after the prompt:
 ## Examples
 
 ```bash
-# Basic feature implementation
+# Basic feature implementation (background mode recommended)
+/full-loop "Add user authentication with JWT tokens" --background
+
+# Foreground mode (may timeout for long tasks)
 /full-loop "Add user authentication with JWT tokens"
 
 # Bug fix with limited iterations
-/full-loop "Fix memory leak in connection pool" --max-task-iterations 20
+/full-loop "Fix memory leak in connection pool" --max-task-iterations 20 --background
 
 # Skip postflight for quick iteration
 /full-loop "Update documentation" --skip-postflight
 
 # Manual PR creation
-/full-loop "Refactor database layer" --no-auto-pr
+/full-loop "Refactor database layer" --no-auto-pr --background
+
+# View background loop progress
+~/.aidevops/agents/scripts/full-loop-helper.sh logs
 ```
 
 ## Documentation & Changelog

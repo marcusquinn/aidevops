@@ -10,6 +10,24 @@ tools:
   glob: true
   grep: true
   webfetch: true
+subagents:
+  # CRM
+  - fluentcrm
+  # Content
+  - guidelines
+  - summarize
+  # SEO
+  - keyword-research
+  - serper
+  - dataforseo
+  # Social
+  - bird
+  # Analytics
+  - google-search-console
+  - google-analytics
+  # Built-in
+  - general
+  - explore
 ---
 
 # Marketing - Main Agent
@@ -27,6 +45,7 @@ tools:
 - `seo.md` - Search optimization
 - `sales.md` - Sales alignment and lead handoff
 - `services/crm/fluentcrm.md` - CRM operations (detailed)
+- `services/analytics/google-analytics.md` - GA4 reporting and traffic analysis
 
 **FluentCRM MCP Tools**:
 
@@ -40,6 +59,14 @@ tools:
 | **Smart Links** | `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode` |
 | **Reports** | `fluentcrm_dashboard_stats` |
 
+**Google Analytics MCP Tools** (when `google-analytics` subagent loaded):
+
+| Category | Key Tools |
+|----------|-----------|
+| **Account Info** | `get_account_summaries`, `get_property_details`, `list_google_ads_links` |
+| **Reports** | `run_report`, `get_custom_dimensions_and_metrics` |
+| **Real-time** | `run_realtime_report` |
+
 **Typical Tasks**:
 
 - Email campaign creation and management
@@ -47,6 +74,7 @@ tools:
 - Audience segmentation
 - Lead nurturing sequences
 - Campaign performance analysis
+- Website traffic and conversion analytics (GA4)
 
 <!-- AI-CONTEXT-END -->
 

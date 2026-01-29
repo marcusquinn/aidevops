@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.53.3
+# Version: 2.92.3
 #
 # Quick Install (one-liner):
 #   bash <(curl -fsSL https://aidevops.dev/install)
@@ -27,6 +27,27 @@ print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Find best python3 binary (prefer Homebrew/pyenv over system)
+find_python3() {
+    local candidates=(
+        "/opt/homebrew/bin/python3"
+        "/usr/local/bin/python3"
+        "$HOME/.pyenv/shims/python3"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    # Fallback to PATH
+    if command -v python3 &> /dev/null; then
+        command -v python3
+        return 0
+    fi
+    return 1
+}
 
 # Confirm step in interactive mode
 # Usage: confirm_step "Step description" && function_to_run
@@ -131,6 +152,8 @@ cleanup_deprecated_paths() {
         "$agents_dir/build-agent"
         "$agents_dir/build-mcp.md"
         "$agents_dir/build-mcp"
+        # v2.91.0: clawdbot renamed to moltbot
+        "$agents_dir/tools/ai-assistants/clawdbot.md"
     )
     
     for path in "${deprecated_paths[@]}"; do
@@ -143,6 +166,136 @@ cleanup_deprecated_paths() {
     if [[ $cleaned -gt 0 ]]; then
         print_info "Cleaned up $cleaned deprecated agent path(s)"
     fi
+    
+    return 0
+}
+
+# Remove deprecated MCP entries from opencode.json
+# These MCPs have been replaced by curl-based subagents (zero context cost)
+cleanup_deprecated_mcps() {
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    if [[ ! -f "$opencode_config" ]]; then
+        return 0
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        return 0
+    fi
+    
+    # MCPs replaced by curl subagents in v2.79.0
+    local deprecated_mcps=(
+        "hetzner-awardsapp"
+        "hetzner-brandlight"
+        "hetzner-marcusquinn"
+        "hetzner-storagebox"
+        "ahrefs"
+        "serper"
+        "dataforseo"
+        "hostinger-api"
+        "shadcn"
+        "repomix"
+    )
+    
+    # Tool rules to remove (for MCPs that no longer exist)
+    local deprecated_tools=(
+        "hetzner-*"
+        "hostinger-api_*"
+        "ahrefs_*"
+        "dataforseo_*"
+        "serper_*"
+        "shadcn_*"
+        "repomix_*"
+    )
+    
+    local cleaned=0
+    local tmp_config
+    tmp_config=$(mktemp)
+    
+    cp "$opencode_config" "$tmp_config"
+    
+    for mcp in "${deprecated_mcps[@]}"; do
+        if jq -e ".mcp[\"$mcp\"]" "$tmp_config" > /dev/null 2>&1; then
+            jq "del(.mcp[\"$mcp\"])" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((cleaned++))
+        fi
+    done
+    
+    for tool in "${deprecated_tools[@]}"; do
+        if jq -e ".tools[\"$tool\"]" "$tmp_config" > /dev/null 2>&1; then
+            jq "del(.tools[\"$tool\"])" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+        fi
+    done
+    
+    # Also remove deprecated tool refs from SEO agent
+    if jq -e '.agent.SEO.tools["dataforseo_*"]' "$tmp_config" > /dev/null 2>&1; then
+        jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+    fi
+    
+    # Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
+    # Parallel arrays avoid bash associative array issues with @ in package names
+    local -a mcp_pkgs=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
+        "analytics-mcp"
+    )
+    local -a mcp_bins=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "playwriter"
+        "macos-automator-mcp"
+        "claude-code-mcp"
+        "analytics-mcp"
+    )
+
+    local i
+    for i in "${!mcp_pkgs[@]}"; do
+        local pkg="${mcp_pkgs[$i]}"
+        local bin_name="${mcp_bins[$i]}"
+        # Find MCP key using npx/bunx/pipx for this package (single query)
+        local mcp_key
+        mcp_key=$(jq -r --arg pkg "$pkg" '.mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(" ") | test("npx.*" + $pkg + "|bunx.*" + $pkg + "|pipx.*run.*" + $pkg)) | .key' "$tmp_config" 2>/dev/null | head -1)
+
+        if [[ -n "$mcp_key" ]]; then
+            # Resolve full path for the binary
+            local full_path
+            full_path=$(resolve_mcp_binary_path "$bin_name")
+            if [[ -n "$full_path" ]]; then
+                jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                ((cleaned++))
+            fi
+        fi
+    done
+
+    # Migrate outscraper from bash -c wrapper to full binary path
+    if jq -e '.mcp.outscraper.command | join(" ") | test("bash.*outscraper")' "$tmp_config" > /dev/null 2>&1; then
+        local outscraper_path
+        outscraper_path=$(resolve_mcp_binary_path "outscraper-mcp-server")
+        if [[ -n "$outscraper_path" ]]; then
+            # Source the API key and set it in environment
+            local outscraper_key=""
+            if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+                # shellcheck source=/dev/null
+                outscraper_key=$(source "$HOME/.config/aidevops/mcp-env.sh" && echo "${OUTSCRAPER_API_KEY:-}")
+            fi
+            jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((cleaned++))
+        fi
+    fi
+
+    if [[ $cleaned -gt 0 ]]; then
+        create_backup_with_rotation "$opencode_config" "opencode"
+        mv "$tmp_config" "$opencode_config"
+        print_info "Updated $cleaned MCP entry/entries in opencode.json (using full binary paths)"
+    else
+        rm -f "$tmp_config"
+    fi
+
+    # Always resolve bare binary names to full paths (fixes PATH-dependent startup)
+    update_mcp_paths_in_opencode
     
     return 0
 }
@@ -231,7 +384,7 @@ migrate_loop_state_directories() {
         
         # Check for loop state files in old location
         local has_loop_state=false
-        if [[ -f "$old_state_dir/ralph-loop.local.md" ]] || \
+        if [[ -f "$old_state_dir/ralph-loop.local.state" ]] || \
            [[ -f "$old_state_dir/loop-state.json" ]] || \
            [[ -d "$old_state_dir/receipts" ]]; then
             has_loop_state=true
@@ -245,7 +398,7 @@ migrate_loop_state_directories() {
         mkdir -p "$new_state_dir"
         
         # Move loop-related files
-        for file in ralph-loop.local.md loop-state.json re-anchor.md guardrails.md; do
+        for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
             if [[ -f "$old_state_dir/$file" ]]; then
                 mv "$old_state_dir/$file" "$new_state_dir/"
                 print_info "  Moved $file"
@@ -391,6 +544,16 @@ install_packages() {
 # Check system requirements
 check_requirements() {
     print_info "Checking system requirements..."
+    
+    # Ensure Homebrew is in PATH (macOS Apple Silicon)
+    if [[ -x "/opt/homebrew/bin/brew" ]] && ! echo "$PATH" | grep -q "/opt/homebrew/bin"; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+        print_warning "Homebrew not in PATH - added for this session"
+        echo ""
+        echo "  To fix permanently, add to ~/.bash_profile or ~/.zshrc:"
+        echo "    eval \"\$(/opt/homebrew/bin/brew shellenv)\""
+        echo ""
+    fi
     
     local missing_deps=()
     
@@ -557,6 +720,260 @@ setup_git_clis() {
         echo "  Or download from: https://dl.gitea.io/tea/"
     else
         print_success "Gitea CLI (tea) found"
+    fi
+    
+    return 0
+}
+
+# Setup file discovery tools (fd, ripgrep) for efficient file searching
+setup_file_discovery_tools() {
+    print_info "Setting up file discovery tools..."
+    
+    local missing_tools=()
+    local missing_packages=()
+    local missing_names=()
+    
+    local fd_version
+    if command -v fd >/dev/null 2>&1; then
+        fd_version=$(fd --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "fd found: $fd_version"
+    elif command -v fdfind >/dev/null 2>&1; then
+        fd_version=$(fdfind --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "fd found (as fdfind): $fd_version"
+        print_warning "Note: 'fd' alias not active in current shell. Restart shell or run: alias fd=fdfind"
+    else
+        missing_tools+=("fd")
+        missing_packages+=("fd")
+        missing_names+=("fd (fast file finder)")
+    fi
+    
+    # Check for ripgrep
+    if ! command -v rg >/dev/null 2>&1; then
+        missing_tools+=("rg")
+        missing_packages+=("ripgrep")
+        missing_names+=("ripgrep (fast content search)")
+    else
+        local rg_version
+        rg_version=$(rg --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "ripgrep found: $rg_version"
+    fi
+    
+    # Offer to install missing tools
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        print_warning "Missing file discovery tools: ${missing_names[*]}"
+        echo ""
+        echo "  These tools provide 10x faster file discovery than built-in glob:"
+        echo "    fd      - Fast alternative to 'find', respects .gitignore"
+        echo "    ripgrep - Fast alternative to 'grep', respects .gitignore"
+        echo ""
+        echo "  AI agents use these for efficient codebase navigation."
+        echo ""
+        
+        local pkg_manager
+        pkg_manager=$(detect_package_manager)
+        
+        if [[ "$pkg_manager" != "unknown" ]]; then
+            local install_fd_tools="y"
+            if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+                read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_fd_tools
+            fi
+            
+            if [[ "$install_fd_tools" == "y" ]]; then
+                print_info "Installing ${missing_packages[*]}..."
+                
+                # Handle package name differences across package managers
+                local actual_packages=()
+                for pkg in "${missing_packages[@]}"; do
+                    case "$pkg_manager" in
+                        apt)
+                            # Debian/Ubuntu uses fd-find instead of fd
+                            if [[ "$pkg" == "fd" ]]; then
+                                actual_packages+=("fd-find")
+                            else
+                                actual_packages+=("$pkg")
+                            fi
+                            ;;
+                        *)
+                            actual_packages+=("$pkg")
+                            ;;
+                    esac
+                done
+                
+                if install_packages "$pkg_manager" "${actual_packages[@]}"; then
+                    print_success "File discovery tools installed"
+                    
+                    # On Debian/Ubuntu, fd is installed as fdfind - create alias in all existing shell rc files
+                    if [[ "$pkg_manager" == "apt" ]] && command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
+                        local rc_files=("$HOME/.bashrc" "$HOME/.zshrc")
+                        local added_to=""
+                        
+                        for rc_file in "${rc_files[@]}"; do
+                            [[ ! -f "$rc_file" ]] && continue
+                            
+                            if ! grep -q 'alias fd="fdfind"' "$rc_file" 2>/dev/null; then
+                                if { echo '' >> "$rc_file" && \
+                                     echo '# fd-find alias for Debian/Ubuntu (added by aidevops)' >> "$rc_file" && \
+                                     echo 'alias fd="fdfind"' >> "$rc_file"; }; then
+                                    added_to="${added_to:+$added_to, }$rc_file"
+                                fi
+                            fi
+                        done
+                        
+                        if [[ -n "$added_to" ]]; then
+                            print_success "Added alias fd=fdfind to: $added_to"
+                            echo "  Restart your shell to activate"
+                        else
+                            print_success "fd alias already configured"
+                        fi
+                    fi
+                else
+                    print_warning "Failed to install some file discovery tools (non-critical)"
+                fi
+            else
+                print_info "Skipped file discovery tools installation"
+                echo ""
+                echo "  Manual installation:"
+                echo "    macOS:        brew install fd ripgrep"
+                echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep"
+                echo "    Fedora:       sudo dnf install fd-find ripgrep"
+                echo "    Arch:         sudo pacman -S fd ripgrep"
+            fi
+        else
+            echo ""
+            echo "  Manual installation:"
+            echo "    macOS:        brew install fd ripgrep"
+            echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep"
+            echo "    Fedora:       sudo dnf install fd-find ripgrep"
+            echo "    Arch:         sudo pacman -S fd ripgrep"
+        fi
+    else
+        print_success "All file discovery tools installed!"
+    fi
+    
+    return 0
+}
+
+# Setup Worktrunk - Git worktree management for parallel AI agent workflows
+setup_worktrunk() {
+    print_info "Setting up Worktrunk (git worktree management)..."
+    
+    # Check if worktrunk (wt) is already installed
+    if command -v wt >/dev/null 2>&1; then
+        local wt_version
+        wt_version=$(wt --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "Worktrunk already installed: $wt_version"
+        
+        # Check if shell integration is installed
+        local shell_name
+        shell_name=$(basename "${SHELL:-/bin/bash}")
+        local shell_rc=""
+        case "$shell_name" in
+            zsh)  shell_rc="$HOME/.zshrc" ;;
+            bash) 
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    shell_rc="$HOME/.bash_profile"
+                else
+                    shell_rc="$HOME/.bashrc"
+                fi
+                ;;
+        esac
+        
+        if [[ -n "$shell_rc" ]] && [[ -f "$shell_rc" ]]; then
+            if ! grep -q "worktrunk" "$shell_rc" 2>/dev/null; then
+                print_info "Shell integration not detected"
+                read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? (y/n): " install_shell
+                if [[ "$install_shell" == "y" ]]; then
+                    if wt config shell install 2>/dev/null; then
+                        print_success "Shell integration installed"
+                        print_info "Restart your terminal or run: source $shell_rc"
+                    else
+                        print_warning "Shell integration failed - run manually: wt config shell install"
+                    fi
+                fi
+            else
+                print_success "Shell integration already configured"
+            fi
+        fi
+        return 0
+    fi
+    
+    # Worktrunk not installed - offer to install
+    print_info "Worktrunk makes git worktrees as easy as branches"
+    echo "  • wt switch feat     - Switch/create worktree (with cd)"
+    echo "  • wt list            - List worktrees with CI status"
+    echo "  • wt merge           - Squash/rebase/merge + cleanup"
+    echo "  • Hooks for automated setup (npm install, etc.)"
+    echo ""
+    echo "  Note: aidevops also includes worktree-helper.sh as a fallback"
+    echo ""
+    
+    local pkg_manager
+    pkg_manager=$(detect_package_manager)
+    
+    if [[ "$pkg_manager" == "brew" ]]; then
+        read -r -p "Install Worktrunk via Homebrew? (y/n): " install_wt
+        
+        if [[ "$install_wt" == "y" ]]; then
+            print_info "Installing Worktrunk..."
+            if brew install max-sixty/worktrunk/wt 2>/dev/null; then
+                print_success "Worktrunk installed"
+                
+                # Install shell integration
+                print_info "Installing shell integration..."
+                if wt config shell install 2>/dev/null; then
+                    print_success "Shell integration installed"
+                    print_info "Restart your terminal or source your shell config"
+                else
+                    print_warning "Shell integration failed - run manually: wt config shell install"
+                fi
+                
+                echo ""
+                print_info "Quick start:"
+                echo "  wt switch feature/my-feature  # Create/switch to worktree"
+                echo "  wt list                       # List all worktrees"
+                echo "  wt merge                      # Merge and cleanup"
+                echo ""
+                print_info "Documentation: ~/.aidevops/agents/tools/git/worktrunk.md"
+            else
+                print_warning "Homebrew installation failed"
+                echo "  Try: cargo install worktrunk && wt config shell install"
+            fi
+        else
+            print_info "Skipped Worktrunk installation"
+            print_info "Install later: brew install max-sixty/worktrunk/wt"
+            print_info "Fallback available: ~/.aidevops/agents/scripts/worktree-helper.sh"
+        fi
+    elif command -v cargo >/dev/null 2>&1; then
+        read -r -p "Install Worktrunk via Cargo? (y/n): " install_wt
+        
+        if [[ "$install_wt" == "y" ]]; then
+            print_info "Installing Worktrunk via Cargo..."
+            if cargo install worktrunk 2>/dev/null; then
+                print_success "Worktrunk installed"
+                
+                # Install shell integration
+                if wt config shell install 2>/dev/null; then
+                    print_success "Shell integration installed"
+                else
+                    print_warning "Shell integration failed - run manually: wt config shell install"
+                fi
+            else
+                print_warning "Cargo installation failed"
+            fi
+        else
+            print_info "Skipped Worktrunk installation"
+        fi
+    else
+        print_warning "Worktrunk not installed"
+        echo ""
+        echo "  Install options:"
+        echo "    macOS/Linux (Homebrew): brew install max-sixty/worktrunk/wt"
+        echo "    Cargo:                  cargo install worktrunk"
+        echo "    Windows:                winget install max-sixty.worktrunk"
+        echo ""
+        echo "  After install: wt config shell install"
+        echo ""
+        print_info "Fallback available: ~/.aidevops/agents/scripts/worktree-helper.sh"
     fi
     
     return 0
@@ -750,6 +1167,90 @@ setup_recommended_tools() {
         fi
     else
         print_success "All recommended tools installed!"
+    fi
+    
+    return 0
+}
+
+# Setup MiniSim - iOS/Android emulator launcher (macOS only)
+setup_minisim() {
+    # Only available on macOS
+    if [[ "$(uname)" != "Darwin" ]]; then
+        return 0
+    fi
+    
+    print_info "Setting up MiniSim (iOS/Android emulator launcher)..."
+    
+    # Check if MiniSim is already installed
+    if [[ -d "/Applications/MiniSim.app" ]]; then
+        print_success "MiniSim already installed"
+        print_info "Global shortcut: Option + Shift + E"
+        return 0
+    fi
+    
+    # Check if Xcode or Android Studio is installed (MiniSim needs at least one)
+    local has_xcode=false
+    local has_android=false
+    
+    if command -v xcrun >/dev/null 2>&1 && xcrun simctl list devices >/dev/null 2>&1; then
+        has_xcode=true
+    fi
+    
+    if [[ -n "${ANDROID_HOME:-}" ]] || [[ -n "${ANDROID_SDK_ROOT:-}" ]] || [[ -d "$HOME/Library/Android/sdk" ]]; then
+        has_android=true
+    fi
+    
+    if [[ "$has_xcode" == "false" && "$has_android" == "false" ]]; then
+        print_info "MiniSim requires Xcode (iOS) or Android Studio (Android)"
+        print_info "Install one of these first, then re-run setup to install MiniSim"
+        return 0
+    fi
+    
+    # Show what's available
+    local available_for=""
+    if [[ "$has_xcode" == "true" ]]; then
+        available_for="iOS simulators"
+    fi
+    if [[ "$has_android" == "true" ]]; then
+        if [[ -n "$available_for" ]]; then
+            available_for="$available_for and Android emulators"
+        else
+            available_for="Android emulators"
+        fi
+    fi
+    
+    print_info "MiniSim is a menu bar app for launching $available_for"
+    echo "  Features:"
+    echo "    - Global shortcut: Option + Shift + E"
+    echo "    - Launch/manage iOS simulators and Android emulators"
+    echo "    - Copy device UDID/ADB ID"
+    echo "    - Cold boot Android emulators"
+    echo "    - Run Android emulators without audio (saves Bluetooth battery)"
+    echo ""
+    
+    # Check if Homebrew is available
+    if ! command -v brew >/dev/null 2>&1; then
+        print_warning "Homebrew not found - cannot install MiniSim automatically"
+        echo "  Install manually: https://github.com/okwasniewski/MiniSim/releases"
+        return 0
+    fi
+    
+    local install_minisim
+    read -r -p "Install MiniSim? (y/n): " install_minisim
+    
+    if [[ "$install_minisim" == "y" ]]; then
+        print_info "Installing MiniSim..."
+        if brew install --cask minisim; then
+            print_success "MiniSim installed successfully"
+            print_info "Global shortcut: Option + Shift + E"
+            print_info "Documentation: ~/.aidevops/agents/tools/mobile/minisim.md"
+        else
+            print_warning "Failed to install MiniSim via Homebrew"
+            echo "  Install manually: https://github.com/okwasniewski/MiniSim/releases"
+        fi
+    else
+        print_info "Skipped MiniSim installation"
+        print_info "Install later: brew install --cask minisim"
     fi
     
     return 0
@@ -1117,6 +1618,28 @@ extract_opencode_prompts() {
     return 0
 }
 
+# Check if upstream OpenCode prompts have drifted from our synced version
+check_opencode_prompt_drift() {
+    local drift_script=".agent/scripts/opencode-prompt-drift-check.sh"
+    if [[ -f "$drift_script" ]]; then
+        local output exit_code=0
+        output=$(bash "$drift_script" --quiet 2>/dev/null) || exit_code=$?
+        if [[ "$exit_code" -eq 1 && "$output" == PROMPT_DRIFT* ]]; then
+            local local_hash upstream_hash
+            local_hash=$(echo "$output" | cut -d'|' -f2)
+            upstream_hash=$(echo "$output" | cut -d'|' -f3)
+            print_warning "OpenCode upstream prompt has changed (${local_hash} → ${upstream_hash})"
+            print_info "  Review: https://github.com/anomalyco/opencode/compare/${local_hash}...${upstream_hash}"
+            print_info "  Update .agent/prompts/build.txt if needed"
+        elif [[ "$exit_code" -eq 0 ]]; then
+            print_success "OpenCode prompt in sync with upstream"
+        else
+            print_warning "Could not check prompt drift (network issue or missing dependency)"
+        fi
+    fi
+    return 0
+}
+
 # Deploy aidevops agents to user location
 deploy_aidevops_agents() {
     print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
@@ -1125,6 +1648,17 @@ deploy_aidevops_agents() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local source_dir="$script_dir/.agent"
     local target_dir="$HOME/.aidevops/agents"
+    
+    # Validate source directory exists (catches curl install from wrong directory)
+    if [[ ! -d "$source_dir" ]]; then
+        print_error "Agent source directory not found: $source_dir"
+        print_info "This usually means setup.sh was run from the wrong directory."
+        print_info "The bootstrap should have cloned the repo and re-executed."
+        print_info ""
+        print_info "To fix manually:"
+        print_info "  cd ~/Git/aidevops && ./setup.sh"
+        return 1
+    fi
     
     # Create backup if target exists (with rotation)
     if [[ -d "$target_dir" ]]; then
@@ -1140,9 +1674,16 @@ deploy_aidevops_agents() {
         rm -rf "${target_dir:?}"/*
     fi
     
-    # Copy all agent files and folders (excluding scripts which are large)
-    # We copy scripts separately to maintain structure
-    cp -R "$source_dir"/* "$target_dir/"
+    # Copy all agent files and folders, excluding:
+    # - loop-state/ (local runtime state, not agents)
+    # Use rsync for selective exclusion
+    if command -v rsync &>/dev/null; then
+        rsync -a --exclude='loop-state/' "$source_dir/" "$target_dir/"
+    else
+        # Fallback: copy then remove loop-state
+        cp -R "$source_dir"/* "$target_dir/"
+        rm -rf "$target_dir/loop-state" 2>/dev/null || true
+    fi
     
     if [[ $? -eq 0 ]]; then
         print_success "Deployed agents to $target_dir"
@@ -1210,6 +1751,169 @@ generate_agent_skills() {
         fi
     else
         print_warning "Agent Skills generator not found at $skills_script"
+    fi
+    
+    return 0
+}
+
+# Create symlinks for imported skills to AI assistant skill directories
+create_skill_symlinks() {
+    print_info "Creating symlinks for imported skills..."
+    
+    local skill_sources="$HOME/.aidevops/agents/configs/skill-sources.json"
+    local agents_dir="$HOME/.aidevops/agents"
+    
+    # Skip if no skill-sources.json or jq not available
+    if [[ ! -f "$skill_sources" ]]; then
+        print_info "No imported skills found (skill-sources.json not present)"
+        return 0
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not found - cannot create skill symlinks"
+        return 0
+    fi
+    
+    # Check if there are any skills
+    local skill_count
+    skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+    
+    if [[ "$skill_count" -eq 0 ]]; then
+        print_info "No imported skills to symlink"
+        return 0
+    fi
+    
+    # AI assistant skill directories
+    local skill_dirs=(
+        "$HOME/.config/opencode/skills"
+        "$HOME/.codex/skills"
+        "$HOME/.claude/skills"
+        "$HOME/.config/amp/tools"
+    )
+    
+    # Create skill directories if they don't exist
+    for dir in "${skill_dirs[@]}"; do
+        mkdir -p "$dir" 2>/dev/null || true
+    done
+    
+    local created_count=0
+    
+    # Read each skill and create symlinks
+    while IFS= read -r skill_json; do
+        local name local_path
+        name=$(echo "$skill_json" | jq -r '.name')
+        local_path=$(echo "$skill_json" | jq -r '.local_path')
+        
+        # Skip if path doesn't exist
+        local full_path="$agents_dir/${local_path#.agent/}"
+        if [[ ! -f "$full_path" ]]; then
+            print_warning "Skill file not found: $full_path"
+            continue
+        fi
+        
+        # Create symlinks in each AI assistant directory
+        for skill_dir in "${skill_dirs[@]}"; do
+            local target_file
+            
+            # Amp expects <name>.md directly, others expect <name>/SKILL.md
+            if [[ "$skill_dir" == *"/amp/tools" ]]; then
+                target_file="$skill_dir/${name}.md"
+            else
+                local target_dir="$skill_dir/$name"
+                target_file="$target_dir/SKILL.md"
+                # Create skill subdirectory
+                mkdir -p "$target_dir" 2>/dev/null || continue
+            fi
+            
+            # Create symlink (remove existing first)
+            rm -f "$target_file" 2>/dev/null || true
+            if ln -sf "$full_path" "$target_file" 2>/dev/null; then
+                ((created_count++))
+            fi
+        done
+    done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+    
+    if [[ $created_count -gt 0 ]]; then
+        print_success "Created $created_count skill symlinks across AI assistants"
+    else
+        print_info "No skill symlinks created"
+    fi
+    
+    return 0
+}
+
+# Check for updates to imported skills from upstream repositories
+check_skill_updates() {
+    print_info "Checking for skill updates..."
+    
+    local skill_sources="$HOME/.aidevops/agents/configs/skill-sources.json"
+    
+    # Skip if no skill-sources.json or required tools not available
+    if [[ ! -f "$skill_sources" ]]; then
+        print_info "No imported skills to check"
+        return 0
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not found - cannot check skill updates"
+        return 0
+    fi
+    
+    if ! command -v curl &>/dev/null; then
+        print_warning "curl not found - cannot check skill updates"
+        return 0
+    fi
+    
+    local skill_count
+    skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+    
+    if [[ "$skill_count" -eq 0 ]]; then
+        print_info "No imported skills to check"
+        return 0
+    fi
+    
+    local updates_available=0
+    local update_list=""
+    
+    # Check each skill for updates
+    while IFS= read -r skill_json; do
+        local name upstream_url upstream_commit
+        name=$(echo "$skill_json" | jq -r '.name')
+        upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
+        upstream_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
+        
+        # Skip skills without upstream URL or commit (e.g., context7 imports)
+        if [[ -z "$upstream_url" || "$upstream_url" == "null" ]]; then
+            continue
+        fi
+        if [[ -z "$upstream_commit" ]]; then
+            continue
+        fi
+        
+        # Extract owner/repo from GitHub URL
+        local owner_repo
+        owner_repo=$(echo "$upstream_url" | sed -E 's|https://github.com/||; s|\.git$||; s|/tree/.*||')
+        
+        if [[ -z "$owner_repo" || ! "$owner_repo" =~ / ]]; then
+            continue
+        fi
+        
+        # Get latest commit from GitHub API (silent, with timeout)
+        local latest_commit
+        latest_commit=$(curl -s --max-time 5 "https://api.github.com/repos/$owner_repo/commits?per_page=1" 2>/dev/null | jq -r '.[0].sha // empty')
+        
+        if [[ -n "$latest_commit" && "$latest_commit" != "$upstream_commit" ]]; then
+            ((updates_available++))
+            update_list="${update_list}\n  - $name (${upstream_commit:0:7} → ${latest_commit:0:7})"
+        fi
+    done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+    
+    if [[ $updates_available -gt 0 ]]; then
+        print_warning "Skill updates available:$update_list"
+        print_info "Run: ~/.aidevops/agents/scripts/add-skill-helper.sh check-updates"
+        print_info "To update a skill: ~/.aidevops/agents/scripts/add-skill-helper.sh add <url> --force"
+    else
+        print_success "All imported skills are up to date"
     fi
     
     return 0
@@ -1355,14 +2059,17 @@ setup_python_env() {
     print_info "Setting up Python environment for DSPy..."
 
     # Check if Python 3 is available
-    if ! command -v python3 &> /dev/null; then
+    local python3_bin
+    if ! python3_bin=$(find_python3); then
         print_warning "Python 3 not found - DSPy setup skipped"
         print_info "Install Python 3.8+ to enable DSPy integration"
         return
     fi
 
-    local python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
-    local version_check=$(python3 -c "import sys; print(1 if sys.version_info >= (3, 8) else 0)")
+    local python_version
+    python_version=$("$python3_bin" --version | cut -d' ' -f2 | cut -d'.' -f1-2)
+    local version_check
+    version_check=$("$python3_bin" -c "import sys; print(1 if sys.version_info >= (3, 8) else 0)")
 
     if [[ "$version_check" != "1" ]]; then
         print_warning "Python 3.8+ required for DSPy, found $python_version - DSPy setup skipped"
@@ -1387,14 +2094,20 @@ setup_python_env() {
 
     # Install DSPy dependencies
     print_info "Installing DSPy dependencies..."
+    # shellcheck source=/dev/null
     source python-env/dspy-env/bin/activate
     pip install --upgrade pip > /dev/null 2>&1
-    pip install -r requirements.txt > /dev/null 2>&1
-
-    if [[ $? -eq 0 ]]; then
+    
+    local pip_output
+    if pip_output=$(pip install -r requirements.txt 2>&1); then
         print_success "DSPy dependencies installed successfully"
     else
-        print_warning "Failed to install DSPy dependencies - check requirements.txt"
+        print_warning "Failed to install DSPy dependencies:"
+        # Show last few lines of error for debugging
+        echo "$pip_output" | tail -8 | sed 's/^/  /'
+        echo ""
+        print_info "Check requirements.txt or run manually:"
+        print_info "  source python-env/dspy-env/bin/activate && pip install -r requirements.txt"
     fi
 }
 
@@ -1434,6 +2147,201 @@ setup_nodejs_env() {
     else
         print_success "DSPyGround already installed"
     fi
+}
+
+# Install MCP servers globally for fast startup (no npx/pipx overhead)
+install_mcp_packages() {
+    print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
+
+    # Node.js MCP packages to install globally
+    local -a node_mcps=(
+        "chrome-devtools-mcp"
+        "mcp-server-gsc"
+        "playwriter"
+        "@steipete/macos-automator-mcp"
+        "@steipete/claude-code-mcp"
+    )
+
+    local installer=""
+    local install_cmd=""
+
+    if command -v bun &> /dev/null; then
+        installer="bun"
+        install_cmd="bun install -g"
+    elif command -v npm &> /dev/null; then
+        installer="npm"
+        install_cmd="npm install -g"
+    else
+        print_warning "Neither bun nor npm found - cannot install MCP packages"
+        print_info "Install bun (recommended): curl -fsSL https://bun.sh/install | bash"
+        return 0
+    fi
+
+    print_info "Using $installer to install/update Node.js MCP packages..."
+
+    # Always install latest (bun install -g is fast and idempotent)
+    local updated=0
+    local failed=0
+    local pkg
+    for pkg in "${node_mcps[@]}"; do
+        if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
+            ((updated++))
+        else
+            ((failed++))
+            print_warning "Failed to install/update $pkg"
+        fi
+    done
+
+    if [[ $updated -gt 0 ]]; then
+        print_success "$updated Node.js MCP packages installed/updated to latest via $installer"
+    fi
+    if [[ $failed -gt 0 ]]; then
+        print_warning "$failed packages failed (check network or package names)"
+    fi
+
+    # Python MCP packages (install or upgrade)
+    if command -v pipx &> /dev/null; then
+        print_info "Installing/updating analytics-mcp via pipx..."
+        if command -v analytics-mcp &> /dev/null; then
+            pipx upgrade analytics-mcp > /dev/null 2>&1 || true
+        else
+            pipx install analytics-mcp > /dev/null 2>&1 || print_warning "Failed to install analytics-mcp"
+        fi
+    fi
+
+    if command -v uv &> /dev/null; then
+        print_info "Installing/updating outscraper-mcp-server via uv..."
+        if command -v outscraper-mcp-server &> /dev/null; then
+            uv tool upgrade outscraper-mcp-server > /dev/null 2>&1 || true
+        else
+            uv tool install outscraper-mcp-server > /dev/null 2>&1 || print_warning "Failed to install outscraper-mcp-server"
+        fi
+    fi
+
+    # Update opencode.json with resolved full paths for all MCP binaries
+    update_mcp_paths_in_opencode
+
+    print_info "MCP servers will start instantly (no registry lookups on each launch)"
+    return 0
+}
+
+# Resolve full path for an MCP binary, checking common install locations
+# Usage: resolve_mcp_binary_path "binary-name"
+# Returns: full path on stdout, or empty string if not found
+resolve_mcp_binary_path() {
+    local bin_name="$1"
+    local resolved=""
+
+    # Check common locations in priority order
+    local search_paths=(
+        "$HOME/.bun/bin/$bin_name"
+        "/opt/homebrew/bin/$bin_name"
+        "/usr/local/bin/$bin_name"
+        "$HOME/.local/bin/$bin_name"
+        "$HOME/.npm-global/bin/$bin_name"
+    )
+
+    for path in "${search_paths[@]}"; do
+        if [[ -x "$path" ]]; then
+            resolved="$path"
+            break
+        fi
+    done
+
+    # Fallback: use command -v if in PATH (portable, POSIX-compliant)
+    if [[ -z "$resolved" ]]; then
+        resolved=$(command -v "$bin_name" 2>/dev/null || true)
+    fi
+
+    echo "$resolved"
+    return 0
+}
+
+# Update opencode.json MCP commands to use full binary paths
+# This ensures MCPs start regardless of PATH configuration
+update_mcp_paths_in_opencode() {
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+
+    if [[ ! -f "$opencode_config" ]]; then
+        return 0
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        return 0
+    fi
+
+    local tmp_config
+    tmp_config=$(mktemp)
+    cp "$opencode_config" "$tmp_config"
+
+    local updated=0
+
+    # Get all MCP entries with local commands
+    local mcp_keys
+    mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | .key' "$tmp_config" 2>/dev/null)
+
+    while IFS= read -r mcp_key; do
+        [[ -z "$mcp_key" ]] && continue
+
+        # Get the first element of the command array (the binary)
+        local current_cmd
+        current_cmd=$(jq -r --arg k "$mcp_key" '.mcp[$k].command[0]' "$tmp_config" 2>/dev/null)
+
+        # Skip if already a full path
+        if [[ "$current_cmd" == /* ]]; then
+            # Verify the path still exists
+            if [[ ! -x "$current_cmd" ]]; then
+                # Path is stale, try to resolve
+                local bin_name
+                bin_name=$(basename "$current_cmd")
+                local new_path
+                new_path=$(resolve_mcp_binary_path "$bin_name")
+                if [[ -n "$new_path" && "$new_path" != "$current_cmd" ]]; then
+                    jq --arg k "$mcp_key" --arg p "$new_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                    ((updated++))
+                fi
+            fi
+            continue
+        fi
+
+        # Skip docker (container runtime) and node (resolved separately below)
+        case "$current_cmd" in
+            docker|node) continue ;;
+        esac
+
+        # Resolve the full path
+        local full_path
+        full_path=$(resolve_mcp_binary_path "$current_cmd")
+
+        if [[ -n "$full_path" && "$full_path" != "$current_cmd" ]]; then
+            jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((updated++))
+        fi
+    done <<< "$mcp_keys"
+
+    # Also resolve 'node' commands (e.g., quickfile, amazon-order-history)
+    # These use ["node", "/path/to/index.js"] - node itself should be resolved
+    local node_path
+    node_path=$(resolve_mcp_binary_path "node")
+    if [[ -n "$node_path" ]]; then
+        local node_mcp_keys
+        node_mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | select(.value.command[0] == "node") | .key' "$tmp_config" 2>/dev/null)
+        while IFS= read -r mcp_key; do
+            [[ -z "$mcp_key" ]] && continue
+            jq --arg k "$mcp_key" --arg p "$node_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((updated++))
+        done <<< "$node_mcp_keys"
+    fi
+
+    if [[ $updated -gt 0 ]]; then
+        create_backup_with_rotation "$opencode_config" "opencode"
+        mv "$tmp_config" "$opencode_config"
+        print_success "Updated $updated MCP commands to use full binary paths in opencode.json"
+    else
+        rm -f "$tmp_config"
+    fi
+
+    return 0
 }
 
 # Setup LocalWP MCP server for AI database access
@@ -1758,11 +2666,16 @@ setup_browser_tools() {
             print_success "dev-browser already installed"
         else
             print_info "Installing dev-browser (stateful browser automation)..."
-            if bash "$AGENTS_DIR/scripts/dev-browser-helper.sh" setup 2>/dev/null; then
+            local dev_browser_output
+            if dev_browser_output=$(bash "$HOME/.aidevops/agents/scripts/dev-browser-helper.sh" setup 2>&1); then
                 print_success "dev-browser installed"
                 print_info "Start server with: bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start"
             else
-                print_warning "dev-browser setup failed - run manually:"
+                print_warning "dev-browser setup failed:"
+                # Show last few lines of error output for debugging
+                echo "$dev_browser_output" | tail -5 | sed 's/^/  /'
+                echo ""
+                print_info "Run manually to see full output:"
                 print_info "  bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup"
             fi
         fi
@@ -1776,7 +2689,40 @@ setup_browser_tools() {
         print_warning "Node.js not found - Playwriter MCP unavailable"
     fi
     
-    print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Stagehand (AI)"
+    # Playwright MCP (cross-browser testing automation)
+    if [[ "$has_node" == "true" ]]; then
+        print_info "Setting up Playwright MCP..."
+        
+        # Check if Playwright browsers are installed (--no-install prevents auto-download)
+        if npx --no-install playwright --version &> /dev/null 2>&1; then
+            print_success "Playwright already installed"
+        else
+            local install_playwright
+            read -r -p "Install Playwright MCP with browsers (chromium, firefox, webkit)? (y/n): " install_playwright
+            
+            if [[ "$install_playwright" == "y" ]]; then
+                print_info "Installing Playwright browsers..."
+                if npx playwright install; then
+                    print_success "Playwright browsers installed"
+                else
+                    print_warning "Playwright browser installation failed"
+                    print_info "Run manually: npx playwright install"
+                fi
+            else
+                print_info "Skipped Playwright installation"
+                print_info "Install later with: npx playwright install"
+            fi
+        fi
+        
+        print_info "Playwright MCP runs via: npx playwright-mcp@latest"
+    fi
+    
+    if [[ "$has_node" == "true" ]]; then
+        print_info "Browser tools: dev-browser (stateful), Playwriter (extension), Playwright (testing), Stagehand (AI)"
+    else
+        print_info "Browser tools: dev-browser (stateful), Stagehand (AI)"
+    fi
+    return 0
 }
 
 # Setup AI Orchestration Frameworks (Langflow, CrewAI, AutoGen)
@@ -1785,10 +2731,11 @@ setup_ai_orchestration() {
     
     local has_python=false
     
-    # Check Python
-    if command -v python3 &> /dev/null; then
+    # Check Python (prefer Homebrew/pyenv over system)
+    local python3_bin
+    if python3_bin=$(find_python3); then
         local python_version
-        python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
+        python_version=$("$python3_bin" --version 2>&1 | cut -d' ' -f2)
         local major minor
         major=$(echo "$python_version" | cut -d. -f1)
         minor=$(echo "$python_version" | cut -d. -f2)
@@ -1798,9 +2745,21 @@ setup_ai_orchestration() {
             print_success "Python $python_version found (3.10+ required)"
         else
             print_warning "Python 3.10+ required for AI orchestration, found $python_version"
+            echo ""
+            echo "  Upgrade options:"
+            echo "    macOS (Homebrew): brew install python@3.12"
+            echo "    macOS (pyenv):    pyenv install 3.12 && pyenv global 3.12"
+            echo "    Ubuntu/Debian:    sudo apt install python3.12"
+            echo "    Fedora:           sudo dnf install python3.12"
+            echo ""
         fi
     else
         print_warning "Python 3 not found - AI orchestration frameworks unavailable"
+        echo ""
+        echo "  Install options:"
+        echo "    macOS: brew install python@3.12"
+        echo "    Linux: sudo apt install python3 (or dnf/pacman)"
+        echo ""
         return 0
     fi
     
@@ -1836,12 +2795,12 @@ add_opencode_plugin() {
     
     # Check if plugin array exists and if plugin is already configured
     local has_plugin_array
-    has_plugin_array=$(jq -e '.plugin' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+    has_plugin_array=$(jq -e '.plugin' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
     
     if [[ "$has_plugin_array" == "true" ]]; then
         # Check if plugin is already in the array
         local plugin_exists
-        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
         
         if [[ "$plugin_exists" == "true" ]]; then
             # Update existing plugin to latest version
@@ -1891,6 +2850,14 @@ setup_opencode_plugins() {
         return 0
     fi
     
+    # Setup aidevops compaction plugin (local file plugin)
+    local aidevops_plugin_path="$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+    if [[ -f "$aidevops_plugin_path" ]]; then
+        print_info "Setting up aidevops compaction plugin..."
+        add_opencode_plugin "file://$HOME/.aidevops" "file://${aidevops_plugin_path}" "$opencode_config"
+        print_success "aidevops compaction plugin registered (preserves context across compaction)"
+    fi
+
     # Setup Antigravity OAuth plugin (Google OAuth)
     print_info "Setting up Antigravity OAuth plugin..."
     add_opencode_plugin "opencode-antigravity-auth" "opencode-antigravity-auth@latest" "$opencode_config"
@@ -1900,18 +2867,13 @@ setup_opencode_plugins() {
     print_info "See: https://github.com/NoeFabris/opencode-antigravity-auth"
     echo ""
     
-    # Setup Anthropic OAuth plugin (Claude OAuth)
-    print_info "Setting up Anthropic OAuth plugin..."
-    add_opencode_plugin "opencode-anthropic-auth" "opencode-anthropic-auth@latest" "$opencode_config"
-    
-    print_info "Anthropic OAuth plugin enables Claude Pro/Max authentication"
-    print_info "Zero cost for Claude subscribers, auto token refresh, beta features"
-    print_info "See: https://github.com/anomalyco/opencode-anthropic-auth"
-    echo ""
+    # Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
+    # Adding it as an external plugin causes TypeError due to double-loading.
+    # Removed in v2.90.0 - see PR #230.
     
     print_info "After setup, authenticate with: opencode auth login"
     print_info "  • For Google OAuth: Select 'Google' → 'OAuth with Google (Antigravity)'"
-    print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max'"
+    print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max' (built-in)"
     
     return 0
 }
@@ -1965,12 +2927,12 @@ setup_oh_my_opencode() {
     
     # Check if plugin array exists
     local has_plugin_array
-    has_plugin_array=$(jq -e '.plugin' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+    has_plugin_array=$(jq -e '.plugin' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
     
     if [[ "$has_plugin_array" == "true" ]]; then
         # Check if plugin is already in the array
         local plugin_exists
-        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(. == $p or startswith($p + "@"))) | length > 0' "$opencode_config" 2>/dev/null && echo "true" || echo "false")
+        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(. == $p or startswith($p + "@"))) | length > 0' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
         
         if [[ "$plugin_exists" == "true" ]]; then
             print_info "Oh-My-OpenCode already configured"
@@ -2025,90 +2987,208 @@ EOF
 }
 
 setup_seo_mcps() {
-    print_info "Setting up SEO MCP servers..."
-
-    local has_node=false
-    local has_python=false
-    local has_uv=false
-
-    # Check Node.js
-    if command -v node &> /dev/null; then
-        has_node=true
-    fi
-
-    # Check Python
-    if command -v python3 &> /dev/null; then
-        has_python=true
-    fi
-
-    # Check uv (Python package manager)
-    if command -v uv &> /dev/null; then
-        has_uv=true
-    elif command -v uvx &> /dev/null; then
-        has_uv=true
-    fi
-
-    # DataForSEO MCP (Node.js based)
-    if [[ "$has_node" == "true" ]]; then
-        print_info "DataForSEO MCP available via: npx dataforseo-mcp-server"
-        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
-        print_info "  DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD"
-    else
-        print_warning "Node.js not found - DataForSEO MCP requires Node.js"
-    fi
-
-    # Serper MCP (Python based, uses uv/uvx)
-    if [[ "$has_uv" == "true" ]]; then
-        print_info "Serper MCP available via: uvx serper-mcp-server"
-        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
-        print_info "  SERPER_API_KEY"
-    elif [[ "$has_python" == "true" ]]; then
-        print_info "Serper MCP available via: pip install serper-mcp-server"
-        print_info "Then run: python3 -m serper_mcp_server"
-        print_info "Configure credentials in ~/.config/aidevops/mcp-env.sh:"
-        print_info "  SERPER_API_KEY"
-        
-        # Offer to install uv for better experience
-        read -r -p "Install uv (recommended Python package manager)? (y/n): " install_uv
-        if [[ "$install_uv" == "y" ]]; then
-            print_info "Installing uv..."
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            if [[ $? -eq 0 ]]; then
-                print_success "uv installed successfully"
-                print_info "Restart your terminal or run: source ~/.bashrc (or ~/.zshrc)"
-            else
-                print_warning "Failed to install uv"
-            fi
-        fi
-    else
-        print_warning "Python not found - Serper MCP requires Python 3.11+"
-    fi
-
+    print_info "Setting up SEO integrations..."
+    
+    # SEO services use curl-based subagents (no MCP needed)
+    # Subagents: serper.md, dataforseo.md, ahrefs.md, google-search-console.md
+    print_info "SEO uses curl-based subagents (zero context cost until invoked)"
+    
     # Check if credentials are configured
     if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
         # shellcheck source=/dev/null
         source "$HOME/.config/aidevops/mcp-env.sh"
         
-        if [[ -n "$DATAFORSEO_USERNAME" && -n "$DATAFORSEO_PASSWORD" ]]; then
-            print_success "DataForSEO credentials configured"
-        else
-            print_info "DataForSEO: Set credentials with:"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
-        fi
+        [[ -n "$DATAFORSEO_USERNAME" ]] && print_success "DataForSEO credentials configured" || \
+            print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in mcp-env.sh"
         
-        if [[ -n "$SERPER_API_KEY" ]]; then
-            print_success "Serper API key configured"
-        else
-            print_info "Serper: Set API key with:"
-            print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY your_key"
-        fi
+        [[ -n "$SERPER_API_KEY" ]] && print_success "Serper API key configured" || \
+            print_info "Serper: set SERPER_API_KEY in mcp-env.sh"
+        
+        [[ -n "$AHREFS_API_KEY" ]] && print_success "Ahrefs API key configured" || \
+            print_info "Ahrefs: set AHREFS_API_KEY in mcp-env.sh"
     else
-        print_info "Configure SEO API credentials:"
-        print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh setup"
+        print_info "Configure SEO API credentials in ~/.config/aidevops/mcp-env.sh"
+    fi
+    
+    # GSC uses MCP (OAuth2 complexity warrants it)
+    local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+    if [[ -f "$gsc_creds" ]]; then
+        print_success "Google Search Console credentials configured"
+    else
+        print_info "GSC: Create service account JSON at $gsc_creds"
+        print_info "  See: ~/.aidevops/agents/seo/google-search-console.md"
     fi
 
-    print_info "SEO MCP documentation: ~/.aidevops/agents/seo/"
+    print_info "SEO documentation: ~/.aidevops/agents/seo/"
+    return 0
+}
+
+# Setup Google Analytics MCP (uses shared GSC service account credentials)
+setup_google_analytics_mcp() {
+    print_info "Setting up Google Analytics MCP..."
+    
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+    
+    # Check if opencode.json exists
+    if [[ ! -f "$opencode_config" ]]; then
+        print_warning "OpenCode config not found at $opencode_config - skipping Google Analytics MCP"
+        return 0
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        print_warning "jq not found - cannot add Google Analytics MCP to config"
+        print_info "Install jq and re-run setup, or manually add the MCP config"
+        return 0
+    fi
+    
+    # Check if pipx is available
+    if ! command -v pipx &> /dev/null; then
+        print_warning "pipx not found - Google Analytics MCP requires pipx"
+        print_info "Install pipx: brew install pipx (macOS) or pip install pipx"
+        print_info "Then re-run setup to add Google Analytics MCP"
+        return 0
+    fi
+    
+    # Auto-detect credentials from shared GSC service account
+    local creds_path=""
+    local project_id=""
+    local enable_mcp="false"
+    
+    if [[ -f "$gsc_creds" ]]; then
+        creds_path="$gsc_creds"
+        # Extract project_id from service account JSON
+        project_id=$(jq -r '.project_id // empty' "$gsc_creds" 2>/dev/null)
+        if [[ -n "$project_id" ]]; then
+            enable_mcp="true"
+            print_success "Found GSC credentials - sharing with Google Analytics MCP"
+            print_info "Project: $project_id"
+        fi
+    fi
+    
+    # Check if google-analytics-mcp already exists in config
+    if jq -e '.mcp["google-analytics-mcp"]' "$opencode_config" > /dev/null 2>&1; then
+        # Update existing entry if we have credentials now
+        if [[ "$enable_mcp" == "true" ]]; then
+            local tmp_config
+            tmp_config=$(mktemp)
+            if jq --arg creds "$creds_path" --arg proj "$project_id" \
+                '.mcp["google-analytics-mcp"].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
+                 .mcp["google-analytics-mcp"].environment.GOOGLE_PROJECT_ID = $proj |
+                 .mcp["google-analytics-mcp"].enabled = true' \
+                "$opencode_config" > "$tmp_config" 2>/dev/null; then
+                mv "$tmp_config" "$opencode_config"
+                print_success "Updated Google Analytics MCP with GSC credentials (enabled)"
+            else
+                rm -f "$tmp_config"
+                print_warning "Failed to update Google Analytics MCP config"
+            fi
+        else
+            print_info "Google Analytics MCP already configured in OpenCode"
+        fi
+        return 0
+    fi
+    
+    # Add google-analytics-mcp to opencode.json
+    local tmp_config
+    tmp_config=$(mktemp)
+    
+    if jq --arg creds "$creds_path" --arg proj "$project_id" --argjson enabled "$enable_mcp" \
+        '.mcp["google-analytics-mcp"] = {
+        "type": "local",
+        "command": ["analytics-mcp"],
+        "environment": {
+            "GOOGLE_APPLICATION_CREDENTIALS": $creds,
+            "GOOGLE_PROJECT_ID": $proj
+        },
+        "enabled": $enabled
+    }' "$opencode_config" > "$tmp_config" 2>/dev/null; then
+        mv "$tmp_config" "$opencode_config"
+        if [[ "$enable_mcp" == "true" ]]; then
+            print_success "Added Google Analytics MCP to OpenCode (enabled with GSC credentials)"
+        else
+            print_success "Added Google Analytics MCP to OpenCode (disabled - no credentials found)"
+            print_info "To enable: Create service account JSON at $gsc_creds"
+        fi
+        print_info "Or use the google-analytics subagent which enables it automatically"
+    else
+        rm -f "$tmp_config"
+        print_warning "Failed to add Google Analytics MCP to config"
+    fi
+    
+    # Show setup instructions
+    print_info "Google Analytics MCP setup:"
+    print_info "  1. Enable Google Analytics Admin & Data APIs in Google Cloud Console"
+    print_info "  2. Configure ADC: gcloud auth application-default login --scopes https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
+    print_info "  3. Update GOOGLE_APPLICATION_CREDENTIALS path in opencode.json"
+    print_info "  4. Set GOOGLE_PROJECT_ID in opencode.json"
+    print_info "Documentation: ~/.aidevops/agents/services/analytics/google-analytics.md"
+    
+    return 0
+}
+
+# Setup multi-tenant credential storage
+setup_multi_tenant_credentials() {
+    print_info "Multi-tenant credential storage..."
+    
+    local credential_helper="$HOME/.aidevops/agents/scripts/credential-helper.sh"
+    
+    if [[ ! -f "$credential_helper" ]]; then
+        # Try local script if deployed version not available yet
+        credential_helper=".agent/scripts/credential-helper.sh"
+    fi
+    
+    if [[ ! -f "$credential_helper" ]]; then
+        print_warning "credential-helper.sh not found - skipping"
+        return 0
+    fi
+    
+    # Check if already initialized
+    if [[ -d "$HOME/.config/aidevops/tenants" ]]; then
+        local tenant_count
+        tenant_count=$(find "$HOME/.config/aidevops/tenants" -maxdepth 1 -type d | wc -l)
+        # Subtract 1 for the tenants/ dir itself
+        tenant_count=$((tenant_count - 1))
+        print_success "Multi-tenant already initialized ($tenant_count tenant(s))"
+        bash "$credential_helper" status
+        return 0
+    fi
+    
+    # Check if there are existing credentials to migrate
+    if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+        local key_count
+        key_count=$(grep -c "^export " "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || echo "0")
+        print_info "Found $key_count existing API keys in mcp-env.sh"
+        print_info "Multi-tenant enables managing separate credential sets for:"
+        echo "  - Multiple clients (agency/freelance work)"
+        echo "  - Multiple environments (production, staging)"
+        echo "  - Multiple accounts (personal, work)"
+        echo ""
+        print_info "Your existing keys will be migrated to a 'default' tenant."
+        print_info "Everything continues to work as before - this is non-breaking."
+        echo ""
+        
+        read -r -p "Enable multi-tenant credential storage? (y/n): " enable_mt
+        enable_mt=$(echo "$enable_mt" | tr '[:upper:]' '[:lower:]')
+        
+        if [[ "$enable_mt" == "y" || "$enable_mt" == "yes" ]]; then
+            bash "$credential_helper" init
+            print_success "Multi-tenant credential storage enabled"
+            echo ""
+            print_info "Quick start:"
+            echo "  credential-helper.sh create client-name    # Create a tenant"
+            echo "  credential-helper.sh switch client-name    # Switch active tenant"
+            echo "  credential-helper.sh set KEY val --tenant X  # Add key to tenant"
+            echo "  credential-helper.sh status                # Show current state"
+        else
+            print_info "Skipped. Enable later: credential-helper.sh init"
+        fi
+    else
+        print_info "No existing credentials found. Multi-tenant available when needed."
+        print_info "Enable later: credential-helper.sh init"
+    fi
+    
     return 0
 }
 
@@ -2239,7 +3319,10 @@ main() {
     # Optional steps with confirmation in interactive mode
     confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
     confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
+    confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
     confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
+    confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
+    confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
     confirm_step "Setup SSH key" && setup_ssh_key
     confirm_step "Setup configuration files" && setup_configs
     confirm_step "Set secure permissions on config files" && set_permissions
@@ -2250,18 +3333,25 @@ main() {
     confirm_step "Migrate old backups to new structure" && migrate_old_backups
     confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
+    confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
+    confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+    confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
     confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
+    confirm_step "Create symlinks for imported skills" && create_skill_symlinks
+    confirm_step "Check for skill updates from upstream" && check_skill_updates
     confirm_step "Inject agents reference into AI configs" && inject_agents_reference
     confirm_step "Update OpenCode configuration" && update_opencode_config
     confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
     confirm_step "Setup Node.js environment" && setup_nodejs_env
+    confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
     confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
     confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
     confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
     confirm_step "Setup Beads task management" && setup_beads
-    confirm_step "Setup SEO MCP servers (DataForSEO, Serper)" && setup_seo_mcps
+    confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
+    confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
     confirm_step "Setup browser automation tools" && setup_browser_tools
     confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
     confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
@@ -2307,8 +3397,13 @@ echo "  aidevops uninstall    - Remove aidevops"
     echo "• Augment Context Engine - Cloud semantic codebase retrieval"
     echo "• Context7               - Real-time library documentation"
     echo "• osgrep                 - Local semantic search (100% private)"
+    echo "• GSC                    - Google Search Console (MCP + OAuth2)"
+    echo "• Google Analytics       - Analytics data (shared GSC credentials)"
+    echo ""
+    echo "SEO Integrations (curl subagents - no MCP overhead):"
     echo "• DataForSEO             - Comprehensive SEO data APIs"
     echo "• Serper                 - Google Search API"
+    echo "• Ahrefs                 - Backlink and keyword data"
     echo ""
     echo "DSPy & DSPyGround Integration:"
     echo "• ./.agent/scripts/dspy-helper.sh        - DSPy prompt optimization toolkit"

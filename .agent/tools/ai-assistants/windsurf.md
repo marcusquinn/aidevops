@@ -182,7 +182,7 @@ ai-with-context windsurf ~/Git/aidevops
 **Total AI Tools Now Supported: 8**
 
 1. **Aider AI** - AI pair programming
-2. **Claude CLI** - Anthropic's Claude assistant
+2. **Claude Code** - Anthropic's official CLI tool
 3. **Qwen CLI** - Alibaba's Qwen model
 4. **Windsurf IDE** - Codeium's AI-powered IDE ✅ **NEW**
 5. **OpenAI CLI** - GPT models access

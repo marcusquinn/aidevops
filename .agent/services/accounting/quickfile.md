@@ -148,6 +148,21 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 - API calls are authenticated via MD5 hash
 - Default rate limit: 1000 calls/day
 
+## Troubleshooting
+
+If you encounter issues with QuickFile operations, check these resources:
+
+| Resource | URL | Purpose |
+|----------|-----|---------|
+| Support Portal | https://support.quickfile.co.uk/ | Official help articles and FAQs |
+| Community Forum | https://community.quickfile.co.uk/ | User discussions and solutions |
+| API Documentation | https://api.quickfile.co.uk/ | Technical API reference |
+
+**Common issues:**
+- **Authentication errors**: Verify credentials in `~/.config/.quickfile-mcp/credentials.json`
+- **Rate limiting**: Default 1000 calls/day - check usage in QuickFile dashboard
+- **API changes**: Check API docs for deprecations or new endpoints
+
 ## Related Agents
 
 - `@aidevops` - For infrastructure operations
@@ -155,5 +170,7 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 
 ## Reference
 
+- [QuickFile Support Portal](https://support.quickfile.co.uk/)
+- [QuickFile Community Forum](https://community.quickfile.co.uk/)
 - [QuickFile API Documentation](https://api.quickfile.co.uk/)
 - [AGENTS.md](../AGENTS.md) - Full documentation

@@ -332,14 +332,30 @@ cd ~/Git/aidevops && ./setup.sh
 
 This ensures `~/.aidevops/agents/` has the latest release with updated version references.
 
-### Task Completion
+### Task Completion (Automatic)
 
-Mark all tasks included in this release as completed:
+The release script **automatically marks tasks complete** based on commit messages:
 
-1. **Move tasks** from `## In Progress` or `## In Review` to `## Done`
-2. **Add timestamps**: `completed:` with current date
-3. **Add actual time**: `actual:` if known (calculate from `started:`)
-4. **Sync with Beads**
+1. **Scans commits** since last release for task IDs (t001, t001.1, etc.)
+2. **Updates TODO.md** - changes `- [ ]` to `- [x]` and adds `completed:` timestamp
+3. **Commits changes** as part of the release commit
+
+**Supported commit patterns:**
+- Direct reference: `chore: mark t001 as complete`
+- Conventional commits: `feat(t001): add user dashboard`
+- Any mention: `fix: resolve issue in t002 validation`
+
+**Manual commands:**
+
+```bash
+# Preview which tasks would be marked complete
+.agent/scripts/version-manager.sh list-task-ids
+
+# Manually run auto-mark (without release)
+.agent/scripts/version-manager.sh auto-mark-tasks
+```
+
+**Manual completion** (if needed):
 
 ```markdown
 # Before (in ## In Progress or ## In Review)
@@ -350,13 +366,9 @@ Mark all tasks included in this release as completed:
 ```
 
 ```bash
-# Sync with Beads after updating TODO.md
+# Sync with Beads after manual updates
 ~/.aidevops/agents/scripts/beads-sync-helper.sh push
 ```
-
-**Task identification**: The release script can parse commit messages for task IDs:
-- Conventional commits: `feat(t001): add user dashboard`
-- Issue references: `Closes #123` (if linked to task)
 
 ### Time Summary
 

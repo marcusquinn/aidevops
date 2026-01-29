@@ -636,6 +636,27 @@ This protocol should also be reviewed when:
 - User feedback indicates protocol is too aggressive/passive
 - Duplicate detection fails to catch conflicts
 
+### Tool Selection Checklist
+
+Before using tools, verify you're using the optimal choice:
+
+| Task | Preferred Tool | Avoid | Why |
+|------|---------------|-------|-----|
+| Find files by pattern | `git ls-files` or `fd` | `mcp_glob` | CLI is 10x faster |
+| Search file contents | `rg` (ripgrep) | `mcp_grep` | CLI is more powerful |
+| Read file contents | `mcp_read` | `cat` via bash | Better error handling |
+| Edit files | `mcp_edit` | `sed` via bash | Safer, atomic |
+| Web content | `mcp_webfetch` | `curl` via bash | Handles redirects |
+| Remote repo research | `mcp_webfetch` README first | `npx repomix --remote` | Prevents context overload |
+
+**Self-check prompt**: Before calling any MCP tool, ask:
+> "Is there a faster CLI alternative I should use via Bash?"
+
+**Context budget check**: Before context-heavy operations, ask:
+> "Could this return >50K tokens? Have I checked the size first?"
+
+See `tools/context/context-guardrails.md` for detailed guardrails.
+
 ### Agent File Structure Convention
 
 All agent files should follow this structure:
@@ -704,8 +725,36 @@ See "Subagent YAML Frontmatter" section for full permission options.
 │   ├── {category}/           # Grouped by function
 ├── services/                 # External integrations
 │   ├── {category}/           # Grouped by type
-└── workflows/                # Process guides
+├── workflows/                # Process guides
+└── scripts/
+    └── commands/             # Slash command definitions
 ```text
+
+### Slash Command Placement
+
+**CRITICAL**: Never define slash commands inline in main agents.
+
+| Command Type | Location | Example |
+|--------------|----------|---------|
+| Generic (cross-domain) | `scripts/commands/{command}.md` | `/save-todo`, `/remember`, `/code-simplifier` |
+| Domain-specific | `{domain}/{subagent}.md` | `/keyword-research` in `seo/keyword-research.md` |
+
+**Main agents only reference commands** - they list available commands but never contain the implementation:
+
+```markdown
+# Good: Reference in main agent (seo.md)
+**Commands**: `/keyword-research`, `/autocomplete-research`
+
+# Bad: Implementation in main agent
+## /keyword-research Command
+[50 lines of command implementation...]
+```text
+
+**Why this matters:**
+- Keeps main agents under instruction budget
+- Enables command reuse across agents
+- Allows targeted reading (only load command when invoked)
+- Prevents duplication when multiple agents use same command
 
 **Naming conventions:**
 
@@ -755,6 +804,91 @@ cd ~/Git/aidevops && ./setup.sh
 - Modifying agent content users need immediately
 
 See `aidevops/setup.md` for deployment details.
+
+### Cache-Aware Prompt Patterns
+
+LLM providers implement prompt caching to reduce costs and latency. Anthropic's prompt caching, for example, caches the first N tokens of a prompt and reuses them across calls. To maximize cache hits:
+
+**Stable Prefix Pattern**
+
+Keep the beginning of your prompts stable across calls:
+
+```text
+# Good: Stable prefix, variable suffix
+[AGENTS.md content - stable]     ← Cached
+[Subagent content - stable]      ← Cached  
+[User message - variable]        ← Not cached
+
+# Bad: Variable content early
+[Dynamic timestamp]              ← Breaks cache
+[AGENTS.md content]              ← Not cached (prefix changed)
+```
+
+**Instruction Ordering**
+
+Never reorder instructions between calls:
+
+```markdown
+# Good: Consistent order
+1. Security rules
+2. Code standards
+3. Output format
+
+# Bad: Reordering based on task
+# Call 1: Security, Code, Output
+# Call 2: Code, Security, Output  ← Cache miss
+```
+
+**Avoid Dynamic Prefixes**
+
+Don't put variable content at the start of agent files:
+
+```markdown
+# Bad: Dynamic content at top
+Last updated: 2025-01-21  ← Changes daily, breaks cache
+Version: 2.41.0           ← Changes on release
+
+# Good: Static content at top
+# Agent Name - Purpose
+[Static instructions...]
+
+<!-- Dynamic content at end if needed -->
+```
+
+**AI-CONTEXT Blocks**
+
+The `<!-- AI-CONTEXT-START -->` pattern helps by:
+1. Putting essential, stable content first
+2. Detailed docs after (may be truncated, but prefix cached)
+
+```markdown
+<!-- AI-CONTEXT-START -->
+[Stable, essential content - always cached]
+<!-- AI-CONTEXT-END -->
+
+## Detailed Documentation
+[Less critical, may vary - cache still benefits from prefix]
+```
+
+**MCP Tool Definitions**
+
+MCP tools are injected into prompts. Minimize tool churn:
+
+```json
+// Good: Stable tool set per agent
+"SEO": { "tools": { "dataforseo_*": true, "serper_*": true } }
+
+// Bad: Dynamically changing tools
+// Session 1: dataforseo_*, serper_*
+// Session 2: dataforseo_*, gsc_*  ← Different tools, cache miss
+```
+
+**Measuring Cache Effectiveness**
+
+Monitor your API usage for cache hit rates. High cache hits indicate:
+- Stable instruction prefixes
+- Consistent tool configurations
+- Effective progressive disclosure (subagents loaded only when needed)
 
 ### Reviewing Existing Agents
 

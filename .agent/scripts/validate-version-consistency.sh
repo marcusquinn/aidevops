@@ -51,15 +51,23 @@ validate_version_consistency() {
         errors=$((errors + 1))
     fi
     
-    # Check README badge
+    # Check README badge (optional - dynamic GitHub release badge is preferred)
+    # If using dynamic badge (github.io/v/release), skip hardcoded version check
     if [[ -f "$REPO_ROOT/README.md" ]]; then
-        if grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
+        if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
+            print_success "README.md uses dynamic GitHub release badge (recommended)"
+        elif grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
             print_success "README.md badge: $expected_version"
         else
             local current_badge
             current_badge=$(grep -o "Version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue" "$REPO_ROOT/README.md" || echo "not found")
-            print_error "README.md badge shows '$current_badge', expected 'Version-$expected_version-blue'"
-            errors=$((errors + 1))
+            if [[ "$current_badge" == "not found" ]]; then
+                print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
+                warnings=$((warnings + 1))
+            else
+                print_error "README.md badge shows '$current_badge', expected 'Version-$expected_version-blue'"
+                errors=$((errors + 1))
+            fi
         fi
     else
         print_warning "README.md not found"
@@ -94,6 +102,48 @@ validate_version_consistency() {
     else
         print_warning "setup.sh not found"
         warnings=$((warnings + 1))
+    fi
+    
+    # Check aidevops.sh
+    if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
+        if grep -q "# Version: $expected_version" "$REPO_ROOT/aidevops.sh"; then
+            print_success "aidevops.sh: $expected_version"
+        else
+            local current_aidevops
+            current_aidevops=$(grep "# Version:" "$REPO_ROOT/aidevops.sh" | head -1 | cut -d':' -f2 | xargs || echo "not found")
+            print_error "aidevops.sh shows '$current_aidevops', expected '$expected_version'"
+            errors=$((errors + 1))
+        fi
+    else
+        print_warning "aidevops.sh not found"
+        warnings=$((warnings + 1))
+    fi
+    
+    # Check package.json
+    if [[ -f "$REPO_ROOT/package.json" ]]; then
+        local pkg_version
+        pkg_version=$(grep '"version"' "$REPO_ROOT/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/' || echo "not found")
+        if [[ "$pkg_version" == "$expected_version" ]]; then
+            print_success "package.json: $expected_version"
+        else
+            print_error "package.json shows '$pkg_version', expected '$expected_version'"
+            errors=$((errors + 1))
+        fi
+    else
+        print_warning "package.json not found"
+        warnings=$((warnings + 1))
+    fi
+    
+    # Check .claude-plugin/marketplace.json (optional - only for repos with Claude plugin)
+    if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
+        local marketplace_version
+        marketplace_version=$(grep '"version"' "$REPO_ROOT/.claude-plugin/marketplace.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/' || echo "not found")
+        if [[ "$marketplace_version" == "$expected_version" ]]; then
+            print_success ".claude-plugin/marketplace.json: $expected_version"
+        else
+            print_error ".claude-plugin/marketplace.json shows '$marketplace_version', expected '$expected_version'"
+            errors=$((errors + 1))
+        fi
     fi
     
     echo ""

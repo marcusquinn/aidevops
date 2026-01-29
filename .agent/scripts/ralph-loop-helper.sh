@@ -44,12 +44,12 @@ fi
 
 # State directories
 readonly RALPH_STATE_DIR=".agent/loop-state"
-readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.md"
+readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
 readonly RALPH_LEGACY_STATE_DIR=".claude"
 # shellcheck disable=SC2034  # Defined for documentation, used in status checks
-readonly RALPH_LEGACY_STATE_FILE="${RALPH_LEGACY_STATE_DIR}/ralph-loop.local.md"
+readonly RALPH_LEGACY_STATE_FILE="${RALPH_LEGACY_STATE_DIR}/ralph-loop.local.state"
 
 # Adaptive timing constants (evidence-based from PR #19 analysis)
 readonly RALPH_DELAY_BASE="${RALPH_DELAY_BASE:-2}"
@@ -68,6 +68,9 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
 readonly NC='\033[0m'
+
+# Output file for tool capture (shared with EXIT trap)
+output_file=""
 
 # =============================================================================
 # Helper Functions
@@ -258,9 +261,8 @@ run_v2_loop() {
     echo ""
 
     local iteration=1
-    local output_file
-    output_file=$(mktemp)
-    trap 'rm -f "$output_file"' EXIT
+    output_file="$(mktemp)"
+    trap 'rm -f "${output_file:-}"' RETURN
 
     while [[ $iteration -le $max_iterations ]]; do
         print_step "=== Iteration $iteration/$max_iterations ==="
@@ -291,7 +293,11 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
         
         case "$tool" in
             opencode)
-                echo "$reanchor_prompt" | opencode --print > "$output_file" 2>&1 || exit_code=$?
+                local opencode_args=("run" "$reanchor_prompt" "--format" "json")
+                if [[ -n "${RALPH_MODEL:-}" ]]; then
+                    opencode_args+=("--model" "$RALPH_MODEL")
+                fi
+                opencode "${opencode_args[@]}" > "$output_file" 2>&1 || exit_code=$?
                 ;;
             claude)
                 echo "$reanchor_prompt" | claude --print > "$output_file" 2>&1 || exit_code=$?
@@ -307,10 +313,15 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
 
         if [[ $exit_code -ne 0 ]]; then
             print_warning "Tool exited with code $exit_code (continuing)"
+            if [[ -s "$output_file" ]]; then
+                print_warning "Tool output (last 20 lines):"
+                tail -n 20 "$output_file"
+            fi
         fi
 
         # Check for completion promise
         if grep -q "<promise>$completion_promise</promise>" "$output_file" 2>/dev/null; then
+            # opencode run emits JSON events; grep still works on raw output
             print_success "Completion promise detected!"
             
             # Create success receipt
@@ -588,8 +599,8 @@ show_status_all() {
             # Check for v2 state (new location first, then legacy)
             local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
             local v2_state_legacy="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.md"
-            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.md"
+            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.state"
             
             # Check any of the state file locations
             if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then
@@ -660,8 +671,8 @@ check_other_loops() {
             # Check all possible state file locations (new and legacy)
             local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
             local v2_state_legacy="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.md"
-            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.md"
+            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+            local legacy_state_old="$worktree_path/.claude/ralph-loop.local.state"
 
             if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then
                 local branch

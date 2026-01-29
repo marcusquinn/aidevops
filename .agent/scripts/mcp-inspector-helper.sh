@@ -385,7 +385,6 @@ Configuration:
     - mcp-dashboard    (HTTP)  - MCP Dashboard with WebSocket
     - crawl4ai         (stdio) - Web crawling
     - context7         (stdio) - Library documentation
-    - repomix          (stdio) - Repository packaging
     - filesystem       (stdio) - File system access
     - memory           (stdio) - Persistent memory
     - github           (stdio) - GitHub API

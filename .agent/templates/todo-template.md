@@ -12,10 +12,10 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 **Human-readable:**
 
 ```markdown
-- [ ] t001 Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
-- [ ] t002 Dependent task blocked-by:t001 ~2h
-- [ ] t001.1 Subtask of t001 ~1h
-- [x] t003 Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
+- [ ] t001 Task description @owner #tag ~30m risk:low logged:2025-01-15
+- [ ] t002 Dependent task blocked-by:t001 ~15m risk:med
+- [ ] t001.1 Subtask of t001 ~10m
+- [x] t003 Completed task ~30m actual:25m logged:2025-01-10 completed:2025-01-15
 - [-] Declined task
 ```
 
@@ -30,31 +30,36 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - `blocks:t003` - This task blocks t003
 
 **Time fields:**
-- `~estimate` - Total time with optional breakdown `(ai:Xh test:Xh read:Xm)`
-- `actual:` - Actual time spent (recorded at commit/release)
+- `~estimate` - Active session time (AI execution, not wall clock)
+- `actual:` - Actual active time spent (from session-time-helper.sh)
 - `logged:` - When task was added
 - `started:` - When branch was created
 - `completed:` - When task was marked done
 
+**Risk (human oversight needed):**
+- `risk:low` - Autonomous: fire-and-forget, review PR after
+- `risk:med` - Supervised: check in mid-task, review before merge
+- `risk:high` - Engaged: stay present, test thoroughly, potential regressions
+
 <!--TOON:meta{version,format,updated}:
-1.0,todo-md+toon,{{DATE}}
+1.1,todo-md+toon,{{DATE}}
 -->
 
 ## Ready
 
 <!-- Tasks with no open blockers - run /ready to refresh -->
 
-<!--TOON:ready[0]{id,desc,owner,tags,est,logged,status}:
+<!--TOON:ready[0]{id,desc,owner,tags,est,risk,logged,status}:
 -->
 
 ## Backlog
 
-<!--TOON:backlog[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,status}:
+<!--TOON:backlog[0]{id,desc,owner,tags,est,risk,logged,status}:
 -->
 
 ## In Progress
 
-<!--TOON:in_progress[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
+<!--TOON:in_progress[0]{id,desc,owner,tags,est,risk,logged,started,status}:
 -->
 
 ## In Review

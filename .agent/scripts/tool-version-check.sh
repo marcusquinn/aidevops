@@ -73,17 +73,23 @@ done
 NPM_TOOLS=(
     "npm|osgrep|osgrep|--version|osgrep|npm update -g osgrep"
     "npm|Augment CLI|auggie|--version|@augmentcode/auggie@prerelease|npm update -g @augmentcode/auggie@prerelease"
-    "npm|Repomix|repomix|--version|repomix|npm update -g repomix"
+    "npm|Repomix|repomix|--version|repomix|bun install -g repomix@latest"
     "npm|DSPyGround|dspyground|--version|dspyground|npm update -g dspyground"
     "npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm update -g @verygoodplugins/mcp-local-wp"
     "npm|Beads UI|beads-ui|--version|beads-ui|npm update -g beads-ui"
     "npm|BDUI|bdui|--version|bdui|npm update -g bdui"
-    "npm|OpenCode|opencode|--version|opencode|npm update -g opencode"
+    "npm|OpenCode|opencode|--version|opencode|bun install -g opencode-ai@latest"
+    "npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|bun install -g chrome-devtools-mcp@latest"
+    "npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|bun install -g mcp-server-gsc@latest"
+    "npm|Playwriter MCP|playwriter|--version|playwriter|bun install -g playwriter@latest"
+    "npm|macOS Automator MCP|macos-automator-mcp|--version|@steipete/macos-automator-mcp|bun install -g @steipete/macos-automator-mcp@latest"
+    "npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|bun install -g @steipete/claude-code-mcp@latest"
 )
 
 BREW_TOOLS=(
     "brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
     "brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
+    "brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"
     "brew|Beads CLI|bd|version|steveyegge/beads/bd|brew upgrade steveyegge/beads/bd"
     "brew|jq|jq|--version|jq|brew upgrade jq"
     "brew|ShellCheck|shellcheck|--version|shellcheck|brew upgrade shellcheck"
@@ -93,6 +99,8 @@ PIP_TOOLS=(
     "pip|Beads Viewer|beads_viewer|--version|beads-viewer|pip install --upgrade beads-viewer"
     "pip|DSPy|dspy|--version|dspy-ai|pip install --upgrade dspy-ai"
     "pip|Crawl4AI|crawl4ai|--version|crawl4ai|pip install --upgrade crawl4ai"
+    "pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
+    "pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
 
 # Counters
@@ -180,6 +188,7 @@ check_tool() {
         npm) latest=$(get_npm_latest "$pkg") ;;
         brew) latest=$(get_brew_latest "$pkg") ;;
         pip) latest=$(get_pip_latest "$pkg") ;;
+        *) latest="unknown" ;;
     esac
     
     local status="up_to_date"
@@ -235,6 +244,9 @@ check_tool() {
                 ;;
             up_to_date)
                 echo -e "${color}${icon}  $name: $installed${NC}"
+                ;;
+            *)
+                echo -e "${color}${icon}  $name: $installed (status: $status)${NC}"
                 ;;
         esac
     fi

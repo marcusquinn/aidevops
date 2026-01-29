@@ -77,9 +77,9 @@ opencode auth login
 
 **Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution. Run `opencode auth login` again to add more accounts.
 
-## Anthropic OAuth Plugin
+## Anthropic OAuth (Built-in)
 
-The aidevops setup automatically installs the [opencode-anthropic-auth](https://github.com/anomalyco/opencode-anthropic-auth) plugin, enabling OAuth authentication for Claude Pro/Max accounts.
+OpenCode v1.1.36+ includes Anthropic OAuth authentication natively. No external plugin is needed.
 
 **Authenticate after setup:**
 
@@ -104,7 +104,7 @@ opencode auth login
 - Zero cost for Pro/Max subscribers
 - No manual API key management
 
-**See also:** `tools/opencode/opencode-anthropic-auth.md` for detailed setup and troubleshooting.
+> **Note:** The external `opencode-anthropic-auth` plugin is no longer needed and should be removed from `opencode.json` plugins if present. Adding it alongside the built-in version causes a TypeError due to double-loading.
 
 ## Installation
 
@@ -358,7 +358,7 @@ opencode run --attach http://localhost:4096 "Another test" --agent SEO
 |----------|---------|
 | New MCP added | `opencode run "List tools from [mcp]_*" --agent [agent]` |
 | MCP auth issues | `opencode run "Call [mcp]_[tool]" --agent [agent] 2>&1` |
-| Agent permissions | `opencode run "Try to write a file" --agent Plan+` |
+| Agent permissions | `opencode run "Try to write a file" --agent Build+` |
 | Slash command | `opencode run "/new-command arg1 arg2" --agent Build+` |
 | Quick task | `opencode run "Do X quickly" --agent Build+` |
 
@@ -371,7 +371,7 @@ Use the helper script for common testing tasks:
 ~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
 
 # Test agent permissions
-~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Plan+
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Build+
 
 # List tools available to agent
 ~/.aidevops/agents/scripts/opencode-test-helper.sh list-tools Build+
@@ -532,7 +532,7 @@ When a parent agent uses the `task` tool to spawn a subagent:
 | `write: false, edit: false, bash: true` | NO - bash can write files |
 | `write: false, edit: false, bash: false, task: false` | YES - truly read-only |
 
-**Example**: Plan+ with `task: true` could call a subagent that creates files, defeating its read-only purpose.
+**Example**: A read-only agent (like @plan-plus) with `task: true` could call a subagent that creates files, defeating its read-only purpose.
 
 ### Bash Escapes All Restrictions
 
@@ -543,12 +543,12 @@ When `bash: true`, the agent can execute ANY shell command, including:
 
 **For true read-only behavior**: Set both `bash: false` AND `task: false`
 
-### Plan+ Read-Only Configuration
+### @plan-plus Read-Only Configuration
 
-Plan+ is configured as strictly read-only:
+The @plan-plus subagent is configured as strictly read-only:
 
 ```json
-"Plan+": {
+"@plan-plus": {
   "permission": {
     "edit": "deny",
     "write": "deny",

@@ -40,7 +40,11 @@ jobs:
           script: |
             const comment = context.payload.comment;
             const sender = context.payload.sender;
-            const issue = context.payload.issue;
+            // Handle both issue_comment and pull_request_review_comment events
+            // For issue_comment: context.payload.issue exists
+            // For pull_request_review_comment: context.payload.pull_request exists, issue is undefined
+            const issue = context.payload.issue || context.payload.pull_request;
+            const isPRReviewComment = context.eventName === 'pull_request_review_comment';
             
             // Must contain /oc or /opencode trigger
             const hasTrigger = /\/(oc|opencode)\b/.test(comment.body);
@@ -57,18 +61,29 @@ jobs:
               core.setOutput('allowed', 'false');
               core.setOutput('reason', `User ${sender.login} has association '${association}', requires: ${trustedAssociations.join(', ')}`);
               
-              // Post warning comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                body: `> **Security Notice**: AI agent commands are restricted to repository collaborators.\n\n@${sender.login} your request was not processed. If you believe this is an error, please contact a maintainer.`
-              });
+              // Post warning comment (use appropriate API based on event type)
+              if (isPRReviewComment) {
+                await github.rest.pulls.createReplyForReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: issue.number,
+                  comment_id: comment.id,
+                  body: `> **Security Notice**: AI agent commands are restricted to repository collaborators.\n\n@${sender.login} your request was not processed. If you believe this is an error, please contact a maintainer.`
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: `> **Security Notice**: AI agent commands are restricted to repository collaborators.\n\n@${sender.login} your request was not processed. If you believe this is an error, please contact a maintainer.`
+                });
+              }
               return;
             }
             
             // For issues (not PRs): require 'ai-approved' label
-            const isPR = !!context.payload.issue.pull_request;
+            // PR review comments are always on PRs, so skip label check for them
+            const isPR = isPRReviewComment || !!(context.payload.issue && context.payload.issue.pull_request);
             if (!isPR) {
               const labels = issue.labels.map(l => l.name);
               if (!labels.includes('ai-approved')) {
@@ -109,20 +124,31 @@ jobs:
                 core.setOutput('allowed', 'false');
                 core.setOutput('reason', `Suspicious pattern detected: ${pattern.toString()}`);
                 
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  body: `> **Security Notice**: AI agent detected potentially unsafe content in the command and has blocked execution.\n\nPlease review your request and try again with a clearer, safer instruction.`
-                });
-                
-                // Also create a security alert for maintainers
-                await github.rest.issues.addLabels({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  labels: ['security-review']
-                });
+                // Post warning (use appropriate API based on event type)
+                if (isPRReviewComment) {
+                  await github.rest.pulls.createReplyForReviewComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: issue.number,
+                    comment_id: comment.id,
+                    body: `> **Security Notice**: AI agent detected potentially unsafe content in the command and has blocked execution.\n\nPlease review your request and try again with a clearer, safer instruction.`
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    body: `> **Security Notice**: AI agent detected potentially unsafe content in the command and has blocked execution.\n\nPlease review your request and try again with a clearer, safer instruction.`
+                  });
+                  
+                  // Also create a security alert for maintainers (only for issues, not PR comments)
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    labels: ['security-review']
+                  });
+                }
                 return;
               }
             }
@@ -145,19 +171,21 @@ jobs:
           script: |
             const comment = context.payload.comment;
             const sender = context.payload.sender;
-            const issue = context.payload.issue;
+            // Handle both issue_comment and pull_request_review_comment events
+            const issue = context.payload.issue || context.payload.pull_request;
             const allowed = '${{ needs.security-check.outputs.allowed }}';
             const reason = '${{ needs.security-check.outputs.reason }}';
             
             const logEntry = {
               timestamp: new Date().toISOString(),
               event: 'opencode-agent-trigger',
+              event_type: context.eventName,
               allowed: allowed === 'true',
               reason: reason,
               user: sender.login,
               user_association: comment.author_association,
-              issue_number: issue.number,
-              issue_title: issue.title,
+              issue_number: issue ? issue.number : null,
+              issue_title: issue ? issue.title : null,
               comment_id: comment.id,
               comment_url: comment.html_url,
               command: comment.body.substring(0, 500), // Truncate for safety
@@ -201,13 +229,26 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const issue = context.payload.issue;
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'eyes'
-            });
+            // Handle both issue_comment and pull_request_review_comment events
+            const isPRReviewComment = context.eventName === 'pull_request_review_comment';
+            
+            if (isPRReviewComment) {
+              // For PR review comments, use the pulls API
+              await github.rest.reactions.createForPullRequestReviewComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'eyes'
+              });
+            } else {
+              // For issue comments
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'eyes'
+              });
+            }
       
       - name: Run OpenCode Agent
         uses: sst/opencode/github@latest
@@ -243,15 +284,27 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const issue = context.payload.issue;
+            // Handle both issue_comment and pull_request_review_comment events
+            const isPRReviewComment = context.eventName === 'pull_request_review_comment';
             const success = '${{ job.status }}' === 'success';
             
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: success ? 'rocket' : 'confused'
-            });
+            if (isPRReviewComment) {
+              // For PR review comments, use the pulls API
+              await github.rest.reactions.createForPullRequestReviewComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: success ? 'rocket' : 'confused'
+              });
+            } else {
+              // For issue comments
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: success ? 'rocket' : 'confused'
+              });
+            }
 
   # Notify on security blocks
   security-blocked:

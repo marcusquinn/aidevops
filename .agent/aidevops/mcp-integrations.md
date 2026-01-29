@@ -30,7 +30,11 @@ tools:
 - Perplexity MCP: `PERPLEXITY_API_KEY` required
 - Google Search Console: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON)
 
+**Document Processing**:
+- Unstract MCP: `UNSTRACT_API_KEY` + `API_BASE_URL` required (Docker-based, self-hosted default)
+
 **Development**:
+- Claude Code MCP: Claude Code automation (forked server)
 - Next.js DevTools MCP
 - Context7 MCP: Real-time library docs
 - LocalWP MCP: WordPress database access
@@ -56,7 +60,12 @@ This document provides comprehensive setup and usage instructions for advanced M
 
 ### **⚡ Development Tools**
 
+- **Claude Code MCP**: Run Claude Code as an MCP server for automation
 - **Next.js DevTools MCP**: Next.js development and debugging assistance
+
+### **📄 Document Processing**
+
+- **Unstract MCP**: LLM-powered structured data extraction from unstructured documents (PDF, images, DOCX)
 
 ### **📧 CRM & Marketing**
 
@@ -92,6 +101,17 @@ playwright-mcp --install-browsers
 # Add to MCP client
 claude mcp add playwright npx playwright-mcp@latest
 ```
+
+### **Claude Code MCP (Fork)**
+
+```bash
+# Add forked MCP server via Claude Code CLI
+claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
+```
+
+**One-time setup**: run `claude --dangerously-skip-permissions` and accept prompts.
+**Upstream**: https://github.com/steipete/claude-code-mcp (revert if merged).
+**Local dev (optional)**: clone the fork and swap the command to `./start.sh` for instant iteration.
 
 ### **Ahrefs MCP**
 
@@ -189,6 +209,64 @@ export FLUENTCRM_API_PASSWORD="your_application_password"
 
 See `services/crm/fluentcrm.md` for detailed documentation.
 
+### **Unstract MCP**
+
+```bash
+# 1. Self-hosted (recommended): unstract-helper.sh install
+# 2. Or cloud: Sign up at https://unstract.com/start-for-free/
+# 3. Create a Prompt Studio project, define schema, deploy as API
+# 4. Store credentials in ~/.config/aidevops/mcp-env.sh:
+export UNSTRACT_API_KEY="your_api_key_here"
+export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
+chmod 600 ~/.config/aidevops/mcp-env.sh
+```
+
+**Note**: The MCP expects `API_BASE_URL` (not prefixed) - this matches the official Unstract spec.
+
+**For OpenCode** - Docker-based, disabled globally, enabled on-demand:
+
+```json
+{
+  "unstract": {
+    "type": "local",
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL -e DISABLE_TELEMETRY=true unstract/mcp-server:${UNSTRACT_IMAGE_TAG:-latest} unstract"],
+    "enabled": false
+  }
+}
+```
+
+**For Claude Desktop** (Docker):
+
+```json
+{
+  "mcpServers": {
+    "unstract_tool": {
+      "command": "/usr/local/bin/docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "/tmp:/tmp",
+        "-e", "UNSTRACT_API_KEY",
+        "-e", "API_BASE_URL",
+        "-e", "DISABLE_TELEMETRY=true",
+        "unstract/mcp-server", "unstract"
+      ],
+      "env": {
+        "UNSTRACT_API_KEY": "your_api_key",
+        "API_BASE_URL": "http://backend.unstract.localhost/deployment/api/.../"
+      }
+    }
+  }
+}
+```
+
+**Per-Agent Enablement**: The `services/document-processing/unstract.md` subagent has `unstract_tool: true` in its tools section. Agents needing document extraction reference this subagent.
+
+**Available Tools**: `unstract_tool` - submits files, polls for completion, returns structured JSON. Supports optional metadata and metrics.
+
+**Image Pinning**: Set `UNSTRACT_IMAGE_TAG` env var to pin a specific version for reproducibility.
+
+See `services/document-processing/unstract.md` for detailed documentation.
+
 ## 🔧 **Configuration Examples**
 
 ### **Advanced Chrome DevTools Configuration**
@@ -264,6 +342,12 @@ export AHREFS_API_KEY="your_40_char_ahrefs_key"
 export PERPLEXITY_API_KEY="your_perplexity_key"
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 export CLOUDFLARE_API_TOKEN="your_api_token"
+
+# Unstract - document processing (see services/document-processing/unstract.md)
+export UNSTRACT_API_KEY="your_unstract_api_key"
+export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
+# Optional: pin image version for reproducibility
+export UNSTRACT_IMAGE_TAG="latest"
 ```
 
 ## 🚀 **Getting Started**

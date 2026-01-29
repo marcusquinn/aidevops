@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Registry of imported external skills with upstream tracking for update detection",
+  "version": "1.0.0",
+  "skills": [
+    {
+      "name": "animejs",
+      "upstream_url": "https://github.com/juliangarnier/anime",
+      "upstream_commit": "",
+      "local_path": ".agent/tools/animation/animejs.md",
+      "format_detected": "context7",
+      "docs_url": "https://animejs.com/documentation",
+      "context7_id": "/websites/animejs",
+      "imported_at": "2026-01-21T12:00:00Z",
+      "last_checked": "2026-01-21T12:00:00Z",
+      "merge_strategy": "added",
+      "notes": "Imported via Context7 documentation API with /websites/animejs library ID"
+    },
+    {
+      "name": "remotion",
+      "upstream_url": "https://github.com/remotion-dev/skills",
+      "upstream_commit": "9550e1643dd451d3f8c131579d8ae827b2ce3eea",
+      "local_path": ".agent/tools/video/remotion.md",
+      "format_detected": "skill-md",
+      "imported_at": "2026-01-21T04:58:00Z",
+      "last_checked": "2026-01-21T04:58:00Z",
+      "merge_strategy": "added",
+      "notes": "Includes 29 rule files in .agent/tools/video/remotion/",
+      "context7_id": "/remotion-dev/remotion"
+    },
+    {
+      "name": "video-prompt-design",
+      "upstream_url": "https://github.com/snubroot/Veo-3-Meta-Framework",
+      "upstream_commit": "",
+      "local_path": ".agent/tools/video/video-prompt-design.md",
+      "format_detected": "readme-distilled",
+      "imported_at": "2026-01-23T20:40:00Z",
+      "last_checked": "2026-01-23T20:40:00Z",
+      "merge_strategy": "added",
+      "notes": "Distilled from upstream README into 7-component meta prompt framework subagent"
+    },
+    {
+      "name": "cloudflare-platform",
+      "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
+      "upstream_commit": "c4696d5389f95e9546b075759ff8326deac1fba7",
+      "local_path": ".agent/services/hosting/cloudflare-platform.md",
+      "format_detected": "skill-md-nested",
+      "imported_at": "2026-01-21T05:12:00Z",
+      "last_checked": "2026-01-21T05:12:00Z",
+      "merge_strategy": "added",
+      "notes": "Includes 60 product reference directories in .agent/services/hosting/cloudflare-platform/references/"
+    },
+    {
+      "name": "heygen",
+      "upstream_url": "https://github.com/heygen-com/skills",
+      "upstream_commit": "f11988dc81a6deed557f3d547b24f73627b59ebc",
+      "local_path": ".agent/tools/video/heygen-skill.md",
+      "format_detected": "skill-md-nested",
+      "imported_at": "2026-01-24T12:00:00Z",
+      "last_checked": "2026-01-24T12:00:00Z",
+      "merge_strategy": "added",
+      "notes": "Includes 18 rule files in .agent/tools/video/heygen-skill/rules/"
+    },
+    {
+      "name": "caldav-calendar",
+      "upstream_url": "https://clawdhub.com/Asleep123/caldav-calendar",
+      "upstream_commit": "1.0.1",
+      "local_path": ".agent/tools/productivity/caldav-calendar-skill.md",
+      "format_detected": "clawdhub",
+      "imported_at": "2026-01-24T22:20:00Z",
+      "last_checked": "2026-01-24T22:20:00Z",
+      "merge_strategy": "added",
+      "notes": "ClawdHub v1.0.1 by @Asleep123 - CalDAV calendar sync via vdirsyncer + khal"
+    },
+    {
+      "name": "proxmox-full",
+      "upstream_url": "https://clawdhub.com/mSarheed/proxmox-full",
+      "upstream_commit": "1.0.0",
+      "local_path": ".agent/services/hosting/proxmox-full-skill.md",
+      "format_detected": "clawdhub",
+      "imported_at": "2026-01-24T22:20:00Z",
+      "last_checked": "2026-01-24T22:20:00Z",
+      "merge_strategy": "added",
+      "notes": "ClawdHub v1.0.0 by @mSarheed - Complete Proxmox VE management via REST API"
+    }
+  ]
+}

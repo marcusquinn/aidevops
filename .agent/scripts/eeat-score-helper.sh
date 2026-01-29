@@ -85,25 +85,23 @@ print_header() {
 
 # Load configuration
 load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        if command -v jq &> /dev/null; then
-            LLM_PROVIDER=$(jq -r '.llm_provider // "openai"' "$CONFIG_FILE")
-            LLM_MODEL=$(jq -r '.llm_model // "gpt-4o"' "$CONFIG_FILE")
-            TEMPERATURE=$(jq -r '.temperature // 0.3' "$CONFIG_FILE")
-            MAX_TOKENS=$(jq -r '.max_tokens // 500' "$CONFIG_FILE")
-            CONCURRENT_REQUESTS=$(jq -r '.concurrent_requests // 3' "$CONFIG_FILE")
-            OUTPUT_FORMAT=$(jq -r '.output_format // "xlsx"' "$CONFIG_FILE")
-            INCLUDE_REASONING=$(jq -r '.include_reasoning // true' "$CONFIG_FILE")
-            
-            # Load weights
-            WEIGHT_AUTHORSHIP=$(jq -r '.weights.authorship // 0.15' "$CONFIG_FILE")
-            WEIGHT_CITATION=$(jq -r '.weights.citation // 0.15' "$CONFIG_FILE")
-            WEIGHT_EFFORT=$(jq -r '.weights.effort // 0.15' "$CONFIG_FILE")
-            WEIGHT_ORIGINALITY=$(jq -r '.weights.originality // 0.15' "$CONFIG_FILE")
-            WEIGHT_INTENT=$(jq -r '.weights.intent // 0.15' "$CONFIG_FILE")
-            WEIGHT_SUBJECTIVE=$(jq -r '.weights.subjective // 0.15' "$CONFIG_FILE")
-            WEIGHT_WRITING=$(jq -r '.weights.writing // 0.10' "$CONFIG_FILE")
-        fi
+    if [[ -f "$CONFIG_FILE" ]] && command -v jq &> /dev/null; then
+        LLM_PROVIDER=$(jq -r '.llm_provider // "openai"' "$CONFIG_FILE")
+        LLM_MODEL=$(jq -r '.llm_model // "gpt-4o"' "$CONFIG_FILE")
+        TEMPERATURE=$(jq -r '.temperature // 0.3' "$CONFIG_FILE")
+        MAX_TOKENS=$(jq -r '.max_tokens // 500' "$CONFIG_FILE")
+        CONCURRENT_REQUESTS=$(jq -r '.concurrent_requests // 3' "$CONFIG_FILE")
+        OUTPUT_FORMAT=$(jq -r '.output_format // "xlsx"' "$CONFIG_FILE")
+        INCLUDE_REASONING=$(jq -r '.include_reasoning // true' "$CONFIG_FILE")
+        
+        # Load weights
+        WEIGHT_AUTHORSHIP=$(jq -r '.weights.authorship // 0.15' "$CONFIG_FILE")
+        WEIGHT_CITATION=$(jq -r '.weights.citation // 0.15' "$CONFIG_FILE")
+        WEIGHT_EFFORT=$(jq -r '.weights.effort // 0.15' "$CONFIG_FILE")
+        WEIGHT_ORIGINALITY=$(jq -r '.weights.originality // 0.15' "$CONFIG_FILE")
+        WEIGHT_INTENT=$(jq -r '.weights.intent // 0.15' "$CONFIG_FILE")
+        WEIGHT_SUBJECTIVE=$(jq -r '.weights.subjective // 0.15' "$CONFIG_FILE")
+        WEIGHT_WRITING=$(jq -r '.weights.writing // 0.10' "$CONFIG_FILE")
     fi
     return 0
 }

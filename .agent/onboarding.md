@@ -2,6 +2,19 @@
 name: onboarding
 description: Interactive onboarding wizard - discover services, check credentials, configure integrations
 mode: subagent
+subagents:
+  # Setup/config
+  - setup
+  - troubleshooting
+  - api-key-setup
+  - list-keys
+  - mcp-integrations
+  # Services overview
+  - services
+  - service-links
+  # Built-in
+  - general
+  - explore
 ---
 
 # Onboarding Wizard - aidevops Configuration
@@ -40,7 +53,11 @@ Would you like me to explain what aidevops can help you with? (yes/no)
 If yes, provide a brief overview:
 
 ```text
-aidevops gives your AI assistant superpowers for DevOps and infrastructure management:
+aidevops gives your AI assistant superpowers for DevOps and infrastructure management.
+
+**Recommended tool:** You should be running this in [Claude Code](https://Claude.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for Claude Code first. If you're using a different tool, most features will still work, but Claude Code provides the best experience.
+
+**Capabilities:**
 
 - **Infrastructure**: Manage servers across Hetzner, Hostinger, Cloudron, Coolify
 - **Domains & DNS**: Purchase domains, manage DNS via Cloudflare, Spaceship, 101domains
@@ -383,6 +400,35 @@ auggie token print  # Verify
 | Chrome DevTools | Chrome running | `--remote-debugging-port=9222` | Browser debugging |
 | Playwriter | Browser extension | Install from Chrome Web Store | Extension-based automation |
 
+### Personal AI Assistant (Mobile Access)
+
+| Service | Requirements | Setup | Purpose |
+|---------|--------------|-------|---------|
+| Moltbot | Node.js >= 22 | `npm install -g moltbot@latest && moltbot onboard` | AI via WhatsApp, Telegram, Slack, Discord |
+
+**Moltbot setup** (recommended for mobile AI access):
+
+```bash
+# Install globally
+npm install -g moltbot@latest
+
+# Run onboarding wizard (installs daemon, connects channels)
+moltbot onboard --install-daemon
+
+# Verify
+moltbot doctor
+```
+
+Moltbot lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
+
+**Key features:**
+- Multi-channel inbox (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
+- Voice Wake + Talk Mode (macOS/iOS/Android)
+- Skills system compatible with aidevops agents
+- Browser control, cron jobs, webhooks
+
+**Docs**: https://docs.molt.bot
+
 ### WordPress
 
 | Service | Requirements | Setup Link | Purpose |
@@ -509,6 +555,14 @@ For new users, suggest this order based on their interests:
 4. Hetzner + Cloudflare
 5. All code quality tools
 6. DataForSEO + Serper
+7. Moltbot (mobile AI access)
+
+### Mobile-First / Always-On
+
+1. Moltbot (`moltbot onboard --install-daemon`)
+2. OpenAI or Anthropic API key
+3. Connect WhatsApp or Telegram channel
+4. Optional: Voice Wake for hands-free
 
 ## Troubleshooting
 
@@ -561,13 +615,18 @@ Main agents are complete AI personas with their own tools and focus areas. In Op
 
 | Agent | Focus | Best For |
 |-------|-------|----------|
-| `Plan+` | Read-only planning | Architecture decisions, research, analysis |
-| `Build+` | Full development | Coding, debugging, file changes |
+| `Build+` | Unified coding agent | Planning, coding, debugging, DevOps |
 | `SEO` | Search optimization | Keyword research, SERP analysis, GSC |
 | `WordPress` | WordPress ecosystem | Theme/plugin dev, MainWP, LocalWP |
-| `AI-DevOps` | Framework operations | Setup, troubleshooting, meta-tasks |
 
-**When to switch agents:** Switch when your task changes focus. Planning? Use `Plan+`. Ready to code? Switch to `Build+`. Need SEO analysis? Switch to `SEO`.
+**Build+ intent detection:** Build+ automatically detects your intent:
+- "What do you think..." / "How should we..." → Deliberation mode (research, discuss)
+- "Implement X" / "Fix Y" / "Add Z" → Execution mode (code changes)
+- Ambiguous → Asks for clarification
+
+**Specialist subagents:** Use `@aidevops` for framework operations, `@plan-plus` for planning-only mode.
+
+**When to switch agents:** Switch when your task changes domain. Need SEO analysis? Switch to `SEO`. WordPress work? Switch to `WordPress`.
 
 ### Subagents (@mention)
 

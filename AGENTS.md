@@ -8,10 +8,14 @@
 - **User Guide**: `.agent/AGENTS.md` (deployed to `~/.aidevops/agents/`)
 - **Repo**: `~/Git/aidevops/`
 
-**OpenCode Paths** (commonly needed):
+**OpenCode Paths** (aidevops recommends OpenCode as primary tool):
 - Config: `~/.config/opencode/opencode.json`
 - Agents: `~/.config/opencode/agent/`
 - Alternative: `~/.opencode/`
+
+**Claude Code Paths** (also supported):
+- Config: `~/.claude/`
+- Settings: `~/.claude/settings.json`
 
 **Development Commands**:
 
@@ -49,6 +53,11 @@
     ├── templates/         # PRD and task templates
     └── scripts/           # Helper scripts
 ```
+
+**Before extending aidevops**: Read `.agent/aidevops/architecture.md` for:
+- Agent design patterns (progressive disclosure, context offloading, Ralph loop)
+- Extension guide (adding services, tools, documentation standards)
+- Framework conventions (naming, code standards, security requirements)
 
 <!-- AI-CONTEXT-END -->
 

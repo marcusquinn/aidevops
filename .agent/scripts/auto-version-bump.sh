@@ -19,6 +19,18 @@ print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 
 print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
 print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
+# Cross-platform sed in-place edit (works on macOS and Linux)
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "$pattern" "$file"
+    else
+        sed -i "$pattern" "$file"
+    fi
+    return $?
+}
+
 # Repository root directory
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
 VERSION_MANAGER="$REPO_ROOT/.agent/scripts/version-manager.sh"
@@ -68,15 +80,20 @@ update_version_badge() {
     local readme_file="$REPO_ROOT/README.md"
 
     if [[ -f "$readme_file" ]]; then
-        # Use more robust regex pattern for version numbers (handles single and multi-digit)
-        # macOS sed requires different syntax for extended regex
-        sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$readme_file"
+        # Skip if using dynamic GitHub release badge
+        if grep -q "img.shields.io/github/v/release" "$readme_file"; then
+            print_success "README.md uses dynamic GitHub release badge (no update needed)"
+            return 0
+        fi
+        
+        # Use cross-platform sed for hardcoded badge
+        sed_inplace "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$readme_file"
 
         # Validate the update was successful
         if grep -q "Version-$new_version-blue" "$readme_file"; then
             print_success "Updated version badge in README.md to $new_version"
         else
-            print_error "Failed to update version badge in README.md"
+            print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
         fi
     fi
     return 0
@@ -118,8 +135,8 @@ main() {
             print_success "Version bumped: $current_version → $new_version"
             update_version_badge "$new_version"
             
-            # Add updated files to git
-            git add VERSION README.md sonar-project.properties setup.sh 2>/dev/null
+            # Add updated files to git (all version-tracked files)
+            git add VERSION README.md sonar-project.properties setup.sh aidevops.sh package.json .claude-plugin/marketplace.json 2>/dev/null
             
             echo "$new_version"
         else

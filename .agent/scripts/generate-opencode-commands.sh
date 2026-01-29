@@ -41,7 +41,7 @@ agent: Build-Agent
 subtask: true
 ---
 
-Read ~/.aidevops/agents/build-agent/agent-review.md and follow its instructions.
+Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
 
@@ -120,6 +120,35 @@ Report findings and recommend next actions (fix issues, merge, etc.)
 EOF
 ((++command_count))
 echo -e "  ${GREEN}✓${NC} Created /postflight command"
+
+# =============================================================================
+# REVIEW-ISSUE-PR COMMAND
+# =============================================================================
+# Review external issues and PRs - validate problems and evaluate solutions
+
+cat > "$OPENCODE_COMMAND_DIR/review-issue-pr.md" << 'EOF'
+---
+description: Review external issue or PR - validate problem and evaluate solution
+agent: Build+
+subtask: true
+---
+
+Read ~/.aidevops/agents/workflows/review-issue-pr.md and follow its instructions.
+
+Review this issue or PR: $ARGUMENTS
+
+**Usage:**
+- `/review-issue-pr 123` - Review issue or PR by number
+- `/review-issue-pr https://github.com/owner/repo/issues/123` - Review by URL
+- `/review-issue-pr https://github.com/owner/repo/pull/456` - Review PR by URL
+
+**Core questions to answer:**
+1. Is the issue real? (reproducible, not duplicate, actually a bug)
+2. Is this the best solution? (simplest approach, fixes root cause)
+3. Is the scope appropriate? (minimal changes, no scope creep)
+EOF
+((++command_count))
+echo -e "  ${GREEN}✓${NC} Created /review-issue-pr command"
 
 # =============================================================================
 # RELEASE COMMAND
@@ -512,7 +541,7 @@ echo -e "  ${GREEN}✓${NC} Created /pr command (alias for /create-pr)"
 cat > "$OPENCODE_COMMAND_DIR/create-prd.md" << 'EOF'
 ---
 description: Generate a Product Requirements Document for a feature
-agent: Plan+
+agent: Build+
 ---
 
 Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
@@ -550,7 +579,7 @@ echo -e "  ${GREEN}✓${NC} Created /create-prd command"
 cat > "$OPENCODE_COMMAND_DIR/generate-tasks.md" << 'EOF'
 ---
 description: Generate implementation tasks from a PRD
-agent: Plan+
+agent: Build+
 ---
 
 Read ~/.aidevops/agents/workflows/plans.md and follow its task generation instructions.
@@ -590,7 +619,7 @@ echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
 cat > "$OPENCODE_COMMAND_DIR/list-todo.md" << 'EOF'
 ---
 description: List tasks and plans with sorting, filtering, and grouping
-agent: Plan+
+agent: Build+
 ---
 
 Read TODO.md and todo/PLANS.md and display tasks based on arguments.
@@ -678,7 +707,7 @@ echo -e "  ${GREEN}✓${NC} Created /list-todo command"
 cat > "$OPENCODE_COMMAND_DIR/save-todo.md" << 'EOF'
 ---
 description: Save current discussion as task or plan (auto-detects complexity)
-agent: Plan+
+agent: Build+
 ---
 
 Analyze the current conversation and save appropriately based on complexity.
@@ -744,7 +773,7 @@ echo -e "  ${GREEN}✓${NC} Created /save-todo command"
 cat > "$OPENCODE_COMMAND_DIR/plan-status.md" << 'EOF'
 ---
 description: Show active plans and TODO.md status
-agent: Plan+
+agent: Build+
 ---
 
 Read TODO.md and todo/PLANS.md to show current planning status.
@@ -988,7 +1017,7 @@ echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
 cat > "$OPENCODE_COMMAND_DIR/onboarding.md" << 'EOF'
 ---
 description: Interactive onboarding wizard - discover services, configure integrations
-agent: AI-DevOps
+agent: Build+
 ---
 
 Read ~/.aidevops/agents/onboarding.md and follow its instructions.
@@ -1084,6 +1113,8 @@ Start a Ralph loop for iterative development.
 
 Arguments: $ARGUMENTS
 
+**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task` which sets `"t042: description"`). If no task-prefixed title exists, use `session-rename` with a concise version of the prompt (truncate to ~60 chars if needed).
+
 **Usage:**
 ```bash
 /ralph-loop "<prompt>" --max-iterations <n> --completion-promise "<text>"
@@ -1135,7 +1166,7 @@ Cancel the active Ralph loop.
 ~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
 ```
 
-This removes the state file at `.agent/loop-state/ralph-loop.local.md` and stops the loop.
+This removes the state file at `.agent/loop-state/ralph-loop.local.state` and stops the loop.
 
 If no loop is active, it will report "No active Ralph loop found."
 EOF
@@ -1329,7 +1360,8 @@ Task ID: $ARGUMENTS
 **Workflow:**
 1. Find task in TODO.md by ID (e.g., t042)
 2. Extract ralph metadata (promise, verify command, max iterations)
-3. Start Ralph loop with extracted parameters
+3. **Set session title** using `session-rename` tool with format: `"t042: Task description here"`
+4. Start Ralph loop with extracted parameters
 
 **Task format in TODO.md:**
 ```markdown
@@ -1352,7 +1384,8 @@ Task ID: $ARGUMENTS
 This will:
 1. Read TODO.md and find task t042
 2. Extract the ralph-promise, ralph-verify, ralph-max values
-3. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
+3. Set session title to `"t042: {task description}"` using `session-rename` tool
+4. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
 
 **Requirements:**
 - Task must have `#ralph` tag
@@ -1385,6 +1418,7 @@ Task Development → Preflight → PR Create → PR Review → Postflight → De
 ```bash
 /full-loop "Implement feature X with tests"
 /full-loop "Fix bug Y" --max-task-iterations 30
+/full-loop t061  # Will look up task description from TODO.md
 ```
 
 **Options:**
@@ -1575,6 +1609,7 @@ echo ""
 echo "  Quality:"
 echo "    /preflight        - Quality checks before commit"
 echo "    /postflight       - Check code audit feedback on latest push"
+echo "    /review-issue-pr  - Review external issue/PR (validate problem, evaluate solution)"
 echo "    /linters-local    - Run local linting (ShellCheck, secretlint)"
 echo "    /code-audit-remote - Run remote auditing (CodeRabbit, Codacy, SonarCloud)"
 echo "    /code-standards   - Check against documented standards"

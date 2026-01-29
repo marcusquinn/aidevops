@@ -184,7 +184,7 @@ parse_todo_md() {
 
 # Push TODO.md to Beads
 cmd_push() {
-    local force="${1:-false}"
+    local _force="${1:-false}"  # Reserved for future force-push support
     local dry_run="${2:-false}"
     local verbose="${3:-false}"
     
@@ -571,12 +571,15 @@ main() {
     local dry_run=false
     local verbose=false
     
+    # Parse options using named variable (S7679)
+    local opt
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        opt="$1"
+        case "$opt" in
             --force) force=true ;;
             --dry-run) dry_run=true ;;
             --verbose) verbose=true ;;
-            *) log_error "Unknown option: $1"; show_help; return 1 ;;
+            *) log_error "Unknown option: $opt"; show_help; return 1 ;;
         esac
         shift
     done

@@ -771,7 +771,6 @@ do_webmaster_research() {
     print_info "Period: Last $days days"
     print_info "Enrichment: $enrich"
     
-    local all_keywords=()
     local gsc_data=""
     local bing_data=""
     
@@ -845,7 +844,6 @@ do_webmaster_research() {
     fi
     
     # Enrich with DataForSEO volume/difficulty data if requested
-    local enriched_data="[]"
     if [[ "$enrich" == "true" ]]; then
         print_info "Enriching with search volume and difficulty data..."
         

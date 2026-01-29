@@ -39,6 +39,25 @@ tools:
 
 This file provides comprehensive context for AI assistants to understand, manage, and extend the AI DevOps Framework.
 
+## Preferred Tool
+
+**[Claude Code](https://Claude.ai/)** is the recommended and primary-tested AI coding agent for aidevops. All features, agents, workflows, and MCP integrations are designed and tested for Claude Code first. Other AI assistants (OpenCode, Cursor, Zed, etc.) are supported as a courtesy for users evaluating aidevops capabilities, but may not receive the same level of testing or integration depth.
+
+Key integrations:
+- **Agents**: Generated via `generate-opencode-agents.sh` with per-agent MCP tool filtering
+- **Commands**: 41 slash commands deployed to `~/.config/opencode/commands/`
+- **Plugins**: Compaction plugin at `.agent/plugins/opencode-aidevops/`
+- **Prompts**: Custom system prompt at `.agent/prompts/build.txt`
+
+## Agent Architecture
+
+**Build+** is the unified coding agent for planning and implementation. It consolidates the former Plan+ and AI-DevOps agents:
+
+- **Intent detection**: Automatically detects deliberation vs execution mode
+- **Planning workflow**: Parallel explore agents, investigation phases, synthesis
+- **Execution workflow**: Pre-edit git check, quality gates, autonomous iteration
+- **Specialist subagents**: `@aidevops` for framework ops, `@plan-plus` for planning-only mode
+
 ## Agent Design Patterns
 
 aidevops implements proven agent design patterns identified by Lance Martin (LangChain) and validated across successful agents like Claude Code, Manus, and Cursor. These patterns optimize for context efficiency and long-running autonomous operation.
@@ -58,14 +77,14 @@ aidevops implements proven agent design patterns identified by Lance Martin (Lan
 
 ### Key Implementation Details
 
-**Multi-Layer Action Space** (lines 114-170 of `generate-opencode-agents.sh`):
+**Multi-Layer Action Space** (`opencode.json` tools section):
 
 ```python
 # Tools disabled globally, enabled per-agent
+GLOBAL_TOOLS = {"gsc_*": False, "outscraper_*": False, "osgrep_*": True, ...}
 AGENT_TOOLS = {
-    "Plan+": {"write": False, "edit": False, "bash": False, ...},
-    "Build+": {"write": True, "context7_*": True, "osgrep_*": True, ...},
-    "SEO": {"gsc_*": True, "dataforseo_*": True, "serper_*": True, ...},
+    "Build+": {"write": True, "context7_*": True, "bash": True, "playwriter_*": True, ...},
+    "SEO": {"gsc_*": True, "google-analytics-mcp_*": True, ...},
 }
 ```
 
@@ -97,6 +116,41 @@ Task -> Implement -> Check -> Fix Issues -> Re-check -> ... -> Complete
 # Recall across sessions
 /recall "cors nginx"
 ```
+
+### MCP Lifecycle Pattern
+
+Decision framework for when to use an MCP server vs a curl-based subagent:
+
+| Factor | Use MCP | Use curl subagent |
+|--------|---------|-------------------|
+| Tool count | 25+ tools (outscraper) | 5-10 endpoints |
+| Auth complexity | OAuth2 token exchange (GSC) | Simple Bearer/Basic/API key |
+| Session frequency | Used most sessions | Used occasionally |
+| Context cost | Justified by frequency | Wasteful if rarely invoked |
+| Statefulness | Needs persistent connection | Stateless REST calls |
+
+**Three-tier MCP strategy**:
+
+1. **Globally enabled** (always loaded, ~2K tokens each): osgrep, augment-context-engine
+2. **Enabled, tools disabled** (zero context until agent invokes): claude-code-mcp, gsc, outscraper, google-analytics-mcp, quickfile, amazon-order-history, context7, repomix, playwriter, chrome-devtools, etc.
+3. **Replaced by curl subagent** (removed entirely): hetzner, serper, dataforseo, ahrefs, hostinger
+
+**Pattern for tier 2** (in `opencode.json`):
+
+```json
+"mcp": { "service": { "enabled": true, ... } },
+"tools": { "service_*": false },
+"agent": { "AgentName": { "tools": { "service_*": true } } }
+```
+
+The MCP process runs but tools are hidden from all agents except those that explicitly enable them. Zero context overhead for agents that don't need the capability.
+
+**When to migrate MCP → curl subagent**:
+- API is simple REST with Bearer/Basic auth
+- Fewer than ~10 endpoints needed
+- No complex state management
+- Subagent can document all patterns in a single markdown file
+- Saves ~2K context tokens per session permanently
 
 ### References
 

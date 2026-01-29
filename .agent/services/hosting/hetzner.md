@@ -1,5 +1,5 @@
 ---
-description: Hetzner Cloud server provisioning
+description: Hetzner Cloud server management via REST API
 mode: subagent
 tools:
   read: true
@@ -8,320 +8,175 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: true
 ---
 
-# Hetzner Cloud Provider Guide
+# Hetzner Cloud Provider
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Type**: Cloud VPS, dedicated servers, storage
-- **Locations**: Germany, Finland, USA (Ashburn, Hillsboro)
-- **API**: REST API at `api.hetzner.cloud/v1`
-- **Auth**: Bearer token via API
-- **Config**: `configs/hetzner-config.json`
-- **Commands**: `hetzner-helper.sh [list|create|connect|start|stop|reboot|api] [account] [server]`
+- **API**: REST at `https://api.hetzner.cloud/v1`
+- **Auth**: Bearer token per project (stored in `~/.config/aidevops/mcp-env.sh`)
+- **Token format**: `HCLOUD_TOKEN_{PROJECT}` (e.g. `HCLOUD_TOKEN_MYPROJECT`)
+- **Locations**: Germany (fsn1, nbg1), Finland (hel1), USA (ash, hil)
 - **Server types**: CX (shared), CPX (dedicated vCPU), CCX (dedicated CPU)
-- **SSH**: Full root access with SSH key authentication
-- **MCP**: Port 8081+ (configurable per account)
+- **Docs**: https://docs.hetzner.cloud/
+
+**No MCP required** - this subagent uses curl directly. Zero context cost until invoked.
+
 <!-- AI-CONTEXT-END -->
 
-Hetzner Cloud is a German cloud infrastructure provider known for excellent price-to-performance ratio, reliable service, and developer-friendly features.
-
-## Provider Overview
-
-### **Hetzner Cloud Characteristics:**
-
-- **Infrastructure Type**: Cloud VPS, Dedicated servers, Storage
-- **Locations**: Germany, Finland, USA (Ashburn, Hillsboro)
-- **API**: Comprehensive REST API with excellent documentation
-- **SSH Access**: Full root access with SSH key authentication
-- **Pricing**: Exceptional price-to-performance ratio
-- **Performance**: High-performance SSD storage, fast networking
-- **Reliability**: 99.9% uptime SLA, German engineering quality
-
-### **Best Use Cases:**
-
-- **Production applications** requiring reliable infrastructure
-- **Development and staging** environments
-- **High-performance computing** workloads
-- **Cost-effective scaling** for growing applications
-- **European data residency** requirements
-- **Docker and Kubernetes** deployments
-
-## 🔧 **Configuration**
-
-### **Setup Configuration:**
+## Authentication
 
 ```bash
-# Copy template
-cp configs/hetzner-config.json.txt configs/hetzner-config.json
+# Load token for a specific project
+source ~/.config/aidevops/mcp-env.sh
+export HCLOUD_TOKEN="$HCLOUD_TOKEN_MYPROJECT"
 
-# Edit with your actual API tokens and server details
+# Verify access
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/servers | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for s in d.get('servers',[]):
+  print(f\"{s['id']:>10} {s['status']:<10} {s['server_type']:<8} {s['name']}\")"
 ```
 
-### **Multi-Account Configuration:**
+## API Operations
+
+### List Servers
+
+```bash
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/servers | python3 -m json.tool
+```
+
+### Get Server Details
+
+```bash
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/servers/{id} | python3 -m json.tool
+```
+
+### Server Actions
+
+```bash
+# Actions: poweron, poweroff, reboot, shutdown, reset_password
+curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/servers/{id}/actions/{action}
+```
+
+### Create Server
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-server",
+    "server_type": "cx22",
+    "image": "ubuntu-24.04",
+    "location": "fsn1",
+    "ssh_keys": ["my-key"]
+  }' \
+  https://api.hetzner.cloud/v1/servers
+```
+
+### Delete Server
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/servers/{id}
+```
+
+### Volumes
+
+```bash
+# List
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/volumes
+
+# Create
+curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"data","size":50,"location":"fsn1","format":"ext4"}' \
+  https://api.hetzner.cloud/v1/volumes
+```
+
+### Firewalls
+
+```bash
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/firewalls
+```
+
+### SSH Keys
+
+```bash
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/ssh_keys
+```
+
+### Snapshots & Backups
+
+```bash
+# Enable backups
+curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/servers/{id}/actions/enable_backup
+
+# Create snapshot
+curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"pre-upgrade"}' \
+  https://api.hetzner.cloud/v1/servers/{id}/actions/create_image
+```
+
+### Server Types & Images
+
+```bash
+# Available server types
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  https://api.hetzner.cloud/v1/server_types | python3 -c "
+import json,sys
+for t in json.load(sys.stdin)['server_types']:
+  print(f\"{t['name']:<10} {t['cores']}c {t['memory']:.0f}GB {t['description']}\")"
+
+# Available images
+curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+  "https://api.hetzner.cloud/v1/images?type=system&status=available" | python3 -c "
+import json,sys
+for i in json.load(sys.stdin)['images']:
+  print(f\"{i['name']:<20} {i['description']}\")"
+```
+
+## Multi-Project Setup
+
+Each Hetzner Cloud project gets its own API token. Store them in `~/.config/aidevops/mcp-env.sh`:
+
+```bash
+export HCLOUD_TOKEN_PROJECTA="hc_..."
+export HCLOUD_TOKEN_PROJECTB="hc_..."
+```
+
+To get a token:
+1. https://console.hetzner.cloud → Select project
+2. Security → API Tokens → Generate API Token
+3. Read & Write permissions → Copy token
+
+## When to Enable the MCP Instead
+
+For frequent interactive use, enable the MCP server in `opencode.json`:
 
 ```json
-{
-  "accounts": {
-    "main": {
-      "api_token": "YOUR_MAIN_HETZNER_API_TOKEN_HERE",
-      "description": "Main production account",
-      "account": "your-email@domain.com"
-    },
-    "client-project": {
-      "api_token": "YOUR_CLIENT_PROJECT_HETZNER_API_TOKEN_HERE",
-      "description": "Client project account",
-      "account": "your-email@domain.com"
-    },
-    "storagebox": {
-      "api_token": "YOUR_STORAGEBOX_HETZNER_API_TOKEN_HERE",
-      "description": "Storage and backup account",
-      "account": "your-email@domain.com"
-    }
-  },
-  "mcp_integration": {
-    "enabled": true,
-    "base_port": 8081,
-    "notes": "MCP servers will use sequential ports starting from base_port"
-  }
+"hetzner-myproject": {
+  "type": "local",
+  "command": ["/bin/bash", "-c",
+    "source ~/.config/aidevops/mcp-env.sh && HCLOUD_TOKEN=$HCLOUD_TOKEN_MYPROJECT /Users/you/.local/bin/mcp-hetzner"],
+  "enabled": true
 }
 ```
 
-### **API Token Setup:**
+Install: `uv tool install 'mcp-hetzner @ git+https://github.com/dkruyt/mcp-hetzner.git'`
 
-1. **Login to Hetzner Cloud Console**
-2. **Go to Security** → API Tokens
-3. **Create new token** with appropriate permissions
-4. **Copy token** to your configuration file
-5. **Test access** with API call
-
-## 🚀 **Usage Examples**
-
-### **Server Management:**
-
-```bash
-# List all servers across accounts
-./.agent/scripts/hetzner-helper.sh list
-
-# List servers for specific account
-./.agent/scripts/hetzner-helper.sh list main
-
-# Create new server
-./.agent/scripts/hetzner-helper.sh create main web-server cx11 ubuntu-20.04
-
-# Connect to server
-./.agent/scripts/hetzner-helper.sh connect main web-server
-
-# Server operations
-./.agent/scripts/hetzner-helper.sh start main web-server
-./.agent/scripts/hetzner-helper.sh stop main web-server
-./.agent/scripts/hetzner-helper.sh reboot main web-server
-```
-
-### **API Operations:**
-
-```bash
-# Raw API calls
-./.agent/scripts/hetzner-helper.sh api main servers GET
-./.agent/scripts/hetzner-helper.sh api main images GET
-./.agent/scripts/hetzner-helper.sh api main server-types GET
-
-# Server details
-./.agent/scripts/hetzner-helper.sh api main servers/12345 GET
-```
-
-### **MCP Server Integration:**
-
-```bash
-# Start MCP server for specific account
-./.agent/scripts/hetzner-helper.sh mcp-start main
-
-# Test MCP server
-curl http://localhost:8081/health
-```
-
-## 🛡️ **Security Best Practices**
-
-### **API Token Security:**
-
-- **Separate tokens**: Use different tokens for different projects
-- **Minimal permissions**: Grant only required permissions
-- **Regular rotation**: Rotate tokens every 6-12 months
-- **Secure storage**: Store tokens in secure configuration files
-- **Environment variables**: Use env vars in CI/CD pipelines
-
-### **Server Security:**
-
-```bash
-# SSH key management
-./.agent/scripts/hetzner-helper.sh exec main web-server 'cat ~/.ssh/authorized_keys'
-
-# Firewall configuration
-./.agent/scripts/hetzner-helper.sh exec main web-server 'ufw status'
-
-# Security updates
-./.agent/scripts/hetzner-helper.sh exec main web-server 'apt update && apt upgrade -y'
-```
-
-### **Network Security:**
-
-- **Private networks**: Use Hetzner private networks for internal communication
-- **Firewalls**: Configure Hetzner Cloud Firewalls
-- **Load balancers**: Use Hetzner Load Balancers for high availability
-- **Floating IPs**: Use floating IPs for failover scenarios
-
-## 🔍 **Troubleshooting**
-
-### **Common Issues:**
-
-#### **API Authentication Errors:**
-
-```bash
-# Verify API token
-curl -H "Authorization: Bearer YOUR_TOKEN" https://api.hetzner.cloud/v1/servers
-
-# Check token permissions
-# Ensure token has required scopes (read, write)
-```
-
-#### **SSH Connection Issues:**
-
-```bash
-# Check server status
-./.agent/scripts/hetzner-helper.sh api main servers/12345 GET
-
-# Verify SSH key is added
-./.agent/scripts/hetzner-helper.sh api main ssh_keys GET
-
-# Check firewall rules
-./.agent/scripts/hetzner-helper.sh api main firewalls GET
-```
-
-#### **Server Performance Issues:**
-
-```bash
-# Check server metrics
-./.agent/scripts/hetzner-helper.sh exec main web-server 'htop'
-./.agent/scripts/hetzner-helper.sh exec main web-server 'iostat -x 1'
-
-# Monitor network
-./.agent/scripts/hetzner-helper.sh exec main web-server 'iftop'
-```
-
-## 📊 **Performance Optimization**
-
-### **Server Types:**
-
-- **CX series**: Shared vCPU, cost-effective
-- **CPX series**: Dedicated vCPU, consistent performance
-- **CCX series**: Dedicated CPU, high-performance computing
-
-### **Storage Options:**
-
-- **Local SSD**: High IOPS, included with server
-- **Volumes**: Network-attached storage, scalable
-- **Snapshots**: Point-in-time backups
-
-### **Networking:**
-
-```bash
-# Private networks for internal communication
-./.agent/scripts/hetzner-helper.sh api main networks POST
-
-# Load balancers for high availability
-./.agent/scripts/hetzner-helper.sh api main load_balancers POST
-
-# Floating IPs for failover
-./.agent/scripts/hetzner-helper.sh api main floating_ips POST
-```
-
-## 🔄 **Backup & Disaster Recovery**
-
-### **Automated Backups:**
-
-```bash
-# Enable automatic backups
-./.agent/scripts/hetzner-helper.sh api main servers/12345/actions/enable_backup POST
-
-# Create manual snapshot
-./.agent/scripts/hetzner-helper.sh api main servers/12345/actions/create_image POST
-```
-
-### **Volume Snapshots:**
-
-```bash
-# Create volume snapshot
-./.agent/scripts/hetzner-helper.sh api main volumes/12345/actions/create_snapshot POST
-
-# Restore from snapshot
-./.agent/scripts/hetzner-helper.sh api main volumes POST
-```
-
-## 🐳 **Container & Kubernetes**
-
-### **Docker Setup:**
-
-```bash
-# Install Docker
-./.agent/scripts/hetzner-helper.sh exec main web-server 'curl -fsSL https://get.docker.com | sh'
-
-# Docker Compose
-./.agent/scripts/hetzner-helper.sh exec main web-server 'curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose'
-```
-
-### **Kubernetes Integration:**
-
-- **Hetzner Cloud Controller Manager**: For Kubernetes integration
-- **CSI Driver**: For persistent volume support
-- **Load Balancer**: Automatic load balancer provisioning
-
-## 📚 **Best Practices**
-
-### **Infrastructure as Code:**
-
-```bash
-# Use Terraform for infrastructure management
-# Hetzner provider available
-terraform init
-terraform plan
-terraform apply
-```
-
-### **Monitoring & Alerting:**
-
-- **Prometheus**: For metrics collection
-- **Grafana**: For visualization
-- **AlertManager**: For alerting
-- **Uptime monitoring**: External monitoring services
-
-### **Cost Optimization:**
-
-- **Right-sizing**: Choose appropriate server types
-- **Scheduling**: Use scheduling for development environments
-- **Snapshots**: Regular cleanup of old snapshots
-- **Monitoring**: Track resource utilization
-
-## 🎯 **AI Assistant Integration**
-
-### **Automated Infrastructure:**
-
-- **Auto-scaling**: Automated server provisioning
-- **Health monitoring**: Automated health checks
-- **Backup management**: Automated backup scheduling
-- **Security updates**: Automated security patching
-- **Cost monitoring**: Automated cost tracking and alerts
-
-### **Development Workflows:**
-
-- **Environment provisioning**: Automated dev/staging environments
-- **CI/CD integration**: Automated deployments
-- **Testing environments**: Ephemeral test environments
-- **Database management**: Automated database operations
-
----
-
-**Hetzner Cloud provides exceptional value with enterprise-grade features, making it ideal for production workloads and cost-conscious scaling.** 🚀
+The MCP costs ~2K context tokens per session but provides richer tool integration.

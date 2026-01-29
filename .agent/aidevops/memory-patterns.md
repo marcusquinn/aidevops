@@ -23,7 +23,7 @@ tools:
 - **Key Instruction**: "At the beginning of each session, read ~/AGENTS.md"
 - **Setup Script**: `setup.sh` includes automatic creation
 - **Config Script**: `.agent/scripts/ai-cli-config.sh`
-- **Supported Tools**: Qwen CLI, Claude CLI, Gemini CLI, Cursor AI, GitHub Copilot, Factory.ai Droid
+- **Supported Tools**: Qwen CLI, Claude Code, Gemini CLI, Cursor AI, GitHub Copilot, Factory.ai Droid
 - **Note**: Warp AI and Amp Code use project context (no specific memory files)
 <!-- AI-CONTEXT-END -->
 
@@ -44,11 +44,12 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 - **Content**: "At the beginning of each session, read ~/agents.md to get additional context and instructions."
 - **Status**: **WORKING** - Your discovery confirmed this pattern
 
-### **2. Claude CLI** - **IMPLEMENTED** ✅
+### **2. Claude Code** - **IMPLEMENTED** ✅
 
 - **Memory File**: `~/CLAUDE.md` (home directory)
 - **Project File**: `~/Git/aidevops/CLAUDE.md` (project-specific)
-- **Behavior**: Persistent memory for Claude CLI sessions
+- **Behavior**: Persistent memory for Claude Code sessions
+- **Note**: Claude Code is Anthropic's official CLI tool (the `claude` command)
 - **Status**: **CREATED** - Both home and project files
 
 ### **3. Gemini CLI** - **IMPLEMENTED** ✅
@@ -82,7 +83,7 @@ Based on comprehensive research and your discovery about Qwen's `QWEN.md` file, 
 ### **✅ HOME DIRECTORY MEMORY FILES:**
 
 ```bash
-~/CLAUDE.md                           # Claude CLI memory
+~/CLAUDE.md                           # Claude Code memory
 ~/GEMINI.md                           # Gemini CLI memory
 ~/.qwen/QWEN.md                       # Qwen CLI memory (existing)
 ~/.cursorrules                        # Cursor AI rules
@@ -152,7 +153,7 @@ create_project_memory_files()  # Creates all project-level memory files
 
 ### **Research Results:**
 
-- ✅ **Claude CLI**: Uses `CLAUDE.md` files - **IMPLEMENTED**
+- ✅ **Claude Code**: Uses `CLAUDE.md` files - **IMPLEMENTED**
 - ✅ **Qwen CLI**: Uses `~/.qwen/QWEN.md` - **VERIFIED & PRESERVED**
 - ✅ **Gemini CLI**: Uses `GEMINI.md` files - **IMPLEMENTED**
 - ✅ **Cursor AI**: Uses `.cursorrules` files - **IMPLEMENTED**

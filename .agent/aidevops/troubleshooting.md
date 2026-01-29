@@ -248,7 +248,7 @@ opencode run "/new-command arg1" --agent Build+
 
 ```bash
 ~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
-~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Plan+
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Build+
 ```
 
 ## Performance Optimization

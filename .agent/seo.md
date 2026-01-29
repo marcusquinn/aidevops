@@ -2,6 +2,22 @@
 name: seo
 description: SEO optimization and analysis - keyword research, Search Console, DataForSEO, site crawling
 mode: subagent
+subagents:
+  - keyword-research
+  - google-search-console
+  - gsc-sitemaps
+  - dataforseo
+  - serper
+  - ahrefs
+  - site-crawler
+  - eeat-score
+  - domain-research
+  - pagespeed
+  - google-analytics
+  - data-export
+  - ranking-opportunities
+  - general
+  - explore
 ---
 
 # SEO - Main Agent
@@ -11,11 +27,11 @@ mode: subagent
 ## Quick Reference
 
 - **Purpose**: SEO optimization and analysis
-- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Context7
-- **MCP**: GSC, DataForSEO, Serper, Context7 for comprehensive SEO data and library docs
-- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`
+- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
+- **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7 for comprehensive SEO data and library docs
+- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`
 
-**Subagents** (`seo/`):
+**Subagents** (`seo/` and `services/analytics/`):
 
 | Subagent | Purpose |
 |----------|---------|
@@ -26,6 +42,9 @@ mode: subagent
 | `serper.md` | Google Search API (web, images, news, places) |
 | `site-crawler.md` | SEO site auditing (Screaming Frog-like capabilities) |
 | `eeat-score.md` | E-E-A-T content quality scoring and analysis |
+| `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
+| `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
+| `ranking-opportunities.md` | Analyze data for quick wins, striking distance, cannibalization |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
@@ -36,6 +55,7 @@ mode: subagent
 - SERP analysis (DataForSEO, Serper)
 - Backlink analysis (Ahrefs, DataForSEO)
 - Page speed optimization (PageSpeed)
+- **Data export and analysis** (`/seo-opportunities`)
 
 **Commands**:
 
@@ -54,24 +74,21 @@ mode: subagent
 
 # Keyword gap analysis
 /keyword-research-extended --gap mysite.com,competitor.com
+
+# Export and analyze ranking data
+/seo-opportunities example.com --days 90
 ```
 
-**MCP Integration**:
+**API Access** (via curl in subagents, no MCP needed):
 
-```bash
-# GSC queries via MCP
-gsc_search_analytics [site] [query]
-gsc_index_status [site] [url]
+| Subagent | API | What it provides |
+|----------|-----|-----------------|
+| `google-search-console` | Google Search Console API | Search analytics, indexing, sitemaps |
+| `dataforseo` | DataForSEO REST API | SERP data, keywords, backlinks, on-page |
+| `serper` | Serper.dev API | Google search results (web, images, news, places) |
+| `ahrefs` | Ahrefs REST API v3 | Backlinks, organic keywords, domain rating |
 
-# DataForSEO via MCP
-dataforseo.serp [keyword] [location]
-dataforseo.keywords_data [keywords]
-dataforseo.backlinks [domain]
-
-# Serper via MCP
-serper.google_search [query]
-serper.google_search_news [query]
-```
+Each subagent has curl examples. Load the relevant one when needed.
 
 **Testing**: Use OpenCode CLI to test SEO commands without restarting TUI:
 
@@ -192,6 +209,31 @@ Use `seo/gsc-sitemaps.md` for automated sitemap submissions:
 ```
 
 Uses Playwright browser automation with persistent Chrome profile. First-time setup requires `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login` to authenticate.
+
+### Data Export & Opportunity Analysis
+
+Export ranking data from multiple platforms and analyze for opportunities:
+
+```bash
+# Export from all platforms (GSC, Bing, Ahrefs, DataForSEO)
+/seo-export all example.com --days 90
+
+# Run full analysis
+/seo-analyze example.com
+
+# Or combine both in one step
+/seo-opportunities example.com --days 90
+```
+
+**Analysis types**:
+- **Quick Wins**: Position 4-20, high impressions (easy improvements)
+- **Striking Distance**: Position 11-30, high volume (page 2 to page 1)
+- **Low CTR**: High impressions, low clicks (title/meta optimization)
+- **Cannibalization**: Same query ranking with multiple URLs
+
+Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`
+
+See `seo/data-export.md` and `seo/ranking-opportunities.md` for details.
 
 ### Content Optimization
 

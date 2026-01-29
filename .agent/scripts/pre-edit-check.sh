@@ -10,12 +10,15 @@
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "description"
 #
 # Exit codes:
-#   0 - OK to proceed (on feature branch, or docs-only on main in loop mode)
-#   1 - STOP (on protected branch, interactive mode)
+#   0 - OK to proceed (on feature branch in worktree, or docs-only on main)
+#   1 - STOP (on protected branch main/master, interactive mode)
 #   2 - Create worktree (loop mode detected code task on main)
+#   3 - WARNING (on feature branch in main repo - should use worktree instead)
 #
-# AI assistants should call this before any Edit/Write tool and STOP if it
-# returns a warning about being on main branch.
+# AI assistants should call this before any Edit/Write tool and:
+# - Exit 1: STOP and present branch creation options
+# - Exit 3: Present options to user (continue, create worktree, or switch main back)
+# - Exit 0: Proceed with edits
 # =============================================================================
 
 set -euo pipefail
@@ -58,7 +61,8 @@ is_docs_only() {
     local code_patterns="feature|fix|bug|implement|refactor|add.*function|update.*code|create.*script|modify.*config|change.*logic|new.*api|endpoint|enhance|port|ssl|helper"
     
     # Docs-only indicators (positive match)
-    local docs_patterns="^readme|^changelog|^documentation|docs/|typo|spelling|comment only|license only|^update readme|^update changelog|^update docs"
+    # Includes planning files (TODO.md, todo/) which can be edited on main
+    local docs_patterns="^readme|^changelog|^documentation|docs/|typo|spelling|comment only|license only|^update readme|^update changelog|^update docs|^todo|todo\.md|plans\.md|planning|^add task|^update task|backlog"
     
     # Check for code patterns first (takes precedence)
     if echo "$task_lower" | grep -qE "$code_patterns"; then
@@ -128,8 +132,16 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
     echo ""
     echo -e "${BOLD}Create a worktree (keeps main repo on main):${NC}"
     echo ""
-    echo "    ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{description}"
-    echo "    cd ../{repo}-{type}-{description}"
+    if command -v wt &>/dev/null; then
+        echo "    wt switch -c {type}/{description}"
+        echo ""
+        echo "    (Using Worktrunk - recommended)"
+    else
+        echo "    ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{description}"
+        echo "    cd ../{repo}-{type}-{description}"
+        echo ""
+        echo "    (Install Worktrunk for better experience: brew install max-sixty/worktrunk/wt)"
+    fi
     echo ""
     echo -e "${YELLOW}Why worktrees? The main repo directory should ALWAYS stay on main.${NC}"
     echo -e "${YELLOW}Using 'git checkout -b' here leaves the repo on a feature branch,${NC}"
@@ -150,20 +162,47 @@ else
         is_main_worktree=true
     fi
     
-    if [[ "$is_main_worktree" == "true" ]]; then
-        echo -e "${YELLOW}WARNING${NC} - Main repo is on feature branch: ${BOLD}$current_branch${NC}"
-        echo -e "${YELLOW}The main repo directory should stay on 'main' for parallel safety.${NC}"
-        echo -e "${YELLOW}Consider using a worktree instead, or switch back to main when done.${NC}"
-        echo ""
-    else
-        echo -e "${GREEN}OK${NC} - On branch: ${BOLD}$current_branch${NC}"
-    fi
-    
     # Sync terminal tab title with repo/branch (silent, non-blocking)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
     if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
         "$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
     fi
     
-    exit 0
+    if [[ "$is_main_worktree" == "true" ]]; then
+        # Loop mode: auto-decide for feature branch in main repo
+        if [[ "$LOOP_MODE" == "true" ]]; then
+            if is_docs_only "$TASK_DESC"; then
+                echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task on feature branch, continuing"
+                echo "LOOP_DECISION=continue"
+                exit 0
+            else
+                # For code tasks, warn but continue (already on feature branch)
+                echo -e "${YELLOW}LOOP-AUTO${NC}: On feature branch in main repo (not ideal but continuing)"
+                echo "LOOP_DECISION=continue_warning"
+                exit 0
+            fi
+        fi
+        
+        # Interactive mode: show warning with options
+        echo ""
+        echo -e "${YELLOW}${BOLD}======================================================${NC}"
+        echo -e "${YELLOW}${BOLD}  WARNING - MAIN REPO ON FEATURE BRANCH${NC}"
+        echo -e "${YELLOW}${BOLD}======================================================${NC}"
+        echo ""
+        echo -e "Current branch: ${BOLD}$current_branch${NC}"
+        echo ""
+        echo -e "${YELLOW}The main repo directory should stay on 'main' for parallel safety.${NC}"
+        echo -e "${YELLOW}Working directly here can cause issues with parallel sessions.${NC}"
+        echo ""
+        echo "Options:"
+        echo "  1. Create worktree for this task (recommended)"
+        echo "  2. Continue on current branch (not recommended for code)"
+        echo "  3. Switch main repo back to main, then create worktree"
+        echo ""
+        echo "FEATURE_BRANCH_WARNING=$current_branch"
+        exit 3
+    else
+        echo -e "${GREEN}OK${NC} - On branch: ${BOLD}$current_branch${NC} (in worktree)"
+        exit 0
+    fi
 fi

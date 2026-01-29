@@ -7,6 +7,655 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.92.3] - 2026-01-29
+
+### Fixed
+
+- make version scripts cross-platform and add validation (#250)
+
+## [2.92.1] - 2026-01-28
+
+### Fixed
+
+- correct MainWP REST API endpoints and auth method (#247)
+
+## [2.90.8] - 2026-01-27
+
+### Changed
+
+- Documentation: add changelog entry for browser custom engine support
+
+### Fixed
+
+- add language specifiers to fenced code blocks (#242)
+- detect fd-find as fdfind on Debian/Ubuntu (#241)
+- correct path to agent-review.md in generate-opencode-commands.sh (#237)
+
+## [2.90.7] - 2026-01-27
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [2.90.6] - 2026-01-27
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [2.90.5] - 2026-01-26
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [2.90.4] - 2026-01-26
+
+### Changed
+
+- Documentation: add changelog entries for v2.90.4
+
+## [2.90.3] - 2026-01-26
+
+### Added
+
+- add /neuronwriter slash command for content optimization (#235)
+
+## [2.90.2] - 2026-01-26
+
+### Changed
+
+- Documentation: add yt-dlp agent, /yt-dlp command, and NeuronWriter to README (#234)
+
+## [2.90.1] - 2026-01-26
+
+### Added
+
+- add /yt-dlp slash command for YouTube downloads (#233)
+
+## [2.90.0] - 2026-01-26
+
+### Added
+
+- add yt-dlp agent for YouTube video/audio downloads (#232)
+
+## [2.89.1] - 2026-01-25
+
+### Fixed
+
+- remove .opencode/agent symlink causing Services/ entries in tab completion (#228)
+
+## [2.89.0] - 2026-01-25
+
+### Changed
+
+- Documentation: mark t079 as complete
+- Refactor: consolidate Plan+ and AI-DevOps into Build+ (#226)
+
+## [2.88.5] - 2026-01-25
+
+### Added
+
+- cache session greeting for agents without Bash (#224)
+- cache session greeting for agents without Bash
+
+### Fixed
+
+- Plan+ uses Read for version check (no Bash tool available) (#223)
+- Plan+ uses Read for version check (no Bash tool available)
+
+## [2.88.4] - 2026-01-25
+
+### Fixed
+
+- add mandatory version check instruction directly to Plan+ agent (#222)
+- add mandatory version check instruction directly to Plan+ agent
+
+## [2.88.3] - 2026-01-25
+
+### Fixed
+
+- insist all agents run update check script (all have permission) (#221)
+- insist all agents run update check script (all have permission)
+
+## [2.88.2] - 2026-01-25
+
+### Fixed
+
+- use placeholder versions in AGENTS.md example to prevent hallucination (#220)
+- use placeholder versions in AGENTS.md example to prevent hallucination
+
+## [2.88.1] - 2026-01-25
+
+### Added
+
+- detect app name in session greeting (#219)
+
+## [2.88.0] - 2026-01-25
+
+### Added
+
+- improve session titles to include task descriptions (#211)
+- add email-health-check command and subagent (#213)
+- add web performance subagent and /performance command (#209)
+- auto-mark tasks complete from commit messages in release (#208)
+- add debug-opengraph and debug-favicon subagents (#206)
+
+### Changed
+
+- Refactor: use 'AI DevOps' identity in system prompt
+- Refactor: standardize Claude Code naming across documentation (#217)
+- Documentation: update README with performance subagent and fix counts
+- Documentation: update agent structure counts after email-health-check addition
+- Documentation: add recent features to README (#215)
+- Documentation: update README counts to reflect current state (#214)
+- Documentation: complete t037 ALwrity review for SEO/marketing inspiration (#207)
+
+### Fixed
+
+- add planning-commit-helper.sh to Plan+ bash permissions
+- prevent false positive task marking in auto-complete (#216)
+
+## [2.87.3] - 2026-01-25
+
+### Fixed
+
+- pass positional args correctly to case statement (#205)
+
+## [2.87.2] - 2026-01-25
+
+### Fixed
+
+- add external_directory permission to Plan+ agent (#204)
+
+## [2.87.1] - 2026-01-25
+
+### Fixed
+
+- use custom system prompt for ALL primary agents (#203)
+
+## [2.86.1] - 2026-01-25
+
+### Added
+
+- add playwright-cli subagent for AI agent automation (#196)
+- allow version check script for initial greeting (#194)
+
+### Changed
+
+- Refactor: replace repomix MCP with CLI (#197)
+- Refactor: remove repomix/playwriter from default agent tools (#195)
+- Documentation: update README with recent PR features (#193)
+
+## [2.83.1] - 2026-01-25
+
+### Changed
+
+- Refactor: remove serper MCP, use curl subagent instead (#187)
+- Refactor: move claude-code-mcp to on-demand loading (#184)
+
+### Fixed
+
+- replace broken uvx command with uv tool run for serper MCP (#186)
+- replace remaining associative array in install_mcp_packages
+- replace associative array with parallel arrays in MCP migration
+- unconditionally disable claude-code-mcp tools globally in setup
+
+## [2.83.0] - 2026-01-24
+
+### Added
+
+- add ClawdHub skill registry as import source with browser automation (#183)
+
+### Changed
+
+- Documentation: add ClawdHub skills and import source to README
+
+## [2.82.0] - 2026-01-24
+
+### Added
+
+- add Examples & Inspiration section to Remotion agent (#182)
+
+## [2.81.0] - 2026-01-24
+
+### Added
+
+- add anti-detect browser automation stack
+
+### Changed
+
+- Documentation: update README with anti-detect browser section and counts
+
+### Fixed
+
+- resolve merge conflict with main and address CodeRabbit review
+
+## [2.80.1] - 2026-01-24
+
+### Fixed
+
+- resolve MCP binary paths to full absolute paths for PATH-independent startup (#179)
+
+## [2.80.0] - 2026-01-24
+
+### Added
+
+- implement multi-tenant credential storage (#178)
+
+### Changed
+
+- Documentation: add changelog entries for multi-tenant credentials
+- Documentation: add list-keys subagent documentation
+
+## [2.78.0] - 2026-01-24
+
+### Added
+
+- add HeyGen AI avatar video creation skill (#170)
+
+## [2.77.3] - 2026-01-24
+
+### Fixed
+
+- auto-install fd and ripgrep in non-interactive mode (#171)
+
+## [2.77.2] - 2026-01-24
+
+### Fixed
+
+- add remote sync verification to release script and tag rollback (#168)
+- add Homebrew PATH detection early in setup.sh requirements check (#169)
+- prefer Homebrew/pyenv python3 over macOS system python in setup.sh (#167)
+
+## [2.77.1] - 2026-01-24
+
+### Changed
+
+- Documentation: add worktree path re-read instruction to AGENTS.md (#166)
+- Documentation: update README metrics to match actual counts (#165)
+
+## [2.77.0] - 2026-01-24
+
+### Added
+
+- add Playwright MCP auto-setup to setup.sh (#150)
+
+### Changed
+
+- Documentation: update browser tool docs with benchmarks and add benchmark agent (#163)
+
+### Fixed
+
+- replace bc version comparison with integer arithmetic in crawl4ai-helper (#164)
+
+## [2.76.1] - 2026-01-24
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [2.76.0] - 2026-01-24
+
+### Added
+
+- add Video main agent for AI video generation and prompt engineering (#161)
+
+### Changed
+
+- Documentation: add PR #159, #160, #157 features to README
+
+### Fixed
+
+- remove hardcoded model IDs from agent config generation
+- correct tools frontmatter format in pre-edit.md
+
+## [2.75.0] - 2026-01-24
+
+### Added
+
+- multi-agent orchestration & token efficiency (p013/t068) (#158)
+- aidevops update now checks planning template versions (#160)
+- add session-time-helper and risk field to task format (#159)
+- add content summaries to subagent routing table (#157)
+- add video-prompt-design subagent for Veo 3 meta prompt framework (#156)
+
+### Changed
+
+- Documentation: add multi-agent orchestration section to README
+
+## [2.74.1] - 2026-01-23
+
+### Fixed
+
+- correct ultimate-multisite plugin URL in wp-preferred.md (#155)
+
+## [2.74.0] - 2026-01-23
+
+### Added
+
+- add technology stack subagents for modern web development (#152)
+
+## [2.73.0] - 2026-01-23
+
+### Added
+
+- add aidevops skill CLI command with telemetry disabled (#154)
+
+## [2.72.0] - 2026-01-22
+
+### Added
+
+- add MiniSim iOS/Android emulator launcher support (#151)
+
+## [2.71.0] - 2026-01-22
+
+### Added
+
+- add Higgsfield AI API support with Context7 documentation (#149)
+
+### Changed
+
+- Documentation: add feature branch scenario guidance to pre-edit workflow (#148)
+
+## [2.70.4] - 2026-01-21
+
+### Changed
+
+- Documentation: add cross-reference from cloudflare.md to cloudflare-platform.md (#147)
+
+## [2.70.3] - 2026-01-21
+
+### Fixed
+
+- resolve Homebrew install failures and improve setup.sh error handling (#146)
+
+## [2.70.2] - 2026-01-21
+
+### Changed
+
+- Documentation: add cloudflare-platform to AGENTS.md subagent table (#145)
+
+## [2.70.1] - 2026-01-21
+
+### Changed
+
+- Documentation: address code review feedback on Imported Skills section (#144)
+
+## [2.70.0] - 2026-01-21
+
+### Added
+
+- import cloudflare-platform skill and add update checking to setup (#142)
+- Agent Design Pattern Improvements (t052-t057, t067) (#140)
+- add anime.js skill imported via Context7 (#137)
+- import Remotion video skill from GitHub (#138)
+
+### Changed
+
+- Documentation: add Imported Skills section to README (#143)
+- Documentation: update README with new skills and accurate counts (#141)
+- Documentation: update README with Remotion skill and accurate counts
+
+### Fixed
+
+- portable regex and nested skill support (#139)
+
+## [2.69.0] - 2026-01-21
+
+### Added
+
+- Agent Design Pattern Improvements (t052-t057, t067) (#140)
+- add anime.js skill imported via Context7 (#137)
+- import Remotion video skill from GitHub (#138)
+
+### Changed
+
+- Documentation: update README with new skills and accurate counts (#141)
+- Documentation: update README with Remotion skill and accurate counts
+
+### Fixed
+
+- portable regex and nested skill support (#139)
+
+## [2.68.0] - 2026-01-21
+
+### Added
+
+- add /add-skill command for external skill import (#135)
+
+### Changed
+
+- Documentation: add /add-skill command to README (#136)
+
+## [2.67.2] - 2026-01-21
+
+### Changed
+
+- Documentation: add changelog entry for dynamic badge fix
+
+### Fixed
+
+- handle dynamic GitHub release badge in version-manager.sh (#134)
+
+## [2.67.1] - 2026-01-21
+
+### Changed
+
+- Documentation: add changelog entry for version validation fix
+
+### Fixed
+
+- consolidate version validation to single source of truth (#133)
+
+## [2.67.0] - 2026-01-21
+
+### Added
+
+- add readme-helper.sh for dynamic count management (#131)
+- add agent design subagents for planning discussions (#132)
+
+### Changed
+
+- Documentation: improve README maintainability and add AI-CONTEXT block (#130)
+
+## [2.66.0] - 2026-01-21
+
+### Added
+
+- Auto-create fd alias on Debian/Ubuntu (#127)
+
+## [2.65.0] - 2026-01-20
+
+### Added
+
+- add README create/update workflow and /readme command (#129)
+- add humanise subagent for AI writing pattern removal (#128)
+- add humanise subagent for AI writing pattern removal
+
+### Changed
+
+- Documentation: update README and CHANGELOG for humanise feature
+
+### Fixed
+
+- show curl errors for better debugging
+
+## [2.64.0] - 2026-01-20
+
+### Added
+
+- add humanise subagent for AI writing pattern removal (#128)
+- add humanise subagent for AI writing pattern removal
+
+### Changed
+
+- Documentation: update README and CHANGELOG for humanise feature
+
+### Fixed
+
+- show curl errors for better debugging
+
+## [2.64.0] - 2026-01-20
+
+### Added
+
+- add humanise subagent for AI writing pattern removal (#128)
+- add /humanise slash command for on-demand text humanisation
+- add humanise-update-helper.sh to check for upstream skill updates
+
+## [2.63.0] - 2026-01-19
+
+### Added
+
+- add /list-todo and /show-plan commands (#126)
+
+## [2.62.1] - 2026-01-19
+
+### Changed
+
+- Refactor: elevate mcp_glob warning to MANDATORY section (#125)
+
+## [2.62.0] - 2026-01-18
+
+### Added
+
+- add granular bash permissions for file discovery (#123)
+
+### Fixed
+
+- update CLI commands to match official docs (#124)
+
+## [2.61.1] - 2026-01-18
+
+### Fixed
+
+- add missing default cases in tool-version-check.sh (S131) (#122)
+- handle pull_request_review_comment events in OpenCode Agent workflow (#121)
+
+## [2.61.0] - 2026-01-18
+
+### Added
+
+- add Moltbot (formerly Clawdbot) integration for mobile AI access (#118)
+
+### Changed
+
+- Documentation: add one-time Bash guidance for Plan+ file discovery (#119)
+
+### Fixed
+
+- prefer Worktrunk (wt) over worktree-helper.sh (#120)
+
+## [2.60.2] - 2026-01-18
+
+### Fixed
+
+- add context budget, file discovery, and capability guardrails (#117)
+
+## [2.60.1] - 2026-01-17
+
+### Changed
+
+- Documentation: add Worktrunk as recommended worktree tool (#116)
+
+## [2.60.0] - 2026-01-17
+
+### Added
+
+- Add file discovery performance guidance to AGENTS.md with preference order (git ls-files, fd, rg, mcp_glob)
+- Add setup_file_discovery_tools() to setup.sh for automatic fd/ripgrep installation
+- Add File Discovery Tools section to README.md with documentation
+
+## [2.59.0] - 2026-01-17
+
+### Added
+
+- add auto-commit for planning files (TODO.md, todo/) (#114)
+
+## [2.58.0] - 2026-01-17
+
+### Added
+
+- add path-based write permissions for Plan+ agent (#112)
+- add worktrunk as default worktree tool with fallback (#109)
+
+### Fixed
+
+- clean up aidevops runtime files before worktree removal
+- change state files from .md to .state extension (#111)
+- exclude loop-state from agent discovery and deployment (#110)
+- add backup rotation to prevent file accumulation (#108)
+
+## [2.57.0] - 2026-01-17
+
+### Added
+
+- add worktrunk as default worktree tool with fallback (#109)
+
+### Fixed
+
+- add backup rotation to prevent file accumulation (#108)
+
+## [2.56.0] - 2026-01-15
+
+### Added
+
+- point Claude Code MCP to fork (#105)
+- add claude-code-mcp server (#103)
+- auto-deploy Google Analytics MCP to OpenCode config (#100)
+- add Google Analytics MCP integration (#98)
+- add /review-issue-pr slash command (#95)
+- add review-issue-pr for triaging external contributions (#94)
+
+### Fixed
+
+- improve secretlint performance with ignore patterns (#107)
+- handle preflight PASS output (#106)
+- resolve unbound variable and use opencode run (#104)
+- suppress jq output in plugin array checks
+- output options as YAML object instead of string (#101)
+
+## [2.55.0] - 2026-01-14
+
+### Added
+
+- add Peekaboo MCP server integration for macOS GUI automation (#91)
+- add macos-automator MCP for AppleScript automation (#89)
+- add sweet-cookie documentation for cookie extraction (#90)
+
+### Changed
+
+- Documentation: add && aidevops update to npm/bun/brew install commands (#87)
+
+## [2.54.2] - 2026-01-14
+
+### Fixed
+
+- resolve next.js security vulnerability CVE-2025-66478 (#79)
+
+## [2.54.1] - 2026-01-14
+
+### Fixed
+
+- include aidevops.sh in version updates (#78)
+
+## [2.54.0] - 2026-01-14
+
+### Added
+
+- add subagent filtering via frontmatter (#75)
+
+### Changed
+
+- Documentation: add troubleshooting section with support links to QuickFile agent (#76)
+- Documentation: add upgrade-planning and update-tools to CLI commands
+- Documentation: add Bun as installation option
+
+### Fixed
+
+- add SonarCloud exclusions for shell code smell rules (#77)
+
 ## [2.53.3] - 2026-01-13
 
 ### Changed

@@ -39,6 +39,9 @@ authorized_keys
 !.agent/scripts/secretlint-helper.sh
 !.agent/secretlint.md
 
+# Exception for credential management script (not actual credentials)
+!.agent/scripts/credential-helper.sh
+
 # Environment files
 .env*
 *.env
@@ -51,6 +54,10 @@ secrets/
 .secrets/
 credentials/
 .credentials/
+
+# Exception: agent credential documentation (not actual credentials)
+!.agent/tools/credentials/
+!.agent/tools/credentials/**
 
 # Private scripts (never commit)
 .agent/scripts-private/
@@ -90,6 +97,7 @@ node_modules/
 package-lock.json
 pnpm-lock.yaml
 yarn.lock
+bun.lock
 
 # OS generated files
 .DS_Store
@@ -183,6 +191,9 @@ test-*.yaml
 .codex/
 .cursor/
 .factory/
+
+# Multi-tenant credential selection (per-project, not committed)
+.aidevops-tenant
 
 # Loop state files (local to each worktree, not committed)
 .agent/loop-state/

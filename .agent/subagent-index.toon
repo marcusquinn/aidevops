@@ -1,0 +1,104 @@
+<!--TOON:agents[13]{name,file,purpose,model_tier}:
+Plan+,plan-plus.md,Read-only planning with semantic codebase search,sonnet
+Build+,build-plus.md,Enhanced Build with context tools,sonnet
+AI-DevOps,aidevops.md,Framework operations and meta-agents,sonnet
+Onboarding,onboarding.md,Interactive setup wizard for new users,sonnet
+SEO,seo.md,SEO optimization and analysis,sonnet
+Content,content.md,Content creation workflows,sonnet
+Research,research.md,Research and analysis tasks,flash
+Marketing,marketing.md,Marketing strategy and email campaigns (FluentCRM),sonnet
+Sales,sales.md,Sales operations and CRM pipeline (FluentCRM),sonnet
+Legal,legal.md,Legal compliance,sonnet
+Accounts,accounts.md,Financial operations,sonnet
+Health,health.md,Health and wellness,sonnet
+Social-Media,social-media.md,Social media management,sonnet
+-->
+
+<!--TOON:model_tiers[5]{tier,model_id,use_case}:
+haiku,claude-3-5-haiku-20241022,Triage routing and simple tasks
+sonnet,claude-sonnet-4-20250514,Code review and implementation
+opus,claude-opus-4-20250514,Architecture and complex reasoning
+flash,gemini-2.5-flash,Fast cheap large context
+pro,gemini-2.5-pro,Capable large context
+-->
+
+<!--TOON:subagents[35]{folder,purpose,key_files}:
+aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
+memory/,Cross-session memory - SQLite FTS5 storage,README
+seo/,Search optimization - keywords and rankings,dataforseo|serper|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score
+content/,Content creation - copywriting and editorial,guidelines|humanise
+tools/content/,Content tools - summarization and extraction,summarize
+tools/social-media/,Social media tools - X/Twitter CLI,bird
+tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review
+tools/build-mcp/,MCP development - creating MCP servers,build-mcp|server-patterns|api-wrapper|transports|deployment
+tools/ai-assistants/,AI tool integration - configuring assistants,agno|capsolver|windsurf|claude-code|configuration
+tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
+tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo
+tools/mobile/,Mobile development - iOS/Android emulators,minisim
+tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
+tools/performance/,Web performance - Core Web Vitals and network analysis,performance
+tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
+tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint
+tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery
+tools/conversion/,Format conversion - document transformation,pandoc
+tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
+tools/data-extraction/,Data extraction - scraping business data,outscraper
+tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
+tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
+tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden
+tools/task-management/,Task tracking - dependency graphs,beads
+tools/terminal/,Terminal integration - tab titles,terminal-title
+tools/automation/,macOS automation - AppleScript and JXA,mac|macos-automator
+tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|localwp|mainwp|wp-preferred|scf
+services/hosting/,Hosting providers - DNS and cloud servers,hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
+services/email/,Email services - transactional email and deliverability,ses|email-health-check
+services/communications/,Communications - SMS and voice,twilio|telfon
+services/crm/,CRM integration - contact management,fluentcrm
+services/analytics/,Website analytics - GA4 reporting,google-analytics
+services/accounting/,Accounting integration - invoicing,quickfile
+services/document-processing/,Document processing - LLM-powered extraction,unstract
+-->
+
+<!--TOON:workflows[12]{name,file,purpose}:
+git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
+plans,workflows/plans.md,Complex execution plans
+release,workflows/release.md,Semver and changelog generation
+version-bump,workflows/version-bump.md,Version bump automation
+pr,workflows/pr.md,PR creation and review
+preflight,workflows/preflight.md,Pre-commit quality checks
+postflight,workflows/postflight.md,Post-release verification
+ralph-loop,workflows/ralph-loop.md,Iterative AI development loops
+session-review,workflows/session-review.md,Session completeness review
+review-issue-pr,workflows/review-issue-pr.md,External issue/PR triage
+bug-fixing,workflows/bug-fixing.md,Bug fix workflow
+feature-development,workflows/feature-development.md,Feature development workflow
+-->
+
+<!--TOON:scripts[26]{name,purpose}:
+list-keys-helper.sh,List all API keys with storage locations
+linters-local.sh,Run local linting (ShellCheck secretlint patterns)
+code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
+version-manager.sh,Version bumps and releases
+linter-manager.sh,Install and manage linters
+github-cli-helper.sh,GitHub operations
+coolify-helper.sh,Coolify deployment management
+stagehand-helper.sh,Browser automation with Stagehand
+crawl4ai-helper.sh,Web crawling and extraction
+watercrawl-helper.sh,WaterCrawl cloud API for web crawling and search
+domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
+toon-helper.sh,TOON format conversion
+sonarcloud-cli.sh,SonarCloud analysis
+secretlint-helper.sh,Secret detection
+beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
+todo-ready.sh,Show tasks with no open blockers
+ralph-loop-helper.sh,Iterative AI development loops
+full-loop-helper.sh,End-to-end development loop (task to PR to deploy)
+session-review-helper.sh,Gather session context for review
+mail-helper.sh,TOON-based inter-agent mailbox system
+memory-helper.sh,Cross-session memory (SQLite FTS5)
+pdf-helper.sh,PDF operations (info fields fill merge text)
+unstract-helper.sh,Unstract self-hosted document processing (install start stop)
+cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
+email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
+yt-dlp-helper.sh,YouTube video/audio download and local file conversion
+-->

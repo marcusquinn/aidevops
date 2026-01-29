@@ -19,6 +19,19 @@ print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 
 print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
 print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
+# Cross-platform sed in-place edit (works on macOS and Linux)
+# Usage: sed_inplace 'pattern' 'file'
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "$pattern" "$file"
+    else
+        sed -i "$pattern" "$file"
+    fi
+    return $?
+}
+
 # Repository root directory
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION_FILE="$REPO_ROOT/VERSION"
@@ -342,75 +355,45 @@ run_preflight_checks() {
 }
 
 # Function to validate version consistency across files
+# Delegates to the standalone validator script for single source of truth
 validate_version_consistency() {
     local expected_version="$1"
-    local errors=0
-
+    local validator_script="${REPO_ROOT}/.agent/scripts/validate-version-consistency.sh"
+    
     print_info "Validating version consistency across files..."
-
-    # Check VERSION file
-    if [[ -f "$VERSION_FILE" ]]; then
-        local version_file_content
-        version_file_content=$(cat "$VERSION_FILE")
-        if [[ "$version_file_content" != "$expected_version" ]]; then
-            print_error "VERSION file contains '$version_file_content', expected '$expected_version'"
-            errors=$((errors + 1))
-        else
-            print_success "VERSION file: $expected_version ✓"
-        fi
+    
+    if [[ -x "$validator_script" ]]; then
+        # Use the standalone validator (single source of truth)
+        "$validator_script" "$expected_version"
+        return $?
     else
-        print_error "VERSION file not found"
-        errors=$((errors + 1))
-    fi
-
-    # Check README badge
-    if [[ -f "$REPO_ROOT/README.md" ]]; then
-        if grep -q "Version-$expected_version-blue" "$REPO_ROOT/README.md"; then
-            print_success "README.md badge: $expected_version ✓"
+        # Fallback: basic validation if standalone script not found
+        print_warning "Standalone validator not found, using basic validation"
+        
+        local errors=0
+        
+        # Check VERSION file
+        if [[ -f "$VERSION_FILE" ]]; then
+            local version_file_content
+            version_file_content=$(cat "$VERSION_FILE")
+            if [[ "$version_file_content" != "$expected_version" ]]; then
+                print_error "VERSION file contains '$version_file_content', expected '$expected_version'"
+                errors=$((errors + 1))
+            else
+                print_success "VERSION file: $expected_version ✓"
+            fi
         else
-            print_error "README.md badge does not contain version $expected_version"
+            print_error "VERSION file not found"
             errors=$((errors + 1))
         fi
-    else
-        print_warning "README.md not found"
-    fi
-
-    # Check sonar-project.properties
-    if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
-        if grep -q "sonar.projectVersion=$expected_version" "$REPO_ROOT/sonar-project.properties"; then
-            print_success "sonar-project.properties: $expected_version ✓"
+        
+        if [[ $errors -eq 0 ]]; then
+            print_success "Basic version validation passed: $expected_version"
+            return 0
         else
-            print_error "sonar-project.properties does not contain version $expected_version"
-            errors=$((errors + 1))
+            print_error "Found $errors version inconsistencies"
+            return 1
         fi
-    fi
-
-    # Check setup.sh
-    if [[ -f "$REPO_ROOT/setup.sh" ]]; then
-        if grep -q "# Version: $expected_version" "$REPO_ROOT/setup.sh"; then
-            print_success "setup.sh: $expected_version ✓"
-        else
-            print_error "setup.sh does not contain version $expected_version"
-            errors=$((errors + 1))
-        fi
-    fi
-
-    # Check Claude Code plugin marketplace.json
-    if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
-        if grep -q "\"version\": \"$expected_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
-            print_success ".claude-plugin/marketplace.json: $expected_version ✓"
-        else
-            print_error ".claude-plugin/marketplace.json does not contain version $expected_version"
-            errors=$((errors + 1))
-        fi
-    fi
-
-    if [[ $errors -eq 0 ]]; then
-        print_success "All version references are consistent: $expected_version"
-        return 0
-    else
-        print_error "Found $errors version inconsistencies"
-        return 1
     fi
     return 0
 }
@@ -418,46 +401,84 @@ validate_version_consistency() {
 # Function to update version in files
 update_version_in_files() {
     local new_version="$1"
+    local errors=0
     
     print_info "Updating version references in files..."
     
     # Update VERSION file
     if [[ -f "$VERSION_FILE" ]]; then
         echo "$new_version" > "$VERSION_FILE"
-        print_success "Updated VERSION file"
+        if [[ "$(cat "$VERSION_FILE")" == "$new_version" ]]; then
+            print_success "Updated VERSION file"
+        else
+            print_error "Failed to update VERSION file"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update package.json if it exists
     if [[ -f "$REPO_ROOT/package.json" ]]; then
-        sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
-        print_success "Updated package.json"
+        sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
+        if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
+            print_success "Updated package.json"
+        else
+            print_error "Failed to update package.json"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update sonar-project.properties
     if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
-        sed -i '' "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
-        print_success "Updated sonar-project.properties"
+        sed_inplace "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
+        if grep -q "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
+            print_success "Updated sonar-project.properties"
+        else
+            print_error "Failed to update sonar-project.properties"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update setup.sh if it exists
     if [[ -f "$REPO_ROOT/setup.sh" ]]; then
-        sed -i '' "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
-        print_success "Updated setup.sh"
+        sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
+        if grep -q "# Version: $new_version" "$REPO_ROOT/setup.sh"; then
+            print_success "Updated setup.sh"
+        else
+            print_error "Failed to update setup.sh"
+            errors=$((errors + 1))
+        fi
     fi
     
-    # Update README version badge
-    if [[ -f "$REPO_ROOT/README.md" ]]; then
-        # Use more robust regex pattern for version numbers (handles single and multi-digit)
-        # macOS sed requires different syntax for extended regex
-        sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
-
-        # Validate the update was successful
-        if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
-            print_success "Updated README.md version badge to $new_version"
+    # Update aidevops.sh CLI if it exists
+    if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
+        sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/aidevops.sh"
+        if grep -q "# Version: $new_version" "$REPO_ROOT/aidevops.sh"; then
+            print_success "Updated aidevops.sh"
         else
-            print_error "Failed to update README.md version badge"
-            print_info "Please manually update the version badge in README.md"
-            return 1
+            print_error "Failed to update aidevops.sh"
+            errors=$((errors + 1))
+        fi
+    fi
+    
+    # Update README version badge (skip if using dynamic GitHub release badge)
+    if [[ -f "$REPO_ROOT/README.md" ]]; then
+        if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
+            # Dynamic badge - no update needed, GitHub handles it automatically
+            print_success "README.md uses dynamic GitHub release badge (no update needed)"
+        elif grep -q "Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue" "$REPO_ROOT/README.md"; then
+            # Hardcoded badge - update it
+            sed_inplace "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
+            
+            # Validate the update was successful
+            if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
+                print_success "Updated README.md version badge to $new_version"
+            else
+                print_error "Failed to update README.md version badge"
+                errors=$((errors + 1))
+            fi
+        else
+            # No version badge found - that's okay, just warn
+            print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
         fi
     else
         print_warning "README.md not found, skipping version badge update"
@@ -465,9 +486,73 @@ update_version_in_files() {
     
     # Update Claude Code plugin marketplace.json
     if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
-        sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
-        print_success "Updated .claude-plugin/marketplace.json"
+        sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
+        
+        # Validate the update was successful
+        if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
+            print_success "Updated .claude-plugin/marketplace.json"
+        else
+            print_error "Failed to update .claude-plugin/marketplace.json"
+            errors=$((errors + 1))
+        fi
     fi
+    
+    # Return error if any updates failed
+    if [[ $errors -gt 0 ]]; then
+        print_error "Failed to update $errors file(s)"
+        return 1
+    fi
+    
+    print_success "All version files updated to $new_version"
+    return 0
+}
+
+# Function to verify local branch is in sync with remote
+# Prevents release failures when local has diverged (e.g., after squash merge)
+verify_remote_sync() {
+    local branch="$1"
+    branch="${branch:-main}"
+    
+    cd "$REPO_ROOT" || exit 1
+    
+    # Verify we're actually on the expected branch
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null)
+    if [[ "$current_branch" != "$branch" ]]; then
+        print_error "Not on $branch branch (currently on: ${current_branch:-detached HEAD})"
+        print_info "Switch to $branch first: git checkout $branch"
+        return 1
+    fi
+    
+    print_info "Verifying local/$branch is in sync with origin/$branch..."
+    
+    # Fetch latest from remote
+    if ! git fetch origin "$branch" --quiet 2>/dev/null; then
+        print_warning "Could not fetch from remote - proceeding without sync check"
+        return 0
+    fi
+    
+    local local_sha
+    local_sha=$(git rev-parse "$branch" 2>/dev/null)
+    local remote_sha
+    remote_sha=$(git rev-parse "origin/$branch" 2>/dev/null)
+    
+    if [[ -z "$local_sha" || -z "$remote_sha" ]]; then
+        print_warning "Could not determine local/remote SHA - proceeding without sync check"
+        return 0
+    fi
+    
+    if [[ "$local_sha" != "$remote_sha" ]]; then
+        print_error "Local $branch has diverged from origin/$branch"
+        print_info "  Local:  $local_sha"
+        print_info "  Remote: $remote_sha"
+        echo ""
+        print_info "This commonly happens after a squash merge on GitHub."
+        print_info "Fix with: git fetch origin && git reset --hard origin/$branch"
+        return 1
+    fi
+    
+    print_success "Local $branch is in sync with origin/$branch"
     return 0
 }
 
@@ -489,6 +574,139 @@ check_working_tree_clean() {
     return 0
 }
 
+# Function to extract task IDs from commit messages since last tag
+# Only extracts from commits that indicate task COMPLETION, not mere mentions
+# Completion patterns:
+#   - Conventional commits with task scope: feat(t001):, fix(t002):, docs(t003):
+#   - Explicit completion phrases: "mark t001 done", "complete t002", "closes t003"
+#   - Multi-task with explicit marker: "mark t001, t002 done" (tasks before "done")
+extract_task_ids_from_commits() {
+    local prev_tag
+    prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    
+    local commits
+    if [[ -n "$prev_tag" ]]; then
+        commits=$(git log "$prev_tag"..HEAD --pretty=format:"%s" 2>/dev/null)
+    else
+        commits=$(git log --oneline -50 --pretty=format:"%s" 2>/dev/null)
+    fi
+    
+    local task_ids=""
+    
+    while IFS= read -r commit; do
+        [[ -z "$commit" ]] && continue
+        
+        # Pattern 1: Conventional commits with task ID in scope
+        # e.g., feat(t001):, fix(t002):, docs(t003.1):, refactor(t004):
+        if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\(t[0-9]{3}(\.[0-9]+)*\): ]]; then
+            local id
+            id=$(echo "$commit" | grep -oE '\(t[0-9]{3}(\.[0-9]+)*\)' | tr -d '()')
+            task_ids="$task_ids $id"
+        fi
+        
+        # Pattern 2: "mark tXXX done/complete" - extract task IDs between "mark" and "done/complete"
+        # e.g., "mark t004, t048, t069 done" -> t004, t048, t069
+        if [[ "$commit" =~ mark[[:space:]]+(.*)[[:space:]]+(done|complete) ]]; then
+            local segment="${BASH_REMATCH[1]}"
+            local ids
+            ids=$(echo "$segment" | grep -oE '\bt[0-9]{3}(\.[0-9]+)*\b')
+            task_ids="$task_ids $ids"
+        fi
+        
+        # Pattern 3: "complete/completes/closes tXXX" - task ID immediately after keyword
+        # e.g., "complete t037", "closes t001"
+        local ids
+        ids=$(echo "$commit" | grep -oE '(completes?|closes?)[[:space:]]+t[0-9]{3}(\.[0-9]+)*' | grep -oE 't[0-9]{3}(\.[0-9]+)*')
+        if [[ -n "$ids" ]]; then
+            task_ids="$task_ids $ids"
+        fi
+        
+        # Pattern 4: "tXXX complete/done/finished" - task ID before completion word
+        # e.g., "t001 complete", "t002 done"
+        ids=$(echo "$commit" | grep -oE 't[0-9]{3}(\.[0-9]+)*[[:space:]]+(complete|done|finished)' | grep -oE 't[0-9]{3}(\.[0-9]+)*')
+        if [[ -n "$ids" ]]; then
+            task_ids="$task_ids $ids"
+        fi
+        
+    done <<< "$commits"
+    
+    # Deduplicate and sort
+    echo "$task_ids" | tr ' ' '\n' | grep -E '^t[0-9]{3}' | sort -u
+    return 0
+}
+
+# Function to auto-mark tasks complete in TODO.md based on commit messages
+# Parses commits since last tag for task IDs and marks them complete
+auto_mark_tasks_complete() {
+    local todo_file="$REPO_ROOT/TODO.md"
+    local today
+    today=$(date +%Y-%m-%dT%H:%M:%SZ)
+    local today_short
+    today_short=$(date +%Y-%m-%d)
+    
+    if [[ ! -f "$todo_file" ]]; then
+        print_warning "TODO.md not found, skipping task auto-completion"
+        return 0
+    fi
+    
+    print_info "Scanning commits for task IDs to auto-mark complete..."
+    
+    local task_ids
+    task_ids=$(extract_task_ids_from_commits)
+    
+    if [[ -z "$task_ids" ]]; then
+        print_info "No task IDs found in commits since last release"
+        return 0
+    fi
+    
+    local count=0
+    local marked_tasks=""
+    
+    # Process each task ID
+    while IFS= read -r task_id; do
+        [[ -z "$task_id" ]] && continue
+        
+        # Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
+        local unchecked_pattern="^[[:space:]]*- \\[ \\] ${task_id}[[:space:]]"
+        local checked_pattern="^[[:space:]]*- \\[x\\] ${task_id}[[:space:]]"
+        
+        # Check if task exists and is not already complete
+        # Pattern: - [ ] t001 ... (not already checked)
+        if grep -qE "$unchecked_pattern" "$todo_file"; then
+            # Mark task complete: change [ ] to [x] and add completed: timestamp
+            # Use sed to update the line
+            local escaped_id
+            escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
+            
+            # Build sed patterns
+            local sed_unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
+            
+            # Check if line already has completed: field
+            if grep -E "$sed_unchecked_pattern" "$todo_file" | grep -q "completed:"; then
+                # Just change checkbox
+                sed -i '' "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]]\\)/\\1- [x] \\2/" "$todo_file"
+            else
+                # Change checkbox and add completed: timestamp
+                sed -i '' "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2 completed:$today_short/" "$todo_file"
+            fi
+            
+            count=$((count + 1))
+            marked_tasks="$marked_tasks $task_id"
+            print_success "Marked $task_id as complete"
+        elif grep -qE "$checked_pattern" "$todo_file"; then
+            print_info "Task $task_id already marked complete"
+        else
+            print_warning "Task $task_id not found in TODO.md (may be subtask or already moved)"
+        fi
+    done <<< "$task_ids"
+    
+    if [[ $count -gt 0 ]]; then
+        print_success "Auto-marked $count task(s) complete:$marked_tasks"
+    fi
+    
+    return 0
+}
+
 # Function to commit version changes
 commit_version_changes() {
     local version="$1"
@@ -497,8 +715,8 @@ commit_version_changes() {
     
     print_info "Committing version changes..."
     
-    # Stage all version-related files (including CHANGELOG.md and Claude plugin)
-    git add VERSION package.json README.md setup.sh sonar-project.properties CHANGELOG.md .claude-plugin/marketplace.json 2>/dev/null
+    # Stage all version-related files (including CHANGELOG.md, TODO.md, and Claude plugin)
+    git add VERSION package.json README.md setup.sh aidevops.sh sonar-project.properties CHANGELOG.md TODO.md .claude-plugin/marketplace.json 2>/dev/null
     
     # Check if there are changes to commit
     if git diff --cached --quiet; then
@@ -521,7 +739,8 @@ push_changes() {
     
     print_info "Pushing changes to remote..."
     
-    if git push origin main --tags; then
+    # Use --atomic to ensure commit and tag are pushed together (all-or-nothing)
+    if git push --atomic origin main --tags; then
         print_success "Pushed changes and tags to remote"
         return 0
     else
@@ -601,10 +820,10 @@ generate_release_notes() {
 
 \`\`\`bash
 # npm (recommended)
-npm install -g aidevops
+npm install -g aidevops && aidevops update
 
 # Homebrew
-brew install marcusquinn/tap/aidevops
+brew install marcusquinn/tap/aidevops && aidevops update
 
 # curl
 bash <(curl -fsSL https://aidevops.sh)
@@ -673,7 +892,11 @@ main() {
             
             if [[ $? -eq 0 ]]; then
                 print_success "Bumped version: $current_version → $new_version"
-                update_version_in_files "$new_version"
+                if ! update_version_in_files "$new_version"; then
+                    print_error "Failed to update version in all files"
+                    print_info "Run validation to check: $0 validate"
+                    exit 1
+                fi
                 echo "$new_version"
             else
                 exit 1
@@ -704,6 +927,17 @@ main() {
             done
 
             print_info "Creating release with $bump_type version bump..."
+
+            # Verify local branch is in sync with remote (prevents post-squash-merge failures)
+            if ! verify_remote_sync "main"; then
+                if [[ "$force_flag" != "--force" ]]; then
+                    print_error "Cannot release when local/remote are out of sync."
+                    print_info "Use --force to bypass (not recommended)"
+                    exit 1
+                else
+                    print_warning "Bypassing remote sync check with --force"
+                fi
+            fi
 
             # Check for uncommitted changes
             if [[ "$allow_dirty" != "--allow-dirty" ]]; then
@@ -743,19 +977,38 @@ main() {
 
             if [[ $? -eq 0 ]]; then
                 print_info "Updating version references in files..."
-                update_version_in_files "$new_version"
+                if ! update_version_in_files "$new_version"; then
+                    print_error "Failed to update version in all files. Aborting release."
+                    print_info "The VERSION file may have been updated. Run validation to check:"
+                    print_info "  $0 validate"
+                    exit 1
+                fi
 
                 print_info "Updating CHANGELOG.md..."
                 if ! update_changelog "$new_version"; then
                     print_warning "Failed to update CHANGELOG.md automatically"
                 fi
 
+                # Auto-mark tasks complete based on commit messages
+                auto_mark_tasks_complete
+
                 print_info "Validating version consistency..."
                 if validate_version_consistency "$new_version"; then
                     print_success "Version validation passed"
                     commit_version_changes "$new_version"
                     create_git_tag "$new_version"
-                    push_changes
+                    if ! push_changes; then
+                        # Rollback: delete local tag since --atomic ensures nothing was pushed
+                        print_warning "Rolling back local tag v$new_version due to push failure"
+                        git tag -d "v$new_version" 2>/dev/null
+                        echo ""
+                        print_info "The version commit exists locally. To complete the release:"
+                        print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
+                        print_info "  2. Re-create tag: git tag -a v$new_version -m 'Release v$new_version'"
+                        print_info "  3. Push: git push --atomic origin main --tags"
+                        print_info "  4. Create release: $0 github-release"
+                        exit 1
+                    fi
                     create_github_release "$new_version"
                     print_success "Release $new_version created successfully!"
                 else
@@ -793,6 +1046,14 @@ main() {
             echo ""
             generate_changelog_preview
             ;;
+        "auto-mark-tasks")
+            print_info "Auto-marking tasks complete from commit messages..."
+            auto_mark_tasks_complete
+            ;;
+        "list-task-ids")
+            print_info "Task IDs found in commits since last release:"
+            extract_task_ids_from_commits
+            ;;
         *)
             echo "AI DevOps Framework Version Manager"
             echo ""
@@ -807,6 +1068,8 @@ main() {
             echo "  validate                      Validate version consistency across all files"
             echo "  changelog-check               Check CHANGELOG.md has entry for current version"
             echo "  changelog-preview             Generate changelog entry from commits since last tag"
+            echo "  auto-mark-tasks               Auto-mark tasks complete based on commit messages"
+            echo "  list-task-ids                 List task IDs found in commits since last release"
             echo ""
             echo "Options:"
             echo "  --force                       Bypass changelog check (use with release)"

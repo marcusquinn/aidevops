@@ -91,13 +91,12 @@ find_python() {
     local user_site="${HOME}/Library/Python/3.11/lib/python/site-packages"
     
     for py in "${pythons[@]}"; do
-        if command -v "$py" &> /dev/null; then
-            # Test if it has the required modules
-            if PYTHONPATH="${user_site}:${PYTHONPATH:-}" "$py" -c "import aiohttp, bs4" 2>/dev/null; then
-                PYTHON_CMD="$py"
-                export PYTHONPATH="${user_site}:${PYTHONPATH:-}"
-                return 0
-            fi
+        # Check if python exists and has the required modules
+        if command -v "$py" &> /dev/null \
+            && PYTHONPATH="${user_site}:${PYTHONPATH:-}" "$py" -c "import aiohttp, bs4" 2>/dev/null; then
+            PYTHON_CMD="$py"
+            export PYTHONPATH="${user_site}:${PYTHONPATH:-}"
+            return 0
         fi
     done
     return 1
@@ -151,7 +150,7 @@ save_markdown_with_metadata() {
     local full_page_dir="$2"
     local body_only_dir="$3"
     local images_dir="$4"
-    local base_domain="$5"
+    local _base_domain="$5"  # Reserved for future domain-relative path generation
     
     # Extract basic info
     local page_url status_code redirected_url success
@@ -637,7 +636,7 @@ crawl4ai_generate_reports() {
     echo "url,status_code,status,title,title_length,meta_description,description_length,h1,h1_count,canonical,meta_robots,word_count,response_time_ms,crawl_depth,internal_links,external_links,images,images_missing_alt" > "$csv_file"
     
     local broken_links=()
-    local redirects=()
+    local _redirects=()  # Reserved for future redirect chain analysis
     local meta_issues=()
     local status_codes=()
     
