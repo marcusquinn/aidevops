@@ -162,8 +162,22 @@ After task completion, the loop automatically:
 1. **Preflight**: Runs quality checks, auto-fixes issues
 2. **PR Create**: Creates pull request with `gh pr create --fill`
 3. **PR Review**: Monitors CI checks and review status
-4. **Postflight**: Verifies release health after merge
-5. **Deploy**: Runs `setup.sh` (aidevops repos only)
+4. **Merge**: Squash merge (without `--delete-branch` when in worktree)
+5. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
+6. **Postflight**: Verifies release health after merge
+7. **Deploy**: Runs `setup.sh` (aidevops repos only)
+
+**Worktree cleanup after merge:**
+
+```bash
+# When in a worktree, merge without --delete-branch
+gh pr merge --squash
+
+# Then clean up from main repo
+cd ~/Git/$(basename "$PWD" | cut -d. -f1)  # Return to main repo
+git pull origin main                        # Get merged changes
+wt prune                                    # Clean merged worktrees
+```
 
 ### Step 5: Human Decision Points
 
