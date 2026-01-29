@@ -33,7 +33,13 @@ sed_inplace() {
 }
 
 # Repository root directory
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# First try git (works when called from any location within a repo)
+# Fall back to script-relative path (for when script is sourced or tested standalone)
+if git rev-parse --show-toplevel &>/dev/null; then
+    REPO_ROOT="$(git rev-parse --show-toplevel)"
+else
+    REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
 VERSION_FILE="$REPO_ROOT/VERSION"
 
 # Function to get current version
@@ -543,13 +549,28 @@ verify_remote_sync() {
     fi
     
     if [[ "$local_sha" != "$remote_sha" ]]; then
-        print_error "Local $branch has diverged from origin/$branch"
-        print_info "  Local:  $local_sha"
-        print_info "  Remote: $remote_sha"
-        echo ""
-        print_info "This commonly happens after a squash merge on GitHub."
-        print_info "Fix with: git fetch origin && git reset --hard origin/$branch"
-        return 1
+        # Check if we're simply behind (can fast-forward) vs diverged
+        if git merge-base --is-ancestor "$local_sha" "$remote_sha" 2>/dev/null; then
+            # Local is behind remote - auto-pull with rebase
+            print_info "Local $branch is behind origin/$branch, pulling..."
+            if git pull --rebase origin "$branch" --quiet 2>/dev/null; then
+                print_success "Auto-pulled latest changes from origin/$branch"
+                return 0
+            else
+                print_error "Failed to auto-pull. Manual intervention required."
+                print_info "Fix with: git pull --rebase origin $branch"
+                return 1
+            fi
+        else
+            # Truly diverged - cannot auto-fix
+            print_error "Local $branch has diverged from origin/$branch"
+            print_info "  Local:  $local_sha"
+            print_info "  Remote: $remote_sha"
+            echo ""
+            print_info "This commonly happens after a squash merge on GitHub."
+            print_info "Fix with: git fetch origin && git reset --hard origin/$branch"
+            return 1
+        fi
     fi
     
     print_success "Local $branch is in sync with origin/$branch"
