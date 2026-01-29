@@ -92,7 +92,7 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
-- 547+ subagent markdown files organized by domain
+- 566+ subagent markdown files organized by domain
 - 155 helper scripts in `.agent/scripts/`
 - 20 slash commands for common workflows
 
@@ -747,6 +747,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Ahrefs](https://ahrefs.com/api) - SEO analysis, backlink research, keyword data (curl subagent)
 - [DataForSEO](https://dataforseo.com/) - Comprehensive SEO data APIs (curl subagent)
 - [Serper](https://serper.dev/) - Google Search API (curl subagent)
+- **SEO Audit** - Comprehensive technical SEO auditing: crawlability, indexation, Core Web Vitals, on-page optimization, E-E-A-T signals (imported skill from [marketingskills](https://github.com/coreyhaines31/marketingskills))
 - **Keyword Research** - Strategic keyword research with SERP weakness detection (via DataForSEO + Serper + Ahrefs)
 - **Site Crawler** - Screaming Frog-like SEO auditing: broken links, redirects, meta issues, structured data
 - **Domain Research** - DNS intelligence via THC (4.51B records) and Reconeer APIs: rDNS, subdomains, CNAMEs
@@ -1158,7 +1159,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 14 primary agents, 547+ subagents, and 155 helper scripts.
+This installs the complete framework: 14 primary agents, 566+ subagents, and 155 helper scripts.
 
 ### Importing External Skills
 
@@ -1246,7 +1247,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 547+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 566+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1425,10 +1426,11 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/seo-analyze` | Analyze exported data for quick wins, striking distance, low CTR |
 | `/seo-opportunities` | Combined export + analysis workflow |
 
-**SEO Debugging** (subagents in `seo/`):
+**SEO Debugging & Auditing** (subagents in `seo/`):
 
 | Subagent | Purpose |
 |----------|---------|
+| `@seo-audit` | Comprehensive SEO audit: technical, on-page, content quality, E-E-A-T |
 | `@debug-opengraph` | Validate Open Graph meta tags, preview social sharing |
 | `@debug-favicon` | Validate favicon setup across platforms (ico, apple-touch, manifest) |
 
