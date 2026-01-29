@@ -1425,6 +1425,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/seo-export` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
 | `/seo-analyze` | Analyze exported data for quick wins, striking distance, low CTR |
 | `/seo-opportunities` | Combined export + analysis workflow |
+| `/seo-audit` | Comprehensive SEO audit: technical, on-page, content, E-E-A-T |
 
 **SEO Debugging & Auditing** (subagents in `seo/`):
 
