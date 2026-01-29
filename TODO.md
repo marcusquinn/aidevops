@@ -52,6 +52,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m (ai:10m test:5m) logged:2026-01-29
+  - Notes: Release commit bd0695c bumped VERSION to 2.92.1 but missed syncing package.json, setup.sh, aidevops.sh, sonar-project.properties, .claude-plugin/marketplace.json. Either fix manually or ensure version-manager.sh is used for all releases.
 - [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
   - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
