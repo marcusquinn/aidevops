@@ -80,7 +80,7 @@ print_warning() {
 
 print_error() {
     local message="$1"
-    echo -e "${RED}[ERROR] $message${NC}"
+    echo -e "${RED}[ERROR] $message${NC}" >&2
     return 0
 }
 

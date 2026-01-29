@@ -29,6 +29,7 @@ get_runtime() {
     else
         echo ""
     fi
+    return 0
 }
 
 # Check if @libpdf/core is installed
@@ -37,7 +38,7 @@ check_libpdf() {
     runtime=$(get_runtime)
     
     if [[ -z "$runtime" ]]; then
-        echo -e "${RED}Error:${NC} Neither bun nor node found. Install one first."
+        echo -e "${RED}Error:${NC} Neither bun nor node found. Install one first." >&2
         return 1
     fi
     
@@ -69,6 +70,7 @@ run_script() {
     else
         node --input-type=module -e "$script"
     fi
+    return 0
 }
 
 # Show PDF info
@@ -76,7 +78,7 @@ cmd_info() {
     local file="$1"
     
     if [[ ! -f "$file" ]]; then
-        echo -e "${RED}Error:${NC} File not found: $file"
+        echo -e "${RED}Error:${NC} File not found: $file" >&2
         return 1
     fi
     
@@ -114,7 +116,7 @@ cmd_fields() {
     local file="$1"
     
     if [[ ! -f "$file" ]]; then
-        echo -e "${RED}Error:${NC} File not found: $file"
+        echo -e "${RED}Error:${NC} File not found: $file" >&2
         return 1
     fi
     
@@ -154,7 +156,7 @@ cmd_fill() {
     local output="${3:-${file%.pdf}-filled.pdf}"
     
     if [[ ! -f "$file" ]]; then
-        echo -e "${RED}Error:${NC} File not found: $file"
+        echo -e "${RED}Error:${NC} File not found: $file" >&2
         return 1
     fi
     
@@ -193,7 +195,7 @@ console.log("Filled PDF saved to:", outputFile);
 # Merge PDFs
 cmd_merge() {
     if ! command -v jq &>/dev/null; then
-        echo -e "${RED}Error:${NC} 'jq' is not installed. Please install it to use the merge command."
+        echo -e "${RED}Error:${NC} 'jq' is not installed. Please install it to use the merge command." >&2
         return 1
     fi
     
@@ -202,7 +204,7 @@ cmd_merge() {
     local files=("$@")
     
     if [[ ${#files[@]} -lt 2 ]]; then
-        echo -e "${RED}Error:${NC} Need at least 2 files to merge"
+        echo -e "${RED}Error:${NC} Need at least 2 files to merge" >&2
         return 1
     fi
     
@@ -231,7 +233,7 @@ cmd_text() {
     local file="$1"
     
     if [[ ! -f "$file" ]]; then
-        echo -e "${RED}Error:${NC} File not found: $file"
+        echo -e "${RED}Error:${NC} File not found: $file" >&2
         return 1
     fi
     
@@ -262,7 +264,7 @@ cmd_install() {
     runtime=$(get_runtime)
     
     if [[ -z "$runtime" ]]; then
-        echo -e "${RED}Error:${NC} Neither bun nor node found. Install one first."
+        echo -e "${RED}Error:${NC} Neither bun nor node found. Install one first." >&2
         return 1
     fi
     
@@ -275,6 +277,7 @@ cmd_install() {
     fi
     
     echo -e "${GREEN}Done!${NC}"
+    return 0
 }
 
 # Show help
@@ -321,28 +324,32 @@ EOF
 # Main
 main() {
     local cmd="${1:-help}"
+    local file_arg
     shift || true
     
     case "$cmd" in
         info)
-            [[ $# -lt 1 ]] && { echo -e "${RED}Error:${NC} Missing file argument"; return 1; }
-            cmd_info "$1"
+            [[ $# -lt 1 ]] && { echo -e "${RED}Error:${NC} Missing file argument" >&2; return 1; }
+            file_arg="$1"
+            cmd_info "$file_arg"
             ;;
         fields)
-            [[ $# -lt 1 ]] && { echo -e "${RED}Error:${NC} Missing file argument"; return 1; }
-            cmd_fields "$1"
+            [[ $# -lt 1 ]] && { echo -e "${RED}Error:${NC} Missing file argument" >&2; return 1; }
+            file_arg="$1"
+            cmd_fields "$file_arg"
             ;;
         fill)
-            [[ $# -lt 2 ]] && { echo -e "${RED}Error:${NC} Missing file or json argument"; return 1; }
+            [[ $# -lt 2 ]] && { echo -e "${RED}Error:${NC} Missing file or json argument" >&2; return 1; }
             cmd_fill "$@"
             ;;
         merge)
-            [[ $# -lt 3 ]] && { echo -e "${RED}Error:${NC} Need output file and at least 2 input files"; return 1; }
+            [[ $# -lt 3 ]] && { echo -e "${RED}Error:${NC} Need output file and at least 2 input files" >&2; return 1; }
             cmd_merge "$@"
             ;;
         text)
-            [[ $# -lt 1 ]] && { echo -e "${RED}Error:${NC} Missing file argument"; return 1; }
-            cmd_text "$1"
+            [[ $# -lt 1 ]] && { echo -e "${RED}Error:${NC} Missing file argument" >&2; return 1; }
+            file_arg="$1"
+            cmd_text "$file_arg"
             ;;
         install)
             cmd_install
@@ -351,7 +358,7 @@ main() {
             cmd_help
             ;;
         *)
-            echo -e "${RED}Error:${NC} Unknown command: $cmd"
+            echo -e "${RED}Error:${NC} Unknown command: $cmd" >&2
             echo "Run 'pdf-helper.sh help' for usage"
             return 1
             ;;

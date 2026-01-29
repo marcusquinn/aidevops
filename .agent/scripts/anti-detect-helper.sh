@@ -144,7 +144,7 @@ setup_rebrowser() {
 
     # Check if playwright is installed
     if ! command -v npx &>/dev/null; then
-        echo -e "${RED}Error: npx not found. Install Node.js first.${NC}"
+        echo -e "${RED}Error: npx not found. Install Node.js first.${NC}" >&2
         return 1
     fi
 
@@ -163,23 +163,23 @@ setup_rebrowser() {
 validate_profile_name() {
     local name="$1"
     if [[ -z "$name" ]]; then
-        echo -e "${RED}Error: Profile name cannot be empty.${NC}"
+        echo -e "${RED}Error: Profile name cannot be empty.${NC}" >&2
         return 1
     fi
     if [[ "$name" =~ [/\\] || "$name" == *..* ]]; then
-        echo -e "${RED}Error: Profile name cannot contain '/', '\\', or '..'.${NC}"
+        echo -e "${RED}Error: Profile name cannot contain '/', '\\', or '..'.${NC}" >&2
         return 1
     fi
     if [[ "$name" == -* ]]; then
-        echo -e "${RED}Error: Profile name cannot start with '-'.${NC}"
+        echo -e "${RED}Error: Profile name cannot start with '-'.${NC}" >&2
         return 1
     fi
     if ! [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        echo -e "${RED}Error: Profile name must only contain letters, numbers, '.', '_', or '-'.${NC}"
+        echo -e "${RED}Error: Profile name must only contain letters, numbers, '.', '_', or '-'.${NC}" >&2
         return 1
     fi
     if [[ ${#name} -gt 64 ]]; then
-        echo -e "${RED}Error: Profile name must be 64 characters or fewer.${NC}"
+        echo -e "${RED}Error: Profile name must be 64 characters or fewer.${NC}" >&2
         return 1
     fi
     return 0
@@ -193,9 +193,11 @@ profile_create() {
     local browser_type="firefox"
     local notes=""
 
+    local arg
     shift
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --type) profile_type="$2"; shift 2 ;;
             --proxy) proxy="$2"; shift 2 ;;
             --os) target_os="$2"; shift 2 ;;
@@ -214,7 +216,7 @@ profile_create() {
     local profile_dir="$PROFILES_DIR/$dir_type/$name"
 
     if [[ -d "$profile_dir" ]]; then
-        echo -e "${RED}Error: Profile '$name' already exists.${NC}"
+        echo -e "${RED}Error: Profile '$name' already exists.${NC}" >&2
         return 1
     fi
 
@@ -296,7 +298,7 @@ profile_show() {
     profile_dir=$(find_profile_dir "$name")
 
     if [[ -z "$profile_dir" ]]; then
-        echo -e "${RED}Error: Profile '$name' not found.${NC}"
+        echo -e "${RED}Error: Profile '$name' not found.${NC}" >&2
         return 1
     fi
 
@@ -335,7 +337,7 @@ profile_delete() {
     profile_dir=$(find_profile_dir "$name")
 
     if [[ -z "$profile_dir" ]]; then
-        echo -e "${RED}Error: Profile '$name' not found.${NC}"
+        echo -e "${RED}Error: Profile '$name' not found.${NC}" >&2
         return 1
     fi
 
@@ -352,7 +354,7 @@ profile_clone() {
     src_dir=$(find_profile_dir "$src")
 
     if [[ -z "$src_dir" ]]; then
-        echo -e "${RED}Error: Source profile '$src' not found.${NC}"
+        echo -e "${RED}Error: Source profile '$src' not found.${NC}" >&2
         return 1
     fi
 
@@ -361,7 +363,7 @@ profile_clone() {
     local dst_dir="$parent_dir/$dst"
 
     if [[ -d "$dst_dir" ]]; then
-        echo -e "${RED}Error: Destination profile '$dst' already exists.${NC}"
+        echo -e "${RED}Error: Destination profile '$dst' already exists.${NC}" >&2
         return 1
     fi
 
@@ -404,12 +406,14 @@ profile_update() {
     profile_dir=$(find_profile_dir "$name")
 
     if [[ -z "$profile_dir" ]]; then
-        echo -e "${RED}Error: Profile '$name' not found.${NC}"
+        echo -e "${RED}Error: Profile '$name' not found.${NC}" >&2
         return 1
     fi
 
+    local arg
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --proxy)
                 local proxy_json
                 proxy_json=$(parse_proxy_url "$2")
@@ -447,8 +451,10 @@ launch_browser() {
     local disposable=""
     local url=""
 
+    local arg
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --profile) profile_name="$2"; shift 2 ;;
             --engine) engine="$2"; shift 2 ;;
             --headless) headless="true"; shift ;;
@@ -459,7 +465,7 @@ launch_browser() {
     done
 
     if [[ -z "$profile_name" && -z "$disposable" ]]; then
-        echo -e "${RED}Error: --profile <name> or --disposable required.${NC}"
+        echo -e "${RED}Error: --profile <name> or --disposable required.${NC}" >&2
         return 1
     fi
 
@@ -500,7 +506,7 @@ launch_camoufox() {
 
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate" 2>/dev/null || {
-        echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}"
+        echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
         return 1
     }
 
@@ -687,9 +693,11 @@ test_detection() {
     local profile_name=""
     local engine="firefox"
     local sites="browserscan,sannysoft"
+    local arg
 
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --profile) profile_name="$2"; shift 2 ;;
             --engine) engine="$2"; shift 2 ;;
             --sites) sites="$2"; shift 2 ;;
@@ -799,9 +807,11 @@ warmup_profile() {
     local profile_name="$1"
     shift
     local duration="30"  # minutes
+    local arg
 
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --duration)
                 duration="${2%m}"  # Strip 'm' suffix
                 shift 2
@@ -814,7 +824,7 @@ warmup_profile() {
     profile_dir=$(find_profile_dir "$profile_name")
 
     if [[ -z "$profile_dir" ]]; then
-        echo -e "${RED}Error: Profile '$profile_name' not found.${NC}"
+        echo -e "${RED}Error: Profile '$profile_name' not found.${NC}" >&2
         return 1
     fi
 
@@ -822,7 +832,7 @@ warmup_profile() {
 
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate" 2>/dev/null || {
-        echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}"
+        echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
         return 1
     }
 
@@ -1047,9 +1057,11 @@ cookies_export() {
     local profile_name="$1"
     shift
     local output=""
+    local arg
 
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --output) output="$2"; shift 2 ;;
             *) shift ;;
         esac
@@ -1059,7 +1071,7 @@ cookies_export() {
     profile_dir=$(find_profile_dir "$profile_name")
 
     if [[ -z "$profile_dir" || ! -f "$profile_dir/storage-state.json" ]]; then
-        echo -e "${RED}Error: No saved state for profile '$profile_name'.${NC}"
+        echo -e "${RED}Error: No saved state for profile '$profile_name'.${NC}" >&2
         return 1
     fi
 
@@ -1099,7 +1111,7 @@ cookies_clear() {
     profile_dir=$(find_profile_dir "$profile_name")
 
     if [[ -z "$profile_dir" ]]; then
-        echo -e "${RED}Error: Profile '$profile_name' not found.${NC}"
+        echo -e "${RED}Error: Profile '$profile_name' not found.${NC}" >&2
         return 1
     fi
 
