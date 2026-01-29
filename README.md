@@ -92,9 +92,9 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
-- 539+ subagent markdown files organized by domain
-- 148 helper scripts in `.agent/scripts/`
-- 16 slash commands for common workflows
+- 547+ subagent markdown files organized by domain
+- 155 helper scripts in `.agent/scripts/`
+- 20 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -480,7 +480,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 146 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 155 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -1158,7 +1158,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 15 primary agents, 552+ subagents, and 147 helper scripts.
+This installs the complete framework: 14 primary agents, 547+ subagents, and 155 helper scripts.
 
 ### Importing External Skills
 
@@ -1246,7 +1246,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 552+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 547+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -1421,6 +1421,9 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/keyword-research-extended` | Full SERP analysis with weakness detection |
 | `/webmaster-keywords` | Keywords from GSC + Bing for your verified sites |
 | `/neuronwriter` | Content optimization with NLP term recommendations and scoring |
+| `/seo-export` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
+| `/seo-analyze` | Analyze exported data for quick wins, striking distance, low CTR |
+| `/seo-opportunities` | Combined export + analysis workflow |
 
 **SEO Debugging** (subagents in `seo/`):
 
@@ -1462,6 +1465,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/session-review` | Review session for completeness and capture learnings |
 | `/full-loop` | End-to-end development loop (task → preflight → PR → postflight → deploy) |
 | `/preflight-loop` | Run preflight checks iteratively until all pass |
+| `/log-issue-aidevops` | Report issues with aidevops (gathers diagnostics, checks duplicates, creates GitHub issue) |
 
 ### Ralph Loop - Iterative AI Development
 
