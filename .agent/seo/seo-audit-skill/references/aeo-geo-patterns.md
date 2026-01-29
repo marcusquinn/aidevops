@@ -19,6 +19,7 @@ Use for "What is [X]?" queries.
 ```
 
 **Example:**
+
 ```markdown
 ## What is Answer Engine Optimization?
 
@@ -44,6 +45,7 @@ Use for "How to [X]" queries. Optimal for list snippets.
 ```
 
 **Example:**
+
 ```markdown
 ## How to Optimize Content for Featured Snippets
 
@@ -163,6 +165,7 @@ Statistics increase AI citation rates by 15-30%. Always include sources.
 ```
 
 **Example:**
+
 ```markdown
 Mobile optimization is no longer optional for SEO success. According to Google's 2024 Core Web Vitals report, 70% of web traffic now comes from mobile devices, and pages failing mobile usability standards see 24% higher bounce rates. This makes mobile-first indexing a critical ranking factor.
 ```
@@ -176,6 +179,7 @@ Named expert attribution adds credibility and increases citation likelihood.
 ```
 
 **Example:**
+
 ```markdown
 "The shift from keyword-driven search to intent-driven discovery represents the most significant change in SEO since mobile-first indexing," says Rand Fishkin, Co-founder of SparkToro. This perspective highlights why content strategies must evolve beyond traditional keyword optimization.
 ```
@@ -189,6 +193,7 @@ Structure claims for easy AI extraction with clear attribution.
 ```
 
 **Example:**
+
 ```markdown
 E-E-A-T is the cornerstone of Google's content quality evaluation. Google's Search Quality Rater Guidelines confirm that trust is the most critical factor, stating that "untrustworthy pages have low E-E-A-T no matter how experienced, expert, or authoritative they may seem." This means content creators must prioritize transparency and accuracy above all other optimization tactics.
 ```
@@ -202,6 +207,7 @@ Create quotable, standalone statements that AI can extract directly.
 ```
 
 **Example:**
+
 ```markdown
 **Ideal blog post length for SEO**: The optimal length for SEO blog posts is 1,500-2,500 words for competitive topics. This range allows comprehensive topic coverage while maintaining reader engagement. HubSpot research shows long-form content earns 77% more backlinks than short articles, directly impacting search rankings.
 ```
@@ -228,30 +234,35 @@ Evidence supporting this includes:
 Different content domains benefit from different authority signals.
 
 ### Technology Content
+
 - Emphasize technical precision and correct terminology
 - Include version numbers and dates for software/tools
 - Reference official documentation
 - Add code examples where relevant
 
 ### Health/Medical Content
+
 - Cite peer-reviewed studies with publication details
 - Include expert credentials (MD, RN, etc.)
 - Note study limitations and context
 - Add "last reviewed" dates
 
 ### Financial Content
+
 - Reference regulatory bodies (SEC, FTC, etc.)
 - Include specific numbers with timeframes
 - Note that information is educational, not advice
 - Cite recognized financial institutions
 
 ### Legal Content
+
 - Cite specific laws, statutes, and regulations
 - Reference jurisdiction clearly
 - Include professional disclaimers
 - Note when professional consultation is advised
 
 ### Business/Marketing Content
+
 - Include case studies with measurable results
 - Reference industry research and reports
 - Add percentage changes and timeframes
@@ -264,6 +275,7 @@ Different content domains benefit from different authority signals.
 Voice queries are conversational and question-based. Optimize for these patterns:
 
 ### Question Formats for Voice
+
 - "What is..."
 - "How do I..."
 - "Where can I find..."
@@ -272,6 +284,7 @@ Voice queries are conversational and question-based. Optimize for these patterns
 - "Who is..."
 
 ### Voice-Optimized Answer Structure
+
 - Lead with direct answer (under 30 words ideal)
 - Use natural, conversational language
 - Avoid jargon unless targeting expert audience

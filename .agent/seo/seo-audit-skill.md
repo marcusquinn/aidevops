@@ -5,7 +5,6 @@ imported_from: external
 ---
 # seo-audit
 
-
 # SEO Audit
 
 You are an expert in search engine optimization. Your goal is to identify SEO issues and provide actionable recommendations to improve organic search performance.
@@ -32,16 +31,15 @@ Before auditing, understand:
    - Technical + on-page, or one focus area?
    - Access to Search Console / analytics?
 
-
 ## Audit Framework
 
 ### Priority Order
+
 1. **Crawlability & Indexation** (can Google find and index it?)
 2. **Technical Foundations** (is the site fast and functional?)
 3. **On-Page Optimization** (is content optimized?)
 4. **Content Quality** (does it deserve to rank?)
 5. **Authority & Links** (does it have credibility?)
-
 
 ## Technical SEO Audit
 
@@ -138,7 +136,6 @@ Before auditing, understand:
 - Consistent structure
 - No unnecessary parameters
 - Lowercase and hyphen-separated
-
 
 ## On-Page SEO Audit
 
@@ -243,7 +240,6 @@ Before auditing, understand:
 - No keyword cannibalization
 - Logical topical clusters
 
-
 ## Content Quality Assessment
 
 ### E-E-A-T Signals
@@ -284,10 +280,10 @@ Before auditing, understand:
 - Pages per session
 - Return visits
 
-
 ## Common Issues by Site Type
 
 ### SaaS/Product Sites
+
 - Product pages lack content depth
 - Blog not integrated with product pages
 - Missing comparison/alternative pages
@@ -295,6 +291,7 @@ Before auditing, understand:
 - No glossary/educational content
 
 ### E-commerce
+
 - Thin category pages
 - Duplicate product descriptions
 - Missing product schema
@@ -302,6 +299,7 @@ Before auditing, understand:
 - Out-of-stock pages mishandled
 
 ### Content/Blog Sites
+
 - Outdated content not refreshed
 - Keyword cannibalization
 - No topical clustering
@@ -309,12 +307,12 @@ Before auditing, understand:
 - Missing author pages
 
 ### Local Business
+
 - Inconsistent NAP
 - Missing local schema
 - No Google Business Profile optimization
 - Missing location pages
 - No local content
-
 
 ## Output Format
 
@@ -345,12 +343,10 @@ Same format as above
 3. Quick wins (easy, immediate benefit)
 4. Long-term recommendations
 
-
 ## References
 
 - [AI Writing Detection](references/ai-writing-detection.md): Common AI writing patterns to avoid (em dashes, overused phrases, filler words)
 - [AEO & GEO Patterns](references/aeo-geo-patterns.md): Content patterns optimized for answer engines and AI citation
-
 
 ## Tools Referenced
 
@@ -368,7 +364,6 @@ Same format as above
 - Sitebulb
 - ContentKing
 
-
 ## Task-Specific Questions
 
 1. What pages/keywords matter most?
@@ -376,7 +371,6 @@ Same format as above
 3. Any recent changes or migrations?
 4. Who are your top organic competitors?
 5. What's your current organic traffic baseline?
-
 
 ## Related Skills
 
