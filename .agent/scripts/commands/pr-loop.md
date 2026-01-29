@@ -108,7 +108,7 @@ Progress is tracked in `.agent/loop-state/quality-loop.local.state`:
 - **Status:** monitoring
 - **PR:** #123
 - **Iteration:** 3/10
-- **Last Check:** 2025-01-29T14:30:00Z
+- **Last Check:** <timestamp>
 
 ### Check Results
 - [x] CI: all checks passing
