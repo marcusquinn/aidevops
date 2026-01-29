@@ -82,6 +82,17 @@
       "last_checked": "2026-01-24T22:20:00Z",
       "merge_strategy": "added",
       "notes": "ClawdHub v1.0.0 by @mSarheed - Complete Proxmox VE management via REST API"
+    },
+    {
+      "name": "seo-audit",
+      "upstream_url": "https://github.com/coreyhaines31/marketingskills",
+      "upstream_commit": "a04cb61a577a20d9ab0f3da2a2d99c17a0476ded",
+      "local_path": ".agent/seo/seo-audit-skill.md",
+      "format_detected": "skill-md",
+      "imported_at": "2026-01-29T01:37:00Z",
+      "last_checked": "2026-01-29T01:37:00Z",
+      "merge_strategy": "added",
+      "notes": "SEO audit skill from marketingskills repo (skills/seo-audit subpath), includes references/"
     }
   ]
 }

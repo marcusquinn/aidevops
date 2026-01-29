@@ -161,6 +161,30 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~30m (ai:20m read:10m) logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
   - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem.
 - [ ] t064 Add seo-regex subagent with Search Console regex workflow #seo #tools ~10m (ai:8m read:2m) logged:2026-01-15
+- [ ] t083 Create Bing Webmaster Tools subagent #seo #tools ~1h (ai:45m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: API integration for Bing Webmaster Tools. Features: submit URLs, check indexation status, view search analytics, manage sitemaps. Ref: https://www.bing.com/webmasters/help/webmaster-api-5f3c5e1e
+- [ ] t084 Create Rich Results Test subagent #seo #tools #schema ~30m (ai:20m test:5m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Google Rich Results Test API integration. Validate structured data, preview rich snippets, check eligibility for rich results. Add to tools/seo/ or seo/. Ref: https://search.google.com/test/rich-results
+- [ ] t085 Create Schema Validator subagent #seo #tools #schema ~30m (ai:20m test:5m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Schema.org validator integration. Validate JSON-LD, Microdata, RDFa structured data. Add to tools/seo/ or seo/. Ref: https://validator.schema.org/
+- [ ] t086 Create Screaming Frog subagent #seo #tools #crawler ~1h (ai:45m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Screaming Frog SEO Spider CLI integration. Technical SEO audits, crawl analysis, broken links, redirects, meta data extraction. Requires license for full features. Add to seo/. Ref: https://www.screamingfrog.co.uk/seo-spider/
+- [ ] t087 Create Semrush subagent #seo #tools ~2h (ai:1.5h test:20m read:10m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/
+- [ ] t088 Create Sitebulb subagent #seo #tools #crawler ~45m (ai:30m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/
+- [ ] t089 Create ContentKing subagent #seo #tools #monitoring ~45m (ai:30m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: ContentKing real-time SEO monitoring API. Track changes, alerts for SEO issues, content tracking. Add to seo/. Ref: https://www.contentkingapp.com/
+- [ ] t090 Create WebPageTest subagent #tools #performance ~45m (ai:30m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: WebPageTest API integration. Performance testing, filmstrip view, waterfall analysis, Core Web Vitals. Complement to existing pagespeed.md. Add to tools/performance/. Ref: https://www.webpagetest.org/
+- [ ] t091 Create programmatic-seo subagent #seo #content ~2h (ai:1.5h test:20m read:10m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Programmatic SEO workflow for building pages at scale. Template-based page generation, keyword clustering, internal linking automation. Referenced by seo-audit-skill. Add to seo/.
+- [ ] t092 Create schema-markup subagent #seo #schema ~1h (ai:45m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Structured data implementation guide. JSON-LD templates for common types (Article, Product, FAQ, HowTo, Organization, LocalBusiness). Schema validation workflow. Referenced by seo-audit-skill. Add to seo/.
+- [ ] t093 Create page-cro subagent #seo #conversion ~1h (ai:45m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Page conversion rate optimization. A/B testing setup, CTA optimization, form optimization, landing page best practices. Referenced by seo-audit-skill. Add to seo/ or tools/marketing/.
+- [ ] t094 Create analytics-tracking subagent #seo #analytics ~1h (ai:45m test:10m read:5m) logged:2026-01-29 related:seo-audit-skill
+  - Notes: Analytics implementation and tracking. GA4 setup, event tracking, conversion tracking, UTM parameters, attribution. Referenced by seo-audit-skill. Add to seo/ or tools/analytics/.
 
 - [ ] t078 Add Lumen subagent for AI-powered git diffs and commit generation #tools #git #code-review ~20m (ai:15m read:5m) logged:2026-01-23 ref:https://github.com/jnsahaj/lumen
   - Notes: Lumen (1.8k stars, Rust, MIT) - Beautiful git diff viewer + AI commit messages + change explanations + git command generation from CLI. Install: `brew install jnsahaj/lumen/lumen` or `cargo install lumen`. Supports OpenAI, Claude, Gemini, Groq, DeepSeek, xAI, Ollama, OpenRouter, Vercel AI Gateway. Config: `~/.config/lumen/lumen.config.json`. Key commands: `lumen diff` (visual diff), `lumen draft` (commit msg), `lumen explain` (change summary), `lumen operate` (natural language git commands). Create subagent at tools/git/lumen.md covering: API key setup (reuse existing keys from mcp-env.sh or per-provider env vars), when to use (pre-commit review, PR diffs, understanding AI-generated changes), integration with aidevops git workflow.
