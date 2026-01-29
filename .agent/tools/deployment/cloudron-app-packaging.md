@@ -20,7 +20,8 @@ tools:
 
 - **Purpose**: Package any web application for Cloudron deployment
 - **Docs**: [docs.cloudron.io/packaging](https://docs.cloudron.io/packaging/tutorial/)
-- **Examples**: [git.cloudron.io/cloudron](https://git.cloudron.io/cloudron) (all official apps)
+- **Source Code**: [git.cloudron.io/packages](https://git.cloudron.io/packages) (200+ official app packages)
+- **By Technology**: [git.cloudron.io/explore/projects/topics](https://git.cloudron.io/explore/projects/topics) (PHP, Node, Python, Go, etc.)
 - **CLI**: `npm install -g cloudron` then `cloudron login my.cloudron.example`
 - **Workflow**: `cloudron build && cloudron update --app testapp`
 - **Debug**: `cloudron exec --app testapp` or `cloudron debug --app testapp`
@@ -76,6 +77,12 @@ Before starting to package an app, search the Cloudron forum for existing knowle
 3. **Search the app store**: `cloudron appstore search APP_NAME` to check if an official or community package already exists
 
 This research often saves significant trial-and-error, especially for apps with non-standard storage, auth, or process models.
+
+## Using git.cloudron.io as Reference
+
+Study real-world packaging patterns from 200+ official Cloudron app packages at https://git.cloudron.io/.
+
+**Full guide**: `cloudron-git-reference.md` - Repository structure, finding apps by technology, GitLab API usage, recommended reference apps by use case, cloning patterns, and common search patterns.
 
 ## Overview
 
@@ -814,17 +821,40 @@ curl -v http://localhost:8000/health
 
 ## Resources
 
-- **Official Docs**: https://docs.cloudron.io/packaging/
-- **Example Apps**: https://git.cloudron.io/cloudron (all official packages)
-- **Forum**: https://forum.cloudron.io/category/96/app-packaging-development
-- **Base Image**: https://hub.docker.com/r/cloudron/base
+### Official Documentation
+
+- **Packaging Tutorial**: https://docs.cloudron.io/packaging/tutorial/
+- **Packaging Reference**: https://docs.cloudron.io/packaging/
 - **CLI Reference**: https://docs.cloudron.io/packaging/cli/
+- **Publishing Guide**: https://docs.cloudron.io/packaging/publishing/
+- **Addon Reference**: https://docs.cloudron.io/packaging/addons/
+
+### git.cloudron.io (Source Code)
+
+The GitLab instance at https://git.cloudron.io/ is the authoritative source for all Cloudron app packages. See "Using git.cloudron.io as Reference" section above for detailed usage.
+
+| Resource | URL |
+|----------|-----|
+| **All Packages** | https://git.cloudron.io/packages |
+| **Explore by Topic** | https://git.cloudron.io/explore/projects/topics |
+| **Recently Updated** | https://git.cloudron.io/explore/projects?sort=latest_activity_desc |
+| **Platform Code** | https://git.cloudron.io/platform |
+| **Documentation Source** | https://git.cloudron.io/docs/docs |
+| **GitLab API** | https://git.cloudron.io/api/v4/ |
 
 ### Example Repos by Framework
 
-- **PHP**: https://git.cloudron.io/explore/projects?tag=php
-- **Node.js**: https://git.cloudron.io/explore/projects?tag=node
-- **Python**: https://git.cloudron.io/explore/projects?tag=python
-- **Go**: https://git.cloudron.io/explore/projects?tag=go
-- **Ruby/Rails**: https://git.cloudron.io/explore/projects?tag=rails
-- **Java**: https://git.cloudron.io/explore/projects?tag=java
+| Framework | Topic URL | Example App |
+|-----------|-----------|-------------|
+| PHP | https://git.cloudron.io/explore/projects/topics/php | nextcloud-app, wordpress-app |
+| Node.js | https://git.cloudron.io/explore/projects/topics/node | ghost-app, nodebb-app |
+| Python | https://git.cloudron.io/explore/projects/topics/python | synapse-app |
+| Go | https://git.cloudron.io/explore/projects/topics/go | vikunja-app |
+| Ruby/Rails | https://git.cloudron.io/explore/projects/topics/rails | discourse-app |
+| Java | https://git.cloudron.io/explore/projects/topics/java | metabase-app |
+
+### Other Resources
+
+- **Forum (Packaging)**: https://forum.cloudron.io/category/96/app-packaging-development
+- **Base Image Tags**: https://hub.docker.com/r/cloudron/base/tags
+- **App Store**: https://cloudron.io/store/index.html
