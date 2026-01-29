@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.93.0] - 2026-01-29
+
+### Added
+
+- import seo-audit skill from marketingskills repo (#255)
+
+### Changed
+
+- Documentation: update README with seo-audit skill and subagent count (#256)
 ## [2.92.5] - 2026-01-29
 
 ### Changed
