@@ -19,6 +19,19 @@ print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 
 print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
 print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
+# Cross-platform sed in-place edit (works on macOS and Linux)
+# Usage: sed_inplace 'pattern' 'file'
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "$pattern" "$file"
+    else
+        sed -i "$pattern" "$file"
+    fi
+    return $?
+}
+
 # Repository root directory
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION_FILE="$REPO_ROOT/VERSION"
@@ -388,37 +401,63 @@ validate_version_consistency() {
 # Function to update version in files
 update_version_in_files() {
     local new_version="$1"
+    local errors=0
     
     print_info "Updating version references in files..."
     
     # Update VERSION file
     if [[ -f "$VERSION_FILE" ]]; then
         echo "$new_version" > "$VERSION_FILE"
-        print_success "Updated VERSION file"
+        if [[ "$(cat "$VERSION_FILE")" == "$new_version" ]]; then
+            print_success "Updated VERSION file"
+        else
+            print_error "Failed to update VERSION file"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update package.json if it exists
     if [[ -f "$REPO_ROOT/package.json" ]]; then
-        sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
-        print_success "Updated package.json"
+        sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
+        if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
+            print_success "Updated package.json"
+        else
+            print_error "Failed to update package.json"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update sonar-project.properties
     if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
-        sed -i '' "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
-        print_success "Updated sonar-project.properties"
+        sed_inplace "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
+        if grep -q "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
+            print_success "Updated sonar-project.properties"
+        else
+            print_error "Failed to update sonar-project.properties"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update setup.sh if it exists
     if [[ -f "$REPO_ROOT/setup.sh" ]]; then
-        sed -i '' "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
-        print_success "Updated setup.sh"
+        sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
+        if grep -q "# Version: $new_version" "$REPO_ROOT/setup.sh"; then
+            print_success "Updated setup.sh"
+        else
+            print_error "Failed to update setup.sh"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update aidevops.sh CLI if it exists
     if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
-        sed -i '' "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/aidevops.sh"
-        print_success "Updated aidevops.sh"
+        sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/aidevops.sh"
+        if grep -q "# Version: $new_version" "$REPO_ROOT/aidevops.sh"; then
+            print_success "Updated aidevops.sh"
+        else
+            print_error "Failed to update aidevops.sh"
+            errors=$((errors + 1))
+        fi
     fi
     
     # Update README version badge (skip if using dynamic GitHub release badge)
@@ -428,15 +467,14 @@ update_version_in_files() {
             print_success "README.md uses dynamic GitHub release badge (no update needed)"
         elif grep -q "Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue" "$REPO_ROOT/README.md"; then
             # Hardcoded badge - update it
-            sed -i '' "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
+            sed_inplace "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
             
             # Validate the update was successful
             if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
                 print_success "Updated README.md version badge to $new_version"
             else
                 print_error "Failed to update README.md version badge"
-                print_info "Please manually update the version badge in README.md"
-                return 1
+                errors=$((errors + 1))
             fi
         else
             # No version badge found - that's okay, just warn
@@ -448,17 +486,24 @@ update_version_in_files() {
     
     # Update Claude Code plugin marketplace.json
     if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
-        sed -i '' "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
+        sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
         
         # Validate the update was successful
         if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
             print_success "Updated .claude-plugin/marketplace.json"
         else
             print_error "Failed to update .claude-plugin/marketplace.json"
-            print_info "Please manually update the version in .claude-plugin/marketplace.json"
-            return 1
+            errors=$((errors + 1))
         fi
     fi
+    
+    # Return error if any updates failed
+    if [[ $errors -gt 0 ]]; then
+        print_error "Failed to update $errors file(s)"
+        return 1
+    fi
+    
+    print_success "All version files updated to $new_version"
     return 0
 }
 
@@ -847,7 +892,11 @@ main() {
             
             if [[ $? -eq 0 ]]; then
                 print_success "Bumped version: $current_version → $new_version"
-                update_version_in_files "$new_version"
+                if ! update_version_in_files "$new_version"; then
+                    print_error "Failed to update version in all files"
+                    print_info "Run validation to check: $0 validate"
+                    exit 1
+                fi
                 echo "$new_version"
             else
                 exit 1
@@ -928,7 +977,12 @@ main() {
 
             if [[ $? -eq 0 ]]; then
                 print_info "Updating version references in files..."
-                update_version_in_files "$new_version"
+                if ! update_version_in_files "$new_version"; then
+                    print_error "Failed to update version in all files. Aborting release."
+                    print_info "The VERSION file may have been updated. Run validation to check:"
+                    print_info "  $0 validate"
+                    exit 1
+                fi
 
                 print_info "Updating CHANGELOG.md..."
                 if ! update_changelog "$new_version"; then
