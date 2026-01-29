@@ -3,7 +3,6 @@ description: "When the user wants to audit, review, or diagnose SEO issues on th
 mode: subagent
 imported_from: external
 ---
-# seo-audit
 
 # SEO Audit
 
