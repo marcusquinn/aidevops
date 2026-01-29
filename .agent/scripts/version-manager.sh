@@ -549,7 +549,7 @@ verify_remote_sync() {
     fi
     
     if [[ "$local_sha" != "$remote_sha" ]]; then
-        # Check if we're simply behind (can fast-forward) vs diverged
+        # Check relationship: behind, ahead, or diverged
         if git merge-base --is-ancestor "$local_sha" "$remote_sha" 2>/dev/null; then
             # Local is behind remote - auto-pull with rebase
             print_info "Local $branch is behind origin/$branch, pulling..."
@@ -561,6 +561,11 @@ verify_remote_sync() {
                 print_info "Fix with: git pull --rebase origin $branch"
                 return 1
             fi
+        elif git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+            # Local is ahead of remote - this is fine for release, just inform
+            print_info "Local $branch is ahead of origin/$branch (unpushed commits)"
+            print_info "This is expected if you have local commits ready to release."
+            return 0
         else
             # Truly diverged - cannot auto-fix
             print_error "Local $branch has diverged from origin/$branch"
