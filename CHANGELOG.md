@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add /pr-loop slash command for iterative PR monitoring (#251)
+
 ## [2.92.3] - 2026-01-29
 
 ### Fixed
