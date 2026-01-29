@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.92.4] - 2026-01-29
+
 ### Added
 
 - add /pr-loop slash command for iterative PR monitoring (#251)
 
+### Changed
+
+- Documentation: add changelog entry for pr-loop command
+- Documentation: update README counts and add new slash commands from recent PRs (#252)
+
+### Fixed
+
+- resolve SonarCloud code quality issues (#253)
 ## [2.92.3] - 2026-01-29
 
 ### Fixed
