@@ -111,6 +111,7 @@ list_platforms() {
             bing) desc="Bing Webmaster Tools" ;;
             ahrefs) desc="Ahrefs organic keywords" ;;
             dataforseo) desc="DataForSEO ranked keywords" ;;
+            *) desc="Unknown platform" ;;
         esac
         
         if [[ "$status" == "ready" ]]; then
@@ -283,9 +284,11 @@ main() {
     # Parse global options
     local domain=""
     local days="$DEFAULT_DAYS"
+    local arg
     
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --days)
                 if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
                     print_error "--days requires a numeric value"
@@ -299,12 +302,12 @@ main() {
                 return 0
                 ;;
             -*)
-                print_error "Unknown option: $1"
+                print_error "Unknown option: $arg"
                 return 1
                 ;;
             *)
                 if [[ -z "$domain" ]]; then
-                    domain="$1"
+                    domain="$arg"
                 fi
                 shift
                 ;;

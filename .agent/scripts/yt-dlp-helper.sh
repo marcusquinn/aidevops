@@ -63,7 +63,7 @@ print_warning() {
 
 print_error() {
     local message="$1"
-    echo -e "${RED}[ERROR] $message${NC}"
+    echo -e "${RED}[ERROR] $message${NC}" >&2
     return 0
 }
 
@@ -98,6 +98,7 @@ sanitize_name() {
     local name="$1"
     local max_length="${2:-60}"
     echo "$name" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-"$max_length"
+    return 0
 }
 
 # Get timestamp for folder naming
@@ -173,8 +174,10 @@ parse_options() {
     SUB_LANGS="en"
     EXTRA_ARGS=()
 
+    local arg
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --output-dir)
                 OUTPUT_DIR="$2"
                 shift 2
@@ -212,7 +215,7 @@ parse_options() {
                 shift 2
                 ;;
             *)
-                EXTRA_ARGS+=("$1")
+                EXTRA_ARGS+=("$arg")
                 shift
                 ;;
         esac
@@ -374,6 +377,7 @@ download_audio() {
         "audio-m4a"|"m4a") audio_format="m4a" ;;
         "audio-opus"|"opus") audio_format="opus" ;;
         "audio-mp3"|"mp3"|"") audio_format="mp3" ;;
+        *) audio_format="mp3" ;;  # Default to mp3 for unknown formats
     esac
 
     print_header "Extracting Audio"
@@ -586,6 +590,9 @@ convert_local() {
             audio_codec="flac"
             audio_quality=""
             ;;
+        *)
+            # Default to mp3 for unknown formats
+            ;;
     esac
 
     # Build output directory
@@ -644,6 +651,9 @@ convert_local() {
                     ;;
                 "libopus")
                     ffmpeg_args+=(-b:a "$audio_quality")
+                    ;;
+                *)
+                    # No quality setting for other codecs
                     ;;
             esac
         fi

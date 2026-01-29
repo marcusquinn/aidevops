@@ -96,7 +96,7 @@ bing_page_stats() {
 # Convert Bing JSON response to TOON format
 json_to_toon() {
     local query_json="$1"
-    local page_json="$2"
+    local _page_json="$2"  # Reserved for future page-level stats integration
     local domain="$3"
     local start_date="$4"
     local end_date="$5"
@@ -248,9 +248,11 @@ EOF
 main() {
     local domain=""
     local days="$DEFAULT_DAYS"
+    local arg
     
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --days)
                 if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
                     print_error "--days requires a numeric value"
@@ -264,12 +266,12 @@ main() {
                 return 0
                 ;;
             -*)
-                print_error "Unknown option: $1"
+                print_error "Unknown option: $arg"
                 return 1
                 ;;
             *)
                 if [[ -z "$domain" ]]; then
-                    domain="$1"
+                    domain="$arg"
                 fi
                 shift
                 ;;

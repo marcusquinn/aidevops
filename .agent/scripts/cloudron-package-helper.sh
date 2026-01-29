@@ -26,10 +26,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Logging functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_success() { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 # Check if cloudron CLI is installed
 check_cloudron_cli() {
@@ -867,6 +867,7 @@ Documentation:
   https://docs.cloudron.io/packaging/
   https://forum.cloudron.io/category/96/app-packaging-development
 HELP
+    return 0
 }
 
 # Main entry point

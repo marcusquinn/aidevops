@@ -27,12 +27,14 @@ get_aidevops_version() {
     else
         echo "unknown"
     fi
+    return 0
 }
 
 get_latest_version() {
     curl --proto '=https' -fsSL \
         "https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" \
         2>/dev/null || echo "unknown"
+    return 0
 }
 
 detect_ai_assistant() {
@@ -69,6 +71,7 @@ detect_ai_assistant() {
             *) echo "Unknown" ;;
         esac
     fi
+    return 0
 }
 
 get_install_method() {
@@ -87,6 +90,7 @@ get_install_method() {
     else
         echo "unknown ($aidevops_path)"
     fi
+    return 0
 }
 
 get_git_context() {
@@ -100,6 +104,7 @@ get_git_context() {
         branch="n/a"
     fi
     echo "$repo ($branch)"
+    return 0
 }
 
 gather_diagnostics() {
@@ -143,6 +148,7 @@ gather_diagnostics() {
 - **Working repo**: $git_context
 - **gh CLI**: $(gh --version 2>/dev/null | head -1 || echo "not installed")
 EOF
+    return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -151,14 +157,14 @@ EOF
 
 check_gh_auth() {
     if ! command -v gh &>/dev/null; then
-        echo "ERROR: GitHub CLI (gh) not installed"
-        echo "Install with: brew install gh (macOS) or apt install gh (Linux)"
+        echo "ERROR: GitHub CLI (gh) not installed" >&2
+        echo "Install with: brew install gh (macOS) or apt install gh (Linux)" >&2
         return 1
     fi
     
     if ! gh auth status &>/dev/null; then
-        echo "ERROR: GitHub CLI not authenticated"
-        echo "Run: gh auth login"
+        echo "ERROR: GitHub CLI not authenticated" >&2
+        echo "Run: gh auth login" >&2
         return 1
     fi
     

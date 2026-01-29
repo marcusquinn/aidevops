@@ -543,22 +543,24 @@ show_summary() {
 main() {
     local domain=""
     local command="analyze"
+    local arg
     
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        arg="$1"
+        case "$arg" in
             --help|-h)
                 show_help
                 return 0
                 ;;
             -*)
-                print_error "Unknown option: $1"
+                print_error "Unknown option: $arg"
                 return 1
                 ;;
             *)
                 if [[ -z "$domain" ]]; then
-                    domain="$1"
+                    domain="$arg"
                 else
-                    command="$1"
+                    command="$arg"
                 fi
                 shift
                 ;;
