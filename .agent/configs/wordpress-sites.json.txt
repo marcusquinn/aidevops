@@ -1,0 +1,79 @@
+{
+  "_description": "WordPress Sites Registry",
+  "_docs": "See .agent/tools/wordpress/wp-admin.md for usage",
+  "_setup": "Copy to ~/.config/aidevops/wordpress-sites.json and fill in your sites",
+
+  "sites": {
+    "local-dev": {
+      "name": "Local Development",
+      "type": "localwp",
+      "path": "~/Local Sites/my-site/app/public",
+      "multisite": false,
+      "mainwp_connected": false
+    },
+    "production": {
+      "name": "Production Site",
+      "type": "hostinger",
+      "url": "https://example.com",
+      "ssh_host": "ssh.example.com",
+      "ssh_port": 65002,
+      "ssh_user": "u123456789",
+      "wp_path": "/domains/example.com/public_html",
+      "mainwp_connected": true,
+      "mainwp_site_id": 123,
+      "category": "client"
+    },
+    "staging": {
+      "name": "Staging Site",
+      "type": "hetzner",
+      "url": "https://staging.example.com",
+      "ssh_host": "123.45.67.89",
+      "ssh_port": 22,
+      "ssh_user": "root",
+      "wp_path": "/var/www/staging/public",
+      "mainwp_connected": false,
+      "category": "internal"
+    },
+    "cloudways-site": {
+      "name": "Cloudways Site",
+      "type": "cloudways",
+      "url": "https://cloudways.example.com",
+      "ssh_host": "cloudways.example.com",
+      "ssh_port": 22,
+      "ssh_user": "master_user",
+      "wp_path": "/home/master_user/applications/app_name/public_html",
+      "mainwp_connected": true,
+      "mainwp_site_id": 456,
+      "category": "lead-gen"
+    },
+    "closte-site": {
+      "name": "Closte Site",
+      "type": "closte",
+      "url": "https://closte.example.com",
+      "ssh_host": "closte.example.com",
+      "ssh_port": 22,
+      "ssh_user": "closte_user",
+      "wp_path": "/var/www/html",
+      "password_file": "~/.ssh/closte_password",
+      "mainwp_connected": false,
+      "category": "client"
+    }
+  },
+
+  "_hosting_types": {
+    "localwp": "Local by Flywheel - no SSH, direct path access",
+    "hostinger": "Hostinger - sshpass with password file, custom port 65002",
+    "hetzner": "Hetzner VPS - SSH key auth",
+    "cloudways": "Cloudways - SSH key auth, master_user pattern",
+    "closte": "Closte - sshpass with password file",
+    "cloudron": "Cloudron - SSH key auth or Cloudron CLI"
+  },
+
+  "_categories": [
+    "client",
+    "internal",
+    "lead-gen",
+    "ecommerce",
+    "blog"
+  ]
+}

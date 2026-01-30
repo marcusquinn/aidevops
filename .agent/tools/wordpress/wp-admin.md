@@ -19,7 +19,9 @@ tools:
 ## Quick Reference
 
 - **Sites Config**: `~/.config/aidevops/wordpress-sites.json`
+- **Sites Template**: `configs/wordpress-sites.json.txt`
 - **MainWP Config**: `configs/mainwp-config.json`
+- **MainWP Template**: `configs/mainwp-config.json.txt`
 - **Working Dir**: `~/.aidevops/.agent-workspace/work/wordpress/`
 - **Preferred Plugins**: See `wp-preferred.md` for curated recommendations
 
@@ -27,9 +29,19 @@ tools:
 
 | Method | When to Use |
 |--------|-------------|
+| wp-helper.sh | Multi-site WP-CLI via wordpress-sites.json |
 | WP-CLI (SSH) | Direct access, any site |
 | MainWP | Fleet operations, connected sites |
 | WordPress MCP | AI-powered admin actions |
+
+**wp-helper.sh Commands**:
+
+```bash
+wp-helper.sh --list                          # List all sites
+wp-helper.sh production plugin list          # Run on specific site
+wp-helper.sh --category client core version  # Run on category
+wp-helper.sh --all plugin update --all       # Run on ALL sites
+```
 
 **Common WP-CLI Commands**:
 
@@ -65,6 +77,16 @@ This subagent handles WordPress administration tasks:
 - User management
 
 ## Site Configuration
+
+### Setup
+
+```bash
+# Copy template to config location
+mkdir -p ~/.config/aidevops
+cp ~/.aidevops/agents/configs/wordpress-sites.json.txt ~/.config/aidevops/wordpress-sites.json
+
+# Edit with your site details
+```
 
 ### WordPress Sites Registry
 
