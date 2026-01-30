@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2034,SC2155
+# shellcheck disable=SC2155
 
 # WordPress CLI Helper Script
 # Runs WP-CLI commands on sites configured in wordpress-sites.json
@@ -22,7 +22,6 @@ readonly INFO_JQ_INSTALL_UBUNTU="Install with: apt-get install jq"
 readonly ERROR_SITE_NOT_FOUND="Site not found in configuration"
 readonly ERROR_SITE_REQUIRED="Site identifier is required"
 readonly ERROR_COMMAND_REQUIRED="WP-CLI command is required"
-readonly HELP_SHOW_MESSAGE="Show this help"
 
 # Configuration file location
 CONFIG_FILE="${HOME}/.config/aidevops/wordpress-sites.json"
@@ -142,15 +141,21 @@ build_ssh_command() {
     case "$site_type" in
         localwp)
             # LocalWP - direct local access
-            local expanded_path
-            expanded_path=$(eval echo "$local_path")
-            echo "cd \"$expanded_path\" && wp $wp_command"
+            # Expand ~ safely without eval
+            local expanded_path="${local_path/#\~/$HOME}"
+            # Quote path for safe execution
+            local quoted_local_path
+            quoted_local_path=$(printf %q "$expanded_path")
+            echo "cd $quoted_local_path && wp $wp_command"
             ;;
         hostinger|closte)
             # Hostinger/Closte - sshpass with password file
+            # Note: sshpass is required due to hosting provider limitations
+            # SSH key auth is preferred when available
             local expanded_password_file
             if [[ -n "$password_file" ]]; then
-                expanded_password_file=$(eval echo "$password_file")
+                # Expand ~ safely without eval
+                expanded_password_file="${password_file/#\~/$HOME}"
             else
                 # Default password file locations
                 if [[ "$site_type" == "hostinger" ]]; then
@@ -162,15 +167,21 @@ build_ssh_command() {
             
             if [[ ! -f "$expanded_password_file" ]]; then
                 print_error "Password file not found: $expanded_password_file"
-                print_info "Create the password file with your SSH password"
+                print_info "Create the password file with your SSH password (chmod 600)"
                 exit 1
             fi
             
-            echo "sshpass -f \"$expanded_password_file\" ssh -p $ssh_port $ssh_user@$ssh_host \"cd $wp_path && wp $wp_command\""
+            # Quote wp_path for safe remote execution
+            local quoted_wp_path
+            quoted_wp_path=$(printf %q "$wp_path")
+            echo "sshpass -f \"$expanded_password_file\" ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $wp_command\""
             ;;
         hetzner|cloudways|cloudron)
-            # SSH key-based authentication
-            echo "ssh -p $ssh_port $ssh_user@$ssh_host \"cd $wp_path && wp $wp_command\""
+            # SSH key-based authentication (preferred)
+            # Quote wp_path for safe remote execution
+            local quoted_wp_path
+            quoted_wp_path=$(printf %q "$wp_path")
+            echo "ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $wp_command\""
             ;;
         *)
             print_error "Unknown hosting type: $site_type"
