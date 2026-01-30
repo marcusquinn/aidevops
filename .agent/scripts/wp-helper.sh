@@ -166,7 +166,7 @@ build_ssh_command() {
             # Quote path for safe execution
             local quoted_local_path
             quoted_local_path=$(printf %q "$expanded_path")
-            echo "cd $quoted_local_path && wp $quoted_wp_command"
+            echo "cd $quoted_local_path && wp $quoted_wp_command" || exit
             ;;
         hostinger|closte)
             # Hostinger/Closte - sshpass with password file
@@ -195,14 +195,14 @@ build_ssh_command() {
             # Quote wp_path for safe remote execution
             local quoted_wp_path
             quoted_wp_path=$(printf %q "$wp_path")
-            echo "sshpass -f \"$expanded_password_file\" ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $quoted_wp_command\""
+            echo "sshpass -f \"$expanded_password_file\" ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $quoted_wp_command\"" || exit
             ;;
         hetzner|cloudways|cloudron)
             # SSH key-based authentication (preferred)
             # Quote wp_path for safe remote execution
             local quoted_wp_path
             quoted_wp_path=$(printf %q "$wp_path")
-            echo "ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $quoted_wp_command\""
+            echo "ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $quoted_wp_command\"" || exit
             ;;
         *)
             print_error "Unknown hosting type: $site_type"
