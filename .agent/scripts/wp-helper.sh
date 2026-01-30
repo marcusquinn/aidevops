@@ -59,6 +59,22 @@ check_dependencies() {
         echo "$INFO_JQ_INSTALL_UBUNTU"
         exit 1
     fi
+    
+    if ! command -v ssh &> /dev/null; then
+        print_error "ssh is required but not installed"
+        exit 1
+    fi
+    return 0
+}
+
+# Check sshpass for password-based SSH (called only when needed)
+check_sshpass() {
+    if ! command -v sshpass &> /dev/null; then
+        print_error "sshpass is required for Hostinger/Closte sites but not installed"
+        print_info "Install with: brew install hudochenkov/sshpass/sshpass (macOS)"
+        print_info "Install with: apt-get install sshpass (Ubuntu)"
+        exit 1
+    fi
     return 0
 }
 
@@ -81,7 +97,7 @@ get_site_config() {
     load_config
     
     local site_config
-    site_config=$(jq -r ".sites.\"$site_key\"" "$CONFIG_FILE")
+    site_config=$(jq -r --arg key "$site_key" '.sites[$key]' "$CONFIG_FILE")
     if [[ "$site_config" == "null" ]]; then
         print_error "$ERROR_SITE_NOT_FOUND: $site_key"
         list_sites
@@ -111,7 +127,7 @@ list_sites_by_category() {
     load_config
     print_info "Sites in category: $category"
     echo ""
-    jq -r ".sites | to_entries[] | select(.value.category == \"$category\") | \"\(.key)|\(.value.name)|\(.value.type)|\(.value.url // .value.path)\"" "$CONFIG_FILE" | \
+    jq -r --arg cat "$category" '.sites | to_entries[] | select(.value.category == $cat) | "\(.key)|\(.value.name)|\(.value.type)|\(.value.url // .value.path)"' "$CONFIG_FILE" | \
     while IFS='|' read -r key name type url; do
         printf "  %-20s %-25s %-12s %s\n" "$key" "$name" "$type" "$url"
     done
@@ -152,6 +168,7 @@ build_ssh_command() {
             # Hostinger/Closte - sshpass with password file
             # Note: sshpass is required due to hosting provider limitations
             # SSH key auth is preferred when available
+            check_sshpass
             local expanded_password_file
             if [[ -n "$password_file" ]]; then
                 # Expand ~ safely without eval
@@ -238,7 +255,7 @@ run_on_category() {
     echo ""
     
     local site_keys
-    site_keys=$(jq -r ".sites | to_entries[] | select(.value.category == \"$category\") | .key" "$CONFIG_FILE")
+    site_keys=$(jq -r --arg cat "$category" '.sites | to_entries[] | select(.value.category == $cat) | .key' "$CONFIG_FILE")
     
     if [[ -z "$site_keys" ]]; then
         print_warning "No sites found in category: $category"
@@ -252,9 +269,9 @@ run_on_category() {
         echo "----------------------------------------"
         print_info "Site: $site_key"
         if run_wp_command "$site_key" "$wp_command"; then
-            ((success_count++))
+            ((++success_count))
         else
-            ((fail_count++))
+            ((++fail_count))
             print_error "Failed on site: $site_key"
         fi
         echo ""
@@ -290,9 +307,9 @@ run_on_all() {
         echo "----------------------------------------"
         print_info "Site: $site_key"
         if run_wp_command "$site_key" "$wp_command"; then
-            ((success_count++))
+            ((++success_count))
         else
-            ((fail_count++))
+            ((++fail_count))
             print_error "Failed on site: $site_key"
         fi
         echo ""
@@ -321,7 +338,12 @@ list_categories() {
     print_info "Available categories:"
     jq -r '.sites[].category // "uncategorized"' "$CONFIG_FILE" | sort -u | while read -r cat; do
         local count
-        count=$(jq -r "[.sites[] | select(.category == \"$cat\")] | length" "$CONFIG_FILE")
+        if [[ "$cat" == "uncategorized" ]]; then
+            # Count sites with null/missing category
+            count=$(jq -r '[.sites[] | select(.category == null or .category == "")] | length' "$CONFIG_FILE")
+        else
+            count=$(jq -r --arg c "$cat" '[.sites[] | select(.category == $c)] | length' "$CONFIG_FILE")
+        fi
         echo "  - $cat ($count sites)"
     done
     return 0
