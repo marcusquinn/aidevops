@@ -1,5 +1,5 @@
 ---
-description: Moltbot - Personal AI assistant for messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
+description: OpenClaw - Personal AI assistant for messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
 mode: subagent
 tools:
   read: true
@@ -12,20 +12,20 @@ tools:
   task: true
 ---
 
-# Moltbot - Personal AI Assistant
+# OpenClaw - Personal AI Assistant
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: Personal AI assistant running locally, accessible via messaging channels
-- **Install**: `npm install -g moltbot@latest && moltbot onboard --install-daemon`
+- **Install**: `npm install -g openclaw@latest && openclaw onboard --install-daemon`
 - **Runtime**: Node.js >= 22
-- **Docs**: https://docs.molt.bot
-- **Repo**: https://github.com/moltbot/moltbot
+- **Docs**: https://docs.openclaw.ai
+- **Repo**: https://github.com/openclaw/openclaw
 - **Gateway**: ws://127.0.0.1:18789 (local control plane)
 
-**Supported Channels**: WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, WebChat
+**Supported Channels**: WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, WebChat, BlueBubbles, Matrix, Google Chat, Zalo
 
 **Key Features**:
 - Multi-channel inbox (respond from any messaging platform)
@@ -42,11 +42,11 @@ tools:
 
 ```bash
 # Requires Node.js >= 22
-npm install -g moltbot@latest
-# or: pnpm add -g moltbot@latest
+npm install -g openclaw@latest
+# or: pnpm add -g openclaw@latest
 
 # Run onboarding wizard (installs daemon)
-moltbot onboard --install-daemon
+openclaw onboard --install-daemon
 ```
 
 The wizard walks through:
@@ -58,14 +58,14 @@ The wizard walks through:
 ### From Source (Development)
 
 ```bash
-git clone https://github.com/moltbot/moltbot.git
-cd moltbot
+git clone https://github.com/openclaw/openclaw.git
+cd openclaw
 
 pnpm install
 pnpm ui:build
 pnpm build
 
-pnpm moltbot onboard --install-daemon
+pnpm openclaw onboard --install-daemon
 
 # Dev loop (auto-reload)
 pnpm gateway:watch
@@ -84,7 +84,7 @@ WhatsApp / Telegram / Slack / Discord / Signal / iMessage / Teams / WebChat
 +---------------+---------------+
                |
                +-- Pi agent (RPC)
-               +-- CLI (moltbot ...)
+               +-- CLI (openclaw ...)
                +-- WebChat UI
                +-- macOS app
                +-- iOS / Android nodes
@@ -92,7 +92,7 @@ WhatsApp / Telegram / Slack / Discord / Signal / iMessage / Teams / WebChat
 
 ## Configuration
 
-Minimal config at `~/.clawdbot/clawdbot.json`:
+Minimal config at `~/.openclaw/openclaw.json`:
 
 ```json5
 {
@@ -102,17 +102,17 @@ Minimal config at `~/.clawdbot/clawdbot.json`:
 }
 ```
 
-Full configuration reference: https://docs.molt.bot/gateway/configuration
+Full configuration reference: https://docs.openclaw.ai/gateway/configuration
 
 ### Channel Setup
 
 #### WhatsApp
 
 ```bash
-moltbot channels login  # Scan QR code
+openclaw channels login  # Scan QR code
 ```
 
-Configure allowlist in `~/.clawdbot/clawdbot.json`:
+Configure allowlist in `~/.openclaw/openclaw.json`:
 
 ```json5
 {
@@ -160,24 +160,24 @@ Or set `DISCORD_BOT_TOKEN` environment variable.
 
 ```bash
 # Start gateway
-moltbot gateway --port 18789 --verbose
+openclaw gateway --port 18789 --verbose
 
 # Send a message
-moltbot message send --to +1234567890 --message "Hello from Moltbot"
+openclaw message send --to +1234567890 --message "Hello from OpenClaw"
 
 # Talk to the assistant
-moltbot agent --message "Ship checklist" --thinking high
+openclaw agent --message "Ship checklist" --thinking high
 
 # Health check
-moltbot doctor
+openclaw doctor
 
 # Manage channels
-moltbot channels login
-moltbot channels list
+openclaw channels login
+openclaw channels list
 
 # Manage pairings (DM security)
-moltbot pairing approve <channel> <code>
-moltbot pairing list
+openclaw pairing approve <channel> <code>
+openclaw pairing list
 ```
 
 ## Chat Commands
@@ -200,7 +200,7 @@ Default DM policy is `pairing` - unknown senders receive a pairing code:
 
 ```bash
 # Approve a sender
-moltbot pairing approve telegram ABC123
+openclaw pairing approve telegram ABC123
 ```
 
 For open DMs (not recommended), set:
@@ -218,19 +218,19 @@ For open DMs (not recommended), set:
 }
 ```
 
-Run `moltbot doctor` to check for risky configurations.
+Run `openclaw doctor` to check for risky configurations.
 
 ## Skills (Agent Workspace)
 
-Moltbot uses a skills system similar to aidevops agents:
+OpenClaw uses a skills system similar to aidevops agents:
 
-- Workspace root: `~/clawd` (configurable)
+- Workspace root: `~/.openclaw/workspace` (configurable)
 - Injected prompts: `AGENTS.md`, `SOUL.md`, `TOOLS.md`
-- Skills location: `~/clawd/skills/<skill>/SKILL.md`
+- Skills location: `~/.openclaw/workspace/skills/<skill>/SKILL.md`
 
 ## Integration with aidevops
 
-Moltbot complements aidevops by providing:
+OpenClaw complements aidevops by providing:
 
 1. **Mobile access**: Interact with AI from WhatsApp/Telegram on your phone
 2. **Always-on assistant**: Gateway runs as a daemon, always available
@@ -239,8 +239,8 @@ Moltbot complements aidevops by providing:
 
 ### Recommended Setup
 
-1. Install Moltbot: `npm install -g moltbot@latest`
-2. Run onboarding: `moltbot onboard --install-daemon`
+1. Install OpenClaw: `npm install -g openclaw@latest`
+2. Run onboarding: `openclaw onboard --install-daemon`
 3. Connect your preferred channel (WhatsApp recommended for mobile)
 4. Configure workspace to use aidevops agents:
 
@@ -272,21 +272,22 @@ Moltbot complements aidevops by providing:
 
 ```bash
 # Check gateway health
-moltbot doctor
+openclaw doctor
 
 # View logs
-moltbot gateway --verbose
+openclaw gateway --verbose
 
 # Reset credentials
-rm -rf ~/.clawdbot/credentials
-moltbot channels login
+rm -rf ~/.openclaw/credentials
+openclaw channels login
 ```
 
 ## Resources
 
-- **Docs**: https://docs.molt.bot
-- **Getting Started**: https://docs.molt.bot/start/getting-started
-- **Configuration**: https://docs.molt.bot/gateway/configuration
-- **Security**: https://docs.molt.bot/gateway/security
-- **Discord**: https://discord.gg/clawd
-- **GitHub**: https://github.com/moltbot/moltbot
+- **Website**: https://openclaw.ai
+- **Docs**: https://docs.openclaw.ai
+- **Getting Started**: https://docs.openclaw.ai/start/getting-started
+- **Configuration**: https://docs.openclaw.ai/gateway/configuration
+- **Security**: https://docs.openclaw.ai/gateway/security
+- **Discord**: https://discord.gg/openclaw
+- **GitHub**: https://github.com/openclaw/openclaw

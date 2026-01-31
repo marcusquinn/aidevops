@@ -404,22 +404,22 @@ auggie token print  # Verify
 
 | Service | Requirements | Setup | Purpose |
 |---------|--------------|-------|---------|
-| Moltbot | Node.js >= 22 | `npm install -g moltbot@latest && moltbot onboard` | AI via WhatsApp, Telegram, Slack, Discord |
+| OpenClaw | Node.js >= 22 | `npm install -g openclaw@latest && openclaw onboard` | AI via WhatsApp, Telegram, Slack, Discord |
 
-**Moltbot setup** (recommended for mobile AI access):
+**OpenClaw setup** (recommended for mobile AI access):
 
 ```bash
 # Install globally
-npm install -g moltbot@latest
+npm install -g openclaw@latest
 
 # Run onboarding wizard (installs daemon, connects channels)
-moltbot onboard --install-daemon
+openclaw onboard --install-daemon
 
 # Verify
-moltbot doctor
+openclaw doctor
 ```
 
-Moltbot lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
+OpenClaw lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
 
 **Key features:**
 - Multi-channel inbox (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
@@ -427,7 +427,7 @@ Moltbot lets you interact with AI from your phone via WhatsApp, Telegram, or any
 - Skills system compatible with aidevops agents
 - Browser control, cron jobs, webhooks
 
-**Docs**: https://docs.molt.bot
+**Docs**: https://docs.openclaw.ai
 
 ### WordPress
 
@@ -555,11 +555,11 @@ For new users, suggest this order based on their interests:
 4. Hetzner + Cloudflare
 5. All code quality tools
 6. DataForSEO + Serper
-7. Moltbot (mobile AI access)
+7. OpenClaw (mobile AI access)
 
 ### Mobile-First / Always-On
 
-1. Moltbot (`moltbot onboard --install-daemon`)
+1. OpenClaw (`openclaw onboard --install-daemon`)
 2. OpenAI or Anthropic API key
 3. Connect WhatsApp or Telegram channel
 4. Optional: Voice Wake for hands-free
