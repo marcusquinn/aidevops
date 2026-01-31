@@ -231,43 +231,47 @@ const elements = await page.evaluate(() => {
 2. **Playwright persistent** - load extension + unlock via Bitwarden CLI (`bw unlock`)
 3. **dev-browser** - install extension in profile, unlock once (persists)
 
-## Custom Browser Engine Support (Brave, Edge, Chrome)
+## Custom Browser Engine Support (Brave, Edge, Chrome, Mullvad)
 
-Tools that use Playwright's bundled Chromium can often be pointed at a different Chromium-based browser instead. This is useful for Brave's built-in Shields (ad/tracker blocking), Edge's enterprise features, or your existing Chrome profile.
+Tools that use Playwright's bundled browsers can often be pointed at a different browser instead. This is useful for Brave's built-in Shields (ad/tracker blocking), Edge's enterprise features, Mullvad Browser's privacy hardening, or your existing Chrome profile.
 
-| Tool | Brave | Edge | Chrome | How |
-|------|-------|------|--------|-----|
-| **Playwright** | Yes | Yes | Yes | `executablePath` in `launch()` or `launchPersistentContext()` |
-| **Playwriter** | Yes | Yes | Yes | Install extension in whichever browser you use |
-| **Stagehand** | Yes | Yes | Yes | `executablePath` in `browserOptions` (uses Playwright) |
-| **Crawl4AI** | Yes | Yes | Yes | `chrome_channel` or `browser_path` in `BrowserConfig` |
-| **dev-browser** | Possible | Possible | Possible | Modify launch args in server config |
-| **playwright-cli** | No | No | No | Uses bundled Chromium only |
-| **agent-browser** | No | No | No | Uses bundled Chromium only |
-| **WaterCrawl** | No | No | No | Cloud API, no local browser |
+| Tool | Brave | Edge | Chrome | Mullvad | How |
+|------|-------|------|--------|---------|-----|
+| **Playwright** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `launch()` or `launchPersistentContext()` |
+| **Playwriter** | Yes | Yes | Yes | Yes | Install extension in whichever browser you use |
+| **Stagehand** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `browserOptions` (uses Playwright) |
+| **Crawl4AI** | Yes | Yes | Yes | Yes (Firefox) | `browser_path` in `BrowserConfig` with `browser_type="firefox"` |
+| **Camoufox** | No | No | No | Partial | Both are hardened Firefox; Camoufox preferred for automation |
+| **dev-browser** | Possible | Possible | Possible | No | Modify launch args in server config |
+| **playwright-cli** | No | No | No | No | Uses bundled Chromium only |
+| **agent-browser** | No | No | No | No | Uses bundled Chromium only |
+| **WaterCrawl** | No | No | No | No | Cloud API, no local browser |
 
 **Browser executable paths** (macOS):
 
 ```text
-Brave:  /Applications/Brave Browser.app/Contents/MacOS/Brave Browser
-Edge:   /Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge
-Chrome: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+Brave:   /Applications/Brave Browser.app/Contents/MacOS/Brave Browser
+Edge:    /Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge
+Chrome:  /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+Mullvad: /Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser
 ```
 
 **Browser executable paths** (Linux):
 
 ```text
-Brave:  /usr/bin/brave-browser
-Edge:   /usr/bin/microsoft-edge
-Chrome: /usr/bin/google-chrome
+Brave:   /usr/bin/brave-browser
+Edge:    /usr/bin/microsoft-edge
+Chrome:  /usr/bin/google-chrome
+Mullvad: /usr/bin/mullvad-browser (or ~/.local/share/mullvad-browser/Browser/start-mullvad-browser)
 ```
 
 **Browser executable paths** (Windows):
 
 ```text
-Brave:  C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe
-Edge:   C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
-Chrome: C:\Program Files\Google\Chrome\Application\chrome.exe
+Brave:   C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe
+Edge:    C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+Chrome:  C:\Program Files\Google\Chrome\Application\chrome.exe
+Mullvad: C:\Program Files\Mullvad Browser\Browser\mullvadbrowser.exe
 ```
 
 **Why use a custom browser?**
@@ -278,21 +282,47 @@ Chrome: C:\Program Files\Google\Chrome\Application\chrome.exe
 | **Edge** | Enterprise SSO, Azure AD integration, IE mode for legacy apps | Heavier than Chromium |
 | **Chrome** | Widest extension ecosystem, most tested | No built-in ad blocking |
 | **Chromium** (bundled) | Cleanest automation baseline, no extra features | No ad blocking, no extensions by default |
+| **Mullvad Browser** | Tor Browser-based hardening, anti-fingerprinting, no telemetry | Firefox-based (not Chromium), some sites may break |
+
+**Mullvad Browser notes**:
+- Based on Firefox ESR with Tor Browser's privacy patches (without Tor network)
+- Built-in anti-fingerprinting (canvas, WebGL, fonts, screen size)
+- Requires Playwright's Firefox driver, not Chromium
+- Best for privacy-focused automation where you want browser-level protection
+- For programmatic fingerprint control, use Camoufox instead (more configurable)
 
 **First-run preference**: When a tool supports custom browsers, the AI agent should ask the user on first use which browser they prefer. Store the preference in `~/.config/aidevops/browser-prefs.json`:
 
 ```json
 {
   "preferred_browser": "brave",
+  "preferred_firefox": "mullvad",
   "browser_paths": {
     "brave": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
     "edge": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "mullvad": "/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser",
+    "firefox": "/Applications/Firefox.app/Contents/MacOS/firefox"
   },
   "extensions": {
     "ublock_origin": "/path/to/ublock-origin-unpacked"
   }
 }
+```
+
+**Mullvad Browser with Playwright** (Firefox driver):
+
+```javascript
+import { firefox } from 'playwright';
+
+const browser = await firefox.launch({
+  executablePath: '/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser',
+  headless: false,  // Mullvad may require headed mode for full privacy features
+});
+const page = await browser.newPage();
+await page.goto('https://browserleaks.com/canvas');
+await page.screenshot({ path: '/tmp/mullvad-test.png' });
+await browser.close();
 ```
 
 ## Ad Blocker / Extension Loading (uBlock Origin)
