@@ -139,6 +139,7 @@ That worked! Want me to remember this for future sessions?
 ### Examples
 
 **After fixing a bug:**
+
 ```text
 User: Adding --legacy-peer-deps fixed the npm install
 AI: That worked! Want me to remember this for future sessions?
