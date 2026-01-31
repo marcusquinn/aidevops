@@ -139,6 +139,7 @@ That worked! Want me to remember this for future sessions?
 ### Examples
 
 **After fixing a bug:**
+
 ```text
 User: Adding --legacy-peer-deps fixed the npm install
 AI: That worked! Want me to remember this for future sessions?
@@ -149,6 +150,7 @@ AI: That worked! Want me to remember this for future sessions?
 ```
 
 **When user states preference:**
+
 ```text
 User: I always use pnpm instead of npm
 AI: Got it! Want me to remember this preference?
@@ -159,6 +161,7 @@ AI: Got it! Want me to remember this preference?
 ```
 
 **After failed approach:**
+
 ```text
 User: That approach with setTimeout didn't work at all
 AI: Noted. Want me to remember to avoid this approach?
