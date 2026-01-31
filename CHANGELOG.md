@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add proactive auto-remember triggers and session distill (#269)
 - add relational versioning and dual timestamps (#268)
 - add Mullvad Browser support for privacy-focused automation (#267)
+
 ## [2.94.0] - 2026-01-31
 
 ### Added
