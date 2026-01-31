@@ -584,7 +584,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- add Moltbot (formerly Clawdbot) integration for mobile AI access (#118)
+- add OpenClaw (formerly Moltbot, Clawdbot) integration for mobile AI access (#118)
 
 ### Changed
 
