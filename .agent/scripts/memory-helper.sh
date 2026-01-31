@@ -328,15 +328,16 @@ cmd_store() {
         event_date="$created_at"
     fi
     
-    # Escape single quotes for SQL
+    # Escape single quotes for SQL (prevents SQL injection)
     local escaped_content="${content//\'/\'\'}"
     local escaped_tags="${tags//\'/\'\'}"
     local escaped_project="${project_path//\'/\'\'}"
+    local escaped_supersedes="${supersedes_id//\'/\'\'}"
     
     # Validate supersedes_id exists if provided
     if [[ -n "$supersedes_id" ]]; then
         local exists
-        exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$supersedes_id';")
+        exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_supersedes';")
         if [[ "$exists" == "0" ]]; then
             log_error "Supersedes ID not found: $supersedes_id"
             return 1
@@ -352,7 +353,7 @@ EOF
     if [[ -n "$supersedes_id" ]]; then
         sqlite3 "$MEMORY_DB" <<EOF
 INSERT INTO learning_relations (id, supersedes_id, relation_type, created_at)
-VALUES ('$id', '$supersedes_id', '$relation_type', '$created_at');
+VALUES ('$id', '$escaped_supersedes', '$relation_type', '$created_at');
 EOF
         log_info "Relation: $id $relation_type $supersedes_id"
     fi
@@ -515,9 +516,12 @@ cmd_history() {
     
     init_db
     
+    # Escape memory_id for SQL (prevents SQL injection)
+    local escaped_id="${memory_id//\'/\'\'}"
+    
     # Check if memory exists
     local exists
-    exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$memory_id';")
+    exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_id';")
     if [[ "$exists" == "0" ]]; then
         log_error "Memory not found: $memory_id"
         return 1
@@ -531,9 +535,9 @@ cmd_history() {
     echo "Current:"
     sqlite3 "$MEMORY_DB" <<EOF
 SELECT '  [' || type || '] ' || substr(content, 1, 80) || '...'
-FROM learnings WHERE id = '$memory_id';
+FROM learnings WHERE id = '$escaped_id';
 SELECT '  Created: ' || created_at || ' | Event: ' || COALESCE(event_date, 'N/A')
-FROM learnings WHERE id = '$memory_id';
+FROM learnings WHERE id = '$escaped_id';
 EOF
     
     # Show what this memory supersedes (ancestors)
@@ -544,7 +548,7 @@ EOF
 WITH RECURSIVE ancestors AS (
     SELECT lr.supersedes_id, lr.relation_type, 1 as depth
     FROM learning_relations lr
-    WHERE lr.id = '$memory_id'
+    WHERE lr.id = '$escaped_id'
     UNION ALL
     SELECT lr.supersedes_id, lr.relation_type, a.depth + 1
     FROM learning_relations lr
@@ -579,7 +583,7 @@ EOF
 WITH RECURSIVE descendants AS (
     SELECT lr.id as child_id, lr.relation_type, 1 as depth
     FROM learning_relations lr
-    WHERE lr.supersedes_id = '$memory_id'
+    WHERE lr.supersedes_id = '$escaped_id'
     UNION ALL
     SELECT lr.id, lr.relation_type, d.depth + 1
     FROM learning_relations lr
@@ -623,11 +627,14 @@ cmd_latest() {
     
     init_db
     
+    # Escape memory_id for SQL (prevents SQL injection)
+    local escaped_id="${memory_id//\'/\'\'}"
+    
     # Find the latest in the chain (no descendants with 'updates' relation)
     local latest_id
     latest_id=$(sqlite3 "$MEMORY_DB" <<EOF
 WITH RECURSIVE chain AS (
-    SELECT '$memory_id' as id
+    SELECT '$escaped_id' as id
     UNION ALL
     SELECT lr.id
     FROM learning_relations lr
@@ -644,12 +651,15 @@ EOF
         latest_id="$memory_id"
     fi
     
+    # Escape latest_id for the final query
+    local escaped_latest="${latest_id//\'/\'\'}"
+    
     echo "$latest_id"
     
     # Show the content
     sqlite3 "$MEMORY_DB" <<EOF
 SELECT '[' || type || '] ' || content
-FROM learnings WHERE id = '$latest_id';
+FROM learnings WHERE id = '$escaped_latest';
 EOF
     
     return 0
@@ -823,7 +833,10 @@ EOF
             subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
         fi
         
-        # Delete from both tables using the subquery (much faster than loop)
+        # Delete from all tables using the subquery (much faster than loop)
+        # Clean up relations first to avoid orphaned references
+        sqlite3 "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"
+        sqlite3 "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);"
         sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
         sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
         
@@ -947,6 +960,10 @@ EOF
             
             # Transfer access history
             sqlite3 "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" 2>/dev/null || true
+            
+            # Re-point relations that referenced the deleted memory to the surviving one
+            sqlite3 "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
+            sqlite3 "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
             
             # Delete the newer duplicate
             sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
