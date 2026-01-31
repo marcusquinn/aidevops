@@ -401,25 +401,31 @@ check_markdown_lint() {
         lint_output=$($markdownlint_cmd $md_files 2>&1) || true
         
         if [[ -n "$lint_output" ]]; then
-            # Count violations (each line is a violation)
-            violations=$(echo "$lint_output" | grep -c "MD[0-9]" || echo "0")
+            # Count violations - ensure single integer (grep -c can fail, use wc -l as fallback)
+            local violation_count
+            violation_count=$(echo "$lint_output" | grep -c "MD[0-9]" 2>/dev/null) || violation_count=0
+            # Ensure it's a valid integer
+            if ! [[ "$violation_count" =~ ^[0-9]+$ ]]; then
+                violation_count=0
+            fi
+            violations=$violation_count
             
             if [[ $violations -gt 0 ]]; then
-                if [[ "$check_mode" == "changed" ]]; then
-                    print_error "Markdown: $violations style issues in changed files (BLOCKING)"
-                else
-                    print_warning "Markdown: $violations style issues found (advisory)"
-                fi
+                # Show violations first (common to both modes)
                 echo "$lint_output" | head -10
                 if [[ $violations -gt 10 ]]; then
                     echo "... and $((violations - 10)) more"
                 fi
                 print_info "Run: markdownlint --fix <file> to auto-fix"
-                # Blocking for changed files, advisory for all files
+                
+                # Mode-specific message and return code
                 if [[ "$check_mode" == "changed" ]]; then
+                    print_error "Markdown: $violations style issues in changed files (BLOCKING)"
                     return 1
+                else
+                    print_warning "Markdown: $violations style issues found (advisory)"
+                    return 0
                 fi
-                return 0
             fi
         fi
         print_success "Markdown: No style issues found"
