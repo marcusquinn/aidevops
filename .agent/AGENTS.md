@@ -109,6 +109,7 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 | Tool configuration worked | `TOOL_CONFIG` | "That config worked - save for next time?" |
 
 **Format**: After detecting a trigger, suggest:
+
 ```text
 Want me to remember this? /remember {concise description}
 ```

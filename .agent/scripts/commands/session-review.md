@@ -68,6 +68,7 @@ After auto-distill, look for learnings that may have been missed:
 4. **User Preferences**: Did the user express preferences?
 
 For each additional learning, suggest:
+
 ```text
 /remember {concise description of learning}
 ```
