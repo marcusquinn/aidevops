@@ -289,5 +289,5 @@ openclaw channels login
 - **Getting Started**: https://docs.openclaw.ai/start/getting-started
 - **Configuration**: https://docs.openclaw.ai/gateway/configuration
 - **Security**: https://docs.openclaw.ai/gateway/security
-- **Discord**: https://discord.gg/clawd
+- **Discord**: https://discord.gg/openclaw
 - **GitHub**: https://github.com/openclaw/openclaw
