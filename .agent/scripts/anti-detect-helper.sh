@@ -1073,6 +1073,8 @@ show_status() {
         mullvad_path="/usr/bin/mullvad-browser"
     elif [[ -f "$HOME/.local/share/mullvad-browser/Browser/start-mullvad-browser" ]]; then
         mullvad_path="$HOME/.local/share/mullvad-browser/Browser/start-mullvad-browser"
+    elif [[ -f "/mnt/c/Program Files/Mullvad Browser/Browser/mullvadbrowser.exe" ]]; then
+        mullvad_path="/mnt/c/Program Files/Mullvad Browser/Browser/mullvadbrowser.exe"
     fi
     if [[ -n "$mullvad_path" ]]; then
         echo -e "  Mullvad Browser:   ${GREEN}installed${NC} ($mullvad_path)"
