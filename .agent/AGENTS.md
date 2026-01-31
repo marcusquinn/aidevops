@@ -69,7 +69,7 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 - NEVER expose credentials in output/logs
 - Confirm destructive operations before execution
 
-**Quality**: SonarCloud A-grade, ShellCheck zero violations, `local var="$1"` pattern, explicit returns.
+**Quality**: SonarCloud A-grade, ShellCheck zero violations, `local var="$1"` pattern, explicit returns, blank lines around code blocks (MD031).
 
 ## Planning & Tasks
 

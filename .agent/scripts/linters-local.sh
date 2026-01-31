@@ -363,9 +363,10 @@ check_markdown_lint() {
     fi
 
     # Get markdown files to check:
-    # 1. Uncommitted changes (staged + unstaged)
-    # 2. If no uncommitted, check files changed in current branch vs main
-    # 3. Fallback to all tracked .md files in .agent/
+    # 1. Uncommitted changes (staged + unstaged) - BLOCKING
+    # 2. If no uncommitted, check files changed in current branch vs main - BLOCKING
+    # 3. Fallback to all tracked .md files in .agent/ - NON-BLOCKING (advisory)
+    local check_mode="changed"  # "changed" = blocking, "all" = advisory
     if git rev-parse --git-dir > /dev/null 2>&1; then
         # First try uncommitted changes
         md_files=$(git diff --name-only --diff-filter=ACMR HEAD -- '*.md' 2>/dev/null)
@@ -379,12 +380,14 @@ check_markdown_lint() {
             fi
         fi
         
-        # Fallback: check all .agent/*.md files
+        # Fallback: check all .agent/*.md files (advisory only)
         if [[ -z "$md_files" ]]; then
             md_files=$(git ls-files '.agent/**/*.md' 2>/dev/null)
+            check_mode="all"
         fi
     else
         md_files=$(find . -name "*.md" -type f 2>/dev/null | grep -v node_modules)
+        check_mode="all"
     fi
 
     if [[ -z "$md_files" ]]; then
@@ -398,48 +401,44 @@ check_markdown_lint() {
         lint_output=$($markdownlint_cmd $md_files 2>&1) || true
         
         if [[ -n "$lint_output" ]]; then
-            # Count violations (each line is a violation)
-            violations=$(echo "$lint_output" | grep -c "MD[0-9]" || echo "0")
+            # Count violations - ensure single integer (grep -c can fail, use wc -l as fallback)
+            local violation_count
+            violation_count=$(echo "$lint_output" | grep -c "MD[0-9]" 2>/dev/null) || violation_count=0
+            # Ensure it's a valid integer
+            if ! [[ "$violation_count" =~ ^[0-9]+$ ]]; then
+                violation_count=0
+            fi
+            violations=$violation_count
             
             if [[ $violations -gt 0 ]]; then
-                print_warning "Markdown: $violations style issues found"
+                # Show violations first (common to both modes)
                 echo "$lint_output" | head -10
                 if [[ $violations -gt 10 ]]; then
                     echo "... and $((violations - 10)) more"
                 fi
-                print_info "Run: markdownlint --fix .agent/**/*.md to auto-fix"
-                # Non-blocking for now - many pre-existing issues
-                # TODO: Make blocking after fixing existing issues
-                return 0
+                print_info "Run: markdownlint --fix <file> to auto-fix"
+                
+                # Mode-specific message and return code
+                if [[ "$check_mode" == "changed" ]]; then
+                    print_error "Markdown: $violations style issues in changed files (BLOCKING)"
+                    return 1
+                else
+                    print_warning "Markdown: $violations style issues found (advisory)"
+                    return 0
+                fi
             fi
         fi
         print_success "Markdown: No style issues found"
     else
         # Fallback: basic checks without markdownlint
-        local issues=0
-        
-        # Check for fenced code blocks without language (MD040)
-        # Pattern: line starts with optional whitespace, then ``` with nothing after (or just whitespace)
-        for file in $md_files; do
-            local count
-            # Use grep -E for extended regex (portable across macOS/Linux)
-            count=$(grep -cE '^[[:space:]]*```[[:space:]]*$' "$file" 2>/dev/null || echo "0")
-            if [[ $count -gt 0 ]]; then
-                print_warning "$file: $count fenced code blocks without language specifier"
-                grep -nE '^[[:space:]]*```[[:space:]]*$' "$file" 2>/dev/null | head -3
-                issues=$((issues + count))
-            fi
-        done
-        
-        if [[ $issues -gt 0 ]]; then
-            print_warning "Markdown: $issues issues found (install markdownlint for full checks)"
-            print_info "Install: npm install -g markdownlint-cli"
-            # Non-blocking for now - many pre-existing issues
-            # TODO: Make blocking after fixing existing issues
-            return 0
-        fi
-        
-        print_success "Markdown: Basic checks passed (install markdownlint for full checks)"
+        # NOTE: Without markdownlint, we can't reliably detect MD031/MD040 violations
+        # because we can't distinguish opening fences (need language) from closing fences (always bare)
+        # So fallback is always advisory-only and recommends installing markdownlint
+        print_warning "Markdown: markdownlint not installed - cannot perform full lint checks"
+        print_info "Install: npm install -g markdownlint-cli"
+        print_info "Then re-run to get blocking checks for changed files"
+        # Advisory only - don't block without proper tooling
+        return 0
     fi
 
     return 0
