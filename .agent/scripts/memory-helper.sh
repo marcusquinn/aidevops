@@ -326,6 +326,8 @@ cmd_store() {
     # Default event_date to created_at if not provided
     if [[ -z "$event_date" ]]; then
         event_date="$created_at"
+    elif ! [[ "$event_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2} ]]; then
+        log_warn "event_date '$event_date' may not be a valid ISO format (YYYY-MM-DD...)"
     fi
     
     # Escape single quotes for SQL (prevents SQL injection)
