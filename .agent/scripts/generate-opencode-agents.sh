@@ -439,10 +439,12 @@ print("  Set Build+ as default agent")
 # This ensures the full aidevops framework docs are available without
 # relying on the LLM to follow "read this file" instructions.
 # See: https://opencode.ai/docs/rules/#using-opencodejson
-config['instructions'] = [
-    os.path.expanduser("~/.aidevops/agents/AGENTS.md")
-]
-print("  Added instructions: ~/.aidevops/agents/AGENTS.md (auto-loaded every session)")
+instructions_path = os.path.expanduser("~/.aidevops/agents/AGENTS.md")
+if os.path.exists(instructions_path):
+    config['instructions'] = [instructions_path]
+    print("  Added instructions: ~/.aidevops/agents/AGENTS.md (auto-loaded every session)")
+else:
+    print("  Warning: ~/.aidevops/agents/AGENTS.md not found - run setup.sh first")
 
 print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
