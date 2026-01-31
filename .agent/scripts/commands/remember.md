@@ -109,20 +109,71 @@ AI: Storing memory:
     1. Confirm  2. Change type  3. Edit  4. Cancel
 ```
 
-## Auto-Remember Triggers
+## Auto-Remember Triggers (MANDATORY)
 
-AI assistants should proactively suggest `/remember` when:
+AI assistants **MUST** proactively suggest `/remember` when detecting these patterns:
 
-1. A solution is found after debugging
-2. User explicitly states a preference
-3. A workaround is discovered for a tool limitation
-4. An architecture decision is made
-5. A failed approach is identified
+### Conversation Pattern Detection
+
+| User Says | Trigger Type | Memory Type |
+|-----------|--------------|-------------|
+| "that fixed it", "it works now", "solved" | Solution found | `WORKING_SOLUTION` |
+| "I prefer", "I like", "always use", "never use" | Preference stated | `USER_PREFERENCE` |
+| "don't do X", "X doesn't work", "avoid X" | Failed approach | `FAILED_APPROACH` |
+| "let's go with", "decided to", "we'll use" | Decision made | `DECISION` |
+| "the trick is", "workaround", "hack" | Workaround found | `WORKING_SOLUTION` |
+| "configure X as", "set X to", "X needs Y" | Tool config | `TOOL_CONFIG` |
+
+### Required Response Format
+
+When a trigger is detected, immediately offer:
 
 ```text
-AI: That fixed it! Want me to remember this solution for future sessions?
-    /remember {suggested content}
+That worked! Want me to remember this for future sessions?
+
+/remember {concise, actionable description}
+
+(Reply 'y' to confirm, or edit the description)
 ```
+
+### Examples
+
+**After fixing a bug:**
+```text
+User: Adding --legacy-peer-deps fixed the npm install
+AI: That worked! Want me to remember this for future sessions?
+    
+    /remember Use --legacy-peer-deps flag when npm install fails with peer dependency conflicts
+    
+    (Reply 'y' to confirm, or edit the description)
+```
+
+**When user states preference:**
+```text
+User: I always use pnpm instead of npm
+AI: Got it! Want me to remember this preference?
+    
+    /remember User prefers pnpm over npm for package management
+    
+    (Reply 'y' to confirm)
+```
+
+**After failed approach:**
+```text
+User: That approach with setTimeout didn't work at all
+AI: Noted. Want me to remember to avoid this approach?
+    
+    /remember Avoid using setTimeout for async coordination - use proper async/await or Promises instead
+    
+    (Reply 'y' to confirm)
+```
+
+### Do NOT Wait
+
+- Do NOT wait for user to explicitly ask to remember
+- Do NOT skip the suggestion if the learning seems minor
+- DO suggest immediately when pattern is detected
+- DO make the suggestion concise and actionable
 
 ## Storage Location
 

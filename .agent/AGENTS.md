@@ -95,6 +95,26 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Full docs**: `memory/README.md`
 
+### MANDATORY: Proactive Memory Triggers
+
+**You MUST suggest `/remember` when you detect these patterns:**
+
+| Trigger | Memory Type | Example |
+|---------|-------------|---------|
+| Solution found after debugging | `WORKING_SOLUTION` | "That fixed it! Want me to remember this?" |
+| User states a preference | `USER_PREFERENCE` | "I'll remember you prefer tabs over spaces" |
+| Workaround discovered | `WORKING_SOLUTION` | "This workaround worked - should I save it?" |
+| Failed approach identified | `FAILED_APPROACH` | "That didn't work - remember to avoid this?" |
+| Architecture decision made | `DECISION` | "Good decision - want me to remember why?" |
+| Tool configuration worked | `TOOL_CONFIG` | "That config worked - save for next time?" |
+
+**Format**: After detecting a trigger, suggest:
+```text
+Want me to remember this? /remember {concise description}
+```
+
+**Do NOT wait for user to ask** - proactively offer to remember valuable learnings.
+
 ## Inter-Agent Mailbox
 
 TOON-based async communication between parallel agent sessions.

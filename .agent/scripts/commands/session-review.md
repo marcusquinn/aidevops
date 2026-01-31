@@ -45,22 +45,40 @@ Verify aidevops best practices:
 | TODO tracking | Tasks logged appropriately | Recommended |
 | Quality checks | Linters run before commit | Recommended |
 
-### Step 4: Identify Knowledge to Capture
+### Step 4: Auto-Distill Session Learnings
 
-Look for learnings that should be preserved:
+**MANDATORY**: Run session distillation to automatically extract and store learnings:
+
+```bash
+~/.aidevops/agents/scripts/session-distill-helper.sh auto
+```
+
+This will:
+1. Analyze git commits for patterns (fixes, features, refactors)
+2. Extract learnings with appropriate types (ERROR_FIX, WORKING_SOLUTION, etc.)
+3. Store them to memory automatically
+
+### Step 5: Identify Additional Knowledge to Capture
+
+After auto-distill, look for learnings that may have been missed:
 
 1. **Corrections Made**: Did the AI make mistakes that were corrected?
 2. **New Patterns**: Were new approaches discovered?
 3. **Tool Issues**: Did any tools not work as expected?
 4. **User Preferences**: Did the user express preferences?
 
-For each learning, suggest where to document:
+For each additional learning, suggest:
+```text
+/remember {concise description of learning}
+```
+
+Or document in:
 - Agent improvements → `@agent-review`
 - Code patterns → Code comments or docs
 - User preferences → `memory/` files
 - Temporary workarounds → TODO.md
 
-### Step 5: Session Health Assessment
+### Step 6: Session Health Assessment
 
 Determine recommendation:
 
