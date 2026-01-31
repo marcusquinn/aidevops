@@ -1,0 +1,37 @@
+{
+  "preferred_browser": "chromium",
+  "preferred_firefox": "firefox",
+  "browser_paths": {
+    "chromium": null,
+    "brave": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "edge": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "firefox": "/Applications/Firefox.app/Contents/MacOS/firefox",
+    "mullvad": "/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser"
+  },
+  "browser_paths_linux": {
+    "chromium": null,
+    "brave": "/usr/bin/brave-browser",
+    "edge": "/usr/bin/microsoft-edge",
+    "chrome": "/usr/bin/google-chrome",
+    "firefox": "/usr/bin/firefox",
+    "mullvad": "/usr/bin/mullvad-browser"
+  },
+  "browser_paths_windows": {
+    "chromium": null,
+    "brave": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+    "edge": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "chrome": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "firefox": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+    "mullvad": "C:\\Program Files\\Mullvad Browser\\Browser\\mullvadbrowser.exe"
+  },
+  "extensions": {
+    "ublock_origin": null
+  },
+  "notes": {
+    "preferred_browser": "Default Chromium-based browser: chromium|brave|edge|chrome",
+    "preferred_firefox": "Default Firefox-based browser: firefox|mullvad",
+    "browser_paths": "Set to null to use Playwright's bundled browser",
+    "mullvad": "Mullvad Browser uses Tor Browser's uniform fingerprint (no rotation). Best for privacy, not multi-account."
+  }
+}

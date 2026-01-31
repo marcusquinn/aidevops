@@ -41,7 +41,7 @@ SETUP OPTIONS:
 
 LAUNCH OPTIONS:
     --profile <name>    Profile to launch (required unless --disposable)
-    --engine <type>     Browser engine: chromium|firefox|random (default: firefox)
+    --engine <type>     Browser engine: chromium|firefox|mullvad|random (default: firefox)
     --headless          Run headless (default: headed)
     --disposable        Single-use profile (auto-deleted)
     --url <url>         URL to navigate to after launch
@@ -470,7 +470,7 @@ launch_browser() {
     fi
 
     if [[ "$engine" == "random" ]]; then
-        engine=$(python3 -c "import random; print(random.choice(['chromium','firefox']))")
+        engine=$(python3 -c "import random; print(random.choice(['chromium','firefox','mullvad']))")
     fi
 
     # Update last_used timestamp
@@ -492,6 +492,8 @@ with open('$profile_dir/metadata.json', 'r+') as f:
 
     if [[ "$engine" == "firefox" ]]; then
         launch_camoufox "$profile_name" "$headless" "$url" "$disposable"
+    elif [[ "$engine" == "mullvad" ]]; then
+        launch_mullvad "$profile_name" "$headless" "$url" "$disposable"
     else
         launch_chromium_stealth "$profile_name" "$headless" "$url" "$disposable"
     fi
@@ -596,6 +598,102 @@ with Camoufox(**kwargs) as browser:
 " 2>&1
 
     deactivate 2>/dev/null || true
+    return 0
+}
+
+launch_mullvad() {
+    local profile_name="$1"
+    local headless="$2"
+    local url="$3"
+    local disposable="$4"
+
+    # Find Mullvad Browser executable
+    local mullvad_path=""
+    if [[ -f "/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser" ]]; then
+        mullvad_path="/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser"
+    elif [[ -f "/usr/bin/mullvad-browser" ]]; then
+        mullvad_path="/usr/bin/mullvad-browser"
+    elif [[ -f "$HOME/.local/share/mullvad-browser/Browser/start-mullvad-browser" ]]; then
+        mullvad_path="$HOME/.local/share/mullvad-browser/Browser/start-mullvad-browser"
+    elif [[ -f "/mnt/c/Program Files/Mullvad Browser/Browser/mullvadbrowser.exe" ]]; then
+        mullvad_path="/mnt/c/Program Files/Mullvad Browser/Browser/mullvadbrowser.exe"
+    else
+        echo -e "${RED}Error: Mullvad Browser not found. Install from https://mullvad.net/browser${NC}" >&2
+        return 1
+    fi
+
+    local profile_dir=""
+    local user_data_dir=""
+    local proxy_server=""
+
+    if [[ -n "$profile_name" ]]; then
+        profile_dir=$(find_profile_dir "$profile_name")
+        if [[ -n "$profile_dir" ]]; then
+            user_data_dir="$profile_dir/mullvad-data"
+            mkdir -p "$user_data_dir"
+        fi
+        if [[ -n "$profile_dir" && -f "$profile_dir/proxy.json" ]]; then
+            proxy_server=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('server',''))" 2>/dev/null)
+        fi
+    fi
+
+    local headless_flag="true"
+    [[ "$headless" != "true" ]] && headless_flag="false"
+
+    local target_url="${url:-https://www.browserscan.net/bot-detection}"
+
+    echo -e "${BLUE}Launching Mullvad Browser (headless=$headless_flag)...${NC}"
+    echo -e "${YELLOW}Note: Mullvad Browser uses Tor Browser's uniform fingerprint (no rotation).${NC}"
+    echo -e "${YELLOW}For fingerprint rotation, use --engine firefox (Camoufox) instead.${NC}"
+
+    # Use Node.js with Playwright Firefox driver
+    node -e "
+const { firefox } = require('playwright');
+
+(async () => {
+    const launchOpts = {
+        executablePath: '$mullvad_path',
+        headless: $headless_flag,
+    };
+
+    const contextOpts = {
+        viewport: { width: 1280, height: 800 },  // Mullvad default
+    };
+
+    const proxyServer = '$proxy_server';
+    if (proxyServer) {
+        launchOpts.proxy = { server: proxyServer };
+    }
+
+    const userDataDir = '$user_data_dir';
+    let browser, context, page;
+
+    if (userDataDir && '$disposable' !== 'true') {
+        // Persistent context for Mullvad
+        browser = await firefox.launchPersistentContext(userDataDir, {
+            ...launchOpts,
+            ...contextOpts,
+        });
+        page = browser.pages()[0] || await browser.newPage();
+    } else {
+        browser = await firefox.launch(launchOpts);
+        context = await browser.newContext(contextOpts);
+        page = await context.newPage();
+    }
+
+    console.log('Mullvad Browser launched');
+    await page.goto('$target_url', { timeout: 30000 });
+    console.log('Navigated to:', page.url());
+    console.log('Title:', await page.title());
+
+    if (!$headless_flag) {
+        await new Promise(r => setTimeout(r, 60000));
+    }
+
+    await browser.close();
+})().catch(e => { console.error(e.message); process.exit(1); });
+" 2>&1
+
     return 0
 }
 
@@ -965,6 +1063,23 @@ show_status() {
         echo -e "  Camoufox:          ${GREEN}installed${NC} (v$camoufox_version)"
     else
         echo -e "  Camoufox:          ${RED}not installed${NC}"
+    fi
+
+    # Mullvad Browser
+    local mullvad_path=""
+    if [[ -f "/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser" ]]; then
+        mullvad_path="/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser"
+    elif [[ -f "/usr/bin/mullvad-browser" ]]; then
+        mullvad_path="/usr/bin/mullvad-browser"
+    elif [[ -f "$HOME/.local/share/mullvad-browser/Browser/start-mullvad-browser" ]]; then
+        mullvad_path="$HOME/.local/share/mullvad-browser/Browser/start-mullvad-browser"
+    elif [[ -f "/mnt/c/Program Files/Mullvad Browser/Browser/mullvadbrowser.exe" ]]; then
+        mullvad_path="/mnt/c/Program Files/Mullvad Browser/Browser/mullvadbrowser.exe"
+    fi
+    if [[ -n "$mullvad_path" ]]; then
+        echo -e "  Mullvad Browser:   ${GREEN}installed${NC} ($mullvad_path)"
+    else
+        echo -e "  Mullvad Browser:   ${YELLOW}not installed${NC} (https://mullvad.net/browser)"
     fi
 
     # rebrowser-patches

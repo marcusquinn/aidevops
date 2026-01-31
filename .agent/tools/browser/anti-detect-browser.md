@@ -54,6 +54,7 @@ Need anti-detection?
     +-> Which browser engine?
     |       |
     |       +-> Maximum stealth (C++ level spoofing)? --> Camoufox (Firefox)
+    |       +-> Privacy-first (Tor Browser patches)? --> Mullvad Browser (--engine mullvad)
     |       +-> Speed + existing Playwright code? --> rebrowser-patches (Chromium)
     |       +-> Both (rotate engines)? --> anti-detect-helper.sh --engine random
     |
@@ -66,20 +67,24 @@ Need anti-detection?
 
 ## Tool Comparison
 
-| Feature | rebrowser-patches | Camoufox | AdsPower/GoLogin |
-|---------|------------------|----------|------------------|
-| **Engine** | Chromium (Playwright) | Firefox (Playwright) | Chromium |
-| **Stealth level** | Medium (CDP patches) | High (C++ level) | High (proprietary) |
-| **Fingerprint rotation** | No (add manually) | Yes (BrowserForge) | Yes |
-| **WebRTC spoofing** | No | Yes (protocol level) | Yes |
-| **Canvas/WebGL** | No | Yes (C++ intercept) | Yes |
-| **Font spoofing** | No | Yes (bundled fonts) | Yes |
-| **Human mouse** | No | Yes (C++ algorithm) | Yes |
-| **Profile management** | Manual | Python API | GUI |
-| **Proxy integration** | Playwright native | Python API | Built-in |
-| **Headless stealth** | Partial | Full (patched) | N/A |
-| **Cost** | Free (MIT) | Free (MPL-2.0) | $9-$299/mo |
-| **Setup** | `npx rebrowser-patches patch` | `pip install camoufox` | Download app |
+| Feature | rebrowser-patches | Camoufox | Mullvad Browser | AdsPower/GoLogin |
+|---------|------------------|----------|-----------------|------------------|
+| **Engine** | Chromium (Playwright) | Firefox (Playwright) | Firefox (Playwright) | Chromium |
+| **Stealth level** | Medium (CDP patches) | High (C++ level) | High (Tor patches) | High (proprietary) |
+| **Fingerprint rotation** | No (add manually) | Yes (BrowserForge) | No (fixed uniform) | Yes |
+| **WebRTC spoofing** | No | Yes (protocol level) | Yes (disabled) | Yes |
+| **Canvas/WebGL** | No | Yes (C++ intercept) | Yes (randomized) | Yes |
+| **Font spoofing** | No | Yes (bundled fonts) | Yes (limited set) | Yes |
+| **Human mouse** | No | Yes (C++ algorithm) | No | Yes |
+| **Profile management** | Manual | Python API | Manual | GUI |
+| **Proxy integration** | Playwright native | Python API | Manual/system | Built-in |
+| **Headless stealth** | Partial | Full (patched) | Partial | N/A |
+| **Cost** | Free (MIT) | Free (MPL-2.0) | Free (GPL) | $9-$299/mo |
+| **Setup** | `npx rebrowser-patches patch` | `pip install camoufox` | Download app | Download app |
+
+**Mullvad Browser vs Camoufox**:
+- **Mullvad Browser**: Best for manual browsing with privacy. Uses Tor Browser's uniform fingerprint approach (all users look identical). Limited automation support.
+- **Camoufox**: Best for automation. Generates unique, realistic fingerprints per profile. Full Playwright API support with C++ level spoofing.
 
 ## Quick Start
 
@@ -95,6 +100,9 @@ Need anti-detection?
 
 # Launch with stealth patches only (faster, Chromium)
 ~/.aidevops/agents/scripts/anti-detect-helper.sh launch --profile "my-account" --engine chromium
+
+# Launch with Mullvad Browser (Tor-based privacy, no fingerprint rotation)
+~/.aidevops/agents/scripts/anti-detect-helper.sh launch --profile "my-account" --engine mullvad
 
 # Test detection status
 ~/.aidevops/agents/scripts/anti-detect-helper.sh test --profile "my-account"
