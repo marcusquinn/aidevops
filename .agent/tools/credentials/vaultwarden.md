@@ -52,6 +52,99 @@ Vaultwarden is a self-hosted, lightweight implementation of the Bitwarden server
 - **Secure note storage** for configuration and documentation
 - **API key management** with audit trails and access control
 
+## Bitwarden Cloud vs Vaultwarden Self-Hosted
+
+### Service Detection
+
+The same `bw` CLI works for both Bitwarden cloud and Vaultwarden self-hosted. Detect which service you're using by the server URL:
+
+| Server URL | Service | Description |
+|------------|---------|-------------|
+| `vault.bitwarden.com` (default) | Bitwarden Cloud | Official hosted service |
+| `bitwarden.com` | Bitwarden Cloud | Official hosted service |
+| Any other domain | Vaultwarden | Self-hosted instance |
+
+```bash
+# Check current server configuration
+bw config server
+
+# Default (Bitwarden cloud) shows:
+# https://vault.bitwarden.com
+
+# Self-hosted shows your custom domain:
+# https://vault.yourdomain.com
+```
+
+### CLI Compatibility
+
+The official Bitwarden CLI (`bw`) works identically with both services:
+
+```bash
+# Install once, use for both
+npm install -g @bitwarden/cli
+
+# Configure for Bitwarden cloud (default, no config needed)
+bw config server https://vault.bitwarden.com
+
+# Configure for Vaultwarden self-hosted
+bw config server https://vault.yourdomain.com
+
+# All commands work the same after configuration
+bw login user@example.com
+bw unlock
+bw list items
+```
+
+### Behavioral Differences
+
+| Feature | Bitwarden Cloud | Vaultwarden Self-Hosted |
+|---------|-----------------|-------------------------|
+| **Hosting** | Managed by Bitwarden Inc. | Self-managed infrastructure |
+| **Pricing** | Free tier + paid plans | Free (open source) |
+| **Premium features** | Require paid subscription | All features unlocked |
+| **TOTP/2FA storage** | Premium only | Always available |
+| **File attachments** | Premium only | Always available |
+| **Emergency access** | Premium only | Always available |
+| **API rate limits** | Enforced by Bitwarden | Configurable (or none) |
+| **Data location** | Bitwarden's servers (US/EU) | Your infrastructure |
+| **Uptime/SLA** | 99.9% SLA on paid plans | Depends on your setup |
+| **Support** | Official support channels | Community support |
+| **Updates** | Automatic | Manual (Docker pull) |
+| **Admin panel** | Web vault only | `/admin` endpoint available |
+
+### When to Use Each
+
+**Choose Bitwarden Cloud when:**
+- You want zero infrastructure management
+- You need official support and SLA guarantees
+- Compliance requires a certified vendor
+- Team size justifies the subscription cost
+
+**Choose Vaultwarden when:**
+- You need all premium features without subscription
+- Data sovereignty requires self-hosting
+- You want full control over your infrastructure
+- You're comfortable with Docker/server management
+
+### Configuration Examples
+
+```json
+{
+  "instances": {
+    "bitwarden-cloud": {
+      "server_url": "https://vault.bitwarden.com",
+      "description": "Official Bitwarden cloud service",
+      "type": "cloud"
+    },
+    "vaultwarden-prod": {
+      "server_url": "https://vault.yourdomain.com",
+      "description": "Self-hosted Vaultwarden instance",
+      "type": "self-hosted"
+    }
+  }
+}
+```
+
 ## 🔧 **Configuration**
 
 ### **Setup Configuration:**
