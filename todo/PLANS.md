@@ -1650,6 +1650,150 @@ d040,p014,Cloudflare Workers AI as privacy-preserving cloud,Data at edge; no log
 
 ---
 
+### [2026-01-31] Claude-Flow Inspirations - Selective Feature Adoption
+
+**Status:** Planning
+**Estimate:** ~3d (ai:2d test:0.5d read:0.5d)
+**Source:** [ruvnet/claude-flow](https://github.com/ruvnet/claude-flow) - Analysis of v3 features
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p015,Claude-Flow Inspirations - Selective Feature Adoption,planning,0,4,,memory|embeddings|routing|optimization|learning,3d,2d,0.5d,0.5d,2026-01-31T00:00Z,
+-->
+
+#### Purpose
+
+Selectively adopt high-value concepts from Claude-Flow v3 while maintaining aidevops' lightweight, shell-script-based philosophy. Claude-Flow is a heavy orchestration platform (~340MB, TypeScript) - we cherry-pick concepts, not implementation.
+
+**What Claude-Flow does well:**
+- HNSW vector memory (150x-12,500x faster semantic search)
+- 3-tier cost-aware routing (WASM → Haiku → Opus)
+- Self-learning routing (SONA neural architecture)
+- Swarm consensus (Byzantine fault-tolerant coordination)
+
+**What aidevops already has:**
+- SQLite FTS5 memory (fast keyword search)
+- Task tool with model parameter
+- Session distillation for pattern capture
+- Inter-agent mailbox (TOON-based)
+
+**Philosophy:** Borrow concepts, keep lightweight. No 340MB dependencies.
+
+#### Context from Discussion
+
+**Analysis summary (2026-01-31):**
+
+| Feature | Claude-Flow | aidevops Current | Adoption Priority |
+|---------|-------------|------------------|-------------------|
+| Vector memory | HNSW (semantic) | FTS5 (keyword) | Medium |
+| Cost routing | 3-tier automatic | Manual model param | High |
+| Self-learning | SONA neural | Manual patterns | Medium |
+| Swarm consensus | Byzantine/Raft | Mailbox async | Low |
+| WASM transforms | Agent Booster | N/A | Low |
+
+**Key decisions:**
+- **Vector memory**: Add optional HNSW alongside FTS5, not replace
+- **Cost routing**: Add model hints to Task tool, document routing guidance
+- **Self-learning**: Track success patterns in memory, surface in `/recall`
+- **Swarm consensus**: Skip - aidevops philosophy is simpler async coordination
+- **WASM transforms**: Skip - Edit tool is already fast enough
+
+#### Progress
+
+- [ ] (2026-01-31) Phase 1: Cost-Aware Model Routing ~4h
+  - Document model tier guidance in `tools/context/model-routing.md`
+  - Define task complexity → model mapping (simple→haiku, code→sonnet, architecture→opus)
+  - Add `model:` field to subagent YAML frontmatter (extend existing)
+  - Update Task tool documentation with model parameter best practices
+  - Create `/route` command to suggest optimal model for a task description
+  - **Deliverable:** Agents can specify preferred model tier, users get routing guidance
+
+- [ ] (2026-01-31) Phase 2: Semantic Memory with Embeddings ~8h
+  - Research lightweight embedding options (all-MiniLM-L6-v2 via ONNX, ~90MB)
+  - Create `memory-embeddings-helper.sh` for vector operations
+  - Add optional HNSW index to `~/.aidevops/.agent-workspace/memory/`
+  - Extend `memory-helper.sh` with `--semantic` flag for similarity search
+  - Keep FTS5 as default, embeddings as opt-in enhancement
+  - Add `/recall --similar "query"` for semantic search
+  - **Deliverable:** Semantic memory search without heavy dependencies
+
+- [ ] (2026-01-31) Phase 3: Success Pattern Tracking ~6h
+  - Extend memory types with `SUCCESS_PATTERN` and `FAILURE_PATTERN`
+  - Auto-tag memories with task type, model used, outcome
+  - Create `pattern-tracker-helper.sh` to analyze memory for patterns
+  - Add `/patterns` command to show what works for different task types
+  - Surface relevant patterns in `/recall` results
+  - **Deliverable:** System learns which approaches work over time
+
+- [ ] (2026-01-31) Phase 4: Documentation & Integration ~6h
+  - Create `aidevops/claude-flow-comparison.md` documenting differences
+  - Update `memory/README.md` with semantic search docs
+  - Update `AGENTS.md` with model routing guidance
+  - Add to `subagent-index.toon`
+  - Test full workflow: store pattern → recall semantically → route optimally
+  - **Deliverable:** Complete documentation, tested integration
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m080,p015,Phase 1: Cost-Aware Model Routing,4h,,2026-01-31T00:00Z,,pending
+m081,p015,Phase 2: Semantic Memory with Embeddings,8h,,2026-01-31T00:00Z,,pending
+m082,p015,Phase 3: Success Pattern Tracking,6h,,2026-01-31T00:00Z,,pending
+m083,p015,Phase 4: Documentation & Integration,6h,,2026-01-31T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Cherry-pick concepts, not implementation
+  **Rationale:** Claude-Flow is 340MB TypeScript; aidevops is lightweight shell scripts. Different philosophies.
+  **Date:** 2026-01-31
+
+- **Decision:** Keep FTS5 as default, embeddings as opt-in
+  **Rationale:** FTS5 is fast, zero dependencies, works for most cases. Embeddings add ~90MB.
+  **Date:** 2026-01-31
+
+- **Decision:** Skip swarm consensus and WASM transforms
+  **Rationale:** aidevops uses simpler async mailbox; Edit tool is already fast enough.
+  **Date:** 2026-01-31
+
+- **Decision:** Use all-MiniLM-L6-v2 via ONNX for embeddings
+  **Rationale:** Small (~90MB), fast, no Python required, good quality for code/text.
+  **Date:** 2026-01-31
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d035,p015,Cherry-pick concepts not implementation,Claude-Flow is 340MB TypeScript; aidevops is lightweight shell,2026-01-31,Architecture
+d036,p015,Keep FTS5 as default embeddings as opt-in,FTS5 is fast zero dependencies works for most cases,2026-01-31,None
+d037,p015,Skip swarm consensus and WASM transforms,aidevops uses simpler async mailbox; Edit tool fast enough,2026-01-31,None
+d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python required good quality,2026-01-31,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `tools/context/model-routing.md` | Model tier guidance and routing logic | 1 |
+| `scripts/commands/route.md` | `/route` command for model suggestions | 1 |
+| `scripts/memory-embeddings-helper.sh` | Vector embedding operations | 2 |
+| `scripts/pattern-tracker-helper.sh` | Success/failure pattern analysis | 3 |
+| `scripts/commands/patterns.md` | `/patterns` command definition | 3 |
+| `aidevops/claude-flow-comparison.md` | Feature comparison documentation | 4 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| Subagent YAML frontmatter | Add `model:` field where appropriate | 1 |
+| `scripts/memory-helper.sh` | Add `--semantic` flag, pattern types | 2, 3 |
+| `memory/README.md` | Document semantic search, patterns | 4 |
+| `AGENTS.md` | Add model routing guidance | 4 |
+| `subagent-index.toon` | Add new subagents | 4 |
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
