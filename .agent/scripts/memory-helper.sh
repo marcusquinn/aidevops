@@ -2,13 +2,29 @@
 # memory-helper.sh - Lightweight memory system for aidevops
 # Uses SQLite FTS5 for fast text search without external dependencies
 #
+# Inspired by Supermemory's architecture for:
+# - Relational versioning (updates, extends, derives relationships)
+# - Dual timestamps (created_at vs event_date)
+# - Contextual disambiguation (atomic, self-contained memories)
+#
 # Usage:
 #   memory-helper.sh store --content "learning" [--type TYPE] [--tags "a,b"] [--session-id ID]
+#   memory-helper.sh store --content "new info" --supersedes mem_xxx --relation updates
 #   memory-helper.sh recall --query "search terms" [--limit 5] [--type TYPE] [--max-age-days 30]
+#   memory-helper.sh history <id>             # Show version history for a memory
 #   memory-helper.sh stats                    # Show memory statistics
 #   memory-helper.sh prune [--older-than-days 90] [--dry-run]  # Remove stale entries
 #   memory-helper.sh validate                 # Check for stale/low-quality entries
 #   memory-helper.sh export [--format json|toon]  # Export all memories
+#
+# Relational Versioning (inspired by Supermemory):
+#   - updates: New info supersedes old (e.g., "favorite color is now green")
+#   - extends: Adds detail without contradiction (e.g., adding job title)
+#   - derives: Second-order inference from combining memories
+#
+# Dual Timestamps:
+#   - created_at: When the memory was stored
+#   - event_date: When the event described actually occurred
 #
 # Staleness Prevention:
 #   - Entries have created_at and last_accessed_at timestamps
@@ -26,6 +42,12 @@ readonly STALE_WARNING_DAYS=60
 
 # Valid learning types (matches documentation and Continuous-Claude-v3)
 readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD"
+
+# Valid relation types (inspired by Supermemory's relational versioning)
+# - updates: New info supersedes old (state mutation)
+# - extends: Adds detail without contradiction (refinement)
+# - derives: Second-order inference from combining memories
+readonly VALID_RELATIONS="updates extends derives"
 
 # Colors for output
 readonly RED='\033[0;31m'
@@ -99,6 +121,7 @@ init_db() {
         
         sqlite3 "$MEMORY_DB" <<'EOF'
 -- FTS5 virtual table for searchable content
+-- Note: FTS5 doesn't support foreign keys, so relationships are tracked separately
 CREATE VIRTUAL TABLE IF NOT EXISTS learnings USING fts5(
     id UNINDEXED,
     session_id UNINDEXED,
@@ -107,6 +130,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS learnings USING fts5(
     tags,
     confidence UNINDEXED,
     created_at UNINDEXED,
+    event_date UNINDEXED,
     project_path UNINDEXED,
     source UNINDEXED,
     tokenize='porter unicode61'
@@ -118,9 +142,81 @@ CREATE TABLE IF NOT EXISTS learning_access (
     last_accessed_at TEXT,
     access_count INTEGER DEFAULT 0
 );
+
+-- Relational versioning table (inspired by Supermemory)
+-- Tracks how memories relate to each other over time
+CREATE TABLE IF NOT EXISTS learning_relations (
+    id TEXT PRIMARY KEY,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 EOF
-        log_success "Database initialized"
+        log_success "Database initialized with relational versioning support"
+    else
+        # Migrate existing database if needed
+        migrate_db
     fi
+    return 0
+}
+
+#######################################
+# Migrate existing database to new schema
+#######################################
+migrate_db() {
+    # Check if event_date column exists in FTS5 table
+    # FTS5 tables don't support ALTER TABLE, so we check via pragma
+    local has_event_date
+    has_event_date=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learnings') WHERE name='event_date';" 2>/dev/null || echo "0")
+    
+    if [[ "$has_event_date" == "0" ]]; then
+        log_info "Migrating database to add event_date and relations..."
+        
+        # For FTS5, we need to recreate the table
+        sqlite3 "$MEMORY_DB" <<'EOF'
+-- Create new FTS5 table with event_date
+CREATE VIRTUAL TABLE IF NOT EXISTS learnings_new USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    content,
+    type,
+    tags,
+    confidence UNINDEXED,
+    created_at UNINDEXED,
+    event_date UNINDEXED,
+    project_path UNINDEXED,
+    source UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+-- Copy existing data (event_date defaults to created_at for existing entries)
+INSERT INTO learnings_new (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+SELECT id, session_id, content, type, tags, confidence, created_at, created_at, project_path, source FROM learnings;
+
+-- Drop old table and rename new
+DROP TABLE learnings;
+ALTER TABLE learnings_new RENAME TO learnings;
+
+-- Create relations table if not exists
+CREATE TABLE IF NOT EXISTS learning_relations (
+    id TEXT PRIMARY KEY,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+        log_success "Database migrated successfully"
+    fi
+    
+    # Ensure relations table exists (for databases created before this feature)
+    sqlite3 "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS learning_relations (
+    id TEXT PRIMARY KEY,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+EOF
     return 0
 }
 
@@ -144,6 +240,9 @@ cmd_store() {
     local session_id=""
     local project_path=""
     local source="manual"
+    local event_date=""
+    local supersedes_id=""
+    local relation_type=""
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -154,6 +253,9 @@ cmd_store() {
             --session-id) session_id="$2"; shift 2 ;;
             --project) project_path="$2"; shift 2 ;;
             --source) source="$2"; shift 2 ;;
+            --event-date) event_date="$2"; shift 2 ;;
+            --supersedes) supersedes_id="$2"; shift 2 ;;
+            --relation) relation_type="$2"; shift 2 ;;
             *) 
                 # Allow content as positional argument
                 if [[ -z "$content" ]]; then
@@ -183,6 +285,27 @@ cmd_store() {
         return 1
     fi
     
+    # Validate relation_type if provided
+    if [[ -n "$relation_type" ]]; then
+        local relation_pattern=" $relation_type "
+        if [[ ! " $VALID_RELATIONS " =~ $relation_pattern ]]; then
+            log_error "Invalid relation type: $relation_type"
+            log_error "Valid relations: $VALID_RELATIONS"
+            return 1
+        fi
+        
+        # If relation_type is provided, supersedes_id is required
+        if [[ -z "$supersedes_id" ]]; then
+            log_error "When using --relation, --supersedes <id> is required"
+            return 1
+        fi
+    fi
+    
+    # If supersedes_id is provided, relation_type defaults to 'updates'
+    if [[ -n "$supersedes_id" && -z "$relation_type" ]]; then
+        relation_type="updates"
+    fi
+    
     # Generate session_id if not provided
     if [[ -z "$session_id" ]]; then
         session_id="session_$(date +%Y%m%d_%H%M%S)"
@@ -200,15 +323,39 @@ cmd_store() {
     local created_at
     created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
+    # Default event_date to created_at if not provided
+    if [[ -z "$event_date" ]]; then
+        event_date="$created_at"
+    fi
+    
     # Escape single quotes for SQL
     local escaped_content="${content//\'/\'\'}"
     local escaped_tags="${tags//\'/\'\'}"
     local escaped_project="${project_path//\'/\'\'}"
     
+    # Validate supersedes_id exists if provided
+    if [[ -n "$supersedes_id" ]]; then
+        local exists
+        exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$supersedes_id';")
+        if [[ "$exists" == "0" ]]; then
+            log_error "Supersedes ID not found: $supersedes_id"
+            return 1
+        fi
+    fi
+    
     sqlite3 "$MEMORY_DB" <<EOF
-INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, project_path, source)
-VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$escaped_project', '$source');
+INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$event_date', '$escaped_project', '$source');
 EOF
+    
+    # Store relation if provided
+    if [[ -n "$supersedes_id" ]]; then
+        sqlite3 "$MEMORY_DB" <<EOF
+INSERT INTO learning_relations (id, supersedes_id, relation_type, created_at)
+VALUES ('$id', '$supersedes_id', '$relation_type', '$created_at');
+EOF
+        log_info "Relation: $id $relation_type $supersedes_id"
+    fi
     
     log_success "Stored learning: $id"
     echo "$id"
@@ -355,6 +502,160 @@ EOF
 }
 
 #######################################
+# Show version history for a memory
+# Traces the chain of updates/extends/derives
+#######################################
+cmd_history() {
+    local memory_id="$1"
+    
+    if [[ -z "$memory_id" ]]; then
+        log_error "Memory ID is required. Usage: memory-helper.sh history <id>"
+        return 1
+    fi
+    
+    init_db
+    
+    # Check if memory exists
+    local exists
+    exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$memory_id';")
+    if [[ "$exists" == "0" ]]; then
+        log_error "Memory not found: $memory_id"
+        return 1
+    fi
+    
+    echo ""
+    echo "=== Version History for $memory_id ==="
+    echo ""
+    
+    # Show the current memory
+    echo "Current:"
+    sqlite3 "$MEMORY_DB" <<EOF
+SELECT '  [' || type || '] ' || substr(content, 1, 80) || '...'
+FROM learnings WHERE id = '$memory_id';
+SELECT '  Created: ' || created_at || ' | Event: ' || COALESCE(event_date, 'N/A')
+FROM learnings WHERE id = '$memory_id';
+EOF
+    
+    # Show what this memory supersedes (ancestors)
+    echo ""
+    echo "Supersedes (ancestors):"
+    local ancestors
+    ancestors=$(sqlite3 "$MEMORY_DB" <<EOF
+WITH RECURSIVE ancestors AS (
+    SELECT lr.supersedes_id, lr.relation_type, 1 as depth
+    FROM learning_relations lr
+    WHERE lr.id = '$memory_id'
+    UNION ALL
+    SELECT lr.supersedes_id, lr.relation_type, a.depth + 1
+    FROM learning_relations lr
+    JOIN ancestors a ON lr.id = a.supersedes_id
+    WHERE a.depth < 10
+)
+SELECT a.supersedes_id, a.relation_type, a.depth, 
+       l.type, substr(l.content, 1, 60), l.created_at
+FROM ancestors a
+JOIN learnings l ON a.supersedes_id = l.id
+ORDER BY a.depth;
+EOF
+)
+    
+    if [[ -z "$ancestors" ]]; then
+        echo "  (none - this is the original)"
+    else
+        echo "$ancestors" | while IFS='|' read -r sup_id rel_type depth mem_type content created; do
+            local indent
+            indent=$(printf '%*s' "$((depth * 2))" '')
+            echo "${indent}[${rel_type}] $sup_id"
+            echo "${indent}  [${mem_type}] $content..."
+            echo "${indent}  Created: $created"
+        done
+    fi
+    
+    # Show what supersedes this memory (descendants)
+    echo ""
+    echo "Superseded by (descendants):"
+    local descendants
+    descendants=$(sqlite3 "$MEMORY_DB" <<EOF
+WITH RECURSIVE descendants AS (
+    SELECT lr.id as child_id, lr.relation_type, 1 as depth
+    FROM learning_relations lr
+    WHERE lr.supersedes_id = '$memory_id'
+    UNION ALL
+    SELECT lr.id, lr.relation_type, d.depth + 1
+    FROM learning_relations lr
+    JOIN descendants d ON lr.supersedes_id = d.child_id
+    WHERE d.depth < 10
+)
+SELECT d.child_id, d.relation_type, d.depth,
+       l.type, substr(l.content, 1, 60), l.created_at
+FROM descendants d
+JOIN learnings l ON d.child_id = l.id
+ORDER BY d.depth;
+EOF
+)
+    
+    if [[ -z "$descendants" ]]; then
+        echo "  (none - this is the latest)"
+    else
+        echo "$descendants" | while IFS='|' read -r child_id rel_type depth mem_type content created; do
+            local indent
+            indent=$(printf '%*s' "$((depth * 2))" '')
+            echo "${indent}[${rel_type}] $child_id"
+            echo "${indent}  [${mem_type}] $content..."
+            echo "${indent}  Created: $created"
+        done
+    fi
+    
+    return 0
+}
+
+#######################################
+# Find the latest version of a memory
+# Follows the chain of 'updates' relations to find the current truth
+#######################################
+cmd_latest() {
+    local memory_id="$1"
+    
+    if [[ -z "$memory_id" ]]; then
+        log_error "Memory ID is required. Usage: memory-helper.sh latest <id>"
+        return 1
+    fi
+    
+    init_db
+    
+    # Find the latest in the chain (no descendants with 'updates' relation)
+    local latest_id
+    latest_id=$(sqlite3 "$MEMORY_DB" <<EOF
+WITH RECURSIVE chain AS (
+    SELECT '$memory_id' as id
+    UNION ALL
+    SELECT lr.id
+    FROM learning_relations lr
+    JOIN chain c ON lr.supersedes_id = c.id
+    WHERE lr.relation_type = 'updates'
+)
+SELECT id FROM chain
+WHERE id NOT IN (SELECT supersedes_id FROM learning_relations WHERE relation_type = 'updates')
+LIMIT 1;
+EOF
+)
+    
+    if [[ -z "$latest_id" ]]; then
+        latest_id="$memory_id"
+    fi
+    
+    echo "$latest_id"
+    
+    # Show the content
+    sqlite3 "$MEMORY_DB" <<EOF
+SELECT '[' || type || '] ' || content
+FROM learnings WHERE id = '$latest_id';
+EOF
+    
+    return 0
+}
+
+#######################################
 # Show memory statistics
 #######################################
 cmd_stats() {
@@ -373,6 +674,20 @@ SELECT 'Never accessed', COUNT(*) FROM learnings l
     LEFT JOIN learning_access a ON l.id = a.id WHERE a.id IS NULL
 UNION ALL
 SELECT 'High confidence', COUNT(*) FROM learnings WHERE confidence = 'high';
+EOF
+    
+    echo ""
+    
+    # Show relation statistics
+    echo "Relational versioning:"
+    sqlite3 "$MEMORY_DB" <<'EOF'
+SELECT '  Total relations', COUNT(*) FROM learning_relations
+UNION ALL
+SELECT '  Updates (supersedes)', COUNT(*) FROM learning_relations WHERE relation_type = 'updates'
+UNION ALL
+SELECT '  Extends (adds detail)', COUNT(*) FROM learning_relations WHERE relation_type = 'extends'
+UNION ALL
+SELECT '  Derives (inferred)', COUNT(*) FROM learning_relations WHERE relation_type = 'derives';
 EOF
     
     echo ""
@@ -689,12 +1004,17 @@ cmd_help() {
     cat <<'EOF'
 memory-helper.sh - Lightweight memory system for aidevops
 
+Inspired by Supermemory's architecture for relational versioning,
+dual timestamps, and contextual disambiguation.
+
 USAGE:
     memory-helper.sh <command> [options]
 
 COMMANDS:
     store       Store a new learning
     recall      Search and retrieve learnings
+    history     Show version history for a memory (ancestors/descendants)
+    latest      Find the latest version of a memory chain
     stats       Show memory statistics
     validate    Check for stale/duplicate entries
     prune       Remove old entries
@@ -709,10 +1029,21 @@ STORE OPTIONS:
     --confidence <level>  high, medium, or low (default: medium)
     --session-id <id>     Session identifier
     --project <path>      Project path
+    --event-date <ISO>    When the event occurred (default: now)
+    --supersedes <id>     ID of memory this updates/extends/derives from
+    --relation <type>     Relation type: updates, extends, derives
 
 VALID TYPES:
     WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
     TOOL_CONFIG, DECISION, CONTEXT, ARCHITECTURAL_DECISION, ERROR_FIX, OPEN_THREAD
+
+RELATION TYPES (inspired by Supermemory):
+    updates   - New info supersedes old (state mutation)
+                e.g., "My favorite color is now green" updates "...is blue"
+    extends   - Adds detail without contradiction (refinement)
+                e.g., Adding job title to existing employment memory
+    derives   - Second-order inference from combining memories
+                e.g., Inferring "works remotely" from location + job info
 
 RECALL OPTIONS:
     --query <text>        Search query (required unless --recent)
@@ -729,6 +1060,11 @@ PRUNE OPTIONS:
     --dry-run             Show what would be deleted
     --include-accessed    Also prune accessed entries
 
+DUAL TIMESTAMPS:
+    - created_at:  When the memory was stored in the database
+    - event_date:  When the event described actually occurred
+    This enables temporal reasoning like "what happened last week?"
+
 STALENESS PREVENTION:
     - Entries track created_at and last_accessed_at
     - Recall updates last_accessed_at (used = valuable)
@@ -738,6 +1074,23 @@ STALENESS PREVENTION:
 EXAMPLES:
     # Store a learning
     memory-helper.sh store --content "Use FTS5 for fast search" --type WORKING_SOLUTION
+
+    # Store with event date (when it happened, not when stored)
+    memory-helper.sh store --content "Fixed CORS issue" --event-date "2024-01-15T10:00:00Z"
+
+    # Update an existing memory (creates version chain)
+    memory-helper.sh store --content "Favorite color is now green" \
+        --supersedes mem_xxx --relation updates
+
+    # Extend a memory with more detail
+    memory-helper.sh store --content "Job title: Senior Engineer" \
+        --supersedes mem_yyy --relation extends
+
+    # View version history
+    memory-helper.sh history mem_xxx
+
+    # Find latest version in a chain
+    memory-helper.sh latest mem_xxx
 
     # Recall learnings
     memory-helper.sh recall --query "database search" --limit 10
@@ -764,6 +1117,8 @@ main() {
     case "$command" in
         store) cmd_store "$@" ;;
         recall) cmd_recall "$@" ;;
+        history) cmd_history "$@" ;;
+        latest) cmd_latest "$@" ;;
         stats) cmd_stats ;;
         validate) cmd_validate ;;
         prune) cmd_prune "$@" ;;
