@@ -18,11 +18,26 @@ Cross-session memory for AI assistants using SQLite FTS5 for fast full-text sear
 
 **Motto**: "Compound, then clear" - Sessions should build on each other.
 
+**Inspired by**: [Supermemory](https://supermemory.ai/research) architecture for:
+
+- **Relational versioning** - Track how memories evolve (updates, extends, derives)
+- **Dual timestamps** - Distinguish when stored vs when event occurred
+- **Contextual disambiguation** - Self-contained, atomic memories
+
 ## Quick Start
 
 ```bash
 # Store a memory
 ~/.aidevops/agents/scripts/memory-helper.sh store --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
+
+# Store with event date (when it happened, not when stored)
+~/.aidevops/agents/scripts/memory-helper.sh store --content "Deployed v2.0" --event-date "2024-01-15T10:00:00Z"
+
+# Update an existing memory (creates version chain)
+~/.aidevops/agents/scripts/memory-helper.sh store --content "Favorite color is now green" --supersedes mem_xxx --relation updates
+
+# View version history
+~/.aidevops/agents/scripts/memory-helper.sh history mem_xxx
 
 # Recall memories
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
@@ -57,6 +72,26 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 | `DECISION` | Architecture decisions |
 | `CONTEXT` | Background info |
 
+## Relation Types
+
+Inspired by Supermemory's relational versioning:
+
+| Relation | Use For | Example |
+|----------|---------|---------|
+| `updates` | New info supersedes old (state mutation) | "Favorite color is now green" updates "...is blue" |
+| `extends` | Adds detail without contradiction | Adding job title to existing employment memory |
+| `derives` | Second-order inference from combining | Inferring "works remotely" from location + job info |
+
+## Dual Timestamps
+
+| Timestamp | Purpose |
+|-----------|---------|
+| `created_at` | When the memory was stored in the database |
+| `event_date` | When the event described actually occurred |
+
+This enables temporal reasoning like "what happened last week?" by distinguishing
+between when you learned something vs when it happened.
+
 ## Storage Location
 
 ```text
@@ -71,11 +106,24 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 # Store with project context
 memory-helper.sh store --type "TYPE" --content "content" --tags "tags" --project "project-name"
 
+# Store with event date (when it happened)
+memory-helper.sh store --content "Fixed bug" --event-date "2024-01-15T10:00:00Z"
+
+# Update an existing memory (relational versioning)
+memory-helper.sh store --content "New info" --supersedes mem_xxx --relation updates
+
+# Extend a memory with more detail
+memory-helper.sh store --content "Additional context" --supersedes mem_xxx --relation extends
+
 # Search with filters
 memory-helper.sh recall "query" --type WORKING_SOLUTION --project myapp --limit 20
 
 # Show recent memories
 memory-helper.sh recall --recent 10
+
+# Version history
+memory-helper.sh history mem_xxx   # Show ancestors and descendants
+memory-helper.sh latest mem_xxx    # Find latest version in chain
 
 # Maintenance
 memory-helper.sh validate          # Check for stale entries
