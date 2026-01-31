@@ -432,6 +432,20 @@ config['agent'] = sorted_agents
 config['default_agent'] = "Build+"
 print("  Set Build+ as default agent")
 
+# =============================================================================
+# INSTRUCTIONS - Auto-load aidevops AGENTS.md for full framework context
+# =============================================================================
+# OpenCode's 'instructions' config auto-includes files in every session.
+# This ensures the full aidevops framework docs are available without
+# relying on the LLM to follow "read this file" instructions.
+# See: https://opencode.ai/docs/rules/#using-opencodejson
+instructions_path = os.path.expanduser("~/.aidevops/agents/AGENTS.md")
+if os.path.exists(instructions_path):
+    config['instructions'] = [instructions_path]
+    print("  Added instructions: ~/.aidevops/agents/AGENTS.md (auto-loaded every session)")
+else:
+    print("  Warning: ~/.aidevops/agents/AGENTS.md not found - run setup.sh first")
+
 print(f"  Auto-discovered {len(sorted_agents)} primary agents from {agents_dir}")
 print(f"  Order: {', '.join(list(sorted_agents.keys())[:5])}...")
 if subagent_filtered_count > 0:
@@ -754,7 +768,8 @@ echo ""
 echo -e "${GREEN}Done!${NC}"
 echo "  Primary agents: Auto-discovered from ~/.aidevops/agents/*.md (Tab-switchable)"
 echo "  Subagents: $subagent_count auto-discovered from subfolders (@mentionable)"
-echo "  AGENTS.md: ~/.config/opencode/AGENTS.md"
+echo "  Instructions: ~/.aidevops/agents/AGENTS.md (auto-loaded every session)"
+echo "  Global rules: ~/.config/opencode/AGENTS.md (version check + pre-edit)"
 echo ""
 echo "Tab order: Build+ → (alphabetical)"
 echo "  Note: Plan+ and AI-DevOps consolidated into Build+ (available as @plan-plus, @aidevops)"
