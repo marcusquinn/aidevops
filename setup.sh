@@ -3388,7 +3388,6 @@ main() {
     confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
     confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
-    confirm_step "Disable on-demand MCPs globally (playwriter, augment, gh-grep)" && disable_ondemand_mcps
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
@@ -3411,6 +3410,8 @@ main() {
     confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
     confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
     confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
+    # Run AFTER all MCP setup functions to ensure disabled state persists
+    confirm_step "Disable on-demand MCPs globally (playwriter, augment, gh_grep)" && disable_ondemand_mcps
 
     echo ""
     print_success "🎉 Setup complete!"
