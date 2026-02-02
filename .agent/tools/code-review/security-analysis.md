@@ -590,19 +590,22 @@ brew install osv-scanner
 
 **"Analysis timeout"**
 
+For large codebases, consider scanning specific directories:
+
 ```bash
-# Use file filters for large codebases
-./.agent/scripts/security-helper.sh analyze full --include="src/**/*" --timeout=600
+# Scan only source files (exclude tests, node_modules, etc.)
+cd src && ./.agent/scripts/security-helper.sh analyze full
 ```
 
 **"Too many false positives"**
 
 ```bash
-# Increase confidence threshold
-./.agent/scripts/security-helper.sh analyze --confidence=high
-
 # Use allowlist for known safe patterns
 echo "CWE-79:src/safe/*.ts:*:Sanitized output" >> .security-analysis/vuln_allowlist.txt
+
+# Or use Ferret's baseline feature for AI config scans
+ferret baseline create
+ferret scan . --baseline .ferret-baseline.json
 ```
 
 ## Integration with AI DevOps Framework

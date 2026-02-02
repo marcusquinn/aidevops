@@ -220,8 +220,9 @@ cmd_analyze() {
             secretlint_cmd="npx secretlint"
         fi
         
+        # Use xargs -I {} to handle filenames with spaces correctly
         # shellcheck disable=SC2086
-        echo "$files_to_scan" | xargs $secretlint_cmd 2>/dev/null || true
+        echo "$files_to_scan" | grep . | xargs -I {} $secretlint_cmd "{}" 2>/dev/null || true
     else
         echo -e "${YELLOW}Secretlint not available. Install with: npm install -g secretlint${NC}"
     fi
@@ -292,8 +293,8 @@ cmd_history() {
         local diff_content
         diff_content=$(git show "$commit" --format="" 2>/dev/null || echo "")
         
-        # Quick pattern matching for common security issues
-        if echo "$diff_content" | grep -qiE "(password|secret|api.?key|token|credential)" 2>/dev/null; then
+        # Quick pattern matching for common security issues (word boundaries to reduce false positives)
+        if echo "$diff_content" | grep -qiE '\b(password|secret|api[_-]?key|token|credential)s?\b' 2>/dev/null; then
             ((issues_found++))
             echo ""
             echo -e "${YELLOW}[POTENTIAL] ${short_hash}: ${commit_msg}${NC}"
