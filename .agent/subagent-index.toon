@@ -55,7 +55,7 @@ services/email/,Email services - transactional email and deliverability,ses|emai
 services/communications/,Communications - SMS and voice,twilio|telfon
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
-services/monitoring/,Error monitoring and debugging,sentry
+services/monitoring/,Error monitoring and debugging,sentry|socket
 services/accounting/,Accounting integration - invoicing,quickfile
 services/document-processing/,Document processing - LLM-powered extraction,unstract
 -->

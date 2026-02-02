@@ -44,6 +44,7 @@ subagents:
   - vercel
   # Monitoring
   - sentry
+  - socket
   # Architecture review
   - architecture
   - build-agent
