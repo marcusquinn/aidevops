@@ -124,22 +124,26 @@ SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md"}
 # These are MCP tools that specific agents need access to
 #
 # MCP On-Demand Loading Strategy:
-# The following MCPs are DISABLED globally to reduce context token usage (~4.6K saved):
+# The following MCPs are DISABLED globally to reduce context token usage:
 #   - playwriter_*: ~3K tokens - enable via @playwriter subagent
 #   - augment-context-engine_*: ~1K tokens - enable via @augment-context-engine subagent
 #   - gh_grep_*: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
+#   - google-analytics-mcp_*: ~800 tokens - enable via @google-analytics subagent
+#   - context7_*: ~800 tokens - enable via @context7 subagent (library docs lookup)
 #
 # osgrep_* remains enabled as the primary semantic search tool (local, no auth).
 # Use @augment-context-engine subagent when osgrep returns insufficient results.
+# Use @context7 subagent when you need up-to-date library documentation.
 AGENT_TOOLS = {
     "Build+": {
         # Unified coding agent - planning, implementation, and DevOps
         # Browser automation: use @playwriter subagent (enables playwriter MCP on-demand)
         # Semantic search: osgrep primary, @augment-context-engine fallback
+        # Library docs: use @context7 subagent when needed
         # GitHub search: use @github-search subagent (rg/bash, no MCP needed)
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True
+        "osgrep_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
@@ -159,11 +163,11 @@ AGENT_TOOLS = {
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
         "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
-        "context7_*": True, "osgrep_*": True
+        "osgrep_*": True
     },
     "WordPress": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "localwp_*": True, "context7_*": True, "osgrep_*": True
+        "localwp_*": True, "osgrep_*": True
     },
     "Content": {
         "write": True, "edit": True, "read": True, "webfetch": True,
@@ -171,17 +175,19 @@ AGENT_TOOLS = {
     },
     "Research": {
         "read": True, "webfetch": True, "bash": True,
-        "context7_*": True, "osgrep_*": True
+        "osgrep_*": True
     },
 }
 
 # Default tools for agents not in AGENT_TOOLS
 #
-# MCP On-Demand Loading:
-# - playwriter_*: DISABLED - use @playwriter subagent (~3K tokens saved)
-# - augment-context-engine_*: DISABLED - use @augment-context-engine subagent (~1K saved)
-# - gh_grep_*: DISABLED - use @github-search subagent (~600 tokens saved)
-# - claude-code-mcp_*: DISABLED - use @claude-code subagent
+# MCP On-Demand Loading (all disabled globally, use subagents):
+# - playwriter_*: ~3K tokens - @playwriter subagent
+# - augment-context-engine_*: ~1K tokens - @augment-context-engine subagent
+# - gh_grep_*: ~600 tokens - @github-search subagent (uses rg/bash)
+# - google-analytics-mcp_*: ~800 tokens - @google-analytics subagent
+# - context7_*: ~800 tokens - @context7 subagent
+# - claude-code-mcp_*: use @claude-code subagent
 #
 # osgrep_* remains enabled as primary semantic search (local, fast, no auth)
 DEFAULT_TOOLS = {
@@ -507,12 +513,16 @@ pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 # MCP LOADING POLICY - Enforce enabled states for all MCPs
 # -----------------------------------------------------------------------------
 # Eager-loaded (enabled: True): Used by all main agents, start at launch
-EAGER_MCPS = {'osgrep', 'augment-context-engine', 'context7', 'playwriter', 'gh_grep', 'sentry', 'socket'}
+# Only osgrep remains eager - it's local, fast, no auth required
+EAGER_MCPS = {'osgrep', 'sentry', 'socket'}
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
+# Moved to lazy: playwriter, augment-context-engine, gh_grep, context7, google-analytics-mcp
+# These save ~6K+ tokens on session startup
 LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
-             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs'}
+             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
+             'playwriter', 'augment-context-engine', 'gh_grep', 'context7'}
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
