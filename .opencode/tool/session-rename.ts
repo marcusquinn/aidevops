@@ -1,11 +1,54 @@
 import { tool } from "@opencode-ai/plugin"
 
 /**
+ * Auto-detect the OpenCode API port by scanning common ports.
+ * OpenCode typically runs on 4096, but may use 4097-4099 if ports are busy.
+ */
+async function findOpenCodePort(): Promise<string | null> {
+  // Check environment variable first
+  if (process.env.OPENCODE_PORT) {
+    return process.env.OPENCODE_PORT
+  }
+  
+  // Scan common ports
+  const ports = ["4096", "4097", "4098", "4099"]
+  for (const port of ports) {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 500)
+      
+      const response = await fetch(`http://localhost:${port}/session`, {
+        method: "GET",
+        signal: controller.signal,
+      })
+      
+      clearTimeout(timeout)
+      
+      if (response.ok) {
+        return port
+      }
+    } catch {
+      // Port not responding, try next
+    }
+  }
+  
+  return null
+}
+
+/**
  * Helper function to rename a session via the OpenCode API.
  * Extracts common logic to avoid duplication between tools.
  */
 async function renameSession(sessionID: string, title: string): Promise<{ success: boolean; message: string }> {
-  const port = process.env.OPENCODE_PORT || "4096"
+  const port = await findOpenCodePort()
+  
+  if (!port) {
+    return { 
+      success: false, 
+      message: "Unable to find OpenCode API. Tried ports 4096-4099. Set OPENCODE_PORT env var if using a different port." 
+    }
+  }
+  
   const baseUrl = `http://localhost:${port}`
   
   try {
@@ -19,7 +62,7 @@ async function renameSession(sessionID: string, title: string): Promise<{ succes
     
     if (!response.ok) {
       const error = await response.text()
-      return { success: false, message: `API error: ${error}` }
+      return { success: false, message: `API error (port ${port}): ${error}` }
     }
     
     const session = await response.json()
