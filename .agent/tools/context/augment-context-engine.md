@@ -10,6 +10,8 @@ tools:
   grep: true
   webfetch: false
   task: true
+mcp:
+  - augment-context-engine
 ---
 
 # Augment Context Engine MCP Setup
