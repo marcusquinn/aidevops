@@ -42,17 +42,9 @@ Commands:
   scan-deps [path]          Scan dependencies for known vulnerabilities (OSV)
   ferret [path]             Scan AI CLI configurations (Ferret)
   report [format]           Generate comprehensive security report
+                            Formats: text (default), json, sarif
   install [tool]            Install security tools
   help                      Show this help message
-
-Options:
-  --severity=LEVEL          Filter by severity (critical,high,medium,low)
-  --include=PATTERN         Include only matching files
-  --exclude=PATTERN         Exclude matching files
-  --format=FORMAT           Output format (text,json,sarif,html)
-  --output=FILE             Output file path
-  --ci                      CI mode (minimal output, exit codes)
-  --fail-on=LEVEL           Fail if issues at or above severity level
 
 Examples:
   $(basename "$0") analyze                    # Analyze git diff
@@ -163,6 +155,13 @@ cmd_analyze() {
     
     print_header
     ensure_output_dir
+    
+    # Guard: ensure we're in a git repository
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo -e "${RED}Not inside a git repository.${NC}"
+        echo "Run this command from within a git repository."
+        return 1
+    fi
     
     echo -e "${BLUE}Security Analysis - Scope: ${scope}${NC}"
     echo ""
@@ -282,7 +281,7 @@ cmd_history() {
     local current=0
     
     while IFS= read -r commit; do
-        ((current++))
+        current=$((current + 1))
         local short_hash="${commit:0:8}"
         local commit_msg
         commit_msg=$(git log -1 --format="%s" "$commit" 2>/dev/null | head -c 50)
@@ -295,7 +294,7 @@ cmd_history() {
         
         # Quick pattern matching for common security issues (word boundaries to reduce false positives)
         if echo "$diff_content" | grep -qiE '\b(password|secret|api[_-]?key|token|credential)s?\b' 2>/dev/null; then
-            ((issues_found++))
+            issues_found=$((issues_found + 1))
             echo ""
             echo -e "${YELLOW}[POTENTIAL] ${short_hash}: ${commit_msg}${NC}"
             echo -e "  May contain sensitive data patterns"
@@ -310,7 +309,7 @@ cmd_history() {
     echo -e "Potential issues: ${issues_found}"
     echo ""
     echo -e "For deep analysis of specific commits, use:"
-    echo -e "  git show <commit> | security-helper.sh analyze"
+    echo -e "  security-helper.sh history <commit>^..<commit>"
     
     return 0
 }
@@ -341,17 +340,18 @@ cmd_scan_deps() {
     echo ""
     
     # Run OSV-Scanner
+    # Exit codes: 0=clean, 1=vulnerabilities found, 127=general error, 128=no packages, 129+=other errors
     osv-scanner --recursive "$path" "$@" || {
         local exit_code=$?
         if [[ $exit_code -eq 1 ]]; then
             echo ""
             echo -e "${RED}Vulnerabilities found!${NC}"
             return 1
-        else
-            echo ""
-            echo -e "${YELLOW}Scan completed with warnings.${NC}"
-            return 0
         fi
+        # Propagate actual errors (not just vulnerability findings)
+        echo ""
+        echo -e "${RED}OSV-Scanner failed with exit code ${exit_code}.${NC}"
+        return "$exit_code"
     }
     
     echo ""
@@ -404,8 +404,19 @@ cmd_ferret() {
 }
 
 cmd_report() {
-    local format="${1:-text}"
-    shift || true
+    local format="text"
+    
+    # Parse --format flag or positional argument
+    if [[ "${1:-}" == --format=* ]]; then
+        format="${1#--format=}"
+        shift || true
+    elif [[ "${1:-}" == "--format" ]]; then
+        format="${2:-text}"
+        shift 2 || true
+    elif [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+        format="$1"
+        shift || true
+    fi
     
     print_header
     ensure_output_dir

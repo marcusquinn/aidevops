@@ -374,7 +374,7 @@ Reports are saved to `.security-analysis/`:
 
 ### Report Format
 
-```markdown
+````markdown
 # Security Analysis Report
 
 **Scan Date**: 2024-01-15T10:30:00Z
@@ -392,16 +392,18 @@ Reports are saved to `.security-analysis/`:
 **Description**: User input is directly concatenated into SQL query without parameterization.
 
 **Vulnerable Code**:
+
 ```typescript
 const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
 ```
 
 **Remediation**: Use parameterized queries:
+
 ```typescript
 const query = 'SELECT * FROM users WHERE id = $1';
 const result = await db.query(query, [req.params.id]);
 ```
-```
+````
 
 ### SARIF Output
 
