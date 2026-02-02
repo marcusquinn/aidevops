@@ -42,6 +42,8 @@ subagents:
   # Deployment
   - coolify
   - vercel
+  # Monitoring
+  - sentry
   # Architecture review
   - architecture
   - build-agent
