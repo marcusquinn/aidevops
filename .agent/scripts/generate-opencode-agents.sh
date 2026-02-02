@@ -514,15 +514,16 @@ pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 # -----------------------------------------------------------------------------
 # Eager-loaded (enabled: True): Used by all main agents, start at launch
 # Only osgrep remains eager - it's local, fast, no auth required
-EAGER_MCPS = {'osgrep', 'sentry', 'socket'}
+EAGER_MCPS = {'osgrep'}
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
-# Moved to lazy: playwriter, augment-context-engine, gh_grep, context7, google-analytics-mcp
-# These save ~6K+ tokens on session startup
+# sentry/socket: Remote MCPs requiring auth, disable until configured
+# These save ~7K+ tokens on session startup
 LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
              'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
-             'playwriter', 'augment-context-engine', 'gh_grep', 'context7'}
+             'playwriter', 'augment-context-engine', 'gh_grep', 'context7',
+             'sentry', 'socket'}
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
