@@ -32,16 +32,6 @@ mcp:
 - Investigating specific issues or stack traces
 - Checking release health and performance
 
-**OpenCode Config** (`~/.config/opencode/opencode.json`):
-
-```json
-"sentry": {
-  "type": "local",
-  "command": ["npx", "@sentry/mcp-server@latest", "--access-token", "YOUR_TOKEN"],
-  "enabled": false
-}
-```
-
 <!-- AI-CONTEXT-END -->
 
 ## MCP Setup
@@ -54,9 +44,9 @@ mcp:
 
 ### 2. Generate Personal Auth Token
 
-**Important**: Create the token AFTER creating the organization.
+**Important**: Create the token AFTER creating the organization. Tokens created before the org don't inherit access.
 
-1. Go to Settings → Account → Personal Tokens (or Auth Tokens)
+1. Go to Settings → Account → Personal Tokens
 2. Click "Create New Token"
 3. Select permissions:
    - `alerts:read`, `alerts:write`
@@ -81,6 +71,13 @@ jq --arg token "$SENTRY_YOURNAME" \
   ~/.config/opencode/opencode.json > /tmp/oc.json && mv /tmp/oc.json ~/.config/opencode/opencode.json
 ```
 
+### 4. Test Connection
+
+```bash
+source ~/.config/aidevops/mcp-env.sh
+curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/organizations/" | jq '.[].slug'
+```
+
 ## Available MCP Tools
 
 | Tool | Description |
@@ -96,199 +93,41 @@ jq --arg token "$SENTRY_YOURNAME" \
 
 ```text
 @sentry list my projects
-@sentry show recent issues in javascript-nextjs
+@sentry show recent issues in my-project
 @sentry get details for issue PROJ-123
 @sentry what's the error rate for the latest release?
 ```
 
----
+## SDK Integration
 
-## Next.js SDK Integration
-
-### Quick Setup (Recommended)
+For integrating Sentry into your app, use the wizard:
 
 ```bash
-npx @sentry/wizard@latest -i nextjs
+npx @sentry/wizard@latest -i nextjs  # Next.js
+npx @sentry/wizard@latest -i node    # Node.js
+npx @sentry/wizard@latest -i react   # React
 ```
 
-This creates all required files automatically.
-
-### Manual Setup (Next.js 15+ with App Router)
-
-**File structure:**
-
-```text
-project-root/
-├── instrumentation-client.ts    # Client-side SDK init
-├── instrumentation.ts           # Server/Edge registration
-├── sentry.server.config.ts      # Server-side SDK init
-├── sentry.edge.config.ts        # Edge runtime SDK init
-├── next.config.ts               # withSentryConfig wrapper
-├── app/
-│   └── global-error.tsx         # React error boundary
-└── .env.local                   # Environment variables
-```
-
-### Configuration Files
-
-**instrumentation-client.ts**:
-
-```typescript
-import * as Sentry from "@sentry/nextjs";
-
-Sentry.init({
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  sendDefaultPii: true,
-  tracesSampleRate: process.env.NODE_ENV === "development" ? 1.0 : 0.1,
-  replaysSessionSampleRate: 0.1,
-  replaysOnErrorSampleRate: 1.0,
-  integrations: [Sentry.replayIntegration()],
-});
-
-export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
-```
-
-**sentry.server.config.ts**:
-
-```typescript
-import * as Sentry from "@sentry/nextjs";
-
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  sendDefaultPii: true,
-  tracesSampleRate: process.env.NODE_ENV === "development" ? 1.0 : 0.1,
-});
-```
-
-**sentry.edge.config.ts**:
-
-```typescript
-import * as Sentry from "@sentry/nextjs";
-
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  tracesSampleRate: process.env.NODE_ENV === "development" ? 1.0 : 0.1,
-});
-```
-
-**instrumentation.ts**:
-
-```typescript
-import * as Sentry from "@sentry/nextjs";
-
-export async function register() {
-  if (process.env.NEXT_RUNTIME === "nodejs") {
-    await import("./sentry.server.config");
-  }
-  if (process.env.NEXT_RUNTIME === "edge") {
-    await import("./sentry.edge.config");
-  }
-}
-
-// Next.js 15+ only
-export const onRequestError = Sentry.captureRequestError;
-```
-
-**next.config.ts**:
-
-```typescript
-import type { NextConfig } from "next";
-import { withSentryConfig } from "@sentry/nextjs";
-
-const nextConfig: NextConfig = {
-  // Your existing config
-};
-
-export default withSentryConfig(nextConfig, {
-  org: "your-org-slug",
-  project: "your-project-slug",
-  authToken: process.env.SENTRY_AUTH_TOKEN,
-  tunnelRoute: "/monitoring",  // Avoids ad-blockers
-  widenClientFileUpload: true,
-  silent: !process.env.CI,
-});
-```
-
-**app/global-error.tsx**:
-
-```tsx
-"use client";
-
-import * as Sentry from "@sentry/nextjs";
-import NextError from "next/error";
-import { useEffect } from "react";
-
-export default function GlobalError({ error }: { error: Error & { digest?: string } }) {
-  useEffect(() => {
-    Sentry.captureException(error);
-  }, [error]);
-
-  return (
-    <html>
-      <body>
-        <NextError statusCode={0} />
-      </body>
-    </html>
-  );
-}
-```
-
-### Environment Variables
-
-| Variable | Purpose | File |
-|----------|---------|------|
-| `NEXT_PUBLIC_SENTRY_DSN` | Client-side DSN | `.env.local` |
-| `SENTRY_DSN` | Server-side DSN | `.env.local` |
-| `SENTRY_AUTH_TOKEN` | Source map uploads | `.env.local` or CI |
-| `SENTRY_ORG` | Organization slug | `next.config.ts` |
-| `SENTRY_PROJECT` | Project slug | `next.config.ts` |
-
-**.env.local**:
-
-```bash
-NEXT_PUBLIC_SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
-SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
-SENTRY_AUTH_TOKEN=sntrys_eyJ...
-```
-
-### Server Actions
-
-```typescript
-"use server";
-import * as Sentry from "@sentry/nextjs";
-
-export async function submitForm(formData: FormData) {
-  return Sentry.withServerActionInstrumentation("submitForm", async () => {
-    // Your server action logic
-    return { success: true };
-  });
-}
-```
+The wizard creates all required config files. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides.
 
 ## Troubleshooting
 
 ### Token returns empty organizations
 
-Create a new Personal Auth Token **after** the organization exists. Tokens created before the org don't inherit access.
+Create a new Personal Auth Token **after** the organization exists.
 
 ### "Not authenticated"
 
-1. Verify token in `~/.config/aidevops/mcp-env.sh`
-2. Test with: `curl -H "Authorization: Bearer $TOKEN" https://sentry.io/api/0/`
+1. Verify token: `source ~/.config/aidevops/mcp-env.sh && echo $SENTRY_YOURNAME`
+2. Test API: `curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`
 3. Restart OpenCode after config changes
 
-### Ad-blockers blocking Sentry
+### Org token vs Personal token
 
-Use `tunnelRoute: "/monitoring"` in `next.config.ts` to proxy requests.
-
-### Source maps not uploading
-
-1. Verify `SENTRY_AUTH_TOKEN` is set
-2. Check org/project slugs match exactly
-3. Run build with `DEBUG=sentry* npm run build`
+- **Org tokens** (`org:ci` scope) - Limited, for CI/CD only
+- **Personal tokens** - Full access, use these for MCP
 
 ## Related
 
-- [Sentry Next.js Docs](https://docs.sentry.io/platforms/javascript/guides/nextjs/)
+- [Sentry Documentation](https://docs.sentry.io/)
 - [Sentry MCP](https://mcp.sentry.dev/)
-- [@sentry/nextjs on npm](https://www.npmjs.com/package/@sentry/nextjs)
