@@ -7,7 +7,7 @@ set -euo pipefail
 [[ -f "${HOME}/.config/aidevops/mcp-env.sh" ]] && source "${HOME}/.config/aidevops/mcp-env.sh"
 
 # Script directory (exported for subprocesses)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 export SCRIPT_DIR
 readonly SCRIPT_DIR
 readonly OUTPUT_DIR=".security-analysis"
