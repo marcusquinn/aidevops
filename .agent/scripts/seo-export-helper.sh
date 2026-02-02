@@ -290,11 +290,12 @@ main() {
         arg="$1"
         case "$arg" in
             --days)
-                if [[ -z "${2:-}" ]] || [[ "$2" == -* ]]; then
+                local next_arg="${2:-}"
+                if [[ -z "$next_arg" ]] || [[ "$next_arg" == -* ]]; then
                     print_error "--days requires a numeric value"
                     return 1
                 fi
-                days="$2"
+                days="$next_arg"
                 shift 2
                 ;;
             --help|-h)
