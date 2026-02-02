@@ -39,7 +39,7 @@ tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/performance/,Web performance - Core Web Vitals and network analysis,performance
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
-tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery
+tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
 tools/data-extraction/,Data extraction - scraping business data,outscraper

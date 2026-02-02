@@ -122,59 +122,72 @@ SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md"}
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
-# Note: playwriter_* is ONLY enabled for agents with browser subagents
-# to reduce context bloat from verbose tool descriptions
+#
+# MCP On-Demand Loading Strategy:
+# The following MCPs are DISABLED globally to reduce context token usage (~4.6K saved):
+#   - playwriter_*: ~3K tokens - enable via @playwriter subagent
+#   - augment-context-engine_*: ~1K tokens - enable via @augment-context-engine subagent
+#   - gh_grep_*: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
+#
+# osgrep_* remains enabled as the primary semantic search tool (local, no auth).
+# Use @augment-context-engine subagent when osgrep returns insufficient results.
 AGENT_TOOLS = {
     "Build+": {
         # Unified coding agent - planning, implementation, and DevOps
-        # Has browser subagents (playwright, stagehand) so needs playwriter
+        # Browser automation: use @playwriter subagent (enables playwriter MCP on-demand)
+        # Semantic search: osgrep primary, @augment-context-engine fallback
+        # GitHub search: use @github-search subagent (rg/bash, no MCP needed)
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True,
-        "gh_grep_*": True, "playwriter_*": True
+        "context7_*": True, "osgrep_*": True
     },
     "Onboarding": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True
     },
     "Accounts": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "quickfile_*": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True
     },
     "Social-Media": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True
     },
     "SEO": {
         "write": True, "read": True, "bash": True, "webfetch": True,
         "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+        "context7_*": True, "osgrep_*": True
     },
     "WordPress": {
         "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-        "localwp_*": True, "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+        "localwp_*": True, "context7_*": True, "osgrep_*": True
     },
     "Content": {
         "write": True, "edit": True, "read": True, "webfetch": True,
-        "osgrep_*": True, "augment-context-engine_*": True
+        "osgrep_*": True
     },
     "Research": {
         "read": True, "webfetch": True, "bash": True,
-        "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
+        "context7_*": True, "osgrep_*": True
     },
 }
 
 # Default tools for agents not in AGENT_TOOLS
-# Note: playwriter_* NOT included by default - it adds significant
-# context overhead from verbose tool descriptions. Enable per-agent as needed.
-# Note: claude-code-mcp_* NOT included - use @claude-code subagent instead
+#
+# MCP On-Demand Loading:
+# - playwriter_*: DISABLED - use @playwriter subagent (~3K tokens saved)
+# - augment-context-engine_*: DISABLED - use @augment-context-engine subagent (~1K saved)
+# - gh_grep_*: DISABLED - use @github-search subagent (~600 tokens saved)
+# - claude-code-mcp_*: DISABLED - use @claude-code subagent
+#
+# osgrep_* remains enabled as primary semantic search (local, fast, no auth)
 DEFAULT_TOOLS = {
     "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
     "webfetch": True, "task": True,
-    "osgrep_*": True, "augment-context-engine_*": True
+    "osgrep_*": True
 }
 
 # Temperature settings (by display name, default 0.2)

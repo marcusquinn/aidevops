@@ -10,6 +10,8 @@ tools:
   grep: true
   webfetch: true
   task: true
+mcp:
+  - playwriter
 ---
 
 # Playwriter - Browser Extension MCP

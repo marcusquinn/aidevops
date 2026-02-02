@@ -41,9 +41,20 @@ mcp-index-helper.sh status
 ```
 
 **Why this matters**:
+
 - MCP tool definitions consume context tokens
 - Loading all MCPs upfront wastes tokens on unused tools
 - On-demand discovery loads only what's needed
+
+**Disabled MCPs** (enabled via subagents):
+
+| MCP | Tokens | Subagent |
+|-----|--------|----------|
+| `playwriter` | ~3K | `@playwriter` |
+| `augment-context-engine` | ~1K | `@augment-context-engine` |
+| `gh_grep` | ~600 | `@github-search` (uses rg/bash) |
+
+**Always enabled**: `osgrep` (primary semantic search, local, no auth)
 
 <!-- AI-CONTEXT-END -->
 
@@ -120,17 +131,29 @@ mcp-index-helper.sh list dataforseo
 
 ### Subagent Frontmatter
 
-Subagents declare which MCPs they need:
+Subagents declare which MCPs they need via the `mcp:` field:
 
 ```yaml
 ---
-description: SEO keyword research
+description: Browser automation via Chrome extension
 mode: subagent
 tools:
-  dataforseo_*: true
-  serper_*: true
+  read: true
+  bash: true
+mcp:
+  - playwriter
 ---
 ```
+
+When a subagent with `mcp:` is invoked, the agent should:
+
+1. Read the subagent file to get instructions
+2. Note the MCP requirement in the frontmatter
+3. Use the MCP tools as documented in the subagent
+
+**Note**: The `mcp:` field is declarative - it documents which MCP the subagent
+requires. The actual enabling happens in `generate-opencode-agents.sh` which
+configures OpenCode's per-agent tool permissions.
 
 ### Main Agent Pattern
 
