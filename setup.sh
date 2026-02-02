@@ -301,6 +301,58 @@ cleanup_deprecated_mcps() {
     return 0
 }
 
+# Disable MCPs globally that should only be enabled on-demand via subagents
+# This reduces session startup context by ~4.6K tokens
+# - playwriter: ~3K tokens - enable via @playwriter subagent
+# - augment-context-engine: ~1K tokens - enable via @augment-context-engine subagent
+# - gh-grep: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
+disable_ondemand_mcps() {
+    local opencode_config="$HOME/.config/opencode/opencode.json"
+    
+    if [[ ! -f "$opencode_config" ]]; then
+        return 0
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        return 0
+    fi
+    
+    # MCPs to disable globally (enabled on-demand via subagents)
+    local -a ondemand_mcps=(
+        "playwriter"
+        "augment-context-engine"
+        "gh-grep"
+    )
+    
+    local disabled=0
+    local tmp_config
+    tmp_config=$(mktemp)
+    
+    cp "$opencode_config" "$tmp_config"
+    
+    for mcp in "${ondemand_mcps[@]}"; do
+        # Check if MCP exists and is currently enabled (or has no enabled field)
+        if jq -e ".mcp[\"$mcp\"]" "$tmp_config" > /dev/null 2>&1; then
+            local current_enabled
+            current_enabled=$(jq -r ".mcp[\"$mcp\"].enabled // \"true\"" "$tmp_config")
+            if [[ "$current_enabled" != "false" ]]; then
+                jq ".mcp[\"$mcp\"].enabled = false" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+                ((disabled++))
+            fi
+        fi
+    done
+    
+    if [[ $disabled -gt 0 ]]; then
+        create_backup_with_rotation "$opencode_config" "opencode"
+        mv "$tmp_config" "$opencode_config"
+        print_info "Disabled $disabled MCP(s) globally (use subagents to enable on-demand)"
+    else
+        rm -f "$tmp_config"
+    fi
+    
+    return 0
+}
+
 # Migrate old config-backups to new per-type backup structure
 # This runs once to clean up the legacy backup directory
 migrate_old_backups() {
@@ -3335,6 +3387,7 @@ main() {
     confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
     confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
+    confirm_step "Disable on-demand MCPs globally (playwriter, augment, gh-grep)" && disable_ondemand_mcps
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
