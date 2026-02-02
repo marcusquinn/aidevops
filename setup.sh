@@ -302,10 +302,12 @@ cleanup_deprecated_mcps() {
 }
 
 # Disable MCPs globally that should only be enabled on-demand via subagents
-# This reduces session startup context by ~4.6K tokens
+# This reduces session startup context by disabling rarely-used MCPs
 # - playwriter: ~3K tokens - enable via @playwriter subagent
 # - augment-context-engine: ~1K tokens - enable via @augment-context-engine subagent
 # - gh_grep: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
+# - google-analytics-mcp: ~800 tokens - enable via @google-analytics subagent
+# - context7: ~800 tokens - enable via @context7 subagent (for library docs lookup)
 disable_ondemand_mcps() {
     local opencode_config="$HOME/.config/opencode/opencode.json"
     
@@ -318,11 +320,13 @@ disable_ondemand_mcps() {
     fi
     
     # MCPs to disable globally (enabled on-demand via subagents)
-    # Note: use exact MCP key names from opencode.json (underscore, not hyphen)
+    # Note: use exact MCP key names from opencode.json
     local -a ondemand_mcps=(
         "playwriter"
         "augment-context-engine"
         "gh_grep"
+        "google-analytics-mcp"
+        "context7"
     )
     
     local disabled=0

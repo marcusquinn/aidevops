@@ -48,11 +48,13 @@ mcp-index-helper.sh status
 
 **Disabled MCPs** (enabled via subagents):
 
-| MCP | Tokens | Subagent |
-|-----|--------|----------|
-| `playwriter` | ~3K | `@playwriter` |
-| `augment-context-engine` | ~1K | `@augment-context-engine` |
-| `gh_grep` | ~600 | `@github-search` (uses rg/bash) |
+| MCP | Tokens | Subagent | When to enable |
+|-----|--------|----------|----------------|
+| `playwriter` | ~3K | `@playwriter` | Browser automation needed |
+| `augment-context-engine` | ~1K | `@augment-context-engine` | osgrep insufficient |
+| `gh_grep` | ~600 | `@github-search` | (uses rg/bash instead) |
+| `google-analytics-mcp` | ~800 | `@google-analytics` | Analytics reporting |
+| `context7` | ~800 | `@context7` | Library docs lookup |
 
 **Always enabled**: `osgrep` (primary semantic search, local, no auth)
 
