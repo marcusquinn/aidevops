@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - auto-detect OpenCode port in session-rename tool (#286)
 - move disable_ondemand_mcps to run after all MCP setup functions (#279)
 - correct MCP name gh-grep to gh_grep in disable_ondemand_mcps (#278)
+
 ## [2.96.0] - 2026-02-02
 
 ### Added
