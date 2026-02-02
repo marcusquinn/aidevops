@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - make markdown lint blocking for changed files (#271)
 - add blank line before fenced code block in remember.md (#270)
+
 ## [2.95.0] - 2026-01-31
 
 ### Added
