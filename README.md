@@ -625,6 +625,10 @@ The setup script offers to install these tools automatically.
 - **[Codacy](https://www.codacy.com/)**: Multi-tool analysis (0 findings)
 - **[CodeRabbit](https://coderabbit.ai/)**: AI-powered code reviews
 - **[Snyk](https://snyk.io/)**: Security vulnerability scanning
+- **[Socket](https://socket.dev/)**: Dependency security and supply chain protection
+- **[Sentry](https://sentry.io/)**: Error monitoring and performance tracking
+- **[Secretlint](https://github.com/secretlint/secretlint)**: Detect exposed secrets in code
+- **[OSV Scanner](https://google.github.io/osv-scanner/)**: Google's vulnerability database scanner
 - **[Qlty](https://qlty.sh/)**: Universal code quality platform (70+ linters, auto-fixes)
 - **[Gemini Code Assist](https://cloud.google.com/gemini/docs/codeassist/overview)**: Google's AI-powered code completion and review
 
@@ -1265,6 +1269,10 @@ These are examples of subagents that have supporting MCPs enabled. See `.agent/`
 | `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
 | `@sentry` | Error monitoring, Next.js SDK setup | sentry |
 | `@socket` | Dependency security scanning | socket |
+| `@security-analysis` | AI-powered vulnerability detection (OSV, Ferret, git history) | osv-scanner, gemini-cli-security |
+| `@secretlint` | Detect exposed secrets in code | (Docker-based) |
+| `@snyk` | Security vulnerability scanning | (API-based) |
+| `@auditing` | Code auditing services and security analysis | (API-based) |
 | `@agent-review` | Session analysis, agent improvement (under build-agent/) | (read/write only) |
 
 ### **Setup for OpenCode**
