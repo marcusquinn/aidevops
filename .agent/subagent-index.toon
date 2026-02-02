@@ -38,7 +38,7 @@ tools/mobile/,Mobile development - iOS/Android emulators,minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/performance/,Web performance - Core Web Vitals and network analysis,performance
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
-tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint
+tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
@@ -74,7 +74,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[26]{name,purpose}:
+<!--TOON:scripts[27]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -89,6 +89,7 @@ domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
 toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
 secretlint-helper.sh,Secret detection
+security-helper.sh,Security analysis (OSV Ferret history full-scan)
 beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
 todo-ready.sh,Show tasks with no open blockers
 ralph-loop-helper.sh,Iterative AI development loops
