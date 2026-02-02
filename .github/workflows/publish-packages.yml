@@ -9,6 +9,10 @@ on:
         description: 'Version to publish (e.g., 2.52.1)'
         required: true
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   publish-npm:
     name: Publish to npm
