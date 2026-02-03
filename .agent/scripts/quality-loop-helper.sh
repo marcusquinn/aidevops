@@ -56,9 +56,9 @@ readonly FAST_SERVICES="codefactor|version|framework"
 readonly MEDIUM_SERVICES="sonarcloud|codacy|qlty|code-review-monitoring"
 readonly SLOW_SERVICES="coderabbit|coderabbitai"
 
-# AI code reviewers (regex pattern for jq test())
+# AI code reviewers (regex pattern for jq test() - anchored to prevent false positives)
 # Supported: CodeRabbit, Gemini Code Assist, Augment Code, GitHub Copilot
-readonly AI_REVIEWERS="coderabbit|gemini-code-assist|augment-code|copilot"
+readonly AI_REVIEWERS="^coderabbit|^gemini-code-assist\\[bot\\]$|^augment-code\\[bot\\]$|^augmentcode\\[bot\\]$|^copilot\\[bot\\]$"
 
 # Timing constants (seconds)
 readonly WAIT_FAST=10
@@ -645,15 +645,20 @@ get_pr_feedback() {
     print_step "Getting PR feedback..."
     
     # Get AI reviewer comments (CodeRabbit, Gemini Code Assist, Augment Code, Copilot)
-    local ai_review_comments
-    ai_review_comments=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" \
-        --jq --arg bots "$AI_REVIEWERS" \
-        '.[] | select(.user.login | test($bots; "i")) | "\(.user.login): \(.body)"' \
-        2>/dev/null | head -20 || echo "")
+    local ai_review_comments api_response
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" 2>/dev/null)
     
-    if [[ -n "$ai_review_comments" ]]; then
-        print_info "AI reviewer feedback found"
-        echo "$ai_review_comments"
+    if [[ -z "$api_response" ]]; then
+        print_warning "Failed to fetch PR comments from GitHub API"
+    else
+        ai_review_comments=$(echo "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+            '.[] | select(.user.login | test($bots; "i")) | "\(.user.login): \(.body)"' \
+            2>/dev/null | head -20)
+        
+        if [[ -n "$ai_review_comments" ]]; then
+            print_info "AI reviewer feedback found"
+            echo "$ai_review_comments"
+        fi
     fi
     
     # Get check run annotations
@@ -693,10 +698,15 @@ check_and_trigger_review() {
     fi
     
     # Get last AI reviewer review time (any supported reviewer)
-    local last_review_time
-    last_review_time=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" \
-        --jq --arg bots "$AI_REVIEWERS" \
-        '[.[] | select(.user.login | test($bots; "i"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null || echo "")
+    local last_review_time api_response
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" 2>/dev/null)
+    
+    if [[ -n "$api_response" ]]; then
+        last_review_time=$(echo "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+            '[.[] | select(.user.login | test($bots; "i"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null)
+    else
+        last_review_time=""
+    fi
     
     # Convert times to epoch for comparison
     local now_epoch last_push_epoch last_review_epoch
@@ -738,16 +748,26 @@ check_and_trigger_review() {
 
 # Check for unresolved AI review comments on a PR
 # Arguments: $1 - PR number
-# Returns: 0 if no unresolved comments, 1 if unresolved comments exist
+# Returns: 0 if no unresolved comments, 1 if unresolved comments exist, 2 on API error
 # Output: Warning message if unresolved comments found
 check_unresolved_review_comments() {
     local pr_number="$1"
     
-    local unresolved_count
-    unresolved_count=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" \
-        --jq --arg bots "$AI_REVIEWERS" \
-        '[.[] | select(.user.login | test($bots; "i")) | select(.in_reply_to_id == null)] | length' \
-        2>/dev/null || echo "0")
+    local api_response unresolved_count
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" 2>/dev/null)
+    
+    if [[ -z "$api_response" ]]; then
+        print_error "Failed to fetch PR comments from GitHub API - cannot verify review status"
+        return 2
+    fi
+    
+    unresolved_count=$(echo "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+        '[.[] | select(.user.login | test($bots; "i")) | select(.in_reply_to_id == null)] | length' 2>/dev/null)
+    
+    if ! [[ "$unresolved_count" =~ ^[0-9]+$ ]]; then
+        print_error "Failed to parse unresolved comment count - cannot proceed safely"
+        return 2
+    fi
     
     if [[ "$unresolved_count" -gt 0 ]]; then
         print_warning "Found $unresolved_count unresolved AI review comments"
@@ -830,10 +850,17 @@ pr_review_loop() {
                 return 0
                 ;;
             READY)
-                print_success "PR is approved and ready to merge!"
-                rm -f "$STATE_FILE"
-                echo "<promise>PR_APPROVED</promise>"
-                return 0
+                # Check for unresolved AI review comments before declaring ready
+                if ! check_unresolved_review_comments "$pr_number"; then
+                    print_warning "PR approved but has unresolved AI review comments"
+                    get_pr_feedback "$pr_number"
+                    print_info "Address the AI reviewer feedback and push updates."
+                else
+                    print_success "PR is approved and ready to merge!"
+                    rm -f "$STATE_FILE"
+                    echo "<promise>PR_APPROVED</promise>"
+                    return 0
+                fi
                 ;;
             PENDING)
                 # Get pending checks and calculate adaptive wait

@@ -105,7 +105,7 @@ The PR loop monitors comments from multiple AI code review services:
 |----------|---------------------|---------|
 | CodeRabbit | `coderabbit*` | AI-powered code review with suggestions |
 | Gemini Code Assist | `gemini-code-assist[bot]` | Google's AI code review |
-| Augment Code | `augment-code[bot]` | Augment AI code review |
+| Augment Code | `augment-code[bot]` | AI-powered code review and improvement |
 | GitHub Copilot | `copilot[bot]` | GitHub's AI assistant |
 
 The `/pr-loop` command automatically detects and surfaces comments from all these reviewers, ensuring no feedback is missed regardless of which AI services are configured on the repository.
