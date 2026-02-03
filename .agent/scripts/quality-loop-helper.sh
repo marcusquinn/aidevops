@@ -651,7 +651,7 @@ get_pr_feedback() {
     if [[ -z "$api_response" ]]; then
         print_warning "Failed to fetch PR comments from GitHub API"
     else
-        ai_review_comments=$(echo "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+        ai_review_comments=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
             '.[] | select(.user.login | test($bots; "i")) | "\(.user.login): \(.body)"' \
             2>/dev/null | head -20)
         
@@ -702,7 +702,7 @@ check_and_trigger_review() {
     api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" 2>/dev/null)
     
     if [[ -n "$api_response" ]]; then
-        last_review_time=$(echo "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+        last_review_time=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
             '[.[] | select(.user.login | test($bots; "i"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null)
     else
         last_review_time=""
@@ -761,7 +761,7 @@ check_unresolved_review_comments() {
         return 2
     fi
     
-    unresolved_count=$(echo "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+    unresolved_count=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
         '[.[] | select(.user.login | test($bots; "i")) | select(.in_reply_to_id == null)] | length' 2>/dev/null)
     
     if ! [[ "$unresolved_count" =~ ^[0-9]+$ ]]; then
@@ -851,7 +851,13 @@ pr_review_loop() {
                 ;;
             READY)
                 # Check for unresolved AI review comments before declaring ready
-                if ! check_unresolved_review_comments "$pr_number"; then
+                local unresolved_check_result
+                check_unresolved_review_comments "$pr_number"
+                unresolved_check_result=$?
+                
+                if [[ $unresolved_check_result -eq 2 ]]; then
+                    print_warning "Could not verify AI review status (API error) - proceeding with caution"
+                elif [[ $unresolved_check_result -eq 1 ]]; then
                     print_warning "PR approved but has unresolved AI review comments"
                     get_pr_feedback "$pr_number"
                     print_info "Address the AI reviewer feedback and push updates."
