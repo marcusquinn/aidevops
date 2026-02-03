@@ -279,6 +279,20 @@ determine_target_path() {
         category="services/hosting"
     elif echo "$content" | grep -qi "cloudflare workers\|cloudflare pages\|wrangler"; then
         category="services/hosting"
+    # Architecture patterns (must come before generic patterns)
+    elif echo "$content" | grep -qi "clean.architecture\|hexagonal\|ddd\|domain.driven\|ports.and.adapters\|onion.architecture\|cqrs\|event.sourcing"; then
+        category="tools/architecture"
+    elif echo "$content" | grep -qi "feature.sliced\|feature-sliced\|fsd.architecture\|slice.organization"; then
+        category="tools/architecture"
+    # Database and ORM
+    elif echo "$content" | grep -qi "postgresql\|postgres\|drizzle\|prisma\|typeorm\|sequelize\|knex\|database.orm"; then
+        category="services/database"
+    # Diagrams and visualization
+    elif echo "$content" | grep -qi "mermaid\|diagram\|flowchart\|sequence.diagram\|er.diagram\|uml"; then
+        category="tools/diagrams"
+    # Programming languages (specific patterns)
+    elif echo "$content" | grep -qi "javascript\|typescript\|es6\|es2020\|es2022\|es2024\|ecmascript\|modern.js"; then
+        category="tools/programming"
     elif echo "$content" | grep -qi "browser\|playwright\|puppeteer\|selenium"; then
         category="tools/browser"
     elif echo "$content" | grep -qi "seo\|search.ranking\|keyword.research"; then
