@@ -56,6 +56,10 @@ readonly FAST_SERVICES="codefactor|version|framework"
 readonly MEDIUM_SERVICES="sonarcloud|codacy|qlty|code-review-monitoring"
 readonly SLOW_SERVICES="coderabbit|coderabbitai"
 
+# AI code reviewers (regex pattern for jq test())
+# Supported: CodeRabbit, Gemini Code Assist, Augment Code, GitHub Copilot
+readonly AI_REVIEWERS="coderabbit|gemini-code-assist|augment-code|copilot"
+
 # Timing constants (seconds)
 readonly WAIT_FAST=10
 readonly WAIT_MEDIUM=60
@@ -640,13 +644,16 @@ get_pr_feedback() {
     
     print_step "Getting PR feedback..."
     
-    # Get CodeRabbit comments
-    local coderabbit_comments
-    coderabbit_comments=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" --jq '.[] | select(.user.login | contains("coderabbit")) | .body' 2>/dev/null | head -10 || echo "")
+    # Get AI reviewer comments (CodeRabbit, Gemini Code Assist, Augment Code, Copilot)
+    local ai_review_comments
+    ai_review_comments=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" \
+        --jq --arg bots "$AI_REVIEWERS" \
+        '.[] | select(.user.login | test($bots; "i")) | "\(.user.login): \(.body)"' \
+        2>/dev/null | head -20 || echo "")
     
-    if [[ -n "$coderabbit_comments" ]]; then
-        print_info "CodeRabbit feedback found"
-        echo "$coderabbit_comments"
+    if [[ -n "$ai_review_comments" ]]; then
+        print_info "AI reviewer feedback found"
+        echo "$ai_review_comments"
     fi
     
     # Get check run annotations
@@ -685,10 +692,11 @@ check_and_trigger_review() {
         return 1
     fi
     
-    # Get last CodeRabbit review time
+    # Get last AI reviewer review time (any supported reviewer)
     local last_review_time
     last_review_time=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" \
-        --jq '[.[] | select(.user.login | contains("coderabbit"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null || echo "")
+        --jq --arg bots "$AI_REVIEWERS" \
+        '[.[] | select(.user.login | test($bots; "i"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null || echo "")
     
     # Convert times to epoch for comparison
     local now_epoch last_push_epoch last_review_epoch
@@ -726,6 +734,26 @@ check_and_trigger_review() {
     fi
     
     return 1
+}
+
+# Check for unresolved AI review comments on a PR
+# Arguments: $1 - PR number
+# Returns: 0 if no unresolved comments, 1 if unresolved comments exist
+# Output: Warning message if unresolved comments found
+check_unresolved_review_comments() {
+    local pr_number="$1"
+    
+    local unresolved_count
+    unresolved_count=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" \
+        --jq --arg bots "$AI_REVIEWERS" \
+        '[.[] | select(.user.login | test($bots; "i")) | select(.in_reply_to_id == null)] | length' \
+        2>/dev/null || echo "0")
+    
+    if [[ "$unresolved_count" -gt 0 ]]; then
+        print_warning "Found $unresolved_count unresolved AI review comments"
+        return 1
+    fi
+    return 0
 }
 
 # Monitor PR until approved or merged

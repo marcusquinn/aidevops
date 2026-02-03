@@ -97,6 +97,19 @@ Calls remote quality services via APIs:
 - Codacy - Code quality analysis
 - SonarCloud - Security and maintainability
 
+### Supported AI Code Reviewers
+
+The PR loop monitors comments from multiple AI code review services:
+
+| Reviewer | Bot Username Pattern | Purpose |
+|----------|---------------------|---------|
+| CodeRabbit | `coderabbit*` | AI-powered code review with suggestions |
+| Gemini Code Assist | `gemini-code-assist[bot]` | Google's AI code review |
+| Augment Code | `augment-code[bot]` | Augment AI code review |
+| GitHub Copilot | `copilot[bot]` | GitHub's AI assistant |
+
+The `/pr-loop` command automatically detects and surfaces comments from all these reviewers, ensuring no feedback is missed regardless of which AI services are configured on the repository.
+
 ### 3. Standards Compliance (`/code-standards`)
 
 Checks against our documented quality standards:
