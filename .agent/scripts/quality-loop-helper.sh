@@ -746,31 +746,46 @@ check_and_trigger_review() {
     return 1
 }
 
-# Check for unresolved AI review comments on a PR
+# Check for unresolved review threads on a PR using GraphQL
 # Arguments: $1 - PR number
-# Returns: 0 if no unresolved comments, 1 if unresolved comments exist, 2 on API error
-# Output: Warning message if unresolved comments found
+# Returns: 0 if no unresolved threads, 1 if unresolved threads exist, 2 on API error
+# Output: Warning message if unresolved threads found
 check_unresolved_review_comments() {
     local pr_number="$1"
     
-    local api_response unresolved_count
-    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" 2>/dev/null)
+    local repo_owner repo_name api_response unresolved_count
+    repo_owner=$(gh repo view --json owner -q '.owner.login' 2>/dev/null || echo "")
+    repo_name=$(gh repo view --json name -q '.name' 2>/dev/null || echo "")
     
-    if [[ -z "$api_response" ]]; then
-        print_error "Failed to fetch PR comments from GitHub API - cannot verify review status"
+    if [[ -z "$repo_owner" || -z "$repo_name" ]]; then
+        print_error "Failed to resolve repo owner/name - cannot verify review status"
         return 2
     fi
     
-    unresolved_count=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
-        '[.[] | select(.user.login | test($bots; "i")) | select(.in_reply_to_id == null)] | length' 2>/dev/null)
+    api_response=$(gh api graphql -f query='
+      query($owner:String!, $repo:String!, $number:Int!) {
+        repository(owner:$owner, name:$repo) {
+          pullRequest(number:$number) {
+            reviewThreads(first:100) { nodes { isResolved } }
+          }
+        }
+      }' -f owner="$repo_owner" -f repo="$repo_name" -F number="$pr_number" 2>/dev/null)
+    
+    if [[ -z "$api_response" ]]; then
+        print_error "Failed to fetch PR review threads from GitHub API - cannot verify review status"
+        return 2
+    fi
+    
+    unresolved_count=$(printf '%s' "$api_response" | jq -r \
+        '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' 2>/dev/null)
     
     if ! [[ "$unresolved_count" =~ ^[0-9]+$ ]]; then
-        print_error "Failed to parse unresolved comment count - cannot proceed safely"
+        print_error "Failed to parse unresolved thread count - cannot proceed safely"
         return 2
     fi
     
     if [[ "$unresolved_count" -gt 0 ]]; then
-        print_warning "Found $unresolved_count unresolved AI review comments"
+        print_warning "Found $unresolved_count unresolved review threads"
         return 1
     fi
     return 0
