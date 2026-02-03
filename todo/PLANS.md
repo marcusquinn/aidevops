@@ -27,7 +27,7 @@ Each plan includes:
 **Estimate:** ~4h (ai:2h test:1h read:1h)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p013,Install Script Integrity Hardening,planning,0,4,,security|supply-chain|setup,4h,2h,1h,1h,2026-02-03T00:00Z,
+p016,Install Script Integrity Hardening,planning,0,4,,security|supply-chain|setup,4h,2h,1h,1h,2026-02-03T00:00Z,
 -->
 
 #### Purpose
@@ -50,10 +50,10 @@ Targets include:
 - [ ] (2026-02-03) Phase 4: Update docs/tests and verify behavior ~30m
 
 <!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m064,p013,Phase 1: Inventory curl|sh usages and verification options,45m,,2026-02-03T00:00Z,,pending
-m065,p013,Phase 2: Replace with download-verify-execute flow,2h,,2026-02-03T00:00Z,,pending
-m066,p013,Phase 3: Add fallback behavior and error messages,45m,,2026-02-03T00:00Z,,pending
-m067,p013,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,,pending
+m064,p016,Phase 1: Inventory curl|sh usages and verification options,45m,,2026-02-03T00:00Z,,pending
+m065,p016,Phase 2: Replace with download-verify-execute flow,2h,,2026-02-03T00:00Z,,pending
+m066,p016,Phase 3: Add fallback behavior and error messages,45m,,2026-02-03T00:00Z,,pending
+m067,p016,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,,pending
 -->
 
 #### Decision Log
@@ -76,7 +76,7 @@ m067,p013,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,
 **Estimate:** ~3h (ai:1.5h test:1h read:30m)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p014,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
+p017,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
 -->
 
 #### Purpose
@@ -94,9 +94,9 @@ Current usage persists `dashboardToken` in `localStorage` in the MCP dashboard U
 - [ ] (2026-02-03) Phase 3: Add reset/clear UI flow and verify behavior ~45m
 
 <!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m068,p014,Phase 1: Trace token flow and storage paths,45m,,2026-02-03T00:00Z,,pending
-m069,p014,Phase 2: Migrate to session/memory storage and update auth flow,1.5h,,2026-02-03T00:00Z,,pending
-m070,p014,Phase 3: Add reset/clear UI flow and verify behavior,45m,,2026-02-03T00:00Z,,pending
+m068,p017,Phase 1: Trace token flow and storage paths,45m,,2026-02-03T00:00Z,,pending
+m069,p017,Phase 2: Migrate to session/memory storage and update auth flow,1.5h,,2026-02-03T00:00Z,,pending
+m070,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,,2026-02-03T00:00Z,,pending
 -->
 
 #### Decision Log
@@ -892,9 +892,9 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 p009,beads-sync-helper.sh; todo-ready.sh; beads.md subagent; blocked-by/blocks syntax; hierarchical IDs; TOON schema; setup.sh integration; AGENTS.md docs,Robust sync script; comprehensive docs; seamless integration,Add optional UI installation to setup.sh,2d,1.5d,-25,1
 -->
 
-<!--TOON:active_plans[11]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p013,Install Script Integrity Hardening,planning,0,4,,security|supply-chain|setup,4h,2h,1h,1h,2026-02-03T00:00Z,
-p014,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
+<!--TOON:active_plans[12]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p016,Install Script Integrity Hardening,planning,0,4,,security|supply-chain|setup,4h,2h,1h,1h,2026-02-03T00:00Z,
+p017,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
 p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
 p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,

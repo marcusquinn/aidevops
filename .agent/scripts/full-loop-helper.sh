@@ -603,6 +603,15 @@ cmd_start() {
 cmd_run_foreground() {
     local prompt="$1"
     run_task_phase "$prompt"
+
+    # Auto-advance when task phase completes in v2.
+    # Legacy mode leaves a Ralph state file; in that case we must wait for manual completion.
+    if [[ -f ".agent/loop-state/ralph-loop.local.state" ]] || [[ -f ".claude/ralph-loop.local.state" ]]; then
+        print_warning "Task loop still active (legacy mode). Run: full-loop-helper.sh resume when complete."
+        return 0
+    fi
+
+    cmd_resume
     return 0
 }
 
