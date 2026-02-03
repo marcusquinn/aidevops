@@ -608,14 +608,15 @@ check_pr_status() {
     check_count=$(echo "$pr_info" | jq '.statusCheckRollup | length')
     
     if [[ "$check_count" -gt 0 ]]; then
-        local pending_count failed_count
-        pending_count=$(echo "$pr_info" | jq '[.statusCheckRollup[] | select(.status == "PENDING" or .status == "IN_PROGRESS")] | length')
-        failed_count=$(echo "$pr_info" | jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE")] | length')
+        local pending_count failed_count action_required_count
+        pending_count=$(printf '%s' "$pr_info" | jq '[.statusCheckRollup[] | select(.status == "PENDING" or .status == "IN_PROGRESS")] | length')
+        failed_count=$(printf '%s' "$pr_info" | jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE")] | length')
+        action_required_count=$(printf '%s' "$pr_info" | jq '[.statusCheckRollup[] | select(.conclusion == "ACTION_REQUIRED")] | length')
         
-        print_info "  CI Checks: $check_count total, $pending_count pending, $failed_count failed"
+        print_info "  CI Checks: $check_count total, $pending_count pending, $failed_count failed, $action_required_count action required"
         
         [[ "$pending_count" -gt 0 ]] && checks_pending=true
-        [[ "$failed_count" -gt 0 ]] && checks_failed=true
+        [[ "$failed_count" -gt 0 || "$action_required_count" -gt 0 ]] && checks_failed=true
     fi
     
     # Determine overall status
