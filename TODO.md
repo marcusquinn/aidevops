@@ -247,12 +247,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
-<!--TOON:backlog[57]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[60]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,4h,2h,1h,2026-02-03T00:00Z,pending,,,
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,3h,1.5h,1h,2026-02-03T00:00Z,pending,,,
+t109,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,20m,10m,2026-02-03T00:00Z,pending,,,
+t110,Resolve awk newline warnings during setup deploy (system-reminder),,setup|deploy|bugfix,45m,30m,15m,2026-02-03T00:00Z,pending,,,
+t111,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m,30m,15m,2026-02-03T00:00Z,pending,,,
 t073,Document Extraction Subagent & Workflow,,plan|document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,pending,,,
 t073.1,Implementation (all subagents + scripts),,document-extraction,1h,1h,,2026-01-25T01:00Z,pending,,,t073
 t073.2,Integration Testing,,document-extraction|testing,2h,,2h,2026-01-25T01:00Z,pending,t073.1,,t073
