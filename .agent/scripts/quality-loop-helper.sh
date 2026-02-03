@@ -762,6 +762,7 @@ check_unresolved_review_comments() {
         return 2
     fi
     
+    # shellcheck disable=SC2016 # GraphQL variables, not shell - single quotes intentional
     api_response=$(gh api graphql -f query='
       query($owner:String!, $repo:String!, $number:Int!) {
         repository(owner:$owner, name:$repo) {
