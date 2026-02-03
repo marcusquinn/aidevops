@@ -5,13 +5,11 @@ imported_from: external
 ---
 # feature-slicing
 
-
 # Feature-Sliced Design Architecture
 
 Frontend architecture methodology with strict layer hierarchy and import rules for scalable, maintainable applications. FSD organizes code by **business domain** rather than technical role.
 
 > **Official Docs:** [feature-sliced.design](https://feature-sliced.design) | **GitHub:** [feature-sliced](https://github.com/feature-sliced)
-
 
 ## THE IMPORT RULE (Critical)
 
@@ -31,7 +29,6 @@ app → pages → widgets → features → entities → shared
 
 **Exception:** `app/` and `shared/` have no slices, so internal cross-imports are allowed within them.
 
-
 ## Layer Hierarchy
 
 | Layer | Purpose | Has Slices | Required |
@@ -44,7 +41,6 @@ app → pages → widgets → features → entities → shared
 | `shared/` | Project-agnostic infrastructure (UI kit, API client, utils) | No | Yes |
 
 **Minimal setup:** `app/`, `pages/`, `shared/` — add other layers as complexity grows.
-
 
 ## Quick Decision Trees
 
@@ -83,7 +79,6 @@ Segments (within a slice):
 ```
 
 **Naming:** Use purpose-driven names (`api/`, `model/`) not essence-based (`hooks/`, `types/`).
-
 
 ## Directory Structure
 
@@ -124,7 +119,6 @@ src/
     └── i18n/               # Translations
 ```
 
-
 ## Public API Pattern
 
 Every slice MUST expose a public API via `index.ts`. External code imports ONLY from this file.
@@ -147,6 +141,7 @@ import { UserCard } from '@/entities/user/ui/UserCard';
 ```
 
 **Avoid wildcard exports** — they expose internals and harm tree-shaking:
+
 ```typescript
 // ❌
 export * from './ui';
@@ -154,7 +149,6 @@ export * from './ui';
 // ✅
 export { UserCard } from './ui/UserCard';
 ```
-
 
 ## Cross-Entity References (@x Notation)
 
@@ -180,7 +174,6 @@ import type { ProductId } from '@/entities/product/@x/order';
 
 **Guidelines:** Keep cross-imports minimal. Consider merging entities if references are extensive.
 
-
 ## Anti-Patterns
 
 | Anti-Pattern | Problem | Fix |
@@ -192,7 +185,6 @@ import type { ProductId } from '@/entities/product/@x/order';
 | Single-use widgets | Widget used by one page | Keep in page slice |
 | Skipping public API | Import from internal paths | Always use `index.ts` |
 | Making everything a feature | All interactions as features | Only reused actions |
-
 
 ## TypeScript Configuration
 
@@ -206,7 +198,6 @@ import type { ProductId } from '@/entities/product/@x/order';
   }
 }
 ```
-
 
 ## Reference Documentation
 
@@ -222,10 +213,12 @@ import type { ProductId } from '@/entities/product/@x/order';
 ## Resources
 
 ### Official Sources
+
 - **Official Documentation**: https://feature-sliced.design
 - **GitHub Organization**: https://github.com/feature-sliced
 - **Official Examples**: https://github.com/feature-sliced/examples
 - **Specification**: https://feature-sliced.design/docs/reference
 
 ### Community
+
 - **Awesome FSD**: https://github.com/feature-sliced/awesome (curated articles, videos, tools)

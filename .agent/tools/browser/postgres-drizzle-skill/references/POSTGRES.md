@@ -69,6 +69,7 @@ SELECT uuidv7();
 - Time-based partitioning friendly
 
 **In Drizzle:**
+
 ```typescript
 id: uuid('id').primaryKey().default(sql`uuidv7()`),
 ```

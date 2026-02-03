@@ -473,6 +473,7 @@ export function configureContainer(): Container {
 The same layered structure applies to any language:
 
 ### Go
+
 ```
 internal/
 ├── domain/
@@ -482,6 +483,7 @@ internal/
 ```
 
 ### Rust
+
 ```
 src/
 ├── domain/
@@ -491,6 +493,7 @@ src/
 ```
 
 ### Python
+
 ```
 src/
 ├── domain/

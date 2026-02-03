@@ -385,6 +385,7 @@ infrastructure/
 ## Resources
 
 ### Books
+
 - Clean Architecture (Robert C. Martin, 2017)
 - Domain-Driven Design (Eric Evans, 2003)
 - Implementing Domain-Driven Design (Vaughn Vernon, 2013)
@@ -392,6 +393,7 @@ infrastructure/
 - Get Your Hands Dirty on Clean Architecture (Tom Hombergs, 2019)
 
 ### Reference Implementations
+
 - Go: [bxcodec/go-clean-arch](https://github.com/bxcodec/go-clean-arch)
 - Rust: [flosse/clean-architecture-with-rust](https://github.com/flosse/clean-architecture-with-rust)
 - Python: [cdddg/py-clean-arch](https://github.com/cdddg/py-clean-arch)
@@ -400,6 +402,7 @@ infrastructure/
 - Java: [thombergs/buckpal](https://github.com/thombergs/buckpal)
 
 ### Official Documentation
+
 - https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
 - https://alistair.cockburn.us/hexagonal-architecture/
 - https://www.domainlanguage.com/ddd/

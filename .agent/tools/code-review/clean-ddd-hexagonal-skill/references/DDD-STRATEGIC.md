@@ -231,6 +231,7 @@ Describes relationships between bounded contexts.
 ### Relationship Patterns
 
 #### Partnership
+
 Two contexts succeed or fail together. Teams coordinate closely.
 
 ```mermaid
@@ -242,6 +243,7 @@ flowchart LR
 ```
 
 #### Shared Kernel
+
 Two contexts share a subset of the domain model.
 
 ```mermaid
@@ -263,6 +265,7 @@ flowchart LR
 **Warning:** Shared kernels create coupling. Use sparingly.
 
 #### Customer-Supplier
+
 Upstream context provides what downstream needs.
 
 ```mermaid
@@ -274,6 +277,7 @@ flowchart LR
 ```
 
 #### Conformist
+
 Downstream conforms to upstream's model with no negotiation power.
 
 ```mermaid
@@ -287,6 +291,7 @@ flowchart LR
 **Example:** Integrating with a third-party API (Stripe, AWS).
 
 #### Anti-Corruption Layer (ACL)
+
 Translation layer protecting your model from external models.
 
 ```mermaid
@@ -363,6 +368,7 @@ export class StripePaymentACL {
 ```
 
 #### Open Host Service / Published Language
+
 Expose a well-defined protocol for integration.
 
 ```mermaid

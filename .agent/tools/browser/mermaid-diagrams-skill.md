@@ -5,7 +5,6 @@ imported_from: external
 ---
 # mermaid-diagrams
 
-
 # Mermaid Diagrams
 
 Generate diagrams in markdown that render in GitHub, GitLab, VS Code, Obsidian, Notion.

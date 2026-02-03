@@ -43,6 +43,7 @@ shared/   → can import: external packages only
 Foundation layer for external connections and utilities. **No business domain knowledge.**
 
 **Segments:**
+
 ```
 shared/
 ├── api/           # Backend client, request functions, interceptors
@@ -74,6 +75,7 @@ shared/
 Real-world business concepts the application works with.
 
 **Structure:**
+
 ```
 entities/
 ├── user/
@@ -138,6 +140,7 @@ User-facing interactions that provide business value.
 **Key principle:** Not everything is a feature. Per [FSD v2.1](https://github.com/feature-sliced/documentation/releases/tag/v2.1), keep non-reused interactions in page slices.
 
 **Structure:**
+
 ```
 features/
 ├── auth/
@@ -180,6 +183,7 @@ Large, self-sufficient UI components reused across multiple pages.
 - Component delivers a complete use case
 
 **Structure:**
+
 ```
 widgets/
 ├── header/
@@ -198,6 +202,7 @@ widgets/
 - Feature = user interaction (behavioral)
 
 Widgets often compose multiple features:
+
 ```tsx
 // widgets/header/ui/Header.tsx
 import { UserAvatar } from '@/entities/user';
@@ -218,6 +223,7 @@ import { SearchBox } from '@/features/search';
 Individual screens or routes. One slice per route (generally).
 
 **Structure:**
+
 ```
 pages/
 ├── home/
@@ -251,6 +257,7 @@ pages/
 Application-wide configuration and initialization.
 
 **Structure:**
+
 ```
 app/
 ├── providers/        # React context, store setup

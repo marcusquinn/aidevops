@@ -5,7 +5,6 @@ imported_from: external
 ---
 # clean-ddd-hexagonal
 
-
 # Clean Architecture + DDD + Hexagonal
 
 Backend architecture combining DDD tactical patterns, Clean Architecture dependency rules, and Hexagonal ports/adapters for maintainable, testable systems.
@@ -153,12 +152,14 @@ src/
 ## Sources
 
 ### Primary Sources
+
 - [The Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html) — Robert C. Martin (2012)
 - [Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/) — Alistair Cockburn (2005)
 - [Domain-Driven Design: The Blue Book](https://www.domainlanguage.com/ddd/blue-book/) — Eric Evans (2003)
 - [Implementing Domain-Driven Design](https://openlibrary.org/works/OL17392277W) — Vaughn Vernon (2013)
 
 ### Pattern References
+
 - [CQRS](https://martinfowler.com/bliki/CQRS.html) — Martin Fowler
 - [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) — Martin Fowler
 - [Repository Pattern](https://martinfowler.com/eaaCatalog/repository.html) — Martin Fowler (PoEAA)
@@ -168,5 +169,6 @@ src/
 - [Effective Aggregate Design](https://www.dddcommunity.org/library/vernon_2011/) — Vaughn Vernon
 
 ### Implementation Guides
+
 - [Microsoft: DDD + CQRS Microservices](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/)
 - [Domain Events](https://udidahan.com/2009/06/14/domain-events-salvation/) — Udi Dahan

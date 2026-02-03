@@ -35,6 +35,7 @@
 ## Flowchart
 
 ### Direction
+
 ```
 TB / TD   Top to Bottom
 BT        Bottom to Top
@@ -43,6 +44,7 @@ RL        Right to Left
 ```
 
 ### Node Shapes
+
 ```
 A[Rectangle]       B(Rounded)         C([Stadium])
 D[[Subroutine]]    E[(Database)]      F((Circle))
@@ -51,6 +53,7 @@ J(((Double)))
 ```
 
 ### Edges
+
 ```
 A --> B       Solid arrow
 A --- B       Solid line
@@ -63,6 +66,7 @@ A -->|text| B Labeled
 ```
 
 ### Subgraph
+
 ```mermaid
 flowchart TB
     subgraph Name
@@ -75,6 +79,7 @@ flowchart TB
 ## Sequence Diagram
 
 ### Messages
+
 ```
 A->>B     Solid arrow (sync)
 A-->>B    Dotted arrow (response)
@@ -83,12 +88,14 @@ A-)B      Async message
 ```
 
 ### Activation
+
 ```
 A->>+B: Request    Activate B
 B-->>-A: Response  Deactivate B
 ```
 
 ### Control Flow
+
 ```
 alt Condition
     A->>B: If true
@@ -112,6 +119,7 @@ end
 ```
 
 ### Notes
+
 ```
 Note right of A: Text
 Note over A,B: Spanning note
@@ -122,6 +130,7 @@ Note over A,B: Spanning note
 ## Class Diagram
 
 ### Visibility
+
 ```
 +  Public
 -  Private
@@ -130,6 +139,7 @@ Note over A,B: Spanning note
 ```
 
 ### Relationships
+
 ```
 A <|-- B    Inheritance
 A *-- B     Composition
@@ -140,12 +150,14 @@ A ..|> B    Realization
 ```
 
 ### Cardinality
+
 ```
 A "1" --> "*" B : has
 A "0..1" --> "1..*" B
 ```
 
 ### Annotations
+
 ```
 class A {
     <<interface>>
@@ -164,6 +176,7 @@ class B {
 ## ER Diagram
 
 ### Cardinality
+
 ```
 ||--||    One to one
 ||--o{    One to many
@@ -172,12 +185,14 @@ class B {
 ```
 
 ### Line Types
+
 ```
 --    Identifying (solid)
 ..    Non-identifying (dashed)
 ```
 
 ### Attributes
+
 ```
 ENTITY {
     type name PK     Primary key
@@ -192,6 +207,7 @@ ENTITY {
 ## State Diagram
 
 ### Basic
+
 ```
 [*] --> State1          Start
 State1 --> State2       Transition
@@ -200,6 +216,7 @@ State1 --> State1       Self-loop
 ```
 
 ### Composite
+
 ```
 state Parent {
     [*] --> Child1
@@ -208,6 +225,7 @@ state Parent {
 ```
 
 ### Choice
+
 ```
 state check <<choice>>
 A --> check
@@ -216,6 +234,7 @@ check --> C : condition2
 ```
 
 ### Fork/Join
+
 ```
 state fork <<fork>>
 state join <<join>>
@@ -232,6 +251,7 @@ join --> [*]
 ## Gantt Chart
 
 ### Task Syntax
+
 ```
 Task name : [tags], [id], [start], [end/duration]
 
@@ -242,6 +262,7 @@ Milestone   :milestone, m1, 2024-01-20, 0d
 ```
 
 ### Dependencies
+
 ```
 after taskId
 after t1 t2    After multiple
@@ -276,6 +297,7 @@ timeline
 ## C4 Diagrams
 
 ### Elements
+
 ```
 Person(alias, "Label", "Description")
 System(alias, "Label", "Description")
@@ -286,6 +308,7 @@ Component(alias, "Label", "Tech", "Description")
 ```
 
 ### Relationships
+
 ```
 Rel(from, to, "Label")
 Rel(from, to, "Label", "Technology")
@@ -293,6 +316,7 @@ BiRel(from, to, "Label")
 ```
 
 ### Boundaries
+
 ```
 System_Boundary(alias, "Label") {
     Container(...)
@@ -304,18 +328,21 @@ System_Boundary(alias, "Label") {
 ## Architecture Diagram
 
 ### Groups
+
 ```
 group id(icon)[Title]
 group id(icon)[Title] in parent
 ```
 
 ### Services
+
 ```
 service id(icon)[Title]
 service id(icon)[Title] in group
 ```
 
 ### Edges
+
 ```
 a:R --> L:b     Right of a to left of b
 a:T --> B:b     Top to bottom
@@ -323,6 +350,7 @@ a:T --> B:b     Top to bottom
 ```
 
 ### Icons
+
 `cloud`, `database`, `disk`, `internet`, `server`
 
 ---
@@ -330,12 +358,15 @@ a:T --> B:b     Top to bottom
 ## Styling
 
 ### Theme
+
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 ```
+
 Themes: `default`, `dark`, `forest`, `neutral`, `base`
 
 ### Class Definition
+
 ```mermaid
 flowchart LR
     A:::className --> B
@@ -343,6 +374,7 @@ flowchart LR
 ```
 
 ### Individual Style
+
 ```mermaid
 flowchart LR
     A --> B
@@ -350,6 +382,7 @@ flowchart LR
 ```
 
 ### Link Style
+
 ```mermaid
 flowchart LR
     A --> B --> C

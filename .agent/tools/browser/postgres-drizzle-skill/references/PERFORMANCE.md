@@ -22,6 +22,7 @@ CREATE UNIQUE INDEX users_email_unique ON users(email);
 ```
 
 **In Drizzle:**
+
 ```typescript
 export const users = pgTable('users', {
   email: text('email').notNull(),
@@ -49,6 +50,7 @@ WHERE status = 'pending';
 **Benefits:** Smaller size, faster updates, more efficient queries.
 
 **In Drizzle:**
+
 ```typescript
 }, (table) => [
   index('active_users_idx')
@@ -181,6 +183,7 @@ const user2 = await getUserById.execute({ id: 'uuid-2' });
 ### Avoid N+1 Queries
 
 **Bad (N+1):**
+
 ```typescript
 const posts = await db.select().from(posts);
 for (const post of posts) {
@@ -193,6 +196,7 @@ for (const post of posts) {
 ```
 
 **Good (Relational Query):**
+
 ```typescript
 const posts = await db.query.posts.findMany({
   with: { author: true },
@@ -201,6 +205,7 @@ const posts = await db.query.posts.findMany({
 ```
 
 **Good (Manual Join):**
+
 ```typescript
 const posts = await db
   .select()
@@ -482,6 +487,7 @@ await db
 ## Performance Checklist
 
 ### PostgreSQL Configuration
+
 - [ ] Set `shared_buffers` to 25% of RAM
 - [ ] Set `effective_cache_size` to 50-75% of RAM
 - [ ] Configure `work_mem` based on workload (OLTP: 4-16MB, OLAP: 64-256MB)
@@ -489,6 +495,7 @@ await db
 - [ ] Tune `io_workers` (~1/4 of CPU cores)
 
 ### Indexing
+
 - [ ] Create indexes for foreign keys
 - [ ] Use partial indexes for filtered subsets
 - [ ] Use covering indexes for hot queries
@@ -496,6 +503,7 @@ await db
 - [ ] Monitor unused indexes and remove them
 
 ### Queries
+
 - [ ] Use `EXPLAIN (ANALYZE, BUFFERS)` for optimization
 - [ ] Use prepared statements for repeated queries
 - [ ] Use relational queries API to avoid N+1
@@ -503,12 +511,14 @@ await db
 - [ ] Use cursor-based pagination for large datasets
 
 ### Application
+
 - [ ] Use connection pooling
 - [ ] Batch insert/update operations
 - [ ] Cache frequently accessed data
 - [ ] Use transactions appropriately
 
 ### Maintenance
+
 - [ ] Ensure autovacuum is configured
 - [ ] Run `ANALYZE` after bulk data changes
 - [ ] Monitor table/index bloat

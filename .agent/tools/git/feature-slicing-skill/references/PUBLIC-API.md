@@ -30,6 +30,7 @@ export { userSchema } from './model/schema';
 ```
 
 **Usage:**
+
 ```typescript
 import { UserCard, type User } from '@/entities/user';
 ```
@@ -39,6 +40,7 @@ import { UserCard, type User } from '@/entities/user';
 ## Avoid Wildcard Exports
 
 **Don't do this:**
+
 ```typescript
 export * from './ui';
 export * from './api';
@@ -162,6 +164,7 @@ shared/ui/
 ```
 
 **Import patterns:**
+
 ```typescript
 import { Button, Input } from '@/shared/ui';
 

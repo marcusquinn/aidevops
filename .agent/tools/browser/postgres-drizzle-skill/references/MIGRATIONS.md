@@ -80,6 +80,7 @@ npx drizzle-kit generate
 ```
 
 Output:
+
 ```
 drizzle/
   0000_initial.sql
@@ -263,6 +264,7 @@ export const users = pgTable('users', {
 ```
 
 Generated SQL:
+
 ```sql
 ALTER TABLE "users" ADD COLUMN "name" text;
 ```
@@ -275,6 +277,7 @@ name: text('name').notNull().default('Unknown'),
 ```
 
 Generated SQL:
+
 ```sql
 ALTER TABLE "users" ADD COLUMN "name" text NOT NULL DEFAULT 'Unknown';
 ```
@@ -299,6 +302,7 @@ export const users = pgTable('users', {
 ```
 
 Generated SQL:
+
 ```sql
 CREATE INDEX "users_email_idx" ON "users" ("email");
 ```
@@ -315,6 +319,7 @@ export const posts = pgTable('posts', {
 ```
 
 Generated SQL:
+
 ```sql
 ALTER TABLE "posts"
 ADD CONSTRAINT "posts_author_id_users_id_fk"
@@ -335,6 +340,7 @@ export const comments = pgTable('comments', {
 ### Dropping a Table
 
 Remove the table definition from schema. Generated SQL:
+
 ```sql
 DROP TABLE "old_table";
 ```

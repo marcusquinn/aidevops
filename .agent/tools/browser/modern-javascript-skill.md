@@ -5,7 +5,6 @@ imported_from: external
 ---
 # modern-javascript
 
-
 # Modern JavaScript (ES6-ES2025)
 
 Write clean, performant, maintainable JavaScript using modern language features. This skill covers ES6 through ES2025, emphasizing immutability, functional patterns, and expressive syntax.
@@ -312,6 +311,7 @@ const [x, y] = getCoordinates();
 ## Reference Documentation
 
 ### ES Version References
+
 | File | Purpose |
 |------|---------|
 | [references/ES2016-ES2017.md](references/ES2016-ES2017.md) | includes, async/await, Object.values/entries, string padding |
@@ -322,6 +322,7 @@ const [x, y] = getCoordinates();
 | [references/UPCOMING.md](references/UPCOMING.md) | Temporal API, Decorators, Decorator Metadata |
 
 ### Pattern References
+
 | File | Purpose |
 |------|---------|
 | [references/PROMISES.md](references/PROMISES.md) | Promise fundamentals, async/await, combinators |
@@ -333,14 +334,17 @@ const [x, y] = getCoordinates();
 ## Resources
 
 ### Specifications
+
 - **ECMAScript Specification**: https://tc39.es/ecma262/ (living standard)
 - **TC39 Proposals**: https://github.com/tc39/proposals (upcoming features)
 - **TC39 Process**: https://tc39.es/process-document/ (how features are added)
 
 ### Documentation
+
 - **MDN Web Docs**: https://developer.mozilla.org/en-US/docs/Web/JavaScript
 - **JavaScript.info**: https://javascript.info/
 
 ### Compatibility
+
 - **Can I Use**: https://caniuse.com (browser support tables)
 - **Node.js ES Compatibility**: https://node.green/

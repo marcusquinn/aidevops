@@ -321,19 +321,23 @@ flowchart LR
 ## Debugging Tips
 
 ### 1. Check Syntax
+
 - Verify diagram type declaration
 - Check for unclosed brackets/quotes
 - Ensure arrow syntax matches diagram type
 
 ### 2. Test Incrementally
+
 - Start with minimal diagram
 - Add elements one at a time
 - Identify breaking change
 
 ### 3. Use Live Editor
+
 Test at: https://mermaid.live
 
 ### 4. Platform Differences
+
 - Check target platform support
 - Some features are version-specific
 - Export to PNG/SVG for guaranteed rendering
@@ -426,6 +430,7 @@ sequenceDiagram
     User->>App: Login
     App->>Auth: Validate
 ```
+
 ```
 
 ## ARIA Labels

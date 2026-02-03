@@ -76,6 +76,7 @@ shared/   → Project-agnostic infrastructure         [NO slices, REQUIRED]
 ## File Structure Templates
 
 ### Entity
+
 ```
 entities/{name}/
 ├── ui/
@@ -94,6 +95,7 @@ entities/{name}/
 ```
 
 ### Feature
+
 ```
 features/{name}/
 ├── ui/
@@ -112,6 +114,7 @@ features/{name}/
 ```
 
 ### Page
+
 ```
 pages/{name}/
 ├── ui/
@@ -140,6 +143,7 @@ export { mapUserDTO } from './model/mapper';
 ```
 
 **Import from public API only:**
+
 ```typescript
 // ✅
 import { UserCard, type User } from '@/entities/user';

@@ -5,7 +5,6 @@ imported_from: external
 ---
 # postgres-drizzle
 
-
 # PostgreSQL + Drizzle ORM
 
 Type-safe database applications with PostgreSQL 18 and Drizzle ORM.
@@ -169,11 +168,13 @@ await db.transaction(async (tx) => {
 ## Resources
 
 ### Drizzle ORM
+
 - **Official Documentation**: https://orm.drizzle.team
 - **GitHub Repository**: https://github.com/drizzle-team/drizzle-orm
 - **Drizzle Kit (Migrations)**: https://orm.drizzle.team/kit-docs/overview
 
 ### PostgreSQL
+
 - **Official Documentation**: https://www.postgresql.org/docs/
 - **SQL Commands Reference**: https://www.postgresql.org/docs/current/sql-commands.html
 - **Performance Tips**: https://www.postgresql.org/docs/current/performance-tips.html
