@@ -57,6 +57,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h (ai:45m test:15m) logged:2026-02-03
 - [ ] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h (ai:45m test:15m) logged:2026-02-03
 - [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~3h (ai:1.5h test:1h read:30m) logged:2026-02-03
+- [ ] t109 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m (ai:20m test:10m) logged:2026-02-03
+- [ ] t110 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m (ai:30m test:15m) logged:2026-02-03
+- [ ] t111 Resolve DSPy dependency conflict (gepa) in setup flow #python #dspy #deps ~45m (ai:30m test:15m) logged:2026-02-03
 - [ ] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m (ai:10m test:5m) logged:2026-01-29
   - Notes: Release commit bd0695c bumped VERSION to 2.92.1 but missed syncing package.json, setup.sh, aidevops.sh, sonar-project.properties, .claude-plugin/marketplace.json. Either fix manually or ensure version-manager.sh is used for all releases.
 - [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
@@ -287,12 +290,21 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
+<<<<<<< HEAD
+<!--TOON:backlog[60]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+=======
 <!--TOON:backlog[80]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+>>>>>>> origin/main
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,4h,2h,1h,2026-02-03T00:00Z,pending,,,
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,3h,1.5h,1h,2026-02-03T00:00Z,pending,,,
+<<<<<<< HEAD
+t109,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,20m,10m,2026-02-03T00:00Z,pending,,,
+t110,Resolve awk newline warnings during setup deploy (system-reminder),,setup|deploy|bugfix,45m,30m,15m,2026-02-03T00:00Z,pending,,,
+t111,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m,30m,15m,2026-02-03T00:00Z,pending,,,
+=======
 t109,Parallel Agents & Headless Dispatch,,plan|agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,2026-02-03T00:00Z,pending,,,
 t109.1,Document headless dispatch patterns,,agents|headless|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t109
 t109.2,Create droid-helper.sh,,agents|scripts|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t109
@@ -312,6 +324,7 @@ t116.3,Test phase - isolated OpenCode sessions,,agents|testing,1.5h,1.5h,,2026-0
 t116.4,PR phase - privacy-filtered contributions,,agents|git|privacy,1h,1h,,2026-02-04T00:00Z,pending,t116.3|t117,,t116
 t117,Privacy filter for public PRs,,security|tools|privacy,3h,2h,45m,2026-02-04T00:00Z,pending,,t116.4,
 t118,Agent testing framework with OpenCode sessions,,tools|testing|agents,4h,2.5h,1h,2026-02-04T00:00Z,pending,,,
+>>>>>>> origin/main
 t073,Document Extraction Subagent & Workflow,,plan|document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,pending,,,
 t073.1,Implementation (all subagents + scripts),,document-extraction,1h,1h,,2026-01-25T01:00Z,pending,,,t073
 t073.2,Integration Testing,,document-extraction|testing,2h,,2h,2026-01-25T01:00Z,pending,t073.1,,t073
