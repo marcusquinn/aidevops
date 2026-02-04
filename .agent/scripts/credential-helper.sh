@@ -337,18 +337,23 @@ cmd_set() {
         env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
     fi
 
+    # Escape value to prevent command injection when file is sourced
+    # printf %q produces a shell-safe string that expands back to the original
+    local escaped_value
+    escaped_value=$(printf '%q' "$value")
+
     # Update or append
     if grep -q "^export ${env_var}=" "$env_file" 2>/dev/null; then
         # Rewrite file excluding the old key, then append new value
         # Avoids sed delimiter injection with arbitrary values
         local tmp_file="${env_file}.tmp"
         grep -v "^export ${env_var}=" "$env_file" > "$tmp_file"
-        echo "export ${env_var}=\"${value}\"" >> "$tmp_file"
+        echo "export ${env_var}=${escaped_value}" >> "$tmp_file"
         mv "$tmp_file" "$env_file"
         chmod 600 "$env_file"
         print_success "Updated $env_var in tenant '$tenant'"
     else
-        echo "export ${env_var}=\"${value}\"" >> "$env_file"
+        echo "export ${env_var}=${escaped_value}" >> "$env_file"
         chmod 600 "$env_file"
         print_success "Added $env_var to tenant '$tenant'"
     fi
@@ -402,16 +407,24 @@ cmd_get() {
         env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
     fi
 
-    local result
-    result=$(grep "^export ${env_var}=" "$env_file" 2>/dev/null | sed -n 's/^export [^=]*="\(.*\)"$/\1/p' || true)
+    # Extract the value - handles both quoted and printf %q escaped formats
+    # Source the line in a subshell to properly expand escaped values
+    local line
+    line=$(grep "^export ${env_var}=" "$env_file" 2>/dev/null || true)
 
-    if [[ -n "$result" ]]; then
-        echo "$result"
-        return 0
-    else
-        print_error "Key $env_var not found in tenant '$tenant'"
-        return 1
+    if [[ -n "$line" ]]; then
+        # Evaluate the export in a subshell and echo the result
+        # This safely expands printf %q escaped values back to originals
+        local result
+        result=$(bash -c "$line; echo \"\$$env_var\"" 2>/dev/null || true)
+        if [[ -n "$result" ]]; then
+            echo "$result"
+            return 0
+        fi
     fi
+
+    print_error "Key $env_var not found in tenant '$tenant'"
+    return 1
 }
 
 # Remove a key from a tenant
