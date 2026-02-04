@@ -1949,6 +1949,7 @@ Document and implement patterns for running parallel Claude Code sessions locall
 4. Chat-triggered dispatch - reduce friction vs terminal
 
 **Model provider flexibility:**
+
 ```bash
 # Any OpenAI-compatible endpoint works
 export ANTHROPIC_BASE_URL="https://your-provider/v1"
@@ -2040,6 +2041,204 @@ d042,p016,Document model providers generically,Models evolve quickly keep option
 | `memory/README.md` | Document namespace feature | 3 |
 | `AGENTS.md` | Add parallel agent guidance | 5 |
 | `subagent-index.toon` | Add new subagents | 5 |
+
+---
+
+### [2026-02-04] Self-Improving Agent System
+
+**Status:** Planning
+**Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
+**Source:** Discussion on parallel agents, OpenCode server, and community contributions
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p017,Self-Improving Agent System,planning,0,6,,agents|self-improvement|automation|privacy|testing|opencode,2d,1d,0.5d,0.5d,2026-02-04T00:00Z,
+-->
+
+#### Purpose
+
+Create a self-improving agent system that can review its own performance, refine agents based on learnings, test changes in isolated sessions, and contribute improvements back to the community with proper privacy filtering.
+
+**Key capabilities:**
+1. **Review** - Analyze memory for success/failure patterns, identify gaps
+2. **Refine** - Generate and apply improvements to agents/scripts
+3. **Test** - Validate changes in isolated OpenCode sessions
+4. **PR** - Contribute improvements with privacy filtering for public repos
+
+**Safety guardrails:**
+- Worktree isolation for all changes
+- Human approval required for PRs
+- Mandatory privacy filter before public contributions
+- Dry-run default (must explicitly enable PR creation)
+- Scope limits (agents-only or scripts-only)
+- Audit log to memory
+
+#### Context from Discussion
+
+**Architecture:**
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Self-Improvement Loop                             │
+│                                                                          │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │  REVIEW  │───▶│  REFINE  │───▶│  TEST    │───▶│  PR      │          │
+│  │          │    │          │    │          │    │          │          │
+│  │ Memory   │    │ Edit     │    │ OpenCode │    │ Privacy  │          │
+│  │ Patterns │    │ Agents   │    │ Sessions │    │ Filter   │          │
+│  │ Failures │    │ Scripts  │    │ Validate │    │ gh CLI   │          │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘          │
+│       ▲                                               │                  │
+│       └───────────────────────────────────────────────┘                  │
+│                         Iterate until quality gates pass                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**What we already have:**
+- `agent-review.md` - Manual review process
+- `memory-helper.sh` - Pattern storage (SUCCESS/FAILURE types)
+- `session-distill-helper.sh` - Extract learnings
+- `secretlint` - Credential detection
+- OpenCode server API - Isolated session testing
+
+**Privacy filter components:**
+1. Secretlint scan for credentials
+2. Pattern-based redaction (emails, IPs, local URLs, home paths, API keys)
+3. Project-specific patterns from `.aidevops/privacy-patterns.txt`
+4. Dry-run review before PR creation
+
+**Example workflow:**
+
+```bash
+# Agent notices repeated failure pattern
+/remember type:FAILURE "ShellCheck SC2086 errors keep appearing in new scripts"
+
+# Later, self-improvement runs
+/self-improve --scope scripts --dry-run
+
+# Output:
+# === Self-Improvement Analysis ===
+# 
+# FAILURE patterns found: 3
+# - SC2086 unquoted variables (5 occurrences)
+# - SC2155 declare and assign separately (2 occurrences)
+# - Missing 'local' in functions (3 occurrences)
+#
+# Proposed changes:
+# 1. Update build-agent.md with ShellCheck reminder
+# 2. Add pre-commit hook for ShellCheck
+# 3. Create shellcheck-patterns.md subagent
+#
+# Test results: PASS (3/3 quality gates)
+# Privacy filter: CLEAN (no secrets/PII detected)
+#
+# Run without --dry-run to create PR
+```
+
+#### Progress
+
+- [ ] (2026-02-04) Phase 1: Review phase - pattern analysis ~1.5h
+  - Query memory for FAILURE/SUCCESS patterns
+  - Identify gaps (failures without solutions)
+  - Check agent-review suggestions
+  - Create self-improve-helper.sh with analyze command
+- [ ] (2026-02-04) Phase 2: Refine phase - generate improvements ~2h
+  - Generate improvement proposals from patterns
+  - Edit agents/scripts in worktree
+  - Run linters-local.sh for validation
+  - Add refine command to self-improve-helper.sh
+- [ ] (2026-02-04) Phase 3: Test phase - isolated sessions ~1.5h
+  - Create OpenCode test session via API
+  - Run test prompts against improved agents
+  - Validate quality gates pass
+  - Compare before/after behavior
+  - Add test command to self-improve-helper.sh
+- [ ] (2026-02-04) Phase 4: Privacy filter implementation ~3h
+  - Create privacy-filter-helper.sh
+  - Integrate secretlint for credential detection
+  - Add pattern-based redaction (emails, IPs, paths, keys)
+  - Support project-specific patterns
+  - Dry-run review mode
+- [ ] (2026-02-04) Phase 5: PR phase - community contributions ~1h
+  - Run privacy filter (mandatory)
+  - Show redacted diff for approval
+  - Create PR with evidence from memory
+  - Include test results and privacy attestation
+  - Add pr command to self-improve-helper.sh
+- [ ] (2026-02-04) Phase 6: Documentation & /self-improve command ~2h
+  - Create tools/build-agent/self-improvement.md subagent
+  - Create scripts/commands/self-improve.md
+  - Update AGENTS.md with self-improvement guidance
+  - Add examples and safety documentation
+
+<!--TOON:milestones[6]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m069,p017,Phase 1: Review phase - pattern analysis,1.5h,,2026-02-04T00:00Z,,pending
+m070,p017,Phase 2: Refine phase - generate improvements,2h,,2026-02-04T00:00Z,,pending
+m071,p017,Phase 3: Test phase - isolated sessions,1.5h,,2026-02-04T00:00Z,,pending
+m072,p017,Phase 4: Privacy filter implementation,3h,,2026-02-04T00:00Z,,pending
+m073,p017,Phase 5: PR phase - community contributions,1h,,2026-02-04T00:00Z,,pending
+m074,p017,Phase 6: Documentation & /self-improve command,2h,,2026-02-04T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Use OpenCode server API for isolated testing
+  **Rationale:** Provides session management, async prompts, and SSE events without spawning CLI processes
+  **Date:** 2026-02-04
+
+- **Decision:** Mandatory privacy filter before any public PR
+  **Rationale:** Prevents accidental exposure of credentials, PII, or internal paths
+  **Date:** 2026-02-04
+
+- **Decision:** Dry-run default for self-improvement
+  **Rationale:** Human must explicitly approve PR creation, prevents runaway automation
+  **Date:** 2026-02-04
+
+- **Decision:** Worktree isolation for all changes
+  **Rationale:** Easy rollback, doesn't affect main branch until PR merged
+  **Date:** 2026-02-04
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d043,p017,Use OpenCode server API for isolated testing,Provides session management and SSE events without CLI spawning,2026-02-04,Architecture
+d044,p017,Mandatory privacy filter before any public PR,Prevents accidental exposure of credentials or PII,2026-02-04,Security
+d045,p017,Dry-run default for self-improvement,Human must explicitly approve PR creation,2026-02-04,Safety
+d046,p017,Worktree isolation for all changes,Easy rollback and doesn't affect main branch,2026-02-04,Safety
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `scripts/self-improve-helper.sh` | Main self-improvement script | 1-5 |
+| `scripts/privacy-filter-helper.sh` | Privacy filtering for PRs | 4 |
+| `scripts/agent-test-helper.sh` | Agent testing framework | 3 |
+| `scripts/commands/self-improve.md` | /self-improve command | 6 |
+| `tools/build-agent/self-improvement.md` | Self-improvement subagent | 6 |
+| `tools/security/privacy-filter.md` | Privacy filter documentation | 4 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `memory-helper.sh` | Add pattern query helpers | 1 |
+| `agent-review.md` | Link to self-improvement | 6 |
+| `AGENTS.md` | Add self-improvement guidance | 6 |
+| `subagent-index.toon` | Add new subagents | 6 |
+
+#### Related Tasks
+
+| Task | Description | Dependency |
+|------|-------------|------------|
+| t116 | Self-improving agent system (main task) | This plan |
+| t117 | Privacy filter for public PRs | Blocks t116.4 |
+| t118 | Agent testing framework | Related |
+| t115 | OpenCode server documentation | Prerequisite knowledge |
 
 ---
 
