@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.100.2] - 2026-02-04
+
+### Fixed
+
+- remove non-existent npm package breaking CI (#314)
 ## [2.100.1] - 2026-02-04
 
 ### Fixed
