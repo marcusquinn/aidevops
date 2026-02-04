@@ -3,7 +3,7 @@
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.97.1
+# Version: 2.98.0
 #
 # Quick Install (one-liner):
 #   bash <(curl -fsSL https://aidevops.dev/install)

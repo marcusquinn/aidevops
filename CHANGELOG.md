@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.98.0] - 2026-02-04
+
+### Added
+
+- OpenCode server docs, privacy filter, and self-improving agents (t115, t116, t117) (#302)
+- import robust-skills from ccheney/robust-skills (#296)
+- support multiple AI code reviewers in PR loop (#295)
+
+### Changed
+
+- Documentation: add self-improving agent system plan and tasks (t110-t118) (#301)
+- Documentation: add parallel agents & headless dispatch plan (t104) (#300)
+- Documentation: add security follow-up tasks and plans (#292)
+- Refactor: improve skill categorization and reorganize imported skills (#297)
+
+### Fixed
+
+- correct SonarCloud rule prefix from shell: to shelldre: (#303)
 ## [2.97.1] - 2026-02-03
 
 ### Added
