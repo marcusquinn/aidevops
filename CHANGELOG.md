@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - prevent command injection in credential-helper.sh (#313)
+
 ## [2.100.0] - 2026-02-04
 
 ### Added
