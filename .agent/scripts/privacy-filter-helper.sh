@@ -229,15 +229,6 @@ scan_privacy() {
     print_info "Checking ${#patterns[@]} patterns"
     echo ""
     
-    # Find files to scan (respect .gitignore)
-    local -a files
-    if command -v rg &> /dev/null; then
-        # Use ripgrep for speed
-        mapfile -t files < <(rg --files "$target" 2>/dev/null || find "$target" -type f 2>/dev/null)
-    else
-        mapfile -t files < <(find "$target" -type f -not -path '*/\.*' -not -path '*/node_modules/*' 2>/dev/null)
-    fi
-    
     # Scan each pattern
     for pattern in "${patterns[@]}"; do
         local pattern_name="${pattern:0:40}..."
