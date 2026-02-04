@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # Configuration
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly WORKSPACE_DIR="${AIDEVOPS_DIR}/.agent-workspace"
 readonly IMPROVE_DIR="${WORKSPACE_DIR}/self-improve"

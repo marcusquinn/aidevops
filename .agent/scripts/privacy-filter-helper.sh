@@ -29,7 +29,7 @@ readonly CYAN='\033[0;36m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly CONFIG_DIR="${AIDEVOPS_DIR}/config"
 readonly PATTERNS_FILE="${CONFIG_DIR}/privacy-patterns.txt"
