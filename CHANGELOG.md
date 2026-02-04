@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.100.0] - 2026-02-04
+
+### Added
+
+- add Ollama GLM-OCR support for local document OCR (#311)
+- add iOS Simulator support to agent-browser (#308)
+
+### Changed
+
+- Documentation: add GLM-OCR to README documentation (#312)
+- Documentation: add terminal capabilities section to AGENTS.md (#309)
+- Documentation: add backlog tasks and loop auto-advance (#298)
+
+### Fixed
+
+- consolidate SonarCloud security hotspot exclusions for shell scripts (#307)
 ## [2.99.0] - 2026-02-04
 
 ### Added
