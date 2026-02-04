@@ -50,10 +50,10 @@ Targets include:
 - [ ] (2026-02-03) Phase 4: Update docs/tests and verify behavior ~30m
 
 <!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m064,p016,Phase 1: Inventory curl|sh usages and verification options,45m,,2026-02-03T00:00Z,,pending
-m065,p016,Phase 2: Replace with download-verify-execute flow,2h,,2026-02-03T00:00Z,,pending
-m066,p016,Phase 3: Add fallback behavior and error messages,45m,,2026-02-03T00:00Z,,pending
-m067,p016,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,,pending
+m084,p016,Phase 1: Inventory curl|sh usages and verification options,45m,,2026-02-03T00:00Z,,pending
+m085,p016,Phase 2: Replace with download-verify-execute flow,2h,,2026-02-03T00:00Z,,pending
+m086,p016,Phase 3: Add fallback behavior and error messages,45m,,2026-02-03T00:00Z,,pending
+m087,p016,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,,pending
 -->
 
 #### Decision Log
@@ -94,9 +94,9 @@ Current usage persists `dashboardToken` in `localStorage` in the MCP dashboard U
 - [ ] (2026-02-03) Phase 3: Add reset/clear UI flow and verify behavior ~45m
 
 <!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m068,p017,Phase 1: Trace token flow and storage paths,45m,,2026-02-03T00:00Z,,pending
-m069,p017,Phase 2: Migrate to session/memory storage and update auth flow,1.5h,,2026-02-03T00:00Z,,pending
-m070,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,,2026-02-03T00:00Z,,pending
+m088,p017,Phase 1: Trace token flow and storage paths,45m,,2026-02-03T00:00Z,,pending
+m089,p017,Phase 2: Migrate to session/memory storage and update auth flow,1.5h,,2026-02-03T00:00Z,,pending
+m090,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,,2026-02-03T00:00Z,,pending
 -->
 
 #### Decision Log
