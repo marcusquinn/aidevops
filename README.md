@@ -534,6 +534,73 @@ Coordinator (pulse loop)
 
 **Subagent index** (`.agent/subagent-index.toon`): Compressed TOON routing table listing all agents, subagents, workflows, and scripts with model tier assignments - enables fast agent discovery without loading full markdown files.
 
+## **Advanced Capabilities** (Planned)
+
+### Parallel Agents & Headless Dispatch
+
+Run multiple AI sessions concurrently with isolated contexts:
+
+| Feature | Description |
+|---------|-------------|
+| **Headless dispatch** | `claude -p` / OpenCode server API for non-interactive execution |
+| **Session management** | Deterministic session IDs, resume with `--resume` |
+| **Memory namespaces** | Per-agent memory isolation with shared access when needed |
+| **Matrix integration** | Chat-triggered dispatch via self-hosted Matrix (optional) |
+
+**Architecture:**
+
+```text
+OpenCode Server (opencode serve)
+├── Session 1 (code-reviewer)
+├── Session 2 (seo-analyst)
+└── Session 3 (scheduled-task)
+         ↑
+    HTTP API / SSE Events
+         ↑
+┌────────┴────────┐
+│  Dispatch Layer │ ← Matrix bot, cron, CLI
+└─────────────────┘
+```
+
+### Self-Improving Agent System
+
+Agents that learn from experience and contribute improvements:
+
+| Phase | Description |
+|-------|-------------|
+| **Review** | Analyze memory for success/failure patterns |
+| **Refine** | Generate and apply improvements to agents |
+| **Test** | Validate in isolated OpenCode sessions |
+| **PR** | Contribute to community with privacy filtering |
+
+**Safety guardrails:**
+- Worktree isolation for all changes
+- Human approval required for PRs
+- Mandatory privacy filter (secretlint + pattern redaction)
+- Dry-run default, explicit opt-in for PR creation
+- Audit log to memory
+
+### Voice Integration
+
+Speech-to-speech AI conversations:
+
+| Method | Description |
+|--------|-------------|
+| **VoiceInk + Shortcut** | macOS: transcription → OpenCode API → response |
+| **iPhone Shortcut** | iOS: dictate → HTTP → speak response |
+| **Pipecat STS** | Full voice pipeline: Soniox STT → AI → Cartesia TTS |
+
+### Scheduled Agent Tasks
+
+Cron-based agent dispatch for automated workflows:
+
+```bash
+# Example: Daily SEO report at 9am
+0 9 * * * ~/.aidevops/agents/scripts/droid-helper.sh dispatch "seo-analyst" "Generate daily SEO report"
+```
+
+**See:** [TODO.md](TODO.md) tasks t109-t118 for implementation status.
+
 ## **Requirements**
 
 ```bash

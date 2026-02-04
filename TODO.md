@@ -219,6 +219,31 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-droid mapping. Message → claude -p → response flow.
   - [ ] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3
     - Notes: Update AGENTS.md with parallel agent guidance. Create example droids (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
+- [ ] t110 Cron agent for scheduled task management #tools #automation #agents ~3h (ai:2h test:45m read:15m) logged:2026-02-04
+  - Notes: Agent for setting up, managing, identifying, and debugging cron jobs that dispatch AI agents. Uses OpenCode server API for session management. Commands: list (show scheduled tasks), add (create new cron job), remove (delete cron job), logs (view execution history), debug (troubleshoot failed jobs). Integrates with existing mailbox system for task dispatch. Add to tools/automation/cron-agent.md.
+- [ ] t111 Objective runner with safety guardrails #tools #automation #agents ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04
+  - Notes: Long-running objective execution via stateless coordinator loop. Safety guardrails: budget limits (max tokens/cost), step limits (max iterations before human review), scope constraints (whitelist of allowed tools/paths), checkpoint reviews (pause after N steps for approval), rollback capability (git worktrees), audit log (all actions to memory). Creates objective-runner-helper.sh. Add to tools/automation/.
+- [ ] t112 VoiceInk to OpenCode via macOS Shortcut #tools #voice #automation ~1h (ai:45m test:15m) logged:2026-02-04 related:t080,t081
+  - Notes: macOS Shortcut that takes VoiceInk transcription and sends to OpenCode server API. Flow: VoiceInk transcription → Shortcut → HTTP POST to OpenCode /session/:id/prompt → response. Document in tools/voice/voiceink-shortcut.md. Include AppleScript/Shortcuts app instructions.
+- [ ] t113 iPhone Shortcut for voice dispatch to OpenCode #tools #voice #mobile ~1h (ai:45m test:15m) logged:2026-02-04 related:t112
+  - Notes: iOS Shortcut for voice-to-AI dispatch. Flow: Dictate (iOS STT) → HTTP POST to OpenCode server (via Tailscale/local network) → wait for response → Speak (iOS TTS). Requires OpenCode server accessible from phone. Document in tools/voice/ios-shortcut.md.
+- [ ] t114 Pipecat STS integration with OpenCode #tools #voice #ai ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04 related:t080,t081
+  - Notes: Full speech-to-speech conversation with AI via Pipecat pipeline. Flow: Mic → Soniox STT → OpenCode API → Cartesia TTS → Speaker. Real-time voice conversation without typing. Builds on t080/t081 Pipecat setup. Add to tools/voice/pipecat-opencode.md.
+- [ ] t115 OpenCode server subagent documentation #docs #tools #ai-assistants ~2h (ai:1.5h test:20m read:10m) logged:2026-02-04
+  - Notes: Document OpenCode server mode (opencode serve) patterns for aidevops. Cover: server setup, SDK usage, session management, async prompts, SSE events, TUI control, authentication. Reference https://opencode.ai/docs/server/ and https://opencode.ai/docs/sdk/. Add to tools/ai-assistants/opencode-server.md.
+- [ ] t116 Self-improving agent system #plan → [todo/PLANS.md#2026-02-04-self-improving-agent-system] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-04
+  - [ ] t116.1 Review phase - pattern analysis from memory ~1.5h blocked-by:none
+    - Notes: Query memory for FAILURE/SUCCESS patterns, identify gaps (failures without solutions), check agent-review suggestions. Create self-improve-helper.sh with analyze command.
+  - [ ] t116.2 Refine phase - generate and apply improvements ~2h blocked-by:t116.1
+    - Notes: Generate improvement proposals, edit agents/scripts in worktree, run linters-local.sh. Add refine command to self-improve-helper.sh.
+  - [ ] t116.3 Test phase - isolated OpenCode sessions ~1.5h blocked-by:t116.2
+    - Notes: Create OpenCode test session, run test prompts against improved agents, validate quality gates pass, compare before/after. Add test command to self-improve-helper.sh.
+  - [ ] t116.4 PR phase - privacy-filtered contributions ~1h blocked-by:t116.3,t117
+    - Notes: Run privacy filter, show redacted diff for approval, create PR with evidence from memory, test results, privacy attestation. Add pr command to self-improve-helper.sh.
+- [ ] t117 Privacy filter for public PRs #security #tools ~3h (ai:2h test:45m read:15m) logged:2026-02-04 blocks:t116.4
+  - Notes: Mandatory privacy filter before any PR to public repos. Components: 1) Secretlint scan for credentials. 2) Pattern-based redaction (emails, IPs, local URLs, home paths, API keys, passwords, tokens). 3) Project-specific patterns from .aidevops/privacy-patterns.txt. 4) Dry-run review before PR. Create privacy-filter-helper.sh. Add to tools/security/.
+- [ ] t118 Agent testing framework with OpenCode sessions #tools #testing #agents ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04 related:t115
+  - Notes: Framework for testing agent changes in isolated OpenCode sessions. Features: create test session, inject test prompts, capture responses, validate against expected patterns, compare before/after agent changes. Uses OpenCode server API. Create agent-test-helper.sh. Add to tools/build-agent/agent-testing.md.
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~3d (ai:2d test:0.5d read:0.5d) logged:2026-01-31
   - [ ] t102.1 Cost-Aware Model Routing ~4h blocked-by:none
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
@@ -260,7 +285,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
-<!--TOON:backlog[63]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[80]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,4h,2h,1h,2026-02-03T00:00Z,pending,,,
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
@@ -272,6 +297,19 @@ t109.2,Create droid-helper.sh,,agents|scripts|dispatch,4h,4h,,2026-02-03T00:00Z,
 t109.3,Memory namespace integration,,memory|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.2,,t109
 t109.4,Matrix bot integration (optional),,matrix|chat|dispatch,6h,6h,,2026-02-03T00:00Z,pending,t109.2,,t109
 t109.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.1|t109.2|t109.3,,t109
+t110,Cron agent for scheduled task management,,tools|automation|agents,3h,2h,45m,2026-02-04T00:00Z,pending,,,
+t111,Objective runner with safety guardrails,,tools|automation|agents,4h,2.5h,1h,2026-02-04T00:00Z,pending,,,
+t112,VoiceInk to OpenCode via macOS Shortcut,,tools|voice|automation,1h,45m,15m,2026-02-04T00:00Z,pending,,,
+t113,iPhone Shortcut for voice dispatch to OpenCode,,tools|voice|mobile,1h,45m,15m,2026-02-04T00:00Z,pending,,,
+t114,Pipecat STS integration with OpenCode,,tools|voice|ai,4h,2.5h,1h,2026-02-04T00:00Z,pending,,,
+t115,OpenCode server subagent documentation,,docs|tools|ai-assistants,2h,1.5h,20m,2026-02-04T00:00Z,pending,,,
+t116,Self-improving agent system,,plan|agents|self-improvement|automation,6h,4h,1.5h,2026-02-04T00:00Z,pending,,,
+t116.1,Review phase - pattern analysis from memory,,agents|memory|analysis,1.5h,1.5h,,2026-02-04T00:00Z,pending,,,t116
+t116.2,Refine phase - generate and apply improvements,,agents|refactor,2h,2h,,2026-02-04T00:00Z,pending,t116.1,,t116
+t116.3,Test phase - isolated OpenCode sessions,,agents|testing,1.5h,1.5h,,2026-02-04T00:00Z,pending,t116.2,,t116
+t116.4,PR phase - privacy-filtered contributions,,agents|git|privacy,1h,1h,,2026-02-04T00:00Z,pending,t116.3|t117,,t116
+t117,Privacy filter for public PRs,,security|tools|privacy,3h,2h,45m,2026-02-04T00:00Z,pending,,t116.4,
+t118,Agent testing framework with OpenCode sessions,,tools|testing|agents,4h,2.5h,1h,2026-02-04T00:00Z,pending,,,
 t073,Document Extraction Subagent & Workflow,,plan|document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,pending,,,
 t073.1,Implementation (all subagents + scripts),,document-extraction,1h,1h,,2026-01-25T01:00Z,pending,,,t073
 t073.2,Integration Testing,,document-extraction|testing,2h,,2h,2026-01-25T01:00Z,pending,t073.1,,t073
