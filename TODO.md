@@ -201,6 +201,17 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Apple-inspired "Mom Test" framework for UX evaluation and CRO. **6 UX Principles:** Clarity, Simplicity, Consistency, Feedback, Discoverability, Forgiveness. **Workflow:** 1) Screen-by-screen "Would this confuse my mom?" analysis. 2) Generate tables: Confusing Element | Mom's Reaction | Fix. 3) Rank biggest UX failures by severity. 4) Identify quick wins with effort/impact matrix. 5) Prioritize CRO recommendations based on proven UX patterns. **Output:** Actionable report with specific fixes, not vague suggestions. Integrate with browser automation (Playwright/Stagehand) for automated page analysis. Reference existing page-cro.md (t093) and accessibility testing. Add to seo/ or tools/ux/.
 - [ ] t103 Review Pi agent for aidevops inspiration #research #agents #architecture ~1h (ai:45m read:15m) logged:2026-02-01 ref:https://lucumr.pocoo.org/2026/1/31/pi/,https://github.com/badlogic/pi-mono/,https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent
   - Notes: Armin Ronacher's blog post on Pi (minimal coding agent by Mario Zechner). Key inspirations to evaluate: 1) Minimal core with only 4 tools (Read, Write, Edit, Bash) - compare to aidevops tool sprawl. 2) Extension system with persistent state across sessions - compare to aidevops memory system. 3) Session trees with branching/rewinding - could improve context management. 4) Hot-reloading extensions - agent can modify and reload its own tools. 5) TUI extensions (spinners, progress bars, file pickers) - enhance CLI experience. 6) /answer command for structured Q&A. 7) /review command with branch-based review context. 8) Skills as agent-generated code, not downloaded packages. 9) No MCP - uses mcporter CLI bridge instead. 10) CDP-based browser skill replacing MCP/Playwright. Evaluate which patterns could simplify or enhance aidevops.
+- [ ] t104 Parallel Agents & Headless Dispatch #plan → [todo/PLANS.md#2026-02-03-parallel-agents--headless-dispatch] ~3d (ai:1.5d test:1d read:0.5d) logged:2026-02-03
+  - [ ] t104.1 Document headless dispatch patterns ~4h blocked-by:none
+    - Notes: Create tools/ai-assistants/headless-dispatch.md. Document `claude -p` flags, streaming JSON format, session resumption with `--resume`, model provider configuration examples.
+  - [ ] t104.2 Create droid-helper.sh ~4h blocked-by:none
+    - Notes: Namespaced agent dispatch with per-droid AGENTS.md. Deterministic session IDs per droid. Integration with existing memory system. Support for parallel execution.
+  - [ ] t104.3 Memory namespace integration ~3h blocked-by:t104.2
+    - Notes: Extend memory-helper.sh with `--namespace` flag. Per-droid memory isolation (optional). Shared memory access when needed.
+  - [ ] t104.4 Matrix bot integration (optional) ~6h blocked-by:t104.2
+    - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-droid mapping. Message → claude -p → response flow.
+  - [ ] t104.5 Documentation & examples ~3h blocked-by:t104.1,t104.2,t104.3
+    - Notes: Update AGENTS.md with parallel agent guidance. Create example droids (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~3d (ai:2d test:0.5d read:0.5d) logged:2026-01-31
   - [ ] t102.1 Cost-Aware Model Routing ~4h blocked-by:none
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
@@ -242,7 +253,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
-<!--TOON:backlog[52]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[58]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+t104,Parallel Agents & Headless Dispatch,,plan|agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,2026-02-03T00:00Z,pending,,,
+t104.1,Document headless dispatch patterns,,agents|headless|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t104
+t104.2,Create droid-helper.sh,,agents|scripts|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t104
+t104.3,Memory namespace integration,,memory|agents,3h,3h,,2026-02-03T00:00Z,pending,t104.2,,t104
+t104.4,Matrix bot integration (optional),,matrix|chat|dispatch,6h,6h,,2026-02-03T00:00Z,pending,t104.2,,t104
+t104.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,pending,t104.1|t104.2|t104.3,,t104
 t073,Document Extraction Subagent & Workflow,,plan|document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,pending,,,
 t073.1,Implementation (all subagents + scripts),,document-extraction,1h,1h,,2026-01-25T01:00Z,pending,,,t073
 t073.2,Integration Testing,,document-extraction|testing,2h,,2h,2026-01-25T01:00Z,pending,t073.1,,t073

@@ -1794,6 +1794,161 @@ d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python requ
 
 ---
 
+### [2026-02-03] Parallel Agents & Headless Dispatch
+
+**Status:** Planning
+**Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
+**Source:** [alexfazio's X post on droids](https://gist.github.com/alexfazio/dcf2f253d346d8ed2702935b57184582)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p016,Parallel Agents & Headless Dispatch,planning,0,5,,agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,0.5d,2026-02-03T00:00Z,
+-->
+
+#### Purpose
+
+Document and implement patterns for running parallel Claude Code sessions locally, with optional Matrix chat integration. Inspired by alexfazio's "droids" architecture but adapted for local-first, low-complexity use.
+
+**Key insight from source:** `claude -p "prompt" --output-format stream-json` enables headless dispatch without containers or hosting costs. Each session can have its own AGENTS.md and memory namespace.
+
+**What we're NOT doing:**
+- Fly.io Sprites or cloud hosting (overkill for local use)
+- Containers (unnecessary complexity for trusted code)
+- New orchestration frameworks (extend existing mailbox)
+
+**What we ARE doing:**
+- Document `claude -p` headless patterns
+- Create droid-helper.sh for namespaced agent dispatch
+- Integrate with existing memory system (per-agent namespaces)
+- Optional Matrix bot for chat-triggered dispatch
+- Document model provider flexibility (any OpenAI-compatible endpoint)
+
+#### Context from Discussion
+
+**Complexity/Maintenance/Context Analysis:**
+
+| Approach | Complexity | Maintenance | Context Hazard | User Attention |
+|----------|------------|-------------|----------------|----------------|
+| Fly.io Sprites | High | High | Low (isolated) | High (new concepts) |
+| Local containers | Medium | Medium | Low (isolated) | Medium |
+| Local parallel sessions | Low | Low | Medium (shared fs) | Low |
+| Matrix bot + local claude | Medium | Low | Low (per-room) | Medium (initial setup) |
+
+**Decision:** Start with local parallel sessions. Add Matrix bot if chat-triggered UX is desired. Skip containers unless isolation is required.
+
+**Architecture:**
+
+```text
+~/.aidevops/.agent-workspace/
+├── droids/
+│   ├── code-reviewer/
+│   │   ├── AGENTS.md      # Agent personality/instructions
+│   │   └── memory.db      # Agent-specific memories (optional)
+│   └── seo-analyst/
+│       ├── AGENTS.md
+│       └── memory.db
+```
+
+**Key patterns from source post:**
+1. `claude -p --output-format stream-json` - headless dispatch
+2. `--resume $session_id` - deterministic session mapping
+3. Self-editing AGENTS.md - agents that improve themselves
+4. Chat-triggered dispatch - reduce friction vs terminal
+
+**Model provider flexibility:**
+```bash
+# Any OpenAI-compatible endpoint works
+export ANTHROPIC_BASE_URL="https://your-provider/v1"
+export ANTHROPIC_API_KEY="your-key"
+```
+
+Users can choose: local (ollama, llama.cpp), cloud (together.ai, openrouter, groq), or self-hosted.
+
+#### Progress
+
+- [ ] (2026-02-03) Phase 1: Document headless dispatch patterns ~4h
+  - Create `tools/ai-assistants/headless-dispatch.md`
+  - Document `claude -p` flags and streaming JSON format
+  - Document session resumption with `--resume`
+  - Add model provider configuration examples
+- [ ] (2026-02-03) Phase 2: Create droid-helper.sh ~4h
+  - Namespaced agent dispatch with per-droid AGENTS.md
+  - Deterministic session IDs per droid
+  - Integration with existing memory system
+  - Support for parallel execution
+- [ ] (2026-02-03) Phase 3: Memory namespace integration ~3h
+  - Extend memory-helper.sh with `--namespace` flag
+  - Per-droid memory isolation (optional)
+  - Shared memory access when needed
+- [ ] (2026-02-03) Phase 4: Matrix bot integration (optional) ~6h
+  - Document Matrix bot setup on Cloudron
+  - Create matrix-dispatch-helper.sh
+  - Room-to-droid mapping
+  - Message → claude -p → response flow
+- [ ] (2026-02-03) Phase 5: Documentation & examples ~3h
+  - Update AGENTS.md with parallel agent guidance
+  - Create example droids (code-reviewer, seo-analyst)
+  - Document when to use parallel vs sequential
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m064,p016,Phase 1: Document headless dispatch patterns,4h,,2026-02-03T00:00Z,,pending
+m065,p016,Phase 2: Create droid-helper.sh,4h,,2026-02-03T00:00Z,,pending
+m066,p016,Phase 3: Memory namespace integration,3h,,2026-02-03T00:00Z,,pending
+m067,p016,Phase 4: Matrix bot integration (optional),6h,,2026-02-03T00:00Z,,pending
+m068,p016,Phase 5: Documentation & examples,3h,,2026-02-03T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Local parallel sessions over containers/cloud
+  **Rationale:** Zero hosting cost, shared filesystem, no sync needed, existing credentials work
+  **Date:** 2026-02-03
+
+- **Decision:** Extend existing memory system with namespaces
+  **Rationale:** Reuse proven SQLite FTS5 infrastructure, avoid new dependencies
+  **Date:** 2026-02-03
+
+- **Decision:** Matrix over Discord/Slack for chat integration
+  **Rationale:** Self-hosted on Cloudron, no platform risk, already in user's stack
+  **Date:** 2026-02-03
+
+- **Decision:** Document model providers generically, not specific versions
+  **Rationale:** Models evolve quickly (minimax, kimi, qwen, deepseek, etc.), keep options open
+  **Date:** 2026-02-03
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d039,p016,Local parallel sessions over containers/cloud,Zero hosting cost shared filesystem no sync needed,2026-02-03,Architecture
+d040,p016,Extend existing memory system with namespaces,Reuse proven SQLite FTS5 infrastructure,2026-02-03,None
+d041,p016,Matrix over Discord/Slack for chat integration,Self-hosted on Cloudron no platform risk,2026-02-03,None
+d042,p016,Document model providers generically,Models evolve quickly keep options open,2026-02-03,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `tools/ai-assistants/headless-dispatch.md` | Document `claude -p` patterns | 1 |
+| `scripts/droid-helper.sh` | Namespaced agent dispatch | 2 |
+| `scripts/matrix-dispatch-helper.sh` | Matrix bot integration | 4 |
+| Example droids in `.agent-workspace/droids/` | Reference implementations | 5 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `scripts/memory-helper.sh` | Add `--namespace` flag | 3 |
+| `memory/README.md` | Document namespace feature | 3 |
+| `AGENTS.md` | Add parallel agent guidance | 5 |
+| `subagent-index.toon` | Add new subagents | 5 |
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓
