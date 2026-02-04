@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - correct SonarCloud rule prefix from shell: to shelldre: (#303)
+
 ## [2.97.1] - 2026-02-03
 
 ### Added
