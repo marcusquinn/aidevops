@@ -229,7 +229,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: iOS Shortcut for voice-to-AI dispatch. Flow: Dictate (iOS STT) → HTTP POST to OpenCode server (via Tailscale/local network) → wait for response → Speak (iOS TTS). Requires OpenCode server accessible from phone. Document in tools/voice/ios-shortcut.md.
 - [ ] t114 Pipecat STS integration with OpenCode #tools #voice #ai ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04 related:t080,t081
   - Notes: Full speech-to-speech conversation with AI via Pipecat pipeline. Flow: Mic → Soniox STT → OpenCode API → Cartesia TTS → Speaker. Real-time voice conversation without typing. Builds on t080/t081 Pipecat setup. Add to tools/voice/pipecat-opencode.md.
-- [ ] t115 OpenCode server subagent documentation #docs #tools #ai-assistants ~2h (ai:1.5h test:20m read:10m) logged:2026-02-04
+- [ ] t115 OpenCode server subagent documentation #docs #tools #ai-assistants ~2h (ai:1.5h test:20m read:10m) logged:2026-02-04 started:2026-02-04T12:00Z
   - Notes: Document OpenCode server mode (opencode serve) patterns for aidevops. Cover: server setup, SDK usage, session management, async prompts, SSE events, TUI control, authentication. Reference https://opencode.ai/docs/server/ and https://opencode.ai/docs/sdk/. Add to tools/ai-assistants/opencode-server.md.
 - [ ] t116 Self-improving agent system #plan → [todo/PLANS.md#2026-02-04-self-improving-agent-system] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-04
   - [ ] t116.1 Review phase - pattern analysis from memory ~1.5h blocked-by:none
