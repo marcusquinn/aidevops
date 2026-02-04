@@ -190,7 +190,48 @@ Checks current quality gate status:
 
 # Direct API (requires SONAR_TOKEN)
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"
-```text
+```
+
+### SonarCloud Security Hotspots
+
+Security hotspots are code patterns that require human review. They are NOT automatically bugs - they need individual assessment.
+
+**Preferred approach**: Review and resolve each hotspot individually in SonarCloud:
+
+1. Open the hotspot in SonarCloud UI
+2. Review the code and context
+3. Mark as one of:
+   - **Safe**: The code is secure (add comment explaining why)
+   - **Fixed**: You've made code changes to address it
+   - **Acknowledged**: Known issue, accepted risk (add justification)
+
+**Common hotspot types and typical resolutions**:
+
+| Rule | Description | Typical Resolution |
+|------|-------------|-------------------|
+| `shell:S5332` | HTTP instead of HTTPS | Safe if localhost/internal; Fix if external |
+| `shell:S6505` | npm install without --ignore-scripts | Safe if trusted packages; scripts needed for setup |
+| `shell:S6506` | Package manager security | Safe if from trusted registries |
+
+**Do NOT**:
+- Blanket-dismiss all hotspots without review
+- Disable rules globally without justification
+- Ignore hotspots hoping they'll go away
+
+**Why individual review matters**:
+- Catches real security issues mixed with false positives
+- Documents security decisions for audit trails
+- Prevents rule fatigue from hiding actual vulnerabilities
+
+```bash
+# View current hotspots
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevops&status=TO_REVIEW" | \
+  jq '.hotspots[] | {file: .component, line: .line, message: .message}'
+
+# Group by rule to prioritize review
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevops&status=TO_REVIEW" | \
+  jq '[.hotspots[] | .ruleKey] | group_by(.) | map({rule: .[0], count: length})'
+```
 
 ## Troubleshooting
 

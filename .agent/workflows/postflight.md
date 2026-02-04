@@ -569,6 +569,59 @@ Postflight verification is successful when:
 4. No exposed secrets detected
 5. Code review tools show no blocking issues
 
+## Handling SonarCloud Quality Gate Failures
+
+If postflight fails due to SonarCloud quality gate, check the specific cause:
+
+### Security Hotspots (Most Common)
+
+Security hotspots require **individual human review**, not blanket dismissal:
+
+```bash
+# Check hotspot count and types
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevops&status=TO_REVIEW" | \
+  jq '{total: .paging.total, by_rule: ([.hotspots[] | .ruleKey] | group_by(.) | map({rule: .[0], count: length}))}'
+```
+
+**Resolution process**:
+
+1. Open SonarCloud Security Hotspots page for the project
+2. Review each hotspot individually
+3. For each hotspot, choose:
+   - **Safe**: Code is secure (add comment explaining why)
+   - **Fixed**: Made code changes to address it
+   - **Acknowledged**: Known issue, accepted risk (add justification)
+
+**Common hotspot patterns in aidevops**:
+
+| Rule | Typical Cause | Typical Resolution |
+|------|---------------|-------------------|
+| `shell:S5332` | HTTP URLs for localhost | Mark Safe: "Localhost HTTP is intentional for local dev servers" |
+| `shell:S6505` | npm/bun install without --ignore-scripts | Mark Safe: "Postinstall scripts required for package setup" |
+| `shell:S6506` | Package manager commands | Mark Safe: "Installing from trusted npm registry" |
+
+**Why NOT to blanket-dismiss**:
+- Real vulnerabilities can hide among false positives
+- Audit trails require documented decisions
+- New code changes may introduce actual issues
+- Rule fatigue leads to missing real problems
+
+### Bugs, Vulnerabilities, or Code Smells
+
+For non-hotspot issues:
+
+```bash
+# Check specific issues
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&types=BUG,VULNERABILITY" | \
+  jq '.issues[] | {type: .type, severity: .severity, message: .message, file: .component}'
+```
+
+These should be fixed in code, not dismissed, unless they are clear false positives.
+
+### Quality Gate Configuration
+
+If the quality gate is too strict for your workflow, adjust it in SonarCloud settings rather than ignoring failures. Document any threshold changes in the project.
+
 **Critical**: When running local postflight, explicitly verify the GH Actions postflight.yml workflow completed successfully:
 
 ```bash
