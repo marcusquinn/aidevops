@@ -219,7 +219,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-droid mapping. Message → claude -p → response flow.
   - [ ] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3
     - Notes: Update AGENTS.md with parallel agent guidance. Create example droids (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
-- [ ] t110 Cron agent for scheduled task management #tools #automation #agents ~3h (ai:2h test:45m read:15m) logged:2026-02-04
+- [ ] t110 Cron agent for scheduled task management #tools #automation #agents ~3h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T03:47Z
   - Notes: Agent for setting up, managing, identifying, and debugging cron jobs that dispatch AI agents. Uses OpenCode server API for session management. Commands: list (show scheduled tasks), add (create new cron job), remove (delete cron job), logs (view execution history), debug (troubleshoot failed jobs). Integrates with existing mailbox system for task dispatch. Add to tools/automation/cron-agent.md.
 - [ ] t111 Objective runner with safety guardrails #tools #automation #agents ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04
   - Notes: Long-running objective execution via stateless coordinator loop. Safety guardrails: budget limits (max tokens/cost), step limits (max iterations before human review), scope constraints (whitelist of allowed tools/paths), checkpoint reviews (pause after N steps for approval), rollback capability (git worktrees), audit log (all actions to memory). Creates objective-runner-helper.sh. Add to tools/automation/.
