@@ -49,6 +49,8 @@ Cold-start penalty ~3-5s on first command while daemon launches.
 
 **AI Page Understanding**: `agent-browser snapshot -i` returns ARIA tree with interactive refs. Use refs (`@e1`, `@e2`) for deterministic element targeting. Faster than screenshots for AI decision-making.
 
+**iOS Support** (macOS only): Control real Mobile Safari in iOS Simulator via Appium. Use `-p ios --device "iPhone 16 Pro"` for mobile web testing.
+
 **Limitations**: No proxy support, no browser extensions, no Chrome DevTools MCP pairing.
 
 <!-- AI-CONTEXT-END -->
@@ -77,6 +79,21 @@ cd agent-browser
 pnpm install
 pnpm build
 agent-browser install
+```
+
+### iOS Simulator (macOS only)
+
+Control real Mobile Safari in the iOS Simulator for authentic mobile web testing.
+
+**Requirements:**
+
+- macOS with Xcode installed
+- Appium and XCUITest driver
+
+```bash
+# Install Appium and XCUITest driver
+npm install -g appium
+appium driver install xcuitest
 ```
 
 ## AI-Optimized Workflow
@@ -351,6 +368,105 @@ agent-browser mouse up [button]       # Release button
 agent-browser mouse wheel <dy> [dx]   # Scroll wheel
 ```
 
+## iOS Simulator
+
+Control real Mobile Safari in the iOS Simulator for authentic mobile web testing. Requires macOS with Xcode.
+
+### Setup
+
+```bash
+# Install Appium and XCUITest driver
+npm install -g appium
+appium driver install xcuitest
+```
+
+### Usage
+
+```bash
+# List available iOS simulators
+agent-browser device list
+
+# Launch Safari on a specific device
+agent-browser -p ios --device "iPhone 16 Pro" open https://example.com
+
+# Same commands as desktop
+agent-browser -p ios snapshot -i
+agent-browser -p ios tap @e1              # Tap (alias for click)
+agent-browser -p ios fill @e2 "text"
+agent-browser -p ios screenshot mobile.png
+
+# Mobile-specific commands
+agent-browser -p ios swipe up
+agent-browser -p ios swipe down 500
+agent-browser -p ios swipe left
+agent-browser -p ios swipe right
+
+# Close session (shuts down simulator)
+agent-browser -p ios close
+```
+
+### Environment Variables
+
+```bash
+export AGENT_BROWSER_PROVIDER=ios
+export AGENT_BROWSER_IOS_DEVICE="iPhone 16 Pro"
+agent-browser open https://example.com
+```
+
+| Variable | Description |
+|----------|-------------|
+| `AGENT_BROWSER_PROVIDER` | Set to `ios` to enable iOS mode |
+| `AGENT_BROWSER_IOS_DEVICE` | Device name (e.g., "iPhone 16 Pro", "iPad Pro") |
+| `AGENT_BROWSER_IOS_UDID` | Device UDID (alternative to device name) |
+
+**Supported devices:** All iOS Simulators available in Xcode (iPhones, iPads), plus real iOS devices.
+
+**Note:** The iOS provider boots the simulator, starts Appium, and controls Safari. First launch takes ~30-60 seconds; subsequent commands are fast.
+
+### Real Device Support
+
+Appium also supports real iOS devices connected via USB. This requires additional one-time setup:
+
+**1. Get your device UDID:**
+
+```bash
+xcrun xctrace list devices
+# or
+system_profiler SPUSBDataType | grep -A 5 "iPhone\|iPad"
+```
+
+**2. Sign WebDriverAgent (one-time):**
+
+```bash
+# Open the WebDriverAgent Xcode project
+cd ~/.appium/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent
+open WebDriverAgent.xcodeproj
+```
+
+In Xcode:
+
+- Select the `WebDriverAgentRunner` target
+- Go to Signing & Capabilities
+- Select your Team (requires Apple Developer account, free tier works)
+- Let Xcode manage signing automatically
+
+**3. Use with agent-browser:**
+
+```bash
+# Connect device via USB, then:
+agent-browser -p ios --device "<DEVICE_UDID>" open https://example.com
+
+# Or use the device name if unique
+agent-browser -p ios --device "John's iPhone" open https://example.com
+```
+
+**Real device notes:**
+
+- First run installs WebDriverAgent to the device (may require Trust prompt)
+- Device must be unlocked and connected via USB
+- Slightly slower initial connection than simulator
+- Tests against real Safari performance and behavior
+
 ## Agent Mode (JSON Output)
 
 Use `--json` for machine-readable output:
@@ -383,13 +499,13 @@ The daemon starts automatically on first command and persists between commands f
 
 ## Platform Support
 
-| Platform | Binary | Fallback |
-|----------|--------|----------|
-| macOS ARM64 | Native Rust | Node.js |
-| macOS x64 | Native Rust | Node.js |
-| Linux ARM64 | Native Rust | Node.js |
-| Linux x64 | Native Rust | Node.js |
-| Windows | - | Node.js |
+| Platform | Binary | Fallback | iOS Support |
+|----------|--------|----------|-------------|
+| macOS ARM64 | Native Rust | Node.js | Yes (Simulator + Real) |
+| macOS x64 | Native Rust | Node.js | Yes (Simulator + Real) |
+| Linux ARM64 | Native Rust | Node.js | No |
+| Linux x64 | Native Rust | Node.js | No |
+| Windows | - | Node.js | No |
 
 ## Comparison with Other Tools
 
@@ -465,6 +581,31 @@ agent-browser --session s2 state load auth-b.json
 # Work in parallel
 agent-browser --session s1 snapshot -i
 agent-browser --session s2 snapshot -i
+```
+
+### iOS Mobile Testing
+
+```bash
+# List available simulators
+agent-browser device list
+
+# Open site on iPhone
+agent-browser -p ios --device "iPhone 16 Pro" open https://example.com/mobile
+
+# Same workflow as desktop
+agent-browser -p ios snapshot -i
+agent-browser -p ios tap @e1
+agent-browser -p ios fill @e2 "user@example.com"
+
+# Mobile-specific gestures
+agent-browser -p ios swipe up
+agent-browser -p ios swipe down 300
+
+# Take mobile screenshot
+agent-browser -p ios screenshot mobile-test.png
+
+# Close (shuts down simulator)
+agent-browser -p ios close
 ```
 
 ## Resources

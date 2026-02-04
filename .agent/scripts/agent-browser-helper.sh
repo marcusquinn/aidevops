@@ -65,6 +65,102 @@ check_chromium() {
     fi
 }
 
+# Check if iOS dependencies are installed (macOS only)
+check_ios() {
+    if [[ "$(uname)" != "Darwin" ]]; then
+        print_warning "iOS support requires macOS"
+        return 1
+    fi
+    
+    local has_appium=false
+    local has_xcuitest=false
+    
+    if command -v appium &> /dev/null; then
+        has_appium=true
+        print_success "Appium is installed"
+    else
+        print_warning "Appium not installed"
+    fi
+    
+    if appium driver list 2>/dev/null | grep -q "xcuitest"; then
+        has_xcuitest=true
+        print_success "XCUITest driver is installed"
+    else
+        print_warning "XCUITest driver not installed"
+    fi
+    
+    if [[ "$has_appium" == "true" && "$has_xcuitest" == "true" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Install iOS dependencies (Appium + XCUITest)
+install_ios() {
+    if [[ "$(uname)" != "Darwin" ]]; then
+        print_error "iOS support requires macOS with Xcode"
+        return 1
+    fi
+    
+    print_info "Installing iOS dependencies..."
+    
+    # Check for Xcode
+    if ! xcode-select -p &> /dev/null; then
+        print_error "Xcode is required. Install from App Store or run: xcode-select --install"
+        return 1
+    fi
+    
+    # Install Appium
+    if ! command -v appium &> /dev/null; then
+        print_info "Installing Appium..."
+        if npm install -g appium; then
+            print_success "Appium installed"
+        else
+            print_error "Failed to install Appium"
+            return 1
+        fi
+    else
+        print_info "Appium already installed"
+    fi
+    
+    # Install XCUITest driver
+    if ! appium driver list 2>/dev/null | grep -q "xcuitest"; then
+        print_info "Installing XCUITest driver..."
+        if appium driver install xcuitest; then
+            print_success "XCUITest driver installed"
+        else
+            print_error "Failed to install XCUITest driver"
+            return 1
+        fi
+    else
+        print_info "XCUITest driver already installed"
+    fi
+    
+    print_success "iOS dependencies installed!"
+    echo ""
+    print_info "Quick start:"
+    echo "  agent-browser device list"
+    echo "  agent-browser -p ios --device \"iPhone 16 Pro\" open https://example.com"
+    echo "  agent-browser -p ios snapshot -i"
+    echo "  agent-browser -p ios tap @e1"
+    echo "  agent-browser -p ios close"
+    
+    return 0
+}
+
+# List available iOS devices
+list_devices() {
+    if [[ "$(uname)" != "Darwin" ]]; then
+        print_error "iOS device listing requires macOS"
+        return 1
+    fi
+    
+    print_info "Available iOS devices:"
+    agent-browser device list 2>/dev/null || xcrun simctl list devices available
+    return 0
+}
+
 # Install agent-browser globally
 install_agent_browser() {
     print_info "Installing agent-browser CLI..."
@@ -149,6 +245,13 @@ status() {
     check_chromium 2>/dev/null || true
     echo ""
     
+    # Check iOS (macOS only)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        print_info "iOS Support:"
+        check_ios 2>/dev/null || true
+        echo ""
+    fi
+    
     # Check active sessions
     print_info "Active sessions:"
     agent-browser session list 2>/dev/null || echo "  (none or daemon not running)"
@@ -231,6 +334,8 @@ Commands:
   setup       Full setup (install CLI + Chromium)
   install     Install agent-browser CLI only
   chromium    Install Chromium browser only
+  ios         Install iOS dependencies (Appium + XCUITest, macOS only)
+  devices     List available iOS simulators
   status      Show installation and session status
   sessions    List active browser sessions
   close-all   Close all active sessions
@@ -250,6 +355,10 @@ Examples:
   # Close all sessions
   agent-browser-helper.sh close-all
 
+  # iOS setup (macOS only)
+  agent-browser-helper.sh ios
+  agent-browser-helper.sh devices
+
 Direct CLI Usage:
   agent-browser open example.com          # Navigate to URL
   agent-browser snapshot                  # Get accessibility tree with refs
@@ -262,6 +371,14 @@ Multi-Session:
   agent-browser --session s1 open site-a.com
   agent-browser --session s2 open site-b.com
   agent-browser session list
+
+iOS Simulator (macOS only):
+  agent-browser device list
+  agent-browser -p ios --device "iPhone 16 Pro" open https://example.com
+  agent-browser -p ios snapshot -i
+  agent-browser -p ios tap @e1
+  agent-browser -p ios swipe up
+  agent-browser -p ios close
 
 For full documentation, see:
   ~/.aidevops/agents/tools/browser/agent-browser.md
@@ -283,6 +400,12 @@ main() {
             ;;
         chromium)
             install_chromium
+            ;;
+        ios)
+            install_ios
+            ;;
+        devices)
+            list_devices
             ;;
         status)
             status
