@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[35]{folder,purpose,key_files}:
+<!--TOON:subagents[36]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score
@@ -46,6 +46,7 @@ tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
 tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden
+tools/security/,Security tools - privacy filtering and scanning,privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,macOS automation - AppleScript and JXA,mac|macos-automator
@@ -75,7 +76,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[27]{name,purpose}:
+<!--TOON:scripts[28]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -103,4 +104,5 @@ unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
 yt-dlp-helper.sh,YouTube video/audio download and local file conversion
+privacy-filter-helper.sh,Privacy filter for public PR contributions
 -->

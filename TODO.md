@@ -240,8 +240,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Create OpenCode test session, run test prompts against improved agents, validate quality gates pass, compare before/after. Add test command to self-improve-helper.sh.
   - [ ] t116.4 PR phase - privacy-filtered contributions ~1h blocked-by:t116.3,t117
     - Notes: Run privacy filter, show redacted diff for approval, create PR with evidence from memory, test results, privacy attestation. Add pr command to self-improve-helper.sh.
-- [ ] t117 Privacy filter for public PRs #security #tools ~3h (ai:2h test:45m read:15m) logged:2026-02-04 blocks:t116.4
-  - Notes: Mandatory privacy filter before any PR to public repos. Components: 1) Secretlint scan for credentials. 2) Pattern-based redaction (emails, IPs, local URLs, home paths, API keys, passwords, tokens). 3) Project-specific patterns from .aidevops/privacy-patterns.txt. 4) Dry-run review before PR. Create privacy-filter-helper.sh. Add to tools/security/.
+- [x] t117 Privacy filter for public PRs #security #tools ~3h actual:1h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T12:30Z completed:2026-02-04 blocks:t116.4
+  - Notes: Implemented privacy-filter-helper.sh with scan/filter/apply/patterns commands. Detects 30+ patterns (credentials, PII, internal URLs). Integrates with secretlint. Created tools/security/privacy-filter.md documentation.
 - [ ] t118 Agent testing framework with OpenCode sessions #tools #testing #agents ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04 related:t115
   - Notes: Framework for testing agent changes in isolated OpenCode sessions. Features: create test session, inject test prompts, capture responses, validate against expected patterns, compare before/after agent changes. Uses OpenCode server API. Create agent-test-helper.sh. Add to tools/build-agent/agent-testing.md.
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~3d (ai:2d test:0.5d read:0.5d) logged:2026-01-31
