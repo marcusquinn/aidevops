@@ -655,6 +655,8 @@ Before using tools, verify you're using the optimal choice:
 | Edit files | `mcp_edit` | `sed` via bash | Safer, atomic |
 | Web content | `mcp_webfetch` | `curl` via bash | Handles redirects |
 | Remote repo research | `mcp_webfetch` README first | `npx repomix --remote` | Prevents context overload |
+| Interactive CLIs | Bash directly | N/A | Full PTY - run vim, psql, ssh, htop |
+| Parallel AI dispatch | OpenCode server API | Multiple TUI instances | Headless, programmatic |
 
 **Self-check prompt**: Before calling any MCP tool, ask:
 > "Is there a faster CLI alternative I should use via Bash?"
