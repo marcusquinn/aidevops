@@ -707,10 +707,29 @@ The setup script offers to install these tools automatically.
 - **[DSPyGround](https://dspyground.com/)**: Interactive playground for prompt optimization
 - **[TOON Format](https://github.com/marcusquinn/aidevops/blob/main/.agent/toon-format.md)**: Token-Oriented Object Notation - 20-60% token reduction for LLM prompts
 
-### **Document Processing**
+### **Document Processing & OCR**
 
 - **[LibPDF](https://libpdf.dev/)**: PDF form filling, digital signatures (PAdES B-B/T/LT/LTA), encryption, merge/split, text extraction
 - **[Unstract](https://github.com/Zipstack/unstract)**: LLM-powered structured data extraction from unstructured documents (PDF, images, DOCX)
+- **[GLM-OCR](https://ollama.com/library/glm-ocr)**: Local OCR via Ollama - purpose-built for document text extraction (tables, forms, complex layouts) with zero cloud dependency
+
+**OCR Tool Selection:**
+
+| Need | Tool | Why |
+|------|------|-----|
+| **Quick text extraction** | GLM-OCR | Local, fast, no API keys, privacy-first |
+| **Structured JSON output** | Unstract | Schema-based extraction, complex documents |
+| **Screen/window OCR** | Peekaboo + GLM-OCR | `peekaboo image --analyze --model ollama/glm-ocr` |
+| **PDF text extraction** | LibPDF | Native PDF parsing, no AI needed |
+
+**Quick start:**
+
+```bash
+ollama pull glm-ocr
+ollama run glm-ocr "Extract all text" --images /path/to/document.png
+```
+
+See `.agent/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peekaboo integration.
 
 ### **Communications**
 
@@ -848,10 +867,11 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [QuickFile](https://github.com/marcusquinn/quickfile-mcp) - Accounting API integration (MCP)
 - [Amazon Order History](https://github.com/marcusquinn/amazon-order-history-csv-download-mcp) - Order data extraction (MCP)
 
-**Document Processing:**
+**Document Processing & OCR:**
 
 - [LibPDF](https://libpdf.dev/) - PDF form filling, digital signatures, encryption, merge/split (via helper script)
 - [Unstract](https://github.com/Zipstack/unstract) - LLM-powered structured data extraction from PDFs, images, DOCX (MCP)
+- [GLM-OCR](https://ollama.com/library/glm-ocr) - Local OCR via Ollama for document text extraction (subagent)
 
 ### **Quick Setup**
 
