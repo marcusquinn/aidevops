@@ -5,16 +5,35 @@
 #
 # Called by crontab entries managed by cron-helper.sh
 # Requires OpenCode server running (opencode serve)
+#
+# Security:
+#   - Uses HTTPS by default for remote hosts (non-localhost)
+#   - Supports basic auth via OPENCODE_SERVER_PASSWORD
+#   - SSL verification enabled by default (disable with OPENCODE_INSECURE=1)
 
 set -euo pipefail
 
 # Configuration
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/aidevops"
 readonly CONFIG_FILE="$CONFIG_DIR/cron-jobs.json"
-# WORKSPACE_DIR reserved for future use (e.g., temp files during execution)
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
+readonly OPENCODE_INSECURE="${OPENCODE_INSECURE:-}"
 readonly MAIL_HELPER="$HOME/.aidevops/agents/scripts/mail-helper.sh"
+
+#######################################
+# Determine protocol based on host
+# Localhost uses HTTP, remote uses HTTPS
+#######################################
+get_protocol() {
+    local host="$1"
+    # Use HTTP only for localhost/127.0.0.1, HTTPS for everything else
+    if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+        echo "http"
+    else
+        echo "https"
+    fi
+}
 
 # Timestamp for logging
 log_timestamp() {
@@ -34,14 +53,27 @@ log_success() {
 }
 
 #######################################
-# Get auth header for OpenCode server
+# Build curl arguments array for secure requests
+# Populates CURL_ARGS array with auth and SSL options
 #######################################
-get_auth_header() {
+build_curl_args() {
+    CURL_ARGS=(-sf)
+    
+    # Add authentication if configured
     if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
         local user="${OPENCODE_SERVER_USERNAME:-admin}"
-        echo "-u ${user}:${OPENCODE_SERVER_PASSWORD}"
-    else
-        echo ""
+        CURL_ARGS+=(-u "${user}:${OPENCODE_SERVER_PASSWORD}")
+    fi
+    
+    # Add SSL options for HTTPS
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    if [[ "$protocol" == "https" ]]; then
+        if [[ -n "$OPENCODE_INSECURE" ]]; then
+            # Allow insecure connections (self-signed certs) - use with caution
+            CURL_ARGS+=(-k)
+            log_info "WARNING: SSL verification disabled (OPENCODE_INSECURE=1)"
+        fi
     fi
 }
 
@@ -49,12 +81,13 @@ get_auth_header() {
 # Check server health
 #######################################
 check_server() {
-    local url="http://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
-    local auth_header
-    auth_header=$(get_auth_header)
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
     
-    # shellcheck disable=SC2086
-    if curl -sf $auth_header "$url" &>/dev/null; then
+    build_curl_args
+    
+    if curl "${CURL_ARGS[@]}" "$url" &>/dev/null; then
         return 0
     else
         return 1
@@ -93,12 +126,13 @@ update_job_status() {
 #######################################
 create_session() {
     local title="$1"
-    local url="http://${OPENCODE_HOST}:${OPENCODE_PORT}/session"
-    local auth_header
-    auth_header=$(get_auth_header)
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/session"
     
-    # shellcheck disable=SC2086
-    curl -sf $auth_header -X POST "$url" \
+    build_curl_args
+    
+    curl "${CURL_ARGS[@]}" -X POST "$url" \
         -H "Content-Type: application/json" \
         -d "{\"title\": \"$title\"}" | jq -r '.id'
 }
@@ -110,10 +144,10 @@ send_prompt() {
     local session_id="$1"
     local task="$2"
     local model="$3"
-    local timeout="$4"
-    local url="http://${OPENCODE_HOST}:${OPENCODE_PORT}/session/${session_id}/message"
-    local auth_header
-    auth_header=$(get_auth_header)
+    local cmd_timeout="$4"
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/session/${session_id}/message"
     
     # Parse model into provider and model ID
     local provider_id model_id
@@ -134,9 +168,10 @@ send_prompt() {
             parts: [{type: "text", text: $task}]
         }')
     
+    build_curl_args
+    
     # Send with timeout
-    # shellcheck disable=SC2086
-    timeout "$timeout" curl -sf $auth_header -X POST "$url" \
+    timeout "$cmd_timeout" curl "${CURL_ARGS[@]}" -X POST "$url" \
         -H "Content-Type: application/json" \
         -d "$body"
 }
@@ -146,12 +181,13 @@ send_prompt() {
 #######################################
 delete_session() {
     local session_id="$1"
-    local url="http://${OPENCODE_HOST}:${OPENCODE_PORT}/session/${session_id}"
-    local auth_header
-    auth_header=$(get_auth_header)
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/session/${session_id}"
     
-    # shellcheck disable=SC2086
-    curl -sf $auth_header -X DELETE "$url" &>/dev/null || true
+    build_curl_args
+    
+    curl "${CURL_ARGS[@]}" -X DELETE "$url" &>/dev/null || true
 }
 
 #######################################

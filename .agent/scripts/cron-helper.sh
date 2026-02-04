@@ -14,6 +14,11 @@
 #
 # Configuration: ~/.config/aidevops/cron-jobs.json
 # Logs: ~/.aidevops/.agent-workspace/cron/
+#
+# Security:
+#   - Uses HTTPS by default for remote hosts (non-localhost)
+#   - Supports basic auth via OPENCODE_SERVER_PASSWORD
+#   - SSL verification enabled by default (disable with OPENCODE_INSECURE=1)
 
 set -euo pipefail
 
@@ -25,6 +30,7 @@ readonly CRON_LOG_DIR="$WORKSPACE_DIR/cron"
 readonly SCRIPTS_DIR="$HOME/.aidevops/agents/scripts"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
+readonly OPENCODE_INSECURE="${OPENCODE_INSECURE:-}"
 readonly DEFAULT_TIMEOUT=600
 readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
 
@@ -84,19 +90,53 @@ check_jq() {
 }
 
 #######################################
+# Determine protocol based on host
+# Localhost uses HTTP, remote uses HTTPS
+#######################################
+get_protocol() {
+    local host="$1"
+    # Use HTTP only for localhost/127.0.0.1, HTTPS for everything else
+    if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+        echo "http"
+    else
+        echo "https"
+    fi
+}
+
+#######################################
+# Build curl arguments array for secure requests
+#######################################
+build_curl_args() {
+    CURL_ARGS=(-sf)
+    
+    # Add authentication if configured
+    if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+        local user="${OPENCODE_SERVER_USERNAME:-admin}"
+        CURL_ARGS+=(-u "${user}:${OPENCODE_SERVER_PASSWORD}")
+    fi
+    
+    # Add SSL options for HTTPS
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    if [[ "$protocol" == "https" ]]; then
+        if [[ -n "$OPENCODE_INSECURE" ]]; then
+            # Allow insecure connections (self-signed certs) - use with caution
+            CURL_ARGS+=(-k)
+        fi
+    fi
+}
+
+#######################################
 # Check OpenCode server health
 #######################################
 check_server() {
-    local url="http://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
-    local auth_header=""
+    local protocol
+    protocol=$(get_protocol "$OPENCODE_HOST")
+    local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
     
-    if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
-        local user="${OPENCODE_SERVER_USERNAME:-admin}"
-        auth_header="-u ${user}:${OPENCODE_SERVER_PASSWORD}"
-    fi
+    build_curl_args
     
-    # shellcheck disable=SC2086
-    if curl -sf $auth_header "$url" &>/dev/null; then
+    if curl "${CURL_ARGS[@]}" "$url" &>/dev/null; then
         return 0
     else
         return 1

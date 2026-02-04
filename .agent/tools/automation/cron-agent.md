@@ -381,11 +381,39 @@ ls -la ~/.aidevops/.agent-workspace/cron/
 
 ## Security Considerations
 
-1. **Server authentication**: Always use `OPENCODE_SERVER_PASSWORD` for network-exposed servers
-2. **Task validation**: Jobs only execute pre-defined tasks from `cron-jobs.json`
-3. **Timeout limits**: All jobs have configurable timeouts to prevent runaway sessions
-4. **Log rotation**: Old logs are automatically pruned (configurable retention)
-5. **Credential isolation**: Tasks inherit environment from cron, not from config files
+1. **HTTPS by default**: Remote hosts (non-localhost) automatically use HTTPS
+2. **Server authentication**: Always use `OPENCODE_SERVER_PASSWORD` for network-exposed servers
+3. **SSL verification**: Enabled by default; use `OPENCODE_INSECURE=1` only for self-signed certs
+4. **Task validation**: Jobs only execute pre-defined tasks from `cron-jobs.json`
+5. **Timeout limits**: All jobs have configurable timeouts to prevent runaway sessions
+6. **Log rotation**: Old logs are automatically pruned (configurable retention)
+7. **Credential isolation**: Tasks inherit environment from cron, not from config files
+
+### Remote Server Configuration
+
+For connecting to a remote OpenCode server:
+
+```bash
+# Required: Set server host and authentication
+export OPENCODE_HOST="opencode.example.com"
+export OPENCODE_PORT="4096"
+export OPENCODE_SERVER_PASSWORD="your-secure-password"
+
+# Optional: For self-signed certificates (not recommended for production)
+export OPENCODE_INSECURE=1
+
+# Test connection
+cron-helper.sh status
+```
+
+### Protocol Selection
+
+| Host | Protocol | Notes |
+|------|----------|-------|
+| `localhost` | HTTP | Safe for local development |
+| `127.0.0.1` | HTTP | Safe for local development |
+| `::1` | HTTP | IPv6 localhost |
+| Any other host | HTTPS | Encrypted connection required |
 
 ## Related Documentation
 
