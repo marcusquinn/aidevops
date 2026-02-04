@@ -1888,6 +1888,360 @@ d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python requ
 
 ---
 
+### [2026-02-03] Parallel Agents & Headless Dispatch
+
+**Status:** Planning
+**Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
+**Source:** [alexfazio's X post on droids](https://gist.github.com/alexfazio/dcf2f253d346d8ed2702935b57184582)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p016,Parallel Agents & Headless Dispatch,planning,0,5,,agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,0.5d,2026-02-03T00:00Z,
+-->
+
+#### Purpose
+
+Document and implement patterns for running parallel Claude Code sessions locally, with optional Matrix chat integration. Inspired by alexfazio's "droids" architecture but adapted for local-first, low-complexity use.
+
+**Key insight from source:** `claude -p "prompt" --output-format stream-json` enables headless dispatch without containers or hosting costs. Each session can have its own AGENTS.md and memory namespace.
+
+**What we're NOT doing:**
+- Fly.io Sprites or cloud hosting (overkill for local use)
+- Containers (unnecessary complexity for trusted code)
+- New orchestration frameworks (extend existing mailbox)
+
+**What we ARE doing:**
+- Document `claude -p` headless patterns
+- Create droid-helper.sh for namespaced agent dispatch
+- Integrate with existing memory system (per-agent namespaces)
+- Optional Matrix bot for chat-triggered dispatch
+- Document model provider flexibility (any OpenAI-compatible endpoint)
+
+#### Context from Discussion
+
+**Complexity/Maintenance/Context Analysis:**
+
+| Approach | Complexity | Maintenance | Context Hazard | User Attention |
+|----------|------------|-------------|----------------|----------------|
+| Fly.io Sprites | High | High | Low (isolated) | High (new concepts) |
+| Local containers | Medium | Medium | Low (isolated) | Medium |
+| Local parallel sessions | Low | Low | Medium (shared fs) | Low |
+| Matrix bot + local claude | Medium | Low | Low (per-room) | Medium (initial setup) |
+
+**Decision:** Start with local parallel sessions. Add Matrix bot if chat-triggered UX is desired. Skip containers unless isolation is required.
+
+**Architecture:**
+
+```text
+~/.aidevops/.agent-workspace/
+├── droids/
+│   ├── code-reviewer/
+│   │   ├── AGENTS.md      # Agent personality/instructions
+│   │   └── memory.db      # Agent-specific memories (optional)
+│   └── seo-analyst/
+│       ├── AGENTS.md
+│       └── memory.db
+```
+
+**Key patterns from source post:**
+1. `claude -p --output-format stream-json` - headless dispatch
+2. `--resume $session_id` - deterministic session mapping
+3. Self-editing AGENTS.md - agents that improve themselves
+4. Chat-triggered dispatch - reduce friction vs terminal
+
+**Model provider flexibility:**
+
+```bash
+# Any OpenAI-compatible endpoint works
+export ANTHROPIC_BASE_URL="https://your-provider/v1"
+export ANTHROPIC_API_KEY="your-key"
+```
+
+Users can choose: local (ollama, llama.cpp), cloud (together.ai, openrouter, groq), or self-hosted.
+
+#### Progress
+
+- [ ] (2026-02-03) Phase 1: Document headless dispatch patterns ~4h
+  - Create `tools/ai-assistants/headless-dispatch.md`
+  - Document `claude -p` flags and streaming JSON format
+  - Document session resumption with `--resume`
+  - Add model provider configuration examples
+- [ ] (2026-02-03) Phase 2: Create droid-helper.sh ~4h
+  - Namespaced agent dispatch with per-droid AGENTS.md
+  - Deterministic session IDs per droid
+  - Integration with existing memory system
+  - Support for parallel execution
+- [ ] (2026-02-03) Phase 3: Memory namespace integration ~3h
+  - Extend memory-helper.sh with `--namespace` flag
+  - Per-droid memory isolation (optional)
+  - Shared memory access when needed
+- [ ] (2026-02-03) Phase 4: Matrix bot integration (optional) ~6h
+  - Document Matrix bot setup on Cloudron
+  - Create matrix-dispatch-helper.sh
+  - Room-to-droid mapping
+  - Message → claude -p → response flow
+- [ ] (2026-02-03) Phase 5: Documentation & examples ~3h
+  - Update AGENTS.md with parallel agent guidance
+  - Create example droids (code-reviewer, seo-analyst)
+  - Document when to use parallel vs sequential
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m064,p016,Phase 1: Document headless dispatch patterns,4h,,2026-02-03T00:00Z,,pending
+m065,p016,Phase 2: Create droid-helper.sh,4h,,2026-02-03T00:00Z,,pending
+m066,p016,Phase 3: Memory namespace integration,3h,,2026-02-03T00:00Z,,pending
+m067,p016,Phase 4: Matrix bot integration (optional),6h,,2026-02-03T00:00Z,,pending
+m068,p016,Phase 5: Documentation & examples,3h,,2026-02-03T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Local parallel sessions over containers/cloud
+  **Rationale:** Zero hosting cost, shared filesystem, no sync needed, existing credentials work
+  **Date:** 2026-02-03
+
+- **Decision:** Extend existing memory system with namespaces
+  **Rationale:** Reuse proven SQLite FTS5 infrastructure, avoid new dependencies
+  **Date:** 2026-02-03
+
+- **Decision:** Matrix over Discord/Slack for chat integration
+  **Rationale:** Self-hosted on Cloudron, no platform risk, already in user's stack
+  **Date:** 2026-02-03
+
+- **Decision:** Document model providers generically, not specific versions
+  **Rationale:** Models evolve quickly (minimax, kimi, qwen, deepseek, etc.), keep options open
+  **Date:** 2026-02-03
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d039,p016,Local parallel sessions over containers/cloud,Zero hosting cost shared filesystem no sync needed,2026-02-03,Architecture
+d040,p016,Extend existing memory system with namespaces,Reuse proven SQLite FTS5 infrastructure,2026-02-03,None
+d041,p016,Matrix over Discord/Slack for chat integration,Self-hosted on Cloudron no platform risk,2026-02-03,None
+d042,p016,Document model providers generically,Models evolve quickly keep options open,2026-02-03,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `tools/ai-assistants/headless-dispatch.md` | Document `claude -p` patterns | 1 |
+| `scripts/droid-helper.sh` | Namespaced agent dispatch | 2 |
+| `scripts/matrix-dispatch-helper.sh` | Matrix bot integration | 4 |
+| Example droids in `.agent-workspace/droids/` | Reference implementations | 5 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `scripts/memory-helper.sh` | Add `--namespace` flag | 3 |
+| `memory/README.md` | Document namespace feature | 3 |
+| `AGENTS.md` | Add parallel agent guidance | 5 |
+| `subagent-index.toon` | Add new subagents | 5 |
+
+---
+
+### [2026-02-04] Self-Improving Agent System
+
+**Status:** Planning
+**Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
+**Source:** Discussion on parallel agents, OpenCode server, and community contributions
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p017,Self-Improving Agent System,planning,0,6,,agents|self-improvement|automation|privacy|testing|opencode,2d,1d,0.5d,0.5d,2026-02-04T00:00Z,
+-->
+
+#### Purpose
+
+Create a self-improving agent system that can review its own performance, refine agents based on learnings, test changes in isolated sessions, and contribute improvements back to the community with proper privacy filtering.
+
+**Key capabilities:**
+1. **Review** - Analyze memory for success/failure patterns, identify gaps
+2. **Refine** - Generate and apply improvements to agents/scripts
+3. **Test** - Validate changes in isolated OpenCode sessions
+4. **PR** - Contribute improvements with privacy filtering for public repos
+
+**Safety guardrails:**
+- Worktree isolation for all changes
+- Human approval required for PRs
+- Mandatory privacy filter before public contributions
+- Dry-run default (must explicitly enable PR creation)
+- Scope limits (agents-only or scripts-only)
+- Audit log to memory
+
+#### Context from Discussion
+
+**Architecture:**
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Self-Improvement Loop                             │
+│                                                                          │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │  REVIEW  │───▶│  REFINE  │───▶│  TEST    │───▶│  PR      │          │
+│  │          │    │          │    │          │    │          │          │
+│  │ Memory   │    │ Edit     │    │ OpenCode │    │ Privacy  │          │
+│  │ Patterns │    │ Agents   │    │ Sessions │    │ Filter   │          │
+│  │ Failures │    │ Scripts  │    │ Validate │    │ gh CLI   │          │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘          │
+│       ▲                                               │                  │
+│       └───────────────────────────────────────────────┘                  │
+│                         Iterate until quality gates pass                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**What we already have:**
+- `agent-review.md` - Manual review process
+- `memory-helper.sh` - Pattern storage (SUCCESS/FAILURE types)
+- `session-distill-helper.sh` - Extract learnings
+- `secretlint` - Credential detection
+- OpenCode server API - Isolated session testing
+
+**Privacy filter components:**
+1. Secretlint scan for credentials
+2. Pattern-based redaction (emails, IPs, local URLs, home paths, API keys)
+3. Project-specific patterns from `.aidevops/privacy-patterns.txt`
+4. Dry-run review before PR creation
+
+**Example workflow:**
+
+```bash
+# Agent notices repeated failure pattern
+/remember type:FAILURE "ShellCheck SC2086 errors keep appearing in new scripts"
+
+# Later, self-improvement runs
+/self-improve --scope scripts --dry-run
+
+# Output:
+# === Self-Improvement Analysis ===
+# 
+# FAILURE patterns found: 3
+# - SC2086 unquoted variables (5 occurrences)
+# - SC2155 declare and assign separately (2 occurrences)
+# - Missing 'local' in functions (3 occurrences)
+#
+# Proposed changes:
+# 1. Update build-agent.md with ShellCheck reminder
+# 2. Add pre-commit hook for ShellCheck
+# 3. Create shellcheck-patterns.md subagent
+#
+# Test results: PASS (3/3 quality gates)
+# Privacy filter: CLEAN (no secrets/PII detected)
+#
+# Run without --dry-run to create PR
+```
+
+#### Progress
+
+- [ ] (2026-02-04) Phase 1: Review phase - pattern analysis ~1.5h
+  - Query memory for FAILURE/SUCCESS patterns
+  - Identify gaps (failures without solutions)
+  - Check agent-review suggestions
+  - Create self-improve-helper.sh with analyze command
+- [ ] (2026-02-04) Phase 2: Refine phase - generate improvements ~2h
+  - Generate improvement proposals from patterns
+  - Edit agents/scripts in worktree
+  - Run linters-local.sh for validation
+  - Add refine command to self-improve-helper.sh
+- [ ] (2026-02-04) Phase 3: Test phase - isolated sessions ~1.5h
+  - Create OpenCode test session via API
+  - Run test prompts against improved agents
+  - Validate quality gates pass
+  - Compare before/after behavior
+  - Add test command to self-improve-helper.sh
+- [ ] (2026-02-04) Phase 4: Privacy filter implementation ~3h
+  - Create privacy-filter-helper.sh
+  - Integrate secretlint for credential detection
+  - Add pattern-based redaction (emails, IPs, paths, keys)
+  - Support project-specific patterns
+  - Dry-run review mode
+- [ ] (2026-02-04) Phase 5: PR phase - community contributions ~1h
+  - Run privacy filter (mandatory)
+  - Show redacted diff for approval
+  - Create PR with evidence from memory
+  - Include test results and privacy attestation
+  - Add pr command to self-improve-helper.sh
+- [ ] (2026-02-04) Phase 6: Documentation & /self-improve command ~2h
+  - Create tools/build-agent/self-improvement.md subagent
+  - Create scripts/commands/self-improve.md
+  - Update AGENTS.md with self-improvement guidance
+  - Add examples and safety documentation
+
+<!--TOON:milestones[6]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m069,p017,Phase 1: Review phase - pattern analysis,1.5h,,2026-02-04T00:00Z,,pending
+m070,p017,Phase 2: Refine phase - generate improvements,2h,,2026-02-04T00:00Z,,pending
+m071,p017,Phase 3: Test phase - isolated sessions,1.5h,,2026-02-04T00:00Z,,pending
+m072,p017,Phase 4: Privacy filter implementation,3h,,2026-02-04T00:00Z,,pending
+m073,p017,Phase 5: PR phase - community contributions,1h,,2026-02-04T00:00Z,,pending
+m074,p017,Phase 6: Documentation & /self-improve command,2h,,2026-02-04T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Use OpenCode server API for isolated testing
+  **Rationale:** Provides session management, async prompts, and SSE events without spawning CLI processes
+  **Date:** 2026-02-04
+
+- **Decision:** Mandatory privacy filter before any public PR
+  **Rationale:** Prevents accidental exposure of credentials, PII, or internal paths
+  **Date:** 2026-02-04
+
+- **Decision:** Dry-run default for self-improvement
+  **Rationale:** Human must explicitly approve PR creation, prevents runaway automation
+  **Date:** 2026-02-04
+
+- **Decision:** Worktree isolation for all changes
+  **Rationale:** Easy rollback, doesn't affect main branch until PR merged
+  **Date:** 2026-02-04
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d043,p017,Use OpenCode server API for isolated testing,Provides session management and SSE events without CLI spawning,2026-02-04,Architecture
+d044,p017,Mandatory privacy filter before any public PR,Prevents accidental exposure of credentials or PII,2026-02-04,Security
+d045,p017,Dry-run default for self-improvement,Human must explicitly approve PR creation,2026-02-04,Safety
+d046,p017,Worktree isolation for all changes,Easy rollback and doesn't affect main branch,2026-02-04,Safety
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `scripts/self-improve-helper.sh` | Main self-improvement script | 1-5 |
+| `scripts/privacy-filter-helper.sh` | Privacy filtering for PRs | 4 |
+| `scripts/agent-test-helper.sh` | Agent testing framework | 3 |
+| `scripts/commands/self-improve.md` | /self-improve command | 6 |
+| `tools/build-agent/self-improvement.md` | Self-improvement subagent | 6 |
+| `tools/security/privacy-filter.md` | Privacy filter documentation | 4 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `memory-helper.sh` | Add pattern query helpers | 1 |
+| `agent-review.md` | Link to self-improvement | 6 |
+| `AGENTS.md` | Add self-improvement guidance | 6 |
+| `subagent-index.toon` | Add new subagents | 6 |
+
+#### Related Tasks
+
+| Task | Description | Dependency |
+|------|-------------|------------|
+| t116 | Self-improving agent system (main task) | This plan |
+| t117 | Privacy filter for public PRs | Blocks t116.4 |
+| t118 | Agent testing framework | Related |
+| t115 | OpenCode server documentation | Prerequisite knowledge |
+
+---
+
 ## Completed Plans
 
 ### [2025-12-21] Beads Integration for aidevops Tasks & Plans ✓

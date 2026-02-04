@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.99.0] - 2026-02-04
+
+### Added
+
+- add cron agent for scheduled AI task dispatch (#304)
+
+### Fixed
+
+- harden cron scripts for secure remote use (#305)
+
+## [2.98.0] - 2026-02-04
+
+### Added
+
+- OpenCode server docs, privacy filter, and self-improving agents (t115, t116, t117) (#302)
+- import robust-skills from ccheney/robust-skills (#296)
+- support multiple AI code reviewers in PR loop (#295)
+
+### Changed
+
+- Documentation: add self-improving agent system plan and tasks (t110-t118) (#301)
+- Documentation: add parallel agents & headless dispatch plan (t104) (#300)
+- Documentation: add security follow-up tasks and plans (#292)
+- Refactor: improve skill categorization and reorganize imported skills (#297)
+
+### Fixed
+
+- correct SonarCloud rule prefix from shell: to shelldre: (#303)
+
+## [2.97.1] - 2026-02-03
+
+### Added
+
+- add @socket subagent for dependency security scanning (#287)
+- add sentry to Build+ allowed subagents (#283)
+- add @sentry subagent for error monitoring MCP (#282)
+- disable sentry and socket MCPs by default (#281)
+- disable google-analytics-mcp and context7 by default (#280)
+- disable on-demand MCPs globally in opencode.json (#277)
+- MCP on-demand loading - disable playwriter, augment, gh_grep globally (#275)
+
+### Changed
+
+- Documentation: add security subagents and tools to README
+- Documentation: update README counts and add sentry/socket subagents
+- Documentation: trim sentry subagent to focus on auth/token setup (#285)
+- Documentation: add Next.js SDK setup instructions to @sentry subagent (#284)
+
+### Fixed
+
+- route /agent-review command to Build+ instead of disabled Build-Agent (#293)
+- catch updown api key secrets with secretlint (#291)
+- add concurrency to all GitHub workflows (#290)
+- address SonarCloud S7679 positional parameter violations (#289)
+- remove invalid '|| exit' after 'then' in clawdhub-helper.sh (#288)
+- auto-detect OpenCode port in session-rename tool (#286)
+- move disable_ondemand_mcps to run after all MCP setup functions (#279)
+- correct MCP name gh-grep to gh_grep in disable_ondemand_mcps (#278)
+
 ## [2.97.0] - 2026-02-02
 
 ### Added

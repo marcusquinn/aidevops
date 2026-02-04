@@ -48,6 +48,7 @@ This document provides a comprehensive list of CLI AI assistants and tools that 
   - Multi-provider support (OpenAI, Anthropic, etc.)
   - GitHub/GitLab integration
 - **Configuration**: See `~/.config/opencode/opencode.json` or project `.opencode/`
+- **Server Mode**: See `opencode-server.md` for programmatic API access
 
 ### **Professional Development Assistants**
 

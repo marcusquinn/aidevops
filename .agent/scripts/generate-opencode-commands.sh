@@ -37,7 +37,7 @@ command_count=0
 cat > "$OPENCODE_COMMAND_DIR/agent-review.md" << 'EOF'
 ---
 description: Systematic review and improvement of agent instructions
-agent: Build-Agent
+agent: Build+
 subtask: true
 ---
 
