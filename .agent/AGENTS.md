@@ -49,6 +49,23 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 ---
 
+## Terminal Capabilities
+
+The Bash tool provides full PTY access. You can run any CLI autonomously:
+
+| Category | Examples |
+|----------|----------|
+| **Editors** | `vim`, `nano`, `emacs` |
+| **Database shells** | `psql`, `mysql`, `redis-cli`, `mongosh` |
+| **Remote sessions** | `ssh user@host`, `mosh` |
+| **Monitoring** | `htop`, `tail -f`, `watch`, `less` |
+| **Dev servers** | `npm run dev`, `cargo watch`, `flask run` |
+| **Nested AI** | `opencode -p "subtask"` (spawns subagent in same TUI) |
+
+For long-running processes: use `&`, `nohup`, or `screen`/`tmux`. For parallel AI dispatch: use OpenCode server API (`tools/ai-assistants/opencode-server.md`).
+
+---
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
