@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "2.97.0",
+  "version": "2.97.1",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "main": "index.js",
@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
+    "@secretlint/secretlint-rule-regexp": "^11.2.5",
     "@types/bun": "latest",
     "secretlint": "^11.2.5",
     "typescript": "^5.0.0"

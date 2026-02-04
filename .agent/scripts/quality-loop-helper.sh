@@ -56,6 +56,10 @@ readonly FAST_SERVICES="codefactor|version|framework"
 readonly MEDIUM_SERVICES="sonarcloud|codacy|qlty|code-review-monitoring"
 readonly SLOW_SERVICES="coderabbit|coderabbitai"
 
+# AI code reviewers (regex pattern for jq test() - anchored to prevent false positives)
+# Supported: CodeRabbit, Gemini Code Assist, Augment Code, GitHub Copilot
+readonly AI_REVIEWERS="^coderabbit|^gemini-code-assist\\[bot\\]$|^augment-code\\[bot\\]$|^augmentcode\\[bot\\]$|^copilot\\[bot\\]$"
+
 # Timing constants (seconds)
 readonly WAIT_FAST=10
 readonly WAIT_MEDIUM=60
@@ -604,14 +608,15 @@ check_pr_status() {
     check_count=$(echo "$pr_info" | jq '.statusCheckRollup | length')
     
     if [[ "$check_count" -gt 0 ]]; then
-        local pending_count failed_count
-        pending_count=$(echo "$pr_info" | jq '[.statusCheckRollup[] | select(.status == "PENDING" or .status == "IN_PROGRESS")] | length')
-        failed_count=$(echo "$pr_info" | jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE")] | length')
+        local pending_count failed_count action_required_count
+        pending_count=$(printf '%s' "$pr_info" | jq '[.statusCheckRollup[] | select(.status == "PENDING" or .status == "IN_PROGRESS")] | length')
+        failed_count=$(printf '%s' "$pr_info" | jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE")] | length')
+        action_required_count=$(printf '%s' "$pr_info" | jq '[.statusCheckRollup[] | select(.conclusion == "ACTION_REQUIRED")] | length')
         
-        print_info "  CI Checks: $check_count total, $pending_count pending, $failed_count failed"
+        print_info "  CI Checks: $check_count total, $pending_count pending, $failed_count failed, $action_required_count action required"
         
         [[ "$pending_count" -gt 0 ]] && checks_pending=true
-        [[ "$failed_count" -gt 0 ]] && checks_failed=true
+        [[ "$failed_count" -gt 0 || "$action_required_count" -gt 0 ]] && checks_failed=true
     fi
     
     # Determine overall status
@@ -640,13 +645,21 @@ get_pr_feedback() {
     
     print_step "Getting PR feedback..."
     
-    # Get CodeRabbit comments
-    local coderabbit_comments
-    coderabbit_comments=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" --jq '.[] | select(.user.login | contains("coderabbit")) | .body' 2>/dev/null | head -10 || echo "")
+    # Get AI reviewer comments (CodeRabbit, Gemini Code Assist, Augment Code, Copilot)
+    local ai_review_comments api_response
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" 2>/dev/null)
     
-    if [[ -n "$coderabbit_comments" ]]; then
-        print_info "CodeRabbit feedback found"
-        echo "$coderabbit_comments"
+    if [[ -z "$api_response" ]]; then
+        print_warning "Failed to fetch PR comments from GitHub API"
+    else
+        ai_review_comments=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+            '.[] | select(.user.login | test($bots; "i")) | "\(.user.login): \(.body)"' \
+            2>/dev/null | head -20)
+        
+        if [[ -n "$ai_review_comments" ]]; then
+            print_info "AI reviewer feedback found"
+            echo "$ai_review_comments"
+        fi
     fi
     
     # Get check run annotations
@@ -685,10 +698,16 @@ check_and_trigger_review() {
         return 1
     fi
     
-    # Get last CodeRabbit review time
-    local last_review_time
-    last_review_time=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" \
-        --jq '[.[] | select(.user.login | contains("coderabbit"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null || echo "")
+    # Get last AI reviewer review time (any supported reviewer)
+    local last_review_time api_response
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" 2>/dev/null)
+    
+    if [[ -n "$api_response" ]]; then
+        last_review_time=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \
+            '[.[] | select(.user.login | test($bots; "i"))] | sort_by(.submitted_at) | last | .submitted_at // ""' 2>/dev/null)
+    else
+        last_review_time=""
+    fi
     
     # Convert times to epoch for comparison
     local now_epoch last_push_epoch last_review_epoch
@@ -726,6 +745,52 @@ check_and_trigger_review() {
     fi
     
     return 1
+}
+
+# Check for unresolved review threads on a PR using GraphQL
+# Arguments: $1 - PR number
+# Returns: 0 if no unresolved threads, 1 if unresolved threads exist, 2 on API error
+# Output: Warning message if unresolved threads found
+check_unresolved_review_comments() {
+    local pr_number="$1"
+    
+    local repo_owner repo_name api_response unresolved_count
+    repo_owner=$(gh repo view --json owner -q '.owner.login' 2>/dev/null || echo "")
+    repo_name=$(gh repo view --json name -q '.name' 2>/dev/null || echo "")
+    
+    if [[ -z "$repo_owner" || -z "$repo_name" ]]; then
+        print_error "Failed to resolve repo owner/name - cannot verify review status"
+        return 2
+    fi
+    
+    # shellcheck disable=SC2016 # GraphQL variables, not shell - single quotes intentional
+    api_response=$(gh api graphql -f query='
+      query($owner:String!, $repo:String!, $number:Int!) {
+        repository(owner:$owner, name:$repo) {
+          pullRequest(number:$number) {
+            reviewThreads(first:100) { nodes { isResolved } }
+          }
+        }
+      }' -f owner="$repo_owner" -f repo="$repo_name" -F number="$pr_number" 2>/dev/null)
+    
+    if [[ -z "$api_response" ]]; then
+        print_error "Failed to fetch PR review threads from GitHub API - cannot verify review status"
+        return 2
+    fi
+    
+    unresolved_count=$(printf '%s' "$api_response" | jq -r \
+        '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' 2>/dev/null)
+    
+    if ! [[ "$unresolved_count" =~ ^[0-9]+$ ]]; then
+        print_error "Failed to parse unresolved thread count - cannot proceed safely"
+        return 2
+    fi
+    
+    if [[ "$unresolved_count" -gt 0 ]]; then
+        print_warning "Found $unresolved_count unresolved review threads"
+        return 1
+    fi
+    return 0
 }
 
 # Monitor PR until approved or merged
@@ -802,10 +867,23 @@ pr_review_loop() {
                 return 0
                 ;;
             READY)
-                print_success "PR is approved and ready to merge!"
-                rm -f "$STATE_FILE"
-                echo "<promise>PR_APPROVED</promise>"
-                return 0
+                # Check for unresolved AI review comments before declaring ready
+                local unresolved_check_result
+                check_unresolved_review_comments "$pr_number"
+                unresolved_check_result=$?
+                
+                if [[ $unresolved_check_result -eq 2 ]]; then
+                    print_warning "Could not verify AI review status (API error) - proceeding with caution"
+                elif [[ $unresolved_check_result -eq 1 ]]; then
+                    print_warning "PR approved but has unresolved AI review comments"
+                    get_pr_feedback "$pr_number"
+                    print_info "Address the AI reviewer feedback and push updates."
+                else
+                    print_success "PR is approved and ready to merge!"
+                    rm -f "$STATE_FILE"
+                    echo "<promise>PR_APPROVED</promise>"
+                    return 0
+                fi
                 ;;
             PENDING)
                 # Get pending checks and calculate adaptive wait
