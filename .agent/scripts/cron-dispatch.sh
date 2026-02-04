@@ -236,7 +236,7 @@ main() {
     
     # Change to workdir
     if [[ -n "$workdir" && -d "$workdir" ]]; then
-        cd "$workdir"
+        cd "$workdir" || exit
         log_info "Changed to: $workdir"
     fi
     
