@@ -1949,6 +1949,7 @@ Document and implement patterns for running parallel Claude Code sessions locall
 4. Chat-triggered dispatch - reduce friction vs terminal
 
 **Model provider flexibility:**
+
 ```bash
 # Any OpenAI-compatible endpoint works
 export ANTHROPIC_BASE_URL="https://your-provider/v1"
