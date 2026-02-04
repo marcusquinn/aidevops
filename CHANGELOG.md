@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - consolidate SonarCloud security hotspot exclusions for shell scripts (#307)
+
 ## [2.99.0] - 2026-02-04
 
 ### Added
