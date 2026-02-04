@@ -796,7 +796,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
 - [playwright-cli](https://github.com/microsoft/playwright-cli) - Microsoft official CLI for AI agents, `--session` isolation, built-in tracing
 - [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
-- [agent-browser](https://github.com/vercel-labs/agent-browser) - CLI/CI/CD, `--session` parallel, ref-based element targeting
+- [agent-browser](https://github.com/vercel-labs/agent-browser) - CLI/CI/CD, `--session` parallel, ref-based element targeting, **iOS Simulator support** (macOS)
 - [Crawl4AI](https://github.com/unclecode/crawl4ai) - Bulk extraction, `arun_many` parallel (1.7x), LLM-ready markdown
 - [WaterCrawl](https://github.com/watercrawl/watercrawl) - Self-hosted crawling with web search, sitemap generation, JS rendering, proxy support
 - [Playwriter](https://github.com/nicholasgriffintn/playwriter) - Your browser's extensions/passwords/proxy, already unlocked
@@ -923,6 +923,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **Tracing** | Full API | Built-in CLI | Via Playwright | Via Playwright | No | Via CDP | Via Playwright |
 | **Natural language** | No | No | No | No | LLM extraction | No | Yes |
 | **Self-healing** | No | No | No | No | No | No | Yes |
+| **iOS Simulator** | No | No | No | **Yes** (macOS) | No | No | No |
 | **Maintainer** | Microsoft | Microsoft | Community | Vercel | Community | Community | Browserbase |
 
 ### Tool Selection
@@ -936,6 +937,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **Bulk extraction** | Crawl4AI | Purpose-built, parallel, LLM-ready output |
 | **Self-hosted crawling** | WaterCrawl | Docker deployment, web search, sitemap generation |
 | **CLI/CI/CD** | playwright-cli or agent-browser | No server needed, `--session` isolation |
+| **iOS mobile testing** | agent-browser | Real Safari in iOS Simulator (macOS only) |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
 | **Bot detection evasion** | Anti-detect stack | Camoufox (full) or rebrowser-patches (quick) |
