@@ -476,7 +476,15 @@ Peekaboo supports multiple AI providers for vision analysis:
 | Anthropic | Claude 4.x | `ANTHROPIC_API_KEY` |
 | xAI | Grok 4-fast | `XAI_API_KEY` |
 | Google | Gemini 2.5 (pro/flash) | `GOOGLE_API_KEY` |
-| Ollama | llama3.3, llava, etc. | Local (no key needed) |
+| Ollama | llama3.3, llava, glm-ocr, etc. | Local (no key needed) |
+
+### Recommended Models by Task
+
+| Task | Recommended Model | Why |
+|------|-------------------|-----|
+| **OCR / Document text extraction** | `ollama/glm-ocr` | Purpose-built for OCR, handles complex layouts, tables, forms |
+| **General screen understanding** | `ollama/llava` or cloud models | Good balance of speed and accuracy |
+| **UI element detection** | Cloud models (GPT-4o, Claude) | Better at identifying interactive elements |
 
 ### Configure Providers
 
@@ -495,12 +503,18 @@ export PEEKABOO_AI_PROVIDERS="openai/gpt-5.1,anthropic/claude-opus-4"
 # Install Ollama
 brew install ollama
 
-# Pull a vision model
-ollama pull llava
+# Pull vision models
+ollama pull llava      # General vision
+ollama pull glm-ocr    # OCR-optimized (recommended for document/text extraction)
 
-# Use with Peekaboo
+# Use with Peekaboo - general vision
 peekaboo image --mode screen --analyze "What's on screen?" --model ollama/llava
+
+# Use with Peekaboo - OCR tasks
+peekaboo image --mode window --app Preview --analyze "Extract all text from this document" --model ollama/glm-ocr
 ```
+
+**GLM-OCR** is recommended for OCR-heavy tasks (documents, forms, tables, receipts). See `tools/ocr/glm-ocr.md` for standalone OCR workflows without Peekaboo.
 
 ## Workflow Patterns
 
