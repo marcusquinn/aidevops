@@ -208,6 +208,17 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Armin Ronacher's blog post on Pi (minimal coding agent by Mario Zechner). Key inspirations to evaluate: 1) Minimal core with only 4 tools (Read, Write, Edit, Bash) - compare to aidevops tool sprawl. 2) Extension system with persistent state across sessions - compare to aidevops memory system. 3) Session trees with branching/rewinding - could improve context management. 4) Hot-reloading extensions - agent can modify and reload its own tools. 5) TUI extensions (spinners, progress bars, file pickers) - enhance CLI experience. 6) /answer command for structured Q&A. 7) /review command with branch-based review context. 8) Skills as agent-generated code, not downloaded packages. 9) No MCP - uses mcporter CLI bridge instead. 10) CDP-based browser skill replacing MCP/Playwright. Evaluate which patterns could simplify or enhance aidevops.
 - [ ] t104 Add Tirith terminal security guard for homograph/injection attacks #security #tools #terminal ~2h (ai:1.5h test:20m read:10m) logged:2026-02-03 ref:https://github.com/sheeki03/tirith
   - Notes: Tirith (740 stars, Rust, AGPL-3.0) - terminal security tool that catches attacks browsers block but terminals don't. **30 rules across 7 categories:** 1) Homograph attacks (Cyrillic/Greek lookalikes, punycode, mixed-script). 2) Terminal injection (ANSI escapes, bidi overrides, zero-width chars). 3) Pipe-to-shell (`curl|bash`, `wget|sh`, `eval $(wget ...)`). 4) Dotfile attacks (downloads targeting ~/.bashrc, ~/.ssh/authorized_keys). 5) Insecure transport (HTTP piped to shell, `curl -k`). 6) Ecosystem threats (git clone typosquats, untrusted Docker registries, pip/npm URL installs). 7) Credential exposure (userinfo tricks, shortened URLs). **Integration options:** 1) Add to aidevops setup/onboarding as recommended install. 2) Create tirith.md subagent at tools/security/. 3) Document shell hook setup (`eval "$(tirith init)"`). 4) Consider MCP wrapper for `tirith check` command validation. **Key features:** Sub-millisecond overhead, local-only (no network calls), YAML policy config, bypass with `TIRITH=0` prefix. Install: `brew install sheeki03/tap/tirith` or `npm install -g tirith` or `cargo install tirith`.
+- [ ] t109 Parallel Agents & Headless Dispatch #plan → [todo/PLANS.md#2026-02-03-parallel-agents--headless-dispatch] ~3d (ai:1.5d test:1d read:0.5d) logged:2026-02-03
+  - [ ] t109.1 Document headless dispatch patterns ~4h blocked-by:none
+    - Notes: Create tools/ai-assistants/headless-dispatch.md. Document `claude -p` flags, streaming JSON format, session resumption with `--resume`, model provider configuration examples.
+  - [ ] t109.2 Create droid-helper.sh ~4h blocked-by:none
+    - Notes: Namespaced agent dispatch with per-droid AGENTS.md. Deterministic session IDs per droid. Integration with existing memory system. Support for parallel execution.
+  - [ ] t109.3 Memory namespace integration ~3h blocked-by:t109.2
+    - Notes: Extend memory-helper.sh with `--namespace` flag. Per-droid memory isolation (optional). Shared memory access when needed.
+  - [ ] t109.4 Matrix bot integration (optional) ~6h blocked-by:t109.2
+    - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-droid mapping. Message → claude -p → response flow.
+  - [ ] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3
+    - Notes: Update AGENTS.md with parallel agent guidance. Create example droids (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~3d (ai:2d test:0.5d read:0.5d) logged:2026-01-31
   - [ ] t102.1 Cost-Aware Model Routing ~4h blocked-by:none
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
@@ -249,12 +260,18 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
 
-<!--TOON:backlog[57]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[63]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,4h,2h,1h,2026-02-03T00:00Z,pending,,,
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,3h,1.5h,1h,2026-02-03T00:00Z,pending,,,
+t109,Parallel Agents & Headless Dispatch,,plan|agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,2026-02-03T00:00Z,pending,,,
+t109.1,Document headless dispatch patterns,,agents|headless|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t109
+t109.2,Create droid-helper.sh,,agents|scripts|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t109
+t109.3,Memory namespace integration,,memory|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.2,,t109
+t109.4,Matrix bot integration (optional),,matrix|chat|dispatch,6h,6h,,2026-02-03T00:00Z,pending,t109.2,,t109
+t109.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.1|t109.2|t109.3,,t109
 t073,Document Extraction Subagent & Workflow,,plan|document-extraction|docling|extractthinker|presidio|pii|local-llm|privacy,3h,1h,2h,2026-01-25T01:00Z,pending,,,
 t073.1,Implementation (all subagents + scripts),,document-extraction,1h,1h,,2026-01-25T01:00Z,pending,,,t073
 t073.2,Integration Testing,,document-extraction|testing,2h,,2h,2026-01-25T01:00Z,pending,t073.1,,t073
