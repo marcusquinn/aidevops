@@ -23,7 +23,7 @@ pro,gemini-2.5-pro,Capable large context
 -->
 
 <!--TOON:subagents[36]{folder,purpose,key_files}:
-aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting
+aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting|self-improving-agents
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings,dataforseo|serper|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score
 content/,Content creation - copywriting and editorial,guidelines|humanise
@@ -76,7 +76,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[28]{name,purpose}:
+<!--TOON:scripts[29]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -105,4 +105,5 @@ cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build 
 email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
 yt-dlp-helper.sh,YouTube video/audio download and local file conversion
 privacy-filter-helper.sh,Privacy filter for public PR contributions
+self-improve-helper.sh,Self-improving agent system (analyze refine test pr)
 -->

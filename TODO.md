@@ -231,15 +231,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Full speech-to-speech conversation with AI via Pipecat pipeline. Flow: Mic → Soniox STT → OpenCode API → Cartesia TTS → Speaker. Real-time voice conversation without typing. Builds on t080/t081 Pipecat setup. Add to tools/voice/pipecat-opencode.md.
 - [ ] t115 OpenCode server subagent documentation #docs #tools #ai-assistants ~2h (ai:1.5h test:20m read:10m) logged:2026-02-04 started:2026-02-04T12:00Z
   - Notes: Document OpenCode server mode (opencode serve) patterns for aidevops. Cover: server setup, SDK usage, session management, async prompts, SSE events, TUI control, authentication. Reference https://opencode.ai/docs/server/ and https://opencode.ai/docs/sdk/. Add to tools/ai-assistants/opencode-server.md.
-- [ ] t116 Self-improving agent system #plan → [todo/PLANS.md#2026-02-04-self-improving-agent-system] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-04
-  - [ ] t116.1 Review phase - pattern analysis from memory ~1.5h blocked-by:none
-    - Notes: Query memory for FAILURE/SUCCESS patterns, identify gaps (failures without solutions), check agent-review suggestions. Create self-improve-helper.sh with analyze command.
-  - [ ] t116.2 Refine phase - generate and apply improvements ~2h blocked-by:t116.1
-    - Notes: Generate improvement proposals, edit agents/scripts in worktree, run linters-local.sh. Add refine command to self-improve-helper.sh.
-  - [ ] t116.3 Test phase - isolated OpenCode sessions ~1.5h blocked-by:t116.2
-    - Notes: Create OpenCode test session, run test prompts against improved agents, validate quality gates pass, compare before/after. Add test command to self-improve-helper.sh.
-  - [ ] t116.4 PR phase - privacy-filtered contributions ~1h blocked-by:t116.3,t117
-    - Notes: Run privacy filter, show redacted diff for approval, create PR with evidence from memory, test results, privacy attestation. Add pr command to self-improve-helper.sh.
+- [x] t116 Self-improving agent system #plan → [todo/PLANS.md#2026-02-04-self-improving-agent-system] ~6h actual:2h (ai:4h test:1.5h read:30m) logged:2026-02-04 started:2026-02-04T12:30Z completed:2026-02-04
+  - [x] t116.1 Review phase - pattern analysis from memory ~1.5h actual:30m blocked-by:none completed:2026-02-04
+    - Notes: Implemented analyze command in self-improve-helper.sh. Queries memory for FAILED_APPROACH, ERROR_FIX, WORKING_SOLUTION patterns. Identifies gaps (failures without solutions).
+  - [x] t116.2 Refine phase - generate and apply improvements ~2h actual:30m blocked-by:t116.1 completed:2026-02-04
+    - Notes: Implemented refine command. Creates OpenCode session, sends analysis with structured prompt, receives proposals as JSON. Supports --dry-run.
+  - [x] t116.3 Test phase - isolated OpenCode sessions ~1.5h actual:30m blocked-by:t116.2 completed:2026-02-04
+    - Notes: Implemented test command. Runs each proposal's test_prompt in OpenCode session, checks for error indicators, saves results.
+  - [x] t116.4 PR phase - privacy-filtered contributions ~1h actual:30m blocked-by:t116.3,t117 completed:2026-02-04
+    - Notes: Implemented pr command. Runs mandatory privacy filter, builds PR body with evidence, creates PR via gh CLI. Supports --dry-run.
 - [x] t117 Privacy filter for public PRs #security #tools ~3h actual:1h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T12:30Z completed:2026-02-04 blocks:t116.4
   - Notes: Implemented privacy-filter-helper.sh with scan/filter/apply/patterns commands. Detects 30+ patterns (credentials, PII, internal URLs). Integrates with secretlint. Created tools/security/privacy-filter.md documentation.
 - [ ] t118 Agent testing framework with OpenCode sessions #tools #testing #agents ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04 related:t115
