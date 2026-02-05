@@ -385,8 +385,7 @@ disable_ondemand_mcps() {
         # Oh-My-OpenCode MCPs - use @github-search subagent instead
         "grep_app"
         "websearch"
-        # osgrep - use osgrep tool directly via Bash, not MCP
-        "osgrep"
+        # Note: osgrep is kept ENABLED - it's useful for semantic code search
     )
     
     local disabled=0
@@ -418,7 +417,7 @@ disable_ondemand_mcps() {
     # Remove invalid MCP entries added by v2.100.16 bug
     # These have type "stdio" (invalid - only "local" or "remote" are valid)
     # or command ["echo", "disabled"] which breaks OpenCode
-    local invalid_mcps=("grep_app" "websearch" "context7" "augment-context-engine" "osgrep")
+    local invalid_mcps=("grep_app" "websearch" "context7" "augment-context-engine")
     for mcp in "${invalid_mcps[@]}"; do
         # Check for invalid type "stdio" or dummy command
         if jq -e ".mcp[\"$mcp\"].type == \"stdio\" or .mcp[\"$mcp\"].command[0] == \"echo\"" "$tmp_config" > /dev/null 2>&1; then
@@ -427,6 +426,13 @@ disable_ondemand_mcps() {
             disabled=1  # Mark as changed
         fi
     done
+    
+    # Re-enable osgrep if it was accidentally disabled (v2.100.16 bug)
+    if jq -e '.mcp["osgrep"].enabled == false' "$tmp_config" > /dev/null 2>&1; then
+        jq '.mcp["osgrep"].enabled = true' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+        print_info "Re-enabled osgrep MCP"
+        disabled=1  # Mark as changed
+    fi
     
     if [[ $disabled -gt 0 ]]; then
         create_backup_with_rotation "$opencode_config" "opencode"
