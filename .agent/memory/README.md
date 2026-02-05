@@ -84,6 +84,8 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 | `TOOL_CONFIG` | Tool setup notes |
 | `DECISION` | Architecture decisions |
 | `CONTEXT` | Background info |
+| `SUCCESS_PATTERN` | Approaches that consistently work for task types |
+| `FAILURE_PATTERN` | Approaches that consistently fail for task types |
 
 ## Relation Types
 
@@ -105,11 +107,53 @@ Inspired by Supermemory's relational versioning:
 This enables temporal reasoning like "what happened last week?" by distinguishing
 between when you learned something vs when it happened.
 
+## Semantic Search (Opt-in)
+
+For similarity-based search beyond keyword matching, enable vector embeddings:
+
+```bash
+# One-time setup (~90MB model download)
+memory-embeddings-helper.sh setup
+
+# Index existing memories
+memory-embeddings-helper.sh index
+
+# Search by meaning (not just keywords)
+memory-helper.sh recall "how to optimize database queries" --semantic
+
+# Or use the embeddings helper directly
+memory-embeddings-helper.sh search "authentication patterns"
+```
+
+FTS5 keyword search remains the default. Semantic search requires Python 3.9+ and sentence-transformers.
+
+## Pattern Tracking
+
+Track what works and what fails across task types and models:
+
+```bash
+# Record a pattern
+pattern-tracker-helper.sh record --outcome success --task-type bugfix \
+    --model sonnet --description "Structured debugging found root cause"
+
+# Get suggestions for a task
+pattern-tracker-helper.sh suggest "refactor the auth middleware"
+
+# View pattern statistics
+pattern-tracker-helper.sh stats
+
+# Or use the /patterns command
+/patterns refactor
+```
+
+See `scripts/pattern-tracker-helper.sh` for full documentation.
+
 ## Storage Location
 
 ```text
 ~/.aidevops/.agent-workspace/memory/
 ├── memory.db           # SQLite database with FTS5
+├── embeddings.db       # Optional: vector embeddings for semantic search
 └── preferences/        # Optional: markdown preference files
 ```
 

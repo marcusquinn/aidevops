@@ -92,9 +92,9 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
-- 572+ subagent markdown files organized by domain
-- 157 helper scripts in `.agent/scripts/`
-- 22 slash commands for common workflows
+- 614+ subagent markdown files organized by domain
+- 163 helper scripts in `.agent/scripts/`
+- 28 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -480,7 +480,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 157 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 163 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -1252,7 +1252,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 14 primary agents, 572+ subagents, and 157 helper scripts.
+This installs the complete framework: 14 primary agents, 614+ subagents, and 163 helper scripts.
 
 ### Importing External Skills
 
@@ -1340,7 +1340,7 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 572+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agent/` for the full list of 614+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
