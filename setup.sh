@@ -2767,13 +2767,13 @@ setup_beads_ui() {
     read -r -p "  Install bv (TUI with PageRank, critical path, graph analytics)? [Y/n]: " install_viewer
     if [[ "$install_viewer" =~ ^[Yy]?$ ]]; then
         if command -v brew &> /dev/null; then
-            # Add the tap and install
-            if run_with_spinner "Installing bv via Homebrew" bash -c "brew tap dicklesworthstone/tap 2>/dev/null; brew install dicklesworthstone/tap/bv"; then
+            # brew install user/tap/formula auto-taps
+            if run_with_spinner "Installing bv via Homebrew" brew install dicklesworthstone/tap/bv; then
                 print_info "Run: bv (in a beads-enabled project)"
                 ((installed_count++))
             else
                 print_warning "Homebrew install failed - try manually:"
-                print_info "  brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
+                print_info "  brew install dicklesworthstone/tap/bv"
             fi
         else
             # No Homebrew - try install script or Go
