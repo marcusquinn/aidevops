@@ -439,14 +439,28 @@ cmd_status() {
     local config="$dir/config.json"
 
     local description model workdir created last_run last_status run_count last_duration
-    description=$(jq -r '.description // "N/A"' "$config")
-    model=$(jq -r '.model // "N/A"' "$config")
-    workdir=$(jq -r '.workdir // "N/A"' "$config")
-    created=$(jq -r '.created // "N/A"' "$config")
-    last_run=$(jq -r '.lastRun // "never"' "$config")
-    last_status=$(jq -r '.lastStatus // "N/A"' "$config")
-    run_count=$(jq -r '.runCount // 0' "$config")
-    last_duration=$(jq -r '.lastDuration // "N/A"' "$config")
+    local config_values
+    config_values=$(jq -r '[
+        .description // "N/A",
+        .model // "N/A",
+        .workdir // "N/A",
+        .created // "N/A",
+        .lastRun // "never",
+        .lastStatus // "N/A",
+        (.runCount // 0 | tostring),
+        (.lastDuration // "N/A" | tostring)
+    ] | join("\n")' "$config")
+
+    {
+        read -r description
+        read -r model
+        read -r workdir
+        read -r created
+        read -r last_run
+        read -r last_status
+        read -r run_count
+        read -r last_duration
+    } <<< "$config_values"
 
     local status_color="$NC"
     case "$last_status" in
@@ -515,23 +529,19 @@ cmd_list() {
     fi
 
     if [[ "$output_format" == "json" ]]; then
-        local json_output="["
-        local first=true
+        local -a config_files=()
         for runner_path in $runners; do
-            local rname
-            rname=$(basename "$runner_path")
             local config_file="$runner_path/config.json"
             if [[ -f "$config_file" ]]; then
-                if [[ "$first" == "true" ]]; then
-                    first=false
-                else
-                    json_output+=","
-                fi
-                json_output+=$(cat "$config_file")
+                config_files+=("$config_file")
             fi
         done
-        json_output+="]"
-        echo "$json_output" | jq '.'
+
+        if (( ${#config_files[@]} > 0 )); then
+            jq -s . "${config_files[@]}"
+        else
+            echo "[]"
+        fi
         return 0
     fi
 
