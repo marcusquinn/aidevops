@@ -216,8 +216,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Created tools/ai-assistants/headless-dispatch.md. Documents `opencode run` headless flags, `opencode serve` server mode, `--attach` warm server pattern, SDK parallel dispatch, runner lifecycle, custom agents, CI/CD integration.
   - [x] t109.2 Create runner-helper.sh ~4h blocked-by:none completed:2026-02-05
     - Notes: Created runner-helper.sh (create/run/status/list/edit/logs/stop/destroy). Renamed from "droid" to "runner" to avoid Factory.ai naming conflict. Runners are named headless agent instances with per-runner AGENTS.md, config.json, and run logs. Uses `opencode run` for dispatch with `--attach` support for warm server.
-  - [ ] t109.3 Memory namespace integration ~3h blocked-by:t109.2
-    - Notes: Extend memory-helper.sh with `--namespace` flag. Per-runner memory isolation (optional). Shared memory access when needed.
+  - [x] t109.3 Memory namespace integration ~3h blocked-by:t109.2 completed:2026-02-05
+    - Notes: Added --namespace/-n flag to memory-helper.sh and memory-embeddings-helper.sh. Per-runner isolated DBs at memory/namespaces/<name>/memory.db. --shared flag on recall searches both namespace and global. namespaces command (list/prune/migrate). Runner destroy cleans up namespace. Shared recall updates global access tracking. PRs #351, #352.
   - [ ] t109.4 Matrix bot integration (optional) ~6h blocked-by:t109.2
     - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-runner mapping. Message → opencode run → response flow.
   - [ ] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3
@@ -309,7 +309,7 @@ t111,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m
 t109,Parallel Agents & Headless Dispatch,,plan|agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,2026-02-03T00:00Z,pending,,,
 t109.1,Document headless dispatch patterns,,agents|headless|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t109
 t109.2,Create droid-helper.sh,,agents|scripts|dispatch,4h,4h,,2026-02-03T00:00Z,pending,,,t109
-t109.3,Memory namespace integration,,memory|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.2,,t109
+t109.3,Memory namespace integration,,memory|agents,3h,3h,,2026-02-03T00:00Z,completed,t109.2,,t109
 t109.4,Matrix bot integration (optional),,matrix|chat|dispatch,6h,6h,,2026-02-03T00:00Z,pending,t109.2,,t109
 t109.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.1|t109.2|t109.3,,t109
 t110,Cron agent for scheduled task management,,tools|automation|agents,3h,2h,45m,2026-02-04T00:00Z,pending,,,
