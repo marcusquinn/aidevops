@@ -484,10 +484,86 @@ jobs:
             > review.md
 ```
 
+## Parallel vs Sequential
+
+Use this decision guide to choose the right dispatch pattern.
+
+### Use Parallel When
+
+- **Tasks are independent** - code review, test generation, and docs don't depend on each other
+- **Tasks read but don't write** - multiple reviewers analyzing the same codebase
+- **You need speed** - 3 tasks at 2 min each = 2 min parallel vs 6 min sequential
+- **Tasks have separate outputs** - each produces its own report/artifact
+
+```bash
+# Example: parallel review + tests + docs
+opencode serve --port 4096 &
+runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096 &
+runner-helper.sh run test-generator "Generate tests for src/utils/" --attach http://localhost:4096 &
+runner-helper.sh run doc-writer "Document the API endpoints" --attach http://localhost:4096 &
+wait
+```
+
+### Use Sequential When
+
+- **Tasks depend on each other** - "fix the bug" then "write tests for the fix"
+- **Tasks modify the same files** - two agents editing the same file = merge conflicts
+- **Output of one feeds the next** - analysis results inform implementation
+- **You need human review between steps** - review plan before execution
+
+```bash
+# Example: sequential analyze → implement → test
+runner-helper.sh run planner "Analyze the auth module and propose improvements"
+# Review output, then:
+runner-helper.sh run developer "Implement the improvements from the plan" --continue
+# Then:
+runner-helper.sh run tester "Write tests for the changes"
+```
+
+### Decision Table
+
+| Scenario | Pattern | Why |
+|----------|---------|-----|
+| PR review (security + quality + style) | Parallel | Independent read-only analysis |
+| Bug fix + tests | Sequential | Tests depend on the fix |
+| Multi-page SEO audit | Parallel | Each page is independent |
+| Refactor + update docs | Sequential | Docs depend on refactored code |
+| Generate tests for 5 modules | Parallel | Each module is independent |
+| Plan → implement → verify | Sequential | Each step depends on previous |
+| Cron: daily report + weekly digest | Parallel | Independent scheduled tasks |
+| Migration: schema → data → verify | Sequential | Each step depends on previous |
+
+### Hybrid Pattern
+
+For complex workflows, combine both:
+
+```bash
+# Phase 1: Parallel analysis
+runner-helper.sh run security-reviewer "Audit src/" --attach :4096 &
+runner-helper.sh run perf-analyzer "Profile src/" --attach :4096 &
+wait
+
+# Phase 2: Sequential implementation (based on analysis)
+runner-helper.sh run developer "Fix the critical security issues found"
+runner-helper.sh run developer "Optimize the performance bottlenecks found" --continue
+```
+
+## Example Runner Templates
+
+Ready-to-use AGENTS.md templates for common runner types:
+
+| Template | Description |
+|----------|-------------|
+| [code-reviewer](runners/code-reviewer.md) | Security and quality code review with structured output |
+| [seo-analyst](runners/seo-analyst.md) | SEO analysis with issue/opportunity tables |
+
+See [runners/README.md](runners/README.md) for how to create runners from templates.
+
 ## Related
 
 - `tools/ai-assistants/opencode-server.md` - Full server API reference
 - `tools/ai-assistants/overview.md` - AI assistant comparison
+- `tools/ai-assistants/runners/` - Example runner templates
 - `scripts/runner-helper.sh` - Runner management CLI
 - `scripts/cron-dispatch.sh` - Cron-triggered dispatch
 - `scripts/cron-helper.sh` - Cron job management

@@ -587,7 +587,9 @@ OpenCode Server (opencode serve)
 └─────────────────┘
 ```
 
-**See:** [headless-dispatch.md](.agent/tools/ai-assistants/headless-dispatch.md) for full documentation including SDK examples, CI/CD integration, and custom agent configuration.
+**Example runner templates:** [code-reviewer](.agent/tools/ai-assistants/runners/code-reviewer.md), [seo-analyst](.agent/tools/ai-assistants/runners/seo-analyst.md) - copy and customize for your own runners.
+
+**See:** [headless-dispatch.md](.agent/tools/ai-assistants/headless-dispatch.md) for full documentation including parallel vs sequential decision guide, SDK examples, CI/CD integration, and custom agent configuration.
 
 ### Self-Improving Agent System
 
