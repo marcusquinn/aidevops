@@ -148,12 +148,43 @@ pattern-tracker-helper.sh stats
 
 See `scripts/pattern-tracker-helper.sh` for full documentation.
 
+## Namespaces (Per-Runner Memory Isolation)
+
+Runners can have isolated memory namespaces. Each namespace gets its own SQLite DB,
+preventing cross-contamination between parallel agents while allowing shared access
+to global memories when needed.
+
+```bash
+# Store in a runner-specific namespace
+memory-helper.sh --namespace code-reviewer store --content "Prefer explicit error handling"
+
+# Recall from namespace only
+memory-helper.sh --namespace code-reviewer recall "error handling"
+
+# Recall from namespace + global (shared access)
+memory-helper.sh --namespace code-reviewer recall "error handling" --shared
+
+# View namespace stats
+memory-helper.sh --namespace code-reviewer stats
+
+# List all namespaces
+memory-helper.sh namespaces
+```
+
+Namespace DBs are stored at `memory/namespaces/<name>/memory.db`. The global DB
+remains at `memory/memory.db` and is always accessible without `--namespace`.
+
 ## Storage Location
 
 ```text
 ~/.aidevops/.agent-workspace/memory/
-├── memory.db           # SQLite database with FTS5
+├── memory.db           # Global SQLite database with FTS5
 ├── embeddings.db       # Optional: vector embeddings for semantic search
+├── namespaces/         # Per-runner isolated memory
+│   ├── code-reviewer/
+│   │   └── memory.db
+│   └── seo-analyst/
+│       └── memory.db
 └── preferences/        # Optional: markdown preference files
 ```
 
@@ -190,6 +221,11 @@ memory-helper.sh prune             # Remove stale entries
 # Export
 memory-helper.sh export --format json   # Export as JSON
 memory-helper.sh export --format toon   # Export as TOON (token-efficient)
+
+# Namespaces (per-runner isolation)
+memory-helper.sh --namespace my-runner store --content "Runner-specific learning"
+memory-helper.sh --namespace my-runner recall "query" --shared  # Also search global
+memory-helper.sh namespaces            # List all namespaces
 ```
 
 ## Legacy: File-Based Preferences
