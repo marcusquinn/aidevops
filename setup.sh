@@ -28,6 +28,23 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Find OpenCode config file (checks multiple possible locations)
+# Returns: path to config file, or empty string if not found
+find_opencode_config() {
+    local candidates=(
+        "$HOME/.config/opencode/opencode.json"      # XDG standard (Linux, some macOS)
+        "$HOME/.opencode/opencode.json"             # Alternative location
+        "$HOME/Library/Application Support/opencode/opencode.json"  # macOS standard
+    )
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Find best python3 binary (prefer Homebrew/pyenv over system)
 find_python3() {
     local candidates=(
@@ -174,7 +191,8 @@ cleanup_deprecated_paths() {
 # Remove deprecated MCP entries from opencode.json
 # These MCPs have been replaced by curl-based subagents (zero context cost)
 cleanup_deprecated_mcps() {
-    local opencode_config="$HOME/.config/opencode/opencode.json"
+    local opencode_config
+    opencode_config=$(find_opencode_config) || return 0
     
     if [[ ! -f "$opencode_config" ]]; then
         return 0
@@ -309,7 +327,8 @@ cleanup_deprecated_mcps() {
 # - google-analytics-mcp: ~800 tokens - enable via @google-analytics subagent
 # - context7: ~800 tokens - enable via @context7 subagent (for library docs lookup)
 disable_ondemand_mcps() {
-    local opencode_config="$HOME/.config/opencode/opencode.json"
+    local opencode_config
+    opencode_config=$(find_opencode_config) || return 0
     
     if [[ ! -f "$opencode_config" ]]; then
         return 0
@@ -2053,12 +2072,13 @@ inject_agents_reference() {
 update_opencode_config() {
     print_info "Updating OpenCode configuration..."
     
-    local opencode_config="$HOME/.config/opencode/opencode.json"
-    
-    if [[ ! -f "$opencode_config" ]]; then
-        print_info "OpenCode config not found at $opencode_config - skipping"
+    local opencode_config
+    if ! opencode_config=$(find_opencode_config); then
+        print_info "OpenCode config not found (checked ~/.config/opencode/, ~/.opencode/, ~/Library/Application Support/opencode/) - skipping"
         return 0
     fi
+    
+    print_info "Found OpenCode config at: $opencode_config"
     
     # Create backup (with rotation)
     create_backup_with_rotation "$opencode_config" "opencode"
@@ -2324,7 +2344,8 @@ resolve_mcp_binary_path() {
 # Update opencode.json MCP commands to use full binary paths
 # This ensures MCPs start regardless of PATH configuration
 update_mcp_paths_in_opencode() {
-    local opencode_config="$HOME/.config/opencode/opencode.json"
+    local opencode_config
+    opencode_config=$(find_opencode_config) || return 0
 
     if [[ ! -f "$opencode_config" ]]; then
         return 0
@@ -2908,8 +2929,6 @@ add_opencode_plugin() {
 setup_opencode_plugins() {
     print_info "Setting up OpenCode plugins..."
     
-    local opencode_config="$HOME/.config/opencode/opencode.json"
-    
     # Check if OpenCode is installed
     if ! command -v opencode &> /dev/null; then
         print_warning "OpenCode not found - plugin setup skipped"
@@ -2918,8 +2937,9 @@ setup_opencode_plugins() {
     fi
     
     # Check if config exists
-    if [[ ! -f "$opencode_config" ]]; then
-        print_warning "OpenCode config not found at $opencode_config - plugin setup skipped"
+    local opencode_config
+    if ! opencode_config=$(find_opencode_config); then
+        print_warning "OpenCode config not found - plugin setup skipped"
         return 0
     fi
     
@@ -2961,8 +2981,6 @@ setup_opencode_plugins() {
 setup_oh_my_opencode() {
     print_info "Setting up Oh-My-OpenCode plugin..."
     
-    local opencode_config="$HOME/.config/opencode/opencode.json"
-    
     # Check if OpenCode is installed
     if ! command -v opencode &> /dev/null; then
         print_warning "OpenCode not found - Oh-My-OpenCode setup skipped"
@@ -2970,7 +2988,8 @@ setup_oh_my_opencode() {
     fi
     
     # Check if config exists
-    if [[ ! -f "$opencode_config" ]]; then
+    local opencode_config
+    if ! opencode_config=$(find_opencode_config); then
         print_warning "OpenCode config not found - Oh-My-OpenCode setup skipped"
         return 0
     fi
@@ -3106,12 +3125,12 @@ setup_seo_mcps() {
 setup_google_analytics_mcp() {
     print_info "Setting up Google Analytics MCP..."
     
-    local opencode_config="$HOME/.config/opencode/opencode.json"
     local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
     
     # Check if opencode.json exists
-    if [[ ! -f "$opencode_config" ]]; then
-        print_warning "OpenCode config not found at $opencode_config - skipping Google Analytics MCP"
+    local opencode_config
+    if ! opencode_config=$(find_opencode_config); then
+        print_warning "OpenCode config not found - skipping Google Analytics MCP"
         return 0
     fi
     
