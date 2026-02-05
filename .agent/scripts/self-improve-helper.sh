@@ -23,7 +23,8 @@
 set -euo pipefail
 
 # Configuration
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+readonly SCRIPT_DIR
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly WORKSPACE_DIR="${AIDEVOPS_DIR}/.agent-workspace"
 readonly IMPROVE_DIR="${WORKSPACE_DIR}/self-improve"
@@ -42,7 +43,6 @@ readonly BLUE='\033[0;34m'
 readonly YELLOW='\033[1;33m'
 readonly RED='\033[0;31m'
 readonly PURPLE='\033[0;35m'
-readonly CYAN='\033[0;36m'
 readonly NC='\033[0m' # No Color
 
 # Print functions
