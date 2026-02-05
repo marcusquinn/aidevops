@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - add explicit guidance to use generator script for OpenCode config (#319)
 - check multiple OpenCode config locations (#318)
+
 ## [2.100.3] - 2026-02-04
 
 ### Changed
