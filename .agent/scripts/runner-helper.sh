@@ -377,15 +377,30 @@ $prompt"
     log_info "Model: $model"
     log_info "Run ID: $run_id"
 
-    # Execute with timeout
+    # Execute with timeout (gtimeout on macOS, timeout on Linux)
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout"
+    fi
+
     local exit_code=0
     local start_time
     start_time=$(date +%s)
 
-    if timeout "$cmd_timeout" "${cmd_args[@]}" 2>&1 | tee "$log_file"; then
-        exit_code=0
+    if [[ -n "$timeout_cmd" ]]; then
+        if "$timeout_cmd" "$cmd_timeout" "${cmd_args[@]}" 2>&1 | tee "$log_file"; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
     else
-        exit_code=$?
+        if "${cmd_args[@]}" 2>&1 | tee "$log_file"; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
     fi
 
     local end_time duration
