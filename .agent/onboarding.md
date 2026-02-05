@@ -27,6 +27,12 @@ subagents:
 - **Script**: `~/.aidevops/agents/scripts/onboarding-helper.sh`
 - **Purpose**: Interactive wizard to discover, configure, and verify aidevops integrations
 
+**CRITICAL - OpenCode Setup**: NEVER manually write `opencode.json`. Always run:
+
+```bash
+~/.aidevops/agents/scripts/generate-opencode-agents.sh
+```
+
 **Workflow**:
 1. Welcome & explain aidevops capabilities
 2. Ask about user's work/interests for personalized suggestions
@@ -595,6 +601,58 @@ opencode mcp list
 # Fix permissions
 chmod 600 ~/.config/aidevops/mcp-env.sh
 chmod 700 ~/.config/aidevops
+```
+
+## OpenCode Configuration
+
+**CRITICAL**: When setting up OpenCode with aidevops, ALWAYS use the generator script. NEVER manually write `opencode.json` - the schema is complex and easy to get wrong.
+
+### Correct Setup Method
+
+```bash
+# Run the generator script - it handles all schema requirements
+~/.aidevops/agents/scripts/generate-opencode-agents.sh
+```
+
+This script:
+- Auto-discovers agents from `~/.aidevops/agents/*.md`
+- Configures MCP servers with correct `type: "local"` or `type: "remote"` fields
+- Sets up tools as objects (not arrays) with boolean values
+- Applies proper loading policies (eager vs lazy MCPs)
+- Creates subagent markdown files in `~/.config/opencode/agent/`
+
+### Common Schema Errors (if manually written)
+
+| Error | Wrong | Correct |
+|-------|-------|---------|
+| `expected record, received array` for tools | `"tools": []` | `"tools": {}` |
+| `Invalid input mcp.*` | Missing `type` field | Add `"type": "local"` or `"type": "remote"` |
+| `expected boolean, received object` for tools | `"tool_name": {...}` | `"tool_name": true` |
+
+### If OpenCode Won't Start
+
+```bash
+# Backup broken config
+mv ~/.config/opencode/opencode.json ~/.config/opencode/opencode.json.broken
+
+# Regenerate from scratch
+~/.aidevops/agents/scripts/generate-opencode-agents.sh
+
+# Restart OpenCode
+opencode
+```
+
+### Verify Configuration
+
+```bash
+# Check config is valid JSON
+jq . ~/.config/opencode/opencode.json > /dev/null && echo "Valid JSON"
+
+# List configured agents
+jq '.agent | keys' ~/.config/opencode/opencode.json
+
+# List configured MCPs
+jq '.mcp | keys' ~/.config/opencode/opencode.json
 ```
 
 ## Understanding Agents, Subagents, and Commands
