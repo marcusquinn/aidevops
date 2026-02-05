@@ -505,8 +505,9 @@ bootstrap_repo() {
     # Detect if running from curl (no script directory context)
     local script_path="${BASH_SOURCE[0]}"
     
-    # If script_path is empty or stdin, we're running from curl
-    if [[ -z "$script_path" || "$script_path" == "/dev/stdin" || "$script_path" == "bash" ]]; then
+    # If script_path is empty, stdin, bash, or /dev/fd/* (process substitution), we're running from curl
+    # bash <(curl ...) produces paths like /dev/fd/63
+    if [[ -z "$script_path" || "$script_path" == "/dev/stdin" || "$script_path" == "bash" || "$script_path" == /dev/fd/* ]]; then
         print_info "Remote install detected - bootstrapping repository..."
         
         # Check for git
@@ -978,11 +979,16 @@ setup_worktrunk() {
                 
                 # Install shell integration
                 print_info "Installing shell integration..."
-                if wt config shell install 2>/dev/null; then
+                local wt_shell_output
+                if wt_shell_output=$(wt config shell install 2>&1); then
                     print_success "Shell integration installed"
                     print_info "Restart your terminal or source your shell config"
                 else
+                    # Show the actual error for debugging
                     print_warning "Shell integration failed - run manually: wt config shell install"
+                    if [[ -n "$wt_shell_output" ]]; then
+                        echo "$wt_shell_output" | head -3 | sed 's/^/  /'
+                    fi
                 fi
                 
                 echo ""
@@ -1363,10 +1369,10 @@ setup_configs() {
 set_permissions() {
     print_info "Setting proper file permissions..."
     
-    # Make scripts executable
-    chmod +x ./*.sh
-    chmod +x .agent/scripts/*.sh
-    chmod +x ssh/*.sh
+    # Make scripts executable (suppress errors for missing paths)
+    chmod +x ./*.sh 2>/dev/null || true
+    chmod +x .agent/scripts/*.sh 2>/dev/null || true
+    chmod +x ssh/*.sh 2>/dev/null || true
     
     # Secure configuration files
     chmod 600 configs/*.json 2>/dev/null || true
@@ -2617,16 +2623,30 @@ setup_beads_ui() {
     
     local installed_count=0
     
-    # beads_viewer (Python)
-    if command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
+    # beads_viewer (Python) - use pipx for isolated install
+    if command -v pipx &> /dev/null; then
+        read -r -p "  Install beads_viewer (Python TUI with graph analytics)? (y/n): " install_viewer
+        if [[ "$install_viewer" == "y" ]]; then
+            print_info "Installing beads_viewer via pipx..."
+            if pipx install beads-viewer 2>/dev/null; then
+                print_success "beads_viewer installed (run: beads-viewer)"
+                ((installed_count++))
+            else
+                print_warning "Failed to install beads_viewer"
+                print_info "Try manually: pipx install beads-viewer"
+            fi
+        fi
+    elif command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
         read -r -p "  Install beads_viewer (Python TUI with graph analytics)? (y/n): " install_viewer
         if [[ "$install_viewer" == "y" ]]; then
             print_info "Installing beads_viewer..."
-            if pip3 install beads-viewer 2>/dev/null || pip install beads-viewer 2>/dev/null; then
+            # Try pipx first (handles externally-managed-environment), fall back to pip
+            if pipx install beads-viewer 2>/dev/null || pip3 install --user beads-viewer 2>/dev/null || pip install --user beads-viewer 2>/dev/null; then
                 print_success "beads_viewer installed"
                 ((installed_count++))
             else
                 print_warning "Failed to install beads_viewer"
+                print_info "On macOS, install pipx first: brew install pipx && pipx ensurepath"
             fi
         fi
     fi
@@ -2760,11 +2780,12 @@ setup_browser_tools() {
             
             if [[ "$install_playwright" == "y" ]]; then
                 print_info "Installing Playwright browsers..."
-                if npx playwright install; then
+                # Use -y to auto-confirm npx install, suppress the "install without dependencies" warning
+                if npx -y playwright@latest install 2>&1 | grep -v "WARNING: It looks like you are running"; then
                     print_success "Playwright browsers installed"
                 else
                     print_warning "Playwright browser installation failed"
-                    print_info "Run manually: npx playwright install"
+                    print_info "Run manually: npx -y playwright@latest install"
                 fi
             else
                 print_info "Skipped Playwright installation"
