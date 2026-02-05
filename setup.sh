@@ -385,6 +385,8 @@ disable_ondemand_mcps() {
         # Oh-My-OpenCode MCPs - use @github-search subagent instead
         "grep_app"
         "websearch"
+        # osgrep - use osgrep tool directly via Bash, not MCP
+        "osgrep"
     )
     
     local disabled=0
@@ -394,14 +396,20 @@ disable_ondemand_mcps() {
     cp "$opencode_config" "$tmp_config"
     
     for mcp in "${ondemand_mcps[@]}"; do
-        # Check if MCP exists and is currently enabled (or has no enabled field)
+        # Check if MCP exists
         if jq -e ".mcp[\"$mcp\"]" "$tmp_config" > /dev/null 2>&1; then
+            # MCP exists - check if enabled
             local current_enabled
             current_enabled=$(jq -r ".mcp[\"$mcp\"].enabled // \"true\"" "$tmp_config")
             if [[ "$current_enabled" != "false" ]]; then
                 jq ".mcp[\"$mcp\"].enabled = false" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
                 ((disabled++))
             fi
+        else
+            # MCP doesn't exist - add it as disabled (prevents OmO from enabling it)
+            # This is needed for MCPs that plugins add dynamically (like oh-my-opencode)
+            jq ".mcp[\"$mcp\"] = {\"type\": \"stdio\", \"enabled\": false, \"command\": [\"echo\", \"disabled\"]}" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            ((disabled++))
         fi
     done
     
