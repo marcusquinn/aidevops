@@ -93,6 +93,10 @@ What do you need?
     |       +-> Proxy per profile / geo-targeting?
     |               --> proxy-integration.md (residential, SOCKS5, rotation)
     |
+    +-> EXPERIMENTAL (agent-native browser, VLM vision)?
+    |       --> neural-chromium.md (Chromium fork, semantic DOM, gRPC, Windows-only)
+    |       --> Note: Early stage, requires building Chromium from source
+    |
     +-> TEST your own app (dev server)?
             |
             +-> Need to stay logged in across restarts? --> dev-browser (profile)
@@ -174,6 +178,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Playwriter** | Existing browser, extensions, bypass detection | Medium | Chrome extension + `npx playwriter` |
 | **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
 | **Anti-detect** | Bot evasion, multi-account, fingerprint rotation | Medium | `anti-detect-helper.sh setup` |
+| **Neural-Chromium** | Semantic DOM, VLM vision, stealth (experimental) | Medium | Build from source (Windows) |
 
 ## AI Page Understanding (Visual Verification)
 
