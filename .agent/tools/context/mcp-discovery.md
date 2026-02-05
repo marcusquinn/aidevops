@@ -56,6 +56,7 @@ mcp-index-helper.sh status
 | `context7` | ~800 | `@context7` | Library docs lookup |
 
 **Not installed by aidevops** (use subagent instead):
+
 | MCP | Subagent | Notes |
 |-----|----------|-------|
 | `grep_app` / `gh_grep` | `@github-search` | CLI-based, zero tokens |
