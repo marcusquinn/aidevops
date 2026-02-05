@@ -412,6 +412,85 @@ disable_ondemand_mcps() {
     return 0
 }
 
+# Validate and repair OpenCode config schema
+# Fixes common issues from manual editing or AI-generated configs:
+# - MCP entries missing "type": "local" field
+# - tools entries as objects {} instead of booleans
+# If invalid, backs up and regenerates using the generator script
+validate_opencode_config() {
+    local opencode_config
+    opencode_config=$(find_opencode_config) || return 0
+    
+    if [[ ! -f "$opencode_config" ]]; then
+        return 0
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        return 0
+    fi
+    
+    local needs_repair=false
+    local issues=""
+    
+    # Check 1: MCP entries must have "type" field (usually "local")
+    # Invalid: {"mcp": {"foo": {"command": "..."}}}
+    # Valid:   {"mcp": {"foo": {"type": "local", "command": "..."}}}
+    local mcps_without_type
+    mcps_without_type=$(jq -r '.mcp // {} | to_entries[] | select(.value.type == null and .value.command != null) | .key' "$opencode_config" 2>/dev/null | head -5)
+    if [[ -n "$mcps_without_type" ]]; then
+        needs_repair=true
+        issues="${issues}\n  - MCP entries missing 'type' field: $(echo "$mcps_without_type" | tr '\n' ', ' | sed 's/,$//')"
+    fi
+    
+    # Check 2: tools entries must be booleans, not objects
+    # Invalid: {"tools": {"gh_grep": {}}}
+    # Valid:   {"tools": {"gh_grep": true}}
+    local tools_as_objects
+    tools_as_objects=$(jq -r '.tools // {} | to_entries[] | select(.value | type == "object") | .key' "$opencode_config" 2>/dev/null | head -5)
+    if [[ -n "$tools_as_objects" ]]; then
+        needs_repair=true
+        issues="${issues}\n  - tools entries as objects instead of booleans: $(echo "$tools_as_objects" | tr '\n' ', ' | sed 's/,$//')"
+    fi
+    
+    # Check 3: Try to parse with opencode (if available) to catch other schema issues
+    if command -v opencode &> /dev/null; then
+        local validation_output
+        if ! validation_output=$(opencode --version 2>&1); then
+            # If opencode fails to start, config might be invalid
+            if echo "$validation_output" | grep -q "Configuration is invalid"; then
+                needs_repair=true
+                issues="${issues}\n  - OpenCode reports invalid configuration"
+            fi
+        fi
+    fi
+    
+    if [[ "$needs_repair" == "true" ]]; then
+        print_warning "OpenCode config has schema issues:$issues"
+        
+        # Backup the invalid config
+        create_backup_with_rotation "$opencode_config" "opencode"
+        print_info "Backed up invalid config"
+        
+        # Remove the invalid config so generator creates fresh one
+        rm -f "$opencode_config"
+        
+        # Regenerate using the generator script
+        local generator_script="$HOME/.aidevops/agents/scripts/generate-opencode-agents.sh"
+        if [[ -x "$generator_script" ]]; then
+            print_info "Regenerating OpenCode config with correct schema..."
+            if "$generator_script" > /dev/null 2>&1; then
+                print_success "OpenCode config regenerated successfully"
+            else
+                print_warning "Config regeneration failed - run manually: $generator_script"
+            fi
+        else
+            print_warning "Generator script not found - run setup.sh again after agents are deployed"
+        fi
+    fi
+    
+    return 0
+}
+
 # Migrate old config-backups to new per-type backup structure
 # This runs once to clean up the legacy backup directory
 migrate_old_backups() {
@@ -3418,6 +3497,7 @@ main() {
     confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
     confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
+    confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
     confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
     confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
     confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
