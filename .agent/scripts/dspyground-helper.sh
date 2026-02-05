@@ -102,7 +102,7 @@ init_project() {
     
     if [[ -d "$project_dir" ]]; then
         print_warning "Project directory already exists: $project_dir"
-        read -p "Continue anyway? (y/n): " -n 1 -r
+        read -p "Continue anyway? [Y/n]: " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1

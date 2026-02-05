@@ -28,6 +28,41 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Spinner for long-running operations
+# Usage: run_with_spinner "Installing package..." command arg1 arg2
+run_with_spinner() {
+    local message="$1"
+    shift
+    local pid
+    local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    
+    # Start command in background
+    "$@" &>/dev/null &
+    pid=$!
+    
+    # Show spinner while command runs
+    printf "${BLUE}[INFO]${NC} %s " "$message"
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${BLUE}[INFO]${NC} %s %s" "$message" "${spin_chars:i++%${#spin_chars}:1}"
+        sleep 0.1
+    done
+    
+    # Check exit status
+    wait "$pid"
+    local exit_code=$?
+    
+    # Clear spinner and show result
+    printf "\r"
+    if [[ $exit_code -eq 0 ]]; then
+        print_success "$message done"
+    else
+        print_error "$message failed"
+    fi
+    
+    return $exit_code
+}
+
 # Find OpenCode config file (checks multiple possible locations)
 # Returns: path to config file, or empty string if not found
 find_opencode_config() {
@@ -660,9 +695,9 @@ check_requirements() {
         fi
         
         echo ""
-        read -r -p "Install missing dependencies using $pkg_manager? (y/n): " install_deps
+        read -r -p "Install missing dependencies using $pkg_manager? [Y/n]: " install_deps
         
-        if [[ "$install_deps" == "y" ]]; then
+        if [[ "$install_deps" =~ ^[Yy]?$ ]]; then
             print_info "Installing ${missing_deps[*]}..."
             if install_packages "$pkg_manager" "${missing_deps[@]}"; then
                 print_success "Dependencies installed successfully"
@@ -699,9 +734,9 @@ check_optional_deps() {
         pkg_manager=$(detect_package_manager)
         
         if [[ "$pkg_manager" != "unknown" ]]; then
-            read -r -p "Install optional dependencies using $pkg_manager? (y/n): " install_optional
+            read -r -p "Install optional dependencies using $pkg_manager? [Y/n]: " install_optional
             
-            if [[ "$install_optional" == "y" ]]; then
+            if [[ "$install_optional" =~ ^[Yy]?$ ]]; then
                 print_info "Installing ${missing_optional[*]}..."
                 if install_packages "$pkg_manager" "${missing_optional[@]}"; then
                     print_success "Optional dependencies installed"
@@ -755,9 +790,9 @@ setup_git_clis() {
         
         if [[ "$pkg_manager" != "unknown" ]]; then
             echo ""
-            read -r -p "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_git_clis
+            read -r -p "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " install_git_clis
             
-            if [[ "$install_git_clis" == "y" ]]; then
+            if [[ "$install_git_clis" =~ ^[Yy]?$ ]]; then
                 print_info "Installing ${missing_packages[*]}..."
                 if install_packages "$pkg_manager" "${missing_packages[@]}"; then
                     print_success "Git CLI tools installed"
@@ -853,10 +888,10 @@ setup_file_discovery_tools() {
         if [[ "$pkg_manager" != "unknown" ]]; then
             local install_fd_tools="y"
             if [[ "$INTERACTIVE_MODE" == "true" ]]; then
-                read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? (y/n): " install_fd_tools
+                read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " install_fd_tools
             fi
             
-            if [[ "$install_fd_tools" == "y" ]]; then
+            if [[ "$install_fd_tools" =~ ^[Yy]?$ ]]; then
                 print_info "Installing ${missing_packages[*]}..."
                 
                 # Handle package name differences across package managers
@@ -959,8 +994,8 @@ setup_worktrunk() {
         if [[ -n "$shell_rc" ]] && [[ -f "$shell_rc" ]]; then
             if ! grep -q "worktrunk" "$shell_rc" 2>/dev/null; then
                 print_info "Shell integration not detected"
-                read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? (y/n): " install_shell
-                if [[ "$install_shell" == "y" ]]; then
+                read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " install_shell
+                if [[ "$install_shell" =~ ^[Yy]?$ ]]; then
                     if wt config shell install 2>/dev/null; then
                         print_success "Shell integration installed"
                         print_info "Restart your terminal or run: source $shell_rc"
@@ -989,25 +1024,15 @@ setup_worktrunk() {
     pkg_manager=$(detect_package_manager)
     
     if [[ "$pkg_manager" == "brew" ]]; then
-        read -r -p "Install Worktrunk via Homebrew? (y/n): " install_wt
+        read -r -p "Install Worktrunk via Homebrew? [Y/n]: " install_wt
         
-        if [[ "$install_wt" == "y" ]]; then
-            print_info "Installing Worktrunk..."
-            if brew install max-sixty/worktrunk/wt 2>/dev/null; then
-                print_success "Worktrunk installed"
-                
+        if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
+            if run_with_spinner "Installing Worktrunk via Homebrew" brew install max-sixty/worktrunk/wt; then
                 # Install shell integration
-                print_info "Installing shell integration..."
-                local wt_shell_output
-                if wt_shell_output=$(wt config shell install 2>&1); then
-                    print_success "Shell integration installed"
+                if run_with_spinner "Installing shell integration" wt config shell install; then
                     print_info "Restart your terminal or source your shell config"
                 else
-                    # Show the actual error for debugging
                     print_warning "Shell integration failed - run manually: wt config shell install"
-                    if [[ -n "$wt_shell_output" ]]; then
-                        echo "$wt_shell_output" | head -3 | sed 's/^/  /'
-                    fi
                 fi
                 
                 echo ""
@@ -1027,16 +1052,13 @@ setup_worktrunk() {
             print_info "Fallback available: ~/.aidevops/agents/scripts/worktree-helper.sh"
         fi
     elif command -v cargo >/dev/null 2>&1; then
-        read -r -p "Install Worktrunk via Cargo? (y/n): " install_wt
+        read -r -p "Install Worktrunk via Cargo? [Y/n]: " install_wt
         
-        if [[ "$install_wt" == "y" ]]; then
-            print_info "Installing Worktrunk via Cargo..."
-            if cargo install worktrunk 2>/dev/null; then
-                print_success "Worktrunk installed"
-                
+        if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
+            if run_with_spinner "Installing Worktrunk via Cargo" cargo install worktrunk; then
                 # Install shell integration
-                if wt config shell install 2>/dev/null; then
-                    print_success "Shell integration installed"
+                if run_with_spinner "Installing shell integration" wt config shell install; then
+                    print_info "Restart your terminal or source your shell config"
                 else
                     print_warning "Shell integration failed - run manually: wt config shell install"
                 fi
@@ -1121,8 +1143,8 @@ setup_recommended_tools() {
         
         if [[ -d "$zed_extensions_dir" ]]; then
             if [[ ! -d "$zed_extensions_dir/opencode" ]]; then
-                read -r -p "Install OpenCode extension for Zed? (y/n): " install_opencode_ext
-                if [[ "$install_opencode_ext" == "y" ]]; then
+                read -r -p "Install OpenCode extension for Zed? [Y/n]: " install_opencode_ext
+                if [[ "$install_opencode_ext" =~ ^[Yy]?$ ]]; then
                     print_info "Installing OpenCode extension..."
                     if [[ "$(uname)" == "Darwin" ]]; then
                         open "zed://extension/opencode" 2>/dev/null
@@ -1148,15 +1170,13 @@ setup_recommended_tools() {
         
         # Install Tabby if missing
         if [[ " ${missing_tools[*]} " =~ " tabby " ]]; then
-            read -r -p "Install Tabby terminal? (y/n): " install_tabby
+            read -r -p "Install Tabby terminal? [Y/n]: " install_tabby
             
-            if [[ "$install_tabby" == "y" ]]; then
-                print_info "Installing Tabby..."
+            if [[ "$install_tabby" =~ ^[Yy]?$ ]]; then
                 if [[ "$(uname)" == "Darwin" ]]; then
                     if command -v brew >/dev/null 2>&1; then
-                        brew install --cask tabby
-                        if [[ $? -eq 0 ]]; then
-                            print_success "Tabby installed successfully"
+                        if run_with_spinner "Installing Tabby" brew install --cask tabby; then
+                            : # Success message handled by spinner
                         else
                             print_warning "Failed to install Tabby via Homebrew"
                             echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
@@ -1197,16 +1217,13 @@ setup_recommended_tools() {
         
         # Install Zed if missing
         if [[ " ${missing_tools[*]} " =~ " zed " ]]; then
-            read -r -p "Install Zed editor? (y/n): " install_zed
+            read -r -p "Install Zed editor? [Y/n]: " install_zed
             
-            if [[ "$install_zed" == "y" ]]; then
-                print_info "Installing Zed..."
+            if [[ "$install_zed" =~ ^[Yy]?$ ]]; then
                 local zed_installed=false
                 if [[ "$(uname)" == "Darwin" ]]; then
                     if command -v brew >/dev/null 2>&1; then
-                        brew install --cask zed
-                        if [[ $? -eq 0 ]]; then
-                            print_success "Zed installed successfully"
+                        if run_with_spinner "Installing Zed" brew install --cask zed; then
                             zed_installed=true
                         else
                             print_warning "Failed to install Zed via Homebrew"
@@ -1217,10 +1234,9 @@ setup_recommended_tools() {
                         echo "  Download manually: https://zed.dev/download"
                     fi
                 elif [[ "$(uname)" == "Linux" ]]; then
-                    # Zed provides an install script for Linux
+                    # Zed provides an install script for Linux (interactive, can't use spinner)
                     print_info "Running Zed install script..."
-                    curl -f https://zed.dev/install.sh | sh
-                    if [[ $? -eq 0 ]]; then
+                    if curl -f https://zed.dev/install.sh | sh; then
                         print_success "Zed installed successfully"
                         zed_installed=true
                     else
@@ -1231,8 +1247,8 @@ setup_recommended_tools() {
                 
                 # Install OpenCode extension for Zed
                 if [[ "$zed_installed" == "true" ]]; then
-                    read -r -p "Install OpenCode extension for Zed? (y/n): " install_opencode_ext
-                    if [[ "$install_opencode_ext" == "y" ]]; then
+                    read -r -p "Install OpenCode extension for Zed? [Y/n]: " install_opencode_ext
+                    if [[ "$install_opencode_ext" =~ ^[Yy]?$ ]]; then
                         print_info "Installing OpenCode extension..."
                         if [[ "$(uname)" == "Darwin" ]]; then
                             open "zed://extension/opencode" 2>/dev/null
@@ -1319,12 +1335,10 @@ setup_minisim() {
     fi
     
     local install_minisim
-    read -r -p "Install MiniSim? (y/n): " install_minisim
+    read -r -p "Install MiniSim? [Y/n]: " install_minisim
     
-    if [[ "$install_minisim" == "y" ]]; then
-        print_info "Installing MiniSim..."
-        if brew install --cask minisim; then
-            print_success "MiniSim installed successfully"
+    if [[ "$install_minisim" =~ ^[Yy]?$ ]]; then
+        if run_with_spinner "Installing MiniSim" brew install --cask minisim; then
             print_info "Global shortcut: Option + Shift + E"
             print_info "Documentation: ~/.aidevops/agents/tools/mobile/minisim.md"
         else
@@ -1345,9 +1359,9 @@ setup_ssh_key() {
     
     if [[ ! -f ~/.ssh/id_ed25519 ]]; then
         print_warning "Ed25519 SSH key not found"
-        read -r -p "Generate new Ed25519 SSH key? (y/n): " generate_key
+        read -r -p "Generate new Ed25519 SSH key? [Y/n]: " generate_key
         
-        if [[ "$generate_key" == "y" ]]; then
+        if [[ "$generate_key" =~ ^[Yy]?$ ]]; then
             read -r -p "Enter your email address: " email
             ssh-keygen -t ed25519 -C "$email"
             print_success "SSH key generated"
@@ -1563,9 +1577,9 @@ setup_aliases() {
     fi
     
     print_info "Detected shell: $shell_name"
-    read -r -p "Add shell aliases to $shell_rc? (y/n): " add_aliases
+    read -r -p "Add shell aliases to $shell_rc? [Y/n]: " add_aliases
     
-    if [[ "$add_aliases" == "y" ]]; then
+    if [[ "$add_aliases" =~ ^[Yy]?$ ]]; then
         # Fish shell uses different syntax
         if [[ "$shell_name" == "fish" ]]; then
             mkdir -p "$HOME/.config/fish"
@@ -1652,9 +1666,9 @@ setup_terminal_title() {
     fi
     
     echo ""
-    read -r -p "Install terminal title integration? (y/n): " install_title
+    read -r -p "Install terminal title integration? [Y/n]: " install_title
     
-    if [[ "$install_title" == "y" ]]; then
+    if [[ "$install_title" =~ ^[Yy]?$ ]]; then
         if bash "$setup_script" install; then
             print_success "Terminal title integration installed"
         else
@@ -2182,14 +2196,9 @@ setup_python_env() {
     source python-env/dspy-env/bin/activate
     pip install --upgrade pip > /dev/null 2>&1
     
-    local pip_output
-    if pip_output=$(pip install -r requirements.txt 2>&1); then
-        print_success "DSPy dependencies installed successfully"
+    if run_with_spinner "Installing DSPy dependencies" pip install -r requirements.txt; then
+        : # Success message handled by spinner
     else
-        print_warning "Failed to install DSPy dependencies:"
-        # Show last few lines of error for debugging
-        echo "$pip_output" | tail -8 | sed 's/^/  /'
-        echo ""
         print_info "Check requirements.txt or run manually:"
         print_info "  source python-env/dspy-env/bin/activate && pip install -r requirements.txt"
     fi
@@ -2220,13 +2229,10 @@ setup_nodejs_env() {
 
     # Install DSPyGround globally if not already installed
     if ! command -v dspyground &> /dev/null; then
-        print_info "Installing DSPyGround globally..."
-        npm install -g dspyground > /dev/null 2>&1
-
-        if [[ $? -eq 0 ]]; then
-            print_success "DSPyGround installed successfully"
+        if run_with_spinner "Installing DSPyGround" npm install -g dspyground; then
+            : # Success message handled by spinner
         else
-            print_warning "Failed to install DSPyGround globally"
+            print_warning "Try manually: npm install -g dspyground"
         fi
     else
         print_success "DSPyGround already installed"
@@ -2462,16 +2468,13 @@ setup_localwp_mcp() {
 
     # Offer to install mcp-local-wp
     print_info "LocalWP MCP server enables AI assistants to query WordPress databases"
-    read -r -p "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? (y/n): " install_mcp
+    read -r -p "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? [Y/n]: " install_mcp
 
-    if [[ "$install_mcp" == "y" ]]; then
-        print_info "Installing LocalWP MCP server..."
-        if npm install -g @verygoodplugins/mcp-local-wp > /dev/null 2>&1; then
-            print_success "LocalWP MCP server installed successfully"
+    if [[ "$install_mcp" =~ ^[Yy]?$ ]]; then
+        if run_with_spinner "Installing LocalWP MCP server" npm install -g @verygoodplugins/mcp-local-wp; then
             print_info "Start with: ~/.aidevops/agents/scripts/localhost-helper.sh start-mcp"
             print_info "Or configure in OpenCode MCP settings for auto-start"
         else
-            print_warning "Failed to install LocalWP MCP server"
             print_info "Try manually: npm install -g @verygoodplugins/mcp-local-wp"
         fi
     else
@@ -2580,16 +2583,13 @@ setup_beads() {
     else
         # Try to install via Homebrew first (macOS/Linux with Homebrew)
         if command -v brew &> /dev/null; then
-            print_info "Installing Beads via Homebrew..."
-            if brew install steveyegge/beads/bd 2>/dev/null; then
-                print_success "Beads CLI installed via Homebrew"
+            if run_with_spinner "Installing Beads via Homebrew" brew install steveyegge/beads/bd; then
+                : # Success message handled by spinner
             else
                 print_warning "Homebrew tap installation failed, trying alternative..."
                 # Try Go install if Go is available
                 if command -v go &> /dev/null; then
-                    print_info "Installing Beads via Go..."
-                    if go install github.com/steveyegge/beads/cmd/bd@latest 2>/dev/null; then
-                        print_success "Beads CLI installed via Go"
+                    if run_with_spinner "Installing Beads via Go" go install github.com/steveyegge/beads/cmd/bd@latest; then
                         print_info "Ensure \$GOPATH/bin is in your PATH"
                     else
                         print_warning "Go installation failed"
@@ -2597,9 +2597,7 @@ setup_beads() {
                 fi
             fi
         elif command -v go &> /dev/null; then
-            print_info "Installing Beads via Go..."
-            if go install github.com/steveyegge/beads/cmd/bd@latest 2>/dev/null; then
-                print_success "Beads CLI installed via Go"
+            if run_with_spinner "Installing Beads via Go" go install github.com/steveyegge/beads/cmd/bd@latest; then
                 print_info "Ensure \$GOPATH/bin is in your PATH"
             else
                 print_warning "Go installation failed"
@@ -2635,9 +2633,9 @@ setup_beads_ui() {
     echo "  • perles (Rust)         - BQL query language TUI"
     echo ""
     
-    read -r -p "Install optional Beads UI tools? (y/n): " install_beads_ui
+    read -r -p "Install optional Beads UI tools? [Y/n]: " install_beads_ui
     
-    if [[ "$install_beads_ui" != "y" ]]; then
+    if [[ ! "$install_beads_ui" =~ ^[Yy]?$ ]]; then
         print_info "Skipped Beads UI tools (can install later from beads.md docs)"
         return 0
     fi
@@ -2646,24 +2644,21 @@ setup_beads_ui() {
     
     # beads_viewer (Python) - use pipx for isolated install
     if command -v pipx &> /dev/null || command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
-        read -r -p "  Install beads_viewer (Python TUI with graph analytics)? (y/n): " install_viewer
-        if [[ "$install_viewer" == "y" ]]; then
+        read -r -p "  Install beads_viewer (Python TUI with graph analytics)? [Y/n]: " install_viewer
+        if [[ "$install_viewer" =~ ^[Yy]?$ ]]; then
             if command -v pipx &> /dev/null; then
-                print_info "Installing beads_viewer via pipx..."
-                if pipx install beads-viewer 2>/dev/null; then
-                    print_success "beads_viewer installed (run: beads-viewer)"
+                if run_with_spinner "Installing beads_viewer via pipx" pipx install beads-viewer; then
+                    print_info "Run: beads-viewer"
                     ((installed_count++))
                 else
-                    print_warning "Failed to install beads_viewer"
                     print_info "Try manually: pipx install beads-viewer"
                 fi
             else
-                print_info "Installing beads_viewer..."
-                if pip3 install --user beads-viewer 2>/dev/null || pip install --user beads-viewer 2>/dev/null; then
-                    print_success "beads_viewer installed"
+                if run_with_spinner "Installing beads_viewer" pip3 install --user beads-viewer; then
+                    ((installed_count++))
+                elif run_with_spinner "Installing beads_viewer" pip install --user beads-viewer; then
                     ((installed_count++))
                 else
-                    print_warning "Failed to install beads_viewer"
                     print_info "On macOS, install pipx first: brew install pipx && pipx ensurepath"
                 fi
             fi
@@ -2672,39 +2667,30 @@ setup_beads_ui() {
     
     # beads-ui (Node.js)
     if command -v npm &> /dev/null; then
-        read -r -p "  Install beads-ui (Web dashboard)? (y/n): " install_web
-        if [[ "$install_web" == "y" ]]; then
-            print_info "Installing beads-ui..."
-            if npm install -g beads-ui 2>/dev/null; then
-                print_success "beads-ui installed (run: beads-ui)"
+        read -r -p "  Install beads-ui (Web dashboard)? [Y/n]: " install_web
+        if [[ "$install_web" =~ ^[Yy]?$ ]]; then
+            if run_with_spinner "Installing beads-ui" npm install -g beads-ui; then
+                print_info "Run: beads-ui"
                 ((installed_count++))
-            else
-                print_warning "Failed to install beads-ui"
             fi
         fi
         
-        read -r -p "  Install bdui (React/Ink TUI)? (y/n): " install_bdui
-        if [[ "$install_bdui" == "y" ]]; then
-            print_info "Installing bdui..."
-            if npm install -g bdui 2>/dev/null; then
-                print_success "bdui installed (run: bdui)"
+        read -r -p "  Install bdui (React/Ink TUI)? [Y/n]: " install_bdui
+        if [[ "$install_bdui" =~ ^[Yy]?$ ]]; then
+            if run_with_spinner "Installing bdui" npm install -g bdui; then
+                print_info "Run: bdui"
                 ((installed_count++))
-            else
-                print_warning "Failed to install bdui"
             fi
         fi
     fi
     
     # perles (Rust)
     if command -v cargo &> /dev/null; then
-        read -r -p "  Install perles (BQL query language TUI)? (y/n): " install_perles
-        if [[ "$install_perles" == "y" ]]; then
-            print_info "Installing perles (this may take a few minutes)..."
-            if cargo install perles 2>/dev/null; then
-                print_success "perles installed (run: perles)"
+        read -r -p "  Install perles (BQL query language TUI)? [Y/n]: " install_perles
+        if [[ "$install_perles" =~ ^[Yy]?$ ]]; then
+            if run_with_spinner "Installing perles (Rust compile)" cargo install perles; then
+                print_info "Run: perles"
                 ((installed_count++))
-            else
-                print_warning "Failed to install perles"
             fi
         fi
     fi
@@ -2795,9 +2781,9 @@ setup_browser_tools() {
             print_success "Playwright already installed"
         else
             local install_playwright
-            read -r -p "Install Playwright MCP with browsers (chromium, firefox, webkit)? (y/n): " install_playwright
+            read -r -p "Install Playwright MCP with browsers (chromium, firefox, webkit)? [Y/n]: " install_playwright
             
-            if [[ "$install_playwright" == "y" ]]; then
+            if [[ "$install_playwright" =~ ^[Yy]?$ ]]; then
                 print_info "Installing Playwright browsers..."
                 # Use -y to auto-confirm npx install, suppress the "install without dependencies" warning
                 # Use PIPESTATUS to check npx exit code, not grep's exit code
@@ -3014,9 +3000,9 @@ setup_oh_my_opencode() {
     echo "        They are complementary and work well together."
     echo ""
     
-    read -r -p "Install Oh-My-OpenCode plugin? (y/n): " install_omo
+    read -r -p "Install Oh-My-OpenCode plugin? [Y/n]: " install_omo
     
-    if [[ "$install_omo" != "y" ]]; then
+    if [[ ! "$install_omo" =~ ^[Yy]?$ ]]; then
         print_info "Skipped Oh-My-OpenCode installation"
         return 0
     fi
@@ -3267,10 +3253,10 @@ setup_multi_tenant_credentials() {
         print_info "Everything continues to work as before - this is non-breaking."
         echo ""
         
-        read -r -p "Enable multi-tenant credential storage? (y/n): " enable_mt
+        read -r -p "Enable multi-tenant credential storage? [Y/n]: " enable_mt
         enable_mt=$(echo "$enable_mt" | tr '[:upper:]' '[:lower:]')
         
-        if [[ "$enable_mt" == "y" || "$enable_mt" == "yes" ]]; then
+        if [[ "$enable_mt" =~ ^[Yy]?$ || "$enable_mt" == "yes" ]]; then
             bash "$credential_helper" init
             print_success "Multi-tenant credential storage enabled"
             echo ""
@@ -3332,9 +3318,9 @@ check_tool_updates() {
     bash "$tool_check_script" --quiet
     echo ""
     
-    read -r -p "Update all outdated tools now? (y/n): " do_update
+    read -r -p "Update all outdated tools now? [Y/n]: " do_update
     
-    if [[ "$do_update" == "y" || "$do_update" == "Y" ]]; then
+    if [[ "$do_update" =~ ^[Yy]?$ || "$do_update" == "Y" ]]; then
         print_info "Updating tools..."
         bash "$tool_check_script" --update
         print_success "Tool updates complete!"
@@ -3543,8 +3529,8 @@ echo "  aidevops uninstall    - Remove aidevops"
         echo "  • Get personalized recommendations based on your work"
         echo "  • Set up API keys and credentials interactively"
         echo ""
-        read -r -p "Launch OpenCode with /onboarding now? (y/n): " launch_onboarding
-        if [[ "$launch_onboarding" == "y" || "$launch_onboarding" == "Y" ]]; then
+        read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
+        if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
             echo ""
             echo "Starting OpenCode..."
             opencode --prompt "/onboarding"
