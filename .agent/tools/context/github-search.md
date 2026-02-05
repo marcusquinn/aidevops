@@ -148,14 +148,16 @@ rg '"scripts"' package.json -A 10
 
 5. **Look at tests**: Test files often show correct usage patterns.
 
-## Comparison with gh_grep MCP
+## Comparison with GitHub Search MCPs
 
-| Feature | github-search (this) | gh_grep MCP |
-|---------|---------------------|-------------|
+| Feature | github-search (this) | grep_app / gh_grep MCP |
+|---------|---------------------|------------------------|
 | Token cost | 0 (no MCP) | ~600 tokens |
 | Speed | Fast (local rg) | Network dependent |
 | Scope | Local + gh CLI | GitHub API |
 | Regex | Full ripgrep | Limited |
 | Offline | Partial (local) | No |
 
-This subagent provides the same functionality as `gh_grep` MCP without the token overhead.
+This subagent provides the same functionality as `grep_app` (Oh-My-OpenCode) or `gh_grep` MCPs without the token overhead.
+
+**Note**: aidevops does not install GitHub search MCPs. If you have Oh-My-OpenCode installed, it provides `grep_app`. Use this `@github-search` subagent instead for zero-overhead GitHub code search.

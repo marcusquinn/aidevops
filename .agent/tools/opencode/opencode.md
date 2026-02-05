@@ -152,7 +152,7 @@ Specialized agents invoked with `@agent-name`. MCPs are enabled only for relevan
 | `code-quality` | Quality scanning + learning loop | context7 |
 | `browser-automation` | Testing, scraping | chrome-devtools, context7 |
 | `context7-mcp-setup` | Documentation | context7 |
-| `git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
+| `git-platforms` | GitHub, GitLab, Gitea | context7 |
 | `crawl4ai-usage` | Web crawling | context7 |
 | `dns-providers` | DNS management | hostinger-api (DNS) |
 | `agent-review` | Session analysis, improvements | (read/write only) |
