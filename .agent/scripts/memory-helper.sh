@@ -41,7 +41,7 @@ readonly DEFAULT_MAX_AGE_DAYS=90
 readonly STALE_WARNING_DAYS=60
 
 # Valid learning types (matches documentation and Continuous-Claude-v3)
-readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD"
+readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD SUCCESS_PATTERN FAILURE_PATTERN"
 
 # Valid relation types (inspired by Supermemory's relational versioning)
 # - updates: New info supersedes old (state mutation)
@@ -375,6 +375,7 @@ cmd_recall() {
     local project_filter=""
     local format="text"
     local recent_mode=false
+    local semantic_mode=false
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -384,6 +385,7 @@ cmd_recall() {
             --max-age-days) max_age_days="$2"; shift 2 ;;
             --project|-p) project_filter="$2"; shift 2 ;;
             --recent) recent_mode=true; limit="${2:-10}"; shift; [[ "${1:-}" =~ ^[0-9]+$ ]] && shift ;;
+            --semantic|--similar) semantic_mode=true; shift ;;
             --format) format="$2"; shift 2 ;;
             --json) format="json"; shift ;;
             --stats) cmd_stats; return 0 ;;
@@ -416,6 +418,22 @@ cmd_recall() {
     if [[ -z "$query" ]]; then
         log_error "Query is required. Use --query \"search terms\" or --recent"
         return 1
+    fi
+    
+    # Handle --semantic mode (delegate to embeddings helper)
+    if [[ "$semantic_mode" == true ]]; then
+        local embeddings_script
+        embeddings_script="$(dirname "$0")/memory-embeddings-helper.sh"
+        if [[ ! -x "$embeddings_script" ]]; then
+            log_error "Semantic search not available. Run: memory-embeddings-helper.sh setup"
+            return 1
+        fi
+        local semantic_args=("search" "$query" "--limit" "$limit")
+        if [[ "$format" == "json" ]]; then
+            semantic_args+=("--json")
+        fi
+        "$embeddings_script" "${semantic_args[@]}"
+        return $?
     fi
     
     # Escape query for FTS5 - escape both single and double quotes
@@ -1054,7 +1072,8 @@ STORE OPTIONS:
 
 VALID TYPES:
     WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
-    TOOL_CONFIG, DECISION, CONTEXT, ARCHITECTURAL_DECISION, ERROR_FIX, OPEN_THREAD
+    TOOL_CONFIG, DECISION, CONTEXT, ARCHITECTURAL_DECISION, ERROR_FIX,
+    OPEN_THREAD, SUCCESS_PATTERN, FAILURE_PATTERN
 
 RELATION TYPES (inspired by Supermemory):
     updates   - New info supersedes old (state mutation)
@@ -1071,6 +1090,8 @@ RECALL OPTIONS:
     --max-age-days <n>    Only recent entries
     --project <path>      Filter by project path
     --recent [n]          Show n most recent entries (default: 10)
+    --semantic            Use semantic similarity search (requires embeddings setup)
+    --similar             Alias for --semantic
     --stats               Show memory statistics
     --json                Output as JSON
 
@@ -1111,8 +1132,11 @@ EXAMPLES:
     # Find latest version in a chain
     memory-helper.sh latest mem_xxx
 
-    # Recall learnings
+    # Recall learnings (keyword search - default)
     memory-helper.sh recall --query "database search" --limit 10
+
+    # Recall learnings (semantic similarity - opt-in, requires setup)
+    memory-helper.sh recall --query "how to optimize queries" --semantic
 
     # Check for stale entries
     memory-helper.sh validate
