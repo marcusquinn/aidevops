@@ -35,7 +35,8 @@ get_mcp_command() {
         "nextjs-devtools") echo "npx next-devtools-mcp@latest" ;;
         "google-search-console") echo "npx mcp-server-gsc@latest" ;;
         "pagespeed-insights") echo "npx mcp-pagespeed-server@latest" ;;
-        "grep-vercel") echo "remote:https://mcp.grep.app" ;;
+        # grep-vercel - REMOVED: Use @github-search subagent (CLI-based, zero tokens)
+        "grep-vercel") echo "" ;;
         "claude-code-mcp") echo "npx -y github:marcusquinn/claude-code-mcp" ;;
         "stagehand") echo "node ${HOME}/.aidevops/stagehand/examples/basic-example.js" ;;
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
@@ -175,18 +176,12 @@ install_mcp() {
             print_info "Use: ./.agent/scripts/pagespeed-helper.sh for CLI access"
             ;;
         "grep-vercel")
-            print_info "Setting up Grep by Vercel MCP for GitHub code search..."
-            print_info "This is a remote MCP server - no local installation required"
-            print_info "URL: https://mcp.grep.app"
-            
-            # Add to Claude MCP if available
-            if command -v claude &> /dev/null; then
-                claude mcp add gh_grep --url "https://mcp.grep.app"
-            fi
-            
-            print_success "Grep by Vercel MCP setup complete!"
-            print_info "Use 'gh_grep' tool in prompts to search GitHub code"
-            print_info "Example: 'use gh_grep to find examples of SST Astro components'"
+            print_info "Grep by Vercel MCP (grep.app) is no longer installed by aidevops"
+            print_info "Use @github-search subagent instead (CLI-based, zero token overhead)"
+            print_info "If you have Oh-My-OpenCode, it provides grep_app MCP"
+            print_info ""
+            print_info "Usage: @github-search 'search pattern'"
+            print_info "Or directly: gh search code 'pattern' --language typescript"
             ;;
         "claude-code-mcp")
             print_info "Setting up Claude Code MCP (forked) for Claude Code automation..."

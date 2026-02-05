@@ -522,8 +522,9 @@ EAGER_MCPS = {'osgrep'}
 LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
              'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
-             'playwriter', 'augment-context-engine', 'gh_grep', 'context7',
+             'playwriter', 'augment-context-engine', 'context7',
              'sentry', 'socket'}
+# Note: gh_grep removed entirely - @github-search subagent uses CLI tools instead
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
@@ -585,21 +586,9 @@ if 'playwriter' not in config['mcp']:
 # playwriter_* enabled globally (used by all main agents)
 config['tools']['playwriter_*'] = True
 
-# gh_grep MCP - GitHub code search (lazy load - @github-search subagent only)
-# This is a remote MCP, no local process to start
-# Disabled globally to save ~600 tokens, enabled when @github-search is called
-if 'gh_grep' not in config['mcp']:
-    config['mcp']['gh_grep'] = {
-        "type": "remote",
-        "url": "https://mcp.grep.app",
-        "enabled": False
-    }
-    print("  Added gh_grep MCP (lazy load - @github-search subagent only)")
-
-# gh_grep tools disabled globally, enabled via @github-search subagent
-if 'gh_grep_*' not in config['tools']:
-    config['tools']['gh_grep_*'] = False
-    print("  Set gh_grep_* disabled globally (@github-search enables on-demand)")
+# gh_grep MCP removed - @github-search subagent uses CLI tools (rg, gh) instead
+# This saves ~600 tokens per session with equivalent functionality
+# See: tools/context/github-search.md
 
 # -----------------------------------------------------------------------------
 # LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand

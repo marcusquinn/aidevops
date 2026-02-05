@@ -52,9 +52,13 @@ mcp-index-helper.sh status
 |-----|--------|----------|----------------|
 | `playwriter` | ~3K | `@playwriter` | Browser automation needed |
 | `augment-context-engine` | ~1K | `@augment-context-engine` | osgrep insufficient |
-| `gh_grep` | ~600 | `@github-search` | (uses rg/bash instead) |
 | `google-analytics-mcp` | ~800 | `@google-analytics` | Analytics reporting |
 | `context7` | ~800 | `@context7` | Library docs lookup |
+
+**Not installed by aidevops** (use subagent instead):
+| MCP | Subagent | Notes |
+|-----|----------|-------|
+| `grep_app` / `gh_grep` | `@github-search` | CLI-based, zero tokens |
 
 **Always enabled**: `osgrep` (primary semantic search, local, no auth)
 

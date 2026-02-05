@@ -408,11 +408,13 @@ async setup(input: PluginInput) {
   const omoLoaded = input.plugins?.includes('oh-my-opencode');
   
   if (omoLoaded && config.omoCompatibility) {
-    // Disable MCPs that OmO provides
-    config.disabledMcps.push('context7', 'websearch_exa', 'gh_grep');
+    // Disable MCPs that OmO provides (websearch_exa, context7, grep_app)
+    // aidevops doesn't add these - OmO handles them
+    // We just need to avoid conflicts with agent names
+    config.disabledMcps.push('context7', 'websearch_exa');
     
-    // Prefix agent names to avoid conflicts
-    // (though current agents don't conflict)
+    // Note: OmO provides grep_app for GitHub search
+    // aidevops uses @github-search subagent (CLI-based, zero token overhead)
   }
   
   // Continue with setup...
