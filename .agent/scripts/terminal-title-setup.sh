@@ -136,9 +136,9 @@ check_and_fix_tabby() {
     log_warn "Tabby has 'disableDynamicTitle: true' in $count profile(s)"
     log_info "This prevents terminal title sync from working"
     echo ""
-    read -r -p "Fix Tabby config to allow dynamic titles? (y/n): " fix_tabby
+    read -r -p "Fix Tabby config to allow dynamic titles? [Y/n]: " fix_tabby
     
-    if [[ "$fix_tabby" == "y" ]]; then
+    if [[ "$fix_tabby" =~ ^[Yy]?$ ]]; then
         tabby_enable_dynamic_titles
     else
         log_info "Skipped Tabby config fix"
