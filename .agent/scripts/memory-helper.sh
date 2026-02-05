@@ -477,7 +477,11 @@ cmd_recall() {
             log_error "Semantic search not available. Run: memory-embeddings-helper.sh setup"
             return 1
         fi
-        local semantic_args=("search" "$query" "--limit" "$limit")
+        local semantic_args=()
+        if [[ -n "$MEMORY_NAMESPACE" ]]; then
+            semantic_args+=("--namespace" "$MEMORY_NAMESPACE")
+        fi
+        semantic_args+=("search" "$query" "--limit" "$limit")
         if [[ "$format" == "json" ]]; then
             semantic_args+=("--json")
         fi
@@ -578,6 +582,23 @@ ORDER BY score
 LIMIT $limit;
 EOF
 )
+            # Update access tracking in global DB for shared results
+            if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
+                local shared_ids
+                shared_ids=$(echo "$shared_results" | extract_ids_from_json)
+                if [[ -n "$shared_ids" ]]; then
+                    while IFS= read -r sid; do
+                        [[ -z "$sid" ]] && continue
+                        sqlite3 "$global_db" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+VALUES ('$sid', datetime('now'), 1)
+ON CONFLICT(id) DO UPDATE SET 
+    last_accessed_at = datetime('now'),
+    access_count = access_count + 1;
+EOF
+                    done <<< "$shared_ids"
+                fi
+            fi
         fi
     fi
 
@@ -1227,6 +1248,188 @@ cmd_namespaces() {
 }
 
 #######################################
+# Prune orphaned namespaces
+# Removes namespace directories that have no matching runner
+#######################################
+cmd_namespaces_prune() {
+    local dry_run=false
+    local runners_dir="${AIDEVOPS_RUNNERS_DIR:-$HOME/.aidevops/.agent-workspace/runners}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    local ns_dir="$MEMORY_BASE_DIR/namespaces"
+
+    if [[ ! -d "$ns_dir" ]]; then
+        log_info "No namespaces to prune"
+        return 0
+    fi
+
+    local namespaces
+    namespaces=$(find "$ns_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+    if [[ -z "$namespaces" ]]; then
+        log_info "No namespaces to prune"
+        return 0
+    fi
+
+    local orphaned=0
+    local kept=0
+
+    for ns_path in $namespaces; do
+        local ns_name
+        ns_name=$(basename "$ns_path")
+        local runner_path="$runners_dir/$ns_name"
+
+        if [[ -d "$runner_path" && -f "$runner_path/config.json" ]]; then
+            kept=$((kept + 1))
+            continue
+        fi
+
+        local ns_db="$ns_path/memory.db"
+        local count=0
+        if [[ -f "$ns_db" ]]; then
+            count=$(sqlite3 "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+        fi
+
+        if [[ "$dry_run" == true ]]; then
+            log_warn "[DRY RUN] Would remove orphaned namespace: $ns_name ($count entries)"
+        else
+            rm -rf "$ns_path"
+            log_info "Removed orphaned namespace: $ns_name ($count entries)"
+        fi
+        orphaned=$((orphaned + 1))
+    done
+
+    if [[ "$orphaned" -eq 0 ]]; then
+        log_success "No orphaned namespaces found ($kept active)"
+    elif [[ "$dry_run" == true ]]; then
+        log_warn "[DRY RUN] Would remove $orphaned orphaned namespaces ($kept active)"
+    else
+        log_success "Removed $orphaned orphaned namespaces ($kept active)"
+    fi
+
+    return 0
+}
+
+#######################################
+# Migrate memories between namespaces
+# Copies entries from one namespace (or global) to another
+#######################################
+cmd_namespaces_migrate() {
+    local from_ns=""
+    local to_ns=""
+    local dry_run=false
+    local move=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from_ns="$2"; shift 2 ;;
+            --to) to_ns="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            --move) move=true; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$from_ns" || -z "$to_ns" ]]; then
+        log_error "Both --from and --to are required"
+        echo "Usage: memory-helper.sh namespaces migrate --from <ns|global> --to <ns|global> [--dry-run] [--move]"
+        return 1
+    fi
+
+    # Resolve source DB
+    local from_db
+    if [[ "$from_ns" == "global" ]]; then
+        from_db="$MEMORY_BASE_DIR/memory.db"
+    else
+        from_db="$MEMORY_BASE_DIR/namespaces/$from_ns/memory.db"
+    fi
+
+    if [[ ! -f "$from_db" ]]; then
+        log_error "Source not found: $from_db"
+        return 1
+    fi
+
+    # Resolve target DB
+    local to_db
+    local to_dir
+    if [[ "$to_ns" == "global" ]]; then
+        to_db="$MEMORY_BASE_DIR/memory.db"
+        to_dir="$MEMORY_BASE_DIR"
+    else
+        to_dir="$MEMORY_BASE_DIR/namespaces/$to_ns"
+        to_db="$to_dir/memory.db"
+    fi
+
+    # Count entries to migrate
+    local count
+    count=$(sqlite3 "$from_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+
+    if [[ "$count" -eq 0 ]]; then
+        log_info "No entries to migrate from $from_ns"
+        return 0
+    fi
+
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would migrate $count entries from '$from_ns' to '$to_ns'"
+        if [[ "$move" == true ]]; then
+            log_info "[DRY RUN] Would delete entries from source after migration"
+        fi
+        return 0
+    fi
+
+    # Ensure target DB exists with correct schema
+    mkdir -p "$to_dir"
+    local saved_dir="$MEMORY_DIR"
+    local saved_db="$MEMORY_DB"
+    MEMORY_DIR="$to_dir"
+    MEMORY_DB="$to_db"
+    init_db
+    MEMORY_DIR="$saved_dir"
+    MEMORY_DB="$saved_db"
+
+    # Migrate using ATTACH DATABASE
+    sqlite3 "$to_db" <<EOF
+ATTACH DATABASE '$from_db' AS source;
+
+-- Insert entries that don't already exist (by id)
+INSERT OR IGNORE INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+SELECT id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source
+FROM source.learnings;
+
+-- Migrate access tracking
+INSERT OR IGNORE INTO learning_access (id, last_accessed_at, access_count)
+SELECT id, last_accessed_at, access_count
+FROM source.learning_access;
+
+-- Migrate relations
+INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at)
+SELECT id, supersedes_id, relation_type, created_at
+FROM source.learning_relations;
+
+DETACH DATABASE source;
+EOF
+
+    log_success "Migrated $count entries from '$from_ns' to '$to_ns'"
+
+    # If --move, delete from source
+    if [[ "$move" == true ]]; then
+        sqlite3 "$from_db" "DELETE FROM learning_relations;"
+        sqlite3 "$from_db" "DELETE FROM learning_access;"
+        sqlite3 "$from_db" "DELETE FROM learnings;"
+        sqlite3 "$from_db" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        log_info "Cleared source: $from_ns"
+    fi
+
+    return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1360,6 +1563,15 @@ NAMESPACE EXAMPLES:
 
     # List all namespaces
     memory-helper.sh namespaces
+
+    # Remove orphaned namespaces (no matching runner)
+    memory-helper.sh namespaces prune --dry-run
+    memory-helper.sh namespaces prune
+
+    # Migrate entries between namespaces
+    memory-helper.sh namespaces migrate --from code-reviewer --to global --dry-run
+    memory-helper.sh namespaces migrate --from code-reviewer --to global
+    memory-helper.sh namespaces migrate --from global --to seo-analyst --move
 EOF
     return 0
 }
@@ -1404,7 +1616,16 @@ main() {
         prune) cmd_prune "$@" ;;
         consolidate) cmd_consolidate "$@" ;;
         export) cmd_export "$@" ;;
-        namespaces) cmd_namespaces "$@" ;;
+        namespaces)
+            # Support subcommands: namespaces [list|prune|migrate]
+            local ns_subcmd="${1:-list}"
+            case "$ns_subcmd" in
+                prune) shift; cmd_namespaces_prune "$@" ;;
+                migrate) shift; cmd_namespaces_migrate "$@" ;;
+                list|--json|--format) cmd_namespaces "$@" ;;
+                *) cmd_namespaces "$@" ;;
+            esac
+            ;;
         help|--help|-h) cmd_help ;;
         *)
             log_error "Unknown command: $command"

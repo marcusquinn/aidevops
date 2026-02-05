@@ -759,6 +759,13 @@ cmd_destroy() {
     dir=$(runner_dir "$name")
     rm -rf "$dir"
 
+    # Clean up memory namespace if it exists
+    local ns_dir="$HOME/.aidevops/.agent-workspace/memory/namespaces/$name"
+    if [[ -d "$ns_dir" ]]; then
+        rm -rf "$ns_dir"
+        log_info "Removed memory namespace: $name"
+    fi
+
     log_success "Destroyed runner: $name"
     return 0
 }
