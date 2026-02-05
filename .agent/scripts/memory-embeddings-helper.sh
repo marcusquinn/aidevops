@@ -18,12 +18,16 @@
 set -euo pipefail
 
 # Configuration
-readonly MEMORY_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
-readonly MEMORY_DB="$MEMORY_DIR/memory.db"
-readonly EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
+readonly MEMORY_BASE_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
 readonly MODEL_NAME="all-MiniLM-L6-v2"
 readonly EMBEDDING_DIM=384
-readonly PYTHON_SCRIPT="$MEMORY_DIR/.embeddings-engine.py"
+
+# Namespace support: resolved in main() before command dispatch
+EMBEDDINGS_NAMESPACE=""
+MEMORY_DIR="$MEMORY_BASE_DIR"
+MEMORY_DB="$MEMORY_DIR/memory.db"
+EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
+PYTHON_SCRIPT="$MEMORY_DIR/.embeddings-engine.py"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -36,6 +40,34 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+#######################################
+# Resolve namespace to correct DB paths
+#######################################
+resolve_embeddings_namespace() {
+    local namespace="$1"
+
+    if [[ -z "$namespace" ]]; then
+        MEMORY_DIR="$MEMORY_BASE_DIR"
+        MEMORY_DB="$MEMORY_DIR/memory.db"
+        EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
+        PYTHON_SCRIPT="$MEMORY_DIR/.embeddings-engine.py"
+        return 0
+    fi
+
+    if [[ ! "$namespace" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+        log_error "Invalid namespace: '$namespace'"
+        return 1
+    fi
+
+    EMBEDDINGS_NAMESPACE="$namespace"
+    MEMORY_DIR="$MEMORY_BASE_DIR/namespaces/$namespace"
+    MEMORY_DB="$MEMORY_DIR/memory.db"
+    EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
+    # Python script stays in base dir (shared across namespaces)
+    PYTHON_SCRIPT="$MEMORY_BASE_DIR/.embeddings-engine.py"
+    return 0
+}
 
 #######################################
 # Check if dependencies are installed
@@ -552,8 +584,29 @@ cmd_help() {
 # Main entry point
 #######################################
 main() {
+    # Parse global flags before command
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --namespace|-n)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--namespace requires a value"
+                    return 1
+                fi
+                resolve_embeddings_namespace "$2" || return 1
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
     local command="${1:-help}"
     shift || true
+
+    if [[ -n "$EMBEDDINGS_NAMESPACE" ]]; then
+        log_info "Using namespace: $EMBEDDINGS_NAMESPACE"
+    fi
 
     case "$command" in
         setup) cmd_setup ;;
