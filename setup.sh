@@ -3728,11 +3728,11 @@ echo "  aidevops uninstall    - Remove aidevops"
                     onboarding_model="google/gemini-2.5-flash"
                 fi
             fi
+            local opencode_args=("--agent" "Onboarding" "--prompt" "/onboarding")
             if [[ -n "$onboarding_model" ]]; then
-                opencode --agent Onboarding --prompt "/onboarding" --model "$onboarding_model"
-            else
-                opencode --agent Onboarding --prompt "/onboarding"
+                opencode_args+=("--model" "$onboarding_model")
             fi
+            opencode "${opencode_args[@]}"
         else
             echo ""
             echo "You can run /onboarding anytime in OpenCode to configure services."
