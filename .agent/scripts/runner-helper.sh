@@ -505,7 +505,7 @@ cmd_status() {
     # Check for memory namespace
     if [[ -x "$MEMORY_HELPER" ]]; then
         local mem_count
-        mem_count=$("$MEMORY_HELPER" stats --namespace "$name" 2>/dev/null | grep -c "Total" || echo "0")
+        mem_count=$("$MEMORY_HELPER" --namespace "$name" stats 2>/dev/null | grep -c "Total" || echo "0")
         if [[ "$mem_count" -gt 0 ]]; then
             echo "Memory entries: $mem_count"
         fi

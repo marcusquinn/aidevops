@@ -1810,9 +1810,14 @@ pattern-tracker-helper.sh suggest "refactor the auth middleware"
 # Maintenance
 ~/.aidevops/agents/scripts/memory-helper.sh validate   # Check for stale entries
 ~/.aidevops/agents/scripts/memory-helper.sh prune      # Remove stale memories
+
+# Namespaces (per-runner memory isolation)
+~/.aidevops/agents/scripts/memory-helper.sh --namespace my-runner store --content "Runner learning"
+~/.aidevops/agents/scripts/memory-helper.sh --namespace my-runner recall "query" --shared
+~/.aidevops/agents/scripts/memory-helper.sh namespaces  # List all namespaces
 ```
 
-**Storage:** `~/.aidevops/.agent-workspace/memory/memory.db` (+ optional `embeddings.db` for semantic search)
+**Storage:** `~/.aidevops/.agent-workspace/memory/memory.db` (+ optional `embeddings.db` for semantic search, `namespaces/` for per-runner isolation)
 
 See `.agent/memory/README.md` for complete documentation.
 

@@ -17,6 +17,12 @@
 #   memory-helper.sh validate                 # Check for stale/low-quality entries
 #   memory-helper.sh export [--format json|toon]  # Export all memories
 #
+# Namespace Support (per-runner memory isolation):
+#   memory-helper.sh --namespace my-runner store --content "runner-specific learning"
+#   memory-helper.sh --namespace my-runner recall --query "search" [--shared]
+#   memory-helper.sh --namespace my-runner stats
+#   memory-helper.sh namespaces              # List all namespaces
+#
 # Relational Versioning (inspired by Supermemory):
 #   - updates: New info supersedes old (e.g., "favorite color is now green")
 #   - extends: Adds detail without contradiction (e.g., adding job title)
@@ -35,9 +41,14 @@
 set -euo pipefail
 
 # Configuration
-readonly MEMORY_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
-readonly MEMORY_DB="$MEMORY_DIR/memory.db"
+readonly MEMORY_BASE_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
 readonly DEFAULT_MAX_AGE_DAYS=90
+
+# Namespace support: --namespace sets a per-runner isolated DB
+# Parsed in main() before command dispatch
+MEMORY_NAMESPACE=""
+MEMORY_DIR="$MEMORY_BASE_DIR"
+MEMORY_DB="$MEMORY_DIR/memory.db"
 readonly STALE_WARNING_DAYS=60
 
 # Valid learning types (matches documentation and Continuous-Claude-v3)
@@ -63,6 +74,42 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+#######################################
+# Resolve namespace to memory directory and DB path
+# Sets MEMORY_DIR and MEMORY_DB globals
+#######################################
+resolve_namespace() {
+    local namespace="$1"
+
+    if [[ -z "$namespace" ]]; then
+        MEMORY_DIR="$MEMORY_BASE_DIR"
+        MEMORY_DB="$MEMORY_DIR/memory.db"
+        return 0
+    fi
+
+    # Validate namespace name (same rules as runner names)
+    if [[ ! "$namespace" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+        log_error "Invalid namespace: '$namespace' (must start with letter, contain only alphanumeric, hyphens, underscores)"
+        return 1
+    fi
+    if [[ ${#namespace} -gt 40 ]]; then
+        log_error "Namespace name too long: '$namespace' (max 40 characters)"
+        return 1
+    fi
+
+    MEMORY_NAMESPACE="$namespace"
+    MEMORY_DIR="$MEMORY_BASE_DIR/namespaces/$namespace"
+    MEMORY_DB="$MEMORY_DIR/memory.db"
+    return 0
+}
+
+#######################################
+# Get the global (non-namespaced) DB path
+#######################################
+global_db_path() {
+    echo "$MEMORY_BASE_DIR/memory.db"
+}
 
 #######################################
 # Format JSON results as text (jq fallback)
@@ -376,6 +423,7 @@ cmd_recall() {
     local format="text"
     local recent_mode=false
     local semantic_mode=false
+    local shared_mode=false
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -386,6 +434,7 @@ cmd_recall() {
             --project|-p) project_filter="$2"; shift 2 ;;
             --recent) recent_mode=true; limit="${2:-10}"; shift; [[ "${1:-}" =~ ^[0-9]+$ ]] && shift ;;
             --semantic|--similar) semantic_mode=true; shift ;;
+            --shared) shared_mode=true; shift ;;
             --format) format="$2"; shift 2 ;;
             --json) format="json"; shift ;;
             --stats) cmd_stats; return 0 ;;
@@ -505,20 +554,75 @@ EOF
         fi
     fi
     
+    # Shared search: also query global DB when in a namespace with --shared
+    local shared_results=""
+    if [[ "$shared_mode" == true && -n "$MEMORY_NAMESPACE" ]]; then
+        local global_db
+        global_db=$(global_db_path)
+        if [[ -f "$global_db" ]]; then
+            shared_results=$(sqlite3 -json "$global_db" <<EOF
+SELECT 
+    learnings.id,
+    learnings.content,
+    learnings.type,
+    learnings.tags,
+    learnings.confidence,
+    learnings.created_at,
+    COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
+    COALESCE(learning_access.access_count, 0) as access_count,
+    bm25(learnings) as score
+FROM learnings
+LEFT JOIN learning_access ON learnings.id = learning_access.id
+WHERE learnings MATCH '$escaped_query' $extra_filters
+ORDER BY score
+LIMIT $limit;
+EOF
+)
+        fi
+    fi
+
     # Output based on format
     if [[ "$format" == "json" ]]; then
-        echo "$results"
+        if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
+            # Merge namespace and global results into single JSON array
+            if command -v jq &>/dev/null; then
+                local ns_json="${results:-[]}"
+                jq -s '.[0] + .[1] | sort_by(.score) | .[:'"$limit"']' \
+                    <(echo "$ns_json") <(echo "$shared_results")
+            else
+                echo "$results"
+                echo "$shared_results"
+            fi
+        else
+            echo "$results"
+        fi
     else
         if [[ -z "$results" || "$results" == "[]" ]]; then
-            log_warn "No results found for: $query"
-            return 0
+            if [[ -z "$shared_results" || "$shared_results" == "[]" ]]; then
+                log_warn "No results found for: $query"
+                return 0
+            fi
+        fi
+        
+        local header_suffix=""
+        if [[ -n "$MEMORY_NAMESPACE" ]]; then
+            header_suffix=" [namespace: $MEMORY_NAMESPACE]"
         fi
         
         echo ""
-        echo "=== Memory Recall: \"$query\" ==="
+        echo "=== Memory Recall: \"$query\"${header_suffix} ==="
         echo ""
         
-        echo "$results" | format_results_text
+        if [[ -n "$results" && "$results" != "[]" ]]; then
+            echo "$results" | format_results_text
+        fi
+        
+        if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
+            echo ""
+            echo "--- Shared (global) results ---"
+            echo ""
+            echo "$shared_results" | format_results_text
+        fi
     fi
 }
 
@@ -691,8 +795,13 @@ EOF
 cmd_stats() {
     init_db
     
+    local header_suffix=""
+    if [[ -n "$MEMORY_NAMESPACE" ]]; then
+        header_suffix=" [namespace: $MEMORY_NAMESPACE]"
+    fi
+    
     echo ""
-    echo "=== Memory Statistics ==="
+    echo "=== Memory Statistics${header_suffix} ==="
     echo ""
     
     sqlite3 "$MEMORY_DB" <<'EOF'
@@ -1035,6 +1144,89 @@ cmd_export() {
 }
 
 #######################################
+# List all memory namespaces
+#######################################
+cmd_namespaces() {
+    local output_format="table"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --format) output_format="$2"; shift 2 ;;
+            --json) output_format="json"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    local ns_dir="$MEMORY_BASE_DIR/namespaces"
+
+    if [[ ! -d "$ns_dir" ]]; then
+        log_info "No namespaces configured"
+        echo ""
+        echo "Create one with:"
+        echo "  memory-helper.sh --namespace my-runner store --content \"learning\""
+        return 0
+    fi
+
+    local namespaces
+    namespaces=$(find "$ns_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+    if [[ -z "$namespaces" ]]; then
+        log_info "No namespaces configured"
+        return 0
+    fi
+
+    if [[ "$output_format" == "json" ]]; then
+        echo "["
+        local first=true
+        for ns_path in $namespaces; do
+            local ns_name
+            ns_name=$(basename "$ns_path")
+            local ns_db="$ns_path/memory.db"
+            local count=0
+            if [[ -f "$ns_db" ]]; then
+                count=$(sqlite3 "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+            fi
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                echo ","
+            fi
+            printf '  {"namespace": "%s", "entries": %d, "path": "%s"}' "$ns_name" "$count" "$ns_path"
+        done
+        echo ""
+        echo "]"
+        return 0
+    fi
+
+    echo ""
+    echo "=== Memory Namespaces ==="
+    echo ""
+
+    # Global DB stats
+    local global_db
+    global_db=$(global_db_path)
+    local global_count=0
+    if [[ -f "$global_db" ]]; then
+        global_count=$(sqlite3 "$global_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+    fi
+    printf "  %-25s %s entries\n" "(global)" "$global_count"
+
+    for ns_path in $namespaces; do
+        local ns_name
+        ns_name=$(basename "$ns_path")
+        local ns_db="$ns_path/memory.db"
+        local count=0
+        if [[ -f "$ns_db" ]]; then
+            count=$(sqlite3 "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+        fi
+        printf "  %-25s %s entries\n" "$ns_name" "$count"
+    done
+
+    echo ""
+    return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1045,7 +1237,7 @@ Inspired by Supermemory's architecture for relational versioning,
 dual timestamps, and contextual disambiguation.
 
 USAGE:
-    memory-helper.sh <command> [options]
+    memory-helper.sh [--namespace NAME] <command> [options]
 
 COMMANDS:
     store       Store a new learning
@@ -1057,7 +1249,12 @@ COMMANDS:
     prune       Remove old entries
     consolidate Merge similar memories to reduce redundancy
     export      Export all memories
+    namespaces  List all memory namespaces
     help        Show this help
+
+GLOBAL OPTIONS:
+    --namespace <name>    Use isolated memory namespace (per-runner)
+                          Creates DB at: memory/namespaces/<name>/memory.db
 
 STORE OPTIONS:
     --content <text>      Learning content (required)
@@ -1090,6 +1287,7 @@ RECALL OPTIONS:
     --max-age-days <n>    Only recent entries
     --project <path>      Filter by project path
     --recent [n]          Show n most recent entries (default: 10)
+    --shared              Also search global memory (when using --namespace)
     --semantic            Use semantic similarity search (requires embeddings setup)
     --similar             Alias for --semantic
     --stats               Show memory statistics
@@ -1146,17 +1344,56 @@ EXAMPLES:
 
     # Consolidate similar memories
     memory-helper.sh consolidate --dry-run
+
+NAMESPACE EXAMPLES:
+    # Store in a runner-specific namespace
+    memory-helper.sh --namespace code-reviewer store --content "Prefer explicit error handling"
+
+    # Recall from namespace only
+    memory-helper.sh --namespace code-reviewer recall "error handling"
+
+    # Recall from namespace + global (shared access)
+    memory-helper.sh --namespace code-reviewer recall "error handling" --shared
+
+    # View namespace stats
+    memory-helper.sh --namespace code-reviewer stats
+
+    # List all namespaces
+    memory-helper.sh namespaces
 EOF
     return 0
 }
 
 #######################################
 # Main entry point
+# Parses global --namespace flag before dispatching to commands
 #######################################
 main() {
+    # Parse global flags before command
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --namespace|-n)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--namespace requires a value"
+                    return 1
+                fi
+                resolve_namespace "$2" || return 1
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
     local command="${1:-help}"
     shift || true
     
+    # Show namespace context if set
+    if [[ -n "$MEMORY_NAMESPACE" ]]; then
+        log_info "Using namespace: $MEMORY_NAMESPACE ($MEMORY_DB)"
+    fi
+
     case "$command" in
         store) cmd_store "$@" ;;
         recall) cmd_recall "$@" ;;
@@ -1167,6 +1404,7 @@ main() {
         prune) cmd_prune "$@" ;;
         consolidate) cmd_consolidate "$@" ;;
         export) cmd_export "$@" ;;
+        namespaces) cmd_namespaces "$@" ;;
         help|--help|-h) cmd_help ;;
         *)
             log_error "Unknown command: $command"
