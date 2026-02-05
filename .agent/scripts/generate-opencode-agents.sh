@@ -545,17 +545,25 @@ print(f"  Applied MCP loading policy: {len(EAGER_MCPS)} eager, {len(LAZY_MCPS)} 
 # -----------------------------------------------------------------------------
 
 # osgrep MCP - local semantic search (primary, try first)
-# Install: npm install -g osgrep && osgrep install-opencode
-if 'osgrep' not in config['mcp']:
-    config['mcp']['osgrep'] = {
-        "type": "local",
-        "command": ["osgrep", "mcp"],
-        "enabled": True
-    }
-    print("  Added osgrep MCP (eager load - used by all agents)")
-
-# osgrep_* enabled globally (used by all main agents)
-config['tools']['osgrep_*'] = True
+# Install: npm install -g osgrep && osgrep setup
+# Only enable if osgrep CLI is installed (avoids "Executable not found" errors)
+osgrep_installed = shutil.which('osgrep') is not None
+if osgrep_installed:
+    if 'osgrep' not in config['mcp']:
+        config['mcp']['osgrep'] = {
+            "type": "local",
+            "command": ["osgrep", "mcp"],
+            "enabled": True
+        }
+        print("  Added osgrep MCP (eager load - used by all agents)")
+    # osgrep_* enabled globally (used by all main agents)
+    config['tools']['osgrep_*'] = True
+else:
+    # Disable osgrep if not installed to avoid MCP errors
+    if 'osgrep' in config['mcp']:
+        config['mcp']['osgrep']['enabled'] = False
+    config['tools']['osgrep_*'] = False
+    print("  osgrep not installed - MCP disabled (install: npm install -g osgrep && osgrep setup)")
 
 # Playwriter MCP - browser automation via Chrome extension (used by all main agents)
 # Requires: Chrome extension from https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
