@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.100.20] - 2026-02-05
+
+### Changed
+
+- Documentation: add MCP auto-installation plan to PLANS.md (#338)
 ## [2.100.6] - 2026-02-05
 
 ### Fixed
