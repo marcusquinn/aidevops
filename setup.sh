@@ -373,19 +373,17 @@ disable_ondemand_mcps() {
         return 0
     fi
     
-    # MCPs to disable globally (enabled on-demand via subagents)
+    # MCPs to disable globally (these have subagent alternatives or are unused)
     # Note: use exact MCP key names from opencode.json
-    # Includes Oh-My-OpenCode MCPs (grep_app, websearch) that we replace with subagents
     local -a ondemand_mcps=(
         "playwriter"
         "augment-context-engine"
         "gh_grep"
         "google-analytics-mcp"
-        "context7"
-        # Oh-My-OpenCode MCPs - use @github-search subagent instead
+        # Oh-My-OpenCode MCPs - replaced by @github-search subagent
         "grep_app"
         "websearch"
-        # Note: osgrep is kept ENABLED - it's useful for semantic code search
+        # KEEP ENABLED: osgrep (semantic code search), context7 (library docs)
     )
     
     local disabled=0
@@ -427,12 +425,15 @@ disable_ondemand_mcps() {
         fi
     done
     
-    # Re-enable osgrep if it was accidentally disabled (v2.100.16 bug)
-    if jq -e '.mcp["osgrep"].enabled == false' "$tmp_config" > /dev/null 2>&1; then
-        jq '.mcp["osgrep"].enabled = true' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-        print_info "Re-enabled osgrep MCP"
-        disabled=1  # Mark as changed
-    fi
+    # Re-enable MCPs that were accidentally disabled (v2.100.16-17 bug)
+    local -a keep_enabled=("osgrep" "context7")
+    for mcp in "${keep_enabled[@]}"; do
+        if jq -e ".mcp[\"$mcp\"].enabled == false" "$tmp_config" > /dev/null 2>&1; then
+            jq ".mcp[\"$mcp\"].enabled = true" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            print_info "Re-enabled $mcp MCP"
+            disabled=1  # Mark as changed
+        fi
+    done
     
     if [[ $disabled -gt 0 ]]; then
         create_backup_with_rotation "$opencode_config" "opencode"
