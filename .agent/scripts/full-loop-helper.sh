@@ -632,6 +632,11 @@ cmd_resume() {
                 print_info "Task loop still active. Complete it first."
                 return 0
             fi
+            # README gate reminder before preflight transition
+            print_warning "README GATE: Did this task add/change user-facing features?"
+            print_info "If yes, ensure README.md is updated before proceeding."
+            print_info "For aidevops repo:"
+            print_info "  Run: readme-helper.sh check"
             save_state "$PHASE_PREFLIGHT" "$SAVED_PROMPT" "" "$STARTED_AT"
             run_preflight_phase
             save_state "$PHASE_PR_CREATE" "$SAVED_PROMPT" "" "$STARTED_AT"
