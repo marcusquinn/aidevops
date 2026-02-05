@@ -375,12 +375,16 @@ disable_ondemand_mcps() {
     
     # MCPs to disable globally (enabled on-demand via subagents)
     # Note: use exact MCP key names from opencode.json
+    # Includes Oh-My-OpenCode MCPs (grep_app, websearch) that we replace with subagents
     local -a ondemand_mcps=(
         "playwriter"
         "augment-context-engine"
         "gh_grep"
         "google-analytics-mcp"
         "context7"
+        # Oh-My-OpenCode MCPs - use @github-search subagent instead
+        "grep_app"
+        "websearch"
     )
     
     local disabled=0
@@ -3590,8 +3594,8 @@ main() {
     confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
     confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
     confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
-    # Run AFTER all MCP setup functions to ensure disabled state persists
-    confirm_step "Disable on-demand MCPs globally (playwriter, augment, gh_grep)" && disable_ondemand_mcps
+    # Run AFTER all MCP setup functions (including OmO) to ensure disabled state persists
+    confirm_step "Disable on-demand MCPs globally (incl. OmO: grep_app, websearch)" && disable_ondemand_mcps
 
     echo ""
     print_success "🎉 Setup complete!"
