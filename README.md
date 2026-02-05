@@ -489,7 +489,9 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Multi-Agent Orchestration** | Coordinate parallel agents | TOON mailbox, agent registry, stateless coordinator |
 | **Compaction Resilience** | Preserve context across compaction | OpenCode plugin injects dynamic state at compaction time |
 | **Ralph Loop** | Iterative execution until complete | `ralph-loop-helper.sh`, `full-loop-helper.sh` |
-| **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 |
+| **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
+| **Pattern Tracking** | Learn what works/fails | `pattern-tracker-helper.sh`, `/patterns` command |
+| **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 5-tier guidance, `/route` command |
 
 **Key insight**: Context is a finite resource with diminishing returns. aidevops treats every token as precious - loading only what's needed, when it's needed.
 
@@ -518,7 +520,7 @@ Coordinator (pulse loop)
 | Mailbox | `mail-helper.sh` | TOON-based inter-agent messaging (send, check, broadcast, archive) |
 | Coordinator | `coordinator-helper.sh` | Stateless pulse loop: collect reports, dispatch tasks, track idle workers |
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
-| Model routing | `generate-opencode-agents.sh` | Maps agent tiers to cost-effective models |
+| Model routing | `model-routing.md`, `/route` | Cost-aware 5-tier routing guidance (haiku/flash/sonnet/pro/opus) |
 
 **How it works:**
 
@@ -568,7 +570,7 @@ Agents that learn from experience and contribute improvements:
 
 | Phase | Description |
 |-------|-------------|
-| **Review** | Analyze memory for success/failure patterns |
+| **Review** | Analyze memory for success/failure patterns (`pattern-tracker-helper.sh`) |
 | **Refine** | Generate and apply improvements to agents |
 | **Test** | Validate in isolated OpenCode sessions |
 | **PR** | Contribute to community with privacy filtering |
@@ -1717,7 +1719,7 @@ See `.agent/workflows/session-manager.md` for the complete guide.
 
 ### Cross-Session Memory System
 
-**"Compound, then clear"** - Sessions should build on each other. The memory system stores knowledge, patterns, and learnings for future sessions using SQLite FTS5 for fast full-text search.
+**"Compound, then clear"** - Sessions should build on each other. The memory system stores knowledge, patterns, and learnings for future sessions using SQLite FTS5 for fast full-text search, with opt-in semantic similarity search via vector embeddings.
 
 **Slash commands:**
 
@@ -1727,6 +1729,8 @@ See `.agent/workflows/session-manager.md` for the complete guide.
 | `/recall {query}` | Search memories by keyword |
 | `/recall --recent` | Show 10 most recent memories |
 | `/recall --stats` | Show memory statistics |
+| `/patterns {task}` | Show success/failure patterns for a task type |
+| `/route {task}` | Suggest optimal model tier for a task |
 
 **Memory types:**
 
@@ -1739,6 +1743,29 @@ See `.agent/workflows/session-manager.md` for the complete guide.
 | `TOOL_CONFIG` | Tool setup notes |
 | `DECISION` | Architecture decisions |
 | `CONTEXT` | Background info |
+| `SUCCESS_PATTERN` | Approaches that consistently work |
+| `FAILURE_PATTERN` | Approaches that consistently fail |
+
+**Semantic search (opt-in):**
+
+```bash
+# Enable semantic similarity search (~90MB model download)
+memory-embeddings-helper.sh setup
+
+# Search by meaning, not just keywords
+memory-helper.sh recall "how to optimize queries" --semantic
+```
+
+**Pattern tracking:**
+
+```bash
+# Record what worked
+pattern-tracker-helper.sh record --outcome success --task-type bugfix \
+    --model sonnet --description "Structured debugging found root cause"
+
+# Get suggestions for a new task
+pattern-tracker-helper.sh suggest "refactor the auth middleware"
+```
 
 **CLI usage:**
 
@@ -1746,8 +1773,11 @@ See `.agent/workflows/session-manager.md` for the complete guide.
 # Store a memory
 ~/.aidevops/agents/scripts/memory-helper.sh store "WORKING_SOLUTION" "Fixed CORS with nginx headers" "cors,nginx"
 
-# Recall memories
+# Recall memories (keyword search - default)
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
+
+# Recall memories (semantic similarity - opt-in)
+~/.aidevops/agents/scripts/memory-helper.sh recall "cors" --semantic
 
 # View statistics
 ~/.aidevops/agents/scripts/memory-helper.sh stats
@@ -1757,7 +1787,7 @@ See `.agent/workflows/session-manager.md` for the complete guide.
 ~/.aidevops/agents/scripts/memory-helper.sh prune      # Remove stale memories
 ```
 
-**Storage:** `~/.aidevops/.agent-workspace/memory/memory.db`
+**Storage:** `~/.aidevops/.agent-workspace/memory/memory.db` (+ optional `embeddings.db` for semantic search)
 
 See `.agent/memory/README.md` for complete documentation.
 
