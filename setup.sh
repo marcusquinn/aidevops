@@ -2089,8 +2089,16 @@ check_skill_updates() {
         fi
         
         # Get latest commit from GitHub API (silent, with timeout)
-        local latest_commit
-        latest_commit=$(curl -s --max-time 5 "https://api.github.com/repos/$owner_repo/commits?per_page=1" 2>/dev/null | jq -r '.[0].sha // empty')
+        local api_response latest_commit
+        api_response=$(curl -s --max-time 5 "https://api.github.com/repos/$owner_repo/commits?per_page=1" 2>/dev/null)
+        
+        # Check if response is an array (success) or object (error like rate limit)
+        if echo "$api_response" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            latest_commit=$(echo "$api_response" | jq -r '.[0].sha // empty')
+        else
+            # API returned error object, skip this skill
+            continue
+        fi
         
         if [[ -n "$latest_commit" && "$latest_commit" != "$upstream_commit" ]]; then
             ((updates_available++))
