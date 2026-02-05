@@ -34,6 +34,8 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 **Self-verification**: Your FIRST step before any Edit/Write MUST be to run this script. If you are about to edit a file and have not yet run pre-edit-check.sh in this session, STOP and run it now. No exceptions — including TODO.md and planning files (the script handles exception logic, not you).
 
+**Subagent write restrictions**: Subagents invoked via the Task tool cannot run `pre-edit-check.sh` (many lack `bash: true`). When on `main`/`master`, subagents with `write: true` may ONLY write to: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes must be returned as proposed edits for the calling agent to apply in a worktree.
+
 ---
 
 ## MANDATORY: File Discovery

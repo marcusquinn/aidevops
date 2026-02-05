@@ -241,10 +241,19 @@ tools:
 
 **Note on permissions**: Path-based permissions (e.g., restricting which files can be edited) are configured in `opencode.json` for OpenCode, not in markdown frontmatter. The frontmatter defines which tools are available; the JSON config defines granular restrictions.
 
+**Main-branch write restrictions**: Subagents with `write: true` / `edit: true` that are invoked via the Task tool MUST respect the same branch protection as the primary agent. When the working directory is on `main`/`master`:
+
+- **ALLOWED**: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*` (planning and documentation files)
+- **BLOCKED**: All other files (code, scripts, configs, agent definitions)
+- **WORKTREE**: If a worktree is active, writes to the worktree path are unrestricted
+
+Subagents cannot run `pre-edit-check.sh` (many lack `bash: true`), so this rule must be stated explicitly in the subagent's markdown. Add a "Write Restrictions" section to any subagent that has `write: true` and may be invoked on the main repo path.
+
 **Why this matters:**
 - Prevents confusion when agents recommend actions they cannot perform
 - Makes agent capabilities explicit and predictable
 - Enables safer parallel execution (read-only agents can't conflict)
+- Prevents subagents from bypassing branch protection when invoked via Task tool
 - Documents intent for both humans and AI systems
 
 #### Agent Directory Architecture
