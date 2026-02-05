@@ -24,9 +24,9 @@ readonly ERROR_SITE_ID_REQUIRED="Site ID is required"
 readonly ERROR_AT_LEAST_ONE_SITE_ID="At least one site ID is required"
 readonly HELP_SHOW_MESSAGE="Show this help"
 
-# Resolve script directory for reliable config path
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-CONFIG_FILE="${SCRIPT_DIR}/../configs/mainwp-config.json"
+# Configuration file location (XDG-compliant user config)
+CONFIG_FILE="${HOME}/.config/aidevops/mainwp-config.json"
+TEMPLATE_FILE="${HOME}/.aidevops/agents/configs/mainwp-config.json.txt"
 
 print_info() {
     local msg="$1"
@@ -72,7 +72,9 @@ check_dependencies() {
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
         print_error "$ERROR_CONFIG_NOT_FOUND: $CONFIG_FILE"
-        print_info "Copy and customize: cp ${SCRIPT_DIR}/../configs/mainwp-config.json.txt $CONFIG_FILE"
+        print_info "Copy and customize the template:"
+        print_info "  mkdir -p ~/.config/aidevops"
+        print_info "  cp $TEMPLATE_FILE $CONFIG_FILE"
         exit 1
     fi
     return 0
@@ -608,8 +610,13 @@ Examples:
   mainwp-helper.sh bulk-update-wp production 123 124 125
 
 Configuration:
-  Config file: ~/.aidevops/agents/configs/mainwp-config.json
+  Config file: ~/.config/aidevops/mainwp-config.json
   Template: ~/.aidevops/agents/configs/mainwp-config.json.txt
+
+Setup:
+  mkdir -p ~/.config/aidevops
+  cp ~/.aidevops/agents/configs/mainwp-config.json.txt ~/.config/aidevops/mainwp-config.json
+  # Edit the file with your MainWP credentials
 
 API Authentication:
   MainWP REST API v1 uses query parameter authentication.
