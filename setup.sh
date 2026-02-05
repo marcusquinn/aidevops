@@ -1075,7 +1075,8 @@ setup_worktrunk() {
                 print_info "Shell integration not detected"
                 read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " install_shell
                 if [[ "$install_shell" =~ ^[Yy]?$ ]]; then
-                    if wt config shell install 2>/dev/null; then
+                    print_info "Installing shell integration..."
+                    if wt config shell install; then
                         print_success "Shell integration installed"
                         print_info "Restart your terminal or run: source $shell_rc"
                     else
@@ -1107,8 +1108,10 @@ setup_worktrunk() {
         
         if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
             if run_with_spinner "Installing Worktrunk via Homebrew" brew install max-sixty/worktrunk/wt; then
-                # Install shell integration
-                if run_with_spinner "Installing shell integration" wt config shell install; then
+                # Install shell integration (don't use spinner - command is fast and may need interaction)
+                print_info "Installing shell integration..."
+                if wt config shell install; then
+                    print_success "Shell integration installed"
                     print_info "Restart your terminal or source your shell config"
                 else
                     print_warning "Shell integration failed - run manually: wt config shell install"
@@ -1135,8 +1138,10 @@ setup_worktrunk() {
         
         if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
             if run_with_spinner "Installing Worktrunk via Cargo" cargo install worktrunk; then
-                # Install shell integration
-                if run_with_spinner "Installing shell integration" wt config shell install; then
+                # Install shell integration (don't use spinner - command is fast and may need interaction)
+                print_info "Installing shell integration..."
+                if wt config shell install; then
+                    print_success "Shell integration installed"
                     print_info "Restart your terminal or source your shell config"
                 else
                     print_warning "Shell integration failed - run manually: wt config shell install"
@@ -1892,15 +1897,24 @@ deploy_aidevops_agents() {
         if [[ -f "$plan_reminder" && -f "$plan_plus" ]]; then
             # Check if plan-plus.md has the placeholder marker
             if grep -q "OPENCODE-PLAN-REMINDER-INJECT" "$plan_plus"; then
-                # Replace placeholder with extracted content
-                local reminder_content
-                reminder_content=$(cat "$plan_reminder")
-                # Use awk to replace the placeholder section
-                awk -v content="$reminder_content" '
-                    /<!-- OPENCODE-PLAN-REMINDER-INJECT-START -->/ { print; print content; skip=1; next }
-                    /<!-- OPENCODE-PLAN-REMINDER-INJECT-END -->/ { skip=0 }
-                    !skip { print }
-                ' "$plan_plus" > "$plan_plus.tmp" && mv "$plan_plus.tmp" "$plan_plus"
+                # Replace placeholder with extracted content using sed
+                # (awk -v doesn't handle multi-line content with special chars well)
+                local tmp_file
+                tmp_file=$(mktemp)
+                local in_placeholder=false
+                while IFS= read -r line || [[ -n "$line" ]]; do
+                    if [[ "$line" == *"OPENCODE-PLAN-REMINDER-INJECT-START"* ]]; then
+                        echo "$line" >> "$tmp_file"
+                        cat "$plan_reminder" >> "$tmp_file"
+                        in_placeholder=true
+                    elif [[ "$line" == *"OPENCODE-PLAN-REMINDER-INJECT-END"* ]]; then
+                        echo "$line" >> "$tmp_file"
+                        in_placeholder=false
+                    elif [[ "$in_placeholder" == false ]]; then
+                        echo "$line" >> "$tmp_file"
+                    fi
+                done < "$plan_plus"
+                mv "$tmp_file" "$plan_plus"
                 print_info "Injected OpenCode plan-reminder into Plan+"
             fi
         fi
@@ -3612,8 +3626,8 @@ echo "  aidevops uninstall    - Remove aidevops"
         read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
         if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
             echo ""
-            echo "Starting OpenCode..."
-            opencode --prompt "/onboarding"
+            echo "Starting OpenCode with Onboarding agent..."
+            opencode --agent Onboarding --prompt "/onboarding"
         else
             echo ""
             echo "You can run /onboarding anytime in OpenCode to configure services."
