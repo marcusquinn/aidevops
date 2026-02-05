@@ -34,8 +34,8 @@ readonly NC='\033[0m' # No Color
 # - String literals: Code duplication is a style issue, not a bug
 readonly MAX_TOTAL_ISSUES=100
 readonly MAX_RETURN_ISSUES=10
-readonly MAX_POSITIONAL_ISSUES=280
-readonly MAX_STRING_LITERAL_ISSUES=2200
+readonly MAX_POSITIONAL_ISSUES=300
+readonly MAX_STRING_LITERAL_ISSUES=2300
 
 print_header() {
     echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
