@@ -409,7 +409,7 @@ async setup(input: PluginInput) {
   
   if (omoLoaded && config.omoCompatibility) {
     // Disable MCPs that OmO provides
-    config.disabledMcps.push('context7', 'websearch_exa', 'grep_app');
+    config.disabledMcps.push('context7', 'websearch_exa', 'gh_grep');
     
     // Prefix agent names to avoid conflicts
     // (though current agents don't conflict)
