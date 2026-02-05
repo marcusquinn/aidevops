@@ -144,7 +144,7 @@ When both TODO.md and Beads have changes:
 | Tool | Type | Features | Install |
 |------|------|----------|---------|
 | `bd` | CLI | Core commands, MCP server | `brew install steveyegge/beads/bd` |
-| `beads_viewer` | TUI | PageRank, critical path, graph analytics | `pip install beads-viewer` |
+| `bv` | TUI | PageRank, critical path, graph analytics | `brew install dicklesworthstone/tap/bv` |
 | `beads-ui` | Web | Live updates, browser-based | `npm install -g beads-ui` |
 | `bdui` | TUI | React/Ink interface | `npm install -g bdui` |
 | `perles` | TUI | BQL query language | `cargo install perles` |
@@ -156,8 +156,10 @@ When both TODO.md and Beads have changes:
 brew install steveyegge/beads/bd
 # Or: go install github.com/steveyegge/beads/cmd/bd@latest
 
-# Advanced TUI with graph analytics (Python)
-pip install beads-viewer
+# Advanced TUI with graph analytics (Go)
+brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv
+# Or: go install github.com/Dicklesworthstone/beads_viewer/cmd/bv@latest
+# Or: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash
 # Repository: https://github.com/Dicklesworthstone/beads_viewer
 
 # Web UI with live updates (Node.js)
@@ -182,10 +184,10 @@ bd list
 bd ready
 bd graph <issue-id>
 
-# beads_viewer - Advanced TUI
-beads-viewer              # Interactive mode
-beads-viewer --pagerank   # Show PageRank scores
-beads-viewer --critical   # Show critical path
+# bv - Advanced TUI (beads_viewer)
+bv                        # Interactive mode
+bv --robot-triage         # Agent mode: triage overview
+bv --robot-next           # Agent mode: next task to work on
 
 # beads-ui - Web interface
 beads-ui                  # Starts on http://localhost:3000
