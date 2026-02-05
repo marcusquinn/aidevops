@@ -905,6 +905,87 @@ p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d
 p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
 p010,Agent Design Pattern Improvements,planning,0,5,,architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,
 p011,Memory Auto-Capture,planning,0,5,,memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,
+p018,MCP Auto-Installation in setup.sh,planning,0,4,,mcp|setup|installation,4h,2h,1h,1h,2026-02-05T03:00Z,
+-->
+
+### [2026-02-05] MCP Auto-Installation in setup.sh
+
+**Status:** Planning
+**Estimate:** ~4h (ai:2h test:1h read:1h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p018,MCP Auto-Installation in setup.sh,planning,0,4,,mcp|setup|installation,4h,2h,1h,1h,2026-02-05T03:00Z,
+-->
+
+#### Purpose
+
+Add automatic MCP installation/configuration to setup.sh so users get working MCPs out of the box. Currently many MCPs are configured but not installed, leading to "Disabled" status.
+
+#### Context from Discussion
+
+**MCP Categories:**
+
+| Category | MCPs | Install Method | Auth |
+|----------|------|----------------|------|
+| **Remote (no install)** | context7, socket | Just enable | No |
+| **Bun packages** | chrome-devtools, gsc | `bun install -g` | gsc needs OAuth |
+| **Brew packages** | localwp | `brew install` | Needs Local WP app |
+| **Docker** | MCP_DOCKER | Docker Desktop | No |
+| **NPX** | sentry | `npx @sentry/mcp-server` | Access token |
+| **NPM + Auth** | augment-context-engine | `npm install -g @augmentcode/auggie` | `auggie login` |
+| **Custom** | amazon-order-history | Git clone + build | Amazon auth |
+
+**Priority Order:**
+1. Remote MCPs (context7, socket) - just enable, no install
+2. Simple packages (chrome-devtools) - auto-install
+3. Auth-required (gsc, sentry) - install + guide user to auth
+4. App-dependent (localwp, MCP_DOCKER) - check prereqs, guide setup
+5. Complex (augment, amazon) - document manual setup
+
+#### Progress
+
+- [ ] (2026-02-05) Phase 1: Enable remote MCPs (context7, socket) ~30m
+  - Add to opencode.json with `enabled: true`
+  - No installation needed
+- [ ] (2026-02-05) Phase 2: Auto-install simple MCPs ~1h
+  - chrome-devtools: `bun install -g chrome-devtools-mcp`
+  - Add setup functions to setup.sh
+- [ ] (2026-02-05) Phase 3: Auth-required MCPs ~1.5h
+  - gsc: Install + OAuth setup guide
+  - sentry: Install + token prompt
+  - localwp: Check Local WP app, install MCP
+  - MCP_DOCKER: Check Docker Desktop
+- [ ] (2026-02-05) Phase 4: Documentation ~1h
+  - Update subagent docs with install status
+  - Add troubleshooting for common issues
+
+<!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m091,p018,Phase 1: Enable remote MCPs (context7 socket),30m,,2026-02-05T03:00Z,,pending
+m092,p018,Phase 2: Auto-install simple MCPs (chrome-devtools),1h,,2026-02-05T03:00Z,,pending
+m093,p018,Phase 3: Auth-required MCPs (gsc sentry localwp MCP_DOCKER),1.5h,,2026-02-05T03:00Z,,pending
+m094,p018,Phase 4: Documentation updates,1h,,2026-02-05T03:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Remote MCPs (context7, socket) should be enabled by default
+  **Rationale:** No installation needed, free services, useful for all users
+  **Date:** 2026-02-05
+
+- **Decision:** Auth-required MCPs get installed but disabled until auth configured
+  **Rationale:** Reduces friction; user can enable after setting up credentials
+  **Date:** 2026-02-05
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d026,p018,Remote MCPs enabled by default,No install needed; free services; useful for all,2026-02-05,None
+d027,p018,Auth-required MCPs installed but disabled,Reduces friction; enable after credentials,2026-02-05,None
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
 ### [2025-01-11] Agent Design Pattern Improvements
