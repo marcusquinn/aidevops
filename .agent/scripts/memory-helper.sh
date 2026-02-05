@@ -331,10 +331,10 @@ cmd_store() {
     fi
     
     # Escape single quotes for SQL (prevents SQL injection)
-    local escaped_content="${content//\'/\'\'}"
-    local escaped_tags="${tags//\'/\'\'}"
-    local escaped_project="${project_path//\'/\'\'}"
-    local escaped_supersedes="${supersedes_id//\'/\'\'}"
+    local escaped_content="${content//"'"/"''"}"
+    local escaped_tags="${tags//"'"/"''"}"
+    local escaped_project="${project_path//"'"/"''"}"
+    local escaped_supersedes="${supersedes_id//"'"/"''"}"
     
     # Validate supersedes_id exists if provided
     if [[ -n "$supersedes_id" ]]; then
@@ -437,7 +437,7 @@ cmd_recall() {
     fi
     
     # Escape query for FTS5 - escape both single and double quotes
-    local escaped_query="${query//\'/\'\'}"
+    local escaped_query="${query//"'"/"''"}"
     escaped_query="${escaped_query//\"/\"\"}"
     
     # Build filters with validation
@@ -461,7 +461,7 @@ cmd_recall() {
         extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
     fi
     if [[ -n "$project_filter" ]]; then
-        local escaped_project="${project_filter//\'/\'\'}"
+        local escaped_project="${project_filter//"'"/"''"}"
         extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%'"
     fi
     
@@ -537,7 +537,7 @@ cmd_history() {
     init_db
     
     # Escape memory_id for SQL (prevents SQL injection)
-    local escaped_id="${memory_id//\'/\'\'}"
+    local escaped_id="${memory_id//"'"/"''"}"
     
     # Check if memory exists
     local exists
@@ -648,7 +648,7 @@ cmd_latest() {
     init_db
     
     # Escape memory_id for SQL (prevents SQL injection)
-    local escaped_id="${memory_id//\'/\'\'}"
+    local escaped_id="${memory_id//"'"/"''"}"
     
     # Find the latest in the chain (no descendants with 'updates' relation)
     local latest_id
@@ -672,7 +672,7 @@ EOF
     fi
     
     # Escape latest_id for the final query
-    local escaped_latest="${latest_id//\'/\'\'}"
+    local escaped_latest="${latest_id//"'"/"''"}"
     
     echo "$latest_id"
     
@@ -962,8 +962,8 @@ EOF
             fi
             
             # Escape IDs for SQL injection prevention
-            local older_id_esc="${older_id//\'/\'\'}"
-            local newer_id_esc="${newer_id//\'/\'\'}"
+            local older_id_esc="${older_id//"'"/"''"}"
+            local newer_id_esc="${newer_id//"'"/"''"}"
             
             # Merge tags from newer into older
             local older_tags newer_tags
@@ -974,7 +974,7 @@ EOF
                 local merged_tags
                 merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
                 # Escape merged_tags for SQL injection prevention
-                local merged_tags_esc="${merged_tags//\'/\'\'}"
+                local merged_tags_esc="${merged_tags//"'"/"''"}"
                 sqlite3 "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
             fi
             
