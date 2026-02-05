@@ -80,12 +80,11 @@ jobs:
     
     - name: 🔧 Apply Auto-Fixes
       run: |
-        # Run Qlty auto-formatting
-        if command -v qlty &> /dev/null; then
-          qlty fmt --all || echo "Qlty formatting completed with warnings"
-        fi
+        # NOTE: Qlty fmt disabled - it introduces invalid shell syntax
+        # (adds "|| exit" after "then" in if statements)
+        # See: https://github.com/marcusquinn/aidevops/issues/333
         
-        # Apply framework-specific fixes
+        # Apply framework-specific fixes only
         ./.agent/scripts/monitor-code-review.sh fix
     
     - name: 📊 Generate Quality Report
