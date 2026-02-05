@@ -670,6 +670,19 @@ if platform.system() == 'Darwin':
         config['tools']['macos-automator_*'] = False
         print("  Set macos-automator_* disabled globally")
 
+# Disable Oh-My-OpenCode MCPs that aidevops replaces with subagents
+# OmO installs: grep_app (GitHub search), context7 (docs), websearch (Exa)
+# We disable these globally - use @github-search, @context7 subagents instead
+omo_mcps_to_disable = ['grep_app', 'websearch']  # context7 handled by LAZY_MCPS
+for mcp_name in omo_mcps_to_disable:
+    if mcp_name in config.get('mcp', {}):
+        config['mcp'][mcp_name]['enabled'] = False
+        print(f"  Disabled {mcp_name} MCP (use @github-search or @context7 subagent instead)")
+    # Also disable tools globally
+    tool_pattern = f'{mcp_name}_*'
+    if tool_pattern not in config.get('tools', {}):
+        config['tools'][tool_pattern] = False
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 
