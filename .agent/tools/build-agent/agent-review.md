@@ -37,6 +37,12 @@ tools:
 
 **Process**: Complete task first, cite evidence, check duplicates, propose specific fix, ask permission
 
+**Write Restrictions (MANDATORY)**: This subagent has `write: true` but MUST respect branch protection. When the working directory is on `main`/`master`:
+
+- **ALLOWED writes**: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`
+- **BLOCKED writes**: All other files (agent definitions, scripts, configs, code)
+- **For code changes**: Return proposed edits to the calling agent; do NOT write directly. The calling agent will apply them in a worktree.
+
 **Testing**: Use OpenCode CLI to test agent/config changes without restarting TUI:
 
 ```bash
