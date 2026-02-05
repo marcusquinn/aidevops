@@ -523,8 +523,10 @@ LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-aut
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
              'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
              'playwriter', 'augment-context-engine', 'context7',
-             'sentry', 'socket'}
-# Note: gh_grep removed entirely - @github-search subagent uses CLI tools instead
+             'sentry', 'socket',
+             # Oh-My-OpenCode MCPs - disable globally, use @github-search/@context7 subagents
+             'grep_app', 'websearch', 'gh_grep'}
+# Note: gh_grep removed from aidevops but may exist from old configs or OmO
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
@@ -670,18 +672,14 @@ if platform.system() == 'Darwin':
         config['tools']['macos-automator_*'] = False
         print("  Set macos-automator_* disabled globally")
 
-# Disable Oh-My-OpenCode MCPs that aidevops replaces with subagents
+# Disable Oh-My-OpenCode MCP tools globally
 # OmO installs: grep_app (GitHub search), context7 (docs), websearch (Exa)
-# We disable these globally - use @github-search, @context7 subagents instead
-omo_mcps_to_disable = ['grep_app', 'websearch']  # context7 handled by LAZY_MCPS
-for mcp_name in omo_mcps_to_disable:
-    if mcp_name in config.get('mcp', {}):
-        config['mcp'][mcp_name]['enabled'] = False
-        print(f"  Disabled {mcp_name} MCP (use @github-search or @context7 subagent instead)")
-    # Also disable tools globally
-    tool_pattern = f'{mcp_name}_*'
+# MCPs are disabled via LAZY_MCPS above, but we also need to disable tools
+omo_tool_patterns = ['grep_app_*', 'websearch_*', 'gh_grep_*']
+for tool_pattern in omo_tool_patterns:
     if tool_pattern not in config.get('tools', {}):
         config['tools'][tool_pattern] = False
+        print(f"  Disabled {tool_pattern} tools globally (use @github-search subagent)")
 
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
