@@ -2624,29 +2624,27 @@ setup_beads_ui() {
     local installed_count=0
     
     # beads_viewer (Python) - use pipx for isolated install
-    if command -v pipx &> /dev/null; then
+    if command -v pipx &> /dev/null || command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
         read -r -p "  Install beads_viewer (Python TUI with graph analytics)? (y/n): " install_viewer
         if [[ "$install_viewer" == "y" ]]; then
-            print_info "Installing beads_viewer via pipx..."
-            if pipx install beads-viewer 2>/dev/null; then
-                print_success "beads_viewer installed (run: beads-viewer)"
-                ((installed_count++))
+            if command -v pipx &> /dev/null; then
+                print_info "Installing beads_viewer via pipx..."
+                if pipx install beads-viewer 2>/dev/null; then
+                    print_success "beads_viewer installed (run: beads-viewer)"
+                    ((installed_count++))
+                else
+                    print_warning "Failed to install beads_viewer"
+                    print_info "Try manually: pipx install beads-viewer"
+                fi
             else
-                print_warning "Failed to install beads_viewer"
-                print_info "Try manually: pipx install beads-viewer"
-            fi
-        fi
-    elif command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
-        read -r -p "  Install beads_viewer (Python TUI with graph analytics)? (y/n): " install_viewer
-        if [[ "$install_viewer" == "y" ]]; then
-            print_info "Installing beads_viewer..."
-            # Try pipx first (handles externally-managed-environment), fall back to pip
-            if pipx install beads-viewer 2>/dev/null || pip3 install --user beads-viewer 2>/dev/null || pip install --user beads-viewer 2>/dev/null; then
-                print_success "beads_viewer installed"
-                ((installed_count++))
-            else
-                print_warning "Failed to install beads_viewer"
-                print_info "On macOS, install pipx first: brew install pipx && pipx ensurepath"
+                print_info "Installing beads_viewer..."
+                if pip3 install --user beads-viewer 2>/dev/null || pip install --user beads-viewer 2>/dev/null; then
+                    print_success "beads_viewer installed"
+                    ((installed_count++))
+                else
+                    print_warning "Failed to install beads_viewer"
+                    print_info "On macOS, install pipx first: brew install pipx && pipx ensurepath"
+                fi
             fi
         fi
     fi
@@ -2781,7 +2779,9 @@ setup_browser_tools() {
             if [[ "$install_playwright" == "y" ]]; then
                 print_info "Installing Playwright browsers..."
                 # Use -y to auto-confirm npx install, suppress the "install without dependencies" warning
-                if npx -y playwright@latest install 2>&1 | grep -v "WARNING: It looks like you are running"; then
+                # Use PIPESTATUS to check npx exit code, not grep's exit code
+                npx -y playwright@latest install 2>&1 | grep -v "WARNING: It looks like you are running"
+                if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
                     print_success "Playwright browsers installed"
                 else
                     print_warning "Playwright browser installation failed"
