@@ -396,20 +396,35 @@ disable_ondemand_mcps() {
     cp "$opencode_config" "$tmp_config"
     
     for mcp in "${ondemand_mcps[@]}"; do
-        # Check if MCP exists
+        # Only disable MCPs that exist in the config
+        # Don't add fake entries - they break OpenCode's config validation
         if jq -e ".mcp[\"$mcp\"]" "$tmp_config" > /dev/null 2>&1; then
-            # MCP exists - check if enabled
             local current_enabled
             current_enabled=$(jq -r ".mcp[\"$mcp\"].enabled // \"true\"" "$tmp_config")
             if [[ "$current_enabled" != "false" ]]; then
                 jq ".mcp[\"$mcp\"].enabled = false" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
                 ((disabled++))
             fi
-        else
-            # MCP doesn't exist - add it as disabled (prevents OmO from enabling it)
-            # This is needed for MCPs that plugins add dynamically (like oh-my-opencode)
-            jq ".mcp[\"$mcp\"] = {\"type\": \"stdio\", \"enabled\": false, \"command\": [\"echo\", \"disabled\"]}" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-            ((disabled++))
+        fi
+    done
+    
+    # Remove oh-my-opencode plugin if present (it adds unwanted MCPs like grep_app, websearch)
+    # Users who want OmO can re-add it manually
+    if jq -e '.plugin | index("oh-my-opencode")' "$tmp_config" > /dev/null 2>&1; then
+        jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+        print_info "Removed oh-my-opencode plugin (adds unwanted MCPs)"
+    fi
+    
+    # Remove invalid MCP entries added by v2.100.16 bug
+    # These have type "stdio" (invalid - only "local" or "remote" are valid)
+    # or command ["echo", "disabled"] which breaks OpenCode
+    local invalid_mcps=("grep_app" "websearch" "context7" "augment-context-engine" "osgrep")
+    for mcp in "${invalid_mcps[@]}"; do
+        # Check for invalid type "stdio" or dummy command
+        if jq -e ".mcp[\"$mcp\"].type == \"stdio\" or .mcp[\"$mcp\"].command[0] == \"echo\"" "$tmp_config" > /dev/null 2>&1; then
+            jq "del(.mcp[\"$mcp\"])" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+            print_info "Removed invalid MCP entry: $mcp"
+            disabled=1  # Mark as changed
         fi
     done
     
