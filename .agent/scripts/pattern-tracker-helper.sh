@@ -280,28 +280,38 @@ cmd_stats() {
     echo -e "${CYAN}=== Pattern Statistics ===${NC}"
     echo ""
 
-    # Count by type
+    # Count by type using direct SQLite queries (FTS5 search unreliable for type filtering)
+    local memory_db="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
+
+    if [[ ! -f "$memory_db" ]]; then
+        echo "  No memory database found."
+        return 0
+    fi
+
     local success_count failure_count
-    success_count=$("$MEMORY_HELPER" recall --query "SUCCESS_PATTERN" --type SUCCESS_PATTERN --limit 100 --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
-    failure_count=$("$MEMORY_HELPER" recall --query "FAILURE_PATTERN" --type FAILURE_PATTERN --limit 100 --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+    success_count=$(sqlite3 "$memory_db" "SELECT COUNT(*) FROM learnings WHERE type = 'SUCCESS_PATTERN';" 2>/dev/null || echo "0")
+    failure_count=$(sqlite3 "$memory_db" "SELECT COUNT(*) FROM learnings WHERE type = 'FAILURE_PATTERN';" 2>/dev/null || echo "0")
 
     echo "  Success patterns: $success_count"
     echo "  Failure patterns: $failure_count"
     echo "  Total patterns: $(( success_count + failure_count ))"
     echo ""
 
-    # Show task type breakdown if jq available
-    if command -v jq &>/dev/null; then
-        echo "  Task types with patterns:"
-        for task_type in $VALID_TASK_TYPES; do
-            local type_count
-            type_count=$("$MEMORY_HELPER" recall --query "task:$task_type" --limit 100 --json 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
-            if [[ "$type_count" -gt 0 ]]; then
-                echo "    $task_type: $type_count"
-            fi
-        done
-        echo ""
+    # Show task type breakdown by querying tags directly
+    echo "  Task types with patterns:"
+    local found_any=false
+    for task_type in $VALID_TASK_TYPES; do
+        local type_count
+        type_count=$(sqlite3 "$memory_db" "SELECT COUNT(*) FROM learnings WHERE type IN ('SUCCESS_PATTERN', 'FAILURE_PATTERN') AND tags LIKE '%${task_type}%';" 2>/dev/null || echo "0")
+        if [[ "$type_count" -gt 0 ]]; then
+            echo "    $task_type: $type_count"
+            found_any=true
+        fi
+    done
+    if [[ "$found_any" == false ]]; then
+        echo "    (none recorded with task types)"
     fi
+    echo ""
     return 0
 }
 
