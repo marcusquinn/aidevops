@@ -540,29 +540,54 @@ Coordinator (pulse loop)
 
 ### Parallel Agents & Headless Dispatch
 
-Run multiple AI sessions concurrently with isolated contexts:
+Run multiple AI sessions concurrently with isolated contexts. Named **runners** provide persistent agent identities with their own instructions and memory.
 
 | Feature | Description |
 |---------|-------------|
-| **Headless dispatch** | `claude -p` / OpenCode server API for non-interactive execution |
-| **Session management** | Deterministic session IDs, resume with `--resume` |
-| **Memory namespaces** | Per-agent memory isolation with shared access when needed |
+| **Headless dispatch** | `opencode run` for one-shot tasks, `opencode serve` + `--attach` for warm server |
+| **Runners** | Named agent instances with per-runner AGENTS.md, config, and run logs (`runner-helper.sh`) |
+| **Session management** | Resume sessions with `-s <id>` or `-c`, fork with SDK |
+| **Memory namespaces** | Per-runner memory isolation with shared access when needed |
+| **SDK orchestration** | `@opencode-ai/sdk` for TypeScript parallel dispatch via `Promise.all` |
 | **Matrix integration** | Chat-triggered dispatch via self-hosted Matrix (optional) |
+
+```bash
+# Create a named runner
+runner-helper.sh create code-reviewer --description "Reviews code for security and quality"
+
+# Dispatch a task (one-shot)
+runner-helper.sh run code-reviewer "Review src/auth/ for vulnerabilities"
+
+# Dispatch against warm server (faster, no MCP cold boot)
+opencode serve --port 4096 &
+runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
+
+# Parallel dispatch via CLI
+opencode run --attach http://localhost:4096 --title "Review" "Review src/auth/" &
+opencode run --attach http://localhost:4096 --title "Tests" "Generate tests for src/utils/" &
+wait
+
+# List runners and status
+runner-helper.sh list
+runner-helper.sh status code-reviewer
+```
 
 **Architecture:**
 
 ```text
 OpenCode Server (opencode serve)
-├── Session 1 (code-reviewer)
-├── Session 2 (seo-analyst)
+├── Session 1 (runner/code-reviewer)
+├── Session 2 (runner/seo-analyst)
 └── Session 3 (scheduled-task)
          ↑
     HTTP API / SSE Events
          ↑
 ┌────────┴────────┐
-│  Dispatch Layer │ ← Matrix bot, cron, CLI
+│  Dispatch Layer │ ← runner-helper.sh, cron, Matrix bot, SDK
 └─────────────────┘
 ```
+
+**See:** [headless-dispatch.md](.agent/tools/ai-assistants/headless-dispatch.md) for full documentation including SDK examples, CI/CD integration, and custom agent configuration.
 
 ### Self-Improving Agent System
 
