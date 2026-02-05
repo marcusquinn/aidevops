@@ -141,19 +141,34 @@ The AI will iterate on the task until outputting:
 <promise>TASK_COMPLETE</promise>
 ```
 
-**Completion criteria:**
-- All requirements implemented
-- Tests passing (if applicable)
-- Code quality acceptable
-- README.md updated (if adding features/APIs) - use `/readme --sections` for targeted updates
-- Conventional commits used (for auto-changelog)
+**Completion criteria (ALL must be satisfied before emitting TASK_COMPLETE):**
 
-**README check (aidevops repo only):**
+1. All requirements implemented
+2. Tests passing (if applicable)
+3. Code quality acceptable
+4. **README gate passed** (see below)
+5. Conventional commits used (for auto-changelog)
+
+**README gate (MANDATORY - do NOT skip):**
+
+Before emitting `TASK_COMPLETE`, answer this decision tree:
+
+1. Did this task add a new feature, tool, API, command, or config option? → **Update README.md**
+2. Did this task change existing user-facing behavior? → **Update README.md**
+3. Is this a pure refactor, bugfix with no behavior change, or internal-only change? → **SKIP**
+
+If README update is needed:
 
 ```bash
-# Check if README counts are stale after adding agents/scripts
+# For any repo: use targeted section updates
+/readme --sections "usage"  # or relevant section
+
+# For aidevops repo: also check if counts are stale
 ~/.aidevops/agents/scripts/readme-helper.sh check
+# If stale, run: readme-helper.sh update --apply
 ```
+
+**Do NOT emit TASK_COMPLETE until README is current.** This is a gate, not a suggestion. The t099 Neural-Chromium task was merged without a README update because this gate was advisory - it is now mandatory.
 
 ### Step 4: Automatic Phase Progression
 
@@ -258,13 +273,9 @@ Pass options after the prompt:
 
 ### README Updates
 
-When implementing features or APIs, include README updates in your task:
+README updates are enforced by the **README gate** in Step 3 completion criteria. You do NOT need to include "and update README" in your prompt - the gate catches it automatically.
 
-```bash
-/full-loop "Add user authentication with JWT tokens and update README"
-```
-
-The task development phase should update README.md with:
+When the gate triggers, update README.md with:
 - New feature documentation
 - Usage examples
 - API endpoint descriptions

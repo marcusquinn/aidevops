@@ -250,9 +250,13 @@ Implement feature X following TDD:
 7. Output: <promise>COMPLETE</promise>
 ```
 
-### 4. Documentation Updates
+### 4. Documentation Updates (MANDATORY gate)
 
-Include documentation requirements in your completion criteria:
+**Before emitting COMPLETE**, check the README gate (enforced in full-loop Step 3):
+
+1. Did this task add a new feature, tool, API, command, or config option? → **Update README.md**
+2. Did this task change existing user-facing behavior? → **Update README.md**
+3. Pure refactor, bugfix with no behavior change, or internal-only? → **SKIP**
 
 **README updates** - When adding features, APIs, or changing behavior:
 
@@ -261,7 +265,8 @@ Implement feature X.
 
 When complete:
 - Feature working with tests
-- README.md updated with usage examples
+- README.md updated with usage examples (MANDATORY if user-facing)
+- For aidevops: readme-helper.sh check passes
 - Output: <promise>COMPLETE</promise>
 ```
 
@@ -651,7 +656,13 @@ The loop is designed for maximum AI autonomy while preserving human control at s
 
 ### Documentation in Loops
 
-**README updates**: Include in task development phase when adding features/APIs.
+**README gate (MANDATORY)**: Before declaring task complete, the AI MUST check:
+
+1. Did this task add/change user-facing features, tools, APIs, or commands?
+2. If YES → Update README.md before proceeding (use `/readme --sections` for targeted updates)
+3. For aidevops repo → Also run `readme-helper.sh check` for stale counts
+
+This is a gate between task development and preflight, not a suggestion. See `scripts/commands/full-loop.md` Step 3 completion criteria.
 
 **Changelog**: Auto-generated from conventional commits during release. Use proper prefixes:
 - `feat:` → Added section
