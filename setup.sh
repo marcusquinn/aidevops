@@ -2629,7 +2629,7 @@ setup_osgrep() {
     if ! command -v node &> /dev/null; then
         print_warning "Node.js not found - osgrep setup skipped"
         print_info "Install Node.js 18+ to enable osgrep"
-        return
+        return 0
     fi
 
     local node_version
@@ -2637,31 +2637,58 @@ setup_osgrep() {
     if [[ $node_version -lt 18 ]]; then
         print_warning "Node.js 18+ required for osgrep, found v$node_version"
         print_info "Install: brew install node@18 (macOS) or nvm install 18"
-        return
+        return 0
     fi
 
     # Check if osgrep is installed
     if ! command -v osgrep &> /dev/null; then
-        print_warning "osgrep CLI not found"
-        print_info "Install with: npm install -g osgrep"
-        print_info "Then run: osgrep setup (downloads ~150MB embedding models)"
-        return
+        echo ""
+        print_info "osgrep provides 100% local semantic search (no cloud, no auth)"
+        echo "  • Search code by meaning, not just keywords"
+        echo "  • Works offline with ~150MB local embedding models"
+        echo "  • Supports: OpenCode, Cursor, Claude Code, Zed, Gemini CLI"
+        echo ""
+        
+        read -r -p "Install osgrep CLI? [Y/n]: " install_osgrep
+        if [[ "$install_osgrep" =~ ^[Yy]?$ ]]; then
+            if run_with_spinner "Installing osgrep CLI" npm install -g osgrep; then
+                print_info "Now downloading embedding models (~150MB)..."
+                # osgrep setup is interactive, don't use spinner
+                if osgrep setup; then
+                    print_success "osgrep installed and configured"
+                else
+                    print_warning "Model download failed - run manually: osgrep setup"
+                fi
+            else
+                print_warning "Installation failed - try manually: npm install -g osgrep"
+                return 0
+            fi
+        else
+            print_info "Skipped osgrep installation"
+            print_info "Install later: npm install -g osgrep && osgrep setup"
+            return 0
+        fi
     fi
 
     # Check if models are downloaded
     if [[ ! -d "$HOME/.osgrep" ]]; then
         print_warning "osgrep models not yet downloaded"
-        print_info "Run: osgrep setup"
-        print_info "This downloads ~150MB of embedding models for local semantic search"
+        read -r -p "Download embedding models now (~150MB)? [Y/n]: " download_models
+        if [[ "$download_models" =~ ^[Yy]?$ ]]; then
+            if osgrep setup; then
+                print_success "osgrep models downloaded"
+            else
+                print_warning "Model download failed - run manually: osgrep setup"
+            fi
+        else
+            print_info "Download later: osgrep setup"
+        fi
     else
-        print_success "osgrep CLI found and configured"
+        print_success "osgrep CLI installed and configured"
     fi
 
-    # Note about Claude Code integration
-    print_info "osgrep provides 100% local semantic search (no cloud, no auth)"
-    print_info "For Claude Code: osgrep install-claude-code"
-    print_info "Supported tools: OpenCode, Cursor, Gemini CLI, Claude Code, Zed"
     print_info "Verification: 'Search for authentication handling in this codebase'"
+    return 0
 }
 
 # Setup Beads - Task Graph Visualization
@@ -2735,25 +2762,53 @@ setup_beads_ui() {
     
     local installed_count=0
     
-    # beads_viewer (Python) - use pipx for isolated install
-    if command -v pipx &> /dev/null || command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
-        read -r -p "  Install beads_viewer (Python TUI with graph analytics)? [Y/n]: " install_viewer
-        if [[ "$install_viewer" =~ ^[Yy]?$ ]]; then
-            if command -v pipx &> /dev/null; then
-                if run_with_spinner "Installing beads_viewer via pipx" pipx install beads-viewer; then
+    # beads_viewer (Python) - use pipx for isolated install (recommended)
+    # pip install --user often fails on macOS due to PEP 668 (externally-managed-environment)
+    read -r -p "  Install beads_viewer (Python TUI with graph analytics)? [Y/n]: " install_viewer
+    if [[ "$install_viewer" =~ ^[Yy]?$ ]]; then
+        if command -v pipx &> /dev/null; then
+            # pipx available - use it (best option)
+            if run_with_spinner "Installing beads_viewer via pipx" pipx install beads-viewer; then
+                print_info "Run: beads-viewer"
+                ((installed_count++))
+            else
+                print_warning "pipx install failed - try manually: pipx install beads-viewer"
+            fi
+        elif command -v brew &> /dev/null; then
+            # macOS with Homebrew - offer to install pipx first
+            print_info "pipx recommended for Python CLI tools (isolated environments)"
+            read -r -p "  Install pipx first? [Y/n]: " install_pipx
+            if [[ "$install_pipx" =~ ^[Yy]?$ ]]; then
+                if run_with_spinner "Installing pipx" brew install pipx; then
+                    # Ensure pipx is in PATH
+                    pipx ensurepath > /dev/null 2>&1
+                    export PATH="$HOME/.local/bin:$PATH"
+                    if run_with_spinner "Installing beads_viewer via pipx" pipx install beads-viewer; then
+                        print_info "Run: beads-viewer"
+                        ((installed_count++))
+                    else
+                        print_warning "Installation failed - try manually: pipx install beads-viewer"
+                    fi
+                else
+                    print_warning "pipx installation failed"
+                fi
+            else
+                print_info "Skipped beads_viewer (requires pipx)"
+                print_info "Install later: brew install pipx && pipx install beads-viewer"
+            fi
+        else
+            # No pipx, no brew - try pip as last resort
+            print_warning "pipx not found - trying pip (may fail on macOS)"
+            if command -v pip3 &> /dev/null; then
+                if run_with_spinner "Installing beads_viewer" pip3 install --user beads-viewer; then
                     print_info "Run: beads-viewer"
                     ((installed_count++))
                 else
-                    print_info "Try manually: pipx install beads-viewer"
+                    print_warning "pip install failed - install pipx first"
+                    print_info "Linux: pip install pipx && pipx install beads-viewer"
                 fi
             else
-                if run_with_spinner "Installing beads_viewer" pip3 install --user beads-viewer; then
-                    ((installed_count++))
-                elif run_with_spinner "Installing beads_viewer" pip install --user beads-viewer; then
-                    ((installed_count++))
-                else
-                    print_info "On macOS, install pipx first: brew install pipx && pipx ensurepath"
-                fi
+                print_warning "Neither pipx nor pip3 found"
             fi
         fi
     fi
