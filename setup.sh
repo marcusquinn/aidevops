@@ -2747,10 +2747,10 @@ setup_beads() {
 setup_beads_ui() {
     echo ""
     print_info "Beads UI tools provide enhanced visualization:"
-    echo "  • beads_viewer (Python) - PageRank, critical path, graph analytics"
-    echo "  • beads-ui (Node.js)    - Web dashboard with live updates"
-    echo "  • bdui (Node.js)        - React/Ink terminal UI"
-    echo "  • perles (Rust)         - BQL query language TUI"
+    echo "  • bv (Go)            - PageRank, critical path, graph analytics TUI"
+    echo "  • beads-ui (Node.js) - Web dashboard with live updates"
+    echo "  • bdui (Node.js)     - React/Ink terminal UI"
+    echo "  • perles (Rust)      - BQL query language TUI"
     echo ""
     
     read -r -p "Install optional Beads UI tools? [Y/n]: " install_beads_ui
@@ -2762,53 +2762,46 @@ setup_beads_ui() {
     
     local installed_count=0
     
-    # beads_viewer (Python) - use pipx for isolated install (recommended)
-    # pip install --user often fails on macOS due to PEP 668 (externally-managed-environment)
-    read -r -p "  Install beads_viewer (Python TUI with graph analytics)? [Y/n]: " install_viewer
+    # bv (beads_viewer) - Go TUI installed via Homebrew
+    # https://github.com/Dicklesworthstone/beads_viewer
+    read -r -p "  Install bv (TUI with PageRank, critical path, graph analytics)? [Y/n]: " install_viewer
     if [[ "$install_viewer" =~ ^[Yy]?$ ]]; then
-        if command -v pipx &> /dev/null; then
-            # pipx available - use it (best option)
-            if run_with_spinner "Installing beads_viewer via pipx" pipx install beads-viewer; then
-                print_info "Run: beads-viewer"
+        if command -v brew &> /dev/null; then
+            # Add the tap and install
+            if run_with_spinner "Installing bv via Homebrew" bash -c "brew tap dicklesworthstone/tap 2>/dev/null; brew install dicklesworthstone/tap/bv"; then
+                print_info "Run: bv (in a beads-enabled project)"
                 ((installed_count++))
             else
-                print_warning "pipx install failed - try manually: pipx install beads-viewer"
-            fi
-        elif command -v brew &> /dev/null; then
-            # macOS with Homebrew - offer to install pipx first
-            print_info "pipx recommended for Python CLI tools (isolated environments)"
-            read -r -p "  Install pipx first? [Y/n]: " install_pipx
-            if [[ "$install_pipx" =~ ^[Yy]?$ ]]; then
-                if run_with_spinner "Installing pipx" brew install pipx; then
-                    # Ensure pipx is in PATH
-                    pipx ensurepath > /dev/null 2>&1
-                    export PATH="$HOME/.local/bin:$PATH"
-                    if run_with_spinner "Installing beads_viewer via pipx" pipx install beads-viewer; then
-                        print_info "Run: beads-viewer"
-                        ((installed_count++))
-                    else
-                        print_warning "Installation failed - try manually: pipx install beads-viewer"
-                    fi
-                else
-                    print_warning "pipx installation failed"
-                fi
-            else
-                print_info "Skipped beads_viewer (requires pipx)"
-                print_info "Install later: brew install pipx && pipx install beads-viewer"
+                print_warning "Homebrew install failed - try manually:"
+                print_info "  brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
             fi
         else
-            # No pipx, no brew - try pip as last resort
-            print_warning "pipx not found - trying pip (may fail on macOS)"
-            if command -v pip3 &> /dev/null; then
-                if run_with_spinner "Installing beads_viewer" pip3 install --user beads-viewer; then
-                    print_info "Run: beads-viewer"
+            # No Homebrew - try install script or Go
+            print_warning "Homebrew not found"
+            if command -v go &> /dev/null; then
+                # Go available - use go install
+                if run_with_spinner "Installing bv via Go" go install github.com/Dicklesworthstone/beads_viewer/cmd/bv@latest; then
+                    print_info "Run: bv (in a beads-enabled project)"
                     ((installed_count++))
                 else
-                    print_warning "pip install failed - install pipx first"
-                    print_info "Linux: pip install pipx && pipx install beads-viewer"
+                    print_warning "Go install failed"
                 fi
             else
-                print_warning "Neither pipx nor pip3 found"
+                # Offer curl install script
+                read -r -p "  Install bv via install script? [Y/n]: " use_script
+                if [[ "$use_script" =~ ^[Yy]?$ ]]; then
+                    if run_with_spinner "Installing bv via script" bash -c 'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh" | bash'; then
+                        print_info "Run: bv (in a beads-enabled project)"
+                        ((installed_count++))
+                    else
+                        print_warning "Install script failed - try manually:"
+                        print_info "  curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash"
+                    fi
+                else
+                    print_info "Install later:"
+                    print_info "  Homebrew: brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
+                    print_info "  Go: go install github.com/Dicklesworthstone/beads_viewer/cmd/bv@latest"
+                fi
             fi
         fi
     fi
