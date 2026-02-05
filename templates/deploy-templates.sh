@@ -63,7 +63,7 @@ create_backup_with_rotation() {
     if (( backup_count > BACKUP_KEEP_COUNT )); then
         local to_delete=$((backup_count - BACKUP_KEEP_COUNT))
         # Delete oldest backups (sorted by name = sorted by date)
-        find "$backup_type_dir" -maxdepth 1 -type d -name "20*" -print0 2>/dev/null | sort -z | head -z -n "$to_delete" | xargs -0 rm -rf
+        find "$backup_type_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do rm -rf "$old_backup"; done
         print_info "Rotated backups: removed $to_delete old backup(s)"
     fi
 
