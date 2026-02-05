@@ -51,6 +51,7 @@ cd ~/Git/aidevops
 - `jq` - JSON processing
 - `curl` - HTTP requests
 - `ssh` - Server access
+- `sqlite3` - Database for memory system (includes FTS5)
 
 **Optional:**
 - `sshpass` - Password-based SSH (for Hostinger)

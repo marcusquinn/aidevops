@@ -16,6 +16,19 @@ tools:
 
 Cross-session memory for AI assistants using SQLite FTS5 for fast full-text search.
 
+**Requires**: `sqlite3` CLI (includes FTS5 by default)
+
+```bash
+# Ubuntu/Debian
+sudo apt install sqlite3
+
+# macOS (usually pre-installed)
+brew install sqlite3
+
+# Verify installation
+sqlite3 --version
+```
+
 **Motto**: "Compound, then clear" - Sessions should build on each other.
 
 **Inspired by**: [Supermemory](https://supermemory.ai/research) architecture for:

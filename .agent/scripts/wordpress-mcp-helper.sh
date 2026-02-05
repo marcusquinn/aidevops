@@ -46,9 +46,9 @@ print_error() {
     return 0
 }
 
-# Configuration paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-CONFIG_FILE="${SCRIPT_DIR}/../configs/wordpress-sites-config.json"
+# Configuration paths (XDG-compliant user config)
+CONFIG_FILE="${HOME}/.config/aidevops/wordpress-sites-config.json"
+TEMPLATE_FILE="${HOME}/.aidevops/agents/configs/wordpress-sites-config.json.txt"
 MCP_ENV_FILE="${HOME}/.config/aidevops/mcp-env.sh"
 LOCAL_SITES_PATH="${HOME}/Local Sites"
 
@@ -435,8 +435,14 @@ Environment Variables:
   LOCAL_SITES_PATH    Path to LocalWP sites (default: ~/Local Sites)
 
 Configuration:
-  Sites config: configs/wordpress-sites-config.json
+  Sites config: ~/.config/aidevops/wordpress-sites-config.json
+  Template:     ~/.aidevops/agents/configs/wordpress-sites-config.json.txt
   MCP env:      ~/.config/aidevops/mcp-env.sh
+
+Setup:
+  mkdir -p ~/.config/aidevops
+  cp ~/.aidevops/agents/configs/wordpress-sites-config.json.txt ~/.config/aidevops/wordpress-sites-config.json
+  # Edit the file with your site details
 
 Prerequisites:
   - WP-CLI installed (for STDIO transport)

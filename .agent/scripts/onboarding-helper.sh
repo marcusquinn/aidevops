@@ -309,6 +309,13 @@ check_context_tools() {
     # Context7 is MCP-only, no auth needed
     print_service "Context7" "ready" "MCP (no auth needed)"
     
+    # sqlite3 is required for memory system
+    if is_installed "sqlite3"; then
+        print_service "sqlite3" "ready" "memory system ready"
+    else
+        print_service "sqlite3" "needs-setup" "required for memory system"
+    fi
+    
     echo ""
     return 0
 }
@@ -374,8 +381,8 @@ check_wordpress() {
         print_service "LocalWP" "optional" "not installed"
     fi
     
-    # MainWP config check
-    if [[ -f "$HOME/Git/aidevops/configs/mainwp-config.json" ]]; then
+    # MainWP config check (XDG-compliant location)
+    if [[ -f "$HOME/.config/aidevops/mainwp-config.json" ]]; then
         print_service "MainWP" "ready" "config exists"
     else
         print_service "MainWP" "optional" "not configured"
@@ -664,6 +671,8 @@ output_json() {
     is_cli_authenticated "auggie" && json+='true' || json+='false'
     json+='},"osgrep":{"installed":'
     is_installed "osgrep" && json+='true' || json+='false'
+    json+='},"sqlite3":{"installed":'
+    is_installed "sqlite3" && json+='true' || json+='false'
     json+='}}'
     
     json+='}'
