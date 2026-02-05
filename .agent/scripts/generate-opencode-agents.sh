@@ -585,20 +585,21 @@ if 'playwriter' not in config['mcp']:
 # playwriter_* enabled globally (used by all main agents)
 config['tools']['playwriter_*'] = True
 
-# gh_grep MCP - GitHub code search (used by Build+)
+# gh_grep MCP - GitHub code search (lazy load - @github-search subagent only)
 # This is a remote MCP, no local process to start
+# Disabled globally to save ~600 tokens, enabled when @github-search is called
 if 'gh_grep' not in config['mcp']:
     config['mcp']['gh_grep'] = {
         "type": "remote",
         "url": "https://mcp.grep.app",
-        "enabled": True
+        "enabled": False
     }
-    print("  Added gh_grep MCP (eager load - used by Build+)")
+    print("  Added gh_grep MCP (lazy load - @github-search subagent only)")
 
-# gh_grep tools disabled globally, enabled for specific agents
+# gh_grep tools disabled globally, enabled via @github-search subagent
 if 'gh_grep_*' not in config['tools']:
     config['tools']['gh_grep_*'] = False
-    print("  Set gh_grep_* disabled globally (enabled for Build+)")
+    print("  Set gh_grep_* disabled globally (@github-search enables on-demand)")
 
 # -----------------------------------------------------------------------------
 # LAZY-LOADED MCPs (enabled: False) - Subagent-only, start on-demand
