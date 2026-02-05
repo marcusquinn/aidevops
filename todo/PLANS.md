@@ -1971,19 +1971,21 @@ d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python requ
 
 ### [2026-02-03] Parallel Agents & Headless Dispatch
 
-**Status:** Planning
+**Status:** In Progress (Phase 2/5)
 **Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
 **Source:** [alexfazio's X post on droids](https://gist.github.com/alexfazio/dcf2f253d346d8ed2702935b57184582)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p016,Parallel Agents & Headless Dispatch,planning,0,5,,agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,0.5d,2026-02-03T00:00Z,
+p016,Parallel Agents & Headless Dispatch,in_progress,2,5,,agents|parallel|headless|dispatch|runners|memory,3d,1.5d,1d,0.5d,2026-02-03T00:00Z,2026-02-05T00:00Z
 -->
 
 #### Purpose
 
-Document and implement patterns for running parallel Claude Code sessions locally, with optional Matrix chat integration. Inspired by alexfazio's "droids" architecture but adapted for local-first, low-complexity use.
+Document and implement patterns for running parallel OpenCode sessions locally, with optional Matrix chat integration. Inspired by alexfazio's "droids" architecture but adapted for local-first, low-complexity use.
 
-**Key insight from source:** `claude -p "prompt" --output-format stream-json` enables headless dispatch without containers or hosting costs. Each session can have its own AGENTS.md and memory namespace.
+**Naming decision:** Renamed from "droids" to "runners" to avoid conflict with Factory.ai's branded "Droids" product. "Runner" maps to the CI/CD mental model (named execution environments that pick up tasks).
+
+**Key insight from source:** `opencode run "prompt"` enables headless dispatch without containers or hosting costs. `opencode run --attach` connects to a warm server for faster dispatch. Each session can have its own AGENTS.md and memory namespace.
 
 **What we're NOT doing:**
 - Fly.io Sprites or cloud hosting (overkill for local use)
@@ -1991,11 +1993,11 @@ Document and implement patterns for running parallel Claude Code sessions locall
 - New orchestration frameworks (extend existing mailbox)
 
 **What we ARE doing:**
-- Document `claude -p` headless patterns
-- Create droid-helper.sh for namespaced agent dispatch
-- Integrate with existing memory system (per-agent namespaces)
+- Document `opencode run` headless patterns and `opencode serve` server mode
+- Create runner-helper.sh for namespaced agent dispatch
+- Integrate with existing memory system (per-runner namespaces)
 - Optional Matrix bot for chat-triggered dispatch
-- Document model provider flexibility (any OpenAI-compatible endpoint)
+- Document model provider flexibility (any provider via `opencode auth login`)
 
 #### Context from Discussion
 
@@ -2014,55 +2016,64 @@ Document and implement patterns for running parallel Claude Code sessions locall
 
 ```text
 ~/.aidevops/.agent-workspace/
-├── droids/
+├── runners/
 │   ├── code-reviewer/
-│   │   ├── AGENTS.md      # Agent personality/instructions
-│   │   └── memory.db      # Agent-specific memories (optional)
+│   │   ├── AGENTS.md      # Runner personality/instructions
+│   │   ├── config.json    # Runner configuration
+│   │   ├── session.id     # Last session ID (for --continue)
+│   │   └── runs/          # Run logs
 │   └── seo-analyst/
 │       ├── AGENTS.md
-│       └── memory.db
+│       ├── config.json
+│       └── runs/
 ```
 
-**Key patterns from source post:**
-1. `claude -p --output-format stream-json` - headless dispatch
-2. `--resume $session_id` - deterministic session mapping
-3. Self-editing AGENTS.md - agents that improve themselves
-4. Chat-triggered dispatch - reduce friction vs terminal
+**Key patterns from source post (adapted for OpenCode):**
+1. `opencode run "prompt"` - headless dispatch
+2. `opencode run --attach http://localhost:4096` - warm server dispatch
+3. `opencode run -s $session_id` - session resumption
+4. `opencode serve` - persistent server for parallel sessions
+5. Self-editing AGENTS.md - agents that improve themselves
+6. Chat-triggered dispatch - reduce friction vs terminal
 
 **Model provider flexibility:**
 
 ```bash
-# Any OpenAI-compatible endpoint works
-export ANTHROPIC_BASE_URL="https://your-provider/v1"
-export ANTHROPIC_API_KEY="your-key"
+# Configure via opencode auth login (interactive)
+opencode auth login
+
+# Or override per-dispatch
+opencode run -m openrouter/anthropic/claude-sonnet-4-20250514 "task"
 ```
 
-Users can choose: local (ollama, llama.cpp), cloud (together.ai, openrouter, groq), or self-hosted.
+Users can choose any provider supported by OpenCode via `opencode auth login`.
 
 #### Progress
 
-- [ ] (2026-02-03) Phase 1: Document headless dispatch patterns ~4h
-  - Create `tools/ai-assistants/headless-dispatch.md`
-  - Document `claude -p` flags and streaming JSON format
-  - Document session resumption with `--resume`
-  - Add model provider configuration examples
-- [ ] (2026-02-03) Phase 2: Create droid-helper.sh ~4h
-  - Namespaced agent dispatch with per-droid AGENTS.md
-  - Deterministic session IDs per droid
-  - Integration with existing memory system
-  - Support for parallel execution
+- [x] (2026-02-05) Phase 1: Document headless dispatch patterns ~4h
+  - Created `tools/ai-assistants/headless-dispatch.md`
+  - Documented `opencode run` flags and `--format json` output
+  - Documented session resumption with `-s` and `-c`
+  - Documented `opencode serve` + `--attach` warm server pattern
+  - Added SDK parallel dispatch examples
+  - Added CI/CD integration (GitHub Actions)
+- [x] (2026-02-05) Phase 2: Create runner-helper.sh ~4h
+  - Namespaced agent dispatch with per-runner AGENTS.md
+  - Commands: create, run, status, list, edit, logs, stop, destroy
+  - Integration with `opencode run --attach` for warm server dispatch
+  - Run logging and metadata tracking
 - [ ] (2026-02-03) Phase 3: Memory namespace integration ~3h
   - Extend memory-helper.sh with `--namespace` flag
-  - Per-droid memory isolation (optional)
+  - Per-runner memory isolation (optional)
   - Shared memory access when needed
 - [ ] (2026-02-03) Phase 4: Matrix bot integration (optional) ~6h
   - Document Matrix bot setup on Cloudron
   - Create matrix-dispatch-helper.sh
-  - Room-to-droid mapping
-  - Message → claude -p → response flow
+  - Room-to-runner mapping
+  - Message → opencode run → response flow
 - [ ] (2026-02-03) Phase 5: Documentation & examples ~3h
   - Update AGENTS.md with parallel agent guidance
-  - Create example droids (code-reviewer, seo-analyst)
+  - Create example runners (code-reviewer, seo-analyst)
   - Document when to use parallel vs sequential
 
 <!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:

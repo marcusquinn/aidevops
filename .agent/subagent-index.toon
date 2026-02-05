@@ -31,7 +31,7 @@ tools/content/,Content tools - summarization and extraction,summarize
 tools/social-media/,Social media tools - X/Twitter CLI,bird
 tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review
 tools/build-mcp/,MCP development - creating MCP servers,build-mcp|server-patterns|api-wrapper|transports|deployment
-tools/ai-assistants/,AI tool integration - configuring assistants,agno|capsolver|windsurf|claude-code|configuration|opencode-server
+tools/ai-assistants/,AI tool integration - configuring assistants and headless dispatch,agno|capsolver|windsurf|claude-code|configuration|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo
 tools/mobile/,Mobile development - iOS/Android emulators,minisim
@@ -77,7 +77,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[33]{name,purpose}:
+<!--TOON:scripts[34]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -111,4 +111,5 @@ privacy-filter-helper.sh,Privacy filter for public PR contributions
 self-improve-helper.sh,Self-improving agent system (analyze refine test pr)
 cron-helper.sh,Cron job management for scheduled AI agent dispatch
 cron-dispatch.sh,Execute cron jobs via OpenCode server API
+runner-helper.sh,Named headless AI agent instances (create run status list edit logs stop destroy)
 -->

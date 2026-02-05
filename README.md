@@ -93,7 +93,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
 - 614+ subagent markdown files organized by domain
-- 163 helper scripts in `.agent/scripts/`
+- 164 helper scripts in `.agent/scripts/`
 - 28 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
@@ -480,7 +480,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 163 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 164 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -598,7 +598,7 @@ Cron-based agent dispatch for automated workflows:
 
 ```bash
 # Example: Daily SEO report at 9am
-0 9 * * * ~/.aidevops/agents/scripts/droid-helper.sh dispatch "seo-analyst" "Generate daily SEO report"
+0 9 * * * ~/.aidevops/agents/scripts/runner-helper.sh run "seo-analyst" "Generate daily SEO report"
 ```
 
 **See:** [TODO.md](TODO.md) tasks t109-t118 for implementation status.
