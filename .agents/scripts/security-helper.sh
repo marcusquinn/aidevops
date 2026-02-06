@@ -396,11 +396,11 @@ cmd_skill_scan() {
         echo -e "${YELLOW}Cisco Skill Scanner not installed.${NC}"
         echo ""
         echo "Install with:"
-        echo "  uv pip install cisco-ai-skill-scanner"
-        echo "  # or run without installing"
-        echo "  uvx cisco-ai-skill-scanner scan /path/to/skill"
+        echo "  uv tool install cisco-ai-skill-scanner"
         echo "  # or via pip"
-        echo "  pip install cisco-ai-skill-scanner"
+        echo "  pip3 install --user cisco-ai-skill-scanner"
+        echo "  # or run setup.sh to auto-install"
+        echo "  aidevops update"
         echo ""
         return 1
     fi
@@ -677,11 +677,11 @@ cmd_install() {
         skill-scanner|cisco-ai-skill-scanner)
             echo "Installing Cisco Skill Scanner..."
             if check_command uv; then
-                uv pip install cisco-ai-skill-scanner
-            elif check_command pip; then
-                pip install cisco-ai-skill-scanner
+                uv tool install cisco-ai-skill-scanner
+            elif check_command pip3; then
+                pip3 install --user cisco-ai-skill-scanner
             else
-                echo -e "${RED}Please install uv or pip first${NC}"
+                echo -e "${RED}Please install uv or pip3 first${NC}"
                 return 1
             fi
             ;;
@@ -711,9 +711,9 @@ cmd_install() {
             if ! check_command skill-scanner; then
                 echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
                 if check_command uv; then
-                    uv pip install cisco-ai-skill-scanner || true
-                elif check_command pip; then
-                    pip install cisco-ai-skill-scanner || true
+                    uv tool install cisco-ai-skill-scanner || true
+                elif check_command pip3; then
+                    pip3 install --user cisco-ai-skill-scanner || true
                 fi
             fi
             

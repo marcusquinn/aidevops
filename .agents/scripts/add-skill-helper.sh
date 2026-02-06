@@ -499,7 +499,7 @@ scan_skill_security() {
         scanner_cmd="pipx run cisco-ai-skill-scanner"
     else
         log_info "Skill Scanner not installed (skipping security scan)"
-        log_info "Install with: uv pip install cisco-ai-skill-scanner"
+        log_info "Install with: uv tool install cisco-ai-skill-scanner"
         return 0
     fi
     

@@ -2323,11 +2323,30 @@ scan_imported_skills() {
         return 0
     fi
     
-    # Check if scanner is available (don't block setup if not installed)
-    if ! command -v skill-scanner &>/dev/null && ! command -v uvx &>/dev/null && ! command -v pipx &>/dev/null; then
-        print_info "Cisco Skill Scanner not installed (optional)"
-        print_info "Install with: uv pip install cisco-ai-skill-scanner"
-        return 0
+    # Install skill-scanner if not present and uv is available
+    if ! command -v skill-scanner &>/dev/null; then
+        if command -v uv &>/dev/null; then
+            print_info "Installing Cisco Skill Scanner..."
+            if run_with_spinner "Installing cisco-ai-skill-scanner" uv tool install cisco-ai-skill-scanner; then
+                print_success "Cisco Skill Scanner installed"
+            else
+                print_warning "Failed to install Cisco Skill Scanner - skipping security scan"
+                print_info "Install manually with: uv tool install cisco-ai-skill-scanner"
+                return 0
+            fi
+        elif command -v pip3 &>/dev/null; then
+            print_info "Installing Cisco Skill Scanner via pip..."
+            if run_with_spinner "Installing cisco-ai-skill-scanner" pip3 install --user cisco-ai-skill-scanner; then
+                print_success "Cisco Skill Scanner installed"
+            else
+                print_warning "Failed to install Cisco Skill Scanner - skipping security scan"
+                return 0
+            fi
+        else
+            print_info "Cisco Skill Scanner not installed (uv or pip3 required)"
+            print_info "Install with: uv tool install cisco-ai-skill-scanner"
+            return 0
+        fi
     fi
     
     if bash "$security_helper" skill-scan all 2>/dev/null; then
