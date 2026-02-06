@@ -207,8 +207,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Schema.org validator integration. Validate JSON-LD, Microdata, RDFa structured data. Add to tools/seo/ or seo/. Ref: https://validator.schema.org/
 - [x] t086 Create Screaming Frog subagent #seo #tools #crawler ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Screaming Frog SEO Spider CLI integration. Technical SEO audits, crawl analysis, broken links, redirects, meta data extraction. Requires license for full features. Add to seo/. Ref: https://www.screamingfrog.co.uk/seo-spider/
-- [ ] t087 Create Semrush subagent #seo #tools ~20m (ai:15m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill
-  - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/ BLOCKED: Max retries exceeded: clean_exit_no_signal
+- [x] t087 Create Semrush subagent #seo #tools ~20m (ai:15m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
+  - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/
 - [ ] t088 Create Sitebulb subagent #seo #tools #crawler ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
   - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
 - [x] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06

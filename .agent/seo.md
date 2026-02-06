@@ -9,6 +9,7 @@ subagents:
   - dataforseo
   - serper
   - ahrefs
+  - semrush
   - site-crawler
   - screaming-frog
   - eeat-score
@@ -32,7 +33,7 @@ subagents:
 ## Quick Reference
 
 - **Purpose**: SEO optimization and analysis
-- **Tools**: Google Search Console, Ahrefs, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
+- **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
 - **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7 for comprehensive SEO data and library docs
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`
 
@@ -50,6 +51,7 @@ subagents:
 | `eeat-score.md` | E-E-A-T content quality scoring and analysis |
 | `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
 | `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
+| `semrush.md` | Semrush API - domain analytics, keyword research, competitor analysis |
 | `ranking-opportunities.md` | Analyze data for quick wins, striking distance, cannibalization |
 | `analytics-tracking.md` | GA4 setup, event tracking, conversions, UTM parameters, attribution |
 | `rich-results.md` | Google Rich Results Test via browser automation (API deprecated) |
@@ -97,6 +99,7 @@ subagents:
 | `dataforseo` | DataForSEO REST API | SERP data, keywords, backlinks, on-page |
 | `serper` | Serper.dev API | Google search results (web, images, news, places) |
 | `ahrefs` | Ahrefs REST API v3 | Backlinks, organic keywords, domain rating |
+| `semrush` | Semrush Analytics API v3 | Domain analytics, keywords, backlinks, competitor research |
 
 Each subagent has curl examples. Load the relevant one when needed.
 
@@ -254,16 +257,18 @@ Integrate with `content.md` for:
 
 ## Tool Comparison
 
-| Feature | GSC | DataForSEO | Serper | Ahrefs |
-|---------|-----|------------|--------|--------|
-| Search Performance | Yes | No | No | No |
-| SERP Data | No | Yes | Yes | Yes |
-| Keyword Research | Limited | Yes | No | Yes |
-| Backlinks | No | Yes | No | Yes |
-| On-Page Analysis | No | Yes | No | Yes |
-| Local/Places | No | Yes | Yes | No |
-| News Search | No | Yes | Yes | No |
-| Pricing | Free | Subscription | Pay-per-search | Subscription |
+| Feature | GSC | DataForSEO | Serper | Ahrefs | Semrush |
+|---------|-----|------------|--------|--------|---------|
+| Search Performance | Yes | No | No | No | No |
+| SERP Data | No | Yes | Yes | Yes | Yes |
+| Keyword Research | Limited | Yes | No | Yes | Yes |
+| Backlinks | No | Yes | No | Yes | Yes |
+| On-Page Analysis | No | Yes | No | Yes | Yes (Site Audit) |
+| Local/Places | No | Yes | Yes | No | No |
+| News Search | No | Yes | Yes | No | No |
+| Competitor Analysis | No | Yes | No | Yes | Yes (Domain vs Domain) |
+| Position Tracking | No | No | No | No | Yes (Projects API) |
+| Pricing | Free | Subscription | Pay-per-search | Subscription | Unit-based |
 
 ## Oh-My-OpenCode Integration
 
