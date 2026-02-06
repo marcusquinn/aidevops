@@ -55,6 +55,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t131 gopass Integration & Credentials Rename #plan #security #credentials → [todo/PLANS.md#2026-02-06-gopass-integration--credentials-rename] ~2d (ai:1d test:4h read:4h) logged:2026-02-06 ref:todo/tasks/prd-gopass-credentials.md
+  - [ ] t131.1 Part A: Rename mcp-env.sh to credentials.sh (83 files, 261 refs) ~4.5h blocked-by:none
+  - [ ] t131.2 Part B: gopass integration + aidevops secret wrapper ~6h blocked-by:t131.1
+  - [ ] t131.3 Part C: Agent instructions + psst alternative docs ~2h blocked-by:t131.2
+  - Notes: Replace plaintext mcp-env.sh with gopass (GPG-encrypted, git-versioned, team-shareable). Build AI-native wrapper (subprocess injection + output redaction) so agents use secrets without seeing values. Rename mcp-env.sh to credentials.sh for accuracy. Document psst as alternative for solo devs. gopass selected over psst (6.7k stars, 8+ years, zero runtime deps, team-ready) after evaluating psst, mcp-secrets-vault, rsec, cross-keychain.
 - [x] t129 Add AI bot review verification to pr-loop and full-loop workflows #workflow #quality #pr-review ~2h actual:45m (ai:40m test:5m) logged:2026-02-06 started:2026-02-06T17:00Z completed:2026-02-06
   - Notes: Added verification steps across 5 files: pr-loop.md (4-step verification workflow), full-loop.md (OpenProse evaluation step), quality-loop-helper.sh (warning in CHANGES_REQUESTED handler), build.txt (AI Suggestion Verification rule), AGENTS.md (Bot Reviewer Feedback section). PR #394 merged. Meta: the PR itself demonstrated the workflow — accepted valid Gemini suggestions, dismissed incorrect CodeRabbit consolidation suggestion with evidence.
 - [ ] t104 Install script integrity hardening (replace curl|sh with verified downloads) #security #supply-chain #plan → [todo/PLANS.md#2026-02-03-install-script-integrity-hardening] ~1.5h (ai:45m test:30m read:15m) logged:2026-02-03

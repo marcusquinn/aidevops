@@ -21,6 +21,88 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-06] gopass Integration & Credentials Rename
+
+**Status:** Planning
+**Estimate:** ~2d (ai:1d test:4h read:4h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p021,gopass Integration & Credentials Rename,planning,0,3,,security|credentials|gopass|rename,2d,1d,4h,4h,2026-02-06T20:00Z,
+-->
+
+#### Purpose
+
+Replace plaintext `mcp-env.sh` credential storage with gopass (GPG-encrypted, git-versioned, team-shareable). Build an AI-native wrapper (`aidevops secret`) that keeps secret values out of agent context windows via subprocess injection and output redaction. Rename `mcp-env.sh` to `credentials.sh` across the entire codebase for accuracy.
+
+#### Context from Discussion
+
+Evaluated 5 tools: gopass (6.7k stars, 8+ years, GPG/age, team-ready), psst (61 stars, AI-native but v0.3.0), mcp-secrets-vault (4 stars, env var wrapper), rsec (7 stars, cloud vaults only), cross-keychain (library, not CLI). gopass selected as primary for maturity, zero runtime deps, team sharing, and ecosystem (browser integration, git credentials, Kubernetes, Terraform). psst documented as alternative for solo devs who prefer simpler UX.
+
+Key design decisions:
+- gopass as encrypted backend, thin shell wrapper for AI-native features (subprocess injection + output redaction)
+- Rename mcp-env.sh to credentials.sh (83 files, 261 references) with backward-compatible symlink
+- credentials.sh kept as fallback for MCP server launching and non-gopass workflows
+- Agent instructions mandate: never accept secrets in conversation context
+
+#### Progress
+
+- [ ] (2026-02-06) Part A: Rename mcp-env.sh to credentials.sh ~4.5h
+  - 7 scripts: variable rename `MCP_ENV_FILE` to `CREDENTIALS_FILE`
+  - ~18 scripts: path string updates
+  - ~65 docs: path reference updates
+  - setup.sh: migration logic + symlink
+  - Verification: `rg 'mcp-env'` returns 0
+- [ ] (2026-02-06) Part B: gopass integration + aidevops secret wrapper ~6h
+  - gopass.md subagent documentation
+  - secret-helper.sh (init, set, list, run, import-credentials)
+  - Output redaction function
+  - credential-helper.sh gopass detection
+  - setup.sh gopass installation
+  - api-keys tool update
+- [ ] (2026-02-06) Part C: Agent instructions + documentation ~2h
+  - AGENTS.md: mandatory "never accept secrets in context" rule
+  - psst.md: documented alternative
+  - Security docs update
+  - Onboarding update
+
+<!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m095,p021,Part A: Rename mcp-env.sh to credentials.sh,4.5h,,2026-02-06T20:00Z,,pending
+m096,p021,Part B: gopass integration + aidevops secret wrapper,6h,,2026-02-06T20:00Z,,pending
+m097,p021,Part C: Agent instructions + documentation,2h,,2026-02-06T20:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** gopass over psst as primary secrets backend
+  **Rationale:** 6.7k stars, 224 contributors, GPG/age encryption (audited), git-versioned, team-shareable, single Go binary (zero runtime deps), 8+ years production use. psst is v0.3.0 with 61 stars, Bun dependency, no team features, custom unaudited AES-256-GCM.
+  **Date:** 2026-02-06
+
+- **Decision:** Rename mcp-env.sh to credentials.sh
+  **Rationale:** File stores credentials for agents, scripts, skills, MCP servers, and CLI tools -- not just MCP environment variables. "credentials.sh" is accurate and tool-agnostic.
+  **Date:** 2026-02-06
+
+- **Decision:** Keep credentials.sh as fallback alongside gopass
+  **Rationale:** MCP server configs need env vars at launch time (can't wrap in subprocess). credentials.sh remains the backward-compatible bridge.
+  **Date:** 2026-02-06
+
+- **Decision:** Build thin shell wrapper, not fork psst
+  **Rationale:** The AI-native gap (subprocess injection + output redaction) is ~50 lines of shell on top of gopass. The hard part (encryption, key management, team sharing, auditing) is what gopass already does.
+  **Date:** 2026-02-06
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d028,p021,gopass over psst as primary,Mature GPG encryption + team sharing + zero deps vs immature AI-native tool,2026-02-06,high
+d029,p021,Rename mcp-env.sh to credentials.sh,File stores credentials for all tools not just MCP,2026-02-06,medium
+d030,p021,Keep credentials.sh as fallback,MCP server configs need env vars at launch time,2026-02-06,medium
+d031,p021,Build thin shell wrapper not fork psst,AI-native gap is ~50 lines of shell on top of gopass,2026-02-06,high
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
 ### [2026-02-03] Install Script Integrity Hardening
 
 **Status:** Planning
@@ -960,7 +1042,8 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 p009,beads-sync-helper.sh; todo-ready.sh; beads.md subagent; blocked-by/blocks syntax; hierarchical IDs; TOON schema; setup.sh integration; AGENTS.md docs,Robust sync script; comprehensive docs; seamless integration,Add optional UI installation to setup.sh,2d,1.5d,-25,1
 -->
 
-<!--TOON:active_plans[14]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+<!--TOON:active_plans[15]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p021,gopass Integration & Credentials Rename,planning,0,3,,security|credentials|gopass|rename,2d,1d,4h,4h,2026-02-06T20:00Z,
 p016,Install Script Integrity Hardening,planning,0,4,,security|supply-chain|setup,4h,2h,1h,1h,2026-02-03T00:00Z,
 p017,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
