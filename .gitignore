@@ -39,8 +39,9 @@ authorized_keys
 !.agents/scripts/secretlint-helper.sh
 !.agents/secretlint.md
 
-# Exception for credential management script (not actual credentials)
+# Exception for credential/secret management scripts (not actual credentials)
 !.agents/scripts/credential-helper.sh
+!.agents/scripts/secret-helper.sh
 
 # Environment files
 .env*

@@ -8,8 +8,10 @@
 # Active:  ~/.config/aidevops/active-tenant
 # Project: .aidevops-tenant (per-project override)
 #
+# For encrypted storage with gopass, use: secret-helper.sh (aidevops secret)
+#
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 1.1.0
 
 set -euo pipefail
 

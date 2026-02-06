@@ -1957,6 +1957,7 @@ cmd_help() {
     echo "  upgrade            Alias for update"
     echo "  update-tools       Check for outdated tools (--update to auto-update)"
     echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+    echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
     echo "  detect             Find and register aidevops projects"
     echo "  uninstall          Remove aidevops from your system"
     echo "  version            Show version information"
@@ -1975,6 +1976,14 @@ cmd_help() {
     echo "  aidevops update-tools        # Check for outdated tools"
     echo "  aidevops update-tools -u     # Update all outdated tools"
     echo "  aidevops uninstall           # Remove aidevops"
+    echo ""
+    echo "Secrets:"
+    echo "  aidevops secret set NAME     # Store a secret (hidden input)"
+    echo "  aidevops secret list         # List secret names (never values)"
+    echo "  aidevops secret run CMD      # Run with secrets injected + redacted"
+    echo "  aidevops secret init         # Initialize gopass encrypted store"
+    echo "  aidevops secret import       # Import from credentials.sh to gopass"
+    echo "  aidevops secret status       # Show backend status"
     echo ""
     echo "Skills:"
     echo "  aidevops skill add <source>  # Import a skill from GitHub"
@@ -2069,6 +2078,19 @@ main() {
             ;;
         detect|scan)
             cmd_detect
+            ;;
+        secret|secrets)
+            shift
+            local secret_helper="$AGENTS_DIR/scripts/secret-helper.sh"
+            if [[ ! -f "$secret_helper" ]]; then
+                secret_helper="$INSTALL_DIR/.agents/scripts/secret-helper.sh"
+            fi
+            if [[ -f "$secret_helper" ]]; then
+                bash "$secret_helper" "$@"
+            else
+                print_error "secret-helper.sh not found. Run: aidevops update"
+                exit 1
+            fi
             ;;
         uninstall|remove)
             cmd_uninstall
