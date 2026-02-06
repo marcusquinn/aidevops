@@ -1872,6 +1872,15 @@ cmd_skill() {
             print_info "Generating SKILL.md stubs for cross-tool discovery..."
             bash "$generate_script" "$@"
             ;;
+        scan)
+            local security_script="$AGENTS_DIR/scripts/security-helper.sh"
+            if [[ ! -f "$security_script" ]]; then
+                print_error "security-helper.sh not found"
+                print_info "Run 'aidevops update' to get the latest scripts"
+                return 1
+            fi
+            bash "$security_script" skill-scan "$@"
+            ;;
         clean)
             local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
             if [[ ! -f "$generate_script" ]]; then
@@ -1895,6 +1904,7 @@ cmd_skill() {
             echo "  check            Check for upstream updates"
             echo "  update [name]    Update specific or all skills"
             echo "  remove <name>    Remove an imported skill"
+            echo "  scan [name]      Security scan imported skills (Cisco Skill Scanner)"
             echo "  status           Show detailed skill status"
             echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
             echo "  clean            Remove generated SKILL.md stubs"
@@ -1910,6 +1920,8 @@ cmd_skill() {
             echo "  aidevops skill add expo/skills --name expo-dev"
             echo "  aidevops skill check"
             echo "  aidevops skill update"
+            echo "  aidevops skill scan"
+            echo "  aidevops skill scan cloudflare-platform"
             echo "  aidevops skill generate --dry-run"
             echo ""
             echo "Imported skills are saved with a -skill suffix to distinguish"

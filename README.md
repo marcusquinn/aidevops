@@ -468,10 +468,11 @@ aidevops skill add clawdhub:<slug> # Import a skill from ClawdHub
 aidevops skill list                # List imported skills
 aidevops skill check               # Check for upstream updates
 aidevops skill update [name]       # Update specific or all skills
+aidevops skill scan [name]         # Security scan skills (Cisco Skill Scanner)
 aidevops skill remove <name>       # Remove an imported skill
 ```
 
-Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream tracking for update detection. Telemetry is disabled - no data is sent to third parties.
+Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream tracking for update detection. Imported skills are automatically security-scanned using [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) when installed (CRITICAL/HIGH findings block import). Telemetry is disabled - no data is sent to third parties.
 
 **Browse community skills:** [skills.sh](https://skills.sh) | [ClawdHub](https://clawdhub.com) | **Specification:** [agentskills.io](https://agentskills.io)
 
@@ -775,6 +776,7 @@ The setup script offers to install these tools automatically.
 - **[Snyk](https://snyk.io/)**: Security vulnerability scanning
 - **[Socket](https://socket.dev/)**: Dependency security and supply chain protection
 - **[Sentry](https://sentry.io/)**: Error monitoring and performance tracking
+- **[Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner)**: Security scanner for AI agent skills (prompt injection, exfiltration, malicious code)
 - **[Secretlint](https://github.com/secretlint/secretlint)**: Detect exposed secrets in code
 - **[OSV Scanner](https://google.github.io/osv-scanner/)**: Google's vulnerability database scanner
 - **[Qlty](https://qlty.sh/)**: Universal code quality platform (70+ linters, auto-fixes)

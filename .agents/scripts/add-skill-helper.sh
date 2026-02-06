@@ -478,6 +478,104 @@ register_skill() {
 }
 
 # =============================================================================
+# Security Scanning
+# =============================================================================
+
+# Scan a skill directory for security threats using Cisco Skill Scanner
+# Returns: 0 = safe or scanner not available, 1 = blocked (CRITICAL/HIGH found)
+scan_skill_security() {
+    local scan_path="$1"
+    local skill_name="$2"
+    local force="${3:-false}"
+    
+    # Determine scanner command
+    local scanner_cmd=""
+    if command -v skill-scanner &>/dev/null; then
+        scanner_cmd="skill-scanner"
+    elif command -v uvx &>/dev/null; then
+        scanner_cmd="uvx cisco-ai-skill-scanner"
+    elif command -v pipx &>/dev/null; then
+        scanner_cmd="pipx run cisco-ai-skill-scanner"
+    else
+        log_info "Skill Scanner not installed (skipping security scan)"
+        log_info "Install with: uv pip install cisco-ai-skill-scanner"
+        return 0
+    fi
+    
+    log_info "Running security scan on '$skill_name'..."
+    
+    local scan_output
+    scan_output=$($scanner_cmd scan "$scan_path" --format json 2>/dev/null) || true
+    
+    if [[ -z "$scan_output" ]]; then
+        log_success "Security scan: SAFE (no findings)"
+        return 0
+    fi
+    
+    local findings max_severity critical_count high_count
+    findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
+    max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
+    critical_count=$(echo "$scan_output" | jq -r '.findings | map(select(.severity == "CRITICAL")) | length' 2>/dev/null || echo "0")
+    high_count=$(echo "$scan_output" | jq -r '.findings | map(select(.severity == "HIGH")) | length' 2>/dev/null || echo "0")
+    
+    if [[ "$findings" -eq 0 ]]; then
+        log_success "Security scan: SAFE (no findings)"
+        return 0
+    fi
+    
+    # Show findings summary
+    echo ""
+    echo -e "${YELLOW}Security scan found $findings issue(s) (max severity: $max_severity):${NC}"
+    
+    # Show individual findings
+    echo "$scan_output" | jq -r '.findings[]? | "  [\(.severity)] \(.rule_id): \(.description // "No description")"' 2>/dev/null || true
+    echo ""
+    
+    # Block on CRITICAL/HIGH unless --force
+    if [[ "$critical_count" -gt 0 || "$high_count" -gt 0 ]]; then
+        if [[ "$force" == true ]]; then
+            log_warning "CRITICAL/HIGH findings detected but --force specified, proceeding"
+            return 0
+        fi
+        
+        echo -e "${RED}BLOCKED: $critical_count CRITICAL and $high_count HIGH severity findings.${NC}"
+        echo ""
+        echo "This skill may contain:"
+        echo "  - Prompt injection or jailbreak instructions"
+        echo "  - Data exfiltration patterns"
+        echo "  - Command injection or malicious code"
+        echo "  - Hardcoded secrets or credentials"
+        echo ""
+        echo "Options:"
+        echo "  1. Cancel import (recommended)"
+        echo "  2. Import anyway (--force)"
+        echo ""
+        
+        # In non-interactive mode (piped), block by default
+        if [[ ! -t 0 ]]; then
+            log_error "Import blocked due to security findings (use --force to override)"
+            return 1
+        fi
+        
+        read -rp "Choose option [1-2]: " choice
+        case "$choice" in
+            2)
+                log_warning "Proceeding despite security findings"
+                return 0
+                ;;
+            *)
+                log_error "Import cancelled due to security findings"
+                return 1
+                ;;
+        esac
+    fi
+    
+    # MEDIUM/LOW findings: warn but allow
+    log_warning "Security scan found $findings issue(s) (max: $max_severity) - review recommended"
+    return 0
+}
+
+# =============================================================================
 # Commands
 # =============================================================================
 
@@ -757,6 +855,16 @@ cmd_add() {
         fi
     done
     
+    # Security scan before registration (scan the source directory which has full context)
+    if ! scan_skill_security "$skill_source_dir" "$skill_name" "$force"; then
+        # Clean up the partially imported files
+        rm -f "$target_file"
+        local skill_resource_dir=".agents/${target_path}"
+        [[ -d "$skill_resource_dir" ]] && rm -rf "$skill_resource_dir"
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
+    
     # Get commit hash for tracking
     local commit_hash=""
     if [[ -d "$TEMP_DIR/repo/.git" ]]; then
@@ -918,6 +1026,14 @@ EOF
     ' "$fetch_dir/SKILL.md" >> "$target_file"
     
     log_success "Created: $target_file"
+    
+    # Security scan before registration
+    if ! scan_skill_security "$fetch_dir" "$skill_name" "$force"; then
+        # Clean up the partially imported files
+        rm -f "$target_file"
+        rm -rf "$fetch_dir"
+        return 1
+    fi
     
     # Register in skill-sources.json
     local upstream_url="https://clawdhub.com/${owner_handle}/${slug}"

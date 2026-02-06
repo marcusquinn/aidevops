@@ -2305,6 +2305,33 @@ check_skill_updates() {
     return 0
 }
 
+# Security scan imported skills using Cisco Skill Scanner
+scan_imported_skills() {
+    print_info "Running security scan on imported skills..."
+    
+    local security_helper="$HOME/.aidevops/agents/scripts/security-helper.sh"
+    
+    if [[ ! -f "$security_helper" ]]; then
+        print_warning "security-helper.sh not found - skipping skill scan"
+        return 0
+    fi
+    
+    # Check if scanner is available (don't block setup if not installed)
+    if ! command -v skill-scanner &>/dev/null && ! command -v uvx &>/dev/null && ! command -v pipx &>/dev/null; then
+        print_info "Cisco Skill Scanner not installed (optional)"
+        print_info "Install with: uv pip install cisco-ai-skill-scanner"
+        return 0
+    fi
+    
+    if bash "$security_helper" skill-scan all 2>/dev/null; then
+        print_success "All imported skills passed security scan"
+    else
+        print_warning "Some imported skills have security findings - review with: aidevops skill scan"
+    fi
+    
+    return 0
+}
+
 # Inject aidevops reference into AI assistant AGENTS.md files
 inject_agents_reference() {
     print_info "Adding aidevops reference to AI assistant configurations..."
@@ -3764,6 +3791,7 @@ main() {
     confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
     confirm_step "Create symlinks for imported skills" && create_skill_symlinks
     confirm_step "Check for skill updates from upstream" && check_skill_updates
+    confirm_step "Security scan imported skills" && scan_imported_skills
     confirm_step "Inject agents reference into AI configs" && inject_agents_reference
     confirm_step "Update OpenCode configuration" && update_opencode_config
     confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
