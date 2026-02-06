@@ -519,7 +519,7 @@ Coordinator (pulse loop)
 |-----------|--------|---------|
 | Mailbox | `mail-helper.sh` | SQLite-backed inter-agent messaging (send, check, broadcast, archive) |
 | Coordinator | `coordinator-helper.sh` | Stateless pulse loop: collect reports, dispatch tasks, track idle workers |
-| Supervisor | `supervisor-helper.sh` | Autonomous multi-task orchestration with SQLite state machine, batches, retry cycles |
+| Supervisor | `supervisor-helper.sh` | Autonomous multi-task orchestration with SQLite state machine, batches, retry cycles, cron scheduling, auto-pickup from TODO.md |
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
 | Model routing | `model-routing.md`, `/route` | Cost-aware 5-tier routing guidance (haiku/flash/sonnet/pro/opus) |
 
