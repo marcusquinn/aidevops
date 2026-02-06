@@ -33,6 +33,7 @@ tools:
 | Generate new PDFs | LibPDF | pdf-lib-like API |
 | Merge/split | LibPDF | Full page manipulation |
 | Text extraction | LibPDF | With position information |
+| PDF to markdown/JSON | MinerU | Layout-aware, OCR, formula support |
 | Render to image | pdf.js | LibPDF doesn't render (yet) |
 
 **Subagents**:
@@ -40,6 +41,7 @@ tools:
 | File | Purpose |
 |------|---------|
 | `libpdf.md` | LibPDF library - form filling, signing, manipulation |
+| `tools/conversion/mineru.md` | MinerU - PDF to markdown/JSON for LLM workflows |
 
 <!-- AI-CONTEXT-END -->
 
@@ -138,4 +140,6 @@ const { bytes: signed } = await pdf.sign({
 ## Related
 
 - `libpdf.md` - Detailed LibPDF usage guide
+- `tools/conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
+- `tools/conversion/pandoc.md` - General document format conversion
 - `tools/browser/playwright.md` - For PDF rendering/screenshots
