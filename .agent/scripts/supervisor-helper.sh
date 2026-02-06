@@ -14,6 +14,8 @@
 #   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
 #   supervisor-helper.sh worker-status <task_id>       Check worker process status
 #   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
+#   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
+#   supervisor-helper.sh notify <task_id>              Send notification about task state
 #   supervisor-helper.sh status [task_id|batch_id]     Show task/batch/overall status
 #   supervisor-helper.sh transition <task_id> <new_state> [--error "reason"]
 #   supervisor-helper.sh list [--state queued|running|...] [--batch name] [--format json]
@@ -1969,6 +1971,9 @@ cmd_pulse() {
                     completed_count=$((completed_count + 1))
                     # Clean up PID file
                     rm -f "$pid_file"
+                    # Auto-update TODO.md and send notification (t128.4)
+                    update_todo_on_complete "$tid" 2>/dev/null || true
+                    send_task_notification "$tid" "complete" "$outcome_detail" 2>/dev/null || true
                     ;;
                 retry)
                     log_warn "  $tid: RETRY ($outcome_detail)"
@@ -1987,17 +1992,16 @@ cmd_pulse() {
                         if [[ "$current_retries" -ge "$max_retries_val" ]]; then
                             log_error "  $tid: max retries exceeded ($current_retries/$max_retries_val), marking blocked"
                             cmd_transition "$tid" "blocked" --error "Max retries exceeded: $outcome_detail" 2>/dev/null || true
-                            # Send escalation
-                            if [[ -x "$MAIL_HELPER" ]]; then
-                                "$MAIL_HELPER" send \
-                                    --to coordinator \
-                                    --type status_report \
-                                    --payload "Task $tid blocked after $current_retries retries: $outcome_detail" 2>/dev/null || true
-                            fi
+                            # Auto-update TODO.md and send notification (t128.4)
+                            update_todo_on_blocked "$tid" "Max retries exceeded: $outcome_detail" 2>/dev/null || true
+                            send_task_notification "$tid" "blocked" "Max retries exceeded: $outcome_detail" 2>/dev/null || true
                         else
                             log_error "  $tid: re-prompt failed, marking failed"
                             cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
                             failed_count=$((failed_count + 1))
+                            # Auto-update TODO.md and send notification (t128.4)
+                            update_todo_on_blocked "$tid" "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
+                            send_task_notification "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
                         fi
                     fi
                     ;;
@@ -2005,19 +2009,18 @@ cmd_pulse() {
                     log_warn "  $tid: BLOCKED ($outcome_detail)"
                     cmd_transition "$tid" "blocked" --error "$outcome_detail" 2>/dev/null || true
                     rm -f "$pid_file"
-                    # Send escalation via mail
-                    if [[ -x "$MAIL_HELPER" ]]; then
-                        "$MAIL_HELPER" send \
-                            --to coordinator \
-                            --type status_report \
-                            --payload "Task $tid blocked: $outcome_detail" 2>/dev/null || true
-                    fi
+                    # Auto-update TODO.md and send notification (t128.4)
+                    update_todo_on_blocked "$tid" "$outcome_detail" 2>/dev/null || true
+                    send_task_notification "$tid" "blocked" "$outcome_detail" 2>/dev/null || true
                     ;;
                 failed)
                     log_error "  $tid: FAILED ($outcome_detail)"
                     cmd_transition "$tid" "failed" --error "$outcome_detail" 2>/dev/null || true
                     failed_count=$((failed_count + 1))
                     rm -f "$pid_file"
+                    # Auto-update TODO.md and send notification (t128.4)
+                    update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>/dev/null || true
+                    send_task_notification "$tid" "failed" "$outcome_detail" 2>/dev/null || true
                     ;;
             esac
         done <<< "$running_tasks"
@@ -2165,6 +2168,337 @@ cmd_cleanup() {
 }
 
 #######################################
+# Update TODO.md when a task completes
+# Marks the task checkbox as [x], adds completed:YYYY-MM-DD
+# Then commits and pushes the change
+#######################################
+update_todo_on_complete() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT repo, description, pr_url FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local trepo tdesc tpr_url
+    IFS='|' read -r trepo tdesc tpr_url <<< "$task_row"
+
+    local todo_file="$trepo/TODO.md"
+    if [[ ! -f "$todo_file" ]]; then
+        log_warn "TODO.md not found at $todo_file"
+        return 1
+    fi
+
+    local today
+    today=$(date +%Y-%m-%d)
+
+    # Match the task line (open checkbox with task ID)
+    # Handles both top-level and indented subtasks
+    if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
+        log_warn "Task $task_id not found as open in $todo_file (may already be completed)"
+        return 0
+    fi
+
+    # Mark as complete: [ ] -> [x], append completed:date
+    # Use sed to match the line and transform it
+    local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2 completed:${today}/"
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' -E "$sed_pattern" "$todo_file"
+    else
+        sed -i -E "$sed_pattern" "$todo_file"
+    fi
+
+    # Verify the change was made
+    if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
+        log_error "Failed to update TODO.md for $task_id"
+        return 1
+    fi
+
+    log_success "Updated TODO.md: $task_id marked complete ($today)"
+
+    # Commit and push from the main repo (TODO.md lives on main)
+    if git -C "$trepo" diff --quiet -- TODO.md 2>/dev/null; then
+        log_info "No changes to commit (TODO.md unchanged)"
+        return 0
+    fi
+
+    git -C "$trepo" add TODO.md
+    local commit_msg="chore: mark $task_id complete in TODO.md"
+    if [[ -n "$tpr_url" ]]; then
+        commit_msg="chore: mark $task_id complete in TODO.md (${tpr_url})"
+    fi
+    git -C "$trepo" commit -m "$commit_msg" -- TODO.md 2>/dev/null || {
+        log_warn "Failed to commit TODO.md update (may need manual commit)"
+        return 1
+    }
+
+    git -C "$trepo" push 2>/dev/null || {
+        log_warn "Failed to push TODO.md update (may need manual push)"
+        return 1
+    }
+
+    log_success "Committed and pushed TODO.md update for $task_id"
+    return 0
+}
+
+#######################################
+# Update TODO.md when a task is blocked or failed
+# Adds Notes line with blocked reason
+# Then commits and pushes the change
+#######################################
+update_todo_on_blocked() {
+    local task_id="$1"
+    local reason="${2:-unknown}"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local trepo
+    trepo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';")
+
+    if [[ -z "$trepo" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local todo_file="$trepo/TODO.md"
+    if [[ ! -f "$todo_file" ]]; then
+        log_warn "TODO.md not found at $todo_file"
+        return 1
+    fi
+
+    # Find the task line number
+    local line_num
+    line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+
+    if [[ -z "$line_num" ]]; then
+        log_warn "Task $task_id not found as open in $todo_file"
+        return 0
+    fi
+
+    # Detect indentation of the task line for proper Notes alignment
+    local task_line
+    task_line=$(sed -n "${line_num}p" "$todo_file")
+    local indent=""
+    indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/')
+
+    # Check if a Notes line already exists below the task
+    local next_line_num=$((line_num + 1))
+    local next_line
+    next_line=$(sed -n "${next_line_num}p" "$todo_file" 2>/dev/null || echo "")
+
+    # Sanitize reason for safe insertion (escape special sed chars)
+    local safe_reason
+    safe_reason=$(echo "$reason" | sed 's/[&/\]/\\&/g' | head -c 200)
+
+    if echo "$next_line" | grep -qE "^[[:space:]]*- Notes:"; then
+        # Append to existing Notes line
+        local append_text=" BLOCKED: ${safe_reason}"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "${next_line_num}s/$/${append_text}/" "$todo_file"
+        else
+            sed -i "${next_line_num}s/$/${append_text}/" "$todo_file"
+        fi
+    else
+        # Insert a new Notes line after the task
+        local notes_line="${indent}  - Notes: BLOCKED by supervisor: ${safe_reason}"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "${line_num}a\\
+${notes_line}" "$todo_file"
+        else
+            sed -i "${line_num}a\\${notes_line}" "$todo_file"
+        fi
+    fi
+
+    log_success "Updated TODO.md: $task_id marked blocked ($reason)"
+
+    # Commit and push
+    if git -C "$trepo" diff --quiet -- TODO.md 2>/dev/null; then
+        log_info "No changes to commit (TODO.md unchanged)"
+        return 0
+    fi
+
+    git -C "$trepo" add TODO.md
+    git -C "$trepo" commit -m "chore: mark $task_id blocked in TODO.md" -- TODO.md 2>/dev/null || {
+        log_warn "Failed to commit TODO.md update"
+        return 1
+    }
+
+    git -C "$trepo" push 2>/dev/null || {
+        log_warn "Failed to push TODO.md update"
+        return 1
+    }
+
+    log_success "Committed and pushed TODO.md blocked update for $task_id"
+    return 0
+}
+
+#######################################
+# Send notification about task state change
+# Uses mail-helper.sh and optionally matrix-dispatch-helper.sh
+#######################################
+send_task_notification() {
+    local task_id="$1"
+    local event_type="$2"  # complete, blocked, failed
+    local detail="${3:-}"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT description, repo, pr_url, error FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    local tdesc trepo tpr terror
+    IFS='|' read -r tdesc trepo tpr terror <<< "$task_row"
+
+    local message=""
+    case "$event_type" in
+        complete)
+            message="Task $task_id completed: ${tdesc:-no description}"
+            if [[ -n "$tpr" ]]; then
+                message="$message | PR: $tpr"
+            fi
+            ;;
+        blocked)
+            message="Task $task_id BLOCKED: ${detail:-${terror:-unknown reason}} | ${tdesc:-no description}"
+            ;;
+        failed)
+            message="Task $task_id FAILED: ${detail:-${terror:-unknown reason}} | ${tdesc:-no description}"
+            ;;
+        *)
+            message="Task $task_id [$event_type]: ${detail:-${tdesc:-no description}}"
+            ;;
+    esac
+
+    # Send via mail-helper.sh (inter-agent mailbox)
+    if [[ -x "$MAIL_HELPER" ]]; then
+        local priority="normal"
+        if [[ "$event_type" == "blocked" || "$event_type" == "failed" ]]; then
+            priority="high"
+        fi
+        "$MAIL_HELPER" send \
+            --to coordinator \
+            --type status_report \
+            --priority "$priority" \
+            --payload "$message" 2>/dev/null || true
+        log_info "Notification sent via mail: $event_type for $task_id"
+    fi
+
+    # Send via Matrix if configured
+    local matrix_helper="${SCRIPT_DIR}/matrix-dispatch-helper.sh"
+    if [[ -x "$matrix_helper" ]]; then
+        local matrix_room
+        matrix_room=$("$matrix_helper" mappings 2>/dev/null | head -1 | cut -d'|' -f1 | tr -d ' ' || true)
+        if [[ -n "$matrix_room" ]]; then
+            "$matrix_helper" test --room "$matrix_room" --message "$message" 2>/dev/null || true
+            log_info "Notification sent via Matrix: $event_type for $task_id"
+        fi
+    fi
+
+    return 0
+}
+
+#######################################
+# Command: update-todo - manually trigger TODO.md update for a task
+#######################################
+cmd_update_todo() {
+    local task_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh update-todo <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local tstatus
+    tstatus=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
+
+    if [[ -z "$tstatus" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    case "$tstatus" in
+        complete)
+            update_todo_on_complete "$task_id"
+            ;;
+        blocked)
+            local terror
+            terror=$(sqlite3 "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+            update_todo_on_blocked "$task_id" "${terror:-blocked by supervisor}"
+            ;;
+        failed)
+            local terror
+            terror=$(sqlite3 "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+            update_todo_on_blocked "$task_id" "FAILED: ${terror:-unknown}"
+            ;;
+        *)
+            log_warn "Task $task_id is in '$tstatus' state - TODO update only applies to complete/blocked/failed tasks"
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
+#######################################
+# Command: notify - manually send notification for a task
+#######################################
+cmd_notify() {
+    local task_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh notify <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local tstatus
+    tstatus=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
+
+    if [[ -z "$tstatus" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local terror
+    terror=$(sqlite3 "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+
+    send_task_notification "$task_id" "$tstatus" "${terror:-}"
+    return 0
+}
+
+#######################################
 # Show usage
 #######################################
 show_usage() {
@@ -2181,6 +2515,8 @@ Usage:
   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
+  supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
+  supervisor-helper.sh notify <task_id>              Send notification about task state
   supervisor-helper.sh transition <id> <state>       Transition task state
   supervisor-helper.sh status [task_id|batch_id]     Show status
   supervisor-helper.sh list [--state X] [--batch Y]  List tasks
@@ -2269,6 +2605,13 @@ Integration:
   - Mail: mail-helper.sh for escalation
   - Memory: memory-helper.sh for cross-batch learning
   - Git: wt/worktree-helper.sh for isolation
+  - TODO: auto-updates TODO.md on task completion/failure
+
+TODO.md Auto-Update (t128.4):
+  On task completion: marks [ ] -> [x], adds completed:YYYY-MM-DD, commits+pushes
+  On task blocked/failed: adds Notes line with reason, commits+pushes
+  Notifications sent via mail-helper.sh and Matrix (if configured)
+  Triggered automatically during pulse cycle, or manually via update-todo command
 EOF
 }
 
@@ -2289,6 +2632,8 @@ main() {
         pulse) cmd_pulse "$@" ;;
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
+        update-todo) cmd_update_todo "$@" ;;
+        notify) cmd_notify "$@" ;;
         transition) cmd_transition "$@" ;;
         status) cmd_status "$@" ;;
         list) cmd_list "$@" ;;
