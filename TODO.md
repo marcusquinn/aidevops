@@ -365,6 +365,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: MiniCPM-o 4.5 does voice+vision+text. Decision needed: 1) Put in tools/vision/ with cross-refs from tools/voice/ (simpler), 2) Create tools/multimodal/ category (cleaner taxonomy but more dirs), 3) Put in whichever is the primary use case and cross-ref. Recommend option 1 initially, revisit when we have 3+ multimodal models.
 - [ ] t133 Cloud GPU deployment guide for AI model hosting #tools #infrastructure #gpu ~45m (ai:30m test:10m read:5m) logged:2026-02-06 related:t080,t071
   - Notes: Shared guide for deploying GPU-intensive models to cloud providers. Covers: NVIDIA Cloud (A100/H100, official), Vast.ai (auction pricing, cheapest), RunPod (balanced), Lambda (research). Common patterns: SSH setup, Docker deployment, model caching, cost optimization. Referenced by tools/voice/speech-to-speech.md and future tools/vision/ subagents. Could live at tools/infrastructure/cloud-gpu.md or services/hosting/cloud-gpu.md.
+- [ ] t134 SOPS + gocryptfs encryption stack #tools #security #encryption ~4h (ai:3h test:45m read:15m) logged:2026-02-06 related:t131
+  - [ ] t134.1 Add SOPS subagent with age backend (encrypt project config files in repos) ~1.5h blocked-by:none
+    - Notes: SOPS (20.7k stars, CNCF sandbox, Mozilla-origin) encrypts values in YAML/JSON/ENV files while keeping structure visible in diffs/PRs. Use age as default backend (simpler than GPG for new users, gopass GPG keys also supported). Create subagent at tools/credentials/sops.md covering: install (brew install sops age), init per-project (.sops.yaml), encrypt/decrypt workflow, key rotation, integration with aidevops secret run for subprocess injection. Reference: https://github.com/getsops/sops
+  - [ ] t134.2 Add gocryptfs subagent (encrypted local project folders) ~1.5h blocked-by:none
+    - Notes: gocryptfs (4.3k stars, active, EncFS successor) provides encrypted overlay filesystem -- mount/unmount encrypted folders as normal directories. No disk images to manage. Create subagent at tools/credentials/gocryptfs.md covering: install (brew install gocryptfs), init encrypted folder, mount/unmount workflow, FIDO2 support, use cases (client data, backups, credential vaults). Reference: https://github.com/rfjakob/gocryptfs
+  - [ ] t134.3 Update aidevops init with optional SOPS setup ~45m blocked-by:t134.1
+    - Notes: Add `aidevops init sops` feature flag. Creates .sops.yaml with age key, adds patterns for common secret files (*.secret.yaml, configs/*.enc.json). Add to features list. Non-breaking -- only activates when explicitly requested.
+  - [ ] t134.4 Document full encryption stack in credentials docs ~30m blocked-by:t134.1,t134.2
+    - Notes: Update gopass.md and api-key-setup.md with encryption stack overview: gopass (secret values), SOPS (config files in repos), gocryptfs (local folders). Decision record: chose SOPS over git-crypt (value-level encryption, CNCF backing, key rotation) and gocryptfs over VeraCrypt (no disk images to manage, CLI-native, overlay filesystem).
 
 <!--TOON:backlog[89]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,1.5h,45m,30m,2026-02-03T00:00Z,pending,,,
@@ -476,6 +485,7 @@ t127,Add Buzz offline transcription support,,tools|voice|transcription,15m,10m,3
 t131,Create tools/vision/ category for visual AI models,,tools|vision|ai,30m,20m,5m,5m,2026-02-06T00:00Z,pending,,,
 t132,Evaluate tools/multimodal/ vs cross-references for models spanning voice+vision,,architecture|tools|ai,15m,10m,,5m,2026-02-06T00:00Z,pending,,,
 t133,Cloud GPU deployment guide for AI model hosting,,tools|infrastructure|gpu,45m,30m,10m,5m,2026-02-06T00:00Z,pending,,,
+t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,2026-02-06T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
