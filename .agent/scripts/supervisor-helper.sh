@@ -26,6 +26,9 @@
 #   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for #auto-dispatch tasks
 #   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
 #   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
+#   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] Handle post-PR merge/deploy lifecycle
+#   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
+#   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
 #   supervisor-helper.sh db [sql]                      Direct SQLite access
 #   supervisor-helper.sh help
 #
@@ -34,6 +37,11 @@
 #                                   -> retrying   -> reprompt -> dispatched (retry cycle)
 #                                   -> blocked    (needs human input / max retries)
 #                                   -> failed     (dispatch failure / unrecoverable)
+#
+# Post-PR lifecycle (t128.8):
+#   complete -> pr_review -> merging -> merged -> deploying -> deployed
+#   Workers exit after PR creation. Supervisor handles remaining stages:
+#   wait for CI, merge (squash), postflight, deploy, worktree cleanup.
 #
 # Outcome evaluation (3-tier):
 #   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
@@ -61,7 +69,7 @@ readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"   # Used by pulse comman
 export MAIL_HELPER MEMORY_HELPER
 
 # Valid states for the state machine
-readonly VALID_STATES="queued dispatched running evaluating retrying complete blocked failed cancelled"
+readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review merging merged deploying deployed blocked failed cancelled"
 
 # Valid state transitions (from:to pairs)
 # Format: "from_state:to_state" - checked by validate_transition()
@@ -84,6 +92,20 @@ readonly -a VALID_TRANSITIONS=(
     "blocked:queued"
     "blocked:cancelled"
     "failed:queued"
+    # Post-PR lifecycle transitions (t128.8)
+    "complete:pr_review"
+    "complete:deployed"
+    "pr_review:merging"
+    "pr_review:blocked"
+    "pr_review:cancelled"
+    "merging:merged"
+    "merging:blocked"
+    "merging:failed"
+    "merged:deploying"
+    "merged:deployed"
+    "deploying:deployed"
+    "deploying:failed"
+    "deployed:cancelled"
 )
 
 # Colors
@@ -128,6 +150,47 @@ ensure_db() {
         init_db
     fi
 
+    # Migrate: add post-PR lifecycle states if CHECK constraint is outdated (t128.8)
+    # SQLite doesn't support ALTER CHECK, so we recreate the constraint via a temp table
+    local check_sql
+    check_sql=$(sqlite3 "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
+    if [[ -n "$check_sql" ]] && ! echo "$check_sql" | grep -q 'pr_review'; then
+        log_info "Migrating database schema for post-PR lifecycle states (t128.8)..."
+        sqlite3 "$SUPERVISOR_DB" << 'MIGRATE'
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+ALTER TABLE tasks RENAME TO tasks_old;
+CREATE TABLE tasks (
+    id              TEXT PRIMARY KEY,
+    repo            TEXT NOT NULL,
+    description     TEXT,
+    status          TEXT NOT NULL DEFAULT 'queued'
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+    session_id      TEXT,
+    worktree        TEXT,
+    branch          TEXT,
+    log_file        TEXT,
+    retries         INTEGER NOT NULL DEFAULT 0,
+    max_retries     INTEGER NOT NULL DEFAULT 3,
+    model           TEXT DEFAULT 'anthropic/claude-opus-4-6',
+    error           TEXT,
+    pr_url          TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    started_at      TEXT,
+    completed_at    TEXT,
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+INSERT INTO tasks SELECT * FROM tasks_old;
+DROP TABLE tasks_old;
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo);
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
+COMMIT;
+PRAGMA foreign_keys=ON;
+MIGRATE
+        log_success "Database schema migrated for post-PR lifecycle states"
+    fi
+
     return 0
 }
 
@@ -147,7 +210,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     repo            TEXT NOT NULL,
     description     TEXT,
     status          TEXT NOT NULL DEFAULT 'queued'
-                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','blocked','failed','cancelled')),
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','merging','merged','deploying','deployed','blocked','failed','cancelled')),
     session_id      TEXT,
     worktree        TEXT,
     branch          TEXT,
@@ -469,7 +532,7 @@ cmd_transition() {
     fi
 
     # Set completed_at on terminal states
-    if [[ "$new_state" == "complete" || "$new_state" == "failed" || "$new_state" == "cancelled" ]]; then
+    if [[ "$new_state" == "complete" || "$new_state" == "deployed" || "$new_state" == "failed" || "$new_state" == "cancelled" ]]; then
         update_parts+=("completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
     fi
 
@@ -549,7 +612,7 @@ check_batch_completion() {
             SELECT count(*) FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$escaped_batch'
-            AND t.status NOT IN ('complete', 'failed', 'cancelled');
+            AND t.status NOT IN ('complete', 'deployed', 'merged', 'failed', 'cancelled');
         ")
 
         if [[ "$incomplete" -eq 0 ]]; then
@@ -598,9 +661,10 @@ cmd_status() {
             local color="$NC"
             case "$state" in
                 running|dispatched) color="$GREEN" ;;
-                evaluating|retrying) color="$YELLOW" ;;
+                evaluating|retrying|pr_review|merging|deploying) color="$YELLOW" ;;
                 blocked|failed) color="$RED" ;;
-                complete) color="$CYAN" ;;
+                complete|merged) color="$CYAN" ;;
+                deployed) color="$GREEN" ;;
             esac
             echo -e "  ${color}${state}${NC}: $count"
         done
@@ -730,9 +794,10 @@ cmd_status() {
             local color="$NC"
             case "$tstatus" in
                 running|dispatched) color="$GREEN" ;;
-                evaluating|retrying) color="$YELLOW" ;;
+                evaluating|retrying|pr_review|merging|deploying) color="$YELLOW" ;;
                 blocked|failed) color="$RED" ;;
-                complete) color="$CYAN" ;;
+                complete|merged) color="$CYAN" ;;
+                deployed) color="$GREEN" ;;
             esac
             local desc_short
             desc_short=$(echo "$tdesc" | head -c 60)
@@ -812,9 +877,10 @@ cmd_list() {
             local color="$NC"
             case "$tstatus" in
                 running|dispatched) color="$GREEN" ;;
-                evaluating|retrying) color="$YELLOW" ;;
+                evaluating|retrying|pr_review|merging|deploying) color="$YELLOW" ;;
                 blocked|failed) color="$RED" ;;
-                complete) color="$CYAN" ;;
+                complete|merged) color="$CYAN" ;;
+                deployed) color="$GREEN" ;;
             esac
             local desc_short
             desc_short=$(echo "$tdesc" | head -c 60)
@@ -905,7 +971,7 @@ cmd_cancel() {
     task_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_target';")
 
     if [[ -n "$task_status" ]]; then
-        if [[ "$task_status" == "complete" || "$task_status" == "cancelled" || "$task_status" == "failed" ]]; then
+        if [[ "$task_status" == "deployed" || "$task_status" == "cancelled" || "$task_status" == "failed" ]]; then
             log_warn "Task $target is already in terminal state: $task_status"
             return 0
         fi
@@ -954,7 +1020,7 @@ cmd_cancel() {
             SELECT count(*) FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$escaped_batch'
-            AND t.status NOT IN ('complete', 'failed', 'cancelled');
+            AND t.status NOT IN ('deployed', 'merged', 'failed', 'cancelled');
         ")
 
         sqlite3 "$SUPERVISOR_DB" "
@@ -964,7 +1030,7 @@ cmd_cancel() {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
             WHERE id IN (
                 SELECT task_id FROM batch_tasks WHERE batch_id = '$escaped_batch'
-            ) AND status NOT IN ('complete', 'failed', 'cancelled');
+            ) AND status NOT IN ('deployed', 'merged', 'failed', 'cancelled');
         "
 
         log_success "Cancelled batch: $target ($cancelled_count tasks cancelled)"
@@ -1929,6 +1995,600 @@ cmd_evaluate() {
 }
 
 #######################################
+# Check PR CI and review status for a task
+# Returns: ready_to_merge, ci_pending, ci_failed, changes_requested, draft, no_pr
+#######################################
+check_pr_status() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local pr_url
+    pr_url=$(sqlite3 "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
+
+    if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
+        echo "no_pr"
+        return 0
+    fi
+
+    # Extract owner/repo and PR number from URL
+    local pr_number
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+    local repo_slug
+    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+
+    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+        # Try to get PR from branch in the worktree
+        local tworktree
+        tworktree=$(sqlite3 "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';")
+        if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+            pr_number=$(gh pr view --json number --jq '.number' 2>/dev/null --repo "$repo_slug" || echo "")
+        fi
+        if [[ -z "$pr_number" ]]; then
+            echo "no_pr"
+            return 0
+        fi
+    fi
+
+    # Check PR state
+    local pr_json
+    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,statusCheckRollup 2>/dev/null || echo "")
+
+    if [[ -z "$pr_json" ]]; then
+        echo "no_pr"
+        return 0
+    fi
+
+    local pr_state
+    pr_state=$(echo "$pr_json" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+
+    # Already merged
+    if [[ "$pr_state" == "MERGED" ]]; then
+        echo "already_merged"
+        return 0
+    fi
+
+    # Closed without merge
+    if [[ "$pr_state" == "CLOSED" ]]; then
+        echo "closed"
+        return 0
+    fi
+
+    # Draft PR
+    local is_draft
+    is_draft=$(echo "$pr_json" | jq -r '.isDraft // false' 2>/dev/null || echo "false")
+    if [[ "$is_draft" == "true" ]]; then
+        echo "draft"
+        return 0
+    fi
+
+    # Check CI status
+    local ci_status="pass"
+    local check_rollup
+    check_rollup=$(echo "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+
+    if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
+        local has_failure
+        has_failure=$(echo "$check_rollup" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "ERROR")] | length' 2>/dev/null || echo "0")
+        local has_pending
+        has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
+
+        if [[ "$has_failure" -gt 0 ]]; then
+            ci_status="failed"
+        elif [[ "$has_pending" -gt 0 ]]; then
+            ci_status="pending"
+        fi
+    fi
+
+    if [[ "$ci_status" == "failed" ]]; then
+        echo "ci_failed"
+        return 0
+    fi
+
+    if [[ "$ci_status" == "pending" ]]; then
+        echo "ci_pending"
+        return 0
+    fi
+
+    # Check review status
+    local review_decision
+    review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+
+    if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+        echo "changes_requested"
+        return 0
+    fi
+
+    # CI passed, no blocking reviews
+    echo "ready_to_merge"
+    return 0
+}
+
+#######################################
+# Command: pr-check - check PR CI/review status for a task
+#######################################
+cmd_pr_check() {
+    local task_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh pr-check <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local pr_url
+    pr_url=$(sqlite3 "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
+
+    echo -e "${BOLD}=== PR Check: $task_id ===${NC}"
+    echo "  PR URL: ${pr_url:-none}"
+
+    local status
+    status=$(check_pr_status "$task_id")
+    local color="$NC"
+    case "$status" in
+        ready_to_merge) color="$GREEN" ;;
+        ci_pending|draft) color="$YELLOW" ;;
+        ci_failed|changes_requested|closed) color="$RED" ;;
+        already_merged) color="$CYAN" ;;
+    esac
+    echo -e "  Status: ${color}${status}${NC}"
+
+    return 0
+}
+
+#######################################
+# Merge a PR for a task (squash merge)
+# Returns 0 on success, 1 on failure
+#######################################
+merge_task_pr() {
+    local task_id="$1"
+    local dry_run="${2:-false}"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT pr_url, worktree, repo, branch FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tpr tworktree trepo tbranch
+    IFS='|' read -r tpr tworktree trepo tbranch <<< "$task_row"
+
+    if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
+        log_error "No PR URL for task $task_id"
+        return 1
+    fi
+
+    local pr_number
+    pr_number=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
+    local repo_slug
+    repo_slug=$(echo "$tpr" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+
+    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+        log_error "Cannot parse PR URL: $tpr"
+        return 1
+    fi
+
+    if [[ "$dry_run" == "true" ]]; then
+        log_info "[dry-run] Would merge PR #$pr_number in $repo_slug (squash)"
+        return 0
+    fi
+
+    log_info "Merging PR #$pr_number in $repo_slug (squash)..."
+
+    # Squash merge without --delete-branch (worktree handles branch cleanup)
+    local merge_output
+    if ! merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1); then
+        log_error "Failed to merge PR #$pr_number. Output from gh:"
+        log_error "$merge_output"
+        return 1
+    fi
+    log_success "PR #$pr_number merged successfully"
+    return 0
+}
+
+#######################################
+# Command: pr-merge - merge a task's PR
+#######################################
+cmd_pr_merge() {
+    local task_id="" dry_run="false"
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh pr-merge <task_id> [--dry-run]"
+        return 1
+    fi
+
+    # Check PR is ready
+    local pr_status
+    pr_status=$(check_pr_status "$task_id")
+
+    if [[ "$pr_status" != "ready_to_merge" ]]; then
+        log_error "PR for $task_id is not ready to merge (status: $pr_status)"
+        return 1
+    fi
+
+    merge_task_pr "$task_id" "$dry_run"
+    return $?
+}
+
+#######################################
+# Run postflight checks after merge
+# Lightweight: just verifies the merge landed on main
+#######################################
+run_postflight_for_task() {
+    local task_id="$1"
+    local repo="$2"
+
+    log_info "Running postflight for $task_id..."
+
+    # Pull latest main to verify merge landed
+    if ! git -C "$repo" pull origin main --ff-only 2>/dev/null; then
+        git -C "$repo" pull origin main 2>/dev/null || true
+    fi
+
+    # Verify the branch was merged (PR should show as merged)
+    local pr_status
+    pr_status=$(check_pr_status "$task_id")
+    if [[ "$pr_status" == "already_merged" ]]; then
+        log_success "Postflight: PR confirmed merged for $task_id"
+        return 0
+    fi
+
+    log_warn "Postflight: PR status is '$pr_status' for $task_id (expected already_merged)"
+    return 1
+}
+
+#######################################
+# Run deploy for a task (aidevops repos only: setup.sh)
+#######################################
+run_deploy_for_task() {
+    local task_id="$1"
+    local repo="$2"
+
+    # Check if this is an aidevops repo
+    local is_aidevops=false
+    if [[ "$repo" == *"/aidevops"* ]]; then
+        is_aidevops=true
+    elif [[ -f "$repo/.aidevops-repo" ]]; then
+        is_aidevops=true
+    elif [[ -f "$repo/setup.sh" ]] && grep -q "aidevops" "$repo/setup.sh" 2>/dev/null; then
+        is_aidevops=true
+    fi
+
+    if [[ "$is_aidevops" == "false" ]]; then
+        log_info "Not an aidevops repo, skipping deploy for $task_id"
+        return 0
+    fi
+
+    if [[ ! -x "$repo/setup.sh" ]]; then
+        log_warn "setup.sh not found or not executable in $repo"
+        return 0
+    fi
+
+    log_info "Running setup.sh for $task_id..."
+    local deploy_output
+    if ! deploy_output=$(cd "$repo" && ./setup.sh 2>&1); then
+        log_warn "Deploy (setup.sh) returned non-zero for $task_id. Output:"
+        log_warn "$deploy_output"
+        return 1
+    fi
+    log_success "Deploy complete for $task_id"
+    return 0
+}
+
+#######################################
+# Clean up worktree after successful merge
+# Returns to main repo, pulls, removes worktree
+#######################################
+cleanup_after_merge() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT worktree, repo, branch FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        return 0
+    fi
+
+    local tworktree trepo tbranch
+    IFS='|' read -r tworktree trepo tbranch <<< "$task_row"
+
+    # Clean up worktree
+    if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+        log_info "Cleaning up worktree for $task_id: $tworktree"
+        cleanup_task_worktree "$tworktree" "$trepo"
+
+        # Clear worktree field in DB
+        sqlite3 "$SUPERVISOR_DB" "
+            UPDATE tasks SET worktree = NULL WHERE id = '$escaped_id';
+        "
+    fi
+
+    # Delete the remote branch (already merged)
+    if [[ -n "$tbranch" ]]; then
+        git -C "$trepo" push origin --delete "$tbranch" 2>/dev/null || true
+        git -C "$trepo" branch -d "$tbranch" 2>/dev/null || true
+        log_info "Cleaned up branch: $tbranch"
+    fi
+
+    # Prune worktrees
+    if command -v wt &>/dev/null; then
+        wt prune -C "$trepo" 2>/dev/null || true
+    else
+        git -C "$trepo" worktree prune 2>/dev/null || true
+    fi
+
+    return 0
+}
+
+#######################################
+# Command: pr-lifecycle - handle full post-PR lifecycle for a task
+# Checks CI, merges, runs postflight, deploys, cleans up worktree
+#######################################
+cmd_pr_lifecycle() {
+    local task_id="" dry_run="false"
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh pr-lifecycle <task_id> [--dry-run]"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT status, pr_url, repo, worktree FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tstatus tpr trepo tworktree
+    IFS='|' read -r tstatus tpr trepo tworktree <<< "$task_row"
+
+    echo -e "${BOLD}=== Post-PR Lifecycle: $task_id ===${NC}"
+    echo "  Status:   $tstatus"
+    echo "  PR:       ${tpr:-none}"
+    echo "  Repo:     $trepo"
+    echo "  Worktree: ${tworktree:-none}"
+
+    # Step 1: Transition to pr_review if still in complete
+    if [[ "$tstatus" == "complete" ]]; then
+        if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
+            log_warn "No PR for $task_id - skipping post-PR lifecycle"
+            # Mark as deployed directly (no PR to merge)
+            if [[ "$dry_run" == "false" ]]; then
+                cmd_transition "$task_id" "deployed" 2>/dev/null || true
+            fi
+            return 0
+        fi
+        if [[ "$dry_run" == "false" ]]; then
+            cmd_transition "$task_id" "pr_review" 2>/dev/null || true
+        fi
+        tstatus="pr_review"
+    fi
+
+    # Step 2: Check PR status
+    if [[ "$tstatus" == "pr_review" ]]; then
+        local pr_status
+        pr_status=$(check_pr_status "$task_id")
+        log_info "PR status: $pr_status"
+
+        case "$pr_status" in
+            ready_to_merge)
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "merging" 2>/dev/null || true
+                fi
+                tstatus="merging"
+                ;;
+            already_merged)
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "merging" 2>/dev/null || true
+                    cmd_transition "$task_id" "merged" 2>/dev/null || true
+                fi
+                tstatus="merged"
+                ;;
+            ci_pending)
+                log_info "CI still pending for $task_id, will retry next pulse"
+                return 0
+                ;;
+            ci_failed)
+                log_warn "CI failed for $task_id"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "blocked" --error "CI checks failed" 2>/dev/null || true
+                    send_task_notification "$task_id" "blocked" "CI checks failed on PR" 2>/dev/null || true
+                fi
+                return 1
+                ;;
+            changes_requested)
+                log_warn "Changes requested on PR for $task_id"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "blocked" --error "PR changes requested" 2>/dev/null || true
+                    send_task_notification "$task_id" "blocked" "PR changes requested" 2>/dev/null || true
+                fi
+                return 1
+                ;;
+            draft)
+                log_info "PR is still a draft for $task_id"
+                return 0
+                ;;
+            closed)
+                log_warn "PR was closed without merge for $task_id"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "blocked" --error "PR closed without merge" 2>/dev/null || true
+                fi
+                return 1
+                ;;
+            no_pr)
+                log_warn "No PR found for $task_id"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "deployed" 2>/dev/null || true
+                fi
+                return 0
+                ;;
+        esac
+    fi
+
+    # Step 3: Merge
+    if [[ "$tstatus" == "merging" ]]; then
+        if [[ "$dry_run" == "true" ]]; then
+            log_info "[dry-run] Would merge PR for $task_id"
+        else
+            if merge_task_pr "$task_id" "$dry_run"; then
+                cmd_transition "$task_id" "merged" 2>/dev/null || true
+                tstatus="merged"
+            else
+                cmd_transition "$task_id" "blocked" --error "Merge failed" 2>/dev/null || true
+                send_task_notification "$task_id" "blocked" "PR merge failed" 2>/dev/null || true
+                return 1
+            fi
+        fi
+    fi
+
+    # Step 4: Postflight + Deploy
+    if [[ "$tstatus" == "merged" ]]; then
+        if [[ "$dry_run" == "false" ]]; then
+            cmd_transition "$task_id" "deploying" || log_warn "Failed to transition $task_id to deploying"
+
+            # Pull main and run postflight
+            run_postflight_for_task "$task_id" "$trepo" || log_warn "Postflight issue for $task_id (non-blocking)"
+
+            # Deploy (aidevops repos only)
+            run_deploy_for_task "$task_id" "$trepo" || log_warn "Deploy issue for $task_id (non-blocking)"
+
+            # Clean up worktree and branch
+            cleanup_after_merge "$task_id" || log_warn "Worktree cleanup issue for $task_id (non-blocking)"
+
+            # Update TODO.md
+            update_todo_on_complete "$task_id" || log_warn "TODO.md update issue for $task_id (non-blocking)"
+
+            # Final transition
+            cmd_transition "$task_id" "deployed" || log_warn "Failed to transition $task_id to deployed"
+
+            # Notify (best-effort, suppress errors)
+            send_task_notification "$task_id" "deployed" "PR merged, deployed, worktree cleaned" 2>/dev/null || true
+            store_success_pattern "$task_id" "deployed" "" 2>/dev/null || true
+        else
+            log_info "[dry-run] Would deploy and clean up for $task_id"
+        fi
+    fi
+
+    log_success "Post-PR lifecycle complete for $task_id (status: $(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo 'unknown'))"
+    return 0
+}
+
+#######################################
+# Process post-PR lifecycle for all eligible tasks
+# Called as Phase 4 of the pulse cycle
+# Finds tasks in complete/pr_review/merging/merged states with PR URLs
+#######################################
+process_post_pr_lifecycle() {
+    local batch_id="${1:-}"
+
+    ensure_db
+
+    # Find tasks eligible for post-PR processing
+    local where_clause="t.status IN ('complete', 'pr_review', 'merging', 'merged', 'deploying')"
+    if [[ -n "$batch_id" ]]; then
+        where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_id")')"
+    fi
+
+    local eligible_tasks
+    eligible_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT t.id, t.status, t.pr_url FROM tasks t
+        WHERE $where_clause
+        ORDER BY t.updated_at ASC;
+    ")
+
+    if [[ -z "$eligible_tasks" ]]; then
+        return 0
+    fi
+
+    local processed=0
+    local merged_count=0
+    local deployed_count=0
+
+    while IFS='|' read -r tid tstatus tpr; do
+        # Skip tasks without PRs that are already complete
+        if [[ "$tstatus" == "complete" && ( -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ) ]]; then
+            # No PR - transition directly to deployed
+            cmd_transition "$tid" "deployed" 2>/dev/null || true
+            deployed_count=$((deployed_count + 1))
+            log_info "  $tid: no PR, marked deployed"
+            continue
+        fi
+
+        log_info "  $tid: processing post-PR lifecycle (status: $tstatus)"
+        if cmd_pr_lifecycle "$tid" 2>/dev/null; then
+            local new_status
+            new_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+            case "$new_status" in
+                merged) merged_count=$((merged_count + 1)) ;;
+                deployed) deployed_count=$((deployed_count + 1)) ;;
+            esac
+        fi
+        processed=$((processed + 1))
+    done <<< "$eligible_tasks"
+
+    if [[ "$processed" -gt 0 ]]; then
+        log_info "Post-PR lifecycle: processed $processed tasks (merged: $merged_count, deployed: $deployed_count)"
+    fi
+
+    return 0
+}
+
+#######################################
 # Supervisor pulse - stateless check and dispatch cycle
 # Designed to run via cron every 5 minutes
 #######################################
@@ -2123,13 +2783,39 @@ cmd_pulse() {
         fi
     fi
 
-    # Phase 3: Summary
+    # Phase 3: Post-PR lifecycle (t128.8)
+    # Process tasks that workers completed (PR created) but still need merge/deploy
+    process_post_pr_lifecycle "${batch_id:-}" 2>/dev/null || true
+
+    # Phase 4: Process hygiene - clean up orphaned processes
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local stale_pid
+            stale_pid=$(cat "$pid_file")
+            if ! kill -0 "$stale_pid" 2>/dev/null; then
+                local stale_task
+                stale_task=$(basename "$pid_file" .pid)
+                local stale_status
+                stale_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$stale_task")';" 2>/dev/null || echo "")
+                # Only clean up PIDs for tasks still marked as running/dispatched
+                if [[ "$stale_status" == "running" || "$stale_status" == "dispatched" ]]; then
+                    log_warn "  Orphaned process for $stale_task (PID $stale_pid dead, status $stale_status)"
+                fi
+                rm -f "$pid_file"
+            fi
+        done
+    fi
+
+    # Phase 5: Summary
     local total_running
     total_running=$(cmd_running_count "${batch_id:-}")
     local total_queued
     total_queued=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';")
     local total_complete
-    total_complete=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'complete';")
+    total_complete=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed');")
+    local total_pr_review
+    total_pr_review=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying');")
 
     echo ""
     log_info "Pulse summary:"
@@ -2139,6 +2825,7 @@ cmd_pulse() {
     log_info "  Dispatched: $dispatched_count new"
     log_info "  Running:    $total_running"
     log_info "  Queued:     $total_queued"
+    log_info "  Post-PR:    $total_pr_review"
     log_info "  Total done: $total_complete"
 
     return 0
@@ -2164,7 +2851,7 @@ cmd_cleanup() {
     terminal_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
         SELECT id, worktree, repo, status FROM tasks
         WHERE worktree IS NOT NULL AND worktree != ''
-        AND status IN ('complete', 'failed', 'cancelled');
+        AND status IN ('deployed', 'merged', 'failed', 'cancelled');
     ")
 
     if [[ -z "$terminal_tasks" ]]; then
@@ -2824,7 +3511,7 @@ cmd_update_todo() {
     fi
 
     case "$tstatus" in
-        complete)
+        complete|deployed|merged)
             update_todo_on_complete "$task_id"
             ;;
         blocked)
@@ -2838,7 +3525,7 @@ cmd_update_todo() {
             update_todo_on_blocked "$task_id" "FAILED: ${terror:-unknown}"
             ;;
         *)
-            log_warn "Task $task_id is in '$tstatus' state - TODO update only applies to complete/blocked/failed tasks"
+            log_warn "Task $task_id is in '$tstatus' state - TODO update only applies to complete/deployed/merged/blocked/failed tasks"
             return 1
             ;;
     esac
@@ -3173,6 +3860,9 @@ Usage:
   supervisor-helper.sh reprompt <task_id> [options]  Re-prompt a retrying task
   supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
+  supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] Handle post-PR merge/deploy lifecycle
+  supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
+  supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
@@ -3192,11 +3882,16 @@ Usage:
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
 
-State Machine:
+State Machine (worker lifecycle):
   queued -> dispatched -> running -> evaluating -> complete
                                   -> retrying   -> reprompt -> dispatched -> running (retry cycle)
                                   -> blocked    (needs human input / max retries exceeded)
                                   -> failed     (dispatch failure / unrecoverable)
+
+Post-PR Lifecycle (t128.8 - supervisor handles directly, no worker needed):
+  complete -> pr_review -> merging -> merged -> deploying -> deployed
+  Workers exit after PR creation. Supervisor detects complete tasks with PR URLs
+  and handles: CI wait, merge (squash), postflight, deploy, worktree cleanup.
 
 Outcome Evaluation (3-tier):
   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
@@ -3302,6 +3997,33 @@ Memory & Self-Assessment (t128.6):
   Manual commands: recall <task_id>, retrospective [batch_id]
   Tags: supervisor,<task_id>,<outcome_type> for targeted recall
 
+Post-PR Lifecycle (t128.8):
+  Workers exit after PR creation (context limit). The supervisor detects
+  tasks in 'complete' state with PR URLs and handles remaining stages:
+    1. pr_review: Wait for CI checks to pass and reviews to approve
+    2. merging: Squash merge the PR via gh pr merge --squash
+    3. merged: Pull main, run postflight verification
+    4. deploying: Run setup.sh (aidevops repos only)
+    5. deployed: Clean up worktree and branch, update TODO.md
+
+  Automatic: pulse cycle Phase 3 processes all eligible tasks each run
+  Manual commands:
+    supervisor-helper.sh pr-check <task_id>              # Check CI/review status
+    supervisor-helper.sh pr-merge <task_id> [--dry-run]  # Merge PR
+    supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] # Full lifecycle
+
+  CI pending tasks are retried on the next pulse (no state change).
+  CI failures and review rejections transition to 'blocked' for human action.
+
+Options for 'pr-lifecycle':
+  --dry-run              Show what would happen without executing
+
+Options for 'pr-check':
+  (no options)           Shows PR CI and review status
+
+Options for 'pr-merge':
+  --dry-run              Show what would happen without executing
+
 Options for 'auto-pickup':
   --repo <path>          Repository with TODO.md (default: current directory)
 
@@ -3332,6 +4054,9 @@ main() {
         reprompt) cmd_reprompt "$@" ;;
         evaluate) cmd_evaluate "$@" ;;
         pulse) cmd_pulse "$@" ;;
+        pr-lifecycle) cmd_pr_lifecycle "$@" ;;
+        pr-check) cmd_pr_check "$@" ;;
+        pr-merge) cmd_pr_merge "$@" ;;
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
         update-todo) cmd_update_todo "$@" ;;
