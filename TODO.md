@@ -59,7 +59,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~3h (ai:1.5h test:1h read:30m) logged:2026-02-03
 - [x] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m actual:0m (ai:0m) logged:2026-02-03 completed:2026-02-06
   - Notes: Already fixed in PR #346. deploy-templates.sh replaced GNU-only `head -z` with macOS-compatible `while read -r` loop. No remaining `head -z` usage in codebase.
-- [ ] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m (ai:30m test:15m) logged:2026-02-03
+- [x] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
+  - Notes: Replaced `awk -v` with while-read loops in aidevops.sh cmd_upgrade_planning() to fix BSD awk "newline in string" warnings when passing multi-line shell variables. PR #371 merged.
 - [x] t123 Resolve DSPy dependency conflict (gepa) in setup flow #python #dspy #deps ~45m actual:0m (ai:0m test:0m) logged:2026-02-03 completed:2026-02-06
   - Notes: Already resolved. dspy 3.1.3 pulls gepa 0.0.26 as transitive dep with no conflicts. Fresh venv install of requirements.txt succeeds, pip check passes, both dspy and gepa import cleanly. Original conflict was likely version-specific and no longer reproduces.
 - [x] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m actual:0m (ai:10m test:5m) logged:2026-01-29 completed:2026-02-06
