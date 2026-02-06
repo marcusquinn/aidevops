@@ -27,6 +27,7 @@ set -euo pipefail
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 TEMP_DIR="${TMPDIR:-/tmp}/aidevops-skill-import"
+SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
 
 # Colors
 RED='\033[0;31m'
@@ -510,17 +511,20 @@ scan_skill_security() {
     
     if [[ -z "$scan_output" ]]; then
         log_success "Security scan: SAFE (no findings)"
+        log_skill_scan_result "$skill_name" "import" "0" "0" "0" "SAFE"
         return 0
     fi
     
-    local findings max_severity critical_count high_count
+    local findings max_severity critical_count high_count medium_count
     findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
     max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
     critical_count=$(echo "$scan_output" | jq -r '.findings | map(select(.severity == "CRITICAL")) | length' 2>/dev/null || echo "0")
     high_count=$(echo "$scan_output" | jq -r '.findings | map(select(.severity == "HIGH")) | length' 2>/dev/null || echo "0")
+    medium_count=$(echo "$scan_output" | jq -r '.findings | map(select(.severity == "MEDIUM")) | length' 2>/dev/null || echo "0")
     
     if [[ "$findings" -eq 0 ]]; then
         log_success "Security scan: SAFE (no findings)"
+        log_skill_scan_result "$skill_name" "import" "0" "0" "0" "SAFE"
         return 0
     fi
     
@@ -536,6 +540,7 @@ scan_skill_security() {
     if [[ "$critical_count" -gt 0 || "$high_count" -gt 0 ]]; then
         if [[ "$skip_security" == true ]]; then
             log_warning "CRITICAL/HIGH findings detected but --skip-security specified, proceeding"
+            log_skill_scan_result "$skill_name" "import (--skip-security)" "$critical_count" "$high_count" "$medium_count" "$max_severity"
             return 0
         fi
         
@@ -562,10 +567,12 @@ scan_skill_security() {
         case "$choice" in
             2)
                 log_warning "Proceeding despite security findings"
+                log_skill_scan_result "$skill_name" "import (user override)" "$critical_count" "$high_count" "$medium_count" "$max_severity"
                 return 0
                 ;;
             *)
                 log_error "Import cancelled due to security findings"
+                log_skill_scan_result "$skill_name" "import BLOCKED" "$critical_count" "$high_count" "$medium_count" "$max_severity"
                 return 1
                 ;;
         esac
@@ -573,6 +580,38 @@ scan_skill_security() {
     
     # MEDIUM/LOW findings: warn but allow
     log_warning "Security scan found $findings issue(s) (max: $max_severity) - review recommended"
+    log_skill_scan_result "$skill_name" "import" "$critical_count" "$high_count" "$medium_count" "$max_severity"
+    return 0
+}
+
+# Log a single skill scan result to SKILL-SCAN-RESULTS.md
+# Args: skill_name action critical_count high_count medium_count max_severity
+log_skill_scan_result() {
+    local skill_name="$1"
+    local action="$2"
+    local critical="${3:-0}"
+    local high="${4:-0}"
+    local medium="${5:-0}"
+    local max_severity="${6:-SAFE}"
+    
+    local repo_root=""
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    
+    if [[ -z "$repo_root" || ! -f "${repo_root}/${SCAN_RESULTS_FILE}" ]]; then
+        return 0
+    fi
+    
+    local scan_date
+    scan_date=$(date -u +"%Y-%m-%d")
+    local safe="1"
+    
+    if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
+        safe="0"
+    fi
+    
+    local notes="Skill ${action}: ${skill_name} (${max_severity})"
+    echo "| ${scan_date} | 1 | ${safe} | ${critical} | ${high} | ${medium} | ${notes} |" >> "${repo_root}/${SCAN_RESULTS_FILE}"
+    
     return 0
 }
 
