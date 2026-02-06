@@ -1333,11 +1333,25 @@ cmd_upgrade_planning() {
             # Find the Backlog TOON block and insert tasks after its closing -->
             if grep -q "<!--TOON:backlog" "$todo_file"; then
                 local temp_file="${todo_file}.merge"
-                awk -v tasks="$existing_tasks" '
-                    /<!--TOON:backlog/ { in_backlog=1 }
-                    in_backlog && /^-->$/ { print; print ""; print tasks; in_backlog=0; next }
-                    { print }
-                ' "$todo_file" > "$temp_file"
+                local tasks_file
+                tasks_file=$(mktemp)
+                printf '%s\n' "$existing_tasks" > "$tasks_file"
+                # Use while-read to avoid BSD awk "newline in string" warning with -v
+                local in_backlog=false
+                while IFS= read -r line || [[ -n "$line" ]]; do
+                    if [[ "$line" == *"<!--TOON:backlog"* ]]; then
+                        in_backlog=true
+                    fi
+                    if [[ "$in_backlog" == true && "$line" == "-->" ]]; then
+                        echo "$line"
+                        echo ""
+                        cat "$tasks_file"
+                        in_backlog=false
+                        continue
+                    fi
+                    echo "$line"
+                done < "$todo_file" > "$temp_file"
+                rm -f "$tasks_file"
                 mv "$temp_file" "$todo_file"
                 print_success "Merged existing tasks into Backlog"
             fi
@@ -1384,11 +1398,25 @@ cmd_upgrade_planning() {
         if [[ -n "$existing_plans" ]]; then
             if grep -q "<!--TOON:active_plans" "$plans_file"; then
                 local temp_file="${plans_file}.merge"
-                awk -v plans="$existing_plans" '
-                    /<!--TOON:active_plans/ { in_active=1 }
-                    in_active && /^-->$/ { print; print ""; print plans; in_active=0; next }
-                    { print }
-                ' "$plans_file" > "$temp_file"
+                local plans_content_file
+                plans_content_file=$(mktemp)
+                printf '%s\n' "$existing_plans" > "$plans_content_file"
+                # Use while-read to avoid BSD awk "newline in string" warning with -v
+                local in_active=false
+                while IFS= read -r line || [[ -n "$line" ]]; do
+                    if [[ "$line" == *"<!--TOON:active_plans"* ]]; then
+                        in_active=true
+                    fi
+                    if [[ "$in_active" == true && "$line" == "-->" ]]; then
+                        echo "$line"
+                        echo ""
+                        cat "$plans_content_file"
+                        in_active=false
+                        continue
+                    fi
+                    echo "$line"
+                done < "$plans_file" > "$temp_file"
+                rm -f "$plans_content_file"
                 mv "$temp_file" "$plans_file"
                 print_success "Merged existing plans into Active Plans"
             fi
