@@ -3592,22 +3592,14 @@ send_task_notification() {
         fi
     fi
 
-    # macOS audio alerts (say + afplay bypass notification permissions)
-    # nohup ensures say completes even if parent shell exits
+    # macOS audio alerts via afplay (reliable across all process contexts)
+    # TTS (say) requires Accessibility permissions for Tabby/terminal app -
+    # enable in System Settings > Privacy & Security > Accessibility
     if [[ "$(uname)" == "Darwin" ]]; then
         case "$event_type" in
-            complete)
-                nohup afplay /System/Library/Sounds/Glass.aiff &>/dev/null &
-                nohup say "$task_id complete" &>/dev/null &
-                ;;
-            blocked)
-                nohup afplay /System/Library/Sounds/Basso.aiff &>/dev/null &
-                nohup say "$task_id blocked. Needs attention." &>/dev/null &
-                ;;
-            failed)
-                nohup afplay /System/Library/Sounds/Sosumi.aiff &>/dev/null &
-                nohup say "$task_id failed. Needs attention." &>/dev/null &
-                ;;
+            complete) afplay /System/Library/Sounds/Glass.aiff 2>/dev/null & ;;
+            blocked)  afplay /System/Library/Sounds/Basso.aiff 2>/dev/null & ;;
+            failed)   afplay /System/Library/Sounds/Sosumi.aiff 2>/dev/null & ;;
         esac
     fi
 
