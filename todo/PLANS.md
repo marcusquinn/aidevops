@@ -1225,7 +1225,7 @@ d025,p012,Merge conflicts require human decision,Preserves existing knowledge,20
 **Source:** [claude-mem](https://github.com/thedotmack/claude-mem) - inspiration for auto-capture patterns
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p011,Memory Auto-Capture,planning,0,5,,memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,
+p011,Memory Auto-Capture,completed,5,5,,memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,2026-02-06T01:30Z
 -->
 
 #### Purpose
@@ -1255,33 +1255,36 @@ Add automatic memory capture to aidevops, inspired by claude-mem but tool-agnost
 
 #### Progress
 
-- [ ] (2026-01-11) Phase 1: Research & Design ~2h
-  - Finalize capture triggers and thresholds
-  - Design classification rules
-  - Document privacy patterns
-- [ ] (2026-01-11) Phase 2: memory-helper.sh updates ~3.5h
-  - Add `--auto-captured` flag
-  - Add deduplication logic
-  - Add capture statistics
-- [ ] (2026-01-11) Phase 3: AGENTS.md instructions ~2h
-  - Add auto-capture instructions to AGENTS.md
-  - Define when to capture (success, failure, decisions)
-  - Add privacy exclusion patterns
-- [ ] (2026-01-11) Phase 4: /memory-log command ~2h
-  - Create `scripts/commands/memory-log.md`
-  - Show recent auto-captures with filtering
-  - Add prune command for cleanup
-- [ ] (2026-01-11) Phase 5: Privacy filters ~2.5h
-  - Integrate with .gitignore patterns
-  - Add `<private>` tag support
-  - Add secretlint pattern exclusions
+- [x] (2026-01-11) Phase 1: Research & Design ~2h actual:0h completed:2026-02-06
+  - Capture triggers defined in AGENTS.md "Proactive Memory Triggers" (t052)
+  - 11 memory types classified in memory-helper.sh
+  - Privacy patterns documented; privacy-filter-helper.sh created (t117)
+- [x] (2026-01-11) Phase 2: memory-helper.sh updates ~3.5h actual:30m completed:2026-02-06
+  - Added `--auto`/`--auto-captured` flag to store command
+  - Deduplication via `consolidate` command (t057)
+  - Auto-capture statistics in `stats` output
+  - `--auto-only`/`--manual-only` recall filters
+  - `log` command for auto-capture review
+  - DB migration adds `auto_captured` column to `learning_access`
+- [x] (2026-01-11) Phase 3: AGENTS.md instructions ~2h actual:0h completed:2026-02-06
+  - Proactive Memory Triggers section added (t052/198b5a8)
+  - Auto-capture with --auto flag documented
+  - Privacy exclusion patterns documented
+- [x] (2026-01-11) Phase 4: /memory-log command ~2h actual:15m completed:2026-02-06
+  - Created `scripts/commands/memory-log.md`
+  - Shows recent auto-captures with filtering
+  - Prune command already existed in memory-helper.sh
+- [x] (2026-01-11) Phase 5: Privacy filters ~2.5h actual:15m completed:2026-02-06
+  - `<private>` tag stripping in memory-helper.sh store
+  - Secret pattern rejection (API keys, tokens, AWS keys, GitHub tokens)
+  - privacy-filter-helper.sh available for comprehensive scanning (t117)
 
 <!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m053,p011,Phase 1: Research & Design,2h,,2026-01-11T12:00Z,,pending
-m054,p011,Phase 2: memory-helper.sh updates,3.5h,,2026-01-11T12:00Z,,pending
-m055,p011,Phase 3: AGENTS.md instructions,2h,,2026-01-11T12:00Z,,pending
-m056,p011,Phase 4: /memory-log command,2h,,2026-01-11T12:00Z,,pending
-m057,p011,Phase 5: Privacy filters,2.5h,,2026-01-11T12:00Z,,pending
+m053,p011,Phase 1: Research & Design,2h,0h,2026-01-11T12:00Z,2026-02-06,completed
+m054,p011,Phase 2: memory-helper.sh updates,3.5h,30m,2026-01-11T12:00Z,2026-02-06,completed
+m055,p011,Phase 3: AGENTS.md instructions,2h,0h,2026-01-11T12:00Z,2026-02-06,completed
+m056,p011,Phase 4: /memory-log command,2h,15m,2026-01-11T12:00Z,2026-02-06,completed
+m057,p011,Phase 5: Privacy filters,2.5h,15m,2026-01-11T12:00Z,2026-02-06,completed
 -->
 
 #### Decision Log

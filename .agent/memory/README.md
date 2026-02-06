@@ -52,13 +52,19 @@ sqlite3 --version
 # View version history
 ~/.aidevops/agents/scripts/memory-helper.sh history mem_xxx
 
+# Store an auto-captured memory (from AI agent)
+~/.aidevops/agents/scripts/memory-helper.sh store --auto --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
+
 # Recall memories
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
 
 # Show recent memories
 ~/.aidevops/agents/scripts/memory-helper.sh recall --recent
 
-# View statistics
+# Show auto-capture log
+~/.aidevops/agents/scripts/memory-helper.sh log
+
+# View statistics (includes auto-capture counts)
 ~/.aidevops/agents/scripts/memory-helper.sh stats
 ```
 
@@ -69,7 +75,9 @@ sqlite3 --version
 | `/remember {content}` | Store a memory with AI-assisted categorization |
 | `/recall {query}` | Search memories by keyword |
 | `/recall --recent` | Show 10 most recent memories |
+| `/recall --auto-only` | Search only auto-captured memories |
 | `/recall --stats` | Show memory statistics |
+| `/memory-log` | Show recent auto-captured memories |
 
 See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full documentation.
 
@@ -86,6 +94,40 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 | `CONTEXT` | Background info |
 | `SUCCESS_PATTERN` | Approaches that consistently work for task types |
 | `FAILURE_PATTERN` | Approaches that consistently fail for task types |
+
+## Auto-Capture
+
+AI agents automatically store memories using the `--auto` flag when they detect
+significant events (working solutions, failed approaches, decisions). This is
+tool-agnostic - works with Claude Code, OpenCode, Cursor, Windsurf, or any AI
+tool that reads AGENTS.md.
+
+**How it works:**
+
+1. Agent detects a trigger (e.g., solution found, preference stated)
+2. Agent stores with `--auto` flag: `memory-helper.sh store --auto --content "..."`
+3. Auto-captured memories are tracked separately from manual `/remember` entries
+4. Review with `/memory-log` or `memory-helper.sh log`
+
+**Privacy filters (applied automatically on store):**
+
+- `<private>...</private>` blocks are stripped from content
+- Content matching secret patterns (API keys, tokens) is rejected
+- Credentials and sensitive config values are never stored
+
+**Filtering:**
+
+```bash
+# Show only auto-captured memories
+memory-helper.sh recall "query" --auto-only
+
+# Show only manually stored memories
+memory-helper.sh recall "query" --manual-only
+
+# Show auto-capture log (recent auto-captures)
+memory-helper.sh log
+memory-helper.sh log --limit 50
+```
 
 ## Relation Types
 

@@ -6,7 +6,7 @@ mode: subagent
 Based on [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) PRD format, with time tracking.
 
 <!--TOON:prd{id,feature,author,status,est,est_ai,est_test,est_read,logged}:
-prd-memory-auto-capture,Memory Auto-Capture,aidevops,draft,1d,6h,4h,2h,2026-01-11T12:00Z
+prd-memory-auto-capture,Memory Auto-Capture,aidevops,completed,1d,6h,4h,2h,2026-01-11T12:00Z
 -->
 
 ## Overview
@@ -14,7 +14,7 @@ prd-memory-auto-capture,Memory Auto-Capture,aidevops,draft,1d,6h,4h,2h,2026-01-1
 **Feature:** Memory Auto-Capture
 **Author:** aidevops
 **Date:** 2026-01-11
-**Status:** Draft
+**Status:** Completed
 **Estimate:** ~1d (ai:6h test:4h read:2h)
 **Reference:** [claude-mem](https://github.com/thedotmack/claude-mem) - 13k+ stars, inspiration for auto-capture patterns
 

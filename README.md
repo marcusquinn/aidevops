@@ -1772,7 +1772,9 @@ See `.agent/workflows/session-manager.md` for the complete guide.
 | `/remember {content}` | Store a memory with AI-assisted categorization |
 | `/recall {query}` | Search memories by keyword |
 | `/recall --recent` | Show 10 most recent memories |
+| `/recall --auto-only` | Search only auto-captured memories |
 | `/recall --stats` | Show memory statistics |
+| `/memory-log` | Show recent auto-captured memories |
 | `/patterns {task}` | Show success/failure patterns for a task type |
 | `/route {task}` | Suggest optimal model tier for a task |
 
@@ -1811,11 +1813,16 @@ pattern-tracker-helper.sh record --outcome success --task-type bugfix \
 pattern-tracker-helper.sh suggest "refactor the auth middleware"
 ```
 
+**Auto-capture:** AI agents automatically store memories using `--auto` flag when they detect working solutions, failed approaches, or decisions. Privacy filters strip `<private>` tags and reject secret patterns.
+
 **CLI usage:**
 
 ```bash
 # Store a memory
-~/.aidevops/agents/scripts/memory-helper.sh store "WORKING_SOLUTION" "Fixed CORS with nginx headers" "cors,nginx"
+~/.aidevops/agents/scripts/memory-helper.sh store --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
+
+# Store auto-captured memory (from AI agent)
+~/.aidevops/agents/scripts/memory-helper.sh store --auto --content "Fixed CORS with nginx headers" --type WORKING_SOLUTION
 
 # Recall memories (keyword search - default)
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
@@ -1823,7 +1830,10 @@ pattern-tracker-helper.sh suggest "refactor the auth middleware"
 # Recall memories (semantic similarity - opt-in)
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors" --semantic
 
-# View statistics
+# Show auto-capture log
+~/.aidevops/agents/scripts/memory-helper.sh log
+
+# View statistics (includes auto-capture counts)
 ~/.aidevops/agents/scripts/memory-helper.sh stats
 
 # Maintenance

@@ -110,9 +110,11 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {query}`, `/recall --recent`
 
-**CLI**: `memory-helper.sh [store|recall|stats|prune|consolidate|export]`
+**CLI**: `memory-helper.sh [store|recall|log|stats|prune|consolidate|export]`
 
 **Session distillation**: `session-distill-helper.sh auto` (extract learnings at session end)
+
+**Auto-capture log**: `/memory-log` or `memory-helper.sh log` (review auto-captured memories)
 
 **Full docs**: `memory/README.md`
 
@@ -136,6 +138,20 @@ Want me to remember this? /remember {concise description}
 ```
 
 **Do NOT wait for user to ask** - proactively offer to remember valuable learnings.
+
+### Auto-Capture with --auto Flag
+
+When storing memories triggered by the patterns above, use the `--auto` flag to distinguish from manual `/remember` entries:
+
+```bash
+memory-helper.sh store --auto --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
+```
+
+**Privacy**: Content is automatically filtered before storage:
+
+- `<private>...</private>` blocks are stripped
+- Content matching secret patterns (API keys, tokens) is rejected
+- Never auto-capture credentials, passwords, or sensitive config values
 
 ## Inter-Agent Mailbox
 
