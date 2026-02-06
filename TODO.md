@@ -207,7 +207,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
   - Notes: ContentKing real-time SEO monitoring API. Track changes, alerts for SEO issues, content tracking. Add to seo/. Ref: https://www.contentkingapp.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
 - [ ] t090 Create WebPageTest subagent #tools #performance ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
-  - Notes: WebPageTest API integration. Performance testing, filmstrip view, waterfall analysis, Core Web Vitals. Complement to existing pagespeed.md. Add to tools/performance/. Ref: https://www.webpagetest.org/
+  - Notes: WebPageTest API integration. Performance testing, filmstrip view, waterfall analysis, Core Web Vitals. Complement to existing pagespeed.md. Add to tools/performance/. Ref: https://www.webpagetest.org/ BLOCKED: Max retries exceeded: clean_exit_no_signal
 - [ ] t091 Create programmatic-seo subagent #seo #content ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill
   - Notes: Programmatic SEO workflow for building pages at scale. Template-based page generation, keyword clustering, internal linking automation. Referenced by seo-audit-skill. Add to seo/.
 - [ ] t092 Create schema-markup subagent #seo #schema ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill
