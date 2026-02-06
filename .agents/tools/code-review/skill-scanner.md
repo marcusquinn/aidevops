@@ -20,7 +20,7 @@ tools:
 
 - **Type**: Security scanner for AI Agent Skills (SKILL.md, AGENTS.md, scripts)
 - **Source**: [cisco-ai-defense/skill-scanner](https://github.com/cisco-ai-defense/skill-scanner) (Apache 2.0)
-- **Install**: `uv pip install cisco-ai-skill-scanner` or `pip install cisco-ai-skill-scanner`
+- **Install**: `uv tool install cisco-ai-skill-scanner` (auto-installed by `setup.sh`)
 - **Run without install**: `uvx cisco-ai-skill-scanner scan /path/to/skill`
 - **aidevops integration**: `aidevops skill scan` or `security-helper.sh skill-scan`
 - **Formats**: summary, json, markdown, table, sarif
