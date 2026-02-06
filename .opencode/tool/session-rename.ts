@@ -38,8 +38,12 @@ async function findOpenCodePort(): Promise<string | null> {
 /**
  * Helper function to rename a session via the OpenCode API.
  * Extracts common logic to avoid duplication between tools.
+ * 
+ * The `directory` parameter is required to scope the request to the correct
+ * project. Without it, the API only searches the "global" session store and
+ * returns NotFoundError for project-scoped sessions.
  */
-async function renameSession(sessionID: string, title: string): Promise<{ success: boolean; message: string }> {
+async function renameSession(sessionID: string, title: string, directory: string): Promise<{ success: boolean; message: string }> {
   const port = await findOpenCodePort()
   
   if (!port) {
@@ -50,9 +54,10 @@ async function renameSession(sessionID: string, title: string): Promise<{ succes
   }
   
   const baseUrl = `http://localhost:${port}`
+  const params = new URLSearchParams({ directory })
   
   try {
-    const response = await fetch(`${baseUrl}/session/${sessionID}`, {
+    const response = await fetch(`${baseUrl}/session/${sessionID}?${params}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -78,10 +83,10 @@ export default tool({
     title: tool.schema.string().describe("New title for the session (e.g., branch name like 'feature/my-feature')"),
   },
   async execute(args, context) {
-    const { sessionID } = context
+    const { sessionID, directory } = context
     const { title } = args
     
-    const result = await renameSession(sessionID, title)
+    const result = await renameSession(sessionID, title, directory)
     
     if (result.success) {
       return `Session renamed to: ${result.message}`
@@ -95,7 +100,7 @@ export const sync_branch = tool({
   description: "Rename the current session to match the current git branch name. Call this after creating or switching branches.",
   args: {},
   async execute(_args, context) {
-    const { sessionID } = context
+    const { sessionID, directory } = context
     
     // Get current branch name - wrapped in try/catch to handle non-git directories
     let branch: string
@@ -110,7 +115,7 @@ export const sync_branch = tool({
       return "No branch checked out (detached HEAD state or not a git repository)"
     }
     
-    const result = await renameSession(sessionID, branch)
+    const result = await renameSession(sessionID, branch, directory)
     
     if (result.success) {
       return `Session synced with branch: ${result.message}`
