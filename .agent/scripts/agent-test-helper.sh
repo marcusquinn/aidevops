@@ -168,13 +168,19 @@ run_prompt_claude() {
     fi
 
     # Run with timeout
-    timeout "${timeout}" "${cmd[@]}" "$prompt" 2>/dev/null || {
+    local stderr_file
+    stderr_file=$(mktemp)
+    timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
         local exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
             echo "[TIMEOUT after ${timeout}s]"
+        elif [[ -s "$stderr_file" ]]; then
+            echo "[ERROR: $(cat "$stderr_file")]"
         fi
+        rm -f "$stderr_file"
         return $exit_code
     }
+    rm -f "$stderr_file"
 }
 
 #######################################
@@ -205,7 +211,7 @@ run_prompt_opencode_server() {
 
     # Create session
     local session_payload
-    session_payload="{\"title\": \"agent-test-$(date +%s)\"}"
+    session_payload=$(jq -n --arg title "agent-test-$(date +%s)" '{"title": $title}')
     local session_response
     session_response=$(curl -s --max-time 10 -X POST "${OPENCODE_URL}/session" \
         -H "Content-Type: application/json" \
@@ -264,13 +270,19 @@ run_prompt_opencode_cli() {
         cmd+=(-m "$model")
     fi
 
-    timeout "${timeout}" "${cmd[@]}" "$prompt" 2>/dev/null || {
+    local stderr_file
+    stderr_file=$(mktemp)
+    timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
         local exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
             echo "[TIMEOUT after ${timeout}s]"
+        elif [[ -s "$stderr_file" ]]; then
+            echo "[ERROR: $(cat "$stderr_file")]"
         fi
+        rm -f "$stderr_file"
         return $exit_code
     }
+    rm -f "$stderr_file"
 }
 
 #######################################
@@ -705,7 +717,10 @@ cmd_compare() {
         local current_status
         current_status=$(jq -r ".results[] | select(.id == \"$test_id\") | .status" "$latest_result" 2>/dev/null)
 
-        if [[ "$baseline_status" == "pass" && "$current_status" == "fail" ]]; then
+        if [[ -z "$current_status" ]]; then
+            log_fail "  Missing: ${test_id} (in baseline but not in current run)"
+            regressions=$((regressions + 1))
+        elif [[ "$baseline_status" == "pass" && "$current_status" == "fail" ]]; then
             log_fail "  Regression: ${test_id} (was pass, now fail)"
             regressions=$((regressions + 1))
         elif [[ "$baseline_status" == "fail" && "$current_status" == "pass" ]]; then
