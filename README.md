@@ -962,7 +962,7 @@ These catch formatting and syntax issues during editing, reducing preflight/post
 
 ## **Browser Automation**
 
-8 browser tools + anti-detect stack, benchmarked and integrated for AI-assisted web automation, dev testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
+8 browser tools + anti-detect stack + device emulation, benchmarked and integrated for AI-assisted web automation, dev testing, mobile/responsive testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
 
 ### Performance Benchmarks
 
@@ -984,6 +984,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **Proxy/VPN** | Full | No | Via args | No | Full | Your browser | Via args |
 | **Extensions** | Yes (persistent) | No | Yes (profile) | No | No | Yes (yours) | Possible |
 | **Password managers** | Partial (needs unlock) | No | Partial | No | No | **Yes** (unlocked) | No |
+| **Device emulation** | **Full** (100+ devices) | No | No | No | No | No | Via Playwright |
 | **Parallel sessions** | 5 ctx/2.1s | --session | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance |
 | **Session persistence** | storageState | Profile dir | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
 | **Tracing** | Full API | Built-in CLI | Via Playwright | Via Playwright | No | Via CDP | Via Playwright |
@@ -1006,6 +1007,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **iOS mobile testing** | agent-browser | Real Safari in iOS Simulator (macOS only) |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
+| **Mobile/tablet emulation** | Playwright | 100+ device presets, viewport, touch, geolocation, locale |
 | **Bot detection evasion** | Anti-detect stack | Camoufox (full) or rebrowser-patches (quick) |
 | **Multi-account** | Browser profiles | Persistent fingerprint + proxy per account |
 
@@ -1021,6 +1023,37 @@ Agents use lightweight methods instead of expensive vision API calls:
 | Screenshot | ~0.05s | ~1K tokens (vision) | Visual debugging only |
 
 See [`.agent/tools/browser/browser-automation.md`](.agent/tools/browser/browser-automation.md) for the full decision tree and [`browser-benchmark.md`](.agent/tools/browser/browser-benchmark.md) for reproducible benchmark scripts.
+
+### Device Emulation
+
+Test responsive layouts and mobile-specific behavior using Playwright's built-in device emulation. Supports 100+ device presets with viewport, user agent, touch events, device scale factor, geolocation, locale/timezone, permissions, color scheme, offline mode, and network throttling.
+
+**Common device presets:**
+
+| Device | Viewport | Scale | Touch |
+|--------|----------|-------|-------|
+| `iPhone 15` | 393x852 | 3 | Yes |
+| `iPad Pro 11` | 834x1194 | 2 | Yes |
+| `Pixel 7` | 412x915 | 2.625 | Yes |
+| `Galaxy S9+` | 320x658 | 4.5 | Yes |
+| `Desktop Chrome` | 1280x720 | 1 | No |
+
+**Emulation capabilities:**
+
+| Feature | Example |
+|---------|---------|
+| **Device presets** | `devices['iPhone 13']` - viewport, UA, touch, scale |
+| **Viewport/HiDPI** | `viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 2` |
+| **Geolocation** | `geolocation: { longitude: -74.006, latitude: 40.7128 }` |
+| **Locale/timezone** | `locale: 'de-DE', timezoneId: 'Europe/Berlin'` |
+| **Color scheme** | `colorScheme: 'dark'` |
+| **Offline mode** | `offline: true` |
+| **Permissions** | `permissions: ['geolocation', 'notifications']` |
+| **Network throttling** | CDP-based Slow 3G / Fast 3G emulation |
+
+**Recipes included:** Responsive breakpoint testing, multi-device parallel testing, touch gesture testing, geolocation-dependent features, dark mode visual regression, and network condition emulation.
+
+See [`.agent/tools/browser/playwright-emulation.md`](.agent/tools/browser/playwright-emulation.md) for complete documentation with code examples.
 
 ### Anti-Detect Browser
 
@@ -2001,7 +2034,8 @@ bash .agent/scripts/continue-cli.sh review
 **Agent Guides** (in `.agent/`):
 
 - **[API Integrations](.agent/aidevops/api-integrations.md)** - Service APIs
-- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 6 tools + anti-detect stack: decision tree, parallel, extensions, fingerprinting
+- **[Browser Automation](.agent/tools/browser/browser-automation.md)** - 8 tools + anti-detect stack: decision tree, parallel, extensions, fingerprinting
+- **[Device Emulation](.agent/tools/browser/playwright-emulation.md)** - Mobile/tablet testing: 100+ device presets, viewport, geolocation, locale, dark mode
 - **[Anti-Detect Browser](.agent/tools/browser/anti-detect-browser.md)** - Multi-profile management, fingerprint rotation, proxy integration
 - **[Web Performance](.agent/tools/performance/performance.md)** - Core Web Vitals, network dependencies, accessibility (Chrome DevTools MCP)
 - **[PageSpeed](.agent/tools/browser/pagespeed.md)** - Lighthouse CLI and PageSpeed Insights API
