@@ -179,11 +179,11 @@ exec $SHELL              # Restart shell
 ### Script Integration
 
 ```bash
-# Load specific tenant in a script
-eval $(credential-helper.sh export --tenant client-acme)
+# Load specific tenant in a script (preferred: source)
+source <(credential-helper.sh export --tenant client-acme)
 
 # Check active tenant
-echo $AIDEVOPS_ACTIVE_TENANT
+echo "$AIDEVOPS_ACTIVE_TENANT"
 ```
 
 ### CI/CD Integration
