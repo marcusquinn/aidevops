@@ -435,6 +435,7 @@ When running performance analysis, provide output in this format for immediate a
 
 ## Related Subagents
 
+- `tools/performance/webpagetest.md` - WebPageTest API for real-world multi-location testing
 - `tools/browser/pagespeed.md` - PageSpeed Insights & Lighthouse CLI
 - `tools/browser/chrome-devtools.md` - Chrome DevTools MCP integration
 - `tools/browser/browser-automation.md` - Browser tool selection guide
