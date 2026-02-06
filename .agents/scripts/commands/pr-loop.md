@@ -52,6 +52,7 @@ The script performs these checks each iteration:
 If issues are found:
 - CI failures: Report and wait for fixes
 - Changes requested: **Verify before acting** (see below), then address valid feedback
+- Unresolved AI feedback (COMMENTED): Some bots (e.g., Gemini Code Assist) post as `COMMENTED` rather than `CHANGES_REQUESTED`, so GitHub's `reviewDecision` stays `NONE`. The loop detects unresolved review threads and surfaces this feedback for action.
 - Stale review: Auto-trigger re-review (unless `--no-auto-trigger`)
 
 ### AI Bot Review Verification
