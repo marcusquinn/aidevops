@@ -951,6 +951,12 @@ check_requirements() {
             exit 1
         fi
         
+        # In non-interactive mode, fail fast on missing deps
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            print_error "Cannot continue without required dependencies (non-interactive mode)"
+            exit 1
+        fi
+        
         echo ""
         read -r -p "Install missing dependencies using $pkg_manager? [Y/n]: " install_deps
         
@@ -3714,6 +3720,7 @@ parse_args() {
                 ;;
         esac
     done
+    return 0
 }
 
 # Main setup function
@@ -3744,6 +3751,7 @@ main() {
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
         print_info "Non-interactive mode: deploying agents and running safe migrations only"
         verify_location
+        check_requirements
         set_permissions
         migrate_old_backups
         migrate_loop_state_directories
