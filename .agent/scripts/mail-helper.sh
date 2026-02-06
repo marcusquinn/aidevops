@@ -7,7 +7,7 @@
 #   mail-helper.sh check [--agent <id>] [--unread-only]
 #   mail-helper.sh read <message-id> [--agent <id>]
 #   mail-helper.sh archive <message-id> [--agent <id>]
-#   mail-helper.sh prune [--older-than-days 7] [--dry-run]
+#   mail-helper.sh prune [--older-than-days 7] [--force]
 #   mail-helper.sh status [--agent <id>]
 #   mail-helper.sh register --agent <id> --role <role> [--branch <branch>] [--worktree <path>]
 #   mail-helper.sh deregister --agent <id>
@@ -21,7 +21,7 @@
 #   request         - Agent requests help/info from another
 #   broadcast       - Message to all agents
 #
-# Lifecycle: send → check → read → auto-archive (7-day prune with memory capture)
+# Lifecycle: send → check → read → archive (prune is manual with storage report)
 #
 # Performance: SQLite WAL mode handles thousands of messages with <10ms queries.
 # Previous TOON file-based system: ~25ms per message (2.5s for 100 messages).
@@ -385,16 +385,19 @@ cmd_archive() {
 }
 
 #######################################
-# Prune old archived messages (with memory capture)
+# Prune: manual deletion with storage report
+# By default shows storage report. Use --force to actually delete.
 #######################################
 cmd_prune() {
     local older_than_days="$DEFAULT_PRUNE_DAYS"
-    local dry_run=false
+    local force=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --older-than-days) [[ $# -lt 2 ]] && { log_error "--older-than-days requires a value"; return 1; }; older_than_days="$2"; shift 2 ;;
-            --dry-run) dry_run=true; shift ;;
+            --force) force=true; shift ;;
+            # Keep --dry-run as alias for default behavior (backward compat)
+            --dry-run) shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -406,50 +409,88 @@ cmd_prune() {
 
     ensure_db
 
-    local cutoff_date
-    cutoff_date=$(date -u -v-"${older_than_days}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "${older_than_days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    # Storage report
+    local db_size_bytes
+    db_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
+    local db_size_kb=$(( db_size_bytes / 1024 ))
 
-    if [[ -z "$cutoff_date" ]]; then
-        # Fallback: let SQLite calculate the date
-        cutoff_date="__sqlite__"
+    local total_messages unread_messages read_messages archived_messages
+    total_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages;")
+    unread_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'unread';")
+    read_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'read';")
+    archived_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'archived';")
+
+    local prunable
+    prunable=$(sqlite3 "$MAIL_DB" "
+        SELECT count(*) FROM messages
+        WHERE status = 'archived'
+        AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
+    ")
+
+    local archivable
+    archivable=$(sqlite3 "$MAIL_DB" "
+        SELECT count(*) FROM messages
+        WHERE status = 'read'
+        AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
+    ")
+
+    local oldest_msg newest_msg
+    oldest_msg=$(sqlite3 "$MAIL_DB" "SELECT min(created_at) FROM messages;" 2>/dev/null || echo "none")
+    newest_msg=$(sqlite3 "$MAIL_DB" "SELECT max(created_at) FROM messages;" 2>/dev/null || echo "none")
+
+    # Per-type breakdown
+    local type_breakdown
+    type_breakdown=$(sqlite3 -separator ': ' "$MAIL_DB" "
+        SELECT type, count(*) FROM messages GROUP BY type ORDER BY count(*) DESC;
+    ")
+
+    echo "Mailbox Storage Report"
+    echo "======================"
+    echo ""
+    echo "  Database:    ${db_size_kb}KB ($MAIL_DB)"
+    echo "  Messages:    $total_messages total"
+    echo "    Unread:    $unread_messages"
+    echo "    Read:      $read_messages"
+    echo "    Archived:  $archived_messages"
+    echo "  Date range:  $oldest_msg → $newest_msg"
+    echo ""
+    echo "  By type:"
+    if [[ -n "$type_breakdown" ]]; then
+        echo "$type_breakdown" | while IFS= read -r line; do
+            echo "    $line"
+        done
+    else
+        echo "    (none)"
     fi
+    echo ""
+    echo "  Prunable (archived >${older_than_days}d): $prunable messages"
+    echo "  Archivable (read >${older_than_days}d):   $archivable messages"
 
-    if [[ "$dry_run" == true ]]; then
-        local count
-        if [[ "$cutoff_date" == "__sqlite__" ]]; then
-            count=$(sqlite3 "$MAIL_DB" "
-                SELECT count(*) FROM messages
-                WHERE status = 'archived'
-                AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
-            ")
+    if [[ "$force" != true ]]; then
+        if [[ "$prunable" -gt 0 || "$archivable" -gt 0 ]]; then
+            echo ""
+            echo "  To delete prunable messages:  mail-helper.sh prune --force"
+            echo "  To change threshold:          mail-helper.sh prune --older-than-days 30 --force"
         else
-            count=$(sqlite3 "$MAIL_DB" "
-                SELECT count(*) FROM messages
-                WHERE status = 'archived' AND archived_at < '$cutoff_date';
-            ")
+            echo ""
+            echo "  Nothing to prune. All messages are within the ${older_than_days}-day window."
         fi
-        log_info "Dry run: would prune $count messages"
         return 0
     fi
+
+    # --force: actually delete
+    log_info "Pruning with --force (${older_than_days}-day threshold)..."
 
     # Capture discoveries and status reports to memory before pruning
     local remembered=0
     if [[ -x "$MEMORY_HELPER" ]]; then
         local notable_messages
-        if [[ "$cutoff_date" == "__sqlite__" ]]; then
-            notable_messages=$(sqlite3 -separator '|' "$MAIL_DB" "
-                SELECT type, payload FROM messages
-                WHERE status = 'archived'
-                AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days')
-                AND type IN ('discovery', 'status_report');
-            ")
-        else
-            notable_messages=$(sqlite3 -separator '|' "$MAIL_DB" "
-                SELECT type, payload FROM messages
-                WHERE status = 'archived' AND archived_at < '$cutoff_date'
-                AND type IN ('discovery', 'status_report');
-            ")
-        fi
+        notable_messages=$(sqlite3 -separator '|' "$MAIL_DB" "
+            SELECT type, payload FROM messages
+            WHERE status = 'archived'
+            AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days')
+            AND type IN ('discovery', 'status_report');
+        ")
 
         if [[ -n "$notable_messages" ]]; then
             while IFS='|' read -r msg_type payload; do
@@ -463,40 +504,34 @@ cmd_prune() {
         fi
     fi
 
-    # Delete prunable messages
-    local pruned
-    if [[ "$cutoff_date" == "__sqlite__" ]]; then
-        pruned=$(sqlite3 "$MAIL_DB" "
-            DELETE FROM messages
-            WHERE status = 'archived'
-            AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
-            SELECT changes();
-        ")
-    else
-        pruned=$(sqlite3 "$MAIL_DB" "
-            DELETE FROM messages WHERE status = 'archived' AND archived_at < '$cutoff_date';
-            SELECT changes();
-        ")
-    fi
-
-    # Also auto-archive read messages older than the threshold
+    # Archive old read messages first
     local auto_archived
-    if [[ "$cutoff_date" == "__sqlite__" ]]; then
-        auto_archived=$(sqlite3 "$MAIL_DB" "
-            UPDATE messages SET status = 'archived', archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-            WHERE status = 'read'
-            AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
-            SELECT changes();
-        ")
-    else
-        auto_archived=$(sqlite3 "$MAIL_DB" "
-            UPDATE messages SET status = 'archived', archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-            WHERE status = 'read' AND read_at < '$cutoff_date';
-            SELECT changes();
-        ")
-    fi
+    auto_archived=$(sqlite3 "$MAIL_DB" "
+        UPDATE messages SET status = 'archived', archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE status = 'read'
+        AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
+        SELECT changes();
+    ")
 
-    log_success "Pruned $pruned archived messages ($remembered captured to memory, $auto_archived auto-archived)"
+    # Delete old archived messages
+    local pruned
+    pruned=$(sqlite3 "$MAIL_DB" "
+        DELETE FROM messages
+        WHERE status = 'archived'
+        AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
+        SELECT changes();
+    ")
+
+    # Vacuum to reclaim space
+    sqlite3 "$MAIL_DB" "VACUUM;"
+
+    local new_size_bytes
+    new_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
+    local new_size_kb=$(( new_size_bytes / 1024 ))
+    local saved_kb=$(( db_size_kb - new_size_kb ))
+
+    log_success "Pruned $pruned messages, archived $auto_archived read messages ($remembered captured to memory)"
+    log_info "Storage: ${db_size_kb}KB → ${new_size_kb}KB (saved ${saved_kb}KB)"
 }
 
 #######################################
@@ -759,7 +794,7 @@ Usage:
   mail-helper.sh check [--agent <id>] [--unread-only]
   mail-helper.sh read <message-id> [--agent <id>]
   mail-helper.sh archive <message-id> [--agent <id>]
-  mail-helper.sh prune [--older-than-days 7] [--dry-run]
+  mail-helper.sh prune [--older-than-days 7] [--force]
   mail-helper.sh status [--agent <id>]
   mail-helper.sh register --agent <id> --role <role> [--branch <branch>]
   mail-helper.sh deregister --agent <id>
@@ -782,7 +817,13 @@ Environment:
   AIDEVOPS_MAIL_DIR    Override mail directory location
 
 Lifecycle:
-  send → check → read → auto-archive on prune (7-day, with memory capture)
+  send → check → read → archive (prune is manual with storage report)
+
+Prune:
+  mail-helper.sh prune                          Show storage report
+  mail-helper.sh prune --force                  Delete archived messages >7 days old
+  mail-helper.sh prune --older-than-days 30     Report with 30-day threshold
+  mail-helper.sh prune --older-than-days 30 --force  Delete with 30-day threshold
 
 Performance:
   SQLite WAL mode - <1ms queries at any scale (vs 25ms/message with files)
