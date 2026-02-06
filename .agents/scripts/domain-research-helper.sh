@@ -39,7 +39,7 @@ load_reconeer_api_key() {
     fi
     
     # Check config file
-    local config_file="$HOME/.config/aidevops/mcp-env.sh"
+    local config_file="$HOME/.config/aidevops/credentials.sh"
     if [[ -f "$config_file" ]]; then
         local key
         key=$(grep -E "^export RECONEER_API_KEY=" "$config_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
@@ -604,7 +604,7 @@ reconeer_cmd() {
             echo "  Premium: Unlimited (\$49/mo with API key)"
             echo ""
             echo "API Key Setup:"
-            echo "  export RECONEER_API_KEY=\"your-key\" in ~/.config/aidevops/mcp-env.sh"
+            echo "  export RECONEER_API_KEY=\"your-key\" in ~/.config/aidevops/credentials.sh"
             echo ""
             ;;
         *)
@@ -714,7 +714,7 @@ show_help() {
     echo "  Reconeer: 10/day free, unlimited with \$49/mo premium"
     echo ""
     echo "API Key Setup (Reconeer):"
-    echo "  Add to ~/.config/aidevops/mcp-env.sh:"
+    echo "  Add to ~/.config/aidevops/credentials.sh:"
     echo "    export RECONEER_API_KEY=\"your-api-key-here\""
     echo ""
     echo "Database Info (THC):"

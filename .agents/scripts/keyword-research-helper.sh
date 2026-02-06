@@ -152,8 +152,8 @@ check_credentials() {
     local has_creds=false
     
     # Source credentials
-    if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
-        source "$HOME/.config/aidevops/mcp-env.sh"
+    if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
+        source "$HOME/.config/aidevops/credentials.sh"
     fi
     
     case "$provider" in
@@ -186,7 +186,7 @@ check_credentials() {
     if [[ "$has_creds" == "false" ]]; then
         print_error "Missing credentials for provider: $provider"
         print_info "Run '/list-keys' to check your API keys"
-        print_info "Configure in ~/.config/aidevops/mcp-env.sh"
+        print_info "Configure in ~/.config/aidevops/credentials.sh"
         return 1
     fi
     
@@ -236,7 +236,7 @@ dataforseo_request() {
     local endpoint="$1"
     local data="$2"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     local auth
     auth=$(echo -n "${DATAFORSEO_USERNAME}:${DATAFORSEO_PASSWORD}" | base64)
@@ -410,7 +410,7 @@ serper_request() {
     local endpoint="$1"
     local data="$2"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     curl -s -X POST \
         "https://google.serper.dev/$endpoint" \
@@ -464,7 +464,7 @@ ahrefs_request() {
     local endpoint="$1"
     local params="$2"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     curl -s -X GET \
         "https://api.ahrefs.com/v3/$endpoint?$params" \
@@ -498,7 +498,7 @@ gsc_request() {
     local endpoint="$1"
     local data="$2"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     # Check for service account credentials
     if [[ -z "${GSC_ACCESS_TOKEN:-}" ]]; then
@@ -608,7 +608,7 @@ EOF
 
 # List verified sites
 gsc_list_sites() {
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${GSC_ACCESS_TOKEN:-}" ]]; then
         if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
@@ -639,10 +639,10 @@ bing_request() {
     local endpoint="$1"
     local site_url="$2"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
-        print_error "BING_WEBMASTER_API_KEY not configured in ~/.config/aidevops/mcp-env.sh"
+        print_error "BING_WEBMASTER_API_KEY not configured in ~/.config/aidevops/credentials.sh"
         return 1
     fi
     
@@ -670,7 +670,7 @@ bing_keyword() {
     local start_date="$3"
     local end_date="$4"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
         print_error "BING_WEBMASTER_API_KEY not configured"
@@ -694,7 +694,7 @@ bing_related_keywords() {
     local start_date="$3"
     local end_date="$4"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
         print_error "BING_WEBMASTER_API_KEY not configured"
@@ -716,7 +716,7 @@ bing_page_query_stats() {
     local site_url="$1"
     local page_url="$2"
     
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
         print_error "BING_WEBMASTER_API_KEY not configured"
@@ -743,7 +743,7 @@ bing_rank_traffic() {
 
 # List user sites
 bing_list_sites() {
-    source "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || true
+    source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
         print_error "BING_WEBMASTER_API_KEY not configured"

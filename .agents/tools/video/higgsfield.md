@@ -58,7 +58,7 @@ hf-secret: {secret}
 Authorization: Key {api-key}:{secret}
 ```
 
-Store credentials in `~/.config/aidevops/mcp-env.sh`:
+Store credentials in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export HIGGSFIELD_API_KEY="your-api-key"

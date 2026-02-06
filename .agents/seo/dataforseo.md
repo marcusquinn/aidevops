@@ -18,7 +18,7 @@ tools:
 
 - **Purpose**: Comprehensive SEO data via DataForSEO APIs
 - **API**: REST at `https://api.dataforseo.com/v3/`
-- **Auth**: Basic auth (username:password) in `~/.config/aidevops/mcp-env.sh`
+- **Auth**: Basic auth (username:password) in `~/.config/aidevops/credentials.sh`
 - **Env Vars**: `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD`
 - **Docs**: https://docs.dataforseo.com/v3/
 - **No MCP required** - uses curl directly
@@ -42,7 +42,7 @@ tools:
 ## Direct API Access
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 export DFS_AUTH=$(echo -n "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" | base64)
 ```
 
@@ -121,7 +121,7 @@ Add to `~/.config/opencode/opencode.json`:
       "command": [
         "/bin/bash",
         "-c",
-        "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"
+        "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"
       ],
       "enabled": true
     }

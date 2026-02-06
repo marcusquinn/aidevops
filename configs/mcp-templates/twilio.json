@@ -20,7 +20,7 @@
   },
   
   "environment_variables": {
-    "_comment": "Store in ~/.config/aidevops/mcp-env.sh",
+    "_comment": "Store in ~/.config/aidevops/credentials.sh",
     "TWILIO_ACCOUNT_SID_PRODUCTION": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "TWILIO_AUTH_TOKEN_PRODUCTION": "your_auth_token_here",
     "TWILIO_ACCOUNT_SID_STAGING": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",

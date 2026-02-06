@@ -63,7 +63,7 @@ domain-research-helper.sh reconeer subdomain api.example.com
 
 # With API key for unlimited access
 domain-research-helper.sh reconeer domain example.com --api-key YOUR_KEY
-# Or set RECONEER_API_KEY in ~/.config/aidevops/mcp-env.sh
+# Or set RECONEER_API_KEY in ~/.config/aidevops/credentials.sh
 ```
 
 **Use Cases**:
@@ -447,7 +447,7 @@ Reconeer provides curated subdomain enumeration with enriched data including IP 
 - **Free tier**: 10 queries/day, no API key required
 - **Premium**: $49/mo for unlimited queries, requires API key
 
-Store your API key in `~/.config/aidevops/mcp-env.sh`:
+Store your API key in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export RECONEER_API_KEY="your-api-key-here"

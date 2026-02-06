@@ -449,9 +449,9 @@ cleanup_deprecated_mcps() {
         if [[ -n "$outscraper_path" ]]; then
             # Source the API key and set it in environment
             local outscraper_key=""
-            if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+            if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
                 # shellcheck source=/dev/null
-                outscraper_key=$(source "$HOME/.config/aidevops/mcp-env.sh" && echo "${OUTSCRAPER_API_KEY:-}")
+                outscraper_key=$(source "$HOME/.config/aidevops/credentials.sh" && echo "${OUTSCRAPER_API_KEY:-}")
             fi
             jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
             ((cleaned++))
@@ -657,6 +657,66 @@ validate_opencode_config() {
         fi
     fi
     
+    return 0
+}
+
+# Migrate mcp-env.sh to credentials.sh (v2.105.0)
+# Renames the credential file and creates backward-compatible symlink
+migrate_mcp_env_to_credentials() {
+    local config_dir="$HOME/.config/aidevops"
+    local old_file="$config_dir/mcp-env.sh"
+    local new_file="$config_dir/credentials.sh"
+    local migrated=0
+
+    # Migrate root-level mcp-env.sh -> credentials.sh
+    if [[ -f "$old_file" && ! -L "$old_file" ]]; then
+        if [[ ! -f "$new_file" ]]; then
+            mv "$old_file" "$new_file"
+            chmod 600 "$new_file"
+            ((migrated++))
+            print_info "Renamed mcp-env.sh to credentials.sh"
+        fi
+        # Create backward-compatible symlink
+        if [[ ! -L "$old_file" ]]; then
+            ln -sf "credentials.sh" "$old_file"
+            print_info "Created symlink mcp-env.sh -> credentials.sh"
+        fi
+    fi
+
+    # Migrate tenant-level mcp-env.sh -> credentials.sh
+    local tenants_dir="$config_dir/tenants"
+    if [[ -d "$tenants_dir" ]]; then
+        for tenant_dir in "$tenants_dir"/*/; do
+            [[ -d "$tenant_dir" ]] || continue
+            local tenant_old="$tenant_dir/mcp-env.sh"
+            local tenant_new="$tenant_dir/credentials.sh"
+            if [[ -f "$tenant_old" && ! -L "$tenant_old" ]]; then
+                if [[ ! -f "$tenant_new" ]]; then
+                    mv "$tenant_old" "$tenant_new"
+                    chmod 600 "$tenant_new"
+                    ((migrated++))
+                fi
+                if [[ ! -L "$tenant_old" ]]; then
+                    ln -sf "credentials.sh" "$tenant_old"
+                fi
+            fi
+        done
+    fi
+
+    # Update shell rc files that source the old path
+    for rc_file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+        if [[ -f "$rc_file" ]] && grep -q 'source.*mcp-env\.sh' "$rc_file" 2>/dev/null; then
+            # shellcheck disable=SC2016
+            sed -i '' 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file"
+            ((migrated++))
+            print_info "Updated $rc_file to source credentials.sh"
+        fi
+    done
+
+    if [[ $migrated -gt 0 ]]; then
+        print_success "Migrated $migrated mcp-env.sh -> credentials.sh reference(s)"
+    fi
+
     return 0
 }
 
@@ -3468,20 +3528,20 @@ setup_seo_mcps() {
     print_info "SEO uses curl-based subagents (zero context cost until invoked)"
     
     # Check if credentials are configured
-    if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+    if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
         # shellcheck source=/dev/null
-        source "$HOME/.config/aidevops/mcp-env.sh"
+        source "$HOME/.config/aidevops/credentials.sh"
         
         [[ -n "$DATAFORSEO_USERNAME" ]] && print_success "DataForSEO credentials configured" || \
-            print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in mcp-env.sh"
+            print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in credentials.sh"
         
         [[ -n "$SERPER_API_KEY" ]] && print_success "Serper API key configured" || \
-            print_info "Serper: set SERPER_API_KEY in mcp-env.sh"
+            print_info "Serper: set SERPER_API_KEY in credentials.sh"
         
         [[ -n "$AHREFS_API_KEY" ]] && print_success "Ahrefs API key configured" || \
-            print_info "Ahrefs: set AHREFS_API_KEY in mcp-env.sh"
+            print_info "Ahrefs: set AHREFS_API_KEY in credentials.sh"
     else
-        print_info "Configure SEO API credentials in ~/.config/aidevops/mcp-env.sh"
+        print_info "Configure SEO API credentials in ~/.config/aidevops/credentials.sh"
     fi
     
     # GSC uses MCP (OAuth2 complexity warrants it)
@@ -3630,10 +3690,10 @@ setup_multi_tenant_credentials() {
     fi
     
     # Check if there are existing credentials to migrate
-    if [[ -f "$HOME/.config/aidevops/mcp-env.sh" ]]; then
+    if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
         local key_count
-        key_count=$(grep -c "^export " "$HOME/.config/aidevops/mcp-env.sh" 2>/dev/null || echo "0")
-        print_info "Found $key_count existing API keys in mcp-env.sh"
+        key_count=$(grep -c "^export " "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || echo "0")
+        print_info "Found $key_count existing API keys in credentials.sh"
         print_info "Multi-tenant enables managing separate credential sets for:"
         echo "  - Multiple clients (agency/freelance work)"
         echo "  - Multiple environments (production, staging)"
@@ -3808,6 +3868,7 @@ main() {
         migrate_old_backups
         migrate_loop_state_directories
         migrate_agent_to_agents_folder
+        migrate_mcp_env_to_credentials
         cleanup_deprecated_paths
         cleanup_deprecated_mcps
         validate_opencode_config
@@ -3840,6 +3901,7 @@ main() {
         confirm_step "Migrate old backups to new structure" && migrate_old_backups
         confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
         confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
+        confirm_step "Migrate mcp-env.sh -> credentials.sh" && migrate_mcp_env_to_credentials
         confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
         confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
         confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config

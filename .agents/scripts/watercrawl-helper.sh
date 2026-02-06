@@ -52,7 +52,7 @@ readonly HELP_SHOW_MESSAGE="Show this help message"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 readonly CONFIG_DIR="$SCRIPT_DIR/../configs"
-readonly MCP_ENV_FILE="$HOME/.config/aidevops/mcp-env.sh"
+readonly CREDENTIALS_FILE="$HOME/.config/aidevops/credentials.sh"
 readonly WATERCRAWL_CLOUD_URL="https://app.watercrawl.dev"
 readonly WATERCRAWL_LOCAL_URL="http://localhost"
 readonly NPM_PACKAGE="@watercrawl/nodejs"
@@ -90,11 +90,11 @@ print_header() {
     return 0
 }
 
-# Load configuration from mcp-env.sh
+# Load configuration from credentials.sh
 load_config() {
-    if [[ -f "$MCP_ENV_FILE" ]]; then
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
         # shellcheck source=/dev/null
-        source "$MCP_ENV_FILE"
+        source "$CREDENTIALS_FILE"
     fi
     
     # Default to local URL if self-hosted, otherwise cloud
@@ -109,7 +109,7 @@ load_config() {
     return 0
 }
 
-# Load API key from mcp-env.sh
+# Load API key from credentials.sh
 load_api_key() {
     load_config
     
@@ -410,35 +410,35 @@ configure_api_key() {
     print_header "Configuring WaterCrawl API Key"
     
     # Create config directory if needed
-    mkdir -p "$(dirname "$MCP_ENV_FILE")"
+    mkdir -p "$(dirname "$CREDENTIALS_FILE")"
     
     # Check if file exists and has the key
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        if grep -q "^export WATERCRAWL_API_KEY=" "$MCP_ENV_FILE"; then
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        if grep -q "^export WATERCRAWL_API_KEY=" "$CREDENTIALS_FILE"; then
             # Update existing key
-            sed -i.bak "s|^export WATERCRAWL_API_KEY=.*|export WATERCRAWL_API_KEY=\"$api_key\"|" "$MCP_ENV_FILE"
-            rm -f "${MCP_ENV_FILE}.bak"
-            print_success "API key updated in $MCP_ENV_FILE"
+            sed -i.bak "s|^export WATERCRAWL_API_KEY=.*|export WATERCRAWL_API_KEY=\"$api_key\"|" "$CREDENTIALS_FILE"
+            rm -f "${CREDENTIALS_FILE}.bak"
+            print_success "API key updated in $CREDENTIALS_FILE"
         else
             # Append new key
-            echo "" >> "$MCP_ENV_FILE"
-            echo "# WaterCrawl API Key" >> "$MCP_ENV_FILE"
-            echo "export WATERCRAWL_API_KEY=\"$api_key\"" >> "$MCP_ENV_FILE"
-            print_success "API key added to $MCP_ENV_FILE"
+            echo "" >> "$CREDENTIALS_FILE"
+            echo "# WaterCrawl API Key" >> "$CREDENTIALS_FILE"
+            echo "export WATERCRAWL_API_KEY=\"$api_key\"" >> "$CREDENTIALS_FILE"
+            print_success "API key added to $CREDENTIALS_FILE"
         fi
     else
         # Create new file
-        cat > "$MCP_ENV_FILE" << EOF
+        cat > "$CREDENTIALS_FILE" << EOF
 #!/bin/bash
 # MCP Environment Variables
 # This file is sourced by helper scripts to load API keys
-# Permissions should be 600 (chmod 600 $MCP_ENV_FILE)
+# Permissions should be 600 (chmod 600 $CREDENTIALS_FILE)
 
 # WaterCrawl Configuration
 export WATERCRAWL_API_KEY="$api_key"
 EOF
-        chmod 600 "$MCP_ENV_FILE"
-        print_success "Created $MCP_ENV_FILE with API key"
+        chmod 600 "$CREDENTIALS_FILE"
+        print_success "Created $CREDENTIALS_FILE with API key"
     fi
     
     return 0
@@ -457,32 +457,32 @@ configure_api_url() {
     print_header "Configuring WaterCrawl API URL"
     
     # Create config directory if needed
-    mkdir -p "$(dirname "$MCP_ENV_FILE")"
+    mkdir -p "$(dirname "$CREDENTIALS_FILE")"
     
     # Check if file exists and has the URL
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        if grep -q "^export WATERCRAWL_API_URL=" "$MCP_ENV_FILE"; then
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        if grep -q "^export WATERCRAWL_API_URL=" "$CREDENTIALS_FILE"; then
             # Update existing URL
-            sed -i.bak "s|^export WATERCRAWL_API_URL=.*|export WATERCRAWL_API_URL=\"$api_url\"|" "$MCP_ENV_FILE"
-            rm -f "${MCP_ENV_FILE}.bak"
+            sed -i.bak "s|^export WATERCRAWL_API_URL=.*|export WATERCRAWL_API_URL=\"$api_url\"|" "$CREDENTIALS_FILE"
+            rm -f "${CREDENTIALS_FILE}.bak"
             print_success "API URL updated to: $api_url"
         else
             # Append new URL
-            echo "export WATERCRAWL_API_URL=\"$api_url\"" >> "$MCP_ENV_FILE"
+            echo "export WATERCRAWL_API_URL=\"$api_url\"" >> "$CREDENTIALS_FILE"
             print_success "API URL added: $api_url"
         fi
     else
         # Create new file
-        cat > "$MCP_ENV_FILE" << EOF
+        cat > "$CREDENTIALS_FILE" << EOF
 #!/bin/bash
 # MCP Environment Variables
-# Permissions should be 600 (chmod 600 $MCP_ENV_FILE)
+# Permissions should be 600 (chmod 600 $CREDENTIALS_FILE)
 
 # WaterCrawl Configuration
 export WATERCRAWL_API_URL="$api_url"
 EOF
-        chmod 600 "$MCP_ENV_FILE"
-        print_success "Created $MCP_ENV_FILE with API URL"
+        chmod 600 "$CREDENTIALS_FILE"
+        print_success "Created $CREDENTIALS_FILE with API URL"
     fi
     
     return 0

@@ -51,8 +51,8 @@ Avoid environment variables when possible - CLI auth is more secure.
 # Store tokens securely
 mkdir -p ~/.config/aidevops
 chmod 700 ~/.config/aidevops
-echo "GITHUB_TOKEN=xxx" >> ~/.config/aidevops/mcp-env.sh
-chmod 600 ~/.config/aidevops/mcp-env.sh
+echo "GITHUB_TOKEN=xxx" >> ~/.config/aidevops/credentials.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### Token Rotation

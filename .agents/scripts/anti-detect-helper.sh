@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # shellcheck source=/dev/null
-[[ -f "$HOME/.config/aidevops/mcp-env.sh" ]] && source "$HOME/.config/aidevops/mcp-env.sh"
+[[ -f "$HOME/.config/aidevops/credentials.sh" ]] && source "$HOME/.config/aidevops/credentials.sh"
 
 PROFILES_DIR="$HOME/.aidevops/.agent-workspace/browser-profiles"
 VENV_DIR="$HOME/.aidevops/anti-detect-venv"

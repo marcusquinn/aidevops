@@ -19,7 +19,7 @@ tools:
 - **Primary access**: Direct API via `curl`
 - **API Endpoint**: `https://ssl.bing.com/webmaster/api.svc/json/`
 - **Auth**: API Key (passed as query parameter `apikey`)
-- **Credentials**: Store API Key in `~/.config/aidevops/mcp-env.sh` as `BING_API_KEY`
+- **Credentials**: Store API Key in `~/.config/aidevops/credentials.sh` as `BING_API_KEY`
 - **Capabilities**: Submit URLs, URL inspection, Search analytics, Sitemap management
 - **Docs**: [Bing Webmaster API](https://www.bing.com/webmasters/help/webmaster-api-5f3c5e1e)
 
@@ -37,13 +37,13 @@ tools:
 Add the key to your secure environment file:
 
 ```bash
-# Add to ~/.config/aidevops/mcp-env.sh
+# Add to ~/.config/aidevops/credentials.sh
 export BING_API_KEY="your_api_key_here"
 ```
 
 Reload the environment:
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 ## API Operations

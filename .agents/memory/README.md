@@ -430,7 +430,7 @@ Document environment-specific issues that affect AI assistance:
 
 - **Never store credentials** in memory files
 - **Use configuration references** instead of actual API keys
-- **Keep sensitive data** in separate secure locations (`~/.config/aidevops/mcp-env.sh`)
+- **Keep sensitive data** in separate secure locations (`~/.config/aidevops/credentials.sh`)
 - **Regular cleanup** of outdated information
 - **No personal identifiable information** in shareable templates
 

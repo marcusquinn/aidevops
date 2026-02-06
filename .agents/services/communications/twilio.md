@@ -454,7 +454,7 @@ Transcriptions can be:
 
 ```bash
 # Store credentials securely
-# In ~/.config/aidevops/mcp-env.sh (600 permissions)
+# In ~/.config/aidevops/credentials.sh (600 permissions)
 export TWILIO_ACCOUNT_SID_PRODUCTION="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 export TWILIO_AUTH_TOKEN_PRODUCTION="your_token_here"
 

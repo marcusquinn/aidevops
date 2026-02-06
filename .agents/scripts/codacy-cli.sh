@@ -55,7 +55,7 @@ print_warning() {
 
 # Load API configuration
 load_api_config() {
-    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    # Check environment variable first (set via credentials.sh, sourced by .zshrc)
     # CODACY_PROJECT_TOKEN is the standard env var name
     if [[ -z "${CODACY_API_TOKEN:-}" && -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
         export CODACY_API_TOKEN="$CODACY_PROJECT_TOKEN"
@@ -67,7 +67,7 @@ load_api_config() {
         # API token should be set in environment variable
         if [[ -z "${CODACY_API_TOKEN:-}" ]]; then
             print_error "CODACY_API_TOKEN/CODACY_PROJECT_TOKEN not found in environment"
-            print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+            print_info "Add to ~/.config/aidevops/credentials.sh:"
             print_info "  export CODACY_PROJECT_TOKEN=\"your-token\""
             return 1
         fi

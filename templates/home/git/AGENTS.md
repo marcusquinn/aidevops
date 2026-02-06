@@ -42,7 +42,7 @@ ls ~/Git/aidevops/docs/
 
 ### **✅ APPROVED Storage Location:**
 
-- **API Keys & Tokens**: `~/.config/aidevops/mcp-env.sh`
+- **API Keys & Tokens**: `~/.config/aidevops/credentials.sh`
 - **Service Configurations**: `~/Git/aidevops/configs/[service]-config.json`
 - **File Permissions**: 600 (owner read/write only)
 

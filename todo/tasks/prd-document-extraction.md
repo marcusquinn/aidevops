@@ -194,7 +194,7 @@ pip install docling extract-thinker presidio-analyzer presidio-anonymizer
 
 ### Security Considerations
 
-- All credentials stored in `~/.config/aidevops/mcp-env.sh` (chmod 600)
+- All credentials stored in `~/.config/aidevops/credentials.sh` (chmod 600)
 - PII detection runs before any cloud API calls
 - Local processing mode available for air-gapped environments
 - Audit logging for all extraction operations

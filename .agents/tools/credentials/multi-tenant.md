@@ -19,11 +19,11 @@ tools:
 ## Quick Reference
 
 - **Script**: `.agents/scripts/credential-helper.sh`
-- **Storage**: `~/.config/aidevops/tenants/{tenant}/mcp-env.sh`
+- **Storage**: `~/.config/aidevops/tenants/{tenant}/credentials.sh`
 - **Active tenant**: `~/.config/aidevops/active-tenant`
 - **Project override**: `.aidevops-tenant` (gitignored)
 - **Priority**: Project tenant > Global active > "default"
-- **Backward compatible**: Existing `mcp-env.sh` migrates to `default` tenant
+- **Backward compatible**: Existing `credentials.sh` migrates to `default` tenant
 
 **Quick commands**:
 - `credential-helper.sh init` - Initialize (migrates existing keys)
@@ -42,19 +42,21 @@ Multi-tenant credential storage allows managing separate credential sets for:
 - **Multiple accounts** (personal, work, freelance)
 - **Multiple services** (different GitHub orgs, Cloudflare accounts)
 
+**Note**: For encrypted secret storage, see `tools/credentials/gopass.md`. gopass can be used alongside multi-tenant storage -- use `aidevops secret` for encrypted secrets and `credential-helper.sh` for tenant switching.
+
 ## Architecture
 
 ```text
 ~/.config/aidevops/
-├── mcp-env.sh              # Loader (sources active tenant)
+├── credentials.sh              # Loader (sources active tenant)
 ├── active-tenant           # Global active tenant name
 └── tenants/
     ├── default/
-    │   └── mcp-env.sh      # Original credentials (migrated)
+    │   └── credentials.sh      # Original credentials (migrated)
     ├── client-acme/
-    │   └── mcp-env.sh      # Acme Corp credentials
+    │   └── credentials.sh      # Acme Corp credentials
     └── client-globex/
-        └── mcp-env.sh      # Globex Corp credentials
+        └── credentials.sh      # Globex Corp credentials
 ```
 
 ### Resolution Priority
@@ -68,7 +70,7 @@ Multi-tenant credential storage allows managing separate credential sets for:
 ### Initialize
 
 ```bash
-# First time: migrates existing mcp-env.sh to 'default' tenant
+# First time: migrates existing credentials.sh to 'default' tenant
 credential-helper.sh init
 ```
 
@@ -168,7 +170,7 @@ credential-helper.sh copy default client-acme
 
 ### Shell Integration
 
-The `mcp-env.sh` loader is sourced by shell startup (`.zshrc`/`.bashrc`). After switching tenants, either:
+The `credentials.sh` loader is sourced by shell startup (`.zshrc`/`.bashrc`). After switching tenants, either:
 
 ```bash
 source ~/.zshrc          # Reload current shell
@@ -202,7 +204,7 @@ api-keys action:set service:KEY_NAME    # Sets in active tenant
 ## Security
 
 - All tenant directories: `700` permissions
-- All `mcp-env.sh` files: `600` permissions
+- All `credentials.sh` files: `600` permissions
 - `.aidevops-tenant` is automatically added to `.gitignore`
 - Tenant names validated (alphanumeric, hyphens, underscores only)
 - Cannot delete the `default` tenant
@@ -210,7 +212,7 @@ api-keys action:set service:KEY_NAME    # Sets in active tenant
 
 ## Backward Compatibility
 
-- Existing `mcp-env.sh` is automatically migrated to `default` tenant on first `init`
-- The legacy `mcp-env.sh` file becomes a loader that sources the active tenant
+- Existing `credentials.sh` is automatically migrated to `default` tenant on first `init`
+- The legacy `credentials.sh` file becomes a loader that sources the active tenant
 - `setup-local-api-keys.sh` continues to work (operates on active tenant)
 - `list-keys-helper.sh` continues to work (reads from sourced environment)

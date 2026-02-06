@@ -39,7 +39,7 @@ cd ~/Git/aidevops
 **Post-setup locations**:
 - Agents: `~/.aidevops/agents/`
 - Backups: `~/.aidevops/config-backups/`
-- Credentials: `~/.config/aidevops/mcp-env.sh`
+- Credentials: `~/.config/aidevops/credentials.sh`
 
 <!-- AI-CONTEXT-END -->
 
@@ -139,7 +139,7 @@ apt-get install jq curl  # Ubuntu/Debian
 
 ```bash
 # Ensure correct permissions
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 chmod 755 ~/.aidevops/agents/scripts/*.sh
 ```text
 

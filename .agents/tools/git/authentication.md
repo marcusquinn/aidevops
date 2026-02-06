@@ -48,8 +48,8 @@ tools:
 gh auth login
 
 # Or store for scripts
-echo "GITHUB_TOKEN=ghp_xxxx" >> ~/.config/aidevops/mcp-env.sh
-chmod 600 ~/.config/aidevops/mcp-env.sh
+echo "GITHUB_TOKEN=ghp_xxxx" >> ~/.config/aidevops/credentials.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### Verify
@@ -82,8 +82,8 @@ glab auth login
 glab auth login --hostname gitlab.company.com
 
 # Or store for scripts
-echo "GITLAB_TOKEN=glpat-xxxx" >> ~/.config/aidevops/mcp-env.sh
-chmod 600 ~/.config/aidevops/mcp-env.sh
+echo "GITLAB_TOKEN=glpat-xxxx" >> ~/.config/aidevops/credentials.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### Verify
@@ -107,8 +107,8 @@ glab auth status
 tea login add --name myserver --url https://git.example.com --token YOUR_TOKEN
 
 # Or store for scripts
-echo "GITEA_TOKEN=xxxx" >> ~/.config/aidevops/mcp-env.sh
-chmod 600 ~/.config/aidevops/mcp-env.sh
+echo "GITEA_TOKEN=xxxx" >> ~/.config/aidevops/credentials.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### Verify

@@ -23,7 +23,7 @@ mcp:
 - **Purpose**: Error monitoring, debugging, and issue tracking via Sentry
 - **MCP**: Local stdio mode with `@sentry/mcp-server`
 - **Auth**: Personal Auth Token (created after org exists)
-- **Credentials**: `~/.config/aidevops/mcp-env.sh` → `SENTRY_YOURNAME`
+- **Credentials**: `~/.config/aidevops/credentials.sh` → `SENTRY_YOURNAME`
 
 **When to use**:
 
@@ -58,14 +58,14 @@ mcp:
 4. Save token:
 
 ```bash
-echo 'export SENTRY_YOURNAME="sntryu_..."' >> ~/.config/aidevops/mcp-env.sh
-chmod 600 ~/.config/aidevops/mcp-env.sh
+echo 'export SENTRY_YOURNAME="sntryu_..."' >> ~/.config/aidevops/credentials.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### 3. Configure OpenCode MCP
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 jq --arg token "$SENTRY_YOURNAME" \
   '.mcp.sentry = {"type": "local", "command": ["npx", "@sentry/mcp-server@latest", "--access-token", $token], "enabled": false}' \
   ~/.config/opencode/opencode.json > /tmp/oc.json && mv /tmp/oc.json ~/.config/opencode/opencode.json
@@ -74,7 +74,7 @@ jq --arg token "$SENTRY_YOURNAME" \
 ### 4. Test Connection
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/organizations/" | jq '.[].slug'
 ```
 
@@ -118,7 +118,7 @@ Create a new Personal Auth Token **after** the organization exists.
 
 ### "Not authenticated"
 
-1. Verify token: `source ~/.config/aidevops/mcp-env.sh && echo $SENTRY_YOURNAME`
+1. Verify token: `source ~/.config/aidevops/credentials.sh && echo $SENTRY_YOURNAME`
 2. Test API: `curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`
 3. Restart OpenCode after config changes
 

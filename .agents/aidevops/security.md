@@ -19,7 +19,7 @@ tools:
 
 **Credential Rules**:
 - NEVER commit API tokens to git
-- Store in `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- Store in `~/.config/aidevops/credentials.sh` (600 permissions)
 - Rotate tokens quarterly
 - Use least-privilege principle
 

@@ -4,12 +4,14 @@
 # Credential Helper - Multi-Tenant Credential Storage
 # Manage multiple credential sets (tenants) for different accounts/clients
 #
-# Storage: ~/.config/aidevops/tenants/{tenant}/mcp-env.sh
+# Storage: ~/.config/aidevops/tenants/{tenant}/credentials.sh
 # Active:  ~/.config/aidevops/active-tenant
 # Project: .aidevops-tenant (per-project override)
 #
+# For encrypted storage with gopass, use: secret-helper.sh (aidevops secret)
+#
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 1.1.0
 
 set -euo pipefail
 
@@ -25,7 +27,8 @@ readonly NC='\033[0m'
 readonly CONFIG_DIR="$HOME/.config/aidevops"
 readonly TENANTS_DIR="$CONFIG_DIR/tenants"
 readonly ACTIVE_TENANT_FILE="$CONFIG_DIR/active-tenant"
-readonly LEGACY_ENV_FILE="$CONFIG_DIR/mcp-env.sh"
+readonly CREDENTIALS_FILE="$CONFIG_DIR/credentials.sh"
+readonly LEGACY_MCP_ENV_FILE="$CONFIG_DIR/mcp-env.sh"
 readonly PROJECT_TENANT_FILE=".aidevops-tenant"
 
 # Common constants
@@ -93,7 +96,7 @@ get_active_tenant() {
 # Get the env file path for a tenant
 get_tenant_env_file() {
     local tenant="$1"
-    echo "$TENANTS_DIR/$tenant/mcp-env.sh"
+    echo "$TENANTS_DIR/$tenant/credentials.sh"
     return 0
 }
 
@@ -125,9 +128,49 @@ HEADER
     return 0
 }
 
-# Migrate legacy mcp-env.sh to default tenant
+# Migrate from old mcp-env.sh to credentials.sh (file rename)
+migrate_mcp_env_to_credentials() {
+    # Migrate root-level mcp-env.sh -> credentials.sh
+    if [[ -f "$LEGACY_MCP_ENV_FILE" && ! -L "$LEGACY_MCP_ENV_FILE" ]]; then
+        if [[ ! -f "$CREDENTIALS_FILE" ]]; then
+            mv "$LEGACY_MCP_ENV_FILE" "$CREDENTIALS_FILE"
+            chmod 600 "$CREDENTIALS_FILE"
+            print_info "Renamed mcp-env.sh to credentials.sh"
+        fi
+        # Create backward-compatible symlink
+        if [[ ! -L "$LEGACY_MCP_ENV_FILE" ]]; then
+            ln -sf "credentials.sh" "$LEGACY_MCP_ENV_FILE"
+            print_info "Created symlink mcp-env.sh -> credentials.sh"
+        fi
+    fi
+
+    # Migrate tenant-level mcp-env.sh -> credentials.sh
+    if [[ -d "$TENANTS_DIR" ]]; then
+        for tenant_dir in "$TENANTS_DIR"/*/; do
+            [[ -d "$tenant_dir" ]] || continue
+            local old_file="$tenant_dir/mcp-env.sh"
+            local new_file="$tenant_dir/credentials.sh"
+            if [[ -f "$old_file" && ! -L "$old_file" ]]; then
+                if [[ ! -f "$new_file" ]]; then
+                    mv "$old_file" "$new_file"
+                    chmod 600 "$new_file"
+                fi
+                if [[ ! -L "$old_file" ]]; then
+                    ln -sf "credentials.sh" "$old_file"
+                fi
+            fi
+        done
+    fi
+
+    return 0
+}
+
+# Migrate legacy credentials.sh to default tenant
 migrate_legacy() {
-    if [[ ! -f "$LEGACY_ENV_FILE" ]]; then
+    # First handle mcp-env.sh -> credentials.sh rename
+    migrate_mcp_env_to_credentials
+
+    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
         return 0
     fi
 
@@ -137,7 +180,7 @@ migrate_legacy() {
     if [[ -f "$default_env" ]]; then
         # Already migrated - check if legacy has keys not in default
         local legacy_keys
-        legacy_keys=$(grep -c "^export " "$LEGACY_ENV_FILE" 2>/dev/null || echo "0")
+        legacy_keys=$(grep -c "^export " "$CREDENTIALS_FILE" 2>/dev/null || echo "0")
         if [[ "$legacy_keys" -eq 0 ]]; then
             return 0
         fi
@@ -151,13 +194,13 @@ migrate_legacy() {
                     print_info "Migrated $key_name to default tenant"
                 fi
             fi
-        done < "$LEGACY_ENV_FILE"
+        done < "$CREDENTIALS_FILE"
         return 0
     fi
 
     # First migration: copy legacy to default tenant
     ensure_tenant_dir "default"
-    cp "$LEGACY_ENV_FILE" "$default_env"
+    cp "$CREDENTIALS_FILE" "$default_env"
     chmod 600 "$default_env"
 
     # Set default as active
@@ -168,14 +211,14 @@ migrate_legacy() {
     return 0
 }
 
-# Update the legacy mcp-env.sh to source the active tenant
+# Update the credentials.sh to source the active tenant
 update_legacy_sourcing() {
     local active_tenant="$1"
     local tenant_env
     tenant_env=$(get_tenant_env_file "$active_tenant")
 
-    # Rewrite legacy file to source the active tenant
-    cat > "$LEGACY_ENV_FILE" << EOF
+    # Rewrite credentials file to source the active tenant
+    cat > "$CREDENTIALS_FILE" << EOF
 #!/bin/bash
 # ------------------------------------------------------------------------------
 # Multi-Tenant Credential Loader
@@ -193,7 +236,13 @@ if [[ -f "$tenant_env" ]]; then
     source "$tenant_env"
 fi
 EOF
-    chmod 600 "$LEGACY_ENV_FILE"
+    chmod 600 "$CREDENTIALS_FILE"
+
+    # Ensure backward-compatible symlink exists
+    if [[ ! -L "$LEGACY_MCP_ENV_FILE" ]]; then
+        ln -sf "credentials.sh" "$LEGACY_MCP_ENV_FILE"
+    fi
+
     return 0
 }
 
@@ -270,7 +319,7 @@ cmd_list() {
         fi
         local tenant_name
         tenant_name=$(basename "$tenant_dir")
-        local env_file="$tenant_dir/mcp-env.sh"
+        local env_file="$tenant_dir/credentials.sh"
         local key_count=0
 
         if [[ -f "$env_file" ]]; then
@@ -726,7 +775,7 @@ cmd_status() {
             fi
             local tenant_name
             tenant_name=$(basename "$tenant_dir")
-            local env_file="$tenant_dir/mcp-env.sh"
+            local env_file="$tenant_dir/credentials.sh"
             local key_count=0
 
             if [[ -f "$env_file" ]]; then

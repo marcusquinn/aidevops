@@ -262,7 +262,7 @@ setup_api_key() {
 
 # Load API key from configuration
 load_api_key() {
-    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    # Check environment variable first (set via credentials.sh, sourced by .zshrc)
     if [[ -n "${CODERABBIT_API_KEY:-}" ]]; then
         print_info "Using CodeRabbit API key from environment"
         return 0
@@ -274,11 +274,11 @@ load_api_key() {
         legacy_key=$(cat "$API_KEY_FILE")
         export CODERABBIT_API_KEY="$legacy_key"
         print_info "Loaded CodeRabbit API key from legacy storage"
-        print_warning "Consider migrating to ~/.config/aidevops/mcp-env.sh"
+        print_warning "Consider migrating to ~/.config/aidevops/credentials.sh"
         return 0
     else
         print_error "CODERABBIT_API_KEY not found in environment"
-        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "Add to ~/.config/aidevops/credentials.sh:"
         print_info "  export CODERABBIT_API_KEY=\"your-api-key\""
         return 1
     fi

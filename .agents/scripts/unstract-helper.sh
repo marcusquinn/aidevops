@@ -11,7 +11,7 @@ set -euo pipefail
 # Constants
 readonly UNSTRACT_DIR="${HOME}/.aidevops/unstract"
 readonly UNSTRACT_REPO="https://github.com/Zipstack/unstract.git"
-readonly MCP_ENV_FILE="${HOME}/.config/aidevops/mcp-env.sh"
+readonly CREDENTIALS_FILE="${HOME}/.config/aidevops/credentials.sh"
 readonly FRONTEND_URL="http://frontend.unstract.localhost"
 readonly BACKEND_URL="http://backend.unstract.localhost"
 
@@ -186,9 +186,9 @@ do_status() {
     fi
 
     # Check MCP env
-    if [[ -f "$MCP_ENV_FILE" ]] && grep -q "API_BASE_URL" "$MCP_ENV_FILE"; then
+    if [[ -f "$CREDENTIALS_FILE" ]] && grep -q "API_BASE_URL" "$CREDENTIALS_FILE"; then
         local url
-        url=$(grep "^export API_BASE_URL" "$MCP_ENV_FILE" | sed 's/.*=//' | tr -d '"' | tr -d "'")
+        url=$(grep "^export API_BASE_URL" "$CREDENTIALS_FILE" | sed 's/.*=//' | tr -d '"' | tr -d "'")
         print_info "MCP configured: ${url}"
     else
         print_warning "MCP not configured. Run 'unstract-helper.sh configure-llm'"
@@ -236,10 +236,10 @@ do_uninstall() {
     rm -rf "$UNSTRACT_DIR"
 
     # Remove MCP env entries
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        sed -i.bak '/UNSTRACT_API_KEY/d' "$MCP_ENV_FILE"
-        sed -i.bak '/^export API_BASE_URL.*unstract/d' "$MCP_ENV_FILE"
-        rm -f "${MCP_ENV_FILE}.bak"
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        sed -i.bak '/UNSTRACT_API_KEY/d' "$CREDENTIALS_FILE"
+        sed -i.bak '/^export API_BASE_URL.*unstract/d' "$CREDENTIALS_FILE"
+        rm -f "${CREDENTIALS_FILE}.bak"
     fi
 
     print_success "Unstract uninstalled"
@@ -248,24 +248,24 @@ do_uninstall() {
 
 # Configure local MCP environment
 configure_local_mcp_env() {
-    mkdir -p "$(dirname "$MCP_ENV_FILE")"
+    mkdir -p "$(dirname "$CREDENTIALS_FILE")"
 
     # Set default local URL (user will update deployment ID after creating a project)
     local needs_update=0
 
-    if ! grep -q "^export API_BASE_URL" "$MCP_ENV_FILE" 2>/dev/null; then
-        echo 'export API_BASE_URL="http://backend.unstract.localhost/deployment/api/YOUR_DEPLOYMENT_ID/"' >> "$MCP_ENV_FILE"
+    if ! grep -q "^export API_BASE_URL" "$CREDENTIALS_FILE" 2>/dev/null; then
+        echo 'export API_BASE_URL="http://backend.unstract.localhost/deployment/api/YOUR_DEPLOYMENT_ID/"' >> "$CREDENTIALS_FILE"
         needs_update=1
     fi
 
-    if ! grep -q "UNSTRACT_API_KEY" "$MCP_ENV_FILE" 2>/dev/null; then
-        echo 'export UNSTRACT_API_KEY="YOUR_LOCAL_API_KEY"' >> "$MCP_ENV_FILE"
+    if ! grep -q "UNSTRACT_API_KEY" "$CREDENTIALS_FILE" 2>/dev/null; then
+        echo 'export UNSTRACT_API_KEY="YOUR_LOCAL_API_KEY"' >> "$CREDENTIALS_FILE"
         needs_update=1
     fi
 
     if [[ "$needs_update" -eq 1 ]]; then
-        chmod 600 "$MCP_ENV_FILE"
-        print_info "Added UNSTRACT_API_KEY and API_BASE_URL to ${MCP_ENV_FILE}"
+        chmod 600 "$CREDENTIALS_FILE"
+        print_info "Added UNSTRACT_API_KEY and API_BASE_URL to ${CREDENTIALS_FILE}"
         print_warning "Update these after creating your first API deployment in Prompt Studio"
     fi
 
@@ -279,36 +279,36 @@ do_configure_llm() {
     print_info "Unstract uses 'Adapters' to connect to LLM providers."
     print_info "Add these in the Unstract UI: Settings > Adapters > Add Adapter"
     echo
-    print_info "Your existing API keys from ~/.config/aidevops/mcp-env.sh can be used:"
+    print_info "Your existing API keys from ~/.config/aidevops/credentials.sh can be used:"
     echo
 
     # Check which keys the user already has
     local found_keys=0
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        if grep -q "OPENAI_API_KEY" "$MCP_ENV_FILE" 2>/dev/null; then
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        if grep -q "OPENAI_API_KEY" "$CREDENTIALS_FILE" 2>/dev/null; then
             print_success "OpenAI API key found - add as 'OpenAI' adapter in Unstract"
             found_keys=$((found_keys + 1))
         fi
-        if grep -q "ANTHROPIC_API_KEY" "$MCP_ENV_FILE" 2>/dev/null; then
+        if grep -q "ANTHROPIC_API_KEY" "$CREDENTIALS_FILE" 2>/dev/null; then
             print_success "Anthropic API key found - add as 'Anthropic' adapter in Unstract"
             found_keys=$((found_keys + 1))
         fi
-        if grep -q "GOOGLE_API_KEY\|GOOGLE_APPLICATION_CREDENTIALS\|VERTEX" "$MCP_ENV_FILE" 2>/dev/null; then
+        if grep -q "GOOGLE_API_KEY\|GOOGLE_APPLICATION_CREDENTIALS\|VERTEX" "$CREDENTIALS_FILE" 2>/dev/null; then
             print_success "Google/Vertex AI key found - add as 'Google VertexAI' adapter"
             found_keys=$((found_keys + 1))
         fi
-        if grep -q "AZURE_OPENAI" "$MCP_ENV_FILE" 2>/dev/null; then
+        if grep -q "AZURE_OPENAI" "$CREDENTIALS_FILE" 2>/dev/null; then
             print_success "Azure OpenAI key found - add as 'Azure OpenAI' adapter"
             found_keys=$((found_keys + 1))
         fi
-        if grep -q "AWS_ACCESS_KEY\|AWS_SECRET" "$MCP_ENV_FILE" 2>/dev/null; then
+        if grep -q "AWS_ACCESS_KEY\|AWS_SECRET" "$CREDENTIALS_FILE" 2>/dev/null; then
             print_success "AWS credentials found - add as 'Bedrock' adapter"
             found_keys=$((found_keys + 1))
         fi
     fi
 
     if [[ "$found_keys" -eq 0 ]]; then
-        print_warning "No LLM API keys found in ${MCP_ENV_FILE}"
+        print_warning "No LLM API keys found in ${CREDENTIALS_FILE}"
         print_info "Add at least one LLM key to use Unstract:"
         echo
     fi

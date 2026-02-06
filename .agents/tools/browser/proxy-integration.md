@@ -28,7 +28,7 @@ Network identity layer for anti-detect browser profiles. Supports residential, d
 
 ## Provider Configuration
 
-Proxy credentials stored in `~/.config/aidevops/mcp-env.sh`:
+Proxy credentials stored in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 # Residential providers
@@ -250,7 +250,7 @@ Services to be added as subagents when needed:
 
 ## Security Notes
 
-- Never commit proxy credentials (stored in `mcp-env.sh` with 600 permissions)
+- Never commit proxy credentials (stored in `credentials.sh` with 600 permissions)
 - Use sticky sessions for login flows (avoid IP changes mid-session)
 - Match proxy geo to profile fingerprint (timezone, locale, geolocation)
 - Monitor proxy usage/costs via provider dashboards

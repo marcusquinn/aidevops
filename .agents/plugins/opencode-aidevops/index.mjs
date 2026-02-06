@@ -194,7 +194,7 @@ export async function AidevopsPlugin({ directory }) {
           "## Critical Rules to Preserve",
           "- File discovery: use `git ls-files` not Glob",
           "- Git workflow: run pre-edit-check.sh before any file modifications",
-          "- Security: credentials only in ~/.config/aidevops/mcp-env.sh",
+          "- Security: credentials only in ~/.config/aidevops/credentials.sh",
           "- Working directory: ~/.aidevops/.agent-workspace/work/[project]/",
           "- Quality: ShellCheck zero violations, SonarCloud A-grade",
         ].join("\n")

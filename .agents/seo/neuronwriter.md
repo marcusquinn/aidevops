@@ -17,7 +17,7 @@ tools:
 
 - **Purpose**: SEO content optimization, NLP term recommendations, content scoring, competitor analysis
 - **API**: `https://app.neuronwriter.com/neuron-api/0.5/writer`
-- **Auth**: API key in `X-API-KEY` header, stored in `~/.config/aidevops/mcp-env.sh` as `NEURONWRITER_API_KEY`
+- **Auth**: API key in `X-API-KEY` header, stored in `~/.config/aidevops/credentials.sh` as `NEURONWRITER_API_KEY`
 - **Plan**: Gold plan or higher required
 - **Docs**: https://neuronwriter.com/faqs/neuronwriter-api-how-to-use/
 - **No MCP required** - uses curl directly
@@ -29,7 +29,7 @@ tools:
 ## Authentication
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 ## API Endpoints
@@ -214,7 +214,7 @@ curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/evaluate-con
 ### Create Query and Poll for Results
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 
 NW_API="https://app.neuronwriter.com/neuron-api/0.5/writer"
 NW_HEADERS=(-H "X-API-KEY: $NEURONWRITER_API_KEY" -H "Accept: application/json" -H "Content-Type: application/json")
@@ -252,7 +252,7 @@ curl -s -X POST "$NW_API/get-query" "${NW_HEADERS[@]}" \
 ### Score Existing Content Against a Query
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 
 curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/evaluate-content" \
   -H "X-API-KEY: $NEURONWRITER_API_KEY" \
@@ -267,7 +267,7 @@ curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/evaluate-con
 ### Bulk Keyword Analysis
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 
 NW_API="https://app.neuronwriter.com/neuron-api/0.5/writer"
 NW_HEADERS=(-H "X-API-KEY: $NEURONWRITER_API_KEY" -H "Accept: application/json" -H "Content-Type: application/json")
@@ -307,7 +307,7 @@ bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set NEURONWRITER_API_KEY
 3. Verify:
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/list-projects" \
   -H "X-API-KEY: $NEURONWRITER_API_KEY" \
   -H "Accept: application/json" \

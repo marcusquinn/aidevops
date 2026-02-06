@@ -18,11 +18,20 @@ tools:
 
 ## Quick Reference
 
-- **Secrets Location**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- **Recommended**: `aidevops secret set NAME` (gopass encrypted, AI-safe)
+- **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
 - **Working Dirs**: `~/.aidevops/` (agno, stagehand, reports)
 - **Setup**: `bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup`
 
-**Commands**:
+**Encrypted storage** (recommended):
+
+- `aidevops secret init` - Initialize gopass store
+- `aidevops secret set NAME` - Store secret (hidden input, GPG-encrypted)
+- `aidevops secret list` - List names (never values)
+- `aidevops secret run CMD` - Inject secrets + redact output
+
+**Plaintext storage** (fallback):
+
 - `set <service-name> <VALUE>` - Store API key (converts to UPPER_CASE export)
 - `add 'export VAR="value"'` - Parse and store export command
 - `get <service-name>` - Retrieve key value
@@ -30,7 +39,7 @@ tools:
 
 **Common Services**: codacy-project-token, sonar-token, coderabbit-api-key, hcloud-token-*, openai-api-key
 
-**Security**: Shell startup auto-sources mcp-env.sh, never commit keys to repo
+**Security**: NEVER accept secret values in AI conversation. Instruct users to run `aidevops secret set NAME` at their terminal.
 <!-- AI-CONTEXT-END -->
 
 ## Directory Structure
@@ -44,7 +53,7 @@ AI DevOps uses two directories for different purposes:
 
 ## Security Principle
 
-**API keys are stored ONLY in `~/.config/aidevops/mcp-env.sh`, NEVER in repository files.**
+**API keys are stored ONLY in `~/.config/aidevops/credentials.sh`, NEVER in repository files.**
 
 This file is automatically sourced by your shell (zsh and bash) on startup.
 
@@ -59,7 +68,7 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup
 This will:
 
 - Create `~/.config/aidevops/` with secure permissions
-- Create `mcp-env.sh` for storing API keys
+- Create `credentials.sh` for storing API keys
 - Add sourcing to your shell configs (`.zshrc`, `.bashrc`, `.bash_profile`)
 
 ### 2. Store API Keys
@@ -125,12 +134,12 @@ bash .agents/scripts/setup-local-api-keys.sh list
 bash .agents/scripts/setup-local-api-keys.sh get sonar-token
 
 # View the file directly (redacted)
-cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
+cat ~/.config/aidevops/credentials.sh | sed 's/=.*/=<REDACTED>/'
 ```
 
 ## How It Works
 
-1. **mcp-env.sh** contains all API keys as shell exports:
+1. **credentials.sh** contains all API keys as shell exports:
 
    ```bash
    export SONAR_TOKEN="xxx"
@@ -141,7 +150,7 @@ cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
 
    ```bash
    # In ~/.zshrc and ~/.bashrc:
-   [[ -f ~/.config/aidevops/mcp-env.sh ]] && source ~/.config/aidevops/mcp-env.sh
+   [[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh
    ```
 
 3. **All processes** (terminals, scripts, MCPs) get access to the env vars
@@ -150,7 +159,7 @@ cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
 
 ### Secrets (Secure - 600 permissions)
 
-- `~/.config/aidevops/mcp-env.sh` - All API keys and tokens
+- `~/.config/aidevops/credentials.sh` - All API keys and tokens
 
 ### Working Directories (Standard permissions)
 
@@ -174,14 +183,14 @@ cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
 # Verify permissions
 ls -la ~/.config/aidevops/
 # drwx------ (700) for directory
-# -rw------- (600) for mcp-env.sh
+# -rw------- (600) for credentials.sh
 ```
 
 ### Fix Permissions
 
 ```bash
 chmod 700 ~/.config/aidevops
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ## Troubleshooting
@@ -236,9 +245,22 @@ See `multi-tenant.md` for full documentation.
 
 ## Best Practices
 
-1. **Single source** - Always add keys via `setup-local-api-keys.sh` or `credential-helper.sh`
-2. **Regular rotation** - Rotate API keys every 90 days
-3. **Minimal permissions** - Use tokens with minimal required scopes
-4. **Monitor usage** - Check API usage in provider dashboards
-5. **Never commit** - API keys should never appear in git history
-6. **Use tenants** - Separate client/environment credentials with multi-tenant storage
+1. **Use gopass** - Prefer `aidevops secret set` for encrypted storage
+2. **Single source** - Always add keys via `aidevops secret set`, `setup-local-api-keys.sh`, or `credential-helper.sh`
+3. **Regular rotation** - Rotate API keys every 90 days
+4. **Minimal permissions** - Use tokens with minimal required scopes
+5. **Monitor usage** - Check API usage in provider dashboards
+6. **Never commit** - API keys should never appear in git history
+7. **Use tenants** - Separate client/environment credentials with multi-tenant storage
+8. **AI-safe** - Never accept secret values in AI conversation context
+
+## Encrypted Storage (Recommended)
+
+For encrypted secret storage with gopass, see `tools/credentials/gopass.md`.
+
+```bash
+# Quick start
+aidevops secret init              # One-time setup
+aidevops secret set API_KEY       # Store (hidden input)
+aidevops secret run some-command  # Use (injected + redacted)
+```

@@ -53,11 +53,11 @@ print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0;
 
 # Get API key from environment
 get_api_key() {
-    source "$CONFIG_DIR/mcp-env.sh" 2>/dev/null || true
+    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${AHREFS_API_KEY:-}" ]]; then
         print_error "AHREFS_API_KEY not configured"
-        print_error "Set it in ~/.config/aidevops/mcp-env.sh"
+        print_error "Set it in ~/.config/aidevops/credentials.sh"
         return 1
     fi
     
@@ -246,12 +246,12 @@ Data Fields:
     - difficulty: Keyword difficulty (0-100)
 
 Requirements:
-    - AHREFS_API_KEY set in ~/.config/aidevops/mcp-env.sh
+    - AHREFS_API_KEY set in ~/.config/aidevops/credentials.sh
 
 API Key Setup:
     1. Go to https://app.ahrefs.com/user/api
     2. Generate API key
-    3. Add to mcp-env.sh: export AHREFS_API_KEY="your_key"
+    3. Add to credentials.sh: export AHREFS_API_KEY="your_key"
 
 EOF
     return 0

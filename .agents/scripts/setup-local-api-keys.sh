@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 
 # Setup Local API Keys - Secure User-Private Storage
-# Manage API keys in ~/.config/aidevops/mcp-env.sh (sourced by shell configs)
+# Manage API keys in ~/.config/aidevops/credentials.sh (sourced by shell configs)
 #
 # Author: AI DevOps Framework
 # Version: 2.1.0
@@ -42,7 +42,7 @@ print_error() {
 
 # Secure API key directory and file
 readonly API_KEY_DIR="$HOME/.config/aidevops"
-readonly MCP_ENV_FILE="$API_KEY_DIR/mcp-env.sh"
+readonly CREDENTIALS_FILE="$API_KEY_DIR/credentials.sh"
 
 # Shell config files to check/update
 SHELL_CONFIGS=(
@@ -62,39 +62,39 @@ setup_secure_directory() {
     # Ensure proper permissions
     chmod 700 "$API_KEY_DIR"
     
-    # Create mcp-env.sh if it doesn't exist
-    if [[ ! -f "$MCP_ENV_FILE" ]]; then
-        cat > "$MCP_ENV_FILE" << 'EOF'
+    # Create credentials.sh if it doesn't exist
+    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
+        cat > "$CREDENTIALS_FILE" << 'EOF'
 #!/bin/bash
 # ------------------------------------------------------------------------------
 # API Keys & Tokens - Single Source of Truth
 # This file is sourced by shell configs (zsh, bash) for all processes
 # File permissions should be 600 (owner read/write only)
-# Location: ~/.config/aidevops/mcp-env.sh
+# Location: ~/.config/aidevops/credentials.sh
 #
 # Usage: Add keys with setup-local-api-keys.sh or manually:
 #   export SERVICE_NAME_API_KEY="your-key-here"
 # ------------------------------------------------------------------------------
 
 EOF
-        chmod 600 "$MCP_ENV_FILE"
-        print_success "Created mcp-env.sh"
+        chmod 600 "$CREDENTIALS_FILE"
+        print_success "Created credentials.sh"
     fi
     
     return 0
 }
 
-# Ensure shell configs source mcp-env.sh
+# Ensure shell configs source credentials.sh
 setup_shell_integration() {
-    local source_line='[[ -f ~/.config/aidevops/mcp-env.sh ]] && source ~/.config/aidevops/mcp-env.sh'
+    local source_line='[[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh'
     local updated=0
     
     for config in "${SHELL_CONFIGS[@]}"; do
-        if [[ -f "$config" ]] && ! grep -q "mcp-env.sh" "$config" 2>/dev/null; then
+        if [[ -f "$config" ]] && ! grep -q "credentials.sh" "$config" 2>/dev/null; then
             echo "" >> "$config"
             echo "# AI DevOps API Keys (single source of truth)" >> "$config"
             echo "$source_line" >> "$config"
-            print_success "Added mcp-env.sh sourcing to $config"
+            print_success "Added credentials.sh sourcing to $config"
             ((updated++))
         fi
     done
@@ -171,18 +171,18 @@ set_api_key() {
     fi
     
     # Check if the env var already exists in the file
-    if grep -q "^export ${env_var}=" "$MCP_ENV_FILE" 2>/dev/null; then
+    if grep -q "^export ${env_var}=" "$CREDENTIALS_FILE" 2>/dev/null; then
         # Update existing entry
-        local tmp_file="${MCP_ENV_FILE}.tmp"
-        sed "s|^export ${env_var}=.*|export ${env_var}=\"${key}\"|" "$MCP_ENV_FILE" > "$tmp_file"
-        mv "$tmp_file" "$MCP_ENV_FILE"
-        chmod 600 "$MCP_ENV_FILE"
-        print_success "Updated $env_var in mcp-env.sh"
+        local tmp_file="${CREDENTIALS_FILE}.tmp"
+        sed "s|^export ${env_var}=.*|export ${env_var}=\"${key}\"|" "$CREDENTIALS_FILE" > "$tmp_file"
+        mv "$tmp_file" "$CREDENTIALS_FILE"
+        chmod 600 "$CREDENTIALS_FILE"
+        print_success "Updated $env_var in credentials.sh"
     else
         # Append new entry
-        echo "export ${env_var}=\"${key}\"" >> "$MCP_ENV_FILE"
-        chmod 600 "$MCP_ENV_FILE"
-        print_success "Added $env_var to mcp-env.sh"
+        echo "export ${env_var}=\"${key}\"" >> "$CREDENTIALS_FILE"
+        chmod 600 "$CREDENTIALS_FILE"
+        print_success "Added $env_var to credentials.sh"
     fi
     
     # Also export to current shell
@@ -207,7 +207,7 @@ get_api_key() {
         return 1
     fi
     
-    if [[ ! -f "$MCP_ENV_FILE" ]]; then
+    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
         print_warning "No API keys configured. Run '$0 setup' first."
         return 1
     fi
@@ -225,7 +225,7 @@ get_api_key() {
     
     # If not in env, try to extract from file
     if [[ -z "$key" ]]; then
-        key=$(grep "^export ${env_var}=" "$MCP_ENV_FILE" 2>/dev/null | sed 's/^export [^=]*="//' | sed 's/"$//')
+        key=$(grep "^export ${env_var}=" "$CREDENTIALS_FILE" 2>/dev/null | sed 's/^export [^=]*="//' | sed 's/"$//')
     fi
     
     if [[ -n "$key" ]]; then
@@ -240,16 +240,16 @@ get_api_key() {
 
 # List configured services (without showing keys)
 list_services() {
-    if [[ ! -f "$MCP_ENV_FILE" ]]; then
+    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
         print_info "No API keys configured"
         return 0
     fi
     
-    print_info "Configured API keys in mcp-env.sh:"
+    print_info "Configured API keys in credentials.sh:"
     echo ""
-    grep "^export " "$MCP_ENV_FILE" | sed 's/=.*//' | sed 's/export /  /' | sort
+    grep "^export " "$CREDENTIALS_FILE" | sed 's/=.*//' | sed 's/export /  /' | sort
     echo ""
-    print_info "File: $MCP_ENV_FILE"
+    print_info "File: $CREDENTIALS_FILE"
     
     return 0
 }
@@ -258,7 +258,7 @@ list_services() {
 show_help() {
     print_info "AI DevOps - Secure Local API Key Management"
     echo ""
-    print_info "Manages API keys in: $MCP_ENV_FILE"
+    print_info "Manages API keys in: $CREDENTIALS_FILE"
     print_info "This file is sourced by shell configs (zsh & bash) for all processes."
     echo ""
     print_info "Usage: $0 <command> [args]"

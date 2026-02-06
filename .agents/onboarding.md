@@ -504,7 +504,7 @@ All credentials are stored securely:
 
 | Location | Purpose | Permissions |
 |----------|---------|-------------|
-| `~/.config/aidevops/mcp-env.sh` | Primary credential store | 600 |
+| `~/.config/aidevops/credentials.sh` | Primary credential store | 600 |
 | `~/.config/coderabbit/api_key` | CodeRabbit token | 600 |
 | `configs/*-config.json` | Service-specific configs | 600, gitignored |
 
@@ -575,11 +575,11 @@ For new users, suggest this order based on their interests:
 ### Key not loading
 
 ```bash
-# Check if mcp-env.sh is sourced
-grep "mcp-env.sh" ~/.zshrc ~/.bashrc
+# Check if credentials.sh is sourced
+grep "credentials.sh" ~/.zshrc ~/.bashrc
 
 # Source manually
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 
 # Verify
 echo "${OPENAI_API_KEY:0:10}..."
@@ -599,7 +599,7 @@ opencode mcp list
 
 ```bash
 # Fix permissions
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 chmod 700 ~/.config/aidevops
 ```
 

@@ -2,7 +2,7 @@
   "_comments": {
     "note": "Ahrefs MCP configuration for different AI assistants",
     "api_key": "Get standard 40-char API key from https://ahrefs.com/api (JWT tokens do NOT work)",
-    "env_setup": "Store as AHREFS_API_KEY in ~/.config/aidevops/mcp-env.sh",
+    "env_setup": "Store as AHREFS_API_KEY in ~/.config/aidevops/credentials.sh",
     "important": "The @ahrefs/mcp package expects API_KEY env var, not AHREFS_API_KEY"
   },
   "opencode": {

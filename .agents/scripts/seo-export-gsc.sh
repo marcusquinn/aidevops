@@ -48,7 +48,7 @@ print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0;
 
 # Get access token from service account or environment
 get_access_token() {
-    source "$CONFIG_DIR/mcp-env.sh" 2>/dev/null || true
+    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
     
     if [[ -n "${GSC_ACCESS_TOKEN:-}" ]]; then
         echo "$GSC_ACCESS_TOKEN"
@@ -65,7 +65,7 @@ get_access_token() {
     fi
     
     print_error "GSC credentials not configured"
-    print_error "Set GOOGLE_APPLICATION_CREDENTIALS or GSC_ACCESS_TOKEN in ~/.config/aidevops/mcp-env.sh"
+    print_error "Set GOOGLE_APPLICATION_CREDENTIALS or GSC_ACCESS_TOKEN in ~/.config/aidevops/credentials.sh"
     return 1
 }
 
@@ -250,7 +250,7 @@ Output:
 
 Requirements:
     - GOOGLE_APPLICATION_CREDENTIALS pointing to service account JSON
-    - Or GSC_ACCESS_TOKEN set in ~/.config/aidevops/mcp-env.sh
+    - Or GSC_ACCESS_TOKEN set in ~/.config/aidevops/credentials.sh
     - Service account must have access to the GSC property
 
 EOF

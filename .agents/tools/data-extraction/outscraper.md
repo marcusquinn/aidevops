@@ -18,7 +18,7 @@ tools:
 
 - **Purpose**: Business intelligence extraction from Google Maps, Amazon, reviews, contacts
 - **Auth**: API key from <https://auth.outscraper.com/profile>
-- **Env Var**: `OUTSCRAPER_API_KEY` in `~/.config/aidevops/mcp-env.sh`
+- **Env Var**: `OUTSCRAPER_API_KEY` in `~/.config/aidevops/credentials.sh`
 - **API Base**: `https://api.app.outscraper.com`
 - **Docs**: <https://app.outscraper.com/api-docs>
 - **No MCP required** - uses curl directly
@@ -393,7 +393,7 @@ pip install outscraper-mcp-server
 
 ### 4. Configure Environment
 
-Add to `~/.config/aidevops/mcp-env.sh` (create if needed):
+Add to `~/.config/aidevops/credentials.sh` (create if needed):
 
 ```bash
 export OUTSCRAPER_API_KEY="your_api_key_here"
@@ -402,13 +402,13 @@ export OUTSCRAPER_API_KEY="your_api_key_here"
 Set permissions:
 
 ```bash
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 Source in your shell profile:
 
 ```bash
-echo 'source ~/.config/aidevops/mcp-env.sh' >> ~/.zshrc
+echo 'source ~/.config/aidevops/credentials.sh' >> ~/.zshrc
 source ~/.zshrc
 ```
 
@@ -896,7 +896,7 @@ The AI should:
 | Method | Location | Use Case |
 |--------|----------|----------|
 | Environment | `OUTSCRAPER_API_KEY` | Local development, CI/CD |
-| aidevops pattern | `~/.config/aidevops/mcp-env.sh` | Consistent with other services |
+| aidevops pattern | `~/.config/aidevops/credentials.sh` | Consistent with other services |
 | Per-config | `env` block in MCP config | Tool-specific isolation |
 
 **Security**: Never commit API keys. Use environment variables or secure vaults.

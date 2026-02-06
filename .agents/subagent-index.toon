@@ -47,7 +47,7 @@ tools/voice/,Voice AI - speech-to-speech pipeline with local and cloud GPU deplo
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
-tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden
+tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys
 tools/security/,Security tools - privacy filtering and scanning,privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title

@@ -123,7 +123,7 @@ install_mcp() {
             print_info "Get your standard 40-char API key from: https://ahrefs.com/api"
             print_info "Note: JWT-style tokens do NOT work - use the standard API key"
             print_info ""
-            print_info "Store in ~/.config/aidevops/mcp-env.sh:"
+            print_info "Store in ~/.config/aidevops/credentials.sh:"
             print_info "  export AHREFS_API_KEY=\"your_40_char_key\""
             print_info ""
             print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
@@ -256,7 +256,7 @@ install_mcp() {
             print_warning "DataForSEO MCP requires API credentials"
             print_info "Get credentials from: https://app.dataforseo.com/"
             print_info ""
-            print_info "Store in ~/.config/aidevops/mcp-env.sh:"
+            print_info "Store in ~/.config/aidevops/credentials.sh:"
             print_info "  export DATAFORSEO_USERNAME=\"your_username\""
             print_info "  export DATAFORSEO_PASSWORD=\"your_password\""
             print_info ""
@@ -267,7 +267,7 @@ install_mcp() {
             print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
             print_info '  "dataforseo": {'
             print_info '    "type": "local",'
-            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
+            print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
             print_info '    "enabled": true'
             print_info '  }'
             print_info ""
@@ -275,7 +275,7 @@ install_mcp() {
             print_info "Docs: https://docs.dataforseo.com/v3/"
             ;;
         # "serper" - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
-        # Get API key from https://serper.dev/ and set SERPER_API_KEY in mcp-env.sh
+        # Get API key from https://serper.dev/ and set SERPER_API_KEY in credentials.sh
         "unstract")
             print_info "Setting up Unstract self-hosted document processing platform..."
             print_info "This installs the full Unstract platform locally via Docker Compose"

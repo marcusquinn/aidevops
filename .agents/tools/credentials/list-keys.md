@@ -24,7 +24,7 @@ tools:
 - **Security**: Shows key names only, never exposes actual values
 
 **Key Sources** (checked in order):
-1. `~/.config/aidevops/mcp-env.sh` - Primary credential store (600 permissions)
+1. `~/.config/aidevops/credentials.sh` - Primary credential store (600 permissions)
 2. `~/.zshrc`, `~/.bashrc`, etc. - Shell config exports (credential patterns)
 3. Environment variables - Session-only keys matching `*_KEY`, `*_TOKEN`, `*_SECRET`, etc.
 4. `~/.config/coderabbit/api_key` - CodeRabbit CLI token
@@ -55,7 +55,7 @@ Example output:
 API Keys Available in Session
 =============================
 
-Source: ~/.config/aidevops/mcp-env.sh
+Source: ~/.config/aidevops/credentials.sh
   OPENAI_API_KEY          [loaded]
   ANTHROPIC_API_KEY       [loaded]
   CLOUDFLARE_API_KEY      [loaded]

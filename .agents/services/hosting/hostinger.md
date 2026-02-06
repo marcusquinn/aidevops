@@ -18,7 +18,7 @@ tools:
 
 - **Type**: Shared/VPS/Cloud hosting, budget-friendly
 - **API**: REST at `https://developers.hostinger.com`
-- **Auth**: Bearer token in `~/.config/aidevops/mcp-env.sh` as `HOSTINGER_API_TOKEN`
+- **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `HOSTINGER_API_TOKEN`
 - **SSH**: Port 65002, password auth (no SSH keys on shared)
 - **Panel**: Custom hPanel
 - **No MCP required** - uses curl for API, sshpass for SSH
