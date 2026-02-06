@@ -79,8 +79,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Added 3 commands to supervisor-helper.sh: auto-pickup (scans TODO.md for #auto-dispatch tags and Dispatch Queue section), cron (install/uninstall/status for cron-based pulse scheduling, default */5), watch (fswatch-based TODO.md watcher as real-time alternative). Integrated auto-pickup into pulse cycle as Phase 0. Zero ShellCheck violations. PR #381 merged.
   - [x] t128.6 Memory and self-assessment integration ~1h actual:30m (ai:30m) blocked-by:t128.4 started:2026-02-06T05:00Z completed:2026-02-06
     - Notes: Added recall_task_memories() (queries memory before dispatch, injects into worker prompt), store_failure_pattern() (stores blocked/failed outcomes via --auto), store_success_pattern() (records completions), run_batch_retrospective() (stats + recurring error analysis on batch completion). New commands: recall, retrospective. Wired into pulse cycle. Zero ShellCheck violations. PR #380 merged.
-  - [ ] t128.7 Integration testing with t083-t094 batch ~1h blocked-by:t128.6
-    - Notes: Dispatch 12 SEO subagent tasks with concurrency 4. Verify full lifecycle: worktree creation, execution, retry, TODO update, worktree cleanup.
+  - [ ] t128.7 Integration testing with t083-t094 batch ~1h blocked-by:t128.6 started:2026-02-06T05:32Z
+    - Notes: Dispatch 12 SEO subagent tasks with concurrency 4. Verify full lifecycle: worktree creation, execution, retry, TODO update, worktree cleanup. PR #384. Found and fixed 10 bugs: bash 3.2 compat, process orphan cleanup, evaluation false positives, backend error detection, model passthrough, stuck evaluating, macOS audio alerts, health checks.
+  - [ ] t128.8 Supervisor post-PR lifecycle (merge, postflight, deploy) ~4h blocked-by:t128.7
+    - Notes: Workers exit after PR creation (context limit). Supervisor should detect PR-complete tasks and handle remaining stages: wait for CI, merge (squash), postflight, deploy. Either dispatch a lightweight follow-up worker or handle in pulse cycle directly.
+  - [ ] t128.9 Agent-review and session-review integration ~2h blocked-by:t128.7
+    - Notes: After batch completion, run agent-review on created subagents and session-review for learnings. Wire build-agent review into the full-loop quality gate. Store insights via memory-helper.sh.
+  - [ ] t128.10 Automatic release at batch milestones ~2h blocked-by:t128.8
+    - Notes: Trigger version-manager.sh release when batch reaches milestones (e.g., all tasks complete, or N tasks merged). Configurable per-batch via release_on_complete flag.
 - [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
   - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
