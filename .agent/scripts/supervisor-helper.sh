@@ -3593,19 +3593,20 @@ send_task_notification() {
     fi
 
     # macOS audio alerts (say + afplay bypass notification permissions)
+    # nohup ensures say completes even if parent shell exits
     if [[ "$(uname)" == "Darwin" ]]; then
         case "$event_type" in
             complete)
-                afplay /System/Library/Sounds/Glass.aiff 2>/dev/null &
-                say "$task_id complete" 2>/dev/null &
+                nohup afplay /System/Library/Sounds/Glass.aiff &>/dev/null &
+                nohup say "$task_id complete" &>/dev/null &
                 ;;
             blocked)
-                afplay /System/Library/Sounds/Basso.aiff 2>/dev/null &
-                say "$task_id blocked. Needs attention." 2>/dev/null &
+                nohup afplay /System/Library/Sounds/Basso.aiff &>/dev/null &
+                nohup say "$task_id blocked. Needs attention." &>/dev/null &
                 ;;
             failed)
-                afplay /System/Library/Sounds/Sosumi.aiff 2>/dev/null &
-                say "$task_id failed. Needs attention." 2>/dev/null &
+                nohup afplay /System/Library/Sounds/Sosumi.aiff &>/dev/null &
+                nohup say "$task_id failed. Needs attention." &>/dev/null &
                 ;;
         esac
     fi
@@ -3636,14 +3637,14 @@ notify_batch_progress() {
 
     if [[ "$completed" -eq "$total" && "$failed" -eq 0 ]]; then
         message="All $total tasks complete!"
-        afplay /System/Library/Sounds/Hero.aiff 2>/dev/null &
-        say "Batch complete. All $total tasks finished successfully." 2>/dev/null &
+        nohup afplay /System/Library/Sounds/Hero.aiff &>/dev/null &
+        nohup say "Batch complete. All $total tasks finished successfully." &>/dev/null &
     elif [[ "$remaining" -eq 0 ]]; then
         message="Batch finished: $message"
-        afplay /System/Library/Sounds/Purr.aiff 2>/dev/null &
-        say "Batch finished. $completed of $total done. $failed failed." 2>/dev/null &
+        nohup afplay /System/Library/Sounds/Purr.aiff &>/dev/null &
+        nohup say "Batch finished. $completed of $total done. $failed failed." &>/dev/null &
     else
-        afplay /System/Library/Sounds/Pop.aiff 2>/dev/null &
+        nohup afplay /System/Library/Sounds/Pop.aiff &>/dev/null &
     fi
 
     return 0
