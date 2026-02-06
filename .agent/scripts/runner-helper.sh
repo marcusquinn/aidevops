@@ -37,7 +37,6 @@ set -euo pipefail
 # Configuration
 readonly RUNNERS_DIR="${AIDEVOPS_RUNNERS_DIR:-$HOME/.aidevops/.agent-workspace/runners}"
 readonly MEMORY_HELPER="$HOME/.aidevops/agents/scripts/memory-helper.sh"
-# shellcheck disable=SC2034  # MAIL_HELPER reserved for mailbox integration
 readonly MAIL_HELPER="$HOME/.aidevops/agents/scripts/mail-helper.sh"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
@@ -59,6 +58,63 @@ log_info() { echo -e "${BLUE}[RUNNER]${NC} $*"; }
 log_success() { echo -e "${GREEN}[RUNNER]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[RUNNER]${NC} $*"; }
 log_error() { echo -e "${RED}[RUNNER]${NC} $*" >&2; }
+
+#######################################
+# Mailbox bookend: check inbox before work
+# Registers agent, checks for unread messages,
+# returns context to prepend to prompt
+#######################################
+mailbox_before_run() {
+    local name="$1"
+
+    if [[ ! -x "$MAIL_HELPER" ]]; then
+        return 0
+    fi
+
+    # Register this runner as active
+    AIDEVOPS_AGENT_ID="$name" "$MAIL_HELPER" register \
+        --agent "$name" --role worker 2>/dev/null || true
+
+    # Check for unread messages
+    local unread_messages
+    unread_messages=$(AIDEVOPS_AGENT_ID="$name" "$MAIL_HELPER" check --unread-only 2>/dev/null)
+
+    local unread_count
+    unread_count=$(echo "$unread_messages" | grep -o '[0-9]* unread' | grep -o '[0-9]*' || echo "0")
+
+    if [[ "$unread_count" -gt 0 ]]; then
+        log_info "Mailbox: $unread_count unread message(s) for $name"
+        # Return the messages as context (TOON format, parseable by the agent)
+        echo "$unread_messages"
+    fi
+}
+
+#######################################
+# Mailbox bookend: report status after work
+# Sends status report and deregisters
+#######################################
+mailbox_after_run() {
+    local name="$1"
+    local run_status="$2"
+    local duration="$3"
+    local run_id="$4"
+
+    if [[ ! -x "$MAIL_HELPER" ]]; then
+        return 0
+    fi
+
+    # Send status report
+    AIDEVOPS_AGENT_ID="$name" "$MAIL_HELPER" send \
+        --to coordinator \
+        --type status_report \
+        --payload "Runner $name completed ($run_status, ${duration}s, $run_id)" \
+        2>/dev/null || true
+
+    # Deregister (mark inactive)
+    AIDEVOPS_AGENT_ID="$name" "$MAIL_HELPER" deregister --agent "$name" 2>/dev/null || true
+
+    log_info "Mailbox: status report sent, $name deregistered"
+}
 
 #######################################
 # Check if jq is available
@@ -347,6 +403,10 @@ cmd_run() {
         cmd_args+=("--format" "$format")
     fi
 
+    # Mailbox bookend: check inbox before work
+    local mailbox_context
+    mailbox_context=$(mailbox_before_run "$name" 2>/dev/null || true)
+
     # Build the full prompt with runner context
     local agents_md="$dir/AGENTS.md"
     local full_prompt
@@ -362,6 +422,18 @@ cmd_run() {
 $prompt"
     else
         full_prompt="$prompt"
+    fi
+
+    # Prepend mailbox context if there are unread messages
+    if [[ -n "$mailbox_context" ]] && echo "$mailbox_context" | grep -q '[1-9].* unread'; then
+        full_prompt="## Mailbox (unread messages from other agents)
+
+$mailbox_context
+
+---
+
+$full_prompt"
+        log_info "Prepended mailbox context to prompt"
     fi
 
     cmd_args+=("$full_prompt")
@@ -427,6 +499,9 @@ $prompt"
     else
         log_error "Run failed after ${duration}s (exit code: $exit_code)"
     fi
+
+    # Mailbox bookend: report status after work
+    mailbox_after_run "$name" "$status" "$duration" "$run_id" 2>/dev/null || true
 
     return "$exit_code"
 }

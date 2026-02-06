@@ -137,13 +137,17 @@ Want me to remember this? /remember {concise description}
 
 ## Inter-Agent Mailbox
 
-TOON-based async communication between parallel agent sessions.
+SQLite-backed async communication between parallel agent sessions.
 
-**CLI**: `mail-helper.sh [send|check|read|archive|prune|status|register|deregister|agents]`
+**CLI**: `mail-helper.sh [send|check|read|archive|prune|status|register|deregister|agents|migrate]`
 
 **Message types**: task_dispatch, status_report, discovery, request, broadcast
 
-**Lifecycle**: send → check → read → archive → prune (7-day, with memory capture)
+**Lifecycle**: send → check → read → auto-archive on prune (7-day, with memory capture)
+
+**Runner integration**: Runners automatically check inbox before work and send status reports after. Unread messages are prepended as context to the runner's prompt.
+
+**Migration**: Run `mail-helper.sh migrate` to migrate existing TOON files to SQLite (backs up originals).
 
 ## MCP On-Demand Loading
 
@@ -264,7 +268,7 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 ~/.aidevops/.agent-workspace/
 ├── work/[project]/    # Persistent project files
 ├── tmp/session-*/     # Temporary session files
-├── mail/              # Inter-agent mailbox (TOON)
+├── mail/              # Inter-agent mailbox (SQLite: mailbox.db)
 └── memory/            # Cross-session patterns (SQLite FTS5)
 ```
 
