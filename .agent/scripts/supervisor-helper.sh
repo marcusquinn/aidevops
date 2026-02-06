@@ -13,7 +13,8 @@
 #   supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
 #   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
 #   supervisor-helper.sh worker-status <task_id>       Check worker process status
-#   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
+#   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees + processes
+#   supervisor-helper.sh kill-workers [--dry-run]      Kill orphaned worker processes (emergency)
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
 #   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
@@ -1278,6 +1279,173 @@ cleanup_task_worktree() {
 }
 
 #######################################
+# Kill a worker's process tree (PID + all descendants)
+# Called when a worker finishes to prevent orphaned processes
+#######################################
+cleanup_worker_processes() {
+    local task_id="$1"
+
+    local pid_file="$SUPERVISOR_DIR/pids/${task_id}.pid"
+    if [[ ! -f "$pid_file" ]]; then
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$pid_file")
+
+    # Kill the entire process group if possible
+    # First kill descendants (children, grandchildren), then the worker itself
+    local killed=0
+    if kill -0 "$pid" 2>/dev/null; then
+        # Recursively kill all descendants
+        _kill_descendants "$pid"
+        # Kill the worker process itself
+        kill "$pid" 2>/dev/null && killed=$((killed + 1))
+        # Wait briefly for cleanup
+        sleep 1
+        # Force kill if still alive
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    fi
+
+    rm -f "$pid_file"
+
+    if [[ "$killed" -gt 0 ]]; then
+        log_info "Cleaned up worker process for $task_id (PID: $pid)"
+    fi
+
+    return 0
+}
+
+#######################################
+# Recursively kill all descendant processes of a PID
+#######################################
+_kill_descendants() {
+    local parent_pid="$1"
+    local children
+    children=$(pgrep -P "$parent_pid" 2>/dev/null) || true
+
+    if [[ -n "$children" ]]; then
+        for child in $children; do
+            _kill_descendants "$child"
+            kill "$child" 2>/dev/null || true
+        done
+    fi
+
+    return 0
+}
+
+#######################################
+# List all descendant PIDs of a process (stdout, space-separated)
+# Used to build protection lists without killing anything
+#######################################
+_list_descendants() {
+    local parent_pid="$1"
+    local children
+    children=$(pgrep -P "$parent_pid" 2>/dev/null) || true
+
+    for child in $children; do
+        echo "$child"
+        _list_descendants "$child"
+    done
+
+    return 0
+}
+
+#######################################
+# Kill all orphaned worker processes (emergency cleanup)
+# Finds opencode/claude processes with PPID=1 that match supervisor patterns
+#######################################
+cmd_kill_workers() {
+    local dry_run=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    ensure_db
+
+    # Collect PIDs to protect: active workers still in running/dispatched state
+    local protected_pattern=""
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local pid
+            pid=$(cat "$pid_file")
+            local task_id
+            task_id=$(basename "$pid_file" .pid)
+
+            # Check if task is still active
+            local task_status
+            task_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+
+            if [[ "$task_status" == "running" || "$task_status" == "dispatched" ]] && kill -0 "$pid" 2>/dev/null; then
+                protected_pattern="${protected_pattern}|${pid}"
+                # Also protect all descendants (children, grandchildren, MCP servers)
+                local descendants
+                descendants=$(_list_descendants "$pid")
+                for desc in $descendants; do
+                    protected_pattern="${protected_pattern}|${desc}"
+                done
+            fi
+        done
+    fi
+
+    # Also protect the calling process chain (this terminal session)
+    local self_pid=$$
+    while [[ "$self_pid" -gt 1 ]] 2>/dev/null; do
+        protected_pattern="${protected_pattern}|${self_pid}"
+        self_pid=$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')
+        [[ -z "$self_pid" ]] && break
+    done
+    protected_pattern="${protected_pattern#|}"
+
+    log_info "Protected PIDs (active workers + self): $(echo "$protected_pattern" | tr '|' ' ' | wc -w | tr -d ' ') processes"
+
+    # Find orphaned opencode/claude processes (PPID=1, not in any terminal session)
+    local orphan_count=0
+    local killed_count=0
+
+    while read -r pid; do
+        local ppid
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [[ "$ppid" != "1" ]] && continue
+
+        # Check not in protected list
+        if [[ -n "$protected_pattern" ]] && echo "|${protected_pattern}|" | grep -q "|${pid}|"; then
+            continue
+        fi
+
+        orphan_count=$((orphan_count + 1))
+
+        if [[ "$dry_run" == "true" ]]; then
+            local cmd_info
+            cmd_info=$(ps -o args= -p "$pid" 2>/dev/null | head -c 80)
+            log_info "  [dry-run] Would kill PID $pid: $cmd_info"
+        else
+            _kill_descendants "$pid"
+            kill "$pid" 2>/dev/null && killed_count=$((killed_count + 1))
+        fi
+    done < <(pgrep -f 'opencode|claude' 2>/dev/null || true)
+
+    if [[ "$dry_run" == "true" ]]; then
+        log_info "Found $orphan_count orphaned worker processes (dry-run, none killed)"
+    else
+        if [[ "$killed_count" -gt 0 ]]; then
+            log_success "Killed $killed_count orphaned worker processes"
+        else
+            log_info "No orphaned worker processes found"
+        fi
+    fi
+
+    return 0
+}
+
+#######################################
 # Dispatch a single task
 # Creates worktree, starts worker, updates DB
 #######################################
@@ -1579,13 +1747,22 @@ extract_log_metadata() {
     exit_line=$(grep '^EXIT:' "$log_file" 2>/dev/null | tail -1 || true)
     echo "exit_code=${exit_line#EXIT:}"
 
-    # Error patterns (count occurrences for severity assessment)
+    # Error patterns - search only the LAST 20 lines to avoid false positives
+    # from generated content. Worker logs (opencode JSON) embed tool outputs
+    # that may discuss auth, errors, conflicts as documentation content.
+    # Only the final lines contain actual execution status/errors.
+    local log_tail_file
+    log_tail_file=$(mktemp)
+    tail -20 "$log_file" > "$log_tail_file" 2>/dev/null || true
+
     local rate_limit_count=0 auth_error_count=0 conflict_count=0 timeout_count=0 oom_count=0
-    rate_limit_count=$(grep -ci 'rate.limit\|429\|too many requests' "$log_file" 2>/dev/null || echo 0)
-    auth_error_count=$(grep -ci 'permission denied\|unauthorized\|403\|401' "$log_file" 2>/dev/null || echo 0)
-    conflict_count=$(grep -ci 'merge conflict\|CONFLICT\|conflict marker' "$log_file" 2>/dev/null || echo 0)
-    timeout_count=$(grep -ci 'timeout\|timed out\|ETIMEDOUT' "$log_file" 2>/dev/null || echo 0)
-    oom_count=$(grep -ci 'out of memory\|OOM\|heap.*exceeded\|ENOMEM' "$log_file" 2>/dev/null || echo 0)
+    rate_limit_count=$(grep -ci 'rate.limit\|429\|too many requests' "$log_tail_file" 2>/dev/null || echo 0)
+    auth_error_count=$(grep -ci 'permission denied\|unauthorized\|403\|401' "$log_tail_file" 2>/dev/null || echo 0)
+    conflict_count=$(grep -ci 'merge conflict\|CONFLICT\|conflict marker' "$log_tail_file" 2>/dev/null || echo 0)
+    timeout_count=$(grep -ci 'timeout\|timed out\|ETIMEDOUT' "$log_tail_file" 2>/dev/null || echo 0)
+    oom_count=$(grep -ci 'out of memory\|OOM\|heap.*exceeded\|ENOMEM' "$log_tail_file" 2>/dev/null || echo 0)
+
+    rm -f "$log_tail_file"
 
     echo "rate_limit_count=$rate_limit_count"
     echo "auth_error_count=$auth_error_count"
@@ -1641,66 +1818,101 @@ evaluate_worker() {
 
     # --- Tier 1: Deterministic signal detection ---
 
-    # Parse structured metadata from log
-    local -A meta=()
-    while IFS='=' read -r key value; do
-        meta["$key"]="$value"
-    done < <(extract_log_metadata "$tlog")
+    # Parse structured metadata from log (bash 3.2 compatible - no associative arrays)
+    local meta_output
+    meta_output=$(extract_log_metadata "$tlog")
+
+    # Helper: extract a value from key=value metadata output
+    _meta_get() {
+        local key="$1" default="${2:-}"
+        local val
+        val=$(echo "$meta_output" | grep "^${key}=" | head -1 | cut -d= -f2-)
+        echo "${val:-$default}"
+    }
+
+    local meta_signal meta_pr_url meta_exit_code
+    meta_signal=$(_meta_get "signal" "none")
+    meta_pr_url=$(_meta_get "pr_url" "")
+    meta_exit_code=$(_meta_get "exit_code" "")
+
+    local meta_rate_limit_count meta_auth_error_count meta_conflict_count
+    local meta_timeout_count meta_oom_count
+    meta_rate_limit_count=$(_meta_get "rate_limit_count" "0")
+    meta_auth_error_count=$(_meta_get "auth_error_count" "0")
+    meta_conflict_count=$(_meta_get "conflict_count" "0")
+    meta_timeout_count=$(_meta_get "timeout_count" "0")
+    meta_oom_count=$(_meta_get "oom_count" "0")
 
     # FULL_LOOP_COMPLETE = definitive success
-    if [[ "${meta[signal]:-}" == "FULL_LOOP_COMPLETE" ]]; then
-        echo "complete:${meta[pr_url]:-no_pr}"
+    if [[ "$meta_signal" == "FULL_LOOP_COMPLETE" ]]; then
+        echo "complete:${meta_pr_url:-no_pr}"
         return 0
     fi
 
     # TASK_COMPLETE with clean exit = partial success (PR phase may have failed)
-    if [[ "${meta[signal]:-}" == "TASK_COMPLETE" && "${meta[exit_code]:-}" == "0" ]]; then
+    if [[ "$meta_signal" == "TASK_COMPLETE" && "$meta_exit_code" == "0" ]]; then
         echo "complete:task_only"
         return 0
     fi
 
-    # --- Tier 2: Heuristic error pattern matching ---
-
-    # Auth errors are always blocking (human must fix credentials)
-    if [[ "${meta[auth_error_count]:-0}" -gt 0 ]]; then
-        echo "blocked:auth_error"
+    # PR URL with clean exit = task completed (PR was created successfully)
+    # This takes priority over heuristic error patterns because log content
+    # may discuss auth/errors as part of the task itself (e.g., creating an
+    # API integration subagent that documents authentication flows)
+    if [[ -n "$meta_pr_url" && "$meta_exit_code" == "0" ]]; then
+        echo "complete:${meta_pr_url}"
         return 0
     fi
 
-    # Merge conflicts require human resolution
-    if [[ "${meta[conflict_count]:-0}" -gt 0 ]]; then
-        echo "blocked:merge_conflict"
-        return 0
-    fi
-
-    # OOM is infrastructure - blocking
-    if [[ "${meta[oom_count]:-0}" -gt 0 ]]; then
-        echo "blocked:out_of_memory"
-        return 0
-    fi
-
-    # Rate limiting is transient - retry with backoff
-    if [[ "${meta[rate_limit_count]:-0}" -gt 0 ]]; then
-        echo "retry:rate_limited"
-        return 0
-    fi
-
-    # Timeout is transient - retry
-    if [[ "${meta[timeout_count]:-0}" -gt 0 ]]; then
-        echo "retry:timeout"
-        return 0
-    fi
-
-    # Clean exit with no completion signal = likely interrupted or incomplete
-    if [[ "${meta[exit_code]:-}" == "0" && "${meta[signal]:-}" == "none" ]]; then
+    # Clean exit with no completion signal and no PR = likely incomplete
+    # but NOT an error - the agent finished cleanly, just didn't emit a signal.
+    # This should retry (agent may have run out of context or hit a soft limit).
+    if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
         echo "retry:clean_exit_no_signal"
         return 0
     fi
 
+    # --- Tier 2: Heuristic error pattern matching ---
+    # ONLY applied when exit code is non-zero or missing.
+    # When exit=0, the agent finished cleanly - any "error" strings in the log
+    # are content (e.g., subagents documenting auth flows), not real failures.
+
+    if [[ "$meta_exit_code" != "0" ]]; then
+        # Auth errors are always blocking (human must fix credentials)
+        if [[ "$meta_auth_error_count" -gt 0 ]]; then
+            echo "blocked:auth_error"
+            return 0
+        fi
+
+        # Merge conflicts require human resolution
+        if [[ "$meta_conflict_count" -gt 0 ]]; then
+            echo "blocked:merge_conflict"
+            return 0
+        fi
+
+        # OOM is infrastructure - blocking
+        if [[ "$meta_oom_count" -gt 0 ]]; then
+            echo "blocked:out_of_memory"
+            return 0
+        fi
+
+        # Rate limiting is transient - retry with backoff
+        if [[ "$meta_rate_limit_count" -gt 0 ]]; then
+            echo "retry:rate_limited"
+            return 0
+        fi
+
+        # Timeout is transient - retry
+        if [[ "$meta_timeout_count" -gt 0 ]]; then
+            echo "retry:timeout"
+            return 0
+        fi
+    fi
+
     # Non-zero exit with known code
-    if [[ -n "${meta[exit_code]:-}" && "${meta[exit_code]:-}" != "0" ]]; then
+    if [[ -n "$meta_exit_code" && "$meta_exit_code" != "0" ]]; then
         # Exit code 130 = SIGINT (Ctrl+C), 137 = SIGKILL, 143 = SIGTERM
-        case "${meta[exit_code]:-}" in
+        case "$meta_exit_code" in
             130) echo "retry:interrupted_sigint"; return 0 ;;
             137) echo "retry:killed_sigkill"; return 0 ;;
             143) echo "retry:terminated_sigterm"; return 0 ;;
@@ -2633,6 +2845,7 @@ cmd_pulse() {
 
     local completed_count=0
     local failed_count=0
+    local dispatched_count=0
 
     if [[ -n "$running_tasks" ]]; then
         while IFS='|' read -r tid tlog; do
@@ -2673,8 +2886,8 @@ cmd_pulse() {
                     log_success "  $tid: COMPLETE ($outcome_detail)"
                     cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>/dev/null || true
                     completed_count=$((completed_count + 1))
-                    # Clean up PID file
-                    rm -f "$pid_file"
+                    # Clean up worker process tree and PID file (t128.7)
+                    cleanup_worker_processes "$tid"
                     # Auto-update TODO.md and send notification (t128.4)
                     update_todo_on_complete "$tid" 2>/dev/null || true
                     send_task_notification "$tid" "complete" "$outcome_detail" 2>/dev/null || true
@@ -2684,7 +2897,8 @@ cmd_pulse() {
                 retry)
                     log_warn "  $tid: RETRY ($outcome_detail)"
                     cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>/dev/null || true
-                    rm -f "$pid_file"
+                    # Clean up worker process tree before re-prompt (t128.7)
+                    cleanup_worker_processes "$tid"
                     # Store failure pattern in memory (t128.6)
                     store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>/dev/null || true
                     # Re-prompt in existing worktree (continues context)
@@ -2720,7 +2934,8 @@ cmd_pulse() {
                 blocked)
                     log_warn "  $tid: BLOCKED ($outcome_detail)"
                     cmd_transition "$tid" "blocked" --error "$outcome_detail" 2>/dev/null || true
-                    rm -f "$pid_file"
+                    # Clean up worker process tree and PID file (t128.7)
+                    cleanup_worker_processes "$tid"
                     # Auto-update TODO.md and send notification (t128.4)
                     update_todo_on_blocked "$tid" "$outcome_detail" 2>/dev/null || true
                     send_task_notification "$tid" "blocked" "$outcome_detail" 2>/dev/null || true
@@ -2731,7 +2946,8 @@ cmd_pulse() {
                     log_error "  $tid: FAILED ($outcome_detail)"
                     cmd_transition "$tid" "failed" --error "$outcome_detail" 2>/dev/null || true
                     failed_count=$((failed_count + 1))
-                    rm -f "$pid_file"
+                    # Clean up worker process tree and PID file (t128.7)
+                    cleanup_worker_processes "$tid"
                     # Auto-update TODO.md and send notification (t128.4)
                     update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>/dev/null || true
                     send_task_notification "$tid" "failed" "$outcome_detail" 2>/dev/null || true
@@ -2743,7 +2959,6 @@ cmd_pulse() {
     fi
 
     # Phase 2: Dispatch queued tasks up to concurrency limit
-    local dispatched_count=0
 
     if [[ -n "$batch_id" ]]; then
         local next_tasks
@@ -2882,29 +3097,58 @@ cmd_cleanup() {
         fi
     done <<< "$terminal_tasks"
 
-    # Also clean up stale PID files
+    # Clean up worker processes and stale PID files (t128.7)
+    local process_cleaned=0
     if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
-        local stale_pids=0
         for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
             [[ -f "$pid_file" ]] || continue
+            local task_id_from_pid
+            task_id_from_pid=$(basename "$pid_file" .pid)
             local pid
             pid=$(cat "$pid_file")
-            if ! kill -0 "$pid" 2>/dev/null; then
-                if [[ "$dry_run" == "true" ]]; then
-                    log_info "  [dry-run] Would remove stale PID: $pid_file"
-                else
-                    rm -f "$pid_file"
-                    stale_pids=$((stale_pids + 1))
-                fi
-            fi
+
+            # Check task state - only clean up terminal-state tasks
+            local task_state
+            task_state=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id_from_pid")';" 2>/dev/null || echo "unknown")
+
+            case "$task_state" in
+                complete|failed|cancelled|blocked)
+                    if [[ "$dry_run" == "true" ]]; then
+                        local alive_status="dead"
+                        kill -0 "$pid" 2>/dev/null && alive_status="alive"
+                        log_info "  [dry-run] Would clean up $task_id_from_pid process tree (PID: $pid, $alive_status)"
+                    else
+                        cleanup_worker_processes "$task_id_from_pid"
+                        process_cleaned=$((process_cleaned + 1))
+                    fi
+                    ;;
+                running|dispatched)
+                    # Active task - check if PID is actually dead (stale)
+                    if ! kill -0 "$pid" 2>/dev/null; then
+                        if [[ "$dry_run" == "true" ]]; then
+                            log_info "  [dry-run] Would remove stale PID for active task $task_id_from_pid"
+                        else
+                            rm -f "$pid_file"
+                            log_warn "  Removed stale PID file for $task_id_from_pid (task still $task_state but process dead)"
+                        fi
+                    fi
+                    ;;
+                *)
+                    # Unknown task or not in DB - clean up if process is dead
+                    if ! kill -0 "$pid" 2>/dev/null; then
+                        if [[ "$dry_run" == "true" ]]; then
+                            log_info "  [dry-run] Would remove orphaned PID: $pid_file"
+                        else
+                            rm -f "$pid_file"
+                        fi
+                    fi
+                    ;;
+            esac
         done
-        if [[ "$stale_pids" -gt 0 ]]; then
-            log_info "Removed $stale_pids stale PID files"
-        fi
     fi
 
     if [[ "$dry_run" == "false" ]]; then
-        log_success "Cleaned up $cleaned worktrees"
+        log_success "Cleaned up $cleaned worktrees, $process_cleaned worker processes"
     fi
 
     return 0
@@ -4059,6 +4303,7 @@ main() {
         pr-merge) cmd_pr_merge "$@" ;;
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
+        kill-workers) cmd_kill_workers "$@" ;;
         update-todo) cmd_update_todo "$@" ;;
         notify) cmd_notify "$@" ;;
         auto-pickup) cmd_auto_pickup "$@" ;;
