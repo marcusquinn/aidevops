@@ -255,7 +255,7 @@ cmd_check() {
             echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name"
             echo "  Current: ${current_commit:0:7}"
             echo "  Latest:  ${latest_commit:0:7}"
-            echo "  Run: add-skill-helper.sh add $upstream_url --force"
+            echo "  Run: aidevops skill update $name"
             echo ""
             ((updates_available++)) || true
             results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"$current_commit\",\"latest\":\"$latest_commit\"}")

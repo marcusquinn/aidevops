@@ -472,7 +472,21 @@ aidevops skill scan [name]         # Security scan skills (Cisco Skill Scanner)
 aidevops skill remove <name>       # Remove an imported skill
 ```
 
-Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream tracking for update detection. Imported skills are automatically security-scanned using [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) when installed (CRITICAL/HIGH findings block import). Telemetry is disabled - no data is sent to third parties.
+Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with upstream tracking for update detection.
+
+**Security Scanning:**
+
+Imported skills are automatically security-scanned using [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) when installed. Scanning runs on both initial import and updates -- pulling a new version of a skill triggers the same security checks as the first import. CRITICAL/HIGH findings block the operation; MEDIUM/LOW findings warn but allow. Telemetry is disabled - no data is sent to third parties.
+
+| Scenario | Security scan runs? | CRITICAL/HIGH blocks? |
+|----------|--------------------|-----------------------|
+| `aidevops skill add <source>` | Yes | Yes |
+| `aidevops skill update [name]` | Yes | Yes |
+| `aidevops skill add <source> --force` | Yes | Yes |
+| `aidevops skill add <source> --skip-security` | Yes (reports only) | No (warns) |
+| `aidevops skill scan [name]` | Yes (standalone) | Report only |
+
+The `--force` flag only controls file overwrite behavior (replacing an existing skill without prompting). To bypass security blocking, use `--skip-security` explicitly -- this separation ensures that routine updates and re-imports never silently skip security checks.
 
 **Browse community skills:** [skills.sh](https://skills.sh) | [ClawdHub](https://clawdhub.com) | **Specification:** [agentskills.io](https://agentskills.io)
 

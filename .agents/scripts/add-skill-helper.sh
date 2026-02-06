@@ -6,7 +6,7 @@
 # format, handle conflicts, and track upstream sources for update detection.
 #
 # Usage:
-#   add-skill-helper.sh add <url|owner/repo|clawdhub:slug> [--name <name>] [--force]
+#   add-skill-helper.sh add <url|owner/repo|clawdhub:slug> [--name <name>] [--force] [--skip-security]
 #   add-skill-helper.sh list
 #   add-skill-helper.sh check-updates
 #   add-skill-helper.sh remove <name>
@@ -76,6 +76,7 @@ COMMANDS:
 OPTIONS:
     --name <name>           Override the skill name
     --force                 Overwrite existing skill without prompting
+    --skip-security         Bypass security scan (use with caution)
     --dry-run               Show what would be done without making changes
 
 EXAMPLES:
@@ -486,7 +487,7 @@ register_skill() {
 scan_skill_security() {
     local scan_path="$1"
     local skill_name="$2"
-    local force="${3:-false}"
+    local skip_security="${3:-false}"
     
     # Determine scanner command
     local scanner_cmd=""
@@ -531,10 +532,10 @@ scan_skill_security() {
     echo "$scan_output" | jq -r '.findings[]? | "  [\(.severity)] \(.rule_id): \(.description // "No description")"' 2>/dev/null || true
     echo ""
     
-    # Block on CRITICAL/HIGH unless --force
+    # Block on CRITICAL/HIGH unless --skip-security
     if [[ "$critical_count" -gt 0 || "$high_count" -gt 0 ]]; then
-        if [[ "$force" == true ]]; then
-            log_warning "CRITICAL/HIGH findings detected but --force specified, proceeding"
+        if [[ "$skip_security" == true ]]; then
+            log_warning "CRITICAL/HIGH findings detected but --skip-security specified, proceeding"
             return 0
         fi
         
@@ -548,12 +549,12 @@ scan_skill_security() {
         echo ""
         echo "Options:"
         echo "  1. Cancel import (recommended)"
-        echo "  2. Import anyway (--force)"
+        echo "  2. Import anyway (--skip-security)"
         echo ""
         
         # In non-interactive mode (piped), block by default
         if [[ ! -t 0 ]]; then
-            log_error "Import blocked due to security findings (use --force to override)"
+            log_error "Import blocked due to security findings (use --skip-security to override)"
             return 1
         fi
         
@@ -586,6 +587,7 @@ cmd_add() {
     local custom_name=""
     local force=false
     local dry_run=false
+    local skip_security=false
     
     # Parse options using named variable for clarity (S7679)
     local opt
@@ -598,6 +600,10 @@ cmd_add() {
                 ;;
             --force)
                 force=true
+                shift
+                ;;
+            --skip-security)
+                skip_security=true
                 shift
                 ;;
             --dry-run)
@@ -633,7 +639,7 @@ cmd_add() {
     fi
     
     if [[ "$is_clawdhub" == true ]]; then
-        cmd_add_clawdhub "$clawdhub_slug" "$custom_name" "$force" "$dry_run"
+        cmd_add_clawdhub "$clawdhub_slug" "$custom_name" "$force" "$dry_run" "$skip_security"
         return $?
     fi
     
@@ -856,7 +862,7 @@ cmd_add() {
     done
     
     # Security scan before registration (scan the source directory which has full context)
-    if ! scan_skill_security "$skill_source_dir" "$skill_name" "$force"; then
+    if ! scan_skill_security "$skill_source_dir" "$skill_name" "$skip_security"; then
         # Clean up the partially imported files
         rm -f "$target_file"
         local skill_resource_dir=".agents/${target_path}"
@@ -892,6 +898,7 @@ cmd_add_clawdhub() {
     local custom_name="$2"
     local force="$3"
     local dry_run="$4"
+    local skip_security="${5:-false}"
     
     if [[ -z "$slug" ]]; then
         log_error "ClawdHub slug required"
@@ -1028,7 +1035,7 @@ EOF
     log_success "Created: $target_file"
     
     # Security scan before registration
-    if ! scan_skill_security "$fetch_dir" "$skill_name" "$force"; then
+    if ! scan_skill_security "$fetch_dir" "$skill_name" "$skip_security"; then
         # Clean up the partially imported files
         rm -f "$target_file"
         rm -rf "$fetch_dir"
@@ -1131,7 +1138,7 @@ cmd_check_updates() {
             echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name"
             echo "  Current: ${commit:0:7}"
             echo "  Latest:  ${latest_commit:0:7}"
-            echo "  Run: add-skill-helper.sh add $url --force"
+            echo "  Run: aidevops skill update $name"
             echo ""
         else
             echo -e "${GREEN}Up to date${NC}: $name"
@@ -1208,7 +1215,7 @@ main() {
         add)
             if [[ $# -lt 1 ]]; then
                 log_error "URL or owner/repo required"
-                echo "Usage: add-skill-helper.sh add <url|owner/repo> [--name <name>] [--force]"
+                echo "Usage: add-skill-helper.sh add <url|owner/repo> [--name <name>] [--force] [--skip-security]"
                 return 1
             fi
             cmd_add "$@"
