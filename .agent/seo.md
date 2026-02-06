@@ -10,6 +10,7 @@ subagents:
   - serper
   - ahrefs
   - site-crawler
+  - screaming-frog
   - eeat-score
   - domain-research
   - pagespeed
@@ -42,6 +43,7 @@ subagents:
 | `dataforseo.md` | Comprehensive SEO data APIs (SERP, keywords, backlinks) |
 | `serper.md` | Google Search API (web, images, news, places) |
 | `site-crawler.md` | SEO site auditing (Screaming Frog-like capabilities) |
+| `screaming-frog.md` | Screaming Frog SEO Spider CLI integration |
 | `eeat-score.md` | E-E-A-T content quality scoring and analysis |
 | `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
 | `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
