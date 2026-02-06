@@ -202,7 +202,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: API integration for Bing Webmaster Tools. Features: submit URLs, check indexation status, view search analytics, manage sitemaps. Ref: https://www.bing.com/webmasters/help/webmaster-api-5f3c5e1e
 - [ ] t084 Create Rich Results Test subagent #seo #tools #schema ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
   - Notes: Google Rich Results Test API integration. Validate structured data, preview rich snippets, check eligibility for rich results. Add to tools/seo/ or seo/. Ref: https://search.google.com/test/rich-results BLOCKED: auth_error BLOCKED: Max retries exceeded: clean_exit_no_signal
-- [ ] t085 Create Schema Validator subagent #seo #tools #schema ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
+- [x] t085 Create Schema Validator subagent #seo #tools #schema ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Schema.org validator integration. Validate JSON-LD, Microdata, RDFa structured data. Add to tools/seo/ or seo/. Ref: https://validator.schema.org/
 - [x] t086 Create Screaming Frog subagent #seo #tools #crawler ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Screaming Frog SEO Spider CLI integration. Technical SEO audits, crawl analysis, broken links, redirects, meta data extraction. Requires license for full features. Add to seo/. Ref: https://www.screamingfrog.co.uk/seo-spider/
