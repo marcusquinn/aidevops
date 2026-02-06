@@ -102,7 +102,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
-**After ANY TODO/planning edit**: Always commit, push, create PR, and merge immediately. Do not leave planning changes uncommitted. See `workflows/plans.md` "Commit, Push, and Merge After TODO Changes" section.
+**After ANY TODO/planning edit**: Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main — no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. See `workflows/plans.md` "Commit and Push After TODO Changes" section.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
