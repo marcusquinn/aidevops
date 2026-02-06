@@ -1047,6 +1047,705 @@ cmd_next() {
 }
 
 #######################################
+# Detect terminal environment for dispatch mode
+# Returns: "tabby", "headless", or "interactive"
+#######################################
+detect_dispatch_mode() {
+    if [[ "${SUPERVISOR_DISPATCH_MODE:-}" == "headless" ]]; then
+        echo "headless"
+        return 0
+    fi
+    if [[ "${SUPERVISOR_DISPATCH_MODE:-}" == "tabby" ]]; then
+        echo "tabby"
+        return 0
+    fi
+    if [[ "${TERM_PROGRAM:-}" == "Tabby" ]]; then
+        echo "tabby"
+        return 0
+    fi
+    echo "headless"
+    return 0
+}
+
+#######################################
+# Resolve the AI CLI tool to use for dispatch
+# Prefers opencode, falls back to claude
+#######################################
+resolve_ai_cli() {
+    if command -v opencode &>/dev/null; then
+        echo "opencode"
+        return 0
+    fi
+    if command -v claude &>/dev/null; then
+        echo "claude"
+        return 0
+    fi
+    log_error "Neither opencode nor claude CLI found. Install one to dispatch workers."
+    return 1
+}
+
+#######################################
+# Build the dispatch command for a task
+# Outputs the command array elements, one per line
+#######################################
+build_dispatch_cmd() {
+    local task_id="$1"
+    local worktree_path="$2"
+    local log_file="$3"
+    local ai_cli="$4"
+
+    if [[ "$ai_cli" == "opencode" ]]; then
+        echo "opencode"
+        echo "run"
+        echo "--format"
+        echo "json"
+        echo "--title"
+        echo "$task_id"
+        echo "/full-loop $task_id"
+    else
+        # claude CLI
+        echo "claude"
+        echo "-p"
+        echo "/full-loop $task_id"
+        echo "--output-format"
+        echo "json"
+    fi
+
+    return 0
+}
+
+#######################################
+# Create a worktree for a task
+# Returns the worktree path on stdout
+#######################################
+create_task_worktree() {
+    local task_id="$1"
+    local repo="$2"
+
+    local branch_name="feature/${task_id}"
+    # Derive worktree path: ~/Git/repo-name.feature-tXXX (matches wt convention)
+    local repo_basename
+    repo_basename=$(basename "$repo")
+    local repo_parent
+    repo_parent=$(dirname "$repo")
+    local worktree_path="${repo_parent}/${repo_basename}.feature-${task_id}"
+
+    # Check if worktree already exists
+    if [[ -d "$worktree_path" ]]; then
+        log_info "Worktree already exists: $worktree_path" >&2
+        echo "$worktree_path"
+        return 0
+    fi
+
+    # Try wt first (redirect its verbose output to stderr)
+    if command -v wt &>/dev/null; then
+        if wt switch -c "$branch_name" -C "$repo" >&2 2>&1; then
+            echo "$worktree_path"
+            return 0
+        fi
+    fi
+
+    # Fallback: raw git worktree add (quiet, reliable)
+    if git -C "$repo" worktree add "$worktree_path" -b "$branch_name" >&2 2>&1; then
+        echo "$worktree_path"
+        return 0
+    fi
+
+    # Branch may already exist (retry without -b)
+    if git -C "$repo" worktree add "$worktree_path" "$branch_name" >&2 2>&1; then
+        echo "$worktree_path"
+        return 0
+    fi
+
+    log_error "Failed to create worktree for $task_id at $worktree_path"
+    return 1
+}
+
+#######################################
+# Clean up a worktree for a completed/failed task
+#######################################
+cleanup_task_worktree() {
+    local worktree_path="$1"
+    local repo="$2"
+
+    if [[ ! -d "$worktree_path" ]]; then
+        return 0
+    fi
+
+    # Try wt prune first
+    if command -v wt &>/dev/null; then
+        wt remove -C "$repo" "$worktree_path" 2>/dev/null && return 0
+    fi
+
+    # Fallback: git worktree remove
+    git -C "$repo" worktree remove "$worktree_path" --force 2>/dev/null || true
+    return 0
+}
+
+#######################################
+# Dispatch a single task
+# Creates worktree, starts worker, updates DB
+#######################################
+cmd_dispatch() {
+    local task_id="" batch_id=""
+
+    # First positional arg is task_id
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --batch) [[ $# -lt 2 ]] && { log_error "--batch requires a value"; return 1; }; batch_id="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh dispatch <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    # Get task details
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, repo, description, status, model, retries, max_retries
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tid trepo tdesc tstatus tmodel tretries tmax_retries
+    IFS='|' read -r tid trepo tdesc tstatus tmodel tretries tmax_retries <<< "$task_row"
+
+    # Validate task is in dispatchable state
+    if [[ "$tstatus" != "queued" ]]; then
+        log_error "Task $task_id is in '$tstatus' state, must be 'queued' to dispatch"
+        return 1
+    fi
+
+    # Check concurrency limit if in a batch
+    if [[ -n "$batch_id" ]]; then
+        local escaped_batch
+        escaped_batch=$(sql_escape "$batch_id")
+        local concurrency
+        concurrency=$(sqlite3 "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        local active_count
+        active_count=$(cmd_running_count "$batch_id")
+
+        if [[ "$active_count" -ge "$concurrency" ]]; then
+            log_warn "Concurrency limit reached ($active_count/$concurrency) for batch $batch_id"
+            return 2
+        fi
+    else
+        # Global concurrency check (default 4)
+        local global_concurrency="${SUPERVISOR_MAX_CONCURRENCY:-4}"
+        local global_active
+        global_active=$(cmd_running_count)
+        if [[ "$global_active" -ge "$global_concurrency" ]]; then
+            log_warn "Global concurrency limit reached ($global_active/$global_concurrency)"
+            return 2
+        fi
+    fi
+
+    # Check max retries
+    if [[ "$tretries" -ge "$tmax_retries" ]]; then
+        log_error "Task $task_id has exceeded max retries ($tretries/$tmax_retries)"
+        cmd_transition "$task_id" "failed" --error "Max retries exceeded"
+        return 1
+    fi
+
+    # Resolve AI CLI
+    local ai_cli
+    ai_cli=$(resolve_ai_cli) || return 1
+
+    # Create worktree
+    log_info "Creating worktree for $task_id..."
+    local worktree_path
+    worktree_path=$(create_task_worktree "$task_id" "$trepo") || {
+        log_error "Failed to create worktree for $task_id"
+        cmd_transition "$task_id" "failed" --error "Worktree creation failed"
+        return 1
+    }
+
+    local branch_name="feature/${task_id}"
+
+    # Set up log file
+    local log_dir="$SUPERVISOR_DIR/logs"
+    mkdir -p "$log_dir"
+    local log_file
+    log_file="$log_dir/${task_id}-$(date +%Y%m%d%H%M%S).log"
+
+    # Transition to dispatched
+    cmd_transition "$task_id" "dispatched" \
+        --worktree "$worktree_path" \
+        --branch "$branch_name" \
+        --log-file "$log_file"
+
+    # Detect dispatch mode
+    local dispatch_mode
+    dispatch_mode=$(detect_dispatch_mode)
+
+    log_info "Dispatching $task_id via $ai_cli ($dispatch_mode mode)"
+    log_info "Worktree: $worktree_path"
+    log_info "Log: $log_file"
+
+    # Build and execute dispatch command
+    local -a cmd_parts=()
+    while IFS= read -r part; do
+        cmd_parts+=("$part")
+    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli")
+
+    # Ensure PID directory exists before dispatch
+    mkdir -p "$SUPERVISOR_DIR/pids"
+
+    if [[ "$dispatch_mode" == "tabby" ]]; then
+        # Tabby: attempt to open in a new tab via OSC 1337 escape sequence
+        log_info "Opening Tabby tab for $task_id..."
+        local tab_cmd
+        tab_cmd="cd '${worktree_path}' && ${cmd_parts[*]} > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'"
+        printf '\e]1337;NewTab=%s\a' "$tab_cmd" 2>/dev/null || true
+        # Also start background process as fallback (Tabby may not support OSC 1337)
+        (cd "$worktree_path" && "${cmd_parts[@]}" > "$log_file" 2>&1; echo "EXIT:$?" >> "$log_file") &
+    else
+        # Headless: background process
+        (cd "$worktree_path" && "${cmd_parts[@]}" > "$log_file" 2>&1; echo "EXIT:$?" >> "$log_file") &
+    fi
+
+    local worker_pid=$!
+
+    # Store PID for monitoring
+    echo "$worker_pid" > "$SUPERVISOR_DIR/pids/${task_id}.pid"
+
+    # Transition to running
+    cmd_transition "$task_id" "running" --session "pid:$worker_pid"
+
+    log_success "Dispatched $task_id (PID: $worker_pid)"
+    echo "$worker_pid"
+    return 0
+}
+
+#######################################
+# Check the status of a running worker
+# Reads log file and PID to determine state
+#######################################
+cmd_worker_status() {
+    local task_id="${1:-}"
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh worker-status <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT status, session_id, log_file, worktree
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tstatus tsession tlog tworktree
+    IFS='|' read -r tstatus tsession tlog tworktree <<< "$task_row"
+
+    echo -e "${BOLD}Worker: $task_id${NC}"
+    echo "  DB Status:  $tstatus"
+    echo "  Session:    ${tsession:-none}"
+    echo "  Log:        ${tlog:-none}"
+    echo "  Worktree:   ${tworktree:-none}"
+
+    # Check PID if running
+    if [[ "$tstatus" == "running" || "$tstatus" == "dispatched" ]]; then
+        local pid_file="$SUPERVISOR_DIR/pids/${task_id}.pid"
+        if [[ -f "$pid_file" ]]; then
+            local pid
+            pid=$(cat "$pid_file")
+            if kill -0 "$pid" 2>/dev/null; then
+                echo -e "  Process:    ${GREEN}alive${NC} (PID: $pid)"
+            else
+                echo -e "  Process:    ${RED}dead${NC} (PID: $pid was)"
+            fi
+        else
+            echo "  Process:    unknown (no PID file)"
+        fi
+    fi
+
+    # Check log file for completion signals
+    if [[ -n "$tlog" && -f "$tlog" ]]; then
+        local log_size
+        log_size=$(wc -c < "$tlog" | tr -d ' ')
+        echo "  Log size:   ${log_size} bytes"
+
+        # Check for completion signals
+        if grep -q 'FULL_LOOP_COMPLETE' "$tlog" 2>/dev/null; then
+            echo -e "  Signal:     ${GREEN}FULL_LOOP_COMPLETE${NC}"
+        elif grep -q 'TASK_COMPLETE' "$tlog" 2>/dev/null; then
+            echo -e "  Signal:     ${YELLOW}TASK_COMPLETE${NC}"
+        fi
+
+        # Check for PR URL
+        local pr_url
+        pr_url=$(grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' "$tlog" 2>/dev/null | tail -1 || true)
+        if [[ -n "$pr_url" ]]; then
+            echo "  PR:         $pr_url"
+        fi
+
+        # Check for EXIT code
+        local exit_line
+        exit_line=$(grep '^EXIT:' "$tlog" 2>/dev/null | tail -1 || true)
+        if [[ -n "$exit_line" ]]; then
+            echo "  Exit:       ${exit_line#EXIT:}"
+        fi
+
+        # Show last 3 lines of log
+        echo ""
+        echo "  Last output:"
+        tail -3 "$tlog" 2>/dev/null | while IFS= read -r line; do
+            echo "    $line"
+        done
+    fi
+
+    return 0
+}
+
+#######################################
+# Evaluate a completed worker's outcome
+# Returns: complete, retry, blocked, failed
+#######################################
+evaluate_worker() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT status, log_file, retries, max_retries
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tstatus tlog tretries tmax_retries
+    IFS='|' read -r tstatus tlog tretries tmax_retries <<< "$task_row"
+
+    if [[ -z "$tlog" || ! -f "$tlog" ]]; then
+        echo "failed:no_log_file"
+        return 0
+    fi
+
+    # Check for FULL_LOOP_COMPLETE (best outcome)
+    if grep -q 'FULL_LOOP_COMPLETE' "$tlog" 2>/dev/null; then
+        # Extract PR URL if present
+        local pr_url
+        pr_url=$(grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' "$tlog" 2>/dev/null | tail -1 || true)
+        echo "complete:${pr_url:-no_pr}"
+        return 0
+    fi
+
+    # Check for EXIT code
+    local exit_line
+    exit_line=$(grep '^EXIT:' "$tlog" 2>/dev/null | tail -1 || true)
+    local exit_code="${exit_line#EXIT:}"
+
+    if [[ "$exit_code" == "0" ]]; then
+        # Exited cleanly but no FULL_LOOP_COMPLETE - partial success
+        if grep -q 'TASK_COMPLETE' "$tlog" 2>/dev/null; then
+            echo "complete:task_only"
+        else
+            echo "retry:clean_exit_no_signal"
+        fi
+        return 0
+    fi
+
+    # Check for common error patterns
+    if grep -qi 'rate.limit\|429\|too many requests' "$tlog" 2>/dev/null; then
+        echo "retry:rate_limited"
+        return 0
+    fi
+
+    if grep -qi 'permission denied\|unauthorized\|403\|401' "$tlog" 2>/dev/null; then
+        echo "blocked:auth_error"
+        return 0
+    fi
+
+    if grep -qi 'merge conflict\|CONFLICT' "$tlog" 2>/dev/null; then
+        echo "blocked:merge_conflict"
+        return 0
+    fi
+
+    # Check if retries exhausted
+    if [[ "$tretries" -ge "$tmax_retries" ]]; then
+        echo "failed:max_retries"
+        return 0
+    fi
+
+    # Default: retry
+    echo "retry:unknown_error"
+    return 0
+}
+
+#######################################
+# Supervisor pulse - stateless check and dispatch cycle
+# Designed to run via cron every 5 minutes
+#######################################
+cmd_pulse() {
+    local batch_id=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --batch) [[ $# -lt 2 ]] && { log_error "--batch requires a value"; return 1; }; batch_id="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    ensure_db
+
+    log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+    # Phase 1: Check running workers for completion
+    local running_tasks
+    running_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, log_file FROM tasks
+        WHERE status IN ('running', 'dispatched')
+        ORDER BY started_at ASC;
+    ")
+
+    local completed_count=0
+    local failed_count=0
+
+    if [[ -n "$running_tasks" ]]; then
+        while IFS='|' read -r tid tlog; do
+            # Check if worker process is still alive
+            local pid_file="$SUPERVISOR_DIR/pids/${tid}.pid"
+            local is_alive=false
+
+            if [[ -f "$pid_file" ]]; then
+                local pid
+                pid=$(cat "$pid_file")
+                if kill -0 "$pid" 2>/dev/null; then
+                    is_alive=true
+                fi
+            fi
+
+            if [[ "$is_alive" == "true" ]]; then
+                log_info "  $tid: still running"
+                continue
+            fi
+
+            # Worker is done - evaluate outcome
+            log_info "  $tid: worker finished, evaluating..."
+
+            # Transition to evaluating
+            cmd_transition "$tid" "evaluating" 2>/dev/null || true
+
+            local outcome
+            outcome=$(evaluate_worker "$tid")
+            local outcome_type="${outcome%%:*}"
+            local outcome_detail="${outcome#*:}"
+
+            case "$outcome_type" in
+                complete)
+                    log_success "  $tid: COMPLETE ($outcome_detail)"
+                    cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>/dev/null || true
+                    completed_count=$((completed_count + 1))
+                    # Clean up PID file
+                    rm -f "$pid_file"
+                    ;;
+                retry)
+                    log_warn "  $tid: RETRY ($outcome_detail)"
+                    cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>/dev/null || true
+                    # Re-queue for dispatch
+                    cmd_transition "$tid" "dispatched" 2>/dev/null || {
+                        # If transition fails (e.g., max retries), mark failed
+                        log_error "  $tid: could not re-queue, marking failed"
+                        failed_count=$((failed_count + 1))
+                    }
+                    rm -f "$pid_file"
+                    ;;
+                blocked)
+                    log_warn "  $tid: BLOCKED ($outcome_detail)"
+                    cmd_transition "$tid" "blocked" --error "$outcome_detail" 2>/dev/null || true
+                    rm -f "$pid_file"
+                    # Send escalation via mail
+                    if [[ -x "$MAIL_HELPER" ]]; then
+                        "$MAIL_HELPER" send \
+                            --to coordinator \
+                            --type status_report \
+                            --payload "Task $tid blocked: $outcome_detail" 2>/dev/null || true
+                    fi
+                    ;;
+                failed)
+                    log_error "  $tid: FAILED ($outcome_detail)"
+                    cmd_transition "$tid" "failed" --error "$outcome_detail" 2>/dev/null || true
+                    failed_count=$((failed_count + 1))
+                    rm -f "$pid_file"
+                    ;;
+            esac
+        done <<< "$running_tasks"
+    fi
+
+    # Phase 2: Dispatch queued tasks up to concurrency limit
+    local dispatched_count=0
+
+    if [[ -n "$batch_id" ]]; then
+        local next_tasks
+        next_tasks=$(cmd_next "$batch_id" 10)
+
+        if [[ -n "$next_tasks" ]]; then
+            while IFS='|' read -r tid trepo tdesc tmodel; do
+                if cmd_dispatch "$tid" --batch "$batch_id" 2>/dev/null; then
+                    dispatched_count=$((dispatched_count + 1))
+                else
+                    local dispatch_exit=$?
+                    if [[ "$dispatch_exit" -eq 2 ]]; then
+                        # Concurrency limit reached
+                        log_info "Concurrency limit reached, stopping dispatch"
+                        break
+                    fi
+                fi
+            done <<< "$next_tasks"
+        fi
+    else
+        # Global dispatch (no batch filter)
+        local next_tasks
+        next_tasks=$(cmd_next "" 10)
+
+        if [[ -n "$next_tasks" ]]; then
+            while IFS='|' read -r tid trepo tdesc tmodel; do
+                if cmd_dispatch "$tid" 2>/dev/null; then
+                    dispatched_count=$((dispatched_count + 1))
+                else
+                    local dispatch_exit=$?
+                    if [[ "$dispatch_exit" -eq 2 ]]; then
+                        log_info "Concurrency limit reached, stopping dispatch"
+                        break
+                    fi
+                fi
+            done <<< "$next_tasks"
+        fi
+    fi
+
+    # Phase 3: Summary
+    local total_running
+    total_running=$(cmd_running_count "${batch_id:-}")
+    local total_queued
+    total_queued=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';")
+    local total_complete
+    total_complete=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'complete';")
+
+    echo ""
+    log_info "Pulse summary:"
+    log_info "  Evaluated:  $((completed_count + failed_count)) workers"
+    log_info "  Completed:  $completed_count"
+    log_info "  Failed:     $failed_count"
+    log_info "  Dispatched: $dispatched_count new"
+    log_info "  Running:    $total_running"
+    log_info "  Queued:     $total_queued"
+    log_info "  Total done: $total_complete"
+
+    return 0
+}
+
+#######################################
+# Clean up worktrees for completed/failed tasks
+#######################################
+cmd_cleanup() {
+    local dry_run=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    ensure_db
+
+    # Find tasks with worktrees that are in terminal states
+    local terminal_tasks
+    terminal_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, worktree, repo, status FROM tasks
+        WHERE worktree IS NOT NULL AND worktree != ''
+        AND status IN ('complete', 'failed', 'cancelled');
+    ")
+
+    if [[ -z "$terminal_tasks" ]]; then
+        log_info "No worktrees to clean up"
+        return 0
+    fi
+
+    local cleaned=0
+    while IFS='|' read -r tid tworktree trepo tstatus; do
+        if [[ ! -d "$tworktree" ]]; then
+            log_info "  $tid: worktree already removed ($tworktree)"
+            # Clear worktree field in DB
+            sqlite3 "$SUPERVISOR_DB" "
+                UPDATE tasks SET worktree = NULL WHERE id = '$(sql_escape "$tid")';
+            "
+            continue
+        fi
+
+        if [[ "$dry_run" == "true" ]]; then
+            log_info "  [dry-run] Would remove: $tworktree ($tid, $tstatus)"
+        else
+            log_info "  Removing worktree: $tworktree ($tid)"
+            cleanup_task_worktree "$tworktree" "$trepo"
+            sqlite3 "$SUPERVISOR_DB" "
+                UPDATE tasks SET worktree = NULL WHERE id = '$(sql_escape "$tid")';
+            "
+            cleaned=$((cleaned + 1))
+        fi
+    done <<< "$terminal_tasks"
+
+    # Also clean up stale PID files
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        local stale_pids=0
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local pid
+            pid=$(cat "$pid_file")
+            if ! kill -0 "$pid" 2>/dev/null; then
+                if [[ "$dry_run" == "true" ]]; then
+                    log_info "  [dry-run] Would remove stale PID: $pid_file"
+                else
+                    rm -f "$pid_file"
+                    stale_pids=$((stale_pids + 1))
+                fi
+            fi
+        done
+        if [[ "$stale_pids" -gt 0 ]]; then
+            log_info "Removed $stale_pids stale PID files"
+        fi
+    fi
+
+    if [[ "$dry_run" == "false" ]]; then
+        log_success "Cleaned up $cleaned worktrees"
+    fi
+
+    return 0
+}
+
+#######################################
 # Show usage
 #######################################
 show_usage() {
@@ -1057,6 +1756,10 @@ Usage:
   supervisor-helper.sh init                          Initialize supervisor database
   supervisor-helper.sh add <task_id> [options]       Add a task
   supervisor-helper.sh batch <name> [options]        Create a batch of tasks
+  supervisor-helper.sh dispatch <task_id> [options]  Dispatch a task (worktree + worker)
+  supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
+  supervisor-helper.sh worker-status <task_id>       Check worker process status
+  supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
   supervisor-helper.sh transition <id> <state>       Transition task state
   supervisor-helper.sh status [task_id|batch_id]     Show status
   supervisor-helper.sh list [--state X] [--batch Y]  List tasks
@@ -1073,6 +1776,17 @@ State Machine:
                                   -> blocked    (needs human input)
                                   -> failed     (max retries exceeded)
 
+Worker Dispatch:
+  For each task: creates a worktree (wt switch -c feature/tXXX), then
+  dispatches opencode run --format json "/full-loop tXXX" in the worktree.
+  Concurrency semaphore limits parallel workers (default 4, set via
+  SUPERVISOR_MAX_CONCURRENCY or batch --concurrency).
+
+  Dispatch modes (auto-detected):
+    headless  - Background process (default)
+    tabby     - Tabby terminal tab (when TERM_PROGRAM=Tabby)
+  Override: SUPERVISOR_DISPATCH_MODE=headless|tabby
+
 Options for 'add':
   --repo <path>          Repository path (default: current directory)
   --description "desc"   Task description (auto-detected from TODO.md)
@@ -1082,6 +1796,15 @@ Options for 'add':
 Options for 'batch':
   --concurrency <N>      Max parallel workers (default: 4)
   --tasks "t001,t002"    Comma-separated task IDs to add
+
+Options for 'dispatch':
+  --batch <batch_id>     Dispatch within batch concurrency limits
+
+Options for 'pulse':
+  --batch <batch_id>     Only pulse tasks in this batch
+
+Options for 'cleanup':
+  --dry-run              Show what would be cleaned without doing it
 
 Options for 'transition':
   --error "reason"       Error message / block reason
@@ -1095,6 +1818,11 @@ Options for 'list':
   --state <state>        Filter by state
   --batch <batch_id>     Filter by batch
   --format json          Output as JSON
+
+Environment:
+  SUPERVISOR_MAX_CONCURRENCY  Global concurrency limit (default: 4)
+  SUPERVISOR_DISPATCH_MODE    Force dispatch mode: headless|tabby
+  AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
 
@@ -1118,6 +1846,10 @@ main() {
         init) cmd_init "$@" ;;
         add) cmd_add "$@" ;;
         batch) cmd_batch "$@" ;;
+        dispatch) cmd_dispatch "$@" ;;
+        pulse) cmd_pulse "$@" ;;
+        worker-status) cmd_worker_status "$@" ;;
+        cleanup) cmd_cleanup "$@" ;;
         transition) cmd_transition "$@" ;;
         status) cmd_status "$@" ;;
         list) cmd_list "$@" ;;
