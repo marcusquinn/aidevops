@@ -257,14 +257,14 @@ cmd_start() {
     print_info "Command: ${cmd_args[*]}"
 
     if [[ "$background" == true ]]; then
-        (cd "$S2S_DIR" && "${cmd_args[@]}" > "$S2S_LOG_FILE" 2>&1 &
+        (cd "$S2S_DIR" && "${cmd_args[@]}" > "$S2S_LOG_FILE" 2>&1 & || exit
          echo $! > "$S2S_PID_FILE")
         local pid
         pid=$(cat "$S2S_PID_FILE")
         print_success "Pipeline started in background (PID $pid)"
         print_info "Logs: tail -f $S2S_LOG_FILE"
     else
-        (cd "$S2S_DIR" && exec "${cmd_args[@]}")
+        (cd "$S2S_DIR" && exec "${cmd_args[@]}") || exit
     fi
 
     return 0
@@ -282,7 +282,7 @@ cmd_docker_start() {
     fi
 
     print_info "Starting with Docker..."
-    (cd "$S2S_DIR" && docker compose up -d)
+    (cd "$S2S_DIR" && docker compose up -d) || exit
     print_success "Docker containers started"
     print_info "Ports: ${DEFAULT_RECV_PORT} (recv), ${DEFAULT_SEND_PORT} (send)"
     return 0
@@ -312,7 +312,7 @@ cmd_client() {
     fi
 
     print_info "Connecting to server at $host..."
-    (cd "$S2S_DIR" && python3 listen_and_play.py --host "$host" "${extra_args[@]}")
+    (cd "$S2S_DIR" && python3 listen_and_play.py --host "$host" "${extra_args[@]}") || exit
     return 0
 }
 
@@ -344,7 +344,7 @@ cmd_stop() {
     if [[ -f "${S2S_DIR}/docker-compose.yml" ]]; then
         if docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>/dev/null | grep -q .; then
             print_info "Stopping Docker containers..."
-            (cd "$S2S_DIR" && docker compose down)
+            (cd "$S2S_DIR" && docker compose down) || exit
             print_success "Docker containers stopped"
         fi
     fi
@@ -455,7 +455,7 @@ cmd_benchmark() {
     fi
 
     print_info "Running STT benchmark..."
-    (cd "$S2S_DIR" && python3 benchmark_stt.py "$@")
+    (cd "$S2S_DIR" && python3 benchmark_stt.py "$@") || exit
     return 0
 }
 
