@@ -2194,13 +2194,14 @@ merge_task_pr() {
     log_info "Merging PR #$pr_number in $repo_slug (squash)..."
 
     # Squash merge without --delete-branch (worktree handles branch cleanup)
-    if gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>/dev/null; then
-        log_success "PR #$pr_number merged successfully"
-        return 0
-    else
-        log_error "Failed to merge PR #$pr_number"
+    local merge_output
+    if ! merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1); then
+        log_error "Failed to merge PR #$pr_number. Output from gh:"
+        log_error "$merge_output"
         return 1
     fi
+    log_success "PR #$pr_number merged successfully"
+    return 0
 }
 
 #######################################
@@ -2294,13 +2295,14 @@ run_deploy_for_task() {
     fi
 
     log_info "Running setup.sh for $task_id..."
-    if (cd "$repo" && ./setup.sh) 2>/dev/null; then
-        log_success "Deploy complete for $task_id"
-        return 0
-    else
-        log_warn "Deploy (setup.sh) returned non-zero for $task_id"
+    local deploy_output
+    if ! deploy_output=$(cd "$repo" && ./setup.sh 2>&1); then
+        log_warn "Deploy (setup.sh) returned non-zero for $task_id. Output:"
+        log_warn "$deploy_output"
         return 1
     fi
+    log_success "Deploy complete for $task_id"
+    return 0
 }
 
 #######################################
@@ -2497,24 +2499,24 @@ cmd_pr_lifecycle() {
     # Step 4: Postflight + Deploy
     if [[ "$tstatus" == "merged" ]]; then
         if [[ "$dry_run" == "false" ]]; then
-            cmd_transition "$task_id" "deploying" 2>/dev/null || true
+            cmd_transition "$task_id" "deploying" || log_warn "Failed to transition $task_id to deploying"
 
             # Pull main and run postflight
-            run_postflight_for_task "$task_id" "$trepo" 2>/dev/null || true
+            run_postflight_for_task "$task_id" "$trepo" || log_warn "Postflight issue for $task_id (non-blocking)"
 
             # Deploy (aidevops repos only)
-            run_deploy_for_task "$task_id" "$trepo" 2>/dev/null || true
+            run_deploy_for_task "$task_id" "$trepo" || log_warn "Deploy issue for $task_id (non-blocking)"
 
             # Clean up worktree and branch
-            cleanup_after_merge "$task_id" 2>/dev/null || true
+            cleanup_after_merge "$task_id" || log_warn "Worktree cleanup issue for $task_id (non-blocking)"
 
             # Update TODO.md
-            update_todo_on_complete "$task_id" 2>/dev/null || true
+            update_todo_on_complete "$task_id" || log_warn "TODO.md update issue for $task_id (non-blocking)"
 
             # Final transition
-            cmd_transition "$task_id" "deployed" 2>/dev/null || true
+            cmd_transition "$task_id" "deployed" || log_warn "Failed to transition $task_id to deployed"
 
-            # Notify
+            # Notify (best-effort, suppress errors)
             send_task_notification "$task_id" "deployed" "PR merged, deployed, worktree cleaned" 2>/dev/null || true
             store_success_pattern "$task_id" "deployed" "" 2>/dev/null || true
         else
