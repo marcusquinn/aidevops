@@ -88,7 +88,7 @@ process_reports() {
     sqlite3 "$MAIL_DB" "
         UPDATE messages SET status = 'archived', archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE type = 'status_report' AND status = 'unread';
-    " 2>/dev/null || true
+    "
 }
 
 #######################################

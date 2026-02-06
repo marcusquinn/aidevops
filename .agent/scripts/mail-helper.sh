@@ -399,6 +399,11 @@ cmd_prune() {
         esac
     done
 
+    if ! [[ "$older_than_days" =~ ^[0-9]+$ ]]; then
+        log_error "Invalid value for --older-than-days: must be a positive integer"
+        return 1
+    fi
+
     ensure_db
 
     local cutoff_date

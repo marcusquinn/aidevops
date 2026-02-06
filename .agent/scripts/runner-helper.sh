@@ -80,7 +80,10 @@ mailbox_before_run() {
     unread_messages=$(AIDEVOPS_AGENT_ID="$name" "$MAIL_HELPER" check --unread-only 2>/dev/null)
 
     local unread_count
-    unread_count=$(echo "$unread_messages" | grep -o '[0-9]* unread' | grep -o '[0-9]*' || echo "0")
+    unread_count=$(echo "$unread_messages" | grep '^Total:' | sed -n 's/.*(\([0-9]*\) unread).*/\1/p' || echo "0")
+    if [[ -z "$unread_count" ]]; then
+        unread_count=0
+    fi
 
     if [[ "$unread_count" -gt 0 ]]; then
         log_info "Mailbox: $unread_count unread message(s) for $name"
@@ -425,7 +428,7 @@ $prompt"
     fi
 
     # Prepend mailbox context if there are unread messages
-    if [[ -n "$mailbox_context" ]] && echo "$mailbox_context" | grep -q '[1-9].* unread'; then
+    if [[ -n "$mailbox_context" ]] && echo "$mailbox_context" | grep -q '^Total:.*([1-9][0-9]* unread)'; then
         full_prompt="## Mailbox (unread messages from other agents)
 
 $mailbox_context
