@@ -912,10 +912,24 @@ pr_review_loop() {
                 print_info "Address verified feedback and push updates."
                 ;;
             WAITING)
-                print_info "Waiting for review..."
-                # Check if review is stale and trigger re-review if enabled
-                if [[ "$auto_trigger_review" == "true" ]] && check_and_trigger_review "$pr_number"; then
-                    print_info "Re-review triggered, waiting for response..."
+                # Check for unresolved AI review threads (e.g., Gemini posts as
+                # COMMENTED, not CHANGES_REQUESTED, so reviewDecision stays NONE
+                # but feedback still needs addressing)
+                local waiting_unresolved_result
+                check_unresolved_review_comments "$pr_number"
+                waiting_unresolved_result=$?
+                
+                if [[ $waiting_unresolved_result -eq 1 ]]; then
+                    print_warning "AI reviewers left unresolved feedback (review posted as COMMENTED, not CHANGES_REQUESTED)"
+                    get_pr_feedback "$pr_number"
+                    print_warning "IMPORTANT: Verify AI bot suggestions before implementing — reviewers can hallucinate. Check claims against runtime/docs first."
+                    print_info "Address verified feedback and push updates."
+                else
+                    print_info "Waiting for review..."
+                    # Check if review is stale and trigger re-review if enabled
+                    if [[ "$auto_trigger_review" == "true" ]] && check_and_trigger_review "$pr_number"; then
+                        print_info "Re-review triggered, waiting for response..."
+                    fi
                 fi
                 ;;
             *)
