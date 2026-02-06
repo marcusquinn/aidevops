@@ -18,17 +18,20 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 ```
 
 **Task ID format:**
+
 - `t001` - Top-level task
 - `t001.1` - Subtask of t001
 - `t001.1.1` - Sub-subtask of t001.1
 - IDs are stable and never reused
 
 **Dependency fields:**
+
 - `blocked-by:t001,t002` - This task cannot start until t001 and t002 are done
 - `blocks:t003,t004` - Completing this task unblocks t003 and t004
 - `parent:t001` - This is a child of t001 (implicit from indentation)
 
 **Time fields:**
+
 - `~estimate` - Total time estimate with optional breakdown `(ai:Xh test:Xh read:Xm research:Xm)`
 - `actual:` - Actual time spent (recorded at commit/release)
 - `logged:` - When task was added
@@ -52,6 +55,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t129 Add AI bot review verification to pr-loop and full-loop workflows #workflow #quality #pr-review ~2h (ai:1.5h test:20m read:10m) logged:2026-02-06
+  - Notes: AI code review bots (Gemini, CodeRabbit, Copilot) can provide incorrect suggestions. In awardsapp PR #12, Gemini incorrectly claimed postgres:18-alpine doesn't exist and that the Dockerfile CMD path was wrong — both were false. Current pr-loop.md (line 54) says "Changes requested: Report feedback for addressing" with no verification step. quality-loop-helper.sh (lines 908-911) blindly tells the agent to "Address the feedback and push updates." full-loop.md OpenProse example (line 336-337) also lacks verification. **Changes needed:** 1) pr-loop.md: add verification step before acting on CHANGES_REQUESTED — verify factual claims against runtime/docs/project conventions. 2) full-loop.md: update OpenProse example to include "Evaluate review feedback: verify claims, dismiss incorrect suggestions with evidence, address valid ones." 3) quality-loop-helper.sh: add warning message "IMPORTANT: Verify bot suggestions before implementing — AI reviewers can hallucinate." 4) build.txt: add "AI Suggestion Verification" rule — never apply AI tool suggestions without independent verification. 5) AGENTS.md: add "Bot Reviewer Feedback" guidance section.
 - [ ] t104 Install script integrity hardening (replace curl|sh with verified downloads) #security #supply-chain #plan → [todo/PLANS.md#2026-02-03-install-script-integrity-hardening] ~1.5h (ai:45m test:30m read:15m) logged:2026-02-03
 - [x] t105 Remove eval in ampcode-cli.sh (use arrays + whitelist formats) #security #shell ~15m actual:10m (ai:10m) logged:2026-02-03 started:2026-02-06T12:00Z completed:2026-02-06
   - Notes: Replaced all 4 eval usages with bash arrays. Added ALLOWED_OUTPUT_FORMATS whitelist. Fixed broken JSON heredoc. Removed 5 unreachable returns. Reduced shellcheck disables from 23 to 2. PR #375 merged.
@@ -76,7 +81,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t128.4 TODO.md auto-update on completion/failure ~1h actual:30m (ai:30m) blocked-by:t128.3 started:2026-02-06T05:00Z completed:2026-02-06
     - Notes: Added update_todo_on_complete(), update_todo_on_blocked(), send_task_notification() to supervisor-helper.sh. New commands: update-todo (manual trigger), notify (manual notification). Wired into pulse cycle for automatic TODO.md updates after worker evaluation. On complete: marks [ ]→[x], adds completed:date, commits+pushes. On blocked/failed: appends BLOCKED reason to Notes, commits+pushes. Notifications via mail-helper.sh and Matrix. Zero ShellCheck violations. PR #379 merged.
   - [x] t128.5 Cron integration and auto-pickup ~30m actual:20m (ai:20m) blocked-by:t128.4 started:2026-02-06T05:15Z completed:2026-02-06
-    - Notes: Added 3 commands to supervisor-helper.sh: auto-pickup (scans TODO.md for #auto-dispatch tags and Dispatch Queue section), cron (install/uninstall/status for cron-based pulse scheduling, default */5), watch (fswatch-based TODO.md watcher as real-time alternative). Integrated auto-pickup into pulse cycle as Phase 0. Zero ShellCheck violations. PR #381 merged.
+    - Notes: Added 3 commands to supervisor-helper.sh: auto-pickup (scans TODO.md for #auto-dispatch tags and Dispatch Queue section), cron (install/uninstall/status for cron-based pulse scheduling, default \*/5), watch (fswatch-based TODO.md watcher as real-time alternative). Integrated auto-pickup into pulse cycle as Phase 0. Zero ShellCheck violations. PR #381 merged.
   - [x] t128.6 Memory and self-assessment integration ~1h actual:30m (ai:30m) blocked-by:t128.4 started:2026-02-06T05:00Z completed:2026-02-06
     - Notes: Added recall_task_memories() (queries memory before dispatch, injects into worker prompt), store_failure_pattern() (stores blocked/failed outcomes via --auto), store_success_pattern() (records completions), run_batch_retrospective() (stats + recurring error analysis on batch completion). New commands: recall, retrospective. Wired into pulse cycle. Zero ShellCheck violations. PR #380 merged.
   - [x] t128.7 Integration testing with t083-t094 batch ~1h actual:1.5h blocked-by:t128.6 started:2026-02-06T05:32Z completed:2026-02-06
