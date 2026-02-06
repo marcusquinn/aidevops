@@ -1159,6 +1159,7 @@ detect_dispatch_mode() {
 # Prefers opencode, falls back to claude
 #######################################
 resolve_ai_cli() {
+    # Prefer opencode (supports Anthropic auth + zen free models as fallback)
     if command -v opencode &>/dev/null; then
         echo "opencode"
         return 0
@@ -1169,6 +1170,37 @@ resolve_ai_cli() {
     fi
     log_error "Neither opencode nor claude CLI found. Install one to dispatch workers."
     return 1
+}
+
+#######################################
+# Resolve the best available model for a given task tier
+# Priority: Anthropic SOTA via opencode > claude CLI > opencode zen free
+#
+# Tiers:
+#   coding  - Best SOTA model for code tasks (default)
+#   eval    - Cheap/fast model for evaluation calls
+#   health  - Cheapest model for health probes
+#######################################
+resolve_model() {
+    local tier="${1:-coding}"
+    local ai_cli="${2:-opencode}"
+
+    case "$tier" in
+        coding)
+            # Best Anthropic model - primary for all code tasks
+            echo "anthropic/claude-opus-4-6"
+            ;;
+        eval)
+            # Fast + cheap for evaluation decisions
+            echo "anthropic/claude-sonnet-4"
+            ;;
+        health)
+            # Cheapest possible for health probes
+            echo "anthropic/claude-sonnet-4"
+            ;;
+    esac
+
+    return 0
 }
 
 #######################################
@@ -1613,10 +1645,12 @@ cmd_dispatch() {
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
 
-    # Pre-dispatch model health check - send a trivial prompt to verify the
-    # model/provider is responding before creating worktrees and burning retries
-    if ! check_model_health "$ai_cli" "$tmodel"; then
-        log_error "Model health check failed for $task_id ($tmodel via $ai_cli)"
+    # Pre-dispatch model health check - use cheap health-tier model to verify
+    # the provider is responding before creating worktrees and burning retries
+    local health_model
+    health_model=$(resolve_model "health" "$ai_cli")
+    if ! check_model_health "$ai_cli" "$health_model"; then
+        log_error "Provider health check failed for $task_id ($health_model via $ai_cli)"
         log_error "Provider may be down or quota exhausted. Skipping dispatch."
         return 3  # Return 3 = provider unavailable (distinct from concurrency limit 2)
     fi
@@ -2097,17 +2131,21 @@ Respond with ONLY the verdict line, nothing else."
 
     local ai_result=""
     local eval_timeout=60
+    local eval_model
+    eval_model=$(resolve_model "eval" "$ai_cli")
 
     if [[ "$ai_cli" == "opencode" ]]; then
         ai_result=$(timeout "$eval_timeout" opencode run \
-            -m "anthropic/claude-sonnet-4-20250514" \
+            -m "$eval_model" \
             --format text \
             --title "eval-${task_id}" \
             "$eval_prompt" 2>/dev/null || echo "")
     else
+        # Strip provider prefix for claude CLI (expects bare model name)
+        local claude_model="${eval_model#*/}"
         ai_result=$(timeout "$eval_timeout" claude \
             -p "$eval_prompt" \
-            --model claude-sonnet-4-20250514 \
+            --model "$claude_model" \
             --output-format text 2>/dev/null || echo "")
     fi
 
@@ -3176,6 +3214,28 @@ cmd_pulse() {
     if [[ $((completed_count + failed_count + dispatched_count)) -gt 0 ]]; then
         local batch_label="${batch_id:-all tasks}"
         notify_batch_progress "$total_complete" "$total_tasks" "$total_failed" "$batch_label" 2>/dev/null || true
+    fi
+
+    # Phase 4: Periodic process hygiene - clean up orphaned worker processes
+    # Runs every pulse to prevent accumulation between cleanup calls
+    local orphan_killed=0
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local cleanup_tid
+            cleanup_tid=$(basename "$pid_file" .pid)
+            local cleanup_status
+            cleanup_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$cleanup_tid")';" 2>/dev/null || echo "")
+            case "$cleanup_status" in
+                complete|failed|cancelled|blocked)
+                    cleanup_worker_processes "$cleanup_tid" 2>/dev/null || true
+                    orphan_killed=$((orphan_killed + 1))
+                    ;;
+            esac
+        done
+    fi
+    if [[ "$orphan_killed" -gt 0 ]]; then
+        log_info "  Cleaned:    $orphan_killed stale worker processes"
     fi
 
     return 0
