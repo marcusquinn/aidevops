@@ -69,8 +69,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t128 Autonomous Supervisor Loop #plan #orchestration #runners → [todo/PLANS.md#2026-02-06-autonomous-supervisor-loop] ~8h (ai:5h test:2h read:1h) logged:2026-02-06 ref:todo/tasks/prd-autonomous-supervisor.md
   - [x] t128.1 Supervisor SQLite schema and state machine ~1h actual:30m (ai:30m) blocked-by:none started:2026-02-06T04:00Z completed:2026-02-06
     - Notes: Created supervisor-helper.sh (~700 lines) with SQLite schema (tasks, batches, batch_tasks, state_log tables), 9-state machine with 18 validated transitions, 12 commands (init, add, batch, transition, status, list, next, running-count, reset, cancel, db, help). Zero ShellCheck violations. PR #376 merged.
-  - [ ] t128.2 Worker dispatch with worktree isolation ~1.5h blocked-by:t128.1
-    - Notes: For each task: wt switch -c feature/tXXX, then opencode run --format json --title "tXXX" "/full-loop tXXX" in worktree. Concurrency semaphore (default 4). Tabby tab detection for visual mode.
+  - [x] t128.2 Worker dispatch with worktree isolation ~1.5h actual:30m (ai:30m) blocked-by:t128.1 started:2026-02-06T04:30Z completed:2026-02-06
+    - Notes: Added 4 commands to supervisor-helper.sh: dispatch (worktree + worker), pulse (stateless check/dispatch cycle), worker-status (PID/log monitoring), cleanup (worktree removal). Concurrency semaphore (default 4, env/batch configurable). Tabby tab detection. Log-based outcome evaluation. opencode/claude CLI auto-detection. Zero ShellCheck violations. PR #377 merged.
   - [ ] t128.3 Outcome evaluation and re-prompt cycle ~2h blocked-by:t128.2
     - Notes: Parse JSON logs for FULL_LOOP_COMPLETE/PR URL/errors. For ambiguous outcomes, dispatch cheap AI eval (Sonnet ~30s). Re-prompt via opencode run --session <id> --continue. Max retries before marking blocked.
   - [ ] t128.4 TODO.md auto-update on completion/failure ~1h blocked-by:t128.3
