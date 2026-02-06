@@ -423,6 +423,14 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 - Git platform management, domain purchasing, setup automation
 - [WordPress](https://wordpress.org/) management, credential security, code auditing
 
+**Autonomous Orchestration:**
+
+- **Supervisor** - SQLite state machine dispatches tasks to parallel AI agents with retry cycles, batch management, and cron scheduling
+- **Runners** - Named headless agent instances with persistent identity, instructions, and memory namespaces
+- **`/runners` command** - Batch dispatch from task IDs, PR URLs, or descriptions with concurrency control and progress monitoring
+- **Mailbox** - SQLite-backed inter-agent messaging for coordination across parallel sessions
+- **Worktree isolation** - Each agent works on its own branch in a separate directory, no merge conflicts
+
 **Unified Interface:**
 
 - Standardized commands across all providers
@@ -432,7 +440,8 @@ See `.agent/tools/terminal/terminal-title.md` for customization options.
 **Quality Control & Monitoring:**
 
 - **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Gemini Code Assist, Snyk
-- **Performance Auditing**: PageSpeed Insights, Lighthouse, Core Web Vitals (`/performance` command)
+- **Performance Auditing**: PageSpeed Insights, Lighthouse, WebPageTest, Core Web Vitals (`/performance` command)
+- **SEO Toolchain**: 13 SEO subagents including Semrush, Ahrefs, ContentKing, Screaming Frog, Bing Webmaster Tools, Rich Results Test, programmatic SEO, analytics tracking, schema validation
 - **SEO Debugging**: Open Graph validation, favicon checker, social preview testing
 - **Email Deliverability**: SPF/DKIM/DMARC/MX validation, blacklist checking
 - **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
@@ -537,7 +546,9 @@ Coordinator (pulse loop)
 
 **Subagent index** (`.agent/subagent-index.toon`): Compressed TOON routing table listing all agents, subagents, workflows, and scripts with model tier assignments - enables fast agent discovery without loading full markdown files.
 
-## **Advanced Capabilities** (Planned)
+## **Autonomous Orchestration & Parallel Agents**
+
+**Why this matters:** Long-running tasks -- batch PR reviews, multi-site SEO audits, large refactors -- are where AI agents deliver the most value. Instead of babysitting one task at a time, the supervisor dispatches work to parallel agents, each in its own git worktree, with automatic retry, progress tracking, and batch completion reporting.
 
 ### Parallel Agents & Headless Dispatch
 
@@ -820,6 +831,7 @@ See `.agent/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peeka
 
 - **[PageSpeed Insights](https://pagespeed.web.dev/)**: Website performance auditing
 - **[Lighthouse](https://developer.chrome.com/docs/lighthouse/)**: Comprehensive web app analysis
+- **[WebPageTest](https://www.webpagetest.org/)**: Real-world performance testing from 40+ global locations with filmstrip, waterfall, and Core Web Vitals
 - **[Updown.io](https://updown.io/)**: Website uptime and SSL monitoring
 
 ### **AI & Documentation**
@@ -871,6 +883,9 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 | [Ahrefs](https://ahrefs.com/api) | SEO analysis & backlinks | Yes |
 | [DataForSEO](https://dataforseo.com/) | SERP, keywords, backlinks, on-page | Yes |
 | [Serper](https://serper.dev/) | Google Search API (web, images, news) | Yes |
+| [Semrush](https://www.semrush.com/api-documentation/) | Domain analytics, keywords, backlinks, competitor research | Yes |
+| [ContentKing](https://www.contentkingapp.com/) | Real-time SEO monitoring, change tracking, issues | Yes |
+| [WebPageTest](https://www.webpagetest.org/) | Real-world performance testing from 40+ global locations | Yes |
 | [Hostinger](https://developers.hostinger.com/) | Hosting management | Yes |
 | [NeuronWriter](https://neuronwriter.com/) | Content optimization & NLP analysis | Yes |
 
@@ -1676,6 +1691,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/session-review` | Review session for completeness and capture learnings |
 | `/full-loop` | End-to-end development loop (task → preflight → PR → postflight → deploy) |
 | `/preflight-loop` | Run preflight checks iteratively until all pass |
+| `/runners` | Batch dispatch tasks to parallel agents (task IDs, PR URLs, or descriptions) |
 | `/log-issue-aidevops` | Report issues with aidevops (gathers diagnostics, checks duplicates, creates GitHub issue) |
 
 ### Ralph Loop - Iterative AI Development
