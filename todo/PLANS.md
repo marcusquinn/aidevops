@@ -70,6 +70,74 @@ m087,p016,Phase 4: Update docs/tests and verify behavior,30m,,2026-02-03T00:00Z,
 <!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
 -->
 
+### [2026-02-06] Autonomous Supervisor Loop
+
+**Status:** Planning
+**Estimate:** ~8h (ai:5h test:2h read:1h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p018,Autonomous Supervisor Loop,planning,0,7,,orchestration|runners|autonomy,8h,5h,2h,1h,2026-02-06T04:00Z,
+-->
+
+#### Purpose
+
+Build a stateless supervisor pulse that manages long-running parallel objectives from dispatch through completion. Ties together existing components (runners, worktrees, mail, memory, full-loop, cron, Matrix) into an autonomous system that evaluates outcomes, retries failures, escalates blockers, and learns from mistakes. Token-efficient: supervisor is bash + SQLite, AI only invoked for worker execution and ambiguous outcome evaluation.
+
+#### Context from Discussion
+
+Discovered during Tabby tab dispatch experiments that aidevops has all the worker components but no supervisor loop. The gap: nothing evaluates whether a dispatched task succeeded, retries on failure, or updates TODO.md on completion. This is the "brain stem" connecting the existing "limbs."
+
+Key design decisions:
+- Supervisor is stateless bash pulse (not a long-running AI session) for token efficiency
+- State lives in SQLite (supervisor.db), not in-memory
+- Workers are opencode run in isolated worktrees
+- Evaluation uses cheap model (Sonnet) for ambiguous outcomes
+- Cron-triggered (*/5 min) or fswatch on TODO.md
+
+#### Progress
+
+- [ ] (2026-02-06) Phase 1: SQLite schema and state machine (t128.1) ~1h
+- [ ] (2026-02-06) Phase 2: Worker dispatch with worktree isolation (t128.2) ~1.5h
+- [ ] (2026-02-06) Phase 3: Outcome evaluation and re-prompt cycle (t128.3) ~2h
+- [ ] (2026-02-06) Phase 4: TODO.md auto-update on completion/failure (t128.4) ~1h
+- [ ] (2026-02-06) Phase 5: Cron integration and auto-pickup (t128.5) ~30m
+- [ ] (2026-02-06) Phase 6: Memory and self-assessment (t128.6) ~1h
+- [ ] (2026-02-06) Phase 7: Integration test with t083-t094 batch (t128.7) ~1h
+
+<!--TOON:milestones[7]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m088,p018,Phase 1: SQLite schema and state machine,1h,,2026-02-06T04:00Z,,pending
+m089,p018,Phase 2: Worker dispatch with worktree isolation,1.5h,,2026-02-06T04:00Z,,pending
+m090,p018,Phase 3: Outcome evaluation and re-prompt cycle,2h,,2026-02-06T04:00Z,,pending
+m091,p018,Phase 4: TODO.md auto-update on completion/failure,1h,,2026-02-06T04:00Z,,pending
+m092,p018,Phase 5: Cron integration and auto-pickup,30m,,2026-02-06T04:00Z,,pending
+m093,p018,Phase 6: Memory and self-assessment,1h,,2026-02-06T04:00Z,,pending
+m094,p018,Phase 7: Integration test with t083-t094 batch,1h,,2026-02-06T04:00Z,,pending
+-->
+
+#### Decision Log
+
+- D1: Supervisor is bash + SQLite, not an AI session. Rationale: token efficiency - orchestration logic is deterministic, AI only needed for evaluation. (2026-02-06)
+- D2: Workers use opencode run --format json, not TUI. Rationale: parseable output for outcome classification. Tabby visual mode is optional overlay. (2026-02-06)
+- D3: Evaluation uses Sonnet, not Opus. Rationale: outcome classification is a simple task, ~5K tokens max. (2026-02-06)
+
+<!--TOON:decisions[3]{id,plan_id,decision,rationale,date,impact}:
+d018,p018,Supervisor is bash+SQLite not AI session,Token efficiency - orchestration is deterministic,2026-02-06,high
+d019,p018,Workers use opencode run --format json,Parseable output for outcome classification,2026-02-06,high
+d020,p018,Evaluation uses Sonnet not Opus,Outcome classification is simple ~5K tokens,2026-02-06,medium
+-->
+
+#### Surprises & Discoveries
+
+- S1: opencode supports --prompt flag for TUI seeding and --session --continue for re-prompting existing sessions. Both confirmed working. (2026-02-06)
+- S2: Tabby CLI supports `Tabby run <script>` and `Tabby profile <name>` but doesn't hot-reload config changes. (2026-02-06)
+- S3: opencode run --format json streams structured events (step_start, text, tool_call, step_finish) with session IDs, enabling programmatic monitoring. (2026-02-06)
+
+<!--TOON:discoveries[3]{id,plan_id,observation,evidence,impact,date}:
+s018,p018,opencode --prompt and --session --continue both work,Tested in Tabby dispatch experiments,high,2026-02-06
+s019,p018,Tabby CLI doesn't hot-reload config,New profiles not visible until restart,low,2026-02-06
+s020,p018,opencode run --format json streams structured events,Captured step_start/text/step_finish with session IDs,high,2026-02-06
+-->
+
 ### [2026-02-03] Dashboard Token Storage Hardening
 
 **Status:** Planning

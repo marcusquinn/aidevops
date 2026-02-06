@@ -66,6 +66,21 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Already resolved. dspy 3.1.3 pulls gepa 0.0.26 as transitive dep with no conflicts. Fresh venv install of requirements.txt succeeds, pip check passes, both dspy and gepa import cleanly. Original conflict was likely version-specific and no longer reproduces.
 - [x] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m actual:0m (ai:10m test:5m) logged:2026-01-29 completed:2026-02-06
   - Notes: Already fixed. All version files (VERSION, package.json, sonar-project.properties, .claude-plugin/marketplace.json) are in sync at 2.101.0. setup.sh and aidevops.sh read VERSION dynamically (no hardcoded version). version-manager.sh validate confirms consistency. Original issue from bd0695c was resolved by subsequent releases using version-manager.sh.
+- [ ] t128 Autonomous Supervisor Loop #plan #orchestration #runners → [todo/PLANS.md#2026-02-06-autonomous-supervisor-loop] ~8h (ai:5h test:2h read:1h) logged:2026-02-06 ref:todo/tasks/prd-autonomous-supervisor.md
+  - [ ] t128.1 Supervisor SQLite schema and state machine ~1h blocked-by:none
+    - Notes: Create supervisor.db with tasks, batches, batch_tasks tables. State transitions: queued->dispatched->running->evaluating->retrying->complete/blocked/failed. Extend coordinator-helper.sh or create supervisor-helper.sh.
+  - [ ] t128.2 Worker dispatch with worktree isolation ~1.5h blocked-by:t128.1
+    - Notes: For each task: wt switch -c feature/tXXX, then opencode run --format json --title "tXXX" "/full-loop tXXX" in worktree. Concurrency semaphore (default 4). Tabby tab detection for visual mode.
+  - [ ] t128.3 Outcome evaluation and re-prompt cycle ~2h blocked-by:t128.2
+    - Notes: Parse JSON logs for FULL_LOOP_COMPLETE/PR URL/errors. For ambiguous outcomes, dispatch cheap AI eval (Sonnet ~30s). Re-prompt via opencode run --session <id> --continue. Max retries before marking blocked.
+  - [ ] t128.4 TODO.md auto-update on completion/failure ~1h blocked-by:t128.3
+    - Notes: On complete: add completed:date, commit+push. On blocked: add blocked-by:user "reason", send mail/Matrix notification, commit+push.
+  - [ ] t128.5 Cron integration and auto-pickup ~30m blocked-by:t128.4
+    - Notes: supervisor-helper.sh pulse via cron */5. Auto-pickup tasks tagged #auto-dispatch or in Dispatch Queue section. fswatch on TODO.md as alternative trigger.
+  - [ ] t128.6 Memory and self-assessment integration ~1h blocked-by:t128.4
+    - Notes: Store failure patterns via memory-helper.sh --auto. Before dispatch, recall relevant memories. After batch completion, run retrospective and store insights.
+  - [ ] t128.7 Integration testing with t083-t094 batch ~1h blocked-by:t128.6
+    - Notes: Dispatch 12 SEO subagent tasks with concurrency 4. Verify full lifecycle: worktree creation, execution, retry, TODO update, worktree cleanup.
 - [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
   - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
