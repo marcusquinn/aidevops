@@ -34,6 +34,7 @@ mode: subagent
 | Subagent | When to Read |
 |----------|--------------|
 | `agent-review.md` | Reviewing and improving existing agents |
+| `agent-testing.md` | Testing agent behavior with isolated AI sessions |
 
 **Related Agents**:
 - `@code-standards` for linting agent markdown
@@ -44,13 +45,18 @@ mode: subagent
 - Branch strategy: `workflows/branch.md`
 - Git operations: `tools/git.md`
 
-**Testing**: Use OpenCode CLI to test config changes without restarting TUI:
+**Testing**: Use `agent-test-helper.sh` for automated testing, or OpenCode/Claude CLI for quick manual tests:
 
 ```bash
-opencode run "Test query" --agent Build+
-```text
+# Automated test suite
+agent-test-helper.sh run my-tests
 
-See `tools/opencode/opencode.md` for CLI testing patterns.
+# Quick manual test
+claude -p "Test query"
+opencode run "Test query" --agent Build+
+```
+
+See `agent-testing.md` for the full testing framework.
 
 <!-- AI-CONTEXT-END -->
 
