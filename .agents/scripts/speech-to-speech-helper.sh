@@ -148,16 +148,37 @@ cmd_setup() {
         req_file="requirements_mac.txt"
     fi
 
+    # Find compatible Python (3.12 preferred for package compat, then 3.11, 3.13, 3.10)
+    local py_bin="python3"
+    for candidate in python3.12 python3.11 python3.13 python3.10; do
+        if command -v "$candidate" &>/dev/null; then
+            py_bin="$candidate"
+            break
+        fi
+    done
+    print_info "Using Python: $py_bin ($(${py_bin} --version 2>&1))"
+
+    # Create virtual environment if it doesn't exist
+    local venv_dir="${S2S_DIR}/.venv"
+    if [[ ! -d "$venv_dir" ]]; then
+        print_info "Creating virtual environment..."
+        if check_uv; then
+            uv venv --python "$py_bin" "$venv_dir"
+        else
+            "$py_bin" -m venv "$venv_dir"
+        fi
+    fi
+
     print_info "Installing dependencies from $req_file..."
     if check_uv; then
-        uv pip install -r "${S2S_DIR}/${req_file}"
+        uv pip install --python "$venv_dir/bin/python" -r "${S2S_DIR}/${req_file}"
     else
-        pip install -r "${S2S_DIR}/${req_file}"
+        "$venv_dir/bin/pip" install -r "${S2S_DIR}/${req_file}"
     fi
 
     # Download NLTK data
     print_info "Downloading NLTK data..."
-    python3 -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')" >/dev/null
+    "$venv_dir/bin/python" -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')" >/dev/null
 
     print_success "Setup complete. Run: speech-to-speech-helper.sh start"
     return 0
@@ -210,12 +231,18 @@ cmd_start() {
         return 1
     fi
 
+    # Use venv python if available, else system python3
+    local py="python3"
+    if [[ -x "${S2S_DIR}/.venv/bin/python" ]]; then
+        py="${S2S_DIR}/.venv/bin/python"
+    fi
+
     local cmd_args=()
 
     case "$mode" in
         local-mac)
             cmd_args=(
-                python3 s2s_pipeline.py
+                "$py" s2s_pipeline.py
                 --local_mac_optimal_settings
                 --device mps
                 --language "$language"
@@ -227,7 +254,7 @@ cmd_start() {
             ;;
         cuda)
             cmd_args=(
-                python3 s2s_pipeline.py
+                "$py" s2s_pipeline.py
                 --recv_host 0.0.0.0
                 --send_host 0.0.0.0
                 --lm_model_name microsoft/Phi-3-mini-4k-instruct
@@ -238,33 +265,36 @@ cmd_start() {
             ;;
         server)
             cmd_args=(
-                python3 s2s_pipeline.py
+                "$py" s2s_pipeline.py
                 --recv_host 0.0.0.0
                 --send_host 0.0.0.0
                 --language "$language"
             )
             ;;
         docker)
-            cmd_docker_start "${extra_args[@]}"
+            cmd_docker_start
             return $?
             ;;
     esac
 
     # Append any extra args
-    cmd_args+=("${extra_args[@]}")
+    if [[ ${#extra_args[@]} -gt 0 ]]; then
+        cmd_args+=("${extra_args[@]}")
+    fi
 
     print_info "Starting pipeline (mode: $mode, language: $language)..."
     print_info "Command: ${cmd_args[*]}"
 
     if [[ "$background" == true ]]; then
-        (cd "$S2S_DIR" && "${cmd_args[@]}" > "$S2S_LOG_FILE" 2>&1 & || exit
-         echo $! > "$S2S_PID_FILE")
+        cd "$S2S_DIR" || return 1
+        "${cmd_args[@]}" > "$S2S_LOG_FILE" 2>&1 &
+        echo $! > "$S2S_PID_FILE"
         local pid
         pid=$(cat "$S2S_PID_FILE")
         print_success "Pipeline started in background (PID $pid)"
         print_info "Logs: tail -f $S2S_LOG_FILE"
     else
-        (cd "$S2S_DIR" && exec "${cmd_args[@]}") || exit
+        (cd "$S2S_DIR" && exec "${cmd_args[@]}")
     fi
 
     return 0
@@ -311,8 +341,18 @@ cmd_client() {
         return 1
     fi
 
+    # Use venv python if available
+    local py="python3"
+    if [[ -x "${S2S_DIR}/.venv/bin/python" ]]; then
+        py="${S2S_DIR}/.venv/bin/python"
+    fi
+
     print_info "Connecting to server at $host..."
-    (cd "$S2S_DIR" && python3 listen_and_play.py --host "$host" "${extra_args[@]}") || exit
+    if [[ ${#extra_args[@]} -gt 0 ]]; then
+        (cd "$S2S_DIR" && "$py" listen_and_play.py --host "$host" "${extra_args[@]}")
+    else
+        (cd "$S2S_DIR" && "$py" listen_and_play.py --host "$host")
+    fi
     return 0
 }
 
@@ -454,8 +494,14 @@ cmd_benchmark() {
         return 1
     fi
 
+    # Use venv python if available
+    local py="python3"
+    if [[ -x "${S2S_DIR}/.venv/bin/python" ]]; then
+        py="${S2S_DIR}/.venv/bin/python"
+    fi
+
     print_info "Running STT benchmark..."
-    (cd "$S2S_DIR" && python3 benchmark_stt.py "$@") || exit
+    (cd "$S2S_DIR" && "$py" benchmark_stt.py "$@")
     return 0
 }
 
