@@ -355,7 +355,7 @@ Same format as above
 - Bing Webmaster Tools
 - Rich Results Test
 - Mobile-Friendly Test
-- Schema Validator
+- [Schema Validator](schema-validator.md) (`schema-validator-helper.sh validate <url>`)
 
 **Paid Tools** (if available)
 - Screaming Frog
@@ -375,5 +375,6 @@ Same format as above
 
 - **programmatic-seo**: For building SEO pages at scale
 - **schema-markup**: For implementing structured data
+- **schema-validator**: For validating Schema.org structured data (JSON-LD, Microdata, RDFa)
 - **page-cro**: For optimizing pages for conversion (not just ranking)
 - **analytics-tracking**: For measuring SEO performance
