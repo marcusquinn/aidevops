@@ -23,6 +23,7 @@ subagents:
   - rich-results
   - debug-opengraph
   - debug-favicon
+  - programmatic-seo
   - general
   - explore
 ---
@@ -59,6 +60,7 @@ subagents:
 | `rich-results.md` | Google Rich Results Test via browser automation (API deprecated) |
 | `debug-opengraph.md` | Validate Open Graph meta tags for social sharing |
 | `debug-favicon.md` | Validate favicon setup across platforms |
+| `programmatic-seo.md` | Build SEO pages at scale with templates and keyword clustering |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
