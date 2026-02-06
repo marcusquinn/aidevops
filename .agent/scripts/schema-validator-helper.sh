@@ -105,6 +105,7 @@ install_deps() {
     # Install packages if missing
     if [[ ! -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
         print_info "Installing @adobe/structured-data-validator, @marbec/web-auto-extractor, node-fetch..."
+        # NOSONAR - npm scripts required for schema validation dependencies
         (cd "$TOOL_DIR" && npm install @adobe/structured-data-validator @marbec/web-auto-extractor node-fetch --silent) || {
             print_error "Failed to install npm dependencies"
             return 1
