@@ -53,7 +53,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 ## Backlog
 
 - [ ] t104 Install script integrity hardening (replace curl|sh with verified downloads) #security #supply-chain #plan → [todo/PLANS.md#2026-02-03-install-script-integrity-hardening] ~1.5h (ai:45m test:30m read:15m) logged:2026-02-03
-- [ ] t105 Remove eval in ampcode-cli.sh (use arrays + whitelist formats) #security #shell ~15m (ai:10m test:5m) logged:2026-02-03 started:2026-02-06T12:00Z
+- [x] t105 Remove eval in ampcode-cli.sh (use arrays + whitelist formats) #security #shell ~15m actual:10m (ai:10m) logged:2026-02-03 started:2026-02-06T12:00Z completed:2026-02-06
+  - Notes: Replaced all 4 eval usages with bash arrays. Added ALLOWED_OUTPUT_FORMATS whitelist. Fixed broken JSON heredoc. Removed 5 unreachable returns. Reduced shellcheck disables from 23 to 2. PR #375 merged.
 - [x] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
 - [x] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h actual:20m (ai:20m) logged:2026-02-03 completed:2026-02-06
 - [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h (ai:30m test:20m read:10m) logged:2026-02-03
