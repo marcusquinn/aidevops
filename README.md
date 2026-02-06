@@ -506,7 +506,7 @@ Run multiple AI agents in parallel on separate branches, coordinated through a l
 ```text
 Coordinator (pulse loop)
 ├── Agent Registry (TOON format - who's active, what branch, idle/busy)
-├── Mailbox System (file-based, per-agent inbox/outbox)
+├── Mailbox System (SQLite WAL-mode, indexed queries)
 │   ├── task_assignment → worker inbox
 │   ├── status_report → coordinator outbox
 │   └── broadcast → all agents
@@ -517,7 +517,7 @@ Coordinator (pulse loop)
 
 | Component | Script | Purpose |
 |-----------|--------|---------|
-| Mailbox | `mail-helper.sh` | TOON-based inter-agent messaging (send, check, broadcast, archive) |
+| Mailbox | `mail-helper.sh` | SQLite-backed inter-agent messaging (send, check, broadcast, archive) |
 | Coordinator | `coordinator-helper.sh` | Stateless pulse loop: collect reports, dispatch tasks, track idle workers |
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
 | Model routing | `model-routing.md`, `/route` | Cost-aware 5-tier routing guidance (haiku/flash/sonnet/pro/opus) |
@@ -527,8 +527,8 @@ Coordinator (pulse loop)
 1. Each agent registers on startup (`mail-helper.sh register --role worker`)
 2. Coordinator runs periodic pulses (`coordinator-helper.sh pulse`)
 3. Pulse collects status reports, dispatches queued tasks to idle workers
-4. Agents send completion reports back via outbox
-5. File locking (`noclobber` + retry) prevents race conditions
+4. Agents send completion reports back via mailbox
+5. SQLite WAL mode + `busy_timeout` handles concurrent access (79x faster than previous file-based system)
 
 **Compaction plugin** (`.agent/plugins/opencode-aidevops/`): When OpenCode compacts context (at ~200K tokens), the plugin injects current session state - agent registry, pending mailbox messages, git context, and relevant memories - ensuring continuity across compaction boundaries.
 
@@ -755,17 +755,20 @@ The setup script offers to install these tools automatically.
 ### **Document Processing & OCR**
 
 - **[LibPDF](https://libpdf.dev/)**: PDF form filling, digital signatures (PAdES B-B/T/LT/LTA), encryption, merge/split, text extraction
+- **[MinerU](https://github.com/opendatalab/MinerU)**: Layout-aware PDF-to-markdown/JSON conversion with OCR (109 languages), formula-to-LaTeX, and table extraction (53k+ stars, AGPL-3.0)
 - **[Unstract](https://github.com/Zipstack/unstract)**: LLM-powered structured data extraction from unstructured documents (PDF, images, DOCX)
 - **[GLM-OCR](https://ollama.com/library/glm-ocr)**: Local OCR via Ollama - purpose-built for document text extraction (tables, forms, complex layouts) with zero cloud dependency
 
-**OCR Tool Selection:**
+**PDF/OCR Tool Selection:**
 
 | Need | Tool | Why |
 |------|------|-----|
+| **Complex PDF to markdown** | MinerU | Layout-aware, formulas, tables, 109-language OCR |
 | **Quick text extraction** | GLM-OCR | Local, fast, no API keys, privacy-first |
 | **Structured JSON output** | Unstract | Schema-based extraction, complex documents |
 | **Screen/window OCR** | Peekaboo + GLM-OCR | `peekaboo image --analyze --model ollama/glm-ocr` |
 | **PDF text extraction** | LibPDF | Native PDF parsing, no AI needed |
+| **Simple format conversion** | Pandoc | Lightweight, broad format support |
 
 **Quick start:**
 
@@ -892,6 +895,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 **Data Extraction:**
 
 - [Outscraper](https://outscraper.com/) - Google Maps, business data, reviews extraction
+- [curl-copy](.agent/tools/browser/curl-copy.md) - Authenticated scraping via DevTools "Copy as cURL" (no browser automation needed)
 
 **Performance & Security:**
 
@@ -1008,6 +1012,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
 | **Mobile/tablet emulation** | Playwright | 100+ device presets, viewport, touch, geolocation, locale |
+| **Authenticated one-off scrape** | curl-copy | DevTools "Copy as cURL" → paste to terminal/AI |
 | **Bot detection evasion** | Anti-detect stack | Camoufox (full) or rebrowser-patches (quick) |
 | **Multi-account** | Browser profiles | Persistent fingerprint + proxy per account |
 
