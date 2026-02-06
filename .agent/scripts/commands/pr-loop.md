@@ -51,8 +51,19 @@ The script performs these checks each iteration:
 
 If issues are found:
 - CI failures: Report and wait for fixes
-- Changes requested: Report feedback for addressing
+- Changes requested: **Verify before acting** (see below), then address valid feedback
 - Stale review: Auto-trigger re-review (unless `--no-auto-trigger`)
+
+### AI Bot Review Verification
+
+When a review bot (Gemini, CodeRabbit, Copilot, etc.) requests changes, **verify factual claims before implementing**. AI reviewers can hallucinate - e.g., claiming a Docker image version doesn't exist when it does, or flagging correct file paths as wrong.
+
+**Verification steps:**
+
+1. **Check factual claims** - Verify version numbers, file paths, API signatures against runtime/docs/project conventions
+2. **Dismiss incorrect suggestions** - Reply with evidence (e.g., "Image exists: `docker manifest inspect image:tag`")
+3. **Address valid feedback** - Implement suggestions that are technically correct
+4. **Re-request review** - Push fixes and trigger re-review for remaining items
 
 ## Completion Promises
 
