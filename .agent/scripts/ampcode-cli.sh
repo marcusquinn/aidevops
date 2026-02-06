@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+# shellcheck disable=SC2034,SC2155
 
 # AmpCode CLI Integration Script
 # Professional AI coding assistant integration
@@ -30,6 +30,7 @@ readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration
 readonly AMPCODE_API_CONFIG="configs/ampcode-config.json"
 readonly AMPCODE_RESULTS_DIR=".agent/tmp/ampcode"
+readonly ALLOWED_OUTPUT_FORMATS="json text csv html md"
 
 # Print functions
 print_success() {
@@ -107,7 +108,6 @@ check_ampcode_cli() {
         print_info "Expected CLI command: amp"
         return 1
     fi
-    return 0
 }
 
 # Install AmpCode CLI
@@ -166,7 +166,6 @@ install_ampcode_cli() {
         print_info "Alternative: Visit https://ampcode.com to download CLI"
         return 1
     fi
-    return 0
 }
 
 # Setup AmpCode configuration
@@ -192,7 +191,6 @@ setup_ampcode_config() {
     "severity_threshold": "medium",
     "focus_areas": ["security", "performance", "maintainability"]
   }
-    return 0
 }
 EOF
 
@@ -207,13 +205,31 @@ EOF
     return 0
 }
 
+# Validate output format against whitelist
+validate_output_format() {
+    local format="$1"
+    local allowed
+    for allowed in $ALLOWED_OUTPUT_FORMATS; do
+        if [[ "$format" == "$allowed" ]]; then
+            return 0
+        fi
+    done
+    print_error "Invalid output format: $format"
+    print_info "Allowed formats: $ALLOWED_OUTPUT_FORMATS"
+    return 1
+}
+
 # Run code scan
 run_code_scan() {
     local target_path="${1:-.}"
     local output_format="${2:-json}"
 
     print_header "Running AmpCode Code Scan"
-    
+
+    if ! validate_output_format "$output_format"; then
+        return 1
+    fi
+
     # Ensure CLI is installed
     if ! check_ampcode_cli; then
         print_error "AmpCode CLI not installed"
@@ -233,13 +249,13 @@ run_code_scan() {
 
     print_info "Scanning path: $target_path"
     print_info "Output format: $output_format"
-    
-    local cmd="amp scan --path $target_path --format $output_format --output $output_file"
-    print_info "Executing: $cmd"
+
+    local -a cmd=(amp scan --path "$target_path" --format "$output_format" --output "$output_file")
+    print_info "Executing: ${cmd[*]}"
 
     local start_time
     start_time=$(date +%s)
-    eval "$cmd"
+    "${cmd[@]}"
     local exit_code=$?
     local end_time
     end_time=$(date +%s)
@@ -264,7 +280,6 @@ run_code_scan() {
         print_error "Code scan failed after ${duration}s"
         return 1
     fi
-    return 0
 }
 
 # Get AI code review
@@ -292,12 +307,12 @@ get_ai_review() {
     print_info "Reviewing path: $target_path"
     print_info "Severity level: $severity_level"
 
-    local cmd="amp review --path $target_path --severity $severity_level --output $review_file"
-    print_info "Executing: $cmd"
+    local -a cmd=(amp review --path "$target_path" --severity "$severity_level" --output "$review_file")
+    print_info "Executing: ${cmd[*]}"
 
     local start_time
     start_time=$(date +%s)
-    eval "$cmd"
+    "${cmd[@]}"
     local exit_code=$?
     local end_time
     end_time=$(date +%s)
@@ -323,7 +338,6 @@ get_ai_review() {
         print_error "AI review failed after ${duration}s"
         return 1
     fi
-    return 0
 }
 
 # Apply AI-suggested fixes
@@ -349,13 +363,13 @@ apply_fixes() {
     local fixes_file="$AMPCODE_RESULTS_DIR/fixes-$(date +%Y%m%d-%H%M%S).json"
 
     print_info "Analyzing fixes for: $target_path"
-    
-    local cmd="amp analyze --path $target_path --suggest-fixes --output $fixes_file"
-    print_info "Executing: $cmd"
+
+    local -a cmd=(amp analyze --path "$target_path" --suggest-fixes --output "$fixes_file")
+    print_info "Executing: ${cmd[*]}"
 
     local start_time
     start_time=$(date +%s)
-    eval "$cmd"
+    "${cmd[@]}"
     local exit_code=$?
     local end_time
     end_time=$(date +%s)
@@ -364,7 +378,7 @@ apply_fixes() {
 
     if [[ $exit_code -eq 0 && -f "$fixes_file" ]]; then
         print_success "Fix analysis completed in ${duration}s"
-        
+
         if command -v jq >/dev/null 2>&1; then
             local fixes_count
             fixes_count=$(jq '.fixes | length // 0' "$fixes_file" 2>/dev/null || echo "0")
@@ -374,9 +388,9 @@ apply_fixes() {
         if [[ "$auto_apply" == "true" ]]; then
             print_warning "Auto-apply enabled - Apply with caution!"
             print_info "Applying fixes..."
-            
-            local apply_cmd="amp apply-fixes --file $fixes_file"
-            eval "$apply_cmd"
+
+            local -a apply_cmd=(amp apply-fixes --file "$fixes_file")
+            "${apply_cmd[@]}"
             local apply_exit_code=$?
 
             if [[ $apply_exit_code -eq 0 ]]; then
@@ -395,7 +409,6 @@ apply_fixes() {
         print_error "Fix analysis failed after ${duration}s"
         return 1
     fi
-    return 0
 }
 
 # Show AmpCode status
