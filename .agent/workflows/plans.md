@@ -652,17 +652,17 @@ Most TODO.md changes should stay on the current branch:
 | Dependency updates | Adding `blocked-by:` when discovering blockers | Discovered in context |
 | Context notes | Adding notes to tasks you're actively working on | Preserves context |
 
-### Consider Dedicated Branch
+### Consider Dedicated Worktree
 
 When adding **unrelated backlog items** (new ideas, tools to evaluate, future work):
 
 | Condition | Recommendation |
 |-----------|----------------|
-| No uncommitted changes | Offer branch choice |
-| Has uncommitted changes | Stay on current branch (lower friction) |
-| Adding 3+ unrelated items | Suggest batching on dedicated branch |
+| TODO.md-only changes | Commit directly on main (no branch needed) |
+| Mixed changes (TODO + code/agent files) | Create a worktree |
+| Adding 3+ unrelated items on a feature branch | Suggest committing on main instead |
 
-**Prompt pattern** (when adding unrelated backlog items):
+**Prompt pattern** (when adding unrelated backlog items from a feature branch):
 
 ```text
 Adding {N} backlog items unrelated to `{current-branch}`:
@@ -670,34 +670,56 @@ Adding {N} backlog items unrelated to `{current-branch}`:
 - {item 2}
 
 1. Add to current branch (quick, may create PR noise)
-2. Create `chore/backlog-updates` branch (cleaner history)
-3. Add to main directly (TODO.md only, skip PR)
+2. Create worktree: `wt switch -c chore/backlog-updates` (cleaner history)
+3. Add to main directly (TODO.md only, skip PR) — recommended for planning-only
 ```
+
+**NEVER use `git checkout -b` in the main repo directory.** If a dedicated branch is needed, always use a worktree (`wt switch -c`).
 
 ### Why Not Always Switch?
 
-A "always switch branches for TODO.md" rule fails the 80% universal applicability test:
+An "always switch branches for TODO.md" rule fails the 80% universal applicability test:
 
 - ~45% of todo additions ARE related to current work
-- Branch switching adds 2-5 minutes overhead per switch
-- Uncommitted changes make switching complex (stash/pop)
+- Worktree creation adds overhead per switch
 - Context is lost when separating related discoveries
 
-**Bottom line**: Use judgment. Related work stays together; unrelated backlog can optionally go to a dedicated branch.
+**Bottom line**: Use judgment. Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree.
 
-## MANDATORY: Commit, Push, and Merge After TODO Changes
+## MANDATORY: Commit and Push After TODO Changes
 
-After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, you MUST complete the full git cycle:
+After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, you MUST commit and push immediately.
 
-1. **Create branch** (if on main): `git stash && git checkout -b chore/todo-{slug} && git stash pop`
-2. **Commit**: `git add TODO.md && git commit -m "chore: add {description} to backlog"`
-3. **Push**: `git push -u origin chore/todo-{slug}`
-4. **Create PR and merge**: `gh pr create --fill && gh pr merge --squash --delete-branch`
-5. **Return to main**: `git checkout main && git pull`
+### Planning-only changes (on main)
 
-Do NOT leave TODO changes uncommitted or unmerged. Planning edits are low-risk and should flow through to main immediately so all sessions and agents see the updated task list.
+Planning files (TODO.md, todo/) are allowed exceptions that can be edited directly on main. Use the helper script:
 
-**Why this matters**: Uncommitted TODO changes are invisible to other sessions, agents, and the `/ready` command. They can be lost on branch switches or stash conflicts. The full cycle takes ~30 seconds and ensures task visibility.
+```bash
+~/.aidevops/agents/scripts/planning-commit-helper.sh "chore: add {description} to backlog"
+```
+
+Or manually:
+
+1. **Stage**: `git add TODO.md todo/`
+2. **Commit**: `git commit -m "chore: add {description} to backlog"`
+3. **Push**: `git push origin main`
+
+No branch, no PR — commit and push directly to main. These are low-risk planning changes.
+
+### Mixed changes (planning + non-exception files)
+
+If the change also touches non-exception files (e.g., `.agent/workflows/plans.md`):
+
+1. **Create a worktree**: `wt switch -c chore/todo-{slug}` (creates `~/Git/{repo}-chore-todo-{slug}/`)
+2. **Make changes in the worktree directory**
+3. **Commit, push, PR, merge** from the worktree
+4. The main repo directory stays on `main` throughout
+
+**NEVER use `git checkout -b` or `git stash` in the main repo directory.** The main repo must always stay on `main`.
+
+### Why this matters
+
+Uncommitted TODO changes are invisible to other sessions, agents, and the `/ready` command. They can be lost on branch switches or stash conflicts.
 
 **Commit message conventions for TODO changes**:
 
