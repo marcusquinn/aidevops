@@ -72,7 +72,7 @@
       },
       "aidevops_workflows": {
         "enabled": true,
-        "helper_script": ".agent/scripts/autogen-helper.sh"
+        "helper_script": ".agents/scripts/autogen-helper.sh"
       },
       "dotnet_support": {
         "enabled": false,
@@ -100,7 +100,7 @@
     }
   },
   "usage_examples": {
-    "setup": "bash .agent/scripts/autogen-helper.sh setup",
+    "setup": "bash .agents/scripts/autogen-helper.sh setup",
     "start_studio": "~/.aidevops/scripts/start-autogen-studio.sh",
     "stop_studio": "~/.aidevops/scripts/stop-autogen-studio.sh",
     "status": "~/.aidevops/scripts/autogen-status.sh",

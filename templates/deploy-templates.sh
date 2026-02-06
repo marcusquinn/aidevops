@@ -168,7 +168,7 @@ deploy_agent_directory() {
     fi
     
     # Deploy template
-    cp "$SCRIPT_DIR/home/.agent/README.md" "$target_file"
+    cp "$SCRIPT_DIR/home/.agents/README.md" "$target_file"
     print_success "Deployed: $target_file"
     return 0
 }

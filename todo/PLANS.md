@@ -38,9 +38,9 @@ Eliminate `curl | sh` installs by downloading scripts to disk, verifying integri
 
 Targets include:
 - `setup.sh` (multiple install blocks)
-- `.agent/scripts/qlty-cli.sh`
-- `.agent/scripts/coderabbit-cli.sh`
-- `.agent/scripts/dev-browser-helper.sh`
+- `.agents/scripts/qlty-cli.sh`
+- `.agents/scripts/coderabbit-cli.sh`
+- `.agents/scripts/dev-browser-helper.sh`
 
 #### Progress
 
@@ -185,7 +185,7 @@ m090,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,,2026-02-03T0
 
 **Status:** Planning
 **Estimate:** ~2d (ai:1d test:0.5d read:0.5d)
-**Architecture:** [.agent/build-mcp/aidevops-plugin.md](../.agent/build-mcp/aidevops-plugin.md)
+**Architecture:** [.agents/build-mcp/aidevops-plugin.md](../.agents/build-mcp/aidevops-plugin.md)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
@@ -1086,7 +1086,7 @@ Implement remaining agent design pattern improvements identified from Lance Mart
 
 | Priority | Improvement | Estimate | Description |
 |----------|-------------|----------|-------------|
-| Medium | YAML frontmatter in source subagents | ~2h | Add frontmatter to all `.agent/**/*.md` for better progressive disclosure |
+| Medium | YAML frontmatter in source subagents | ~2h | Add frontmatter to all `.agents/**/*.md` for better progressive disclosure |
 | Medium | Automatic session reflection | ~4h | Auto-distill sessions to memory on completion |
 | Low | Cache-aware prompt structure | ~1h | Document stable-prefix patterns for better cache hits |
 | Low | Tool description indexing | ~3h | Cursor-style MCP description sync for on-demand retrieval |
@@ -1095,7 +1095,7 @@ Implement remaining agent design pattern improvements identified from Lance Mart
 #### Progress
 
 - [ ] (2025-01-11) Phase 1: Add YAML frontmatter to source subagents ~2h
-  - Add `description`, `triggers`, `tools` to all `.agent/**/*.md` files
+  - Add `description`, `triggers`, `tools` to all `.agents/**/*.md` files
   - Update `generate-opencode-agents.sh` to parse frontmatter
 - [ ] (2025-01-11) Phase 2: Automatic session reflection ~4h
   - Create `session-distill-helper.sh` to extract learnings
@@ -1156,7 +1156,7 @@ p012,/add-skill System for External Skill Import,planning,0,6,,skills|agents|imp
 
 Create a comprehensive skill import system that allows rapid adoption of external AI agent skills into aidevops, with upstream tracking for updates and multi-assistant compatibility.
 
-**Problem:** Many people are creating and sharing Claude Code skills, OpenCode skills, and other AI assistant configurations. aidevops has its own superior `.agent/` folder structure. We need to rapidly import external skills, convert to aidevops format, handle conflicts intelligently, and track upstream for updates.
+**Problem:** Many people are creating and sharing Claude Code skills, OpenCode skills, and other AI assistant configurations. aidevops has its own superior `.agents/` folder structure. We need to rapidly import external skills, convert to aidevops format, handle conflicts intelligently, and track upstream for updates.
 
 #### Research Completed (2026-01-21)
 
@@ -1190,7 +1190,7 @@ Create a comprehensive skill import system that allows rapid adoption of externa
 - `trailofbits/skills` - Security auditing
 
 **Architecture Decision:**
-- Source of truth: `.agent/` (aidevops format)
+- Source of truth: `.agents/` (aidevops format)
 - `setup.sh` generates symlinks to `~/.config/opencode/skills/`, `~/.codex/skills/`, `~/.claude/skills/`, `~/.config/amp/tools/`
 - Nesting: Simple skills → single .md file; Complex skills → folder with subagents
 - Tracking: `skill-sources.json` with upstream URL, version, last-checked
@@ -1200,12 +1200,12 @@ Create a comprehensive skill import system that allows rapid adoption of externa
 - [ ] (2026-01-21) Phase 1: Create skill-sources.json schema and registry ~2h
   - Define JSON schema for tracking upstream skills
   - Add existing humanise.md as first tracked skill
-  - Create `.agent/configs/skill-sources.json`
+  - Create `.agents/configs/skill-sources.json`
 - [ ] (2026-01-21) Phase 2: Create add-skill-helper.sh ~4h
   - Fetch via `npx skills add` or direct GitHub
   - Detect format (SKILL.md, AGENTS.md, .cursorrules, raw)
   - Extract metadata, instructions, resources
-  - Check for conflicts with existing .agent/ files
+  - Check for conflicts with existing .agents/ files
 - [ ] (2026-01-21) Phase 3: Create /add-skill command ~2h
   - Create `scripts/commands/add-skill.md`
   - Present merge options when conflicts detected
@@ -1236,7 +1236,7 @@ m063,p012,Phase 6: Update setup.sh for symlinks,3h,,2026-01-21T00:00Z,,pending
 #### Decision Log
 
 - **Decision:** Use symlinks by default, pointer fallback for Windows
-  **Rationale:** Single source of truth; updates to .agent/ automatically reflected
+  **Rationale:** Single source of truth; updates to .agents/ automatically reflected
   **Date:** 2026-01-21
 
 - **Decision:** Use `npx skills add` as fetch mechanism when available
@@ -1262,18 +1262,18 @@ d025,p012,Merge conflicts require human decision,Preserves existing knowledge,20
 
 | File | Purpose |
 |------|---------|
-| `.agent/configs/skill-sources.json` | Registry of imported skills with upstream tracking |
-| `.agent/scripts/add-skill-helper.sh` | Fetch, analyse, convert, merge skills |
-| `.agent/scripts/skill-update-helper.sh` | Check all tracked skills for updates |
-| `.agent/scripts/commands/add-skill.md` | `/add-skill` command definition |
-| `.agent/tools/build-agent/add-skill.md` | Subagent with conversion/merge logic |
+| `.agents/configs/skill-sources.json` | Registry of imported skills with upstream tracking |
+| `.agents/scripts/add-skill-helper.sh` | Fetch, analyse, convert, merge skills |
+| `.agents/scripts/skill-update-helper.sh` | Check all tracked skills for updates |
+| `.agents/scripts/commands/add-skill.md` | `/add-skill` command definition |
+| `.agents/tools/build-agent/add-skill.md` | Subagent with conversion/merge logic |
 
 #### Files to Update
 
 | File | Changes |
 |------|---------|
 | `setup.sh` | Generate symlinks to all AI assistant skill locations |
-| `generate-skills.sh` | Create SKILL.md stubs pointing to .agent/ source |
+| `generate-skills.sh` | Create SKILL.md stubs pointing to .agents/ source |
 | `AGENTS.md` | Document /add-skill command in quick reference |
 
 #### Surprises & Discoveries

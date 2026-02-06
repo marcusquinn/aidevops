@@ -986,7 +986,7 @@ Complex, multi-session work that requires detailed planning.
 
 ---
 
-*See `.agent/workflows/plans.md` for planning workflow*
+*See `.agents/workflows/plans.md` for planning workflow*
 EOF
                 print_success "Created todo/PLANS.md (minimal template)"
             fi
@@ -1010,7 +1010,7 @@ EOF
 
 Declarative schema files - source of truth for database structure.
 
-See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+See: `@sql-migrations` or `.agents/workflows/sql-migrations.md`
 EOF
             print_success "Created schemas/ directory"
         else
@@ -1025,7 +1025,7 @@ EOF
 
 Auto-generated versioned migration files. Do not edit manually.
 
-See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+See: `@sql-migrations` or `.agents/workflows/sql-migrations.md`
 EOF
             print_success "Created migrations/ directory"
         else
@@ -1040,7 +1040,7 @@ EOF
 
 Initial and reference data (roles, statuses, test accounts).
 
-See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+See: `@sql-migrations` or `.agents/workflows/sql-migrations.md`
 EOF
             print_success "Created seeds/ directory"
         else
@@ -1139,7 +1139,7 @@ EOF
     elif [[ "$enable_database" == "true" ]]; then
         echo "  1. Add schema files to schemas/"
         echo "  2. Run diff to generate migrations"
-        echo "  3. See .agent/workflows/sql-migrations.md"
+        echo "  3. See .agents/workflows/sql-migrations.md"
     else
         echo "  1. Add tasks to TODO.md"
         echo "  2. Use /create-prd for complex features"

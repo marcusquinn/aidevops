@@ -2,7 +2,7 @@
 # Setup script test runner
 set -uo pipefail
 
-SCRIPTS_DIR="${HOME}/git/aidevops/.agent/scripts"
+SCRIPTS_DIR="${HOME}/git/aidevops/.agents/scripts"
 PASS=0
 FAIL=0
 SKIP=0

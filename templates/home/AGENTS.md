@@ -53,13 +53,13 @@ AI assistants operating in this environment should:
 
 ```bash
 # Store API keys securely
-bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
 
 # Or paste export commands from services
-bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh add 'export TOKEN="xxx"'
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh add 'export TOKEN="xxx"'
 
 # List configured services (keys are never displayed)
-bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh list
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh list
 
 # Verify secure storage location
 ls -la ~/.config/aidevops/
