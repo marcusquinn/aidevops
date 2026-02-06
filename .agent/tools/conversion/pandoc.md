@@ -231,6 +231,8 @@ The helper script automatically:
 
 #### **PDF Conversion Problems**
 
+For complex PDFs (multi-column layouts, tables, formulas, scanned documents), consider using MinerU instead. See `mineru.md` for details.
+
 ```bash
 # Install PDF support
 brew install poppler          # macOS
