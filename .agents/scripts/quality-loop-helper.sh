@@ -919,7 +919,9 @@ pr_review_loop() {
                 check_unresolved_review_comments "$pr_number"
                 waiting_unresolved_result=$?
                 
-                if [[ $waiting_unresolved_result -eq 1 ]]; then
+                if [[ $waiting_unresolved_result -eq 2 ]]; then
+                    print_warning "Could not verify AI review status (API error) - proceeding with caution"
+                elif [[ $waiting_unresolved_result -eq 1 ]]; then
                     print_warning "AI reviewers left unresolved feedback (review posted as COMMENTED, not CHANGES_REQUESTED)"
                     get_pr_feedback "$pr_number"
                     print_warning "IMPORTANT: Verify AI bot suggestions before implementing — reviewers can hallucinate. Check claims against runtime/docs first."
