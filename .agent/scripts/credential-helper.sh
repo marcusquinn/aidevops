@@ -337,10 +337,14 @@ cmd_set() {
         env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
     fi
 
-    # Escape value to prevent command injection when file is sourced
-    # printf %q produces a shell-safe string that expands back to the original
-    local escaped_value
-    escaped_value=$(printf '%q' "$value")
+    # Escape value for safe double-quoted storage
+    # Escapes: backslash, double-quote, dollar, backtick
+    # This avoids printf %q which requires eval/bash -c to decode
+    local escaped_value="$value"
+    escaped_value="${escaped_value//\\/\\\\}"
+    escaped_value="${escaped_value//\"/\\\"}"
+    escaped_value="${escaped_value//\$/\\\$}"
+    escaped_value="${escaped_value//\`/\\\`}"
 
     # Update or append
     if grep -q "^export ${env_var}=" "$env_file" 2>/dev/null; then
@@ -348,12 +352,12 @@ cmd_set() {
         # Avoids sed delimiter injection with arbitrary values
         local tmp_file="${env_file}.tmp"
         grep -v "^export ${env_var}=" "$env_file" > "$tmp_file"
-        echo "export ${env_var}=${escaped_value}" >> "$tmp_file"
+        echo "export ${env_var}=\"${escaped_value}\"" >> "$tmp_file"
         mv "$tmp_file" "$env_file"
         chmod 600 "$env_file"
         print_success "Updated $env_var in tenant '$tenant'"
     else
-        echo "export ${env_var}=${escaped_value}" >> "$env_file"
+        echo "export ${env_var}=\"${escaped_value}\"" >> "$env_file"
         chmod 600 "$env_file"
         print_success "Added $env_var to tenant '$tenant'"
     fi
@@ -407,18 +411,31 @@ cmd_get() {
         env_var=$(echo "$key" | tr '[:lower:]-' '[:upper:]_')
     fi
 
-    # Extract the value - handles both quoted and printf %q escaped formats
-    # Source the line in a subshell to properly expand escaped values
+    # Extract the value safely without eval/bash -c
+    # Handles: export KEY="value" (current format) and export KEY=value (legacy)
     local line
     line=$(grep "^export ${env_var}=" "$env_file" 2>/dev/null || true)
 
     if [[ -n "$line" ]]; then
-        # Evaluate the export in a subshell and echo the result
-        # This safely expands printf %q escaped values back to originals
-        local result
-        result=$(bash -c "$line; echo \"\$$env_var\"" 2>/dev/null || true)
-        if [[ -n "$result" ]]; then
-            echo "$result"
+        # Strip the "export KEY=" prefix to get the raw value portion
+        local raw_value="${line#export "${env_var}"=}"
+
+        # Remove surrounding double quotes if present (current format)
+        if [[ "$raw_value" =~ ^\"(.*)\"$ ]]; then
+            raw_value="${BASH_REMATCH[1]}"
+            # Unescape: \\, \", \$, \` back to originals
+            raw_value="${raw_value//\\\\/\\}"
+            raw_value="${raw_value//\\\"/\"}"
+            raw_value="${raw_value//\\\$/\$}"
+            raw_value="${raw_value//\\\`/\`}"
+        elif [[ "$raw_value" =~ ^\'(.*)\'$ ]]; then
+            # Single-quoted values need no unescaping
+            raw_value="${BASH_REMATCH[1]}"
+        fi
+        # Unquoted values (legacy printf %q format) are returned as-is
+
+        if [[ -n "$raw_value" ]]; then
+            echo "$raw_value"
             return 0
         fi
     fi
@@ -765,7 +782,9 @@ cmd_init() {
     return 0
 }
 
-# Export active tenant's credentials to stdout (for eval)
+# Export active tenant's credentials to stdout
+# Preferred usage: source <(credential-helper.sh export)
+# Legacy usage:    eval "$(credential-helper.sh export)" (less safe)
 cmd_export() {
     local tenant=""
 
@@ -793,8 +812,14 @@ cmd_export() {
         return 1
     fi
 
-    # Output export statements for eval
-    grep "^export " "$env_file" 2>/dev/null || true
+    # Validate and output only well-formed export lines
+    # Rejects lines that don't match strict "export VAR_NAME=..." pattern
+    # to prevent command injection if the env file is tampered with
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^export[[:space:]]+[A-Z_][A-Z0-9_]*= ]]; then
+            echo "$line"
+        fi
+    done < "$env_file"
     echo "export AIDEVOPS_ACTIVE_TENANT=\"$tenant\""
     return 0
 }
@@ -822,7 +847,7 @@ cmd_help() {
     echo ""
     echo "  copy <src> <dest> [--key KEY]     Copy keys between tenants"
     echo "  delete <tenant>                   Delete a tenant (not 'default')"
-    echo "  export [--tenant <name>]          Output exports for eval"
+    echo "  export [--tenant <name>]          Output exports (use with source)"
     echo ""
     print_info "Examples:"
     echo ""
@@ -847,8 +872,11 @@ cmd_help() {
     echo "  # Copy shared keys to new tenant"
     echo "  credential-helper.sh copy default client-acme --key OPENAI_API_KEY"
     echo ""
-    echo "  # Load tenant credentials in a script"
-    echo "  eval \$(credential-helper.sh export --tenant client-acme)"
+    echo "  # Load tenant credentials in a script (preferred: source)"
+    echo "  source <(credential-helper.sh export --tenant client-acme)"
+    echo ""
+    echo "  # Legacy alternative (less safe)"
+    echo "  eval \"\$(credential-helper.sh export --tenant client-acme)\""
     echo ""
     return 0
 }

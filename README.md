@@ -2070,7 +2070,7 @@ credential-helper.sh set GITHUB_TOKEN ghp_xxx
 echo "client-acme" > .aidevops-tenant
 
 # Export for scripts
-eval $(credential-helper.sh export)
+source <(credential-helper.sh export)
 ```
 
 **Resolution priority:** Project `.aidevops-tenant` → Global active tenant → Default
