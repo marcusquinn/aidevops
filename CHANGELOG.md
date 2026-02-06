@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.104.0] - 2026-02-06
+
+### Added
+
+- add AI bot review verification to pr-loop and full-loop workflows (t129) (#394)
+- add schema-validator subagent and helper script (t085) (#391)
+- add programmatic-seo subagent for building SEO pages at scale (t091) (#389)
+- add WebPageTest subagent for real-world performance testing (t090) (#388)
+- add ContentKing/Conductor Monitoring subagent (t089) (#387)
+- add Semrush SEO subagent with Analytics API v3 integration (t087) (#386)
+- add Rich Results Test subagent (t084) (#385)
+- create Screaming Frog subagent (t086) (#383)
+- add Bing Webmaster Tools subagent (t083) (#382)
+- add analytics-tracking subagent for GA4 setup and event tracking (t094) (#390)
+- add /runners command for orchestrated batch dispatch (#393)
+- Supervisor post-PR lifecycle (t128.8) (#392)
+- add memory and self-assessment integration to supervisor (t128.6) (#380)
+- add cron integration and auto-pickup to supervisor (t128.5) (#381)
+- add TODO.md auto-update on task completion/failure (t128.4) (#379)
+- add 3-tier outcome evaluation and re-prompt cycle to supervisor (t128.3) (#378)
+- add worker dispatch with worktree isolation to supervisor (t128.2)
+- add supervisor-helper.sh with SQLite schema and state machine (t128.1)
+
+### Changed
+
+- Refactor: rename .agent/ to .agents/ for industry alignment (#396)
+- Documentation: mark t128.6 complete - memory and self-assessment integration
+- Documentation: mark t128.5 complete - cron integration and auto-pickup
+- Documentation: mark t128.4 complete - TODO.md auto-update on completion/failure
+- Documentation: mark t128.3 complete - outcome evaluation and re-prompt cycle
+- Documentation: mark t128.2 complete - worker dispatch with worktree isolation
+- Documentation: mark t128.1 complete - supervisor SQLite schema and state machine
+- Documentation: add t128 Autonomous Supervisor Loop plan, PRD, and subtasks
+
+### Fixed
+
+- resolve SonarCloud security hotspots for clear-text protocols and npm ignore-scripts (#397)
+- supervisor integration testing fixes (t128.7) (#384)
+- remove eval in ampcode-cli.sh, use arrays + format whitelist (#375)
+- remove deprecated "compaction" key from OpenCode config (#374)
+- add missing blank lines between CHANGELOG.md release sections
+
 ## [2.102.0] - 2026-02-06
 
 ### Added
