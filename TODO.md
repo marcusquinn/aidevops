@@ -218,7 +218,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Programmatic SEO workflow for building pages at scale. Template-based page generation, keyword clustering, internal linking automation. Referenced by seo-audit-skill. Add to seo/.
 - [x] t092 Create schema-markup subagent #seo #schema ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Structured data implementation guide. JSON-LD templates for common types (Article, Product, FAQ, HowTo, Organization, LocalBusiness). Schema validation workflow. Referenced by seo-audit-skill. Add to seo/.
-- [ ] t093 Create page-cro subagent #seo #conversion ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill
+- [x] t093 Create page-cro subagent #seo #conversion ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Page conversion rate optimization. A/B testing setup, CTA optimization, form optimization, landing page best practices. Referenced by seo-audit-skill. Add to seo/ or tools/marketing/.
 - [ ] t094 Create analytics-tracking subagent #seo #analytics ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill
   - Notes: Analytics implementation and tracking. GA4 setup, event tracking, conversion tracking, UTM parameters, attribution. Referenced by seo-audit-skill. Add to seo/ or tools/analytics/.
