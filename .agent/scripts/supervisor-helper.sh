@@ -1764,11 +1764,16 @@ extract_log_metadata() {
 
     rm -f "$log_tail_file"
 
+    # Backend infrastructure errors (opencode Antigravity, API gateway)
+    local backend_error_count=0
+    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway.*error\|service unavailable\|503' "$log_tail_file" 2>/dev/null || echo 0)
+
     echo "rate_limit_count=$rate_limit_count"
     echo "auth_error_count=$auth_error_count"
     echo "conflict_count=$conflict_count"
     echo "timeout_count=$timeout_count"
     echo "oom_count=$oom_count"
+    echo "backend_error_count=$backend_error_count"
 
     # JSON parse errors (opencode --format json output)
     if grep -q '"error"' "$log_file" 2>/dev/null; then
@@ -1836,12 +1841,20 @@ evaluate_worker() {
     meta_exit_code=$(_meta_get "exit_code" "")
 
     local meta_rate_limit_count meta_auth_error_count meta_conflict_count
-    local meta_timeout_count meta_oom_count
+    local meta_timeout_count meta_oom_count meta_backend_error_count
     meta_rate_limit_count=$(_meta_get "rate_limit_count" "0")
     meta_auth_error_count=$(_meta_get "auth_error_count" "0")
     meta_conflict_count=$(_meta_get "conflict_count" "0")
     meta_timeout_count=$(_meta_get "timeout_count" "0")
     meta_oom_count=$(_meta_get "oom_count" "0")
+    meta_backend_error_count=$(_meta_get "backend_error_count" "0")
+
+    # Backend infrastructure error (Antigravity, API gateway) = transient, always retry
+    # These indicate the AI provider is overloaded, not a task failure
+    if [[ "$meta_backend_error_count" -gt 0 ]]; then
+        echo "retry:backend_infrastructure_error"
+        return 0
+    fi
 
     # FULL_LOOP_COMPLETE = definitive success
     if [[ "$meta_signal" == "FULL_LOOP_COMPLETE" ]]; then
