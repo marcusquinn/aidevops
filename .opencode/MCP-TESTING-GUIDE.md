@@ -17,13 +17,13 @@ bun run dashboard
 ### 2. Run Health Check
 
 ```bash
-./.agent/scripts/mcp-inspector-helper.sh health
+./.agents/scripts/mcp-inspector-helper.sh health
 ```
 
 ### 3. Test API Gateway
 
 ```bash
-./.agent/scripts/mcp-inspector-helper.sh test-gateway
+./.agents/scripts/mcp-inspector-helper.sh test-gateway
 ```
 
 ## MCP Inspector Commands
@@ -34,38 +34,38 @@ The web UI provides interactive testing at `http://localhost:6274`:
 
 ```bash
 # Launch with all configured servers
-./.agent/scripts/mcp-inspector-helper.sh ui
+./.agents/scripts/mcp-inspector-helper.sh ui
 
 # Launch for specific server
-./.agent/scripts/mcp-inspector-helper.sh ui context7
+./.agents/scripts/mcp-inspector-helper.sh ui context7
 ```
 
 ### List Tools
 
 ```bash
 # List tools from all servers
-./.agent/scripts/mcp-inspector-helper.sh list-tools
+./.agents/scripts/mcp-inspector-helper.sh list-tools
 
 # List tools from specific server
-./.agent/scripts/mcp-inspector-helper.sh list-tools context7
-./.agent/scripts/mcp-inspector-helper.sh list-tools repomix
+./.agents/scripts/mcp-inspector-helper.sh list-tools context7
+./.agents/scripts/mcp-inspector-helper.sh list-tools repomix
 ```
 
 ### Call Tools
 
 ```bash
 # Call Context7 resolve-library-id
-./.agent/scripts/mcp-inspector-helper.sh call-tool context7 resolve-library-id libraryName=bun
+./.agents/scripts/mcp-inspector-helper.sh call-tool context7 resolve-library-id libraryName=bun
 
 # Call Repomix pack_codebase
-./.agent/scripts/mcp-inspector-helper.sh call-tool repomix pack_codebase directory=/path/to/repo
+./.agents/scripts/mcp-inspector-helper.sh call-tool repomix pack_codebase directory=/path/to/repo
 ```
 
 ### List Resources
 
 ```bash
-./.agent/scripts/mcp-inspector-helper.sh list-resources
-./.agent/scripts/mcp-inspector-helper.sh list-resources filesystem
+./.agents/scripts/mcp-inspector-helper.sh list-resources
+./.agents/scripts/mcp-inspector-helper.sh list-resources filesystem
 ```
 
 ## Direct npx Commands
@@ -210,7 +210,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 1. Check if server is running:
 
    ```bash
-   ./.agent/scripts/mcp-inspector-helper.sh health
+   ./.agents/scripts/mcp-inspector-helper.sh health
    ```
 
 2. Check server logs:
@@ -301,6 +301,6 @@ const data = await response.json()
     ├── parallel-quality.ts     # Parallel quality checks
     └── toon.ts                 # TOON OpenCode tool
 
-.agent/scripts/
+.agents/scripts/
 └── mcp-inspector-helper.sh     # Inspector helper script
 ```

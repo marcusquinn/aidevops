@@ -202,7 +202,7 @@ for mcp_name, mcp_config in mcp_servers.items():
         'osgrep': ['search', 'trace', 'skeleton'],
         'augment-context-engine': ['codebase-retrieval'],
         'dataforseo': ['serp', 'keywords', 'backlinks', 'domain-analytics'],
-        # serper - REMOVED: Uses curl subagent (.agent/seo/serper.md)
+        # serper - REMOVED: Uses curl subagent (.agents/seo/serper.md)
         'gsc': ['query', 'sitemaps', 'inspect'],
         'shadcn': ['browse', 'search', 'install'],
         'playwriter': ['navigate', 'click', 'type', 'screenshot'],

@@ -5,7 +5,7 @@
 # Visual AI workflow builder setup and management
 #
 # Usage:
-#   bash .agent/scripts/langflow-helper.sh [action]
+#   bash .agents/scripts/langflow-helper.sh [action]
 #
 # Actions:
 #   setup     Complete setup of Langflow
@@ -300,7 +300,7 @@ if [[ -f "$LANGFLOW_DIR/start_langflow.sh" ]]; then
     fi
 else
     echo "Langflow not set up. Run setup first:"
-    echo "  bash .agent/scripts/langflow-helper.sh setup"
+    echo "  bash .agents/scripts/langflow-helper.sh setup"
     exit 1
 fi
 EOF

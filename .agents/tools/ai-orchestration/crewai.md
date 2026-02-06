@@ -19,7 +19,7 @@ tools:
 
 - **Purpose**: Role-playing autonomous AI agents working as teams
 - **License**: MIT (fully open-source, commercial use permitted)
-- **Setup**: `bash .agent/scripts/crewai-helper.sh setup`
+- **Setup**: `bash .agents/scripts/crewai-helper.sh setup`
 - **Start**: `~/.aidevops/scripts/start-crewai-studio.sh`
 - **Stop**: `~/.aidevops/scripts/stop-crewai-studio.sh`
 - **Status**: `~/.aidevops/scripts/crewai-status.sh`
@@ -74,7 +74,7 @@ Event-driven workflows for precise control over complex automations.
 
 ```bash
 # Run the setup script
-bash .agent/scripts/crewai-helper.sh setup
+bash .agents/scripts/crewai-helper.sh setup
 
 # Configure API keys
 nano ~/.aidevops/crewai/.env

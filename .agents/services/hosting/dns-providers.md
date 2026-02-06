@@ -112,20 +112,20 @@ cp configs/route53-dns-config.json.txt configs/route53-dns-config.json
 
 ```bash
 # List DNS records across providers
-./.agent/scripts/dns-helper.sh records cloudflare personal example.com
-./.agent/scripts/dns-helper.sh records namecheap personal example.com
-./.agent/scripts/dns-helper.sh records route53 production example.com
+./.agents/scripts/dns-helper.sh records cloudflare personal example.com
+./.agents/scripts/dns-helper.sh records namecheap personal example.com
+./.agents/scripts/dns-helper.sh records route53 production example.com
 
 # Add DNS records
-./.agent/scripts/dns-helper.sh add cloudflare personal example.com www A 192.168.1.100
-./.agent/scripts/dns-helper.sh add namecheap personal example.com mail A 192.168.1.101
-./.agent/scripts/dns-helper.sh add route53 production example.com api A 192.168.1.102
+./.agents/scripts/dns-helper.sh add cloudflare personal example.com www A 192.168.1.100
+./.agents/scripts/dns-helper.sh add namecheap personal example.com mail A 192.168.1.101
+./.agents/scripts/dns-helper.sh add route53 production example.com api A 192.168.1.102
 
 # Update DNS records
-./.agent/scripts/dns-helper.sh update cloudflare personal example.com record-id www A 192.168.1.200
+./.agents/scripts/dns-helper.sh update cloudflare personal example.com record-id www A 192.168.1.200
 
 # Delete DNS records
-./.agent/scripts/dns-helper.sh delete cloudflare personal example.com record-id
+./.agents/scripts/dns-helper.sh delete cloudflare personal example.com record-id
 ```
 
 ### **Provider-Specific Features:**
@@ -134,26 +134,26 @@ cp configs/route53-dns-config.json.txt configs/route53-dns-config.json
 
 ```bash
 # Enable Cloudflare proxy
-./.agent/scripts/dns-helper.sh proxy-enable cloudflare personal example.com record-id
+./.agents/scripts/dns-helper.sh proxy-enable cloudflare personal example.com record-id
 
 # Configure page rules
-./.agent/scripts/dns-helper.sh page-rule cloudflare personal example.com "*.example.com/*" cache-everything
+./.agents/scripts/dns-helper.sh page-rule cloudflare personal example.com "*.example.com/*" cache-everything
 
 # Get analytics
-./.agent/scripts/dns-helper.sh analytics cloudflare personal example.com
+./.agents/scripts/dns-helper.sh analytics cloudflare personal example.com
 ```
 
 #### **Route 53 Advanced Features:**
 
 ```bash
 # Create health check
-./.agent/scripts/dns-helper.sh health-check route53 production example.com https://example.com/health
+./.agents/scripts/dns-helper.sh health-check route53 production example.com https://example.com/health
 
 # Configure weighted routing
-./.agent/scripts/dns-helper.sh weighted-routing route53 production example.com www A 192.168.1.100 50
+./.agents/scripts/dns-helper.sh weighted-routing route53 production example.com www A 192.168.1.100 50
 
 # Set up geolocation routing
-./.agent/scripts/dns-helper.sh geo-routing route53 production example.com www A 192.168.1.100 US
+./.agents/scripts/dns-helper.sh geo-routing route53 production example.com www A 192.168.1.100 US
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -170,13 +170,13 @@ cp configs/route53-dns-config.json.txt configs/route53-dns-config.json
 
 ```bash
 # Enable DNSSEC (where supported)
-./.agent/scripts/dns-helper.sh enable-dnssec cloudflare personal example.com
+./.agents/scripts/dns-helper.sh enable-dnssec cloudflare personal example.com
 
 # Configure CAA records
-./.agent/scripts/dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
+./.agents/scripts/dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
 
 # Set up monitoring
-./.agent/scripts/dns-helper.sh monitor cloudflare personal example.com
+./.agents/scripts/dns-helper.sh monitor cloudflare personal example.com
 ```
 
 ### **Access Control:**
@@ -199,35 +199,35 @@ dig @8.8.8.8 example.com
 nslookup example.com 1.1.1.1
 
 # Test from multiple locations
-./.agent/scripts/dns-helper.sh propagation-check example.com
+./.agents/scripts/dns-helper.sh propagation-check example.com
 
 # Check TTL values
-./.agent/scripts/dns-helper.sh ttl-check example.com
+./.agents/scripts/dns-helper.sh ttl-check example.com
 ```
 
 #### **API Authentication:**
 
 ```bash
 # Test API connectivity
-./.agent/scripts/dns-helper.sh test-auth cloudflare personal
-./.agent/scripts/dns-helper.sh test-auth namecheap personal
-./.agent/scripts/dns-helper.sh test-auth route53 production
+./.agents/scripts/dns-helper.sh test-auth cloudflare personal
+./.agents/scripts/dns-helper.sh test-auth namecheap personal
+./.agents/scripts/dns-helper.sh test-auth route53 production
 
 # Verify API permissions
-./.agent/scripts/dns-helper.sh check-permissions cloudflare personal
+./.agents/scripts/dns-helper.sh check-permissions cloudflare personal
 ```
 
 #### **Record Conflicts:**
 
 ```bash
 # Check for conflicting records
-./.agent/scripts/dns-helper.sh conflict-check cloudflare personal example.com
+./.agents/scripts/dns-helper.sh conflict-check cloudflare personal example.com
 
 # Validate DNS configuration
-./.agent/scripts/dns-helper.sh validate cloudflare personal example.com
+./.agents/scripts/dns-helper.sh validate cloudflare personal example.com
 
 # Compare configurations across providers
-./.agent/scripts/dns-helper.sh compare example.com cloudflare:personal namecheap:personal
+./.agents/scripts/dns-helper.sh compare example.com cloudflare:personal namecheap:personal
 ```
 
 ## 📊 **Monitoring & Analytics**
@@ -236,26 +236,26 @@ nslookup example.com 1.1.1.1
 
 ```bash
 # Monitor DNS resolution
-./.agent/scripts/dns-helper.sh monitor-resolution example.com
+./.agents/scripts/dns-helper.sh monitor-resolution example.com
 
 # Check DNS performance
-./.agent/scripts/dns-helper.sh performance-check example.com
+./.agents/scripts/dns-helper.sh performance-check example.com
 
 # Monitor DNS changes
-./.agent/scripts/dns-helper.sh change-log cloudflare personal example.com
+./.agents/scripts/dns-helper.sh change-log cloudflare personal example.com
 ```
 
 ### **Analytics & Reporting:**
 
 ```bash
 # Get DNS query analytics (Cloudflare)
-./.agent/scripts/dns-helper.sh analytics cloudflare personal example.com
+./.agents/scripts/dns-helper.sh analytics cloudflare personal example.com
 
 # Generate DNS report
-./.agent/scripts/dns-helper.sh report cloudflare personal example.com
+./.agents/scripts/dns-helper.sh report cloudflare personal example.com
 
 # Export DNS configuration
-./.agent/scripts/dns-helper.sh export cloudflare personal example.com > dns-backup.json
+./.agents/scripts/dns-helper.sh export cloudflare personal example.com > dns-backup.json
 ```
 
 ## 🔄 **Migration & Backup**
@@ -264,26 +264,26 @@ nslookup example.com 1.1.1.1
 
 ```bash
 # Export DNS records from source
-./.agent/scripts/dns-helper.sh export namecheap personal example.com > source-dns.json
+./.agents/scripts/dns-helper.sh export namecheap personal example.com > source-dns.json
 
 # Import DNS records to destination
-./.agent/scripts/dns-helper.sh import cloudflare personal example.com source-dns.json
+./.agents/scripts/dns-helper.sh import cloudflare personal example.com source-dns.json
 
 # Verify migration
-./.agent/scripts/dns-helper.sh compare example.com namecheap:personal cloudflare:personal
+./.agents/scripts/dns-helper.sh compare example.com namecheap:personal cloudflare:personal
 ```
 
 ### **Backup & Restore:**
 
 ```bash
 # Backup DNS configuration
-./.agent/scripts/dns-helper.sh backup cloudflare personal example.com
+./.agents/scripts/dns-helper.sh backup cloudflare personal example.com
 
 # Restore DNS configuration
-./.agent/scripts/dns-helper.sh restore cloudflare personal example.com backup-file.json
+./.agents/scripts/dns-helper.sh restore cloudflare personal example.com backup-file.json
 
 # Schedule automated backups
-./.agent/scripts/dns-helper.sh schedule-backup cloudflare personal daily
+./.agents/scripts/dns-helper.sh schedule-backup cloudflare personal daily
 ```
 
 ## 📚 **Best Practices**

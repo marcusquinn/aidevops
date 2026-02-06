@@ -6,7 +6,7 @@ export default tool({
     target: tool.schema.enum(["all", "cache", "logs", "temp", "node_modules", "dry-run"]).describe("What to clean up"),
   },
   async execute(args) {
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/system-cleanup.sh ${args.target}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/system-cleanup.sh ${args.target}`.text()
     return result.trim()
   },
 })

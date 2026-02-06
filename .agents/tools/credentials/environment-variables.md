@@ -22,7 +22,7 @@ tools:
 - **OpenAI**: `OPENAI_API_KEY` (sk-...), `OPENAI_BASE_URL`
 - **Anthropic**: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
 - **Others**: `AI_GATEWAY_API_KEY`, `GOOGLE_API_KEY`, `AZURE_OPENAI_API_KEY`
-- **DSPy test**: `./.agent/scripts/dspy-helper.sh test`
+- **DSPy test**: `./.agents/scripts/dspy-helper.sh test`
 - **Check keys**: `env | grep -E "(OPENAI|ANTHROPIC|CLAUDE)_API_KEY"`
 - **Test OpenAI**: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models | head -20`
 - **Benefits**: Secure (no keys in files), convenient (works immediately), flexible (override per-project)
@@ -133,16 +133,16 @@ Since your `OPENAI_API_KEY` is already set, you can immediately:
 
 ```bash
 # Test DSPy
-./.agent/scripts/dspy-helper.sh test
+./.agents/scripts/dspy-helper.sh test
 
 # Create and run DSPy project
-./.agent/scripts/dspy-helper.sh init my-bot
+./.agents/scripts/dspy-helper.sh init my-bot
 cd data/dspy/my-bot
 source ../../../python-env/dspy-env/bin/activate
 python3 main.py
 
 # Create DSPyGround project
-./.agent/scripts/dspyground-helper.sh init my-agent
+./.agents/scripts/dspyground-helper.sh init my-agent
 cd data/dspyground/my-agent
 # Add AI_GATEWAY_API_KEY to .env if using AI Gateway
 # Otherwise, your OPENAI_API_KEY works directly

@@ -96,7 +96,7 @@ Option 2 (continue on current branch) is acceptable IF:
 ## Working in aidevops Framework
 
 When modifying aidevops agents, you work in TWO locations:
-- **Source**: `~/Git/aidevops/.agent/` - THIS is the git repo, check branch HERE
+- **Source**: `~/Git/aidevops/.agents/` - THIS is the git repo, check branch HERE
 - **Deployed**: `~/.aidevops/agents/` - copy of source, not a git repo
 
 Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location.

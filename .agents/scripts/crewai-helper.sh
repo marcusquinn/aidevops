@@ -5,7 +5,7 @@
 # Multi-agent orchestration framework setup and management
 #
 # Usage:
-#   bash .agent/scripts/crewai-helper.sh [action]
+#   bash .agents/scripts/crewai-helper.sh [action]
 #
 # Actions:
 #   setup     Complete setup of CrewAI
@@ -452,7 +452,7 @@ if [[ -f "$CREWAI_DIR/studio_app.py" ]]; then
     echo "Use 'stop-crewai-studio.sh' to stop"
 else
     echo "CrewAI Studio not set up. Run setup first:"
-    echo "  bash .agent/scripts/crewai-helper.sh setup"
+    echo "  bash .agents/scripts/crewai-helper.sh setup"
     exit 1
 fi
 EOF

@@ -29,13 +29,13 @@ tools:
 
 ```bash
 # Preview changelog entry from commits
-.agent/scripts/version-manager.sh changelog-preview
+.agents/scripts/version-manager.sh changelog-preview
 
 # Validate changelog matches version
-.agent/scripts/version-manager.sh changelog-check
+.agents/scripts/version-manager.sh changelog-check
 
 # Full release (includes changelog validation)
-.agent/scripts/version-manager.sh release [major|minor|patch]
+.agents/scripts/version-manager.sh release [major|minor|patch]
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -95,7 +95,7 @@ Before releasing, verify:
 To preview a changelog entry from recent commits:
 
 ```bash
-.agent/scripts/version-manager.sh changelog-preview
+.agents/scripts/version-manager.sh changelog-preview
 ```
 
 ## Before Releasing

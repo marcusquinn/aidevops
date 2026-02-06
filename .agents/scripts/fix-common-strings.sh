@@ -207,7 +207,7 @@ show_help() {
     echo "Usage: $0 [target]"
     echo ""
     echo "Examples:"
-    echo "  $0 .agent/scripts/"
+    echo "  $0 .agents/scripts/"
     echo "  $0 setup.sh"
     echo "  $0 ."
     echo ""

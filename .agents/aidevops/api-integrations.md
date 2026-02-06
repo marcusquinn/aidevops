@@ -29,10 +29,10 @@ tools:
 - **Email**: Amazon SES
 - **Dev Tools**: Context7, LocalWP, Pandoc, Agno, Playwright/Selenium
 
-**Pattern**: `configs/[service]-config.json` + `.agent/scripts/[service]-helper.sh`
+**Pattern**: `configs/[service]-config.json` + `.agents/scripts/[service]-helper.sh`
 
-**API Key Setup**: `bash .agent/scripts/setup-local-api-keys.sh set [service]-api-key YOUR_KEY`
-**Test All APIs**: `bash .agent/scripts/test-all-apis.sh`
+**API Key Setup**: `bash .agents/scripts/setup-local-api-keys.sh set [service]-api-key YOUR_KEY`
+**Test All APIs**: `bash .agents/scripts/test-all-apis.sh`
 <!-- AI-CONTEXT-END -->
 
 This document provides detailed information about all 28+ API integrations supported by the AI DevOps framework.
@@ -48,7 +48,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Server management, domain operations, hosting control
 - **Authentication**: API Token
 - **Configuration**: `configs/hostinger-config.json`
-- **Helper Script**: `.agent/scripts/hostinger-helper.sh`
+- **Helper Script**: `.agents/scripts/hostinger-helper.sh`
 - **Key Features**: VPS management, domain registration, hosting plans
 
 ### **Hetzner Cloud API**
@@ -56,7 +56,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: VPS management, networking, load balancers
 - **Authentication**: API Token
 - **Configuration**: `configs/hetzner-config.json`
-- **Helper Script**: `.agent/scripts/hetzner-helper.sh`
+- **Helper Script**: `.agents/scripts/hetzner-helper.sh`
 - **Key Features**: Server creation, networking, snapshots, load balancers
 
 ### **Closte API**
@@ -64,7 +64,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Managed hosting, application deployment
 - **Authentication**: API Key
 - **Configuration**: `configs/closte-config.json`
-- **Helper Script**: `.agent/scripts/closte-helper.sh`
+- **Helper Script**: `.agents/scripts/closte-helper.sh`
 - **Key Features**: Application management, deployment automation
 
 ### **Coolify API**
@@ -72,7 +72,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Self-hosted PaaS, application management
 - **Authentication**: API Token
 - **Configuration**: `configs/coolify-config.json`
-- **Helper Script**: `.agent/scripts/coolify-helper.sh`
+- **Helper Script**: `.agents/scripts/coolify-helper.sh`
 - **Key Features**: Docker deployment, service management, monitoring
 
 ## 🌐 **Domain & DNS APIs**
@@ -82,7 +82,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: DNS management, security, performance optimization
 - **Authentication**: API Token (scoped permissions)
 - **Configuration**: `configs/cloudflare-dns-config.json`
-- **Helper Script**: `.agent/scripts/dns-helper.sh`
+- **Helper Script**: `.agents/scripts/dns-helper.sh`
 - **Key Features**: DNS records, security rules, analytics, caching
 
 ### **Spaceship API**
@@ -90,7 +90,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Domain registration, management, transfers
 - **Authentication**: API Key
 - **Configuration**: `configs/spaceship-config.json`
-- **Helper Script**: `.agent/scripts/spaceship-helper.sh`
+- **Helper Script**: `.agents/scripts/spaceship-helper.sh`
 - **Key Features**: Domain search, registration, WHOIS, transfers
 
 ### **101domains API**
@@ -98,7 +98,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Domain purchasing, bulk operations, WHOIS
 - **Authentication**: API Credentials
 - **Configuration**: `configs/101domains-config.json`
-- **Helper Script**: `.agent/scripts/101domains-helper.sh`
+- **Helper Script**: `.agents/scripts/101domains-helper.sh`
 - **Key Features**: Bulk domain operations, pricing, availability
 
 ### **AWS Route 53 API**
@@ -106,7 +106,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: DNS management, health checks
 - **Authentication**: AWS Access Keys
 - **Configuration**: `configs/route53-dns-config.json`
-- **Helper Script**: `.agent/scripts/dns-helper.sh`
+- **Helper Script**: `.agents/scripts/dns-helper.sh`
 - **Key Features**: DNS hosting, health checks, traffic routing
 
 ### **Namecheap API**
@@ -114,7 +114,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Domain registration, DNS management
 - **Authentication**: API Key + Username
 - **Configuration**: `configs/namecheap-dns-config.json`
-- **Helper Script**: `.agent/scripts/dns-helper.sh`
+- **Helper Script**: `.agents/scripts/dns-helper.sh`
 - **Key Features**: Domain management, DNS hosting, SSL certificates
 
 ## 📧 **Communication APIs**
@@ -124,7 +124,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Email delivery, bounce handling, analytics
 - **Authentication**: AWS Access Keys
 - **Configuration**: `configs/ses-config.json`
-- **Helper Script**: `.agent/scripts/ses-helper.sh`
+- **Helper Script**: `.agents/scripts/ses-helper.sh`
 - **Key Features**: Email sending, bounce tracking, reputation monitoring
 
 ### **Twilio API**
@@ -132,7 +132,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: SMS, voice calls, WhatsApp, phone verification, call recording
 - **Authentication**: Account SID + Auth Token
 - **Configuration**: `configs/twilio-config.json`
-- **Helper Script**: `.agent/scripts/twilio-helper.sh`
+- **Helper Script**: `.agents/scripts/twilio-helper.sh`
 - **Key Features**: SMS/MMS, voice calls, WhatsApp Business, Verify (2FA), Lookup, recordings, transcriptions
 - **AUP Compliance**: Must follow Twilio Acceptable Use Policy
 - **Recommended Client**: Telfon app for end-user interface (https://mytelfon.com/)
@@ -142,7 +142,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: WordPress site management, updates, monitoring
 - **Authentication**: API Key
 - **Configuration**: `configs/mainwp-config.json`
-- **Helper Script**: `.agent/scripts/mainwp-helper.sh`
+- **Helper Script**: `.agents/scripts/mainwp-helper.sh`
 - **Key Features**: Site management, updates, backups, monitoring
 
 ## 🔐 **Security & Code Quality APIs**
@@ -152,21 +152,21 @@ Our framework provides standardized access to APIs across all major infrastructu
 - **Purpose**: Password management, secure credential storage
 - **Authentication**: API Token
 - **Configuration**: `configs/vaultwarden-config.json`
-- **Helper Script**: `.agent/scripts/vaultwarden-helper.sh`
+- **Helper Script**: `.agents/scripts/vaultwarden-helper.sh`
 - **Key Features**: Credential storage, secure sharing, audit logs
 
 ### **CodeRabbit API**
 
 - **Purpose**: AI-powered code review, security analysis
 - **Authentication**: API Key
-- **Setup Script**: `.agent/scripts/coderabbit-cli.sh`
+- **Setup Script**: `.agents/scripts/coderabbit-cli.sh`
 - **Key Features**: Automated code review, security scanning, suggestions
 
 ### **Codacy API**
 
 - **Purpose**: Code quality analysis, technical debt tracking
 - **Authentication**: API Token
-- **Setup Script**: `.agent/scripts/codacy-cli.sh`
+- **Setup Script**: `.agents/scripts/codacy-cli.sh`
 - **Key Features**: Quality metrics, security analysis, coverage tracking
 
 ### **SonarCloud API**
@@ -212,21 +212,21 @@ Our framework provides standardized access to APIs across all major infrastructu
 
 - **Purpose**: Repository management, actions, security
 - **Authentication**: Personal Access Token
-- **Helper Script**: `.agent/scripts/git-platforms-helper.sh`
+- **Helper Script**: `.agents/scripts/git-platforms-helper.sh`
 - **Key Features**: Repository operations, workflow management, security scanning
 
 ### **GitLab API**
 
 - **Purpose**: Project management, CI/CD, security scanning
 - **Authentication**: Personal Access Token
-- **Helper Script**: `.agent/scripts/git-platforms-helper.sh`
+- **Helper Script**: `.agents/scripts/git-platforms-helper.sh`
 - **Key Features**: Project management, pipeline automation, security features
 
 ### **Gitea API**
 
 - **Purpose**: Self-hosted Git operations, user management
 - **Authentication**: API Token
-- **Helper Script**: `.agent/scripts/git-platforms-helper.sh`
+- **Helper Script**: `.agents/scripts/git-platforms-helper.sh`
 - **Key Features**: Repository management, user administration, webhooks
 
 ### **Context7 API**
@@ -247,7 +247,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 
 - **Purpose**: Convert various document formats to markdown for AI processing
 - **Authentication**: Local tool (no API key required)
-- **Helper Script**: `.agent/scripts/pandoc-helper.sh`
+- **Helper Script**: `.agents/scripts/pandoc-helper.sh`
 - **Key Features**: Multi-format conversion, batch processing, AI-optimized output
 - **Supported Formats**: Word, PDF, HTML, EPUB, LaTeX, and 20+ other formats
 
@@ -255,7 +255,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 
 - **Purpose**: Local AI agent operating system for DevOps automation
 - **Authentication**: API keys for LLM providers (OpenAI, Anthropic, etc.)
-- **Setup Script**: `.agent/scripts/agno-setup.sh`
+- **Setup Script**: `.agents/scripts/agno-setup.sh`
 - **Key Features**: Multi-agent framework, production runtime, complete privacy
 - **Agents**: DevOps Assistant, Code Review Agent, Documentation Agent
 - **Interface**: Agent-UI web interface and REST API
@@ -264,7 +264,7 @@ Our framework provides standardized access to APIs across all major infrastructu
 
 - **Purpose**: LOCAL web automation and browser-based task automation (privacy-first)
 - **Authentication**: Website credentials (stored securely in local environment only)
-- **Setup Script**: Included in `.agent/scripts/agno-setup.sh`
+- **Setup Script**: Included in `.agents/scripts/agno-setup.sh`
 - **Key Features**: LOCAL LinkedIn automation, web scraping, form filling, social media management
 - **Privacy**: Complete local operation - no cloud services or external browsers
 - **Agents**: LinkedIn Automation Assistant (local), Web Automation Assistant (local)
@@ -310,26 +310,26 @@ cp configs/[service]-config.json.txt configs/[service]-config.json
 # Edit with your API credentials
 
 # Test API connection
-./.agent/scripts/[service]-helper.sh test-connection
+./.agents/scripts/[service]-helper.sh test-connection
 ```
 
 ### **API Key Management**
 
 ```bash
 # Secure API key setup
-bash .agent/scripts/setup-local-api-keys.sh set [service]-api-key YOUR_API_KEY
+bash .agents/scripts/setup-local-api-keys.sh set [service]-api-key YOUR_API_KEY
 
 # List configured APIs
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 
 # Test all API connections
-bash .agent/scripts/test-all-apis.sh
+bash .agents/scripts/test-all-apis.sh
 ```
 
 ## 📚 **Additional Resources**
 
 - [MCP Integration Guide](MCP-INTEGRATIONS.md)
-- [Security Best Practices](.agent/spec/security.md)
+- [Security Best Practices](.agents/spec/security.md)
 - [Configuration Templates](../configs/)
-- [Helper Scripts](../.agent/scripts/)
-- [API Testing Scripts](.agent/scripts/)
+- [Helper Scripts](../.agents/scripts/)
+- [API Testing Scripts](.agents/scripts/)

@@ -17,8 +17,8 @@ tools:
 
 ## Quick Reference
 
-**Setup All**: `bash .agent/scripts/setup-mcp-integrations.sh all`
-**Validate**: `bash .agent/scripts/validate-mcp-integrations.sh`
+**Setup All**: `bash .agents/scripts/setup-mcp-integrations.sh all`
+**Validate**: `bash .agents/scripts/validate-mcp-integrations.sh`
 
 **Browser & Web**:
 - Chrome DevTools MCP: `claude mcp add chrome-devtools npx chrome-devtools-mcp@latest`
@@ -356,19 +356,19 @@ export UNSTRACT_IMAGE_TAG="latest"
 
 ```bash
 # Install all MCP integrations
-bash .agent/scripts/setup-mcp-integrations.sh all
+bash .agents/scripts/setup-mcp-integrations.sh all
 
 # Validate setup
-bash .agent/scripts/validate-mcp-integrations.sh
+bash .agents/scripts/validate-mcp-integrations.sh
 ```
 
 ### **Individual Integration Setup**
 
 ```bash
 # Install specific integration
-bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
-bash .agent/scripts/setup-mcp-integrations.sh playwright
-bash .agent/scripts/setup-mcp-integrations.sh ahrefs
+bash .agents/scripts/setup-mcp-integrations.sh chrome-devtools
+bash .agents/scripts/setup-mcp-integrations.sh playwright
+bash .agents/scripts/setup-mcp-integrations.sh ahrefs
 ```
 
 ### **Configuration Steps**
@@ -404,7 +404,7 @@ bash .agent/scripts/setup-mcp-integrations.sh ahrefs
 Run the validation script to see your current setup status:
 
 ```bash
-bash .agent/scripts/validate-mcp-integrations.sh
+bash .agents/scripts/validate-mcp-integrations.sh
 ```
 
 Expected output for fully configured setup:
@@ -416,8 +416,8 @@ Expected output for fully configured setup:
 
 ## 📚 **Additional Resources**
 
-- [MCP Integration Setup Script](.agent/scripts/setup-mcp-integrations.sh)
-- [MCP Validation Script](.agent/scripts/validate-mcp-integrations.sh)
+- [MCP Integration Setup Script](.agents/scripts/setup-mcp-integrations.sh)
+- [MCP Validation Script](.agents/scripts/validate-mcp-integrations.sh)
 - [MCP Configuration Templates](configs/mcp-templates/)
 - [Chrome DevTools Examples](docs/mcp-examples/chrome-devtools-examples.md)
 - [Playwright Automation Examples](docs/mcp-examples/playwright-automation-examples.md)

@@ -223,6 +223,123 @@ cleanup_deprecated_paths() {
     return 0
 }
 
+# Migrate .agent -> .agents in user projects and local config
+# v2.104.0: Industry converging on .agents/ folder convention (aligning with AGENTS.md)
+# This migrates:
+# 1. .agent symlinks in user projects -> .agents
+# 2. .agent/loop-state/ -> .agents/loop-state/ in user projects
+# 3. .gitignore entries in user projects
+# 4. References in user's AI assistant configs
+# 5. References in ~/.aidevops/ config files
+migrate_agent_to_agents_folder() {
+    print_info "Checking for .agent -> .agents migration..."
+    
+    local migrated=0
+    
+    # 1. Migrate .agent symlinks in registered repos
+    local repos_file="$HOME/.config/aidevops/repos.json"
+    if [[ -f "$repos_file" ]] && command -v jq &>/dev/null; then
+        while IFS= read -r repo_path; do
+            [[ -z "$repo_path" ]] && continue
+            [[ ! -d "$repo_path" ]] && continue
+            
+            # Migrate .agent symlink to .agents
+            if [[ -L "$repo_path/.agent" ]]; then
+                local target
+                target=$(readlink "$repo_path/.agent")
+                rm -f "$repo_path/.agent"
+                ln -s "$target" "$repo_path/.agents" 2>/dev/null || true
+                print_info "  Migrated symlink: $repo_path/.agent -> .agents"
+                ((migrated++))
+            elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
+                # Real directory (not symlink) - rename it
+                if [[ ! -e "$repo_path/.agents" ]]; then
+                    mv "$repo_path/.agent" "$repo_path/.agents"
+                    print_info "  Renamed directory: $repo_path/.agent -> .agents"
+                    ((migrated++))
+                fi
+            fi
+            
+            # Update .gitignore: add .agents, keep .agent for backward compat
+            local gitignore="$repo_path/.gitignore"
+            if [[ -f "$gitignore" ]]; then
+                # Add .agents entry if not present
+                if ! grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
+                    # Replace .agent with .agents if it exists
+                    if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+                        sed -i '' 's/^\.agent$/.agents/' "$gitignore" 2>/dev/null || \
+                        sed -i 's/^\.agent$/.agents/' "$gitignore" 2>/dev/null || true
+                    else
+                        echo ".agents" >> "$gitignore"
+                    fi
+                    print_info "  Updated .gitignore in $(basename "$repo_path")"
+                fi
+                
+                # Update .agent/loop-state/ -> .agents/loop-state/
+                if grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
+                    sed -i '' 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || \
+                    sed -i 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || true
+                fi
+            fi
+        done < <(jq -r '.initialized_repos[].path' "$repos_file" 2>/dev/null)
+    fi
+    
+    # 2. Also scan ~/Git/ for any .agent symlinks not in repos.json
+    if [[ -d "$HOME/Git" ]]; then
+        while IFS= read -r -d '' agent_link; do
+            local repo_dir
+            repo_dir=$(dirname "$agent_link")
+            if [[ -L "$agent_link" ]] && [[ ! -e "$repo_dir/.agents" ]]; then
+                local target
+                target=$(readlink "$agent_link")
+                rm -f "$agent_link"
+                ln -s "$target" "$repo_dir/.agents" 2>/dev/null || true
+                print_info "  Migrated symlink: $agent_link -> .agents"
+                ((migrated++))
+            fi
+        done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" -type l -print0 2>/dev/null)
+    fi
+    
+    # 3. Update AI assistant config files that reference .agent/
+    local ai_config_files=(
+        "$HOME/.config/opencode/agent/AGENTS.md"
+        "$HOME/.config/Claude/AGENTS.md"
+        "$HOME/.cursor/rules/AGENTS.md"
+        "$HOME/.claude/commands/AGENTS.md"
+        "$HOME/.continue/AGENTS.md"
+        "$HOME/.cody/AGENTS.md"
+        "$HOME/.opencode/AGENTS.md"
+    )
+    
+    for config_file in "${ai_config_files[@]}"; do
+        if [[ -f "$config_file" ]]; then
+            if grep -q '\.agent/' "$config_file" 2>/dev/null; then
+                sed -i '' 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || \
+                sed -i 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || true
+                print_info "  Updated references in $config_file"
+                ((migrated++))
+            fi
+        fi
+    done
+    
+    # 4. Update session greeting cache if it references .agent/
+    local greeting_cache="$HOME/.aidevops/cache/session-greeting.txt"
+    if [[ -f "$greeting_cache" ]]; then
+        if grep -q '\.agent/' "$greeting_cache" 2>/dev/null; then
+            sed -i '' 's|\.agent/|.agents/|g' "$greeting_cache" 2>/dev/null || \
+            sed -i 's|\.agent/|.agents/|g' "$greeting_cache" 2>/dev/null || true
+        fi
+    fi
+    
+    if [[ $migrated -gt 0 ]]; then
+        print_success "Migrated $migrated .agent -> .agents reference(s)"
+    else
+        print_info "No .agent -> .agents migration needed"
+    fi
+    
+    return 0
+}
+
 # Remove deprecated MCP entries from opencode.json
 # These MCPs have been replaced by curl-based subagents (zero context cost)
 cleanup_deprecated_mcps() {
@@ -598,8 +715,8 @@ migrate_old_backups() {
     return 0
 }
 
-# Migrate loop state from .claude/ to .agent/loop-state/ in user projects
-# This handles the breaking change from v2.51.0 where loop state directory moved
+# Migrate loop state from .claude/ to .agents/loop-state/ in user projects
+# Also migrates from legacy .agents/loop-state/ to .agents/loop-state/
 # The migration is non-destructive: moves files, doesn't delete originals until confirmed
 migrate_loop_state_directories() {
     print_info "Checking for legacy loop state directories..."
@@ -619,60 +736,69 @@ migrate_loop_state_directories() {
     
     for repo_dir in "${git_dirs[@]}"; do
         local old_state_dir="$repo_dir/.claude"
-        local new_state_dir="$repo_dir/.agent/loop-state"
+        local legacy_state_dir="$repo_dir/.agent/loop-state"
+        local new_state_dir="$repo_dir/.agents/loop-state"
         
-        # Skip if no old state directory
-        [[ ! -d "$old_state_dir" ]] && continue
-        
-        # Check for loop state files in old location
-        local has_loop_state=false
-        if [[ -f "$old_state_dir/ralph-loop.local.state" ]] || \
-           [[ -f "$old_state_dir/loop-state.json" ]] || \
-           [[ -d "$old_state_dir/receipts" ]]; then
-            has_loop_state=true
-        fi
-        
-        [[ "$has_loop_state" != "true" ]] && continue
-        
-        print_info "Found legacy loop state in: $repo_dir/.claude/"
-        
-        # Create new directory
-        mkdir -p "$new_state_dir"
-        
-        # Move loop-related files
-        for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
-            if [[ -f "$old_state_dir/$file" ]]; then
-                mv "$old_state_dir/$file" "$new_state_dir/"
-                print_info "  Moved $file"
+        # Migrate from .claude/ (oldest legacy path)
+        if [[ -d "$old_state_dir" ]]; then
+            local has_loop_state=false
+            if [[ -f "$old_state_dir/ralph-loop.local.state" ]] || \
+               [[ -f "$old_state_dir/loop-state.json" ]] || \
+               [[ -d "$old_state_dir/receipts" ]]; then
+                has_loop_state=true
             fi
-        done
-        
-        # Move receipts directory
-        if [[ -d "$old_state_dir/receipts" ]]; then
-            mv "$old_state_dir/receipts" "$new_state_dir/"
-            print_info "  Moved receipts/"
+            
+            if [[ "$has_loop_state" == "true" ]]; then
+                print_info "Found legacy loop state in: $repo_dir/.claude/"
+                mkdir -p "$new_state_dir"
+                
+                for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
+                    if [[ -f "$old_state_dir/$file" ]]; then
+                        mv "$old_state_dir/$file" "$new_state_dir/"
+                        print_info "  Moved $file"
+                    fi
+                done
+                
+                if [[ -d "$old_state_dir/receipts" ]]; then
+                    mv "$old_state_dir/receipts" "$new_state_dir/"
+                    print_info "  Moved receipts/"
+                fi
+                
+                local remaining
+                remaining=$(find "$old_state_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+                
+                if [[ "$remaining" -eq 0 ]]; then
+                    rmdir "$old_state_dir" 2>/dev/null && print_info "  Removed empty .claude/"
+                else
+                    print_warning "  .claude/ has other files, not removing"
+                fi
+                
+                ((migrated++))
+            fi
         fi
         
-        # Check if .claude/ is now empty (only has hidden files or nothing)
-        local remaining
-        remaining=$(find "$old_state_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
-        
-        if [[ "$remaining" -eq 0 ]]; then
-            rmdir "$old_state_dir" 2>/dev/null && print_info "  Removed empty .claude/"
-        else
-            print_warning "  .claude/ has other files, not removing"
+        # Migrate from .agents/loop-state/ (v2.51.0-v2.103.0 path) to .agents/loop-state/
+        if [[ -d "$legacy_state_dir" ]] && [[ "$legacy_state_dir" != "$new_state_dir" ]]; then
+            print_info "Found legacy loop state in: $repo_dir/.agent/loop-state/"
+            mkdir -p "$new_state_dir"
+            
+            # Move all files from old to new
+            if [[ -n "$(ls -A "$legacy_state_dir" 2>/dev/null)" ]]; then
+                cp -R "$legacy_state_dir"/* "$new_state_dir/" 2>/dev/null || true
+                rm -rf "$legacy_state_dir"
+                print_info "  Migrated .agents/loop-state/ -> .agents/loop-state/"
+                ((migrated++))
+            fi
         fi
         
         # Update .gitignore if needed
         local gitignore="$repo_dir/.gitignore"
         if [[ -f "$gitignore" ]]; then
-            if ! grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
-                echo ".agent/loop-state/" >> "$gitignore"
-                print_info "  Added .agent/loop-state/ to .gitignore"
+            if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+                echo ".agents/loop-state/" >> "$gitignore"
+                print_info "  Added .agents/loop-state/ to .gitignore"
             fi
         fi
-        
-        ((migrated++))
     done
     
     if [[ $migrated -gt 0 ]]; then
@@ -1539,7 +1665,7 @@ set_permissions() {
     
     # Make scripts executable (suppress errors for missing paths)
     chmod +x ./*.sh 2>/dev/null || true
-    chmod +x .agent/scripts/*.sh 2>/dev/null || true
+    chmod +x .agents/scripts/*.sh 2>/dev/null || true
     chmod +x ssh/*.sh 2>/dev/null || true
     
     # Secure configuration files
@@ -1721,22 +1847,22 @@ setup_aliases() {
             cat >> "$shell_rc" << 'EOF'
 
 # AI Assistant Server Access Framework
-alias servers './.agent/scripts/servers-helper.sh'
-alias servers-list './.agent/scripts/servers-helper.sh list'
-alias hostinger './.agent/scripts/hostinger-helper.sh'
-alias hetzner './.agent/scripts/hetzner-helper.sh'
-alias aws-helper './.agent/scripts/aws-helper.sh'
+alias servers './.agents/scripts/servers-helper.sh'
+alias servers-list './.agents/scripts/servers-helper.sh list'
+alias hostinger './.agents/scripts/hostinger-helper.sh'
+alias hetzner './.agents/scripts/hetzner-helper.sh'
+alias aws-helper './.agents/scripts/aws-helper.sh'
 EOF
         else
             # Bash, zsh, ksh use same syntax
             cat >> "$shell_rc" << 'EOF'
 
 # AI Assistant Server Access Framework
-alias servers='./.agent/scripts/servers-helper.sh'
-alias servers-list='./.agent/scripts/servers-helper.sh list'
-alias hostinger='./.agent/scripts/hostinger-helper.sh'
-alias hetzner='./.agent/scripts/hetzner-helper.sh'
-alias aws-helper='./.agent/scripts/aws-helper.sh'
+alias servers='./.agents/scripts/servers-helper.sh'
+alias servers-list='./.agents/scripts/servers-helper.sh list'
+alias hostinger='./.agents/scripts/hostinger-helper.sh'
+alias hetzner='./.agents/scripts/hetzner-helper.sh'
+alias aws-helper='./.agents/scripts/aws-helper.sh'
 EOF
         fi
         print_success "Aliases added to $shell_rc"
@@ -1751,7 +1877,7 @@ EOF
 setup_terminal_title() {
     print_info "Setting up terminal title integration..."
     
-    local setup_script=".agent/scripts/terminal-title-setup.sh"
+    local setup_script=".agents/scripts/terminal-title-setup.sh"
     
     if [[ ! -f "$setup_script" ]]; then
         print_warning "Terminal title setup script not found - skipping"
@@ -1839,7 +1965,7 @@ deploy_ai_templates() {
 # Extract OpenCode prompts from binary (for Plan+ system-reminder)
 # Must run before deploy_aidevops_agents so the cache exists for injection
 extract_opencode_prompts() {
-    local extract_script=".agent/scripts/extract-opencode-prompts.sh"
+    local extract_script=".agents/scripts/extract-opencode-prompts.sh"
     if [[ -f "$extract_script" ]]; then
         if bash "$extract_script"; then
             print_success "OpenCode prompts extracted"
@@ -1852,7 +1978,7 @@ extract_opencode_prompts() {
 
 # Check if upstream OpenCode prompts have drifted from our synced version
 check_opencode_prompt_drift() {
-    local drift_script=".agent/scripts/opencode-prompt-drift-check.sh"
+    local drift_script=".agents/scripts/opencode-prompt-drift-check.sh"
     if [[ -f "$drift_script" ]]; then
         local output exit_code=0
         output=$(bash "$drift_script" --quiet 2>/dev/null) || exit_code=$?
@@ -1862,7 +1988,7 @@ check_opencode_prompt_drift() {
             upstream_hash=$(echo "$output" | cut -d'|' -f3)
             print_warning "OpenCode upstream prompt has changed (${local_hash} → ${upstream_hash})"
             print_info "  Review: https://github.com/anomalyco/opencode/compare/${local_hash}...${upstream_hash}"
-            print_info "  Update .agent/prompts/build.txt if needed"
+            print_info "  Update .agents/prompts/build.txt if needed"
         elif [[ "$exit_code" -eq 0 ]]; then
             print_success "OpenCode prompt in sync with upstream"
         else
@@ -1878,7 +2004,7 @@ deploy_aidevops_agents() {
     
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local source_dir="$script_dir/.agent"
+    local source_dir="$script_dir/.agents"
     local target_dir="$HOME/.aidevops/agents"
     
     # Validate source directory exists (catches curl install from wrong directory)
@@ -2057,7 +2183,7 @@ create_skill_symlinks() {
         local_path=$(echo "$skill_json" | jq -r '.local_path')
         
         # Skip if path doesn't exist
-        local full_path="$agents_dir/${local_path#.agent/}"
+        local full_path="$agents_dir/${local_path#.agents/}"
         if [[ ! -f "$full_path" ]]; then
             print_warning "Skill file not found: $full_path"
             continue
@@ -2263,7 +2389,7 @@ update_opencode_config() {
     # Generate OpenCode agent configuration
     # - Primary agents: Added to opencode.json (for Tab order & MCP control)
     # - Subagents: Generated as markdown in ~/.config/opencode/agent/
-    local generator_script=".agent/scripts/generate-opencode-agents.sh"
+    local generator_script=".agents/scripts/generate-opencode-agents.sh"
     if [[ -f "$generator_script" ]]; then
         print_info "Generating OpenCode agent configuration..."
         if bash "$generator_script"; then
@@ -2277,7 +2403,7 @@ update_opencode_config() {
     
     # Generate OpenCode commands
     # - Commands from workflows and agents -> /command-name
-    local commands_script=".agent/scripts/generate-opencode-commands.sh"
+    local commands_script=".agents/scripts/generate-opencode-commands.sh"
     if [[ -f "$commands_script" ]]; then
         print_info "Generating OpenCode commands..."
         if bash "$commands_script"; then
@@ -3074,11 +3200,11 @@ setup_ai_orchestration() {
     echo "  - AutoGen: Microsoft agentic AI (localhost:8081)"
     echo ""
     print_info "Setup individual frameworks with:"
-    echo "  bash .agent/scripts/langflow-helper.sh setup"
-    echo "  bash .agent/scripts/crewai-helper.sh setup"
-    echo "  bash .agent/scripts/autogen-helper.sh setup"
+    echo "  bash .agents/scripts/langflow-helper.sh setup"
+    echo "  bash .agents/scripts/crewai-helper.sh setup"
+    echo "  bash .agents/scripts/autogen-helper.sh setup"
     echo ""
-    print_info "See .agent/tools/ai-orchestration/overview.md for comparison"
+    print_info "See .agents/tools/ai-orchestration/overview.md for comparison"
     
     return 0
 }
@@ -3431,7 +3557,7 @@ setup_multi_tenant_credentials() {
     
     if [[ ! -f "$credential_helper" ]]; then
         # Try local script if deployed version not available yet
-        credential_helper=".agent/scripts/credential-helper.sh"
+        credential_helper=".agents/scripts/credential-helper.sh"
     fi
     
     if [[ ! -f "$credential_helper" ]]; then
@@ -3495,7 +3621,7 @@ check_tool_updates() {
     
     if [[ ! -f "$tool_check_script" ]]; then
         # Try local script if deployed version not available yet
-        tool_check_script=".agent/scripts/tool-version-check.sh"
+        tool_check_script=".agents/scripts/tool-version-check.sh"
     fi
     
     if [[ ! -f "$tool_check_script" ]]; then
@@ -3626,7 +3752,8 @@ main() {
     confirm_step "Setup terminal title integration" && setup_terminal_title
     confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
     confirm_step "Migrate old backups to new structure" && migrate_old_backups
-    confirm_step "Migrate loop state from .claude/ to .agent/loop-state/" && migrate_loop_state_directories
+    confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
+    confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
     confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
     confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
     confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
@@ -3673,8 +3800,8 @@ echo "  aidevops uninstall    - Remove aidevops"
     echo "Next steps:"
     echo "1. Edit configuration files in configs/ with your actual credentials"
     echo "2. Setup Git CLI tools and authentication (shown during setup)"
-    echo "3. Setup API keys: bash .agent/scripts/setup-local-api-keys.sh setup"
-    echo "4. Test access: ./.agent/scripts/servers-helper.sh list"
+    echo "3. Setup API keys: bash .agents/scripts/setup-local-api-keys.sh setup"
+    echo "4. Test access: ./.agents/scripts/servers-helper.sh list"
     echo "5. Read documentation: ~/.aidevops/agents/AGENTS.md"
     echo ""
     echo "For development on aidevops framework itself:"
@@ -3704,8 +3831,8 @@ echo "  aidevops uninstall    - Remove aidevops"
     echo "• Ahrefs                 - Backlink and keyword data"
     echo ""
     echo "DSPy & DSPyGround Integration:"
-    echo "• ./.agent/scripts/dspy-helper.sh        - DSPy prompt optimization toolkit"
-    echo "• ./.agent/scripts/dspyground-helper.sh  - DSPyGround playground interface"
+    echo "• ./.agents/scripts/dspy-helper.sh        - DSPy prompt optimization toolkit"
+    echo "• ./.agents/scripts/dspyground-helper.sh  - DSPyGround playground interface"
     echo "• python-env/dspy-env/              - Python virtual environment for DSPy"
     echo "• data/dspy/                        - DSPy projects and datasets"
     echo "• data/dspyground/                  - DSPyGround projects and configurations"

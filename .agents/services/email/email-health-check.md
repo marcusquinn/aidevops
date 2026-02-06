@@ -88,7 +88,7 @@ dig MX example.com +short
 
 ```bash
 # Run comprehensive check
-./.agent/scripts/email-health-check-helper.sh check example.com
+./.agents/scripts/email-health-check-helper.sh check example.com
 
 # Output includes:
 # - SPF record and validity
@@ -102,21 +102,21 @@ dig MX example.com +short
 
 ```bash
 # SPF only
-./.agent/scripts/email-health-check-helper.sh spf example.com
+./.agents/scripts/email-health-check-helper.sh spf example.com
 
 # DKIM with specific selector
-./.agent/scripts/email-health-check-helper.sh dkim example.com google
-./.agent/scripts/email-health-check-helper.sh dkim example.com selector1
-./.agent/scripts/email-health-check-helper.sh dkim example.com k1  # Mailchimp
+./.agents/scripts/email-health-check-helper.sh dkim example.com google
+./.agents/scripts/email-health-check-helper.sh dkim example.com selector1
+./.agents/scripts/email-health-check-helper.sh dkim example.com k1  # Mailchimp
 
 # DMARC only
-./.agent/scripts/email-health-check-helper.sh dmarc example.com
+./.agents/scripts/email-health-check-helper.sh dmarc example.com
 
 # MX records
-./.agent/scripts/email-health-check-helper.sh mx example.com
+./.agents/scripts/email-health-check-helper.sh mx example.com
 
 # Blacklist check
-./.agent/scripts/email-health-check-helper.sh blacklist example.com
+./.agents/scripts/email-health-check-helper.sh blacklist example.com
 ```
 
 ### Using checkdmarc Directly
@@ -284,7 +284,7 @@ For comprehensive deliverability testing:
 
 ```bash
 # The helper script can guide you through this
-./.agent/scripts/email-health-check-helper.sh mail-tester
+./.agents/scripts/email-health-check-helper.sh mail-tester
 ```
 
 ### mxtoolbox.com

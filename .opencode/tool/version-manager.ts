@@ -8,7 +8,7 @@ export default tool({
   },
   async execute(args) {
     const type = args.type || ""
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/version-manager.sh ${args.action} ${type}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/version-manager.sh ${args.action} ${type}`.text()
     return result.trim()
   },
 })

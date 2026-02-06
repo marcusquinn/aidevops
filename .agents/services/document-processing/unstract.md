@@ -198,5 +198,5 @@ This subagent is referenced by agents that need document extraction capabilities
 ## Related
 
 - `tools/context/mcp-discovery.md` - On-demand MCP loading pattern
-- `.agent/aidevops/mcp-integrations.md` - All MCP integrations
+- `.agents/aidevops/mcp-integrations.md` - All MCP integrations
 - `configs/mcp-templates/unstract.json` - OpenCode config template

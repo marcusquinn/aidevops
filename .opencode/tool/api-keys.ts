@@ -12,11 +12,11 @@ export default tool({
     // Route tenant actions to credential-helper.sh
     if (args.action.startsWith("tenant-")) {
       const subcommand = args.action.replace("tenant-", "")
-      const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/credential-helper.sh ${subcommand} ${service}`.text()
+      const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/credential-helper.sh ${subcommand} ${service}`.text()
       return result.trim()
     }
 
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/setup-local-api-keys.sh ${args.action} ${service}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/setup-local-api-keys.sh ${args.action} ${service}`.text()
     return result.trim()
   },
 })

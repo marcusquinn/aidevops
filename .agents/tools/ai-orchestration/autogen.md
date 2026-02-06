@@ -19,7 +19,7 @@ tools:
 
 - **Purpose**: Programming framework for agentic AI with multi-language support
 - **License**: MIT (code) / CC-BY-4.0 (docs)
-- **Setup**: `bash .agent/scripts/autogen-helper.sh setup`
+- **Setup**: `bash .agents/scripts/autogen-helper.sh setup`
 - **Start**: `~/.aidevops/scripts/start-autogen-studio.sh`
 - **Stop**: `~/.aidevops/scripts/stop-autogen-studio.sh`
 - **Status**: `~/.aidevops/scripts/autogen-status.sh`
@@ -55,7 +55,7 @@ AutoGen uses a layered design:
 
 ```bash
 # Run the setup script
-bash .agent/scripts/autogen-helper.sh setup
+bash .agents/scripts/autogen-helper.sh setup
 
 # Configure API keys
 nano ~/.aidevops/autogen/.env

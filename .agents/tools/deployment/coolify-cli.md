@@ -21,17 +21,17 @@ tools:
 - **Purpose**: Self-hosted PaaS for Docker deployment
 - **Install**: `curl -fsSL https://raw.githubusercontent.com/coollabsio/coolify-cli/main/scripts/install.sh | bash`
 - **Config**: `configs/coolify-cli-config.json`
-- **Script**: `.agent/scripts/coolify-cli-helper.sh`
+- **Script**: `.agents/scripts/coolify-cli-helper.sh`
 - **Local Dev First**: Works without Coolify setup
 
 **Commands**: `add-context|list-contexts|list-apps|deploy|get-app|list-servers|add-server|list-databases|create-db|dev|build`
 
-**Usage**: `./.agent/scripts/coolify-cli-helper.sh [command] [context] [args]`
+**Usage**: `./.agents/scripts/coolify-cli-helper.sh [command] [context] [args]`
 
 **Databases**: PostgreSQL, MySQL, MongoDB, Redis, ClickHouse, KeyDB
 **Frameworks**: Node.js, PHP, Python, Docker, static sites
 
-**Local Dev** (no Coolify): `./.agent/scripts/coolify-cli-helper.sh dev local ./app 3000`
+**Local Dev** (no Coolify): `./.agents/scripts/coolify-cli-helper.sh dev local ./app 3000`
 <!-- AI-CONTEXT-END -->
 
 Comprehensive self-hosted deployment and management using the Coolify CLI through the AI DevOps Framework.
@@ -91,13 +91,13 @@ nano configs/coolify-cli-config.json
 
 ```bash
 # Add production context
-./.agent/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com your-api-token true
+./.agents/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com your-api-token true
 
 # Add staging context
-./.agent/scripts/coolify-cli-helper.sh add-context staging https://staging.coolify.example.com staging-token
+./.agents/scripts/coolify-cli-helper.sh add-context staging https://staging.coolify.example.com staging-token
 
 # List contexts
-./.agent/scripts/coolify-cli-helper.sh list-contexts
+./.agents/scripts/coolify-cli-helper.sh list-contexts
 ```
 
 ## Usage Examples
@@ -106,10 +106,10 @@ nano configs/coolify-cli-config.json
 
 ```bash
 # Start development server (works immediately)
-./.agent/scripts/coolify-cli-helper.sh dev local ./my-app 3000
+./.agents/scripts/coolify-cli-helper.sh dev local ./my-app 3000
 
 # Build project locally
-./.agent/scripts/coolify-cli-helper.sh build local ./my-app
+./.agents/scripts/coolify-cli-helper.sh build local ./my-app
 
 # Works with any project type:
 # - Node.js projects with package.json
@@ -122,26 +122,26 @@ nano configs/coolify-cli-config.json
 
 ```bash
 # List applications
-./.agent/scripts/coolify-cli-helper.sh list-apps production
+./.agents/scripts/coolify-cli-helper.sh list-apps production
 
 # Deploy application by name
-./.agent/scripts/coolify-cli-helper.sh deploy production my-app
+./.agents/scripts/coolify-cli-helper.sh deploy production my-app
 
 # Force deploy
-./.agent/scripts/coolify-cli-helper.sh deploy production my-app true
+./.agents/scripts/coolify-cli-helper.sh deploy production my-app true
 
 # Get application details
-./.agent/scripts/coolify-cli-helper.sh get-app production app-uuid-here
+./.agents/scripts/coolify-cli-helper.sh get-app production app-uuid-here
 ```
 
 ### Server Management
 
 ```bash
 # List servers
-./.agent/scripts/coolify-cli-helper.sh list-servers production
+./.agents/scripts/coolify-cli-helper.sh list-servers production
 
 # Add new server
-./.agent/scripts/coolify-cli-helper.sh add-server production myserver 192.168.1.100 key-uuid 22 root true
+./.agents/scripts/coolify-cli-helper.sh add-server production myserver 192.168.1.100 key-uuid 22 root true
 
 # Parameters: context name ip key-uuid port user validate
 ```
@@ -150,10 +150,10 @@ nano configs/coolify-cli-config.json
 
 ```bash
 # List databases
-./.agent/scripts/coolify-cli-helper.sh list-databases production
+./.agents/scripts/coolify-cli-helper.sh list-databases production
 
 # Create PostgreSQL database
-./.agent/scripts/coolify-cli-helper.sh create-db production postgresql server-uuid project-uuid main mydb true
+./.agents/scripts/coolify-cli-helper.sh create-db production postgresql server-uuid project-uuid main mydb true
 
 # Parameters: context type server-uuid project-uuid environment name instant-deploy
 ```
@@ -208,10 +208,10 @@ Full Docker integration:
 
 ```bash
 # Docker Compose projects
-./.agent/scripts/coolify-cli-helper.sh dev local ./docker-app 3000
+./.agents/scripts/coolify-cli-helper.sh dev local ./docker-app 3000
 
 # Dockerfile projects
-./.agent/scripts/coolify-cli-helper.sh build local ./docker-app
+./.agents/scripts/coolify-cli-helper.sh build local ./docker-app
 ```
 
 ## Integration with CI/CD
@@ -231,7 +231,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deploy to Coolify
         run: |
-          ./.agent/scripts/coolify-cli-helper.sh deploy production my-app true
+          ./.agents/scripts/coolify-cli-helper.sh deploy production my-app true
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
 ```
@@ -240,13 +240,13 @@ jobs:
 
 ```bash
 # Development
-./.agent/scripts/coolify-cli-helper.sh dev local ./app 3000
+./.agents/scripts/coolify-cli-helper.sh dev local ./app 3000
 
 # Staging deployment
-./.agent/scripts/coolify-cli-helper.sh deploy staging my-app
+./.agents/scripts/coolify-cli-helper.sh deploy staging my-app
 
 # Production deployment
-./.agent/scripts/coolify-cli-helper.sh deploy production my-app
+./.agents/scripts/coolify-cli-helper.sh deploy production my-app
 ```
 
 ## Database Management
@@ -264,9 +264,9 @@ jobs:
 
 ```bash
 # Create databases
-./.agent/scripts/coolify-cli-helper.sh create-db production postgresql server-uuid project-uuid main postgres-db true
-./.agent/scripts/coolify-cli-helper.sh create-db production redis server-uuid project-uuid main redis-cache true
-./.agent/scripts/coolify-cli-helper.sh create-db production mongodb server-uuid project-uuid main mongo-db true
+./.agents/scripts/coolify-cli-helper.sh create-db production postgresql server-uuid project-uuid main postgres-db true
+./.agents/scripts/coolify-cli-helper.sh create-db production redis server-uuid project-uuid main redis-cache true
+./.agents/scripts/coolify-cli-helper.sh create-db production mongodb server-uuid project-uuid main mongo-db true
 ```
 
 ## Security Best Practices
@@ -303,8 +303,8 @@ jobs:
 2. **Context Issues**
 
    ```bash
-   ./.agent/scripts/coolify-cli-helper.sh list-contexts
-   ./.agent/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com token
+   ./.agents/scripts/coolify-cli-helper.sh list-contexts
+   ./.agents/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com token
    ```
 
 3. **Local Development Issues**
@@ -324,7 +324,7 @@ Enable verbose logging:
 ```bash
 # Set debug environment variable
 export DEBUG=1
-./.agent/scripts/coolify-cli-helper.sh deploy production my-app
+./.agents/scripts/coolify-cli-helper.sh deploy production my-app
 ```
 
 ## Framework Support

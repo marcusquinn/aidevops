@@ -4,7 +4,7 @@
 # Script to add return statements to functions that need them
 # Based on SonarCloud S7682 issues
 
-FILE=".agent/scripts/101domains-helper.sh"
+FILE=".agents/scripts/101domains-helper.sh"
 
 # Function to add return statement before closing brace
 add_return_statement() {

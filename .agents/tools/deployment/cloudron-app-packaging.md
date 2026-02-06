@@ -740,7 +740,7 @@ cloudron init
 
 # Structure
 # ~/Git/cloudron-myapp/
-#   .agent/                    # aidevops config
+#   .agents/                    # aidevops config
 #   CloudronManifest.json      # Cloudron manifest
 #   Dockerfile                 # Build instructions
 #   start.sh                   # Entry point
@@ -754,7 +754,7 @@ cloudron init
 .cloudron/
 
 # aidevops
-.agent/loop-state/
+.agents/loop-state/
 *.local.md
 
 # Build artifacts

@@ -19,9 +19,9 @@ tools:
 ## Quick Reference
 
 - **Auto-run**: Called by `version-manager.sh release` before version bump
-- **Manual**: `.agent/scripts/linters-local.sh`
+- **Manual**: `.agents/scripts/linters-local.sh`
 - **Skip**: `version-manager.sh release [type] --force --skip-preflight`
-- **Fast mode**: `.agent/scripts/linters-local.sh --fast`
+- **Fast mode**: `.agents/scripts/linters-local.sh --fast`
 
 **Check Phases** (fast → slow):
 1. Version consistency (~1s, blocking)
@@ -75,7 +75,7 @@ Preflight runs automatically during release:
 
 ```bash
 # Preflight runs before version bump
-.agent/scripts/version-manager.sh release minor
+.agents/scripts/version-manager.sh release minor
 ```text
 
 ### Manual
@@ -84,13 +84,13 @@ Run quality checks independently:
 
 ```bash
 # Full quality check
-.agent/scripts/linters-local.sh
+.agents/scripts/linters-local.sh
 
 # Fast checks only (ShellCheck, secrets, returns)
-.agent/scripts/linters-local.sh --fast
+.agents/scripts/linters-local.sh --fast
 
 # Specific checks
-shellcheck .agent/scripts/*.sh
+shellcheck .agents/scripts/*.sh
 npx secretlint "**/*"
 ```text
 
@@ -124,10 +124,10 @@ For emergency hotfixes only:
 
 ```bash
 # Skip preflight (use with caution)
-.agent/scripts/version-manager.sh release patch --skip-preflight
+.agents/scripts/version-manager.sh release patch --skip-preflight
 
 # Skip both preflight and changelog
-.agent/scripts/version-manager.sh release patch --skip-preflight --force
+.agents/scripts/version-manager.sh release patch --skip-preflight --force
 ```text
 
 **When to skip:**
@@ -148,10 +148,10 @@ Lints all shell scripts for common issues:
 
 ```bash
 # Run manually
-shellcheck .agent/scripts/*.sh
+shellcheck .agents/scripts/*.sh
 
 # Check specific file
-shellcheck .agent/scripts/version-manager.sh
+shellcheck .agents/scripts/version-manager.sh
 ```text
 
 **Must pass**: Zero violations (errors are blocking)
@@ -165,7 +165,7 @@ Detects accidentally committed secrets:
 npx secretlint "**/*"
 
 # With helper
-.agent/scripts/secretlint-helper.sh scan
+.agents/scripts/secretlint-helper.sh scan
 ```text
 
 **Detects**: AWS keys, GitHub tokens, OpenAI keys, private keys, database URLs
@@ -175,7 +175,7 @@ npx secretlint "**/*"
 Ensures VERSION file matches all references:
 
 ```bash
-.agent/scripts/version-manager.sh validate
+.agents/scripts/version-manager.sh validate
 ```text
 
 **Checks**: VERSION, README badge, sonar-project.properties, setup.sh
@@ -186,7 +186,7 @@ Checks current quality gate status:
 
 ```bash
 # Via linters-local.sh
-.agent/scripts/linters-local.sh
+.agents/scripts/linters-local.sh
 
 # Direct API (requires SONAR_TOKEN)
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"
@@ -239,7 +239,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevo
 
 ```bash
 # See specific issues
-shellcheck -f gcc .agent/scripts/problem-script.sh
+shellcheck -f gcc .agents/scripts/problem-script.sh
 
 # Auto-fix some issues (with shellcheck-fix if available)
 # Or manually fix based on SC codes
@@ -261,10 +261,10 @@ path/to/false-positive.txt
 
 ```bash
 # Check current state
-.agent/scripts/version-manager.sh validate
+.agents/scripts/version-manager.sh validate
 
 # Fix by re-running bump
-.agent/scripts/version-manager.sh bump patch
+.agents/scripts/version-manager.sh bump patch
 ```text
 
 ## Worktree Awareness

@@ -103,7 +103,7 @@ check_return_statements() {
     local violations=0
     local files_checked=0
 
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             ((files_checked++))
 
@@ -162,7 +162,7 @@ check_positional_parameters() {
     tmp_file=$(mktemp)
 
     # Only check inside function bodies, exclude heredocs, awk/sed patterns, and comments
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Use awk to find $1-$9 usage inside functions, excluding:
             # - local assignments (local var="$1")
@@ -227,7 +227,7 @@ check_string_literals() {
 
     local violations=0
 
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Find strings that appear 3 or more times
             local repeated_strings
@@ -255,7 +255,7 @@ run_shellcheck() {
 
     local violations=0
 
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Only count errors and warnings, not info-level (SC1091, SC2329, etc.)
             # Use severity filter to exclude info-level messages
@@ -282,7 +282,7 @@ run_shellcheck() {
 check_secrets() {
     echo -e "${BLUE}Checking for Exposed Secrets (Secretlint)...${NC}"
 
-    local secretlint_script=".agent/scripts/secretlint-helper.sh"
+    local secretlint_script=".agents/scripts/secretlint-helper.sh"
     local violations=0
 
     # Check if secretlint is available
@@ -367,7 +367,7 @@ check_markdown_lint() {
     # Get markdown files to check:
     # 1. Uncommitted changes (staged + unstaged) - BLOCKING
     # 2. If no uncommitted, check files changed in current branch vs main - BLOCKING
-    # 3. Fallback to all tracked .md files in .agent/ - NON-BLOCKING (advisory)
+    # 3. Fallback to all tracked .md files in .agents/ - NON-BLOCKING (advisory)
     local check_mode="changed"  # "changed" = blocking, "all" = advisory
     if git rev-parse --git-dir > /dev/null 2>&1; then
         # First try uncommitted changes
@@ -382,9 +382,9 @@ check_markdown_lint() {
             fi
         fi
         
-        # Fallback: check all .agent/*.md files (advisory only)
+        # Fallback: check all .agents/*.md files (advisory only)
         if [[ -z "$md_files" ]]; then
-            md_files=$(git ls-files '.agent/**/*.md' 2>/dev/null)
+            md_files=$(git ls-files '.agents/**/*.md' 2>/dev/null)
             check_mode="all"
         fi
     else
@@ -504,7 +504,7 @@ check_remote_cli_status() {
     print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
     # Secretlint
-    local secretlint_script=".agent/scripts/secretlint-helper.sh"
+    local secretlint_script=".agents/scripts/secretlint-helper.sh"
     if [[ -f "$secretlint_script" ]]; then
         if command -v secretlint &> /dev/null || [[ -f "node_modules/.bin/secretlint" ]]; then
             print_success "Secretlint: Ready"
@@ -514,7 +514,7 @@ check_remote_cli_status() {
     fi
 
     # CodeRabbit CLI
-    local coderabbit_script=".agent/scripts/coderabbit-cli.sh"
+    local coderabbit_script=".agents/scripts/coderabbit-cli.sh"
     if [[ -f "$coderabbit_script" ]]; then
         if bash "$coderabbit_script" status > /dev/null 2>&1; then
             print_success "CodeRabbit CLI: Ready"
@@ -524,7 +524,7 @@ check_remote_cli_status() {
     fi
 
     # Codacy CLI
-    local codacy_script=".agent/scripts/codacy-cli.sh"
+    local codacy_script=".agents/scripts/codacy-cli.sh"
     if [[ -f "$codacy_script" ]]; then
         if bash "$codacy_script" status > /dev/null 2>&1; then
             print_success "Codacy CLI: Ready"
@@ -534,7 +534,7 @@ check_remote_cli_status() {
     fi
 
     # SonarScanner CLI
-    local sonar_script=".agent/scripts/sonarscanner-cli.sh"
+    local sonar_script=".agents/scripts/sonarscanner-cli.sh"
     if [[ -f "$sonar_script" ]]; then
         if bash "$sonar_script" status > /dev/null 2>&1; then
             print_success "SonarScanner CLI: Ready"

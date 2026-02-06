@@ -345,7 +345,7 @@ EOF
 run_preflight_checks() {
     print_info "Running preflight quality checks..."
     
-    local preflight_script="$REPO_ROOT/.agent/scripts/linters-local.sh"
+    local preflight_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
     
     if [[ -f "$preflight_script" ]]; then
         if bash "$preflight_script"; then
@@ -365,7 +365,7 @@ run_preflight_checks() {
 # Delegates to the standalone validator script for single source of truth
 validate_version_consistency() {
     local expected_version="$1"
-    local validator_script="${REPO_ROOT}/.agent/scripts/validate-version-consistency.sh"
+    local validator_script="${REPO_ROOT}/.agents/scripts/validate-version-consistency.sh"
     
     print_info "Validating version consistency across files..."
     
@@ -879,8 +879,8 @@ aidevops repos
 ### Documentation
 
 - **[Setup Guide](README.md)**: Complete framework setup
-- **[User Guide](.agent/AGENTS.md)**: AI assistant integration
-- **[API Integrations](.agent/aidevops/api-integrations.md)**: Service APIs
+- **[User Guide](.agents/AGENTS.md)**: AI assistant integration
+- **[API Integrations](.agents/aidevops/api-integrations.md)**: Service APIs
 
 ### Links
 

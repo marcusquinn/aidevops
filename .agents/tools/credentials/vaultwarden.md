@@ -200,80 +200,80 @@ bw --version
 
 ```bash
 # List all Vaultwarden instances
-./.agent/scripts/vaultwarden-helper.sh instances
+./.agents/scripts/vaultwarden-helper.sh instances
 
 # Get vault status
-./.agent/scripts/vaultwarden-helper.sh status production
+./.agents/scripts/vaultwarden-helper.sh status production
 
 # Login to vault
-./.agent/scripts/vaultwarden-helper.sh login production user@example.com
+./.agents/scripts/vaultwarden-helper.sh login production user@example.com
 
 # Unlock vault (after login)
-./.agent/scripts/vaultwarden-helper.sh unlock
+./.agents/scripts/vaultwarden-helper.sh unlock
 ```
 
 ### **Vault Management:**
 
 ```bash
 # List all vault items
-./.agent/scripts/vaultwarden-helper.sh list production
+./.agents/scripts/vaultwarden-helper.sh list production
 
 # Search vault items
-./.agent/scripts/vaultwarden-helper.sh search production "github"
+./.agents/scripts/vaultwarden-helper.sh search production "github"
 
 # Get specific item
-./.agent/scripts/vaultwarden-helper.sh get production item-uuid
+./.agents/scripts/vaultwarden-helper.sh get production item-uuid
 
 # Get password for item
-./.agent/scripts/vaultwarden-helper.sh get-password production "GitHub Account"
+./.agents/scripts/vaultwarden-helper.sh get-password production "GitHub Account"
 
 # Get username for item
-./.agent/scripts/vaultwarden-helper.sh get-username production "GitHub Account"
+./.agents/scripts/vaultwarden-helper.sh get-username production "GitHub Account"
 ```
 
 ### **Item Management:**
 
 ```bash
 # Create new vault item
-./.agent/scripts/vaultwarden-helper.sh create production "New Service" username password123 https://service.com
+./.agents/scripts/vaultwarden-helper.sh create production "New Service" username password123 https://service.com
 
 # Update vault item
-./.agent/scripts/vaultwarden-helper.sh update production item-uuid password newpassword123
+./.agents/scripts/vaultwarden-helper.sh update production item-uuid password newpassword123
 
 # Delete vault item
-./.agent/scripts/vaultwarden-helper.sh delete production item-uuid
+./.agents/scripts/vaultwarden-helper.sh delete production item-uuid
 
 # Generate secure password
-./.agent/scripts/vaultwarden-helper.sh generate 20 true
+./.agents/scripts/vaultwarden-helper.sh generate 20 true
 ```
 
 ### **Organization Management:**
 
 ```bash
 # List organization vault items
-./.agent/scripts/vaultwarden-helper.sh org-list production org-uuid
+./.agents/scripts/vaultwarden-helper.sh org-list production org-uuid
 
 # Sync vault with server
-./.agent/scripts/vaultwarden-helper.sh sync production
+./.agents/scripts/vaultwarden-helper.sh sync production
 
 # Export vault (encrypted)
-./.agent/scripts/vaultwarden-helper.sh export production json vault-backup.json
+./.agents/scripts/vaultwarden-helper.sh export production json vault-backup.json
 ```
 
 ### **Security & Auditing:**
 
 ```bash
 # Audit vault security
-./.agent/scripts/vaultwarden-helper.sh audit production
+./.agents/scripts/vaultwarden-helper.sh audit production
 
 # Lock vault
-./.agent/scripts/vaultwarden-helper.sh lock
+./.agents/scripts/vaultwarden-helper.sh lock
 
 # Start MCP server for AI access
-./.agent/scripts/vaultwarden-helper.sh start-mcp production 3002
+./.agents/scripts/vaultwarden-helper.sh start-mcp production 3002
 
 # Test MCP connection
-./.agent/scripts/vaultwarden-helper.sh test-mcp 3002
+./.agents/scripts/vaultwarden-helper.sh test-mcp 3002
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -297,7 +297,7 @@ unset BW_SESSION
 bw lock
 
 # Regular security audits
-./.agent/scripts/vaultwarden-helper.sh audit production
+./.agents/scripts/vaultwarden-helper.sh audit production
 ```
 
 ### **Organizational Security:**
@@ -359,10 +359,10 @@ bw login user@example.com
 
 ```bash
 # Start Bitwarden MCP server
-./.agent/scripts/vaultwarden-helper.sh start-mcp production 3002
+./.agents/scripts/vaultwarden-helper.sh start-mcp production 3002
 
 # Test MCP server
-./.agent/scripts/vaultwarden-helper.sh test-mcp 3002
+./.agents/scripts/vaultwarden-helper.sh test-mcp 3002
 
 # Configure in AI assistant
 # Add to MCP servers configuration:
@@ -393,7 +393,7 @@ The MCP server enables AI assistants to:
 
 ```bash
 # Export encrypted vault
-./.agent/scripts/vaultwarden-helper.sh export production json vault-backup-$(date +%Y%m%d).json
+./.agents/scripts/vaultwarden-helper.sh export production json vault-backup-$(date +%Y%m%d).json
 
 # Secure backup file
 chmod 600 vault-backup-*.json
@@ -411,7 +411,7 @@ BACKUP_DIR="/secure/backups/vaultwarden"
 DATE=$(date +%Y%m%d-%H%M%S)
 
 # Create backup
-./.agent/scripts/vaultwarden-helper.sh export $INSTANCE json "$BACKUP_DIR/vault-$DATE.json"
+./.agents/scripts/vaultwarden-helper.sh export $INSTANCE json "$BACKUP_DIR/vault-$DATE.json"
 
 # Encrypt backup
 gpg --cipher-algo AES256 --compress-algo 1 --s2k-mode 3 \

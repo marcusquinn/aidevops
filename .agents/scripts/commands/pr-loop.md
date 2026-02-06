@@ -111,7 +111,7 @@ The loop uses evidence-based timing for different CI services:
 
 ## State Tracking
 
-Progress is tracked in `.agent/loop-state/quality-loop.local.state`:
+Progress is tracked in `.agents/loop-state/quality-loop.local.state`:
 
 ```markdown
 ## PR Review Loop State

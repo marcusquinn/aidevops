@@ -144,7 +144,7 @@ to Augment Context Engine if osgrep returns insufficient results.
 
 **Quality Integration** (`tools/code-review/`):
 
-- Pre-commit: `.agent/scripts/linters-local.sh`
+- Pre-commit: `.agents/scripts/linters-local.sh`
 - Patterns: `tools/code-review/best-practices.md`
 
 **Testing**: Use OpenCode CLI to test config changes without restarting TUI:
@@ -323,7 +323,7 @@ Before implementing:
 
 ```bash
 # Generate token-efficient codebase context
-.agent/scripts/context-builder-helper.sh compress [path]
+.agents/scripts/context-builder-helper.sh compress [path]
 ```
 
 Use Context7 MCP for library documentation (framework APIs, patterns).

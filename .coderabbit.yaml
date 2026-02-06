@@ -28,8 +28,8 @@ reviews:
   
   # Exclude certain files from review
   path_filters:
-    - "!.agent/tmp/*"
-    - "!.agent/memory/*"
+    - "!.agents/tmp/*"
+    - "!.agents/memory/*"
     - "!*.log"
     - "!*.tmp"
   
@@ -43,7 +43,7 @@ reviews:
         - Security of credential handling
         - Input validation
         
-    - path: ".agent/scripts/*.sh"
+    - path: ".agents/scripts/*.sh"
       instructions: |
         Automation scripts - focus on:
         - Reliability and robustness

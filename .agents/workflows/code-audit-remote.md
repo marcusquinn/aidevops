@@ -63,7 +63,7 @@ This complements `/linters-local` which runs fast, offline checks.
 bash ~/.aidevops/agents/scripts/coderabbit-cli.sh review
 
 # Analyze specific directory
-bash ~/.aidevops/agents/scripts/coderabbit-cli.sh analyze .agent/scripts/
+bash ~/.aidevops/agents/scripts/coderabbit-cli.sh analyze .agents/scripts/
 ```
 
 ### Codacy
@@ -218,8 +218,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run Code Audit
         run: |
-          bash .agent/scripts/code-audit-helper.sh audit ${{ github.repository }}
-          bash .agent/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
+          bash .agents/scripts/code-audit-helper.sh audit ${{ github.repository }}
+          bash .agents/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
       - name: Upload Report
         uses: actions/upload-artifact@v4
         with:

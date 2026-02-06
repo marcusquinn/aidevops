@@ -222,7 +222,7 @@ chmod 600 ~/.ssh/*_password
 
 # Scripts
 chmod 755 *.sh
-chmod 755 .agent/scripts/*.sh
+chmod 755 .agents/scripts/*.sh
 chmod 755 ssh/*.sh
 ```
 
@@ -242,7 +242,7 @@ echo "*.pem" >> .gitignore
 ### Directory Structure
 
 ```text
-.agent/
+.agents/
 ├── scripts/              # Shared (committed to Git)
 │   └── [helper].sh       # Use placeholders: YOUR_API_KEY_HERE
 └── scripts-private/      # Private (gitignored, never committed)
@@ -253,7 +253,7 @@ echo "*.pem" >> .gitignore
 
 **Shared scripts (`scripts/`):**
 - Use placeholders: `readonly API_TOKEN="YOUR_API_TOKEN_HERE"`
-- Load from secure storage: `api_key=$(.agent/scripts/setup-local-api-keys.sh get service)`
+- Load from secure storage: `api_key=$(.agents/scripts/setup-local-api-keys.sh get service)`
 - Never hardcode actual credentials
 
 **Private scripts (`scripts-private/`):**
@@ -266,7 +266,7 @@ echo "*.pem" >> .gitignore
 ```bash
 # Verify private scripts are gitignored
 git status --ignored | grep scripts-private
-# Should show: .agent/scripts-private/ (ignored)
+# Should show: .agents/scripts-private/ (ignored)
 ```
 
 ## 🌐 **Network Security**

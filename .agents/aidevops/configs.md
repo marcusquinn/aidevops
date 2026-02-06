@@ -19,9 +19,9 @@ tools:
 
 - **Templates**: `configs/[service]-config.json.txt` (safe to commit)
 - **Working files**: `configs/[service]-config.json` (gitignored, contains credentials)
-- **Setup wizard**: `.agent/scripts/setup-wizard-helper.sh full-setup`
-- **Generate configs**: `.agent/scripts/setup-wizard-helper.sh generate-configs`
-- **Test connections**: `.agent/scripts/setup-wizard-helper.sh test-connections`
+- **Setup wizard**: `.agents/scripts/setup-wizard-helper.sh full-setup`
+- **Generate configs**: `.agents/scripts/setup-wizard-helper.sh generate-configs`
+- **Test connections**: `.agents/scripts/setup-wizard-helper.sh test-connections`
 - **Validate JSON**: `jq '.' [service]-config.json`
 - **Secure permissions**: `chmod 600 configs/*-config.json`
 - **Structure**: `{"accounts": {...}, "default_settings": {...}, "mcp_servers": {...}}`
@@ -179,7 +179,7 @@ cp [service]-config.json.txt [service]-config.json
 nano [service]-config.json
 
 # 3. Test configuration
-../.agent/scripts/[service]-helper.sh accounts
+../.agents/scripts/[service]-helper.sh accounts
 
 # 4. Verify security
 chmod 600 [service]-config.json
@@ -189,13 +189,13 @@ chmod 600 [service]-config.json
 
 ```bash
 # Automated setup with guidance
-../.agent/scripts/setup-wizard-helper.sh full-setup
+../.agents/scripts/setup-wizard-helper.sh full-setup
 
 # Generate all config files from templates
-../.agent/scripts/setup-wizard-helper.sh generate-configs
+../.agents/scripts/setup-wizard-helper.sh generate-configs
 
 # Test all connections
-../.agent/scripts/setup-wizard-helper.sh test-connections
+../.agents/scripts/setup-wizard-helper.sh test-connections
 ```
 
 ## Validation & Testing
@@ -207,10 +207,10 @@ chmod 600 [service]-config.json
 jq '.' [service]-config.json
 
 # Test service connectivity
-../.agent/scripts/[service]-helper.sh accounts
+../.agents/scripts/[service]-helper.sh accounts
 
 # Verify API permissions
-../.agent/scripts/[service]-helper.sh help
+../.agents/scripts/[service]-helper.sh help
 ```
 
 ### Security Validation

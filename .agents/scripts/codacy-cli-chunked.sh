@@ -38,8 +38,8 @@ readonly TIMEOUT=120    # Timeout per chunk in seconds
 TOOL_CATEGORIES_fast="shellcheck pylint pycodestyle flake8"
 
 # Progress tracking
-PROGRESS_FILE=".agent/tmp/codacy-progress.log"
-TIMESTAMP_FILE=".agent/tmp/codacy-timestamp.log"
+PROGRESS_FILE=".agents/tmp/codacy-progress.log"
+TIMESTAMP_FILE=".agents/tmp/codacy-timestamp.log"
 
 # Print functions
 print_success() {
@@ -134,7 +134,7 @@ check_codacy_ready() {
 
     if [[ ! -f "$CODACY_CONFIG_FILE" ]]; then
         print_error "Codacy configuration not found"
-        print_info "Run: bash .agent/scripts/codacy-cli.sh init"
+        print_info "Run: bash .agents/scripts/codacy-cli.sh init"
         return 1
     fi
 
@@ -231,7 +231,7 @@ run_quick_analysis() {
     
     local start_time
     start_time=$(date +%s)
-    local results_file=".agent/tmp/codacy-quick-results.sarif"
+    local results_file=".agents/tmp/codacy-quick-results.sarif"
 
     for tool in $fast_tools; do
         if get_configured_tools | grep -q "^$tool$"; then
@@ -243,7 +243,7 @@ run_quick_analysis() {
             
             local tool_start
             tool_start=$(date +%s)
-            local cmd="codacy-cli analyze --tool $tool --format sarif --output .agent/tmp/codacy-$tool.sarif"
+            local cmd="codacy-cli analyze --tool $tool --format sarif --output .agents/tmp/codacy-$tool.sarif"
             
             # Run with timeout
             timeout $TIMEOUT bash -c "$cmd" 2>/dev/null
@@ -262,12 +262,12 @@ run_quick_analysis() {
                 update_progress "$tool completed successfully in ${tool_duration}s"
                 
                 # Merge results if file exists
-                if [[ -f ".agent/tmp/codacy-$tool.sarif" ]]; then
+                if [[ -f ".agents/tmp/codacy-$tool.sarif" ]]; then
                     if [[ ! -f "$results_file" ]]; then
-                        cp ".agent/tmp/codacy-$tool.sarif" "$results_file"
+                        cp ".agents/tmp/codacy-$tool.sarif" "$results_file"
                     else
                         # Simple merge (in production, use proper SARIF merge)
-                        cat ".agent/tmp/codacy-$tool.sarif" >> "$results_file"
+                        cat ".agents/tmp/codacy-$tool.sarif" >> "$results_file"
                     fi
                 fi
             else
@@ -314,7 +314,7 @@ run_chunked_analysis() {
     
     local start_time
     start_time=$(date +%s)
-    local results_file=".agent/tmp/codacy-chunked-results.sarif"
+    local results_file=".agents/tmp/codacy-chunked-results.sarif"
     local chunk_num=1
 
     # Process tools in chunks
@@ -344,7 +344,7 @@ run_chunked_analysis() {
         
         local chunk_start_time
         chunk_start_time=$(date +%s)
-        local chunk_result_file=".agent/tmp/codacy-chunk-$chunk_num.sarif"
+        local chunk_result_file=".agents/tmp/codacy-chunk-$chunk_num.sarif"
         
         # Run chunk with extended timeout
         local cmd="codacy-cli analyze --tools $(echo $chunk_tools | tr ' ' ',') --format sarif --output $chunk_result_file"
@@ -430,7 +430,7 @@ run_tool_analysis() {
 
     local start_time
     start_time=$(date +%s)
-    local result_file=".agent/tmp/codacy-$tool-single.sarif"
+    local result_file=".agents/tmp/codacy-$tool-single.sarif"
 
     local cmd="codacy-cli analyze --tool $tool --format sarif --output $result_file"
     print_info "Executing: $cmd"
@@ -475,7 +475,7 @@ show_status() {
     
     echo ""
     print_info "Recent Analysis Files:"
-    find .agent/tmp -name "codacy-*.sarif" -newer "$TIMESTAMP_FILE" 2>/dev/null | head -5 | while read -r file; do
+    find .agents/tmp -name "codacy-*.sarif" -newer "$TIMESTAMP_FILE" 2>/dev/null | head -5 | while read -r file; do
         local age
         age=$(find "$file" -mmin +1 2>/dev/null || echo "0")
         local size
@@ -493,7 +493,7 @@ show_status() {
 # Clean up temporary files
 cleanup() {
     print_info "Cleaning up temporary files..."
-    rm -f .agent/tmp/codacy-*.sarif
+    rm -f .agents/tmp/codacy-*.sarif
     rm -f "$PROGRESS_FILE" "$TIMESTAMP_FILE"
     print_success "Cleanup completed"
     return 0
@@ -536,7 +536,7 @@ main() {
     local command="${1:-help}"
 
     # Ensure temp directory exists
-    mkdir -p .agent/tmp
+    mkdir -p .agents/tmp
 
     case "$command" in
         "quick")

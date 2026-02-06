@@ -20,8 +20,8 @@ tools:
 
 - **Purpose**: Transform web content into LLM-ready structured data
 - **Type**: Open-source, self-hosted first (Docker/Coolify), cloud API fallback
-- **Self-Hosted**: `bash .agent/scripts/watercrawl-helper.sh docker-setup`
-- **Cloud API**: `bash .agent/scripts/watercrawl-helper.sh api-url https://app.watercrawl.dev`
+- **Self-Hosted**: `bash .agents/scripts/watercrawl-helper.sh docker-setup`
+- **Cloud API**: `bash .agents/scripts/watercrawl-helper.sh api-url https://app.watercrawl.dev`
 
 **Self-Hosted Commands**: `docker-setup|docker-start|docker-stop|docker-logs|docker-admin|coolify-deploy`
 **API Commands**: `setup|status|api-key|api-url|scrape|crawl|search|sitemap|help`
@@ -90,20 +90,20 @@ WaterCrawl is a modern web crawling framework that transforms web content into s
 
 ```bash
 # Clone and configure WaterCrawl
-bash .agent/scripts/watercrawl-helper.sh docker-setup
+bash .agents/scripts/watercrawl-helper.sh docker-setup
 
 # Start services
-bash .agent/scripts/watercrawl-helper.sh docker-start
+bash .agents/scripts/watercrawl-helper.sh docker-start
 
 # Create admin user
-bash .agent/scripts/watercrawl-helper.sh docker-admin
+bash .agents/scripts/watercrawl-helper.sh docker-admin
 
 # Access dashboard at http://localhost
 # Get API key from dashboard, then:
-bash .agent/scripts/watercrawl-helper.sh api-key YOUR_API_KEY
+bash .agents/scripts/watercrawl-helper.sh api-key YOUR_API_KEY
 
 # Test crawling
-bash .agent/scripts/watercrawl-helper.sh scrape https://example.com
+bash .agents/scripts/watercrawl-helper.sh scrape https://example.com
 ```
 
 ### Coolify Deployment
@@ -111,7 +111,7 @@ bash .agent/scripts/watercrawl-helper.sh scrape https://example.com
 For VPS deployment via Coolify (self-hosted PaaS):
 
 ```bash
-bash .agent/scripts/watercrawl-helper.sh coolify-deploy
+bash .agents/scripts/watercrawl-helper.sh coolify-deploy
 ```
 
 This shows instructions for deploying WaterCrawl as a Docker Compose application in Coolify.
@@ -122,32 +122,32 @@ If you prefer the managed cloud service:
 
 ```bash
 # Install SDK
-bash .agent/scripts/watercrawl-helper.sh setup
+bash .agents/scripts/watercrawl-helper.sh setup
 
 # Point to cloud API
-bash .agent/scripts/watercrawl-helper.sh api-url https://app.watercrawl.dev
+bash .agents/scripts/watercrawl-helper.sh api-url https://app.watercrawl.dev
 
 # Configure API key (get from https://app.watercrawl.dev)
-bash .agent/scripts/watercrawl-helper.sh api-key YOUR_API_KEY
+bash .agents/scripts/watercrawl-helper.sh api-key YOUR_API_KEY
 
 # Check status
-bash .agent/scripts/watercrawl-helper.sh status
+bash .agents/scripts/watercrawl-helper.sh status
 ```
 
 ### Basic Usage
 
 ```bash
 # Scrape a single URL
-bash .agent/scripts/watercrawl-helper.sh scrape https://example.com
+bash .agents/scripts/watercrawl-helper.sh scrape https://example.com
 
 # Crawl a website (depth 3, max 100 pages)
-bash .agent/scripts/watercrawl-helper.sh crawl https://docs.example.com 3 100 output.json
+bash .agents/scripts/watercrawl-helper.sh crawl https://docs.example.com 3 100 output.json
 
 # Search the web
-bash .agent/scripts/watercrawl-helper.sh search "AI web crawling" 10 results.json
+bash .agents/scripts/watercrawl-helper.sh search "AI web crawling" 10 results.json
 
 # Generate sitemap
-bash .agent/scripts/watercrawl-helper.sh sitemap https://example.com sitemap.json
+bash .agents/scripts/watercrawl-helper.sh sitemap https://example.com sitemap.json
 ```
 
 ## Node.js SDK Usage
@@ -446,10 +446,10 @@ pip install watercrawl-openai
 
 ```bash
 # Check if key is configured
-bash .agent/scripts/watercrawl-helper.sh status
+bash .agents/scripts/watercrawl-helper.sh status
 
 # Reconfigure key
-bash .agent/scripts/watercrawl-helper.sh api-key YOUR_NEW_KEY
+bash .agents/scripts/watercrawl-helper.sh api-key YOUR_NEW_KEY
 ```
 
 ### Rate Limiting

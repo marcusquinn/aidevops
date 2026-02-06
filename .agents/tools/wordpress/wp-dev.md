@@ -60,7 +60,7 @@ node -v         # >= 18 (for HTTP transport, wp-env, Playground)
 - `@browser-automation` - E2E testing with Playwright
 - `@code-standards` - PHP/JS code quality checks
 
-**Related Workflows** (in .agent/workflows/):
+**Related Workflows** (in .agents/workflows/):
 - `bug-fixing.md` - Systematic debugging approach
 - `code-review.md` - Code review checklist
 - `git-workflow.md` - Branching for features/fixes
@@ -862,7 +862,7 @@ Before committing WordPress code:
 
 ```bash
 # Scan for secrets
-./.agent/scripts/secretlint-helper.sh scan
+./.agents/scripts/secretlint-helper.sh scan
 
 # Check for hardcoded credentials
 grep -r "password\|api_key\|secret" --include="*.php" .

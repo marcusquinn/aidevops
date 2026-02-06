@@ -20,21 +20,21 @@ Target: $ARGUMENTS
 
    ```bash
    # Check for exposed secrets
-   ./.agent/scripts/secretlint-helper.sh scan
+   ./.agents/scripts/secretlint-helper.sh scan
    ```
 
 2. **Run Ferret** for AI CLI config security:
 
    ```bash
    # Scan AI assistant configurations
-   ./.agent/scripts/security-helper.sh ferret
+   ./.agents/scripts/security-helper.sh ferret
    ```
 
 3. **Quick code scan** for obvious issues:
 
    ```bash
    # Fast analysis on staged/diff
-   ./.agent/scripts/security-helper.sh analyze staged
+   ./.agents/scripts/security-helper.sh analyze staged
    ```
 
 4. **Report findings** with severity and location

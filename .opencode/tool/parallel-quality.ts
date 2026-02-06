@@ -158,7 +158,7 @@ export default tool({
 
     // Use resolved paths - no user input in paths
     const rootDir = new URL('../..', import.meta.url).pathname
-    const scriptDir = new URL('../../.agent/scripts', import.meta.url).pathname
+    const scriptDir = new URL('../../.agents/scripts', import.meta.url).pathname
 
     // Get predefined safe commands
     const allChecks = getSafeCommands(scriptDir, rootDir)

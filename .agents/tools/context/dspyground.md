@@ -20,7 +20,7 @@ tools:
 
 - DSPyGround: Visual prompt optimization playground with GEPA optimizer
 - Requires: Node.js 18+, AI Gateway API key
-- Helper: `./.agent/scripts/dspyground-helper.sh install|init|dev [project]`
+- Helper: `./.agents/scripts/dspyground-helper.sh install|init|dev [project]`
 - Config: `configs/dspyground-config.json`, project: `dspyground.config.ts`
 - Projects: `data/dspyground/[project-name]/`
 - Web UI: `http://localhost:3000` (run with `dspyground dev`)
@@ -49,7 +49,7 @@ DSPyGround is a visual prompt optimization playground powered by the GEPA (Genet
 
 ```bash
 # Install DSPyGround globally
-./.agent/scripts/dspyground-helper.sh install
+./.agents/scripts/dspyground-helper.sh install
 
 # Verify installation
 dspyground --version
@@ -74,7 +74,7 @@ dspyground --version
 
 ```text
 aidevops/
-├── .agent/scripts/dspyground-helper.sh    # DSPyGround management script
+├── .agents/scripts/dspyground-helper.sh    # DSPyGround management script
 ├── configs/dspyground-config.json    # DSPyGround configuration
 ├── data/dspyground/                  # DSPyGround projects
 │   └── my-agent/
@@ -90,7 +90,7 @@ aidevops/
 
 ```bash
 # Create a new DSPyGround project
-./.agent/scripts/dspyground-helper.sh init my-agent
+./.agents/scripts/dspyground-helper.sh init my-agent
 
 # Navigate to project directory
 cd data/dspyground/my-agent
@@ -100,7 +100,7 @@ cd data/dspyground/my-agent
 
 ```bash
 # Start the development server
-./.agent/scripts/dspyground-helper.sh dev my-agent
+./.agents/scripts/dspyground-helper.sh dev my-agent
 
 # Or from project directory
 dspyground dev

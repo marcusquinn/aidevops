@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - Stagehand Python: AI-powered browser automation with Pydantic validation
-- Helper: `bash .agent/scripts/stagehand-python-helper.sh setup|install|status|activate|clean`
+- Helper: `bash .agents/scripts/stagehand-python-helper.sh setup|install|status|activate|clean`
 - Virtual env: `~/.aidevops/stagehand-python/.venv/`
 - Config: `~/.aidevops/stagehand-python/.env`
 - Core primitives:
@@ -64,11 +64,11 @@ Stagehand Python brings the power of AI-driven browser automation to Python deve
 
 ```bash
 # Complete setup (recommended)
-bash .agent/scripts/stagehand-python-helper.sh setup
+bash .agents/scripts/stagehand-python-helper.sh setup
 
 # Or step by step
-bash .agent/scripts/stagehand-python-helper.sh install
-bash .agent/scripts/stagehand-python-setup.sh examples
+bash .agents/scripts/stagehand-python-helper.sh install
+bash .agents/scripts/stagehand-python-setup.sh examples
 ```
 
 ### **Basic Usage**
@@ -354,10 +354,10 @@ async def scrape_news(url: str) -> List[Article]:
 
 ```bash
 # Setup Python MCP integration
-bash .agent/scripts/setup-mcp-integrations.sh stagehand-python
+bash .agents/scripts/setup-mcp-integrations.sh stagehand-python
 
 # Setup both JavaScript and Python
-bash .agent/scripts/setup-mcp-integrations.sh stagehand-both
+bash .agents/scripts/setup-mcp-integrations.sh stagehand-both
 ```
 
 ### **Using MCP with Stagehand Python**
@@ -437,21 +437,21 @@ await agent.execute("Search for information and save it to the database")
 
 ```bash
 # Installation and setup
-bash .agent/scripts/stagehand-python-helper.sh install      # Install Stagehand Python
-bash .agent/scripts/stagehand-python-helper.sh setup       # Complete setup
-bash .agent/scripts/stagehand-python-helper.sh status      # Check installation
+bash .agents/scripts/stagehand-python-helper.sh install      # Install Stagehand Python
+bash .agents/scripts/stagehand-python-helper.sh setup       # Complete setup
+bash .agents/scripts/stagehand-python-helper.sh status      # Check installation
 
 # Virtual environment management
-bash .agent/scripts/stagehand-python-helper.sh activate    # Show activation command
+bash .agents/scripts/stagehand-python-helper.sh activate    # Show activation command
 source ~/.aidevops/stagehand-python/.venv/bin/activate  # Activate venv
 
 # Development and testing
-bash .agent/scripts/stagehand-python-setup.sh examples  # Create examples
+bash .agents/scripts/stagehand-python-setup.sh examples  # Create examples
 python examples/basic_example.py                        # Run basic example
 python examples/ecommerce_automation.py "headphones"    # Run product search
 
 # Maintenance
-bash .agent/scripts/stagehand-python-helper.sh clean       # Clean cache and logs
+bash .agents/scripts/stagehand-python-helper.sh clean       # Clean cache and logs
 ```
 
 ## 📖 **Resources**
@@ -479,5 +479,5 @@ bash .agent/scripts/stagehand-python-helper.sh clean       # Clean cache and log
 **🎉 Ready to revolutionize your browser automation with Python? Get started with Stagehand Python today!**
 
 ```bash
-bash .agent/scripts/stagehand-python-helper.sh setup
+bash .agents/scripts/stagehand-python-helper.sh setup
 ```

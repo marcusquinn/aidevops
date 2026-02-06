@@ -71,7 +71,7 @@ When all checks pass: `<promise>RELEASE_HEALTHY</promise>`
 
 ## State Tracking
 
-Progress is tracked in `.agent/loop-state/quality-loop.local.md`:
+Progress is tracked in `.agents/loop-state/quality-loop.local.md`:
 
 ```markdown
 ## Postflight Loop State

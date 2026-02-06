@@ -1018,7 +1018,7 @@ show_help() {
     echo "Documentation:"
     echo "  GitHub: https://github.com/unclecode/crawl4ai"
     echo "  Docs: https://docs.crawl4ai.com/"
-    echo "  Framework docs: .agent/CRAWL4AI.md"
+    echo "  Framework docs: .agents/CRAWL4AI.md"
     return 0
 }
 

@@ -128,7 +128,7 @@ When tagging a task as `#ralph`, ensure it includes:
 ```markdown
 - [ ] t042 Fix all ShellCheck violations #ralph ~2h
   ralph-promise: "SHELLCHECK_CLEAN"
-  ralph-verify: "shellcheck .agent/scripts/*.sh"
+  ralph-verify: "shellcheck .agents/scripts/*.sh"
   ralph-max: 10
 ```
 
@@ -708,7 +708,7 @@ No branch, no PR — commit and push directly to main. These are low-risk planni
 
 ### Mixed changes (planning + non-exception files)
 
-If the change also touches non-exception files (e.g., `.agent/workflows/plans.md`):
+If the change also touches non-exception files (e.g., `.agents/workflows/plans.md`):
 
 1. **Create a worktree**: `wt switch -c chore/todo-{slug}` (creates `~/Git/{repo}-chore-todo-{slug}/`)
 2. **Make changes in the worktree directory**

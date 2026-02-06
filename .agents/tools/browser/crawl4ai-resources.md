@@ -26,7 +26,7 @@ tools:
 - **Discord**: https://discord.gg/jP8KfhDhyN
 - **CapSolver**: https://www.capsolver.com/ (CAPTCHA integration)
 - **API Endpoints**: `/crawl`, `/crawl/job`, `/health`, `/metrics`, `/screenshot`, `/pdf`
-- **Framework Files**: `.agent/scripts/crawl4ai-helper.sh`, `configs/crawl4ai-config.json.txt`
+- **Framework Files**: `.agents/scripts/crawl4ai-helper.sh`, `configs/crawl4ai-config.json.txt`
 - **Current Version**: v0.7.7 (November 2024)
 <!-- AI-CONTEXT-END -->
 
@@ -81,17 +81,17 @@ tools:
 
 ### Helper Scripts
 
-- **Main Helper**: `.agent/scripts/crawl4ai-helper.sh`
-- **Examples Script**: `.agent/scripts/crawl4ai-examples.sh`
+- **Main Helper**: `.agents/scripts/crawl4ai-helper.sh`
+- **Examples Script**: `.agents/scripts/crawl4ai-examples.sh`
 - **Configuration Template**: `configs/crawl4ai-config.json.txt`
 - **MCP Configuration**: `configs/mcp-templates/crawl4ai-mcp-config.json`
 
 ### Documentation Files
 
-- **Main Guide**: `.agent/crawl4ai.md`
-- **Integration Guide**: `.agent/wiki/crawl4ai-integration.md`
-- **Usage Guide**: `.agent/spec/crawl4ai-usage.md`
-- **Resources**: `.agent/links/crawl4ai-resources.md` (this file)
+- **Main Guide**: `.agents/crawl4ai.md`
+- **Integration Guide**: `.agents/wiki/crawl4ai-integration.md`
+- **Usage Guide**: `.agents/spec/crawl4ai-usage.md`
+- **Resources**: `.agents/links/crawl4ai-resources.md` (this file)
 
 ## MCP Integration
 
@@ -236,7 +236,7 @@ tools:
 ### Tutorials & Guides
 
 - **Video Tutorial**: Available on documentation homepage
-- **Code Examples**: https://github.com/unclecode/crawl4ai/tree/main/.agent/examples
+- **Code Examples**: https://github.com/unclecode/crawl4ai/tree/main/.agents/examples
 - **Blog Posts**: Check GitHub discussions for community tutorials
 
 ### Community Examples

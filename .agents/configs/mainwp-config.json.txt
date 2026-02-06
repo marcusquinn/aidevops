@@ -1,6 +1,6 @@
 {
   "_description": "MainWP Dashboard Configuration",
-  "_docs": "See .agent/tools/wordpress/mainwp.md for usage",
+  "_docs": "See .agents/tools/wordpress/mainwp.md for usage",
   "_setup": "Copy to mainwp-config.json and fill in your credentials",
 
   "instances": {

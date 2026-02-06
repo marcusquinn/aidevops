@@ -76,7 +76,7 @@ Key queries for wiki updates:
 "List all service integrations and their purposes"
 
 # Workflow guides
-"What workflows are available in .agent/workflows/?"
+"What workflows are available in .agents/workflows/?"
 ```
 
 ### Using Repomix
@@ -85,7 +85,7 @@ Generate structured codebase context:
 
 ```bash
 # Compress mode for token-efficient overview
-.agent/scripts/context-builder-helper.sh compress .
+.agents/scripts/context-builder-helper.sh compress .
 
 # Or use Repomix MCP directly
 # pack_codebase with compress=true for ~80% token reduction
@@ -114,7 +114,7 @@ Reference `repomix-instruction.md` for codebase understanding guidelines.
 
 - [ ] Version number matches `VERSION` file
 - [ ] Service count matches actual integrations
-- [ ] Script count matches `.agent/scripts/` contents
+- [ ] Script count matches `.agents/scripts/` contents
 - [ ] MCP integrations list is current
 - [ ] Workflow guides reflect actual workflows
 - [ ] Code examples are accurate and working
@@ -126,11 +126,11 @@ Reference `repomix-instruction.md` for codebase understanding guidelines.
 | Wiki Section | Source of Truth |
 |--------------|-----------------|
 | Version | `VERSION` file |
-| Service count | `.agent/services/` + service `.md` files |
-| Script count | `ls .agent/scripts/*.sh \| wc -l` |
+| Service count | `.agents/services/` + service `.md` files |
+| Script count | `ls .agents/scripts/*.sh \| wc -l` |
 | MCP integrations | `configs/` directory |
-| Workflows | `.agent/workflows/` directory |
-| Agent structure | `.agent/AGENTS.md` |
+| Workflows | `.agents/workflows/` directory |
+| Agent structure | `.agents/AGENTS.md` |
 
 ### Common Update Triggers
 
@@ -174,7 +174,7 @@ Reference `repomix-instruction.md` for codebase understanding guidelines.
 
 #### Workflows-Guide.md
 
-- List all workflows from `.agent/workflows/`
+- List all workflows from `.agents/workflows/`
 - Brief description of each
 - Link to detailed workflow files
 
@@ -192,13 +192,13 @@ Reference `repomix-instruction.md` for codebase understanding guidelines.
 
 ```bash
 # Validate markdown formatting
-.agent/scripts/markdown-formatter.sh lint .wiki/
+.agents/scripts/markdown-formatter.sh lint .wiki/
 
 # Check for broken internal links
 # (wiki links use format: [Text](Page-Name))
 
 # Verify version consistency
-.agent/scripts/version-manager.sh validate
+.agents/scripts/version-manager.sh validate
 ```
 
 ### Content Validation
@@ -240,9 +240,9 @@ cat VERSION
 # Output: 2.0.0
 
 # 2. Count current resources
-echo "Scripts: $(ls .agent/scripts/*.sh 2>/dev/null | wc -l)"
-echo "Services: $(ls .agent/services/**/*.md 2>/dev/null | wc -l)"
-echo "Workflows: $(ls .agent/workflows/*.md 2>/dev/null | wc -l)"
+echo "Scripts: $(ls .agents/scripts/*.sh 2>/dev/null | wc -l)"
+echo "Services: $(ls .agents/services/**/*.md 2>/dev/null | wc -l)"
+echo "Workflows: $(ls .agents/workflows/*.md 2>/dev/null | wc -l)"
 
 # 3. Build context (using Augment Context Engine)
 # "Summarize all changes since the last wiki update"
@@ -250,7 +250,7 @@ echo "Workflows: $(ls .agent/workflows/*.md 2>/dev/null | wc -l)"
 # 4. Update wiki pages as needed
 
 # 5. Validate
-.agent/scripts/markdown-formatter.sh lint .wiki/
+.agents/scripts/markdown-formatter.sh lint .wiki/
 
 # 6. Commit
 git add .wiki/
@@ -328,6 +328,6 @@ VERSION=$(cat VERSION)
 ## Related Documentation
 
 - `repomix-instruction.md` - Codebase context instructions
-- `.agent/tools/context/augment-context-engine.md` - Augment setup
-- `.agent/tools/context/context-builder.md` - Repomix wrapper
+- `.agents/tools/context/augment-context-engine.md` - Augment setup
+- `.agents/tools/context/context-builder.md` - Repomix wrapper
 - `.github/workflows/sync-wiki.yml` - Auto-sync workflow

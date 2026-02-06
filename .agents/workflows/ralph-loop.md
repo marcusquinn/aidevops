@@ -159,7 +159,7 @@ Cancel the active Ralph loop.
 
 ## State File
 
-Ralph stores its state in `.agent/loop-state/ralph-loop.local.md` (gitignored):
+Ralph stores its state in `.agents/loop-state/ralph-loop.local.md` (gitignored):
 
 ```yaml
 ---
@@ -408,13 +408,13 @@ If your AI CLI doesn't support stop hooks, use the external loop:
 
 ```bash
 # View current iteration
-grep '^iteration:' .agent/loop-state/ralph-loop.local.md
+grep '^iteration:' .agents/loop-state/ralph-loop.local.md
 
 # View full state
-head -10 .agent/loop-state/ralph-loop.local.md
+head -10 .agents/loop-state/ralph-loop.local.md
 
 # Check if loop is active
-test -f .agent/loop-state/ralph-loop.local.md && echo "Active" || echo "Not active"
+test -f .agents/loop-state/ralph-loop.local.md && echo "Active" || echo "Not active"
 ```
 
 ## Multi-Worktree Awareness
@@ -479,7 +479,7 @@ The `quality-loop-helper.sh` uses three strategies:
 
 ### Customizing Timing
 
-Edit `.agent/scripts/shared-constants.sh` to adjust timing constants:
+Edit `.agents/scripts/shared-constants.sh` to adjust timing constants:
 
 ```bash
 # Fast checks
@@ -702,7 +702,7 @@ full-loop-helper.sh start "Add new helper script" --no-auto-deploy
 
 ### State Management
 
-The full loop maintains state in `.agent/loop-state/full-loop.local.md` (gitignored), allowing:
+The full loop maintains state in `.agents/loop-state/full-loop.local.md` (gitignored), allowing:
 
 - Resume after interruption
 - Track current phase
@@ -710,7 +710,7 @@ The full loop maintains state in `.agent/loop-state/full-loop.local.md` (gitigno
 
 ```bash
 # Check current state
-cat .agent/loop-state/full-loop.local.md
+cat .agents/loop-state/full-loop.local.md
 
 # Resume from where you left off
 full-loop-helper.sh resume

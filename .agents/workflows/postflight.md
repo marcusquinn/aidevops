@@ -25,7 +25,7 @@ tools:
 - **Commands**:
   - `gh run list --workflow=code-quality.yml --limit=5`
   - `gh api repos/{owner}/{repo}/commits/{sha}/check-runs`
-  - `.agent/scripts/linters-local.sh`
+  - `.agents/scripts/linters-local.sh`
 - **Rollback**: See [Rollback Procedures](#rollback-procedures)
 
 <!-- AI-CONTEXT-END -->
@@ -154,7 +154,7 @@ curl -s "https://sonarcloud.io/api/measures/search_history?component=marcusquinn
 
 ```bash
 # Using Codacy CLI (if configured)
-./.agent/scripts/codacy-cli.sh status
+./.agents/scripts/codacy-cli.sh status
 
 # Check via API (requires CODACY_API_TOKEN)
 curl -s -H "api-token: $CODACY_API_TOKEN" \
@@ -165,7 +165,7 @@ curl -s -H "api-token: $CODACY_API_TOKEN" \
 
 ```bash
 # Run Snyk security scan
-./.agent/scripts/snyk-helper.sh test
+./.agents/scripts/snyk-helper.sh test
 
 # Check for secrets
 secretlint "**/*" --format compact
@@ -174,7 +174,7 @@ secretlint "**/*" --format compact
 npm audit --audit-level=high
 
 # Full security scan
-./.agent/scripts/snyk-helper.sh full
+./.agents/scripts/snyk-helper.sh full
 ```
 
 ### Comprehensive Postflight Script
@@ -410,11 +410,11 @@ Run postflight checks manually after release:
 
 ```bash
 # After release.md completes
-./.agent/scripts/postflight-check.sh
+./.agents/scripts/postflight-check.sh
 
 # Or individual checks
 gh run list --limit=5
-./.agent/scripts/linters-local.sh
+./.agents/scripts/linters-local.sh
 ```
 
 **When to use manual mode:**
@@ -462,7 +462,7 @@ git push origin --delete v{VERSION}
 git checkout -b hotfix/v{VERSION}.1
 # Fix the issue
 git commit -m "fix: resolve critical issue from v{VERSION}"
-./.agent/scripts/version-manager.sh release patch
+./.agents/scripts/version-manager.sh release patch
 ```
 
 ### 3. Rollback Checklist
@@ -480,7 +480,7 @@ git commit -m "fix: resolve critical issue from v{VERSION}"
 ```bash
 # Verify the rollback
 gh run list --limit=5  # Check CI/CD passes
-./.agent/scripts/linters-local.sh  # Verify quality restored
+./.agents/scripts/linters-local.sh  # Verify quality restored
 
 # Check SonarCloud
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq '.projectStatus.status'
@@ -517,7 +517,7 @@ After release publication, run postflight checks:
 gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
 
 # Or run full postflight
-./.agent/scripts/postflight-check.sh
+./.agents/scripts/postflight-check.sh
 \`\`\`
 
 See `workflows/postflight.md` for detailed verification procedures and rollback guidance.

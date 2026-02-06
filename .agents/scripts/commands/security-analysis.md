@@ -11,7 +11,7 @@ Target: $ARGUMENTS
 ## Quick Reference
 
 - **Purpose**: Deep security analysis with AI-powered vulnerability detection
-- **Helper**: `.agent/scripts/security-helper.sh`
+- **Helper**: `.agents/scripts/security-helper.sh`
 - **Scopes**: `diff` (default), `staged`, `branch`, `full`, or specific path
 - **Output**: `.security-analysis/` directory with reports
 
@@ -28,13 +28,13 @@ Target: $ARGUMENTS
 
    ```bash
    # Default: analyze git diff
-   ./.agent/scripts/security-helper.sh analyze
+   ./.agents/scripts/security-helper.sh analyze
 
    # Full codebase scan
-   ./.agent/scripts/security-helper.sh analyze full
+   ./.agents/scripts/security-helper.sh analyze full
 
    # Specific scope
-   ./.agent/scripts/security-helper.sh analyze $ARGUMENTS
+   ./.agents/scripts/security-helper.sh analyze $ARGUMENTS
    ```
 
 3. **Review findings** by severity (critical > high > medium > low)
@@ -47,7 +47,7 @@ Target: $ARGUMENTS
 5. **Generate report**:
 
    ```bash
-   ./.agent/scripts/security-helper.sh report
+   ./.agents/scripts/security-helper.sh report
    ```
 
 ## Vulnerability Categories

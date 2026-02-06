@@ -22,7 +22,7 @@ tools:
 - **Project Files**: `CLAUDE.md`, `GEMINI.md`, `.cursorrules` in project root
 - **Key Instruction**: "At the beginning of each session, read ~/AGENTS.md"
 - **Setup Script**: `setup.sh` includes automatic creation
-- **Config Script**: `.agent/scripts/ai-cli-config.sh`
+- **Config Script**: `.agents/scripts/ai-cli-config.sh`
 - **Supported Tools**: Qwen CLI, Claude Code, Gemini CLI, Cursor AI, GitHub Copilot, Factory.ai Droid
 - **Note**: Warp AI and Amp Code use project context (no specific memory files)
 <!-- AI-CONTEXT-END -->
@@ -113,7 +113,7 @@ At the beginning of each session, read ~/AGENTS.md to get additional context and
 ### **✅ AUTOMATIC CREATION:**
 
 - **Setup Script**: `setup.sh` includes AI memory file creation
-- **Configuration Script**: `.agent/scripts/ai-cli-config.sh` handles all memory files
+- **Configuration Script**: `.agents/scripts/ai-cli-config.sh` handles all memory files
 - **Detection Logic**: Automatically detects installed AI tools and creates appropriate files
 - **Preservation**: Existing files are preserved, new ones created as needed
 

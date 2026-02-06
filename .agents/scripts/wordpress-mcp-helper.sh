@@ -214,7 +214,7 @@ generate_http_config() {
       ],
       "env": {
         "WP_API_URL": "$api_url/wp-json/mcp/$server",
-        "LOG_FILE": "$HOME/.agent/tmp/mcp-$site_name.log",
+        "LOG_FILE": "$HOME/.agents/tmp/mcp-$site_name.log",
         "WP_API_USERNAME": "$username",
         "WP_API_PASSWORD": "$app_password"
       }

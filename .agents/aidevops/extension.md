@@ -19,9 +19,9 @@ tools:
 ## Quick Reference
 
 - **New service steps**: Research -> Helper script -> Config template -> Documentation -> Update framework files
-- **Helper location**: `.agent/scripts/[service-name]-helper.sh`
+- **Helper location**: `.agents/scripts/[service-name]-helper.sh`
 - **Config template**: `configs/[service-name]-config.json.txt`
-- **Documentation**: `.agent/[service-name].md`
+- **Documentation**: `.agents/[service-name].md`
 - **Required functions**: check_dependencies, load_config, get_account_config, api_request, list_accounts, show_help, main
 - **Security checklist**: Token validation, input sanitization, no credential exposure, rate limiting, confirmation prompts
 - **Testing**: Functional, integration, and security testing required
@@ -63,7 +63,7 @@ tools:
 ### Step 2: Create Helper Script
 
 ```bash
-# File: .agent/scripts/[service-name]-helper.sh
+# File: .agents/scripts/[service-name]-helper.sh
 #!/bin/bash
 
 # [Service Name] Helper Script
@@ -142,7 +142,7 @@ main "$@"
 ### Step 4: Create Comprehensive Documentation
 
 ```bash
-# File: .agent/[SERVICE-NAME].md
+# File: .agents/[SERVICE-NAME].md
 # [Service Name] Guide
 
 ## 🏢 **Provider Overview**
@@ -191,10 +191,10 @@ echo "configs/[service-name]-config.json" >> .gitignore
 # - Add to appropriate service category
 # - Update service count
 
-# Update .agent/recommendations-opinionated.md
+# Update .agents/recommendations-opinionated.md
 # - Add to appropriate category with description
 
-# Update .agent/scripts/setup-wizard-helper.sh
+# Update .agents/scripts/setup-wizard-helper.sh
 # - Add to service recommendations logic
 # - Add to API keys guide
 # - Add to configuration generation

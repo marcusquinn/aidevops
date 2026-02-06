@@ -129,39 +129,39 @@ case "$server" in
             "connect"|"ssh"|"")
                 if [[ "$auth_type" == "hostinger" ]]; then
                     print_info "Use Hostinger helper for site management..."
-                    ./.agent/scripts/hostinger-helper.sh list
+                    ./.agents/scripts/hostinger-helper.sh list
                 elif [[ "$auth_type" == "hetzner" ]]; then
                     print_info "Use Hetzner helper for server management..."
-                    ./.agent/scripts/hetzner-helper.sh list
+                    ./.agents/scripts/hetzner-helper.sh list
                 elif [[ "$auth_type" == "closte" ]]; then
                     print_info "Use Closte helper for server management..."
-                    ./.agent/scripts/closte-helper.sh list
+                    ./.agents/scripts/closte-helper.sh list
                 elif [[ "$auth_type" == "cloudron" ]]; then
                     print_info "Use Cloudron helper for server management..."
-                    ./.agent/scripts/cloudron-helper.sh list
+                    ./.agents/scripts/cloudron-helper.sh list
                 elif [[ "$auth_type" == "dns" ]]; then
                     print_info "Use DNS helper for domain management..."
-                    ./.agent/scripts/dns-helper.sh list
+                    ./.agents/scripts/dns-helper.sh list
                 elif [[ "$auth_type" == "localhost" ]]; then
                     print_info "Use Localhost helper for local development..."
-                    ./.agent/scripts/localhost-helper.sh list
+                    ./.agents/scripts/localhost-helper.sh list
                 elif [[ "$auth_type" == "aws" ]]; then
                     print_info "Use AWS helper for instance management..."
-                    ./.agent/scripts/aws-helper.sh list
+                    ./.agents/scripts/aws-helper.sh list
                 elif [[ "$auth_type" == "github" ]]; then
                     print_info "Use GitHub CLI helper for repository management..."
-                    ./.agent/scripts/github-cli-helper.sh list-accounts
+                    ./.agents/scripts/github-cli-helper.sh list-accounts
                 elif [[ "$auth_type" == "gitlab" ]]; then
                     print_info "Use GitLab CLI helper for project management..."
-                    ./.agent/scripts/gitlab-cli-helper.sh list-accounts
+                    ./.agents/scripts/gitlab-cli-helper.sh list-accounts
                 elif [[ "$auth_type" == "gitea" ]]; then
                     print_info "Use Gitea CLI helper for repository management..."
-                    ./.agent/scripts/gitea-cli-helper.sh list-accounts
+                    ./.agents/scripts/gitea-cli-helper.sh list-accounts
                 fi
                 ;;
             *)
                 print_info "Delegating to provider-specific helper..."
-                ./.agent/scripts/"${auth_type}"-helper.sh "$command" "$args"
+                ./.agents/scripts/"${auth_type}"-helper.sh "$command" "$args"
                 ;;
         esac
         ;;
@@ -220,16 +220,16 @@ case "$server" in
                 echo "  $0 hetzner connect"
                 echo ""
                 echo "Provider-Specific Helpers:"
-                echo "  ./.agent/scripts/hostinger-helper.sh      - Hostinger shared hosting"
-                echo "  ./.agent/scripts/hetzner-helper.sh        - Hetzner Cloud VPS"
-                echo "  ./.agent/scripts/closte-helper.sh         - Closte.com VPS servers"
-                echo "  ./.agent/scripts/cloudron-helper.sh       - Cloudron server management"
-                echo "  ./.agent/scripts/dns-helper.sh            - DNS management across providers"
-                echo "  ./.agent/scripts/localhost-helper.sh      - Local development with .local domains"
-                echo "  ./.agent/scripts/aws-helper.sh            - AWS EC2 instances"
-                echo "  ./.agent/scripts/github-cli-helper.sh     - GitHub CLI repository management"
-                echo "  ./.agent/scripts/gitlab-cli-helper.sh     - GitLab CLI project management"
-                echo "  ./.agent/scripts/gitea-cli-helper.sh      - Gitea CLI repository management"
+                echo "  ./.agents/scripts/hostinger-helper.sh      - Hostinger shared hosting"
+                echo "  ./.agents/scripts/hetzner-helper.sh        - Hetzner Cloud VPS"
+                echo "  ./.agents/scripts/closte-helper.sh         - Closte.com VPS servers"
+                echo "  ./.agents/scripts/cloudron-helper.sh       - Cloudron server management"
+                echo "  ./.agents/scripts/dns-helper.sh            - DNS management across providers"
+                echo "  ./.agents/scripts/localhost-helper.sh      - Local development with .local domains"
+                echo "  ./.agents/scripts/aws-helper.sh            - AWS EC2 instances"
+                echo "  ./.agents/scripts/github-cli-helper.sh     - GitHub CLI repository management"
+                echo "  ./.agents/scripts/gitlab-cli-helper.sh     - GitLab CLI project management"
+                echo "  ./.agents/scripts/gitea-cli-helper.sh      - Gitea CLI repository management"
                 ;;
             *)
                 print_error "$ERROR_UNKNOWN_COMMAND $command"

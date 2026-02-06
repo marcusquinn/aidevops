@@ -5,7 +5,7 @@
 # Microsoft AutoGen agentic AI framework setup and management
 #
 # Usage:
-#   bash .agent/scripts/autogen-helper.sh [action]
+#   bash .agents/scripts/autogen-helper.sh [action]
 #
 # Actions:
 #   setup     Complete setup of AutoGen
@@ -340,7 +340,7 @@ if [[ -d "$AUTOGEN_DIR/venv" ]]; then
     echo "Use 'stop-autogen-studio.sh' to stop"
 else
     echo "AutoGen not set up. Run setup first:"
-    echo "  bash .agent/scripts/autogen-helper.sh setup"
+    echo "  bash .agents/scripts/autogen-helper.sh setup"
     exit 1
 fi
 EOF

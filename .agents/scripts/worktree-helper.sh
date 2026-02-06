@@ -106,11 +106,11 @@ worktree_has_changes() {
     local worktree_path="$1"
     if [[ -d "$worktree_path" ]]; then
         local changes
-        # Exclude aidevops runtime files: .agent/loop-state/, .agent/tmp/, .DS_Store
+        # Exclude aidevops runtime files: .agents/loop-state/, .agents/tmp/, .DS_Store
         changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null | \
-            grep -v '^\?\? \.agent/loop-state/' | \
-            grep -v '^\?\? \.agent/tmp/' | \
-            grep -v '^\?\? \.agent/$' | \
+            grep -v '^\?\? \.agents/loop-state/' | \
+            grep -v '^\?\? \.agents/tmp/' | \
+            grep -v '^\?\? \.agents/$' | \
             grep -v '^\?\? \.DS_Store' | \
             head -1)
         [[ -n "$changes" ]]
@@ -318,9 +318,9 @@ cmd_remove() {
     fi
     
     # Clean up aidevops runtime files before removal (prevents "contains untracked files" error)
-    rm -rf "$path_to_remove/.agent/loop-state" 2>/dev/null || true
-    rm -rf "$path_to_remove/.agent/tmp" 2>/dev/null || true
-    rm -f "$path_to_remove/.agent/.DS_Store" 2>/dev/null || true
+    rm -rf "$path_to_remove/.agents/loop-state" 2>/dev/null || true
+    rm -rf "$path_to_remove/.agents/tmp" 2>/dev/null || true
+    rm -f "$path_to_remove/.agents/.DS_Store" 2>/dev/null || true
     rmdir "$path_to_remove/.agent" 2>/dev/null || true  # Only removes if empty
     
     echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
@@ -489,9 +489,9 @@ cmd_clean() {
                     if [[ "$should_remove" == "true" ]]; then
                         echo -e "${BLUE}Removing $worktree_branch...${NC}"
                         # Clean up aidevops runtime files before removal
-                        rm -rf "$worktree_path/.agent/loop-state" 2>/dev/null || true
-                        rm -rf "$worktree_path/.agent/tmp" 2>/dev/null || true
-                        rm -f "$worktree_path/.agent/.DS_Store" 2>/dev/null || true
+                        rm -rf "$worktree_path/.agents/loop-state" 2>/dev/null || true
+                        rm -rf "$worktree_path/.agents/tmp" 2>/dev/null || true
+                        rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
                         rmdir "$worktree_path/.agent" 2>/dev/null || true
                         # Don't use --force to prevent data loss
                         if ! git worktree remove "$worktree_path" 2>/dev/null; then

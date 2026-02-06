@@ -19,7 +19,7 @@ Target: $ARGUMENTS
 1. **Run dependency scan**:
 
    ```bash
-   ./.agent/scripts/security-helper.sh scan-deps
+   ./.agents/scripts/security-helper.sh scan-deps
    ```
 
 2. **Review findings** by severity
@@ -104,7 +104,7 @@ Add to your pipeline:
 ```yaml
 - name: Dependency Scan
   run: |
-    ./.agent/scripts/security-helper.sh scan-deps --format=sarif > deps.sarif
+    ./.agents/scripts/security-helper.sh scan-deps --format=sarif > deps.sarif
 
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v3

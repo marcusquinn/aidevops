@@ -541,7 +541,7 @@ After completing file changes, run preflight automatically:
 > 2. Continue working
 > 3. Done for now
 
-**If changes include `.agent/` files** (in aidevops repo or repos with local agents):
+**If changes include `.agents/` files** (in aidevops repo or repos with local agents):
 
 > Agent files modified. Run `./setup.sh` to deploy to `~/.aidevops/agents/`?
 >

@@ -171,7 +171,7 @@ cmd_check() {
         echo ""
         echo "  1. Run: humanise-update-helper.sh diff"
         echo "  2. Review changes at: https://github.com/${UPSTREAM_REPO}/commits/main"
-        echo "  3. Update .agent/content/humanise.md with relevant changes"
+        echo "  3. Update .agents/content/humanise.md with relevant changes"
         echo "  4. Update upstream_version in frontmatter to: ${upstream_latest}"
         echo ""
         return 1
@@ -235,7 +235,7 @@ cmd_help() {
     echo ""
     echo "When updates are available:"
     echo "  1. Review the diff and upstream commits"
-    echo "  2. Incorporate relevant changes into .agent/content/humanise.md"
+    echo "  2. Incorporate relevant changes into .agents/content/humanise.md"
     echo "  3. Update the upstream_version field in frontmatter"
 }
 

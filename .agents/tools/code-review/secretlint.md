@@ -49,38 +49,38 @@ Secretlint is a pluggable linting tool designed to prevent committing credential
 
 ```bash
 # Option 1: Local installation (recommended for projects)
-./.agent/scripts/secretlint-helper.sh install
+./.agents/scripts/secretlint-helper.sh install
 
 # Option 2: Quick scan without installation
-./.agent/scripts/secretlint-helper.sh quick
+./.agents/scripts/secretlint-helper.sh quick
 
 # Option 3: Docker (no Node.js required)
-./.agent/scripts/secretlint-helper.sh docker
+./.agents/scripts/secretlint-helper.sh docker
 
 # Option 4: Global installation
-./.agent/scripts/secretlint-helper.sh install global
+./.agents/scripts/secretlint-helper.sh install global
 ```
 
 ### Basic Usage
 
 ```bash
 # Check installation status
-./.agent/scripts/secretlint-helper.sh status
+./.agents/scripts/secretlint-helper.sh status
 
 # Initialize configuration
-./.agent/scripts/secretlint-helper.sh init
+./.agents/scripts/secretlint-helper.sh init
 
 # Scan all files
-./.agent/scripts/secretlint-helper.sh scan
+./.agents/scripts/secretlint-helper.sh scan
 
 # Scan specific directory
-./.agent/scripts/secretlint-helper.sh scan "src/**/*"
+./.agents/scripts/secretlint-helper.sh scan "src/**/*"
 
 # Quick scan (no installation needed)
-./.agent/scripts/secretlint-helper.sh quick
+./.agents/scripts/secretlint-helper.sh quick
 
 # Scan via Docker
-./.agent/scripts/secretlint-helper.sh docker
+./.agents/scripts/secretlint-helper.sh docker
 ```
 
 ## Detected Secret Types
@@ -240,7 +240,7 @@ secretlint "**/*"
 ```bash
 secretlint "**/*" --format json
 # or
-./.agent/scripts/secretlint-helper.sh scan . json
+./.agents/scripts/secretlint-helper.sh scan . json
 ```
 
 ### SARIF (for CI/CD)
@@ -252,7 +252,7 @@ npm install @secretlint/secretlint-formatter-sarif --save-dev
 # Generate SARIF
 secretlint "**/*" --format @secretlint/secretlint-formatter-sarif > results.sarif
 # or
-./.agent/scripts/secretlint-helper.sh sarif
+./.agents/scripts/secretlint-helper.sh sarif
 ```
 
 ### Mask Result (fix secrets)
@@ -261,7 +261,7 @@ secretlint "**/*" --format @secretlint/secretlint-formatter-sarif > results.sari
 # Mask secrets in a file and overwrite
 secretlint .zsh_history --format=mask-result --output=.zsh_history
 # or
-./.agent/scripts/secretlint-helper.sh mask .env.example
+./.agents/scripts/secretlint-helper.sh mask .env.example
 ```
 
 ## Pre-commit Integration
@@ -270,14 +270,14 @@ secretlint .zsh_history --format=mask-result --output=.zsh_history
 
 ```bash
 # Setup via helper
-./.agent/scripts/secretlint-helper.sh hook
+./.agents/scripts/secretlint-helper.sh hook
 ```
 
 ### Option 2: Husky + lint-staged (Node.js projects)
 
 ```bash
 # Setup via helper
-./.agent/scripts/secretlint-helper.sh husky
+./.agents/scripts/secretlint-helper.sh husky
 ```
 
 Or manually:
@@ -473,28 +473,28 @@ The Docker image includes:
 
 ```bash
 # Installation
-./.agent/scripts/secretlint-helper.sh install         # Local install
-./.agent/scripts/secretlint-helper.sh install global  # Global install
-./.agent/scripts/secretlint-helper.sh install-rules all  # Additional rules
+./.agents/scripts/secretlint-helper.sh install         # Local install
+./.agents/scripts/secretlint-helper.sh install global  # Global install
+./.agents/scripts/secretlint-helper.sh install-rules all  # Additional rules
 
 # Configuration
-./.agent/scripts/secretlint-helper.sh init            # Initialize config
-./.agent/scripts/secretlint-helper.sh status          # Check status
+./.agents/scripts/secretlint-helper.sh init            # Initialize config
+./.agents/scripts/secretlint-helper.sh status          # Check status
 
 # Scanning
-./.agent/scripts/secretlint-helper.sh scan            # Scan all files
-./.agent/scripts/secretlint-helper.sh scan "src/**/*" # Scan specific
-./.agent/scripts/secretlint-helper.sh quick           # Quick scan (npx)
-./.agent/scripts/secretlint-helper.sh docker          # Docker scan
+./.agents/scripts/secretlint-helper.sh scan            # Scan all files
+./.agents/scripts/secretlint-helper.sh scan "src/**/*" # Scan specific
+./.agents/scripts/secretlint-helper.sh quick           # Quick scan (npx)
+./.agents/scripts/secretlint-helper.sh docker          # Docker scan
 
 # Output
-./.agent/scripts/secretlint-helper.sh scan . json     # JSON output
-./.agent/scripts/secretlint-helper.sh sarif           # SARIF output
-./.agent/scripts/secretlint-helper.sh mask file.txt   # Mask secrets
+./.agents/scripts/secretlint-helper.sh scan . json     # JSON output
+./.agents/scripts/secretlint-helper.sh sarif           # SARIF output
+./.agents/scripts/secretlint-helper.sh mask file.txt   # Mask secrets
 
 # Hooks
-./.agent/scripts/secretlint-helper.sh hook            # Git hook
-./.agent/scripts/secretlint-helper.sh husky           # Husky setup
+./.agents/scripts/secretlint-helper.sh hook            # Git hook
+./.agents/scripts/secretlint-helper.sh husky           # Husky setup
 ```
 
 ### Quality Pipeline Integration
@@ -503,10 +503,10 @@ Secretlint integrates with the framework's quality pipeline:
 
 ```bash
 # Run as part of quality checks
-./.agent/scripts/linters-local.sh  # Includes secretlint
+./.agents/scripts/linters-local.sh  # Includes secretlint
 
 # Pre-commit validation
-./.agent/scripts/pre-commit-hook.sh  # Includes secretlint
+./.agents/scripts/pre-commit-hook.sh  # Includes secretlint
 ```
 
 ## Troubleshooting
@@ -525,13 +525,13 @@ npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
 npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
 
 # Verify installation
-./.agent/scripts/secretlint-helper.sh status
+./.agents/scripts/secretlint-helper.sh status
 ```
 
 **"No configuration file found"**
 
 ```bash
-./.agent/scripts/secretlint-helper.sh init
+./.agents/scripts/secretlint-helper.sh init
 ```
 
 **"secretlint command not found"**
@@ -549,15 +549,15 @@ Exit code 2 indicates a configuration or installation error (not secrets found).
 
 ```bash
 # Diagnose the issue
-./.agent/scripts/secretlint-helper.sh status
+./.agents/scripts/secretlint-helper.sh status
 
 # Common fixes:
 # 1. Missing rules - reinstall
-./.agent/scripts/secretlint-helper.sh install
+./.agents/scripts/secretlint-helper.sh install
 
 # 2. Invalid config - reinitialize
 rm .secretlintrc.json
-./.agent/scripts/secretlint-helper.sh init
+./.agents/scripts/secretlint-helper.sh init
 ```
 
 **Performance issues with large repos**

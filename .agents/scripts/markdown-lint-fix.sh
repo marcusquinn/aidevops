@@ -245,7 +245,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 README.md"
-    echo "  $0 fix .agent/"
+    echo "  $0 fix .agents/"
     echo "  $0 manual ."
     echo "  $0 install"
     echo ""

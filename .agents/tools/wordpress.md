@@ -31,10 +31,10 @@ mode: subagent
 
 ```bash
 # LocalWP sites
-.agent/scripts/wordpress-mcp-helper.sh list-sites
+.agents/scripts/wordpress-mcp-helper.sh list-sites
 
 # MainWP operations
-.agent/scripts/mainwp-helper.sh [command] [site]
+.agents/scripts/mainwp-helper.sh [command] [site]
 ```
 
 <!-- AI-CONTEXT-END -->

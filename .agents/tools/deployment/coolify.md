@@ -107,37 +107,37 @@ curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
 
 ```bash
 # List Coolify servers
-./.agent/scripts/coolify-helper.sh list
+./.agents/scripts/coolify-helper.sh list
 
 # Connect to server
-./.agent/scripts/coolify-helper.sh connect coolify-main
+./.agents/scripts/coolify-helper.sh connect coolify-main
 
 # Open Coolify web interface
-./.agent/scripts/coolify-helper.sh open coolify-main
+./.agents/scripts/coolify-helper.sh open coolify-main
 
 # Check server status
-./.agent/scripts/coolify-helper.sh status coolify-main
+./.agents/scripts/coolify-helper.sh status coolify-main
 ```
 
 ### **Application Management:**
 
 ```bash
 # List applications
-./.agent/scripts/coolify-helper.sh apps main_server
+./.agents/scripts/coolify-helper.sh apps main_server
 
 # Execute commands on server
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker ps'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'df -h'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
 
 # Check Docker containers
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker logs container-name'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs container-name'
 ```
 
 ### **SSH Configuration:**
 
 ```bash
 # Generate SSH configs
-./.agent/scripts/coolify-helper.sh generate-ssh-configs
+./.agents/scripts/coolify-helper.sh generate-ssh-configs
 
 # Then use simplified SSH
 ssh coolify-main
@@ -149,11 +149,11 @@ ssh coolify-main
 
 ```bash
 # Configure firewall
-./.agent/scripts/coolify-helper.sh exec coolify-main 'ufw allow 22/tcp'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'ufw allow 80/tcp'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'ufw allow 443/tcp'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'ufw allow 8000/tcp'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'ufw enable'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 22/tcp'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 80/tcp'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 443/tcp'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 8000/tcp'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw enable'
 ```
 
 ### **SSH Key Management:**
@@ -179,13 +179,13 @@ ssh coolify-main
 ```bash
 # Check build logs in Coolify dashboard
 # Verify build commands and dependencies
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker logs build-container'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs build-container'
 
 # Check disk space
-./.agent/scripts/coolify-helper.sh exec coolify-main 'df -h'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
 
 # Check memory usage
-./.agent/scripts/coolify-helper.sh exec coolify-main 'free -h'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'free -h'
 ```
 
 #### **SSL Certificate Issues:**
@@ -195,23 +195,23 @@ ssh coolify-main
 nslookup yourdomain.com
 
 # Check Let's Encrypt logs
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker logs coolify'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs coolify'
 
 # Manual certificate renewal
-./.agent/scripts/coolify-helper.sh exec coolify-main 'certbot renew'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'certbot renew'
 ```
 
 #### **Application Not Accessible:**
 
 ```bash
 # Check application status
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker ps'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
 
 # Check application logs
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker logs app-container'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs app-container'
 
 # Verify port configuration
-./.agent/scripts/coolify-helper.sh exec coolify-main 'netstat -tlnp'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'netstat -tlnp'
 ```
 
 ## 📊 **Performance Optimization**
@@ -220,11 +220,11 @@ nslookup yourdomain.com
 
 ```bash
 # Monitor resource usage
-./.agent/scripts/coolify-helper.sh exec coolify-main 'htop'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'iostat -x 1'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'htop'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'iostat -x 1'
 
 # Docker resource usage
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker stats'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker stats'
 ```
 
 ### **Application Performance:**
@@ -238,10 +238,10 @@ nslookup yourdomain.com
 
 ```bash
 # Monitor database performance
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker exec postgres-container pg_stat_activity'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec postgres-container pg_stat_activity'
 
 # Database backups
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker exec postgres-container pg_dump dbname > backup.sql'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec postgres-container pg_dump dbname > backup.sql'
 ```
 
 ## 🔄 **Backup & Disaster Recovery**
@@ -268,29 +268,29 @@ nslookup yourdomain.com
 
 ```bash
 # List containers
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker ps -a'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps -a'
 
 # Container logs
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker logs -f container-name'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs -f container-name'
 
 # Execute in container
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker exec -it container-name bash'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec -it container-name bash'
 
 # Container resource usage
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker stats container-name'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker stats container-name'
 ```
 
 ### **Image Management:**
 
 ```bash
 # List images
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker images'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker images'
 
 # Clean up unused images
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker image prune -a'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker image prune -a'
 
 # Clean up unused volumes
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker volume prune'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker volume prune'
 ```
 
 ## 📚 **Best Practices**

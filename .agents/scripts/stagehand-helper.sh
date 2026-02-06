@@ -246,7 +246,7 @@ EXAMPLES:
     $0 status               # Check installation
 
 DOCUMENTATION:
-    For detailed documentation, see: .agent/STAGEHAND.md
+    For detailed documentation, see: .agents/STAGEHAND.md
     Official docs: https://docs.stagehand.dev
     GitHub: https://github.com/browserbase/stagehand
 

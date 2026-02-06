@@ -7,18 +7,18 @@ and helper scripts for DevOps automation across 30+ services.
 
 ### Directory Structure
 
-- **`.agent/`** - Canonical source for all agent definitions (other dirs are symlinks)
-- **`.agent/scripts/`** - Helper shell scripts for service automation
+- **`.agents/`** - Canonical source for all agent definitions (other dirs are symlinks)
+- **`.agents/scripts/`** - Helper shell scripts for service automation
 - **`configs/`** - MCP configuration templates (`.json.txt` files are safe to read)
 - **`AGENTS.md`** - Developer guide for contributing
-- **`.agent/AGENTS.md`** - User guide distributed to `~/.aidevops/agents/`
+- **`.agents/AGENTS.md`** - User guide distributed to `~/.aidevops/agents/`
 
 ### Symlink Architecture
 
-These directories are **symlinks to `.agent/`** - don't analyze them separately:
+These directories are **symlinks to `.agents/`** - don't analyze them separately:
 - `.ai/`, `.continue/`, `.cursor/`, `.claude/`, `.factory/`, `.codex/`, `.kiro/`, `.opencode/`
 
-Focus on `.agent/` for the authoritative content.
+Focus on `.agents/` for the authoritative content.
 
 ### Code Quality Standards
 
@@ -36,16 +36,16 @@ Focus on `.agent/` for the authoritative content.
 
 ## When Analyzing This Codebase
 
-- **For architecture understanding**: Focus on `.agent/AGENTS.md` and `.agent/aidevops/architecture.md`
-- **For script patterns**: Reference `.agent/scripts/` - all follow consistent conventions
-- **For service integrations**: Check `.agent/services/` and `configs/`
-- **For workflows**: See `.agent/workflows/` for release, versioning, bug-fixing guides
+- **For architecture understanding**: Focus on `.agents/AGENTS.md` and `.agents/aidevops/architecture.md`
+- **For script patterns**: Reference `.agents/scripts/` - all follow consistent conventions
+- **For service integrations**: Check `.agents/services/` and `configs/`
+- **For workflows**: See `.agents/workflows/` for release, versioning, bug-fixing guides
 
 ## Common Tasks
 
 | Task | Key Files |
 |------|-----------|
-| Add new service | `.agent/aidevops/add-new-mcp-to-aidevops.md` |
-| Create agent | `.agent/build-agent.md` |
-| Review agents | `.agent/build-agent/agent-review.md` |
-| Release version | `.agent/workflows/release-process.md` |
+| Add new service | `.agents/aidevops/add-new-mcp-to-aidevops.md` |
+| Create agent | `.agents/build-agent.md` |
+| Review agents | `.agents/build-agent/agent-review.md` |
+| Release version | `.agents/workflows/release-process.md` |

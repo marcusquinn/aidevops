@@ -23,7 +23,7 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; return 0; }
 DRY_RUN=false
 TARGET_FILE=""
 FIX_ALL=false
-SCRIPTS_DIR=".agent/scripts"
+SCRIPTS_DIR=".agents/scripts"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do

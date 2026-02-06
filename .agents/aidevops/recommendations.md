@@ -210,13 +210,13 @@ This guide outlines proven best practices for infrastructure management and help
 
 ```bash
 # List LocalWP sites
-./.agent/scripts/localhost-helper.sh list-localwp
+./.agents/scripts/localhost-helper.sh list-localwp
 
 # Setup custom domain for LocalWP site
-./.agent/scripts/localhost-helper.sh setup-localwp-domain plugin-testing plugin-testing.local
+./.agents/scripts/localhost-helper.sh setup-localwp-domain plugin-testing plugin-testing.local
 
 # Generate SSL certificate
-./.agent/scripts/localhost-helper.sh generate-cert plugin-testing.local
+./.agents/scripts/localhost-helper.sh generate-cert plugin-testing.local
 ```
 
 ### **Docker Development**
@@ -282,7 +282,7 @@ This guide outlines proven best practices for infrastructure management and help
 - **Helper scripts**: Root level for easy access
 - **Configuration samples**: In `configs/` directory
 - **Documentation**: In `docs/` directory
-- **Provider scripts**: In `.agent/scripts/` directory
+- **Provider scripts**: In `.agents/scripts/` directory
 
 ## 🔍 **Monitoring & Maintenance**
 

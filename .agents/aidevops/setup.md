@@ -24,7 +24,7 @@ tools:
 **What setup.sh does**:
 1. Checks system requirements (jq, curl, ssh)
 2. Checks optional dependencies (sshpass, git CLIs)
-3. Copies `.agent/` contents to `~/.aidevops/agents/`
+3. Copies `.agents/` contents to `~/.aidevops/agents/`
 4. Backs up existing configs to `~/.aidevops/config-backups/[timestamp]/`
 5. Injects reference into AI assistant AGENTS.md files
 6. Updates OpenCode agent paths in `opencode.json`

@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: Convert documents to markdown for AI processing
 - **Install**: `brew install pandoc poppler` (macOS) or `apt install pandoc poppler-utils`
-- **Helper**: `.agent/scripts/pandoc-helper.sh`
+- **Helper**: `.agents/scripts/pandoc-helper.sh`
 - **Commands**: `convert [file]` | `batch [dir] [output] [pattern]` | `formats` | `detect [file]`
 - **Supported**: DOCX, PDF, HTML, EPUB, ODT, RTF, LaTeX, JSON, CSV, RST, Org-mode
 - **Output**: Markdown with ATX headers, no line wrapping, preserved structure
@@ -68,26 +68,26 @@ pdftotext -v  # For PDF support
 
 ```bash
 # Convert Word document to markdown
-bash .agent/scripts/pandoc-helper.sh convert document.docx
+bash .agents/scripts/pandoc-helper.sh convert document.docx
 
 # Convert PDF with custom output name
-bash .agent/scripts/pandoc-helper.sh convert report.pdf analysis.md
+bash .agents/scripts/pandoc-helper.sh convert report.pdf analysis.md
 
 # Convert with specific format and options
-bash .agent/scripts/pandoc-helper.sh convert file.html output.md html "--extract-media=./images"
+bash .agents/scripts/pandoc-helper.sh convert file.html output.md html "--extract-media=./images"
 ```
 
 ### **Batch Conversion**
 
 ```bash
 # Convert all Word documents in a directory
-bash .agent/scripts/pandoc-helper.sh batch ./documents ./markdown "*.docx"
+bash .agents/scripts/pandoc-helper.sh batch ./documents ./markdown "*.docx"
 
 # Convert all supported formats
-bash .agent/scripts/pandoc-helper.sh batch ./input ./output "*"
+bash .agents/scripts/pandoc-helper.sh batch ./input ./output "*"
 
 # Convert with specific pattern
-bash .agent/scripts/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,html}"
+bash .agents/scripts/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,html}"
 ```
 
 ## Supported Formats
@@ -132,26 +132,26 @@ bash .agent/scripts/pandoc-helper.sh batch ./reports ./markdown "*.{pdf,docx,htm
 
 ```bash
 # Automatically detect file format
-bash .agent/scripts/pandoc-helper.sh detect unknown_file.ext
+bash .agents/scripts/pandoc-helper.sh detect unknown_file.ext
 
 # Show all supported formats
-bash .agent/scripts/pandoc-helper.sh formats
+bash .agents/scripts/pandoc-helper.sh formats
 ```
 
 ### **Custom Conversion Options**
 
 ```bash
 # Extract images and media
-bash .agent/scripts/pandoc-helper.sh convert document.docx output.md docx "--extract-media=./media"
+bash .agents/scripts/pandoc-helper.sh convert document.docx output.md docx "--extract-media=./media"
 
 # Include table of contents
-bash .agent/scripts/pandoc-helper.sh convert document.html output.md html "--toc"
+bash .agents/scripts/pandoc-helper.sh convert document.html output.md html "--toc"
 
 # Create standalone document
-bash .agent/scripts/pandoc-helper.sh convert document.rst output.md rst "--standalone"
+bash .agents/scripts/pandoc-helper.sh convert document.rst output.md rst "--standalone"
 
 # Set custom metadata
-bash .agent/scripts/pandoc-helper.sh convert document.tex output.md latex "--metadata title='My Document'"
+bash .agents/scripts/pandoc-helper.sh convert document.tex output.md latex "--metadata title='My Document'"
 ```
 
 ## AI Assistant Integration
@@ -169,7 +169,7 @@ bash .agent/scripts/pandoc-helper.sh convert document.tex output.md latex "--met
 
 ```bash
 # 1. Convert documents for analysis
-bash .agent/scripts/pandoc-helper.sh batch ./project-docs ./markdown "*.{docx,pdf,html}"
+bash .agents/scripts/pandoc-helper.sh batch ./project-docs ./markdown "*.{docx,pdf,html}"
 
 # 2. Process converted files with AI
 # AI can now easily read and analyze all documents
@@ -275,7 +275,7 @@ pandoc --verbose input.pdf -o output.md
 
 ```bash
 # Convert project documentation
-bash .agent/scripts/pandoc-helper.sh batch ./docs ./ai-ready "*.{docx,pdf}"
+bash .agents/scripts/pandoc-helper.sh batch ./docs ./ai-ready "*.{docx,pdf}"
 
 # Now AI can process all documentation:
 # "Analyze all the converted documentation and create a project summary"
@@ -287,7 +287,7 @@ bash .agent/scripts/pandoc-helper.sh batch ./docs ./ai-ready "*.{docx,pdf}"
 
 ```bash
 # Convert and commit to Git
-bash .agent/scripts/pandoc-helper.sh batch ./documents ./markdown
+bash .agents/scripts/pandoc-helper.sh batch ./documents ./markdown
 git add markdown/
 git commit -m "📄 Add converted documentation for AI processing"
 ```

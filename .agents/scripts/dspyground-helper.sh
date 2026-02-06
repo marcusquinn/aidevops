@@ -9,7 +9,7 @@
 
 # Load shared constants and functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=.agent/scripts/shared-constants.sh
+# shellcheck source=.agents/scripts/shared-constants.sh
 source "$SCRIPT_DIR/shared-constants.sh"
 
 # Use shared print functions with fallback for compatibility

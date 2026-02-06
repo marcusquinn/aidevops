@@ -5,7 +5,7 @@
 # This file contains common strings, error messages, and configuration constants
 # to reduce duplication and improve maintainability across provider scripts.
 #
-# Usage: source .agent/scripts/shared-constants.sh
+# Usage: source .agents/scripts/shared-constants.sh
 #
 # Author: AI DevOps Framework
 # Version: 1.6.0

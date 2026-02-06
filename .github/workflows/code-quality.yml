@@ -28,32 +28,32 @@ jobs:
         echo "✅ AGENTS.md: $(test -f AGENTS.md && echo 'Present' || echo 'Missing')"
         echo "✅ README.md: $(test -f README.md && echo 'Present' || echo 'Missing')"
         echo "✅ LICENSE: $(test -f LICENSE && echo 'Present' || echo 'Missing')"
-        echo "✅ .agent/ directory: $(test -d .agent && echo 'Present' || echo 'Missing')"
+        echo "✅ .agents/ directory: $(test -d .agent && echo 'Present' || echo 'Missing')"
 
         echo ""
         echo "📊 Framework Statistics:"
         echo "📚 Documentation files: $(find . -name '*.md' | wc -l)"
-        echo "🔧 Agent scripts: $(find .agent/scripts -name '*.sh' 2>/dev/null | wc -l || echo '0')"
-        echo "⚙️  Quality specs: $(find .agent/spec -name '*.md' 2>/dev/null | wc -l || echo '0')"
+        echo "🔧 Agent scripts: $(find .agents/scripts -name '*.sh' 2>/dev/null | wc -l || echo '0')"
+        echo "⚙️  Quality specs: $(find .agents/spec -name '*.md' 2>/dev/null | wc -l || echo '0')"
         echo "📖 Service docs: $(find docs -name '*.md' 2>/dev/null | wc -l || echo '0')"
 
         echo ""
         echo "🔍 Quality Checks:"
 
         # Check agent scripts exist and are executable
-        if [ -d ".agent/scripts" ]; then
-          script_count=$(find .agent/scripts -name "*.sh" | wc -l)
+        if [ -d ".agents/scripts" ]; then
+          script_count=$(find .agents/scripts -name "*.sh" | wc -l)
           echo "✅ Agent scripts found: $script_count"
         else
-          echo "❌ .agent/scripts directory missing"
+          echo "❌ .agents/scripts directory missing"
         fi
 
         # Check quality specs exist
-        if [ -d ".agent/spec" ]; then
-          spec_count=$(find .agent/spec -name "*.md" | wc -l)
+        if [ -d ".agents/spec" ]; then
+          spec_count=$(find .agents/spec -name "*.md" | wc -l)
           echo "✅ Quality specs found: $spec_count"
         else
-          echo "❌ .agent/spec directory missing"
+          echo "❌ .agents/spec directory missing"
         fi
 
         # Check documentation exists
@@ -73,7 +73,7 @@ jobs:
         echo "🔐 Security Validation:"
         echo "✅ API keys stored securely in local storage (~/.config/aidevops/)"
         echo "✅ GitHub Actions use repository secrets (SONAR_TOKEN, CODACY_API_TOKEN)"
-        echo "✅ Private scripts directory (.agent/scripts-private/) gitignored"
+        echo "✅ Private scripts directory (.agents/scripts-private/) gitignored"
         echo "✅ Security documentation and best practices implemented"
 
   sonarcloud:

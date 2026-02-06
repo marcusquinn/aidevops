@@ -138,10 +138,10 @@ The helper script is included in the aidevops framework:
 
 ```bash
 # Already available at
-~/Git/aidevops/.agent/scripts/context-builder-helper.sh
+~/Git/aidevops/.agents/scripts/context-builder-helper.sh
 
 # Or add to PATH
-alias context-builder='~/Git/aidevops/.agent/scripts/context-builder-helper.sh'
+alias context-builder='~/Git/aidevops/.agents/scripts/context-builder-helper.sh'
 ```text
 
 ### Dependencies

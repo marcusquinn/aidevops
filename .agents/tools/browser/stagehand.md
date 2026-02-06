@@ -20,9 +20,9 @@ tools:
 
 - **Purpose**: AI-powered browser automation with natural language control
 - **Languages**: JavaScript (npm) + Python (pip)
-- **Setup JS**: `bash .agent/scripts/stagehand-helper.sh setup`
-- **Setup Python**: `bash .agent/scripts/stagehand-python-helper.sh setup`
-- **Setup Both**: `bash .agent/scripts/setup-mcp-integrations.sh stagehand-both`
+- **Setup JS**: `bash .agents/scripts/stagehand-helper.sh setup`
+- **Setup Python**: `bash .agents/scripts/stagehand-python-helper.sh setup`
+- **Setup Both**: `bash .agents/scripts/setup-mcp-integrations.sh stagehand-both`
 
 **Core Primitives**:
 - `act("click login button")` - Natural language actions
@@ -69,13 +69,13 @@ Slowest tool due to AI model overhead. Without API key, works as a Playwright wr
 
 ```bash
 # JavaScript Version
-bash .agent/scripts/stagehand-helper.sh setup
+bash .agents/scripts/stagehand-helper.sh setup
 
 # Python Version
-bash .agent/scripts/stagehand-python-helper.sh setup
+bash .agents/scripts/stagehand-python-helper.sh setup
 
 # Both Versions
-bash .agent/scripts/setup-mcp-integrations.sh stagehand-both
+bash .agents/scripts/setup-mcp-integrations.sh stagehand-both
 ```
 
 ## 🎯 **Overview**
@@ -107,11 +107,11 @@ Stagehand is a revolutionary browser automation framework that combines the powe
 
 ```bash
 # Complete setup (recommended)
-bash .agent/scripts/stagehand-helper.sh setup
+bash .agents/scripts/stagehand-helper.sh setup
 
 # Or step by step
-bash .agent/scripts/stagehand-helper.sh install
-bash .agent/scripts/stagehand-helper.sh create-example
+bash .agents/scripts/stagehand-helper.sh install
+bash .agents/scripts/stagehand-helper.sh create-example
 ```
 
 ### **Basic Usage**
@@ -338,7 +338,7 @@ Stagehand can be integrated with the framework's MCP system:
 
 ```bash
 # Add Stagehand MCP server (if available)
-bash .agent/scripts/setup-mcp-integrations.sh stagehand
+bash .agents/scripts/setup-mcp-integrations.sh stagehand
 ```
 
 ### **Browser Automation Ecosystem**
@@ -354,10 +354,10 @@ Stagehand complements existing browser automation tools:
 
 ```bash
 # Run quality checks on Stagehand scripts
-bash .agent/scripts/linters-local.sh ~/.aidevops/stagehand/
+bash .agents/scripts/linters-local.sh ~/.aidevops/stagehand/
 
 # Lint JavaScript/TypeScript files
-bash .agent/scripts/linter-manager.sh install javascript
+bash .agents/scripts/linter-manager.sh install javascript
 ```
 
 ## 🎯 **Use Cases**
@@ -417,17 +417,17 @@ bash .agent/scripts/linter-manager.sh install javascript
 
 ```bash
 # Installation and setup
-bash .agent/scripts/stagehand-helper.sh install      # Install Stagehand
-bash .agent/scripts/stagehand-helper.sh setup        # Complete setup
-bash .agent/scripts/stagehand-helper.sh status       # Check installation
+bash .agents/scripts/stagehand-helper.sh install      # Install Stagehand
+bash .agents/scripts/stagehand-helper.sh setup        # Complete setup
+bash .agents/scripts/stagehand-helper.sh status       # Check installation
 
 # Development and testing
-bash .agent/scripts/stagehand-helper.sh create-example  # Create example script
-bash .agent/scripts/stagehand-helper.sh run-example     # Run basic example
-bash .agent/scripts/stagehand-helper.sh logs            # View logs
+bash .agents/scripts/stagehand-helper.sh create-example  # Create example script
+bash .agents/scripts/stagehand-helper.sh run-example     # Run basic example
+bash .agents/scripts/stagehand-helper.sh logs            # View logs
 
 # Maintenance
-bash .agent/scripts/stagehand-helper.sh clean        # Clean cache and logs
+bash .agents/scripts/stagehand-helper.sh clean        # Clean cache and logs
 ```
 
 ## 📖 **Resources**
@@ -442,7 +442,7 @@ bash .agent/scripts/stagehand-helper.sh clean        # Clean cache and logs
 
 - **Browser Automation**: docs/BROWSER-AUTOMATION.md
 - **MCP Integrations**: docs/MCP-INTEGRATIONS.md
-- **Quality Standards**: .agent/tools/code-review/code-standards.md
+- **Quality Standards**: .agents/tools/code-review/code-standards.md
 
 ### **Community & Support**
 
@@ -455,5 +455,5 @@ bash .agent/scripts/stagehand-helper.sh clean        # Clean cache and logs
 **🎉 Ready to revolutionize your browser automation with AI? Get started with Stagehand today!**
 
 ```bash
-bash .agent/scripts/stagehand-helper.sh setup
+bash .agents/scripts/stagehand-helper.sh setup
 ```

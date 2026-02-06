@@ -19,9 +19,9 @@ tools:
 ## Quick Reference
 
 - CapSolver: Automated CAPTCHA solving service (99.9% accuracy, <10s)
-- Setup: `./.agent/scripts/crawl4ai-helper.sh capsolver-setup`
+- Setup: `./.agents/scripts/crawl4ai-helper.sh capsolver-setup`
 - API key: `export CAPSOLVER_API_KEY="CAP-xxxxx"` from dashboard.capsolver.com
-- Crawl command: `./.agent/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
+- Crawl command: `./.agents/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
 - CAPTCHA types:
   - reCAPTCHA v2/v3: $0.5/1000 req, <9s/<3s
   - reCAPTCHA Enterprise: $1-3/1000 req
@@ -73,13 +73,13 @@ CapSolver is the world's leading automated CAPTCHA solving service that integrat
 
 ```bash
 # Setup CapSolver integration
-./.agent/scripts/crawl4ai-helper.sh capsolver-setup
+./.agents/scripts/crawl4ai-helper.sh capsolver-setup
 
 # Set API key
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 # Crawl with CAPTCHA solving
-./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
+./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
 ```
 
 ### **2. Browser Extension Integration**
@@ -104,9 +104,9 @@ export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 ```bash
 # Install Crawl4AI with CapSolver support
-./.agent/scripts/crawl4ai-helper.sh install
-./.agent/scripts/crawl4ai-helper.sh docker-setup
-./.agent/scripts/crawl4ai-helper.sh capsolver-setup
+./.agents/scripts/crawl4ai-helper.sh install
+./.agents/scripts/crawl4ai-helper.sh docker-setup
+./.agents/scripts/crawl4ai-helper.sh capsolver-setup
 
 # Set your API key
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
@@ -116,13 +116,13 @@ export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 ```bash
 # Basic CAPTCHA crawling
-./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
+./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
 
 # Cloudflare Turnstile
-./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://clifford.io/demo/cloudflare-turnstile turnstile 0x4AAAAAAAGlwMzq_9z6S9Mh
+./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://clifford.io/demo/cloudflare-turnstile turnstile 0x4AAAAAAAGlwMzq_9z6S9Mh
 
 # AWS WAF bypass
-./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://nft.porsche.com/onboarding@6 aws_waf
+./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://nft.porsche.com/onboarding@6 aws_waf
 ```
 
 ## 📊 Usage Examples
@@ -265,7 +265,7 @@ except Exception as e:
 
 ```bash
 # Check CapSolver integration status
-./.agent/scripts/crawl4ai-helper.sh status
+./.agents/scripts/crawl4ai-helper.sh status
 
 # Test API key
 curl -X POST https://api.capsolver.com/getBalance \
@@ -286,7 +286,7 @@ docker logs crawl4ai --tail 20
 
 ### **Framework Integration**
 
-- **Helper Script**: `.agent/scripts/crawl4ai-helper.sh`
+- **Helper Script**: `.agents/scripts/crawl4ai-helper.sh`
 - **Configuration**: `configs/capsolver-config.json`
 - **Examples**: `configs/capsolver-example.py`
 - **MCP Tools**: `configs/mcp-templates/crawl4ai-mcp-config.json`

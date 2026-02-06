@@ -22,7 +22,7 @@ tools:
 - **Install**: `brew install tea` (macOS) | `go install code.gitea.io/tea/cmd/tea@latest`
 - **Auth**: `tea login add --name <name> --url <url> --token <token>`
 - **Config**: `configs/gitea-cli-config.json`
-- **Script**: `.agent/scripts/gitea-cli-helper.sh`
+- **Script**: `.agents/scripts/gitea-cli-helper.sh`
 - **Requires**: `jq` for JSON parsing
 
 **Commands**: `list-repos|create-repo|delete-repo|list-issues|create-issue|close-issue|list-prs|create-pr|merge-pr|list-branches|create-branch`

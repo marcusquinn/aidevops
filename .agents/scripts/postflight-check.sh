@@ -290,7 +290,7 @@ check_sonarcloud() {
 check_codacy() {
     print_section "Codacy Analysis"
     
-    local codacy_script="$REPO_ROOT/.agent/scripts/codacy-cli.sh"
+    local codacy_script="$REPO_ROOT/.agents/scripts/codacy-cli.sh"
     
     if [[ -f "$codacy_script" ]]; then
         if bash "$codacy_script" status &> /dev/null; then
@@ -411,7 +411,7 @@ check_npm_audit() {
 check_local_quality() {
     print_section "Local Quality Checks"
     
-    local quality_script="$REPO_ROOT/.agent/scripts/linters-local.sh"
+    local quality_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
     
     if [[ -f "$quality_script" ]]; then
         print_info "Running linters-local.sh..."
@@ -449,7 +449,7 @@ print_summary() {
         echo "Recommended actions:"
         echo "  1. Review failed checks above"
         echo "  2. Consider rollback if critical issues found"
-        echo "  3. See: .agent/workflows/postflight.md#rollback-procedures"
+        echo "  3. See: .agents/workflows/postflight.md#rollback-procedures"
         return 1
     elif [[ $WARNINGS -gt 0 ]]; then
         echo -e "${YELLOW}POSTFLIGHT VERIFICATION PASSED WITH WARNINGS${NC}"

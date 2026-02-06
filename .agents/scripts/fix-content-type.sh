@@ -84,7 +84,7 @@ main() {
     local files_fixed=0
     local files_processed=0
     
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             ((files_processed++))
             if fix_content_type_in_file "$file"; then

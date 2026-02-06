@@ -36,10 +36,10 @@ tools:
 
 ```bash
 # Install agents
-.agent/scripts/generate-opencode-agents.sh
+.agents/scripts/generate-opencode-agents.sh
 
 # Check status
-.agent/scripts/generate-opencode-agents.sh
+.agents/scripts/generate-opencode-agents.sh
 
 # Authenticate (OAuth plugins)
 opencode auth login
@@ -119,7 +119,7 @@ opencode auth login
 ```bash
 # Run the setup script
 cd ~/Git/aidevops
-.agent/scripts/generate-opencode-agents.sh
+.agents/scripts/generate-opencode-agents.sh
 ```text
 
 This creates:
@@ -497,7 +497,7 @@ This pattern:
 |------|---------|-------|
 | `~/.aidevops/agents/` | Deployed aidevops agents | Created by setup.sh |
 | `~/.config/aidevops/mcp-env.sh` | API credentials | 600 permissions |
-| `~/Git/aidevops/.agent/` | Source agents | Development repo |
+| `~/Git/aidevops/.agents/` | Source agents | Development repo |
 | `~/Git/aidevops/setup.sh` | Deployment script | Copies to ~/.aidevops/ |
 
 **Troubleshooting Path Issues:**

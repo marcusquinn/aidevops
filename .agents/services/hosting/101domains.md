@@ -101,90 +101,90 @@ cp configs/101domains-config.json.txt configs/101domains-config.json
 
 ```bash
 # List all 101domains accounts
-./.agent/scripts/101domains-helper.sh accounts
+./.agents/scripts/101domains-helper.sh accounts
 
 # List domains for account
-./.agent/scripts/101domains-helper.sh domains personal
+./.agents/scripts/101domains-helper.sh domains personal
 
 # Get domain details
-./.agent/scripts/101domains-helper.sh domain-details personal example.com
+./.agents/scripts/101domains-helper.sh domain-details personal example.com
 
 # Audit complete domain configuration
-./.agent/scripts/101domains-helper.sh audit personal example.com
+./.agents/scripts/101domains-helper.sh audit personal example.com
 ```
 
 ### **DNS Management:**
 
 ```bash
 # List DNS records
-./.agent/scripts/101domains-helper.sh dns-records personal example.com
+./.agents/scripts/101domains-helper.sh dns-records personal example.com
 
 # Add DNS record
-./.agent/scripts/101domains-helper.sh add-dns personal example.com www A 192.168.1.100 3600
+./.agents/scripts/101domains-helper.sh add-dns personal example.com www A 192.168.1.100 3600
 
 # Update DNS record
-./.agent/scripts/101domains-helper.sh update-dns personal example.com record-id www A 192.168.1.101 3600
+./.agents/scripts/101domains-helper.sh update-dns personal example.com record-id www A 192.168.1.101 3600
 
 # Delete DNS record
-./.agent/scripts/101domains-helper.sh delete-dns personal example.com record-id
+./.agents/scripts/101domains-helper.sh delete-dns personal example.com record-id
 ```
 
 ### **Nameserver Management:**
 
 ```bash
 # Get current nameservers
-./.agent/scripts/101domains-helper.sh nameservers personal example.com
+./.agents/scripts/101domains-helper.sh nameservers personal example.com
 
 # Update to Cloudflare nameservers
-./.agent/scripts/101domains-helper.sh update-ns personal example.com ns1.cloudflare.com ns2.cloudflare.com
+./.agents/scripts/101domains-helper.sh update-ns personal example.com ns1.cloudflare.com ns2.cloudflare.com
 
 # Update to Route 53 nameservers
-./.agent/scripts/101domains-helper.sh update-ns personal example.com ns-1.awsdns-01.com ns-2.awsdns-02.net ns-3.awsdns-03.org ns-4.awsdns-04.co.uk
+./.agents/scripts/101domains-helper.sh update-ns personal example.com ns-1.awsdns-01.com ns-2.awsdns-02.net ns-3.awsdns-03.org ns-4.awsdns-04.co.uk
 ```
 
 ### **Domain Management:**
 
 ```bash
 # Check domain availability
-./.agent/scripts/101domains-helper.sh check-availability personal newdomain.com
+./.agents/scripts/101domains-helper.sh check-availability personal newdomain.com
 
 # Get domain contacts
-./.agent/scripts/101domains-helper.sh contacts personal example.com
+./.agents/scripts/101domains-helper.sh contacts personal example.com
 
 # Lock domain
-./.agent/scripts/101domains-helper.sh lock personal example.com
+./.agents/scripts/101domains-helper.sh lock personal example.com
 
 # Unlock domain
-./.agent/scripts/101domains-helper.sh unlock personal example.com
+./.agents/scripts/101domains-helper.sh unlock personal example.com
 
 # Check transfer status
-./.agent/scripts/101domains-helper.sh transfer-status personal example.com
+./.agents/scripts/101domains-helper.sh transfer-status personal example.com
 ```
 
 ### **Privacy Management:**
 
 ```bash
 # Check privacy status
-./.agent/scripts/101domains-helper.sh privacy-status personal example.com
+./.agents/scripts/101domains-helper.sh privacy-status personal example.com
 
 # Enable domain privacy
-./.agent/scripts/101domains-helper.sh enable-privacy personal example.com
+./.agents/scripts/101domains-helper.sh enable-privacy personal example.com
 
 # Disable domain privacy
-./.agent/scripts/101domains-helper.sh disable-privacy personal example.com
+./.agents/scripts/101domains-helper.sh disable-privacy personal example.com
 ```
 
 ### **Monitoring & Automation:**
 
 ```bash
 # Monitor domain expiration (30 days warning)
-./.agent/scripts/101domains-helper.sh monitor-expiration personal 30
+./.agents/scripts/101domains-helper.sh monitor-expiration personal 30
 
 # Monitor domain expiration (60 days warning)
-./.agent/scripts/101domains-helper.sh monitor-expiration personal 60
+./.agents/scripts/101domains-helper.sh monitor-expiration personal 60
 
 # Comprehensive domain audit
-./.agent/scripts/101domains-helper.sh audit personal example.com
+./.agents/scripts/101domains-helper.sh audit personal example.com
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -201,16 +201,16 @@ cp configs/101domains-config.json.txt configs/101domains-config.json
 
 ```bash
 # Enable domain lock
-./.agent/scripts/101domains-helper.sh lock personal example.com
+./.agents/scripts/101domains-helper.sh lock personal example.com
 
 # Enable privacy protection
-./.agent/scripts/101domains-helper.sh enable-privacy personal example.com
+./.agents/scripts/101domains-helper.sh enable-privacy personal example.com
 
 # Monitor transfer status
-./.agent/scripts/101domains-helper.sh transfer-status personal example.com
+./.agents/scripts/101domains-helper.sh transfer-status personal example.com
 
 # Regular security audit
-./.agent/scripts/101domains-helper.sh audit personal example.com
+./.agents/scripts/101domains-helper.sh audit personal example.com
 ```
 
 ### **Privacy Protection:**
@@ -228,7 +228,7 @@ cp configs/101domains-config.json.txt configs/101domains-config.json
 
 ```bash
 # Verify API credentials
-./.agent/scripts/101domains-helper.sh accounts
+./.agents/scripts/101domains-helper.sh accounts
 
 # Check API permissions in 101domains control panel
 # Ensure username and API key are correct
@@ -238,10 +238,10 @@ cp configs/101domains-config.json.txt configs/101domains-config.json
 
 ```bash
 # Check DNS records
-./.agent/scripts/101domains-helper.sh dns-records personal example.com
+./.agents/scripts/101domains-helper.sh dns-records personal example.com
 
 # Verify nameservers
-./.agent/scripts/101domains-helper.sh nameservers personal example.com
+./.agents/scripts/101domains-helper.sh nameservers personal example.com
 
 # Check DNS propagation
 dig @8.8.8.8 example.com
@@ -252,13 +252,13 @@ nslookup example.com 8.8.8.8
 
 ```bash
 # Check domain lock status
-./.agent/scripts/101domains-helper.sh audit personal example.com
+./.agents/scripts/101domains-helper.sh audit personal example.com
 
 # Verify transfer status
-./.agent/scripts/101domains-helper.sh transfer-status personal example.com
+./.agents/scripts/101domains-helper.sh transfer-status personal example.com
 
 # Check domain contacts
-./.agent/scripts/101domains-helper.sh contacts personal example.com
+./.agents/scripts/101domains-helper.sh contacts personal example.com
 ```
 
 ## 📊 **Monitoring & Analytics**
@@ -267,11 +267,11 @@ nslookup example.com 8.8.8.8
 
 ```bash
 # Monitor all domains for expiration
-./.agent/scripts/101domains-helper.sh monitor-expiration personal 30
+./.agents/scripts/101domains-helper.sh monitor-expiration personal 30
 
 # Audit multiple domains
 for domain in example.com another.com; do
-    ./.agent/scripts/101domains-helper.sh audit personal $domain
+    ./.agents/scripts/101domains-helper.sh audit personal $domain
 done
 ```
 
@@ -279,9 +279,9 @@ done
 
 ```bash
 # Check privacy status for all domains
-for domain in $(./.agent/scripts/101domains-helper.sh domains personal | awk '{print $1}'); do
+for domain in $(./.agents/scripts/101domains-helper.sh domains personal | awk '{print $1}'); do
     echo "Privacy status for $domain:"
-    ./.agent/scripts/101domains-helper.sh privacy-status personal $domain
+    ./.agents/scripts/101domains-helper.sh privacy-status personal $domain
 done
 ```
 
@@ -295,12 +295,12 @@ THRESHOLD=30
 
 # Check expiring domains
 echo "=== EXPIRING DOMAINS ==="
-./.agent/scripts/101domains-helper.sh monitor-expiration $ACCOUNT $THRESHOLD
+./.agents/scripts/101domains-helper.sh monitor-expiration $ACCOUNT $THRESHOLD
 
 # Check privacy settings
 echo "=== PRIVACY AUDIT ==="
-for domain in $(./.agent/scripts/101domains-helper.sh domains $ACCOUNT | awk '{print $1}'); do
-    privacy_status=$(./.agent/scripts/101domains-helper.sh privacy-status $ACCOUNT $domain)
+for domain in $(./.agents/scripts/101domains-helper.sh domains $ACCOUNT | awk '{print $1}'); do
+    privacy_status=$(./.agents/scripts/101domains-helper.sh privacy-status $ACCOUNT $domain)
     echo "$domain: $privacy_status"
 done
 ```
@@ -311,21 +311,21 @@ done
 
 ```bash
 # Backup DNS records
-./.agent/scripts/101domains-helper.sh dns-records personal example.com > dns-backup-example.com-$(date +%Y%m%d).txt
+./.agents/scripts/101domains-helper.sh dns-records personal example.com > dns-backup-example.com-$(date +%Y%m%d).txt
 
 # Backup domain configuration
-./.agent/scripts/101domains-helper.sh audit personal example.com > domain-audit-example.com-$(date +%Y%m%d).txt
+./.agents/scripts/101domains-helper.sh audit personal example.com > domain-audit-example.com-$(date +%Y%m%d).txt
 
 # Backup privacy settings
-./.agent/scripts/101domains-helper.sh privacy-status personal example.com > privacy-backup-example.com-$(date +%Y%m%d).txt
+./.agents/scripts/101domains-helper.sh privacy-status personal example.com > privacy-backup-example.com-$(date +%Y%m%d).txt
 ```
 
 ### **Bulk Operations:**
 
 ```bash
 # Backup all domains
-for domain in $(./.agent/scripts/101domains-helper.sh domains personal | awk '{print $1}'); do
-    ./.agent/scripts/101domains-helper.sh audit personal $domain > "backup-$domain-$(date +%Y%m%d).txt"
+for domain in $(./.agents/scripts/101domains-helper.sh domains personal | awk '{print $1}'); do
+    ./.agents/scripts/101domains-helper.sh audit personal $domain > "backup-$domain-$(date +%Y%m%d).txt"
 done
 ```
 

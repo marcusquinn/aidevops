@@ -29,7 +29,7 @@ readonly LOOP_COMMON_DIR
 readonly LOOP_MAIL_HELPER="${LOOP_COMMON_DIR}/mail-helper.sh"
 readonly LOOP_MEMORY_HELPER="${LOOP_COMMON_DIR}/memory-helper.sh"
 
-readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.agent/loop-state}"
+readonly LOOP_STATE_DIR="${LOOP_STATE_DIR:-.agents/loop-state}"
 readonly LOOP_STATE_FILE="${LOOP_STATE_DIR}/loop-state.json"
 readonly LOOP_RECEIPTS_DIR="${LOOP_STATE_DIR}/receipts"
 readonly LOOP_REANCHOR_FILE="${LOOP_STATE_DIR}/re-anchor.md"

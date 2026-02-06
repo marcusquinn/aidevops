@@ -111,10 +111,10 @@ For each agent file under review:
 
 ```bash
 # Search for similar instructions across all agents
-rg "pattern" .agent/
+rg "pattern" .agents/
 
 # Check specific files that might overlap
-diff .agent/file1.md .agent/file2.md
+diff .agents/file1.md .agents/file2.md
 ```text
 
 - Same concept should have single authoritative source
@@ -147,13 +147,13 @@ When proposing changes:
 ```markdown
 ## Agent Improvement Proposal
 
-**File**: `.agent/[path]/[file].md`
+**File**: `.agents/[path]/[file].md`
 **Issue**: [Brief description]
 **Evidence**: [Specific failure, contradiction, or user feedback]
 
 **Related Files** (checked for duplicates):
-- `.agent/[other-file].md` - [relationship]
-- `.agent/[another-file].md` - [relationship]
+- `.agents/[other-file].md` - [relationship]
+- `.agents/[another-file].md` - [relationship]
 
 **Proposed Change**:
 [Specific before/after or description]
@@ -209,7 +209,7 @@ fi
 
 ## After
 
-See error handling pattern at `.agent/scripts/hostinger-helper.sh:145`
+See error handling pattern at `.agents/scripts/hostinger-helper.sh:145`
 
 ```text
 
@@ -229,7 +229,7 @@ Improvements to aidevops agents benefit all users:
 
 1. Create improvement proposal
 2. Make changes in `~/Git/aidevops/`
-3. Run quality check: `.agent/scripts/linters-local.sh`
+3. Run quality check: `.agents/scripts/linters-local.sh`
 4. Commit with descriptive message
 5. Create PR to upstream
 

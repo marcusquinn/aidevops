@@ -100,81 +100,81 @@ cp configs/mainwp-config.json.txt configs/mainwp-config.json
 
 ```bash
 # List all MainWP instances
-./.agent/scripts/mainwp-helper.sh instances
+./.agents/scripts/mainwp-helper.sh instances
 
 # List all managed sites
-./.agent/scripts/mainwp-helper.sh sites production
+./.agents/scripts/mainwp-helper.sh sites production
 
 # Get site details
-./.agent/scripts/mainwp-helper.sh site-details production 123
+./.agents/scripts/mainwp-helper.sh site-details production 123
 
 # Monitor all sites
-./.agent/scripts/mainwp-helper.sh monitor production
+./.agents/scripts/mainwp-helper.sh monitor production
 ```
 
 ### **WordPress Management:**
 
 ```bash
 # Update WordPress core for a site
-./.agent/scripts/mainwp-helper.sh update-core production 123
+./.agents/scripts/mainwp-helper.sh update-core production 123
 
 # Update all plugins for a site
-./.agent/scripts/mainwp-helper.sh update-plugins production 123
+./.agents/scripts/mainwp-helper.sh update-plugins production 123
 
 # Update specific plugin
-./.agent/scripts/mainwp-helper.sh update-plugin production 123 akismet
+./.agents/scripts/mainwp-helper.sh update-plugin production 123 akismet
 
 # List site plugins
-./.agent/scripts/mainwp-helper.sh plugins production 123
+./.agents/scripts/mainwp-helper.sh plugins production 123
 
 # List site themes
-./.agent/scripts/mainwp-helper.sh themes production 123
+./.agents/scripts/mainwp-helper.sh themes production 123
 ```
 
 ### **Backup Management:**
 
 ```bash
 # Create full backup
-./.agent/scripts/mainwp-helper.sh backup production 123 full
+./.agents/scripts/mainwp-helper.sh backup production 123 full
 
 # Create database backup
-./.agent/scripts/mainwp-helper.sh backup production 123 db
+./.agents/scripts/mainwp-helper.sh backup production 123 db
 
 # Create files backup
-./.agent/scripts/mainwp-helper.sh backup production 123 files
+./.agents/scripts/mainwp-helper.sh backup production 123 files
 
 # List all backups
-./.agent/scripts/mainwp-helper.sh backups production 123
+./.agents/scripts/mainwp-helper.sh backups production 123
 ```
 
 ### **Security Management:**
 
 ```bash
 # Run security scan
-./.agent/scripts/mainwp-helper.sh security-scan production 123
+./.agents/scripts/mainwp-helper.sh security-scan production 123
 
 # Get security scan results
-./.agent/scripts/mainwp-helper.sh security-results production 123
+./.agents/scripts/mainwp-helper.sh security-results production 123
 
 # Comprehensive security audit
-./.agent/scripts/mainwp-helper.sh audit-security production 123
+./.agents/scripts/mainwp-helper.sh audit-security production 123
 
 # Get uptime status
-./.agent/scripts/mainwp-helper.sh uptime production 123
+./.agents/scripts/mainwp-helper.sh uptime production 123
 ```
 
 ### **Bulk Operations:**
 
 ```bash
 # Bulk WordPress core updates
-./.agent/scripts/mainwp-helper.sh bulk-update-wp production 123 124 125
+./.agents/scripts/mainwp-helper.sh bulk-update-wp production 123 124 125
 
 # Bulk plugin updates
-./.agent/scripts/mainwp-helper.sh bulk-update-plugins production 123 124 125
+./.agents/scripts/mainwp-helper.sh bulk-update-plugins production 123 124 125
 
 # Sync multiple sites
 for site_id in 123 124 125; do
-    ./.agent/scripts/mainwp-helper.sh sync production $site_id
+    ./.agents/scripts/mainwp-helper.sh sync production $site_id
 done
 ```
 
@@ -182,13 +182,13 @@ done
 
 ```bash
 # Get site status
-./.agent/scripts/mainwp-helper.sh site-status production 123
+./.agents/scripts/mainwp-helper.sh site-status production 123
 
 # Sync site data
-./.agent/scripts/mainwp-helper.sh sync production 123
+./.agents/scripts/mainwp-helper.sh sync production 123
 
 # Monitor all sites overview
-./.agent/scripts/mainwp-helper.sh monitor production
+./.agents/scripts/mainwp-helper.sh monitor production
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -205,13 +205,13 @@ done
 
 ```bash
 # Regular security audits
-./.agent/scripts/mainwp-helper.sh audit-security production 123
+./.agents/scripts/mainwp-helper.sh audit-security production 123
 
 # Monitor security scan results
-./.agent/scripts/mainwp-helper.sh security-results production 123
+./.agents/scripts/mainwp-helper.sh security-results production 123
 
 # Check uptime and availability
-./.agent/scripts/mainwp-helper.sh uptime production 123
+./.agents/scripts/mainwp-helper.sh uptime production 123
 ```
 
 ### **WordPress Security:**
@@ -230,7 +230,7 @@ done
 
 ```bash
 # Verify API credentials
-./.agent/scripts/mainwp-helper.sh instances
+./.agents/scripts/mainwp-helper.sh instances
 
 # Check MainWP instance accessibility
 curl -I https://mainwp.yourdomain.com/wp-json/mainwp/v1/
@@ -243,10 +243,10 @@ openssl s_client -connect mainwp.yourdomain.com:443
 
 ```bash
 # Force site sync
-./.agent/scripts/mainwp-helper.sh sync production 123
+./.agents/scripts/mainwp-helper.sh sync production 123
 
 # Check site status
-./.agent/scripts/mainwp-helper.sh site-status production 123
+./.agents/scripts/mainwp-helper.sh site-status production 123
 
 # Verify child plugin is active on target site
 ```
@@ -255,10 +255,10 @@ openssl s_client -connect mainwp.yourdomain.com:443
 
 ```bash
 # Check site details for error messages
-./.agent/scripts/mainwp-helper.sh site-details production 123
+./.agents/scripts/mainwp-helper.sh site-details production 123
 
 # Verify site accessibility
-./.agent/scripts/mainwp-helper.sh uptime production 123
+./.agents/scripts/mainwp-helper.sh uptime production 123
 
 # Check for maintenance mode or plugin conflicts
 ```
@@ -269,14 +269,14 @@ openssl s_client -connect mainwp.yourdomain.com:443
 
 ```bash
 # Daily monitoring routine
-./.agent/scripts/mainwp-helper.sh monitor production
+./.agents/scripts/mainwp-helper.sh monitor production
 
 # Check for sites needing updates
-./.agent/scripts/mainwp-helper.sh monitor production | grep "updates available"
+./.agents/scripts/mainwp-helper.sh monitor production | grep "updates available"
 
 # Security status overview
-for site_id in $(./.agent/scripts/mainwp-helper.sh sites production | awk '{print $1}' | grep -E '^[0-9]+$'); do
-    ./.agent/scripts/mainwp-helper.sh security-results production $site_id
+for site_id in $(./.agents/scripts/mainwp-helper.sh sites production | awk '{print $1}' | grep -E '^[0-9]+$'); do
+    ./.agents/scripts/mainwp-helper.sh security-results production $site_id
 done
 ```
 
@@ -289,17 +289,17 @@ INSTANCE="production"
 
 # Get sites needing attention
 echo "=== SITES NEEDING UPDATES ==="
-./.agent/scripts/mainwp-helper.sh monitor $INSTANCE
+./.agents/scripts/mainwp-helper.sh monitor $INSTANCE
 
 echo "=== BACKUP STATUS ==="
-for site_id in $(./.agent/scripts/mainwp-helper.sh sites $INSTANCE | awk '{print $1}' | grep -E '^[0-9]+$'); do
+for site_id in $(./.agents/scripts/mainwp-helper.sh sites $INSTANCE | awk '{print $1}' | grep -E '^[0-9]+$'); do
     echo "Site $site_id backups:"
-    ./.agent/scripts/mainwp-helper.sh backups $INSTANCE $site_id | tail -5
+    ./.agents/scripts/mainwp-helper.sh backups $INSTANCE $site_id | tail -5
 done
 
 echo "=== SECURITY ALERTS ==="
-for site_id in $(./.agent/scripts/mainwp-helper.sh sites $INSTANCE | awk '{print $1}' | grep -E '^[0-9]+$'); do
-    security_results=$(./.agent/scripts/mainwp-helper.sh security-results $INSTANCE $site_id)
+for site_id in $(./.agents/scripts/mainwp-helper.sh sites $INSTANCE | awk '{print $1}' | grep -E '^[0-9]+$'); do
+    security_results=$(./.agents/scripts/mainwp-helper.sh security-results $INSTANCE $site_id)
     if echo "$security_results" | grep -q "warning\|error\|critical"; then
         echo "Site $site_id has security issues:"
         echo "$security_results"
@@ -324,9 +324,9 @@ done
 #!/bin/bash
 INSTANCE="production"
 
-for site_id in $(./.agent/scripts/mainwp-helper.sh sites $INSTANCE | awk '{print $1}' | grep -E '^[0-9]+$'); do
+for site_id in $(./.agents/scripts/mainwp-helper.sh sites $INSTANCE | awk '{print $1}' | grep -E '^[0-9]+$'); do
     echo "Creating backup for site $site_id"
-    ./.agent/scripts/mainwp-helper.sh backup $INSTANCE $site_id full
+    ./.agents/scripts/mainwp-helper.sh backup $INSTANCE $site_id full
     sleep 30  # Rate limiting
 done
 ```
@@ -335,9 +335,9 @@ done
 
 ```bash
 # Verify recent backups
-for site_id in $(./.agent/scripts/mainwp-helper.sh sites production | awk '{print $1}' | grep -E '^[0-9]+$'); do
+for site_id in $(./.agents/scripts/mainwp-helper.sh sites production | awk '{print $1}' | grep -E '^[0-9]+$'); do
     echo "Backup status for site $site_id:"
-    ./.agent/scripts/mainwp-helper.sh backups production $site_id | head -3
+    ./.agents/scripts/mainwp-helper.sh backups production $site_id | head -3
 done
 ```
 

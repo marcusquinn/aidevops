@@ -19,17 +19,17 @@ tools:
 ## Quick Reference
 
 - Crawl4AI: #1 trending open-source web crawler for AI/LLM applications
-- Install: `./.agent/scripts/crawl4ai-helper.sh install`
-- Docker setup: `./.agent/scripts/crawl4ai-helper.sh docker-setup`
-- Start: `./.agent/scripts/crawl4ai-helper.sh docker-start`
-- MCP setup: `./.agent/scripts/crawl4ai-helper.sh mcp-setup`
+- Install: `./.agents/scripts/crawl4ai-helper.sh install`
+- Docker setup: `./.agents/scripts/crawl4ai-helper.sh docker-setup`
+- Start: `./.agents/scripts/crawl4ai-helper.sh docker-start`
+- MCP setup: `./.agents/scripts/crawl4ai-helper.sh mcp-setup`
 - URLs: Dashboard http://localhost:11235/dashboard, Playground /playground, API :11235
-- Crawl: `./.agent/scripts/crawl4ai-helper.sh crawl URL markdown output.json`
-- Extract: `./.agent/scripts/crawl4ai-helper.sh extract URL '{"schema"}' data.json`
+- Crawl: `./.agents/scripts/crawl4ai-helper.sh crawl URL markdown output.json`
+- Extract: `./.agents/scripts/crawl4ai-helper.sh extract URL '{"schema"}' data.json`
 - Features: LLM-ready markdown, CSS/XPath/LLM extraction, async parallel crawling
 - MCP tools: crawl_url, crawl_multiple, extract_structured, take_screenshot, generate_pdf
 - Config: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
-- Debug: `./.agent/scripts/crawl4ai-helper.sh status`, `docker logs crawl4ai`
+- Debug: `./.agents/scripts/crawl4ai-helper.sh status`, `docker logs crawl4ai`
 <!-- AI-CONTEXT-END -->
 
 ## Overview
@@ -51,16 +51,16 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 
 ```bash
 # Install Python package
-./.agent/scripts/crawl4ai-helper.sh install
+./.agents/scripts/crawl4ai-helper.sh install
 
 # Setup Docker deployment
-./.agent/scripts/crawl4ai-helper.sh docker-setup
+./.agents/scripts/crawl4ai-helper.sh docker-setup
 
 # Start Docker container with monitoring dashboard
-./.agent/scripts/crawl4ai-helper.sh docker-start
+./.agents/scripts/crawl4ai-helper.sh docker-start
 
 # Setup MCP integration for AI assistants
-./.agent/scripts/crawl4ai-helper.sh mcp-setup
+./.agents/scripts/crawl4ai-helper.sh mcp-setup
 ```
 
 ### Docker Deployment
@@ -95,10 +95,10 @@ Crawl4AI provides native MCP (Model Context Protocol) support for AI assistants:
 
 ```bash
 # Basic crawling
-./.agent/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
 
 # With structured extraction
-./.agent/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
+./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
 ```
 
 ### 2. LLM-Powered Extraction
@@ -394,7 +394,7 @@ browser_config = BrowserConfig(
 
 ```bash
 # Check service status
-./.agent/scripts/crawl4ai-helper.sh status
+./.agents/scripts/crawl4ai-helper.sh status
 
 # View container logs
 docker logs crawl4ai
@@ -407,7 +407,7 @@ curl http://localhost:11235/health
 
 - **Official Documentation**: https://docs.crawl4ai.com/
 - **GitHub Repository**: https://github.com/unclecode/crawl4ai
-- **Framework Integration**: `.agent/scripts/crawl4ai-helper.sh`
+- **Framework Integration**: `.agents/scripts/crawl4ai-helper.sh`
 - **Configuration Templates**: `configs/crawl4ai-config.json.txt`
 - **MCP Configuration**: `configs/mcp-templates/crawl4ai-mcp-config.json`
 

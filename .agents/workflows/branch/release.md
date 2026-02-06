@@ -51,9 +51,9 @@ git checkout -b release/1.2.0
 ### Release Lifecycle
 
 1. **Create release branch**
-2. **Update version files**: `.agent/scripts/version-manager.sh bump {type}`
+2. **Update version files**: `.agents/scripts/version-manager.sh bump {type}`
 3. **Update CHANGELOG.md**
-4. **Final testing**: `.agent/scripts/linters-local.sh`
+4. **Final testing**: `.agents/scripts/linters-local.sh`
 5. **Create PR to main**
 6. **Merge and tag**
 7. **Create GitHub release**

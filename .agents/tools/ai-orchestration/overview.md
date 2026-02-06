@@ -26,16 +26,16 @@ tools:
 
 ```bash
 # Langflow (visual flow builder)
-bash .agent/scripts/langflow-helper.sh setup
+bash .agents/scripts/langflow-helper.sh setup
 
 # CrewAI (multi-agent teams)
-bash .agent/scripts/crewai-helper.sh setup
+bash .agents/scripts/crewai-helper.sh setup
 
 # AutoGen (conversational agents)
-bash .agent/scripts/autogen-helper.sh setup
+bash .agents/scripts/autogen-helper.sh setup
 
 # Agno (enterprise agent OS)
-bash .agent/scripts/agno-setup.sh setup
+bash .agents/scripts/agno-setup.sh setup
 
 # OpenProse (multi-agent DSL - no setup required, pattern-based)
 git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose
@@ -220,7 +220,7 @@ All AI orchestration tools in aidevops follow these patterns:
 
 ### Helper Script Pattern
 
-Each tool has a helper script at `.agent/scripts/{tool}-helper.sh` with:
+Each tool has a helper script at `.agents/scripts/{tool}-helper.sh` with:
 
 ```bash
 # Standard commands
@@ -340,7 +340,7 @@ kill -9 $(lsof -t -i:7860)
 ```bash
 # Recreate venv
 rm -rf ~/.aidevops/{tool}/venv
-bash .agent/scripts/{tool}-helper.sh setup
+bash .agents/scripts/{tool}-helper.sh setup
 ```
 
 **API key errors**:

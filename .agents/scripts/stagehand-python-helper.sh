@@ -244,7 +244,7 @@ VIRTUAL ENVIRONMENT:
     source ~/.aidevops/stagehand-python/.venv/bin/activate
 
 DOCUMENTATION:
-    For detailed documentation, see: .agent/STAGEHAND-PYTHON.md
+    For detailed documentation, see: .agents/STAGEHAND-PYTHON.md
     Official docs: https://docs.stagehand.dev
     GitHub: https://github.com/browserbase/stagehand-python
 

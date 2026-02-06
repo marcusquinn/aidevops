@@ -21,7 +21,7 @@ mcp:
 
 ## Quick Reference
 
-- **Helper**: `.agent/scripts/security-helper.sh`
+- **Helper**: `.agents/scripts/security-helper.sh`
 - **Commands**: `analyze [scope]` | `scan-deps` | `history [commits]` | `ferret` | `report`
 - **Scopes**: `diff` (default), `staged`, `branch`, `full`
 - **Output**: `.security-analysis/` directory with reports
@@ -63,25 +63,25 @@ This tool provides comprehensive security scanning capabilities:
 
 ```bash
 # Check installation status
-./.agent/scripts/security-helper.sh status
+./.agents/scripts/security-helper.sh status
 
 # Analyze current changes (git diff)
-./.agent/scripts/security-helper.sh analyze
+./.agents/scripts/security-helper.sh analyze
 
 # Analyze full codebase
-./.agent/scripts/security-helper.sh analyze full
+./.agents/scripts/security-helper.sh analyze full
 
 # Scan git history (last 50 commits)
-./.agent/scripts/security-helper.sh history 50
+./.agents/scripts/security-helper.sh history 50
 
 # Scan dependencies for vulnerabilities
-./.agent/scripts/security-helper.sh scan-deps
+./.agents/scripts/security-helper.sh scan-deps
 
 # Generate comprehensive report
-./.agent/scripts/security-helper.sh report
+./.agents/scripts/security-helper.sh report
 
 # Scan AI CLI configurations (Ferret)
-./.agent/scripts/security-helper.sh ferret
+./.agents/scripts/security-helper.sh ferret
 ```
 
 ## Scan Modes
@@ -91,9 +91,9 @@ This tool provides comprehensive security scanning capabilities:
 Analyzes uncommitted changes using `git diff --merge-base origin/HEAD`:
 
 ```bash
-./.agent/scripts/security-helper.sh analyze
+./.agents/scripts/security-helper.sh analyze
 # or explicitly
-./.agent/scripts/security-helper.sh analyze diff
+./.agents/scripts/security-helper.sh analyze diff
 ```
 
 ### Staged Changes
@@ -101,7 +101,7 @@ Analyzes uncommitted changes using `git diff --merge-base origin/HEAD`:
 Analyzes only staged changes:
 
 ```bash
-./.agent/scripts/security-helper.sh analyze staged
+./.agents/scripts/security-helper.sh analyze staged
 ```
 
 ### Branch Analysis
@@ -109,7 +109,7 @@ Analyzes only staged changes:
 Analyzes all changes on the current branch compared to main:
 
 ```bash
-./.agent/scripts/security-helper.sh analyze branch
+./.agents/scripts/security-helper.sh analyze branch
 ```
 
 ### Full Codebase Scan
@@ -117,17 +117,17 @@ Analyzes all changes on the current branch compared to main:
 Scans the entire codebase for vulnerabilities:
 
 ```bash
-./.agent/scripts/security-helper.sh analyze full
+./.agents/scripts/security-helper.sh analyze full
 ```
 
 **Note**: Full scans can be time-consuming for large codebases. Consider using file filters:
 
 ```bash
 # Scan only specific directories
-./.agent/scripts/security-helper.sh analyze full --include="src/**/*.ts,lib/**/*.js"
+./.agents/scripts/security-helper.sh analyze full --include="src/**/*.ts,lib/**/*.js"
 
 # Exclude test files
-./.agent/scripts/security-helper.sh analyze full --exclude="**/*.test.ts,**/*.spec.js"
+./.agents/scripts/security-helper.sh analyze full --exclude="**/*.test.ts,**/*.spec.js"
 ```
 
 ### Git History Scan
@@ -136,16 +136,16 @@ Scans historical commits for vulnerabilities that may have been introduced:
 
 ```bash
 # Scan last 50 commits
-./.agent/scripts/security-helper.sh history 50
+./.agents/scripts/security-helper.sh history 50
 
 # Scan specific commit range
-./.agent/scripts/security-helper.sh history abc123..def456
+./.agents/scripts/security-helper.sh history abc123..def456
 
 # Scan commits since a date
-./.agent/scripts/security-helper.sh history --since="2024-01-01"
+./.agents/scripts/security-helper.sh history --since="2024-01-01"
 
 # Scan commits by author
-./.agent/scripts/security-helper.sh history --author="developer@example.com"
+./.agents/scripts/security-helper.sh history --author="developer@example.com"
 ```
 
 ## Vulnerability Detection
@@ -194,7 +194,7 @@ Ferret is a specialized security scanner for AI assistant configurations (Claude
 
 **Install**: `npm install -g ferret-scan` or use `npx ferret-scan`
 
-**Usage**: `./.agent/scripts/security-helper.sh ferret` or `ferret scan .`
+**Usage**: `./.agents/scripts/security-helper.sh ferret` or `ferret scan .`
 
 **Full documentation**: [github.com/fubak/ferret-scan](https://github.com/fubak/ferret-scan)
 
@@ -254,13 +254,13 @@ Uses OSV-Scanner to identify vulnerable dependencies:
 
 ```bash
 # Scan current project
-./.agent/scripts/security-helper.sh scan-deps
+./.agents/scripts/security-helper.sh scan-deps
 
 # Scan with recursive lockfile detection
-./.agent/scripts/security-helper.sh scan-deps --recursive
+./.agents/scripts/security-helper.sh scan-deps --recursive
 
 # Output as JSON
-./.agent/scripts/security-helper.sh scan-deps --format=json
+./.agents/scripts/security-helper.sh scan-deps --format=json
 ```
 
 ### Supported Package Managers
@@ -326,7 +326,7 @@ const result = await db.query(query, [req.params.id]);
 For CI/CD integration, generate SARIF format:
 
 ```bash
-./.agent/scripts/security-helper.sh report --format=sarif
+./.agents/scripts/security-helper.sh report --format=sarif
 ```
 
 ## CI/CD Integration
@@ -347,8 +347,8 @@ jobs:
 
       - name: Run Security Analysis
         run: |
-          ./.agent/scripts/security-helper.sh analyze branch
-          ./.agent/scripts/security-helper.sh scan-deps
+          ./.agents/scripts/security-helper.sh analyze branch
+          ./.agents/scripts/security-helper.sh scan-deps
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -370,7 +370,7 @@ jobs:
 # .git/hooks/pre-commit
 
 # Run security analysis on staged changes
-./.agent/scripts/security-helper.sh analyze staged --severity-threshold=high
+./.agents/scripts/security-helper.sh analyze staged --severity-threshold=high
 
 if [ $? -ne 0 ]; then
     echo "Security issues found. Please fix before committing."
@@ -512,7 +512,7 @@ For large codebases, consider scanning specific directories:
 
 ```bash
 # Scan only source files (exclude tests, node_modules, etc.)
-cd src && ./.agent/scripts/security-helper.sh analyze full
+cd src && ./.agents/scripts/security-helper.sh analyze full
 ```
 
 **"Too many false positives"**
@@ -534,10 +534,10 @@ Security analysis integrates with the framework's quality pipeline:
 
 ```bash
 # Run as part of preflight checks
-./.agent/scripts/linters-local.sh  # Includes security-helper.sh
+./.agents/scripts/linters-local.sh  # Includes security-helper.sh
 
 # Full quality check
-./.agent/scripts/quality-check.sh  # Includes security analysis
+./.agents/scripts/quality-check.sh  # Includes security analysis
 ```
 
 ### CLI Usage
@@ -545,12 +545,12 @@ Security analysis integrates with the framework's quality pipeline:
 Run the helper script directly:
 
 ```bash
-./.agent/scripts/security-helper.sh analyze        # Default analysis (diff)
-./.agent/scripts/security-helper.sh analyze full   # Full codebase scan
-./.agent/scripts/security-helper.sh history 50     # Scan last 50 commits
-./.agent/scripts/security-helper.sh scan-deps      # Dependency scan
-./.agent/scripts/security-helper.sh ferret         # AI CLI config scan
-./.agent/scripts/security-helper.sh report         # Generate report
+./.agents/scripts/security-helper.sh analyze        # Default analysis (diff)
+./.agents/scripts/security-helper.sh analyze full   # Full codebase scan
+./.agents/scripts/security-helper.sh history 50     # Scan last 50 commits
+./.agents/scripts/security-helper.sh scan-deps      # Dependency scan
+./.agents/scripts/security-helper.sh ferret         # AI CLI config scan
+./.agents/scripts/security-helper.sh report         # Generate report
 ```
 
 ## Resources

@@ -23,7 +23,7 @@ tools:
 - Config files: ~/.aider.conf.yml, ~/.openai/config.yaml, ~/.claude/config.json, ~/.ai-shell/config.json, ~/.litellm/config.yaml
 - Aliases: `aider-guided`, `openai-guided`, `claude-guided`, `ai-guided`, `agents`, `agents-home`, `cdai`
 - Universal wrapper: `~/.local/bin/ai-with-context <tool> [args]`
-- Setup script: `bash .agent/scripts/ai-cli-config.sh`
+- Setup script: `bash .agents/scripts/ai-cli-config.sh`
 - Auto-setup: Included in main setup.sh via `configure_ai_clis`
 - Benefits: Consistent guidance, security protocols, unified DevOps approach
 <!-- AI-CONTEXT-END -->
@@ -179,7 +179,7 @@ cdai
 The main `setup.sh` script now includes:
 
 ```bash
-configure_ai_clis    # Runs .agent/scripts/ai-cli-config.sh
+configure_ai_clis    # Runs .agents/scripts/ai-cli-config.sh
 ```
 
 ### **✅ MANUAL CONFIGURATION:**
@@ -187,7 +187,7 @@ configure_ai_clis    # Runs .agent/scripts/ai-cli-config.sh
 ```bash
 # Run AI CLI configuration script
 cd ~/Git/aidevops
-bash .agent/scripts/ai-cli-config.sh
+bash .agents/scripts/ai-cli-config.sh
 
 # Restart shell to load aliases
 source ~/.zshrc  # or ~/.bashrc

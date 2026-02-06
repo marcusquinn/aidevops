@@ -31,7 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
-readonly STATE_DIR=".agent/loop-state"
+readonly STATE_DIR=".agents/loop-state"
 readonly STATE_FILE="${STATE_DIR}/quality-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
@@ -232,7 +232,7 @@ get_pending_checks() {
 #   $2 - Max iterations
 #   $3 - Options string (key=value pairs separated by commas)
 # Returns: 0
-# Side effects: Creates .agent/loop-state/quality-loop.local.state
+# Side effects: Creates .agents/loop-state/quality-loop.local.state
 create_state() {
     local loop_type="$1"
     local max_iterations="$2"
@@ -417,7 +417,7 @@ run_preflight_checks() {
     # Keep this aligned with linters-local.sh which checks warnings+errors.
     # Otherwise, info-level shellcheck findings can fail preflight even though
     # the repo's accepted local-linter gate passes.
-    if find .agent/scripts -name "*.sh" -exec shellcheck --severity=warning {} \; >/dev/null 2>&1; then
+    if find .agents/scripts -name "*.sh" -exec shellcheck --severity=warning {} \; >/dev/null 2>&1; then
         results="${results}shellcheck:pass\n"
         print_success "    ShellCheck: PASS"
     else

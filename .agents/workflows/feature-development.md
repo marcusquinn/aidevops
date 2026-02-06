@@ -160,7 +160,7 @@ npm test
 composer test
 
 # Run quality checks
-bash ~/Git/aidevops/.agent/scripts/linters-local.sh
+bash ~/Git/aidevops/.agents/scripts/linters-local.sh
 
 # Run specific tests
 npm run test:feature

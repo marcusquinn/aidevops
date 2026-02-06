@@ -22,7 +22,7 @@ print_error() { local msg="$1"; echo -e "\033[31m[ERROR]\033[0m $msg"; return 0;
 print_warning() { local msg="$1"; echo -e "\033[33m[WARNING]\033[0m $msg"; return 0; }
 print_info() { local msg="$1"; echo -e "\033[34m[INFO]\033[0m $msg"; return 0; }
 
-# Count main agents (*.md files in .agent/ root, excluding AGENTS.md)
+# Count main agents (*.md files in .agents/ root, excluding AGENTS.md)
 count_main_agents() {
     if [[ -n "$_CACHED_MAIN_AGENTS" ]]; then
         echo "$_CACHED_MAIN_AGENTS"

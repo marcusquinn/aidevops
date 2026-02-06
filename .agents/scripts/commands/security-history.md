@@ -27,16 +27,16 @@ Target: $ARGUMENTS
 
    ```bash
    # Last 50 commits (default)
-   ./.agent/scripts/security-helper.sh history
+   ./.agents/scripts/security-helper.sh history
 
    # Last 100 commits
-   ./.agent/scripts/security-helper.sh history 100
+   ./.agents/scripts/security-helper.sh history 100
 
    # Specific range
-   ./.agent/scripts/security-helper.sh history abc123..def456
+   ./.agents/scripts/security-helper.sh history abc123..def456
 
    # Since date
-   ./.agent/scripts/security-helper.sh history --since="2024-01-01"
+   ./.agents/scripts/security-helper.sh history --since="2024-01-01"
    ```
 
 3. **Review findings** with commit context

@@ -19,7 +19,7 @@ tools:
 
 - **Purpose**: Visual drag-and-drop builder for AI-powered agents and workflows
 - **License**: MIT (fully open-source, commercial use permitted)
-- **Setup**: `bash .agent/scripts/langflow-helper.sh setup`
+- **Setup**: `bash .agents/scripts/langflow-helper.sh setup`
 - **Start**: `~/.aidevops/scripts/start-langflow.sh`
 - **Stop**: `~/.aidevops/scripts/stop-langflow.sh`
 - **Status**: `~/.aidevops/scripts/langflow-status.sh`
@@ -48,7 +48,7 @@ Langflow is a powerful visual tool for building and deploying AI-powered agents 
 
 ```bash
 # Run the setup script
-bash .agent/scripts/langflow-helper.sh setup
+bash .agents/scripts/langflow-helper.sh setup
 
 # Configure API keys
 nano ~/.aidevops/langflow/.env

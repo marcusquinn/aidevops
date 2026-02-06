@@ -17,7 +17,7 @@ tools:
 
 - **Purpose**: AI read-only access to Local by Flywheel WordPress databases
 - **Install**: `npm install -g @verygoodplugins/mcp-local-wp`
-- **Start**: `./.agent/scripts/localhost-helper.sh start-mcp`
+- **Start**: `./.agents/scripts/localhost-helper.sh start-mcp`
 - **Port**: 8085 (default)
 
 **MCP Tools**:
@@ -122,13 +122,13 @@ mcp-local-wp --help
 
 ```bash
 # Start LocalWP MCP server
-./.agent/scripts/localhost-helper.sh start-mcp
+./.agents/scripts/localhost-helper.sh start-mcp
 
 # Stop LocalWP MCP server
-./.agent/scripts/localhost-helper.sh stop-mcp
+./.agents/scripts/localhost-helper.sh stop-mcp
 
 # Check LocalWP sites
-./.agent/scripts/localhost-helper.sh list-localwp
+./.agents/scripts/localhost-helper.sh list-localwp
 ```
 
 ## Available Tools
@@ -279,7 +279,7 @@ The MCP server automatically detects your active Local by Flywheel MySQL instanc
 
 ```bash
 # Enable debug logging
-DEBUG=mcp-local-wp ./.agent/scripts/localhost-helper.sh start-mcp
+DEBUG=mcp-local-wp ./.agents/scripts/localhost-helper.sh start-mcp
 ```
 
 ## Benefits for AI Development

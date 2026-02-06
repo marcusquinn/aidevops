@@ -18,15 +18,15 @@ tools:
 
 ## Quick Reference
 
-- Master script: `bash .agent/scripts/linters-local.sh` (multi-platform validation)
-- Fix script: `bash .agent/scripts/quality-fix.sh [file|dir]`
+- Master script: `bash .agents/scripts/linters-local.sh` (multi-platform validation)
+- Fix script: `bash .agents/scripts/quality-fix.sh [file|dir]`
 - SonarCloud rules: S7679 (positional params), S1481 (unused vars), S1192 (strings), S7682 (returns)
 - Specialized fixes:
   - `fix-content-type.sh` - Content-Type header constants
   - `fix-auth-headers.sh` - Authorization header patterns
   - `fix-error-messages.sh` - Error message consolidation
   - `markdown-formatter.sh` - Markdown linting/formatting
-- CLI manager: `bash .agent/scripts/quality-cli-manager.sh install|analyze|status all`
+- CLI manager: `bash .agents/scripts/quality-cli-manager.sh install|analyze|status all`
 - Platform CLIs: CodeRabbit, Codacy, SonarScanner
 - Achievement: 349 -> 42 issues (88% reduction), A-grade platforms
 <!-- AI-CONTEXT-END -->
@@ -45,7 +45,7 @@ This guide provides detailed documentation of our quality automation tools and t
 #### linters-local.sh - Master Quality Validator
 
 **Purpose**: Comprehensive multi-platform quality validation
-**Usage**: `bash .agent/scripts/linters-local.sh`
+**Usage**: `bash .agents/scripts/linters-local.sh`
 
 **Checks Performed**:
 
@@ -60,7 +60,7 @@ This guide provides detailed documentation of our quality automation tools and t
 #### quality-fix.sh - Universal Issue Resolution
 
 **Purpose**: Automated fixing of common quality issues
-**Usage**: `bash .agent/scripts/quality-fix.sh [file|directory]`
+**Usage**: `bash .agents/scripts/quality-fix.sh [file|directory]`
 
 **Fixes Applied**:
 
@@ -113,13 +113,13 @@ This guide provides detailed documentation of our quality automation tools and t
 
 ```bash
 # Install all quality CLIs
-bash .agent/scripts/quality-cli-manager.sh install all
+bash .agents/scripts/quality-cli-manager.sh install all
 
 # Run comprehensive analysis
-bash .agent/scripts/quality-cli-manager.sh analyze all
+bash .agents/scripts/quality-cli-manager.sh analyze all
 
 # Check status of all platforms
-bash .agent/scripts/quality-cli-manager.sh status all
+bash .agents/scripts/quality-cli-manager.sh status all
 ```
 
 #### Individual Platform CLIs
@@ -127,21 +127,21 @@ bash .agent/scripts/quality-cli-manager.sh status all
 **CodeRabbit CLI**: AI-powered code review
 
 ```bash
-bash .agent/scripts/coderabbit-cli.sh review
-bash .agent/scripts/coderabbit-cli.sh analyze .agent/scripts/
+bash .agents/scripts/coderabbit-cli.sh review
+bash .agents/scripts/coderabbit-cli.sh analyze .agents/scripts/
 ```
 
 **Codacy CLI v2**: Comprehensive static analysis
 
 ```bash
-bash .agent/scripts/codacy-cli.sh analyze
-bash .agent/scripts/codacy-cli.sh upload results.sarif
+bash .agents/scripts/codacy-cli.sh analyze
+bash .agents/scripts/codacy-cli.sh upload results.sarif
 ```
 
 **SonarScanner CLI**: SonarCloud integration
 
 ```bash
-bash .agent/scripts/sonarscanner-cli.sh analyze
+bash .agents/scripts/sonarscanner-cli.sh analyze
 ```
 
 ### Automation Workflows
@@ -153,16 +153,16 @@ bash .agent/scripts/sonarscanner-cli.sh analyze
 # Run before every commit
 
 # 1. Comprehensive quality check
-bash .agent/scripts/linters-local.sh
+bash .agents/scripts/linters-local.sh
 
 # 2. Fix common issues
-bash .agent/scripts/quality-fix.sh .
+bash .agents/scripts/quality-fix.sh .
 
 # 3. Format markdown
-bash .agent/scripts/markdown-formatter.sh .
+bash .agents/scripts/markdown-formatter.sh .
 
 # 4. Verify improvements
-bash .agent/scripts/linters-local.sh
+bash .agents/scripts/linters-local.sh
 ```
 
 #### Continuous Quality Monitoring
@@ -172,10 +172,10 @@ bash .agent/scripts/linters-local.sh
 # Daily quality monitoring
 
 # 1. Multi-platform analysis
-bash .agent/scripts/quality-cli-manager.sh analyze all
+bash .agents/scripts/quality-cli-manager.sh analyze all
 
 # 2. Generate quality report
-bash .agent/scripts/linters-local.sh > quality-report.txt
+bash .agents/scripts/linters-local.sh > quality-report.txt
 
 # 3. Track progress
 echo "$(date): $(grep 'SonarCloud:' quality-report.txt)" >> quality-history.log

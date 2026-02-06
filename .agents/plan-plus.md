@@ -261,7 +261,7 @@ Use context tools for deep understanding:
 
 ```bash
 # Generate token-efficient codebase context (read-only)
-.agent/scripts/context-builder-helper.sh compress [path]
+.agents/scripts/context-builder-helper.sh compress [path]
 ```
 
 ### Phase 3: Synthesis

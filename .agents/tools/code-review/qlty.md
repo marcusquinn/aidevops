@@ -23,9 +23,9 @@ tools:
   - Account API Key (`qltp_...`) - PREFERRED, account-wide access
   - Coverage Token (`qltcw_...`) - Organization-specific fallback
   - Workspace ID (UUID) - Context identifier
-- Store credentials: `bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key KEY`
+- Store credentials: `bash .agents/scripts/setup-local-api-keys.sh set qlty-account-api-key KEY`
 - Organization-specific: `set qlty-ORGNAME TOKEN`, `set qlty-ORGNAME-workspace-id UUID`
-- Commands: `bash .agent/scripts/qlty-cli.sh install|init|check|fmt --all|smells --all [ORG]`
+- Commands: `bash .agents/scripts/qlty-cli.sh install|init|check|fmt --all|smells --all [ORG]`
 - Current config: Account API key active, marcusquinn org fully configured
 - Storage: `~/.config/aidevops/api-keys` (600 permissions)
 - Path: Ensure `~/.qlty/bin` in PATH
@@ -103,39 +103,39 @@ The CLI automatically selects the best available credential:
 
 ```bash
 # PREFERRED: Store Account API Key (account-wide access)
-bash .agent/scripts/setup-local-api-keys.sh set qlty-account-api-key YOUR_ACCOUNT_API_KEY
+bash .agents/scripts/setup-local-api-keys.sh set qlty-account-api-key YOUR_ACCOUNT_API_KEY
 
 # ALTERNATIVE: Store Coverage Token (organization-specific)
-bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME YOUR_COVERAGE_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set qlty-ORGNAME YOUR_COVERAGE_TOKEN
 
 # OPTIONAL: Store Workspace ID (context for operations)
-bash .agent/scripts/setup-local-api-keys.sh set qlty-ORGNAME-workspace-id YOUR_WORKSPACE_ID
+bash .agents/scripts/setup-local-api-keys.sh set qlty-ORGNAME-workspace-id YOUR_WORKSPACE_ID
 ```
 
 ### 2. Verify Configuration
 
 ```bash
 # List all configured services
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 
 # Check Qlty CLI help (shows configured organizations)
-bash .agent/scripts/qlty-cli.sh help
+bash .agents/scripts/qlty-cli.sh help
 ```
 
 ### 3. Test Functionality
 
 ```bash
 # Install Qlty CLI
-bash .agent/scripts/qlty-cli.sh install
+bash .agents/scripts/qlty-cli.sh install
 
 # Initialize repository
-bash .agent/scripts/qlty-cli.sh init
+bash .agents/scripts/qlty-cli.sh init
 
 # Test with default organization
-bash .agent/scripts/qlty-cli.sh check 5
+bash .agents/scripts/qlty-cli.sh check 5
 
 # Test with specific organization
-bash .agent/scripts/qlty-cli.sh check 5 ORGNAME
+bash .agents/scripts/qlty-cli.sh check 5 ORGNAME
 ```
 
 ## Usage Examples
@@ -144,26 +144,26 @@ bash .agent/scripts/qlty-cli.sh check 5 ORGNAME
 
 ```bash
 # Code quality check
-bash .agent/scripts/qlty-cli.sh check
+bash .agents/scripts/qlty-cli.sh check
 
 # Auto-format all files
-bash .agent/scripts/qlty-cli.sh fmt --all
+bash .agents/scripts/qlty-cli.sh fmt --all
 
 # Detect code smells
-bash .agent/scripts/qlty-cli.sh smells --all
+bash .agents/scripts/qlty-cli.sh smells --all
 ```
 
 ### Specific Organization
 
 ```bash
 # Code quality check for 'mycompany' organization
-bash .agent/scripts/qlty-cli.sh check 10 mycompany
+bash .agents/scripts/qlty-cli.sh check 10 mycompany
 
 # Auto-format for 'clientorg' organization
-bash .agent/scripts/qlty-cli.sh fmt --all clientorg
+bash .agents/scripts/qlty-cli.sh fmt --all clientorg
 
 # Code smells for 'teamproject' organization
-bash .agent/scripts/qlty-cli.sh smells --all teamproject
+bash .agents/scripts/qlty-cli.sh smells --all teamproject
 ```
 
 ## Multi-Organization Management
@@ -211,10 +211,10 @@ bash .agent/scripts/qlty-cli.sh smells --all teamproject
 
 ```bash
 # Check stored configurations
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 
 # Test token loading
-bash .agent/scripts/qlty-cli.sh check 1 ORGNAME
+bash .agents/scripts/qlty-cli.sh check 1 ORGNAME
 
 # Verify CLI installation
 qlty --version
@@ -228,10 +228,10 @@ Qlty CLI integrates with the unified Quality CLI Manager:
 
 ```bash
 # Install all quality tools including Qlty
-bash .agent/scripts/quality-cli-manager.sh install all
+bash .agents/scripts/quality-cli-manager.sh install all
 
 # Run Qlty analysis through manager
-bash .agent/scripts/quality-cli-manager.sh analyze qlty
+bash .agents/scripts/quality-cli-manager.sh analyze qlty
 ```
 
 ### GitHub Actions

@@ -103,7 +103,7 @@ epoch_to_date() {
 get_ralph_loop_status() {
     local worktree_path="$1"
     # Check new location first, then legacy
-    local state_file="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+    local state_file="$worktree_path/.agents/loop-state/ralph-loop.local.state"
     local state_file_legacy="$worktree_path/.claude/ralph-loop.local.state"
     
     local active_file=""

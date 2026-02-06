@@ -21,7 +21,7 @@ tools:
 - **Primary Method**: Environment variables (`export CODACY_API_TOKEN="..."`)
 - **Local Storage**: `configs/*-config.json` (gitignored), `~/.config/coderabbit/api_key`
 - **CI/CD**: GitHub Secrets (`SONAR_TOKEN`, `CODACY_API_TOKEN`, `GITHUB_TOKEN`)
-- **Helper Script**: `.agent/scripts/setup-local-api-keys.sh` (set, load, list)
+- **Helper Script**: `.agents/scripts/setup-local-api-keys.sh` (set, load, list)
 - **Token Sources**: Codacy (app.codacy.com/account/api-tokens), SonarCloud (sonarcloud.io/account/security)
 - **Security**: 600 permissions, never commit, regular rotation (90 days)
 - **If Compromised**: Revoke immediately → Generate new → Update local + GitHub secrets → Verify
@@ -95,14 +95,14 @@ GITHUB_TOKEN                         # Automatic (provided by GitHub)
 
 ```bash
 # Use secure local storage (RECOMMENDED)
-bash .agent/scripts/setup-local-api-keys.sh set codacy YOUR_CODACY_API_TOKEN
-bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_SONAR_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set codacy YOUR_CODACY_API_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set sonar YOUR_SONAR_TOKEN
 
 # Load all API keys into environment when needed
-bash .agent/scripts/setup-local-api-keys.sh load
+bash .agents/scripts/setup-local-api-keys.sh load
 
 # List configured services
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 ```
 
 ### **4. Test Configuration**
@@ -110,7 +110,7 @@ bash .agent/scripts/setup-local-api-keys.sh list
 ```bash
 # Test Codacy CLI
 cd git/aidevops
-bash .agent/scripts/codacy-cli.sh analyze
+bash .agents/scripts/codacy-cli.sh analyze
 
 # Test environment variables
 echo "Codacy token: ${CODACY_API_TOKEN:0:10}..."

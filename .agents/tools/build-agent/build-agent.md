@@ -83,7 +83,7 @@ Main agents are for high-level project orchestration:
 - **Scope**: Broad domain (wordpress, seo, content, aidevops)
 - **Role**: Coordinates subagents, makes strategic decisions
 - **Context**: Needs awareness of multiple related concerns
-- **Location**: Root of `.agent/` folder
+- **Location**: Root of `.agents/` folder
 - **Examples**: `seo.md`, `aidevops.md`, `build-plus.md`
 
 **Main agent characteristics:**
@@ -268,16 +268,16 @@ This repository has two agent directories with different purposes:
 
 | Directory | Purpose | Used By |
 |-----------|---------|---------|
-| `.agent/` | Source of truth with full documentation | Deployed to `~/.aidevops/agents/` by `setup.sh` |
+| `.agents/` | Source of truth with full documentation | Deployed to `~/.aidevops/agents/` by `setup.sh` |
 | `.opencode/agent/` | Generated stubs for OpenCode | OpenCode CLI (reads these directly) |
 
 **How it works:**
-1. `.agent/` contains the authoritative agent files with rich documentation
-2. `setup.sh` deploys `.agent/` to `~/.aidevops/agents/`
+1. `.agents/` contains the authoritative agent files with rich documentation
+2. `setup.sh` deploys `.agents/` to `~/.aidevops/agents/`
 3. `generate-opencode-agents.sh` creates minimal stubs in `~/.config/opencode/agent/` that reference the deployed files
 4. OpenCode reads the stubs, which point to the full agent content
 
-**Frontmatter in `.agent/` files** serves as:
+**Frontmatter in `.agents/` files** serves as:
 - Documentation of intended permissions
 - Reference for non-OpenCode AI assistants (Claude, Cursor, etc.)
 - Template for what the generated stubs should enable
@@ -355,10 +355,10 @@ Line numbers drift as code changes. Use search patterns instead:
 
 ```markdown
 # Bad (will drift)
-See error handling at `.agent/scripts/hostinger-helper.sh:145`
+See error handling at `.agents/scripts/hostinger-helper.sh:145`
 
 # Good (stable)
-Search for `handle_api_error` in `.agent/scripts/hostinger-helper.sh`
+Search for `handle_api_error` in `.agents/scripts/hostinger-helper.sh`
 
 # Better (with fallback)
 Search for `handle_api_error` in hostinger-helper.sh.
@@ -486,7 +486,7 @@ Before adding content to any agent file:
    - Remove redundant or obvious instructions
 
 6. **Does this duplicate other agents?**
-   - Search: `rg "pattern" .agent/` before adding
+   - Search: `rg "pattern" .agents/` before adding
    - Check for conflicting guidance across files
    - Single source of truth for each concept
 
@@ -556,7 +556,7 @@ Read subagents only when task requires them.
 3. **Command syntax reference** - The example IS the documentation
 
    ```bash
-   .agent/scripts/[service]-helper.sh [command] [account] [target]
+   .agents/scripts/[service]-helper.sh [command] [account] [target]
    ```
 
 **Avoid code examples when:**
@@ -640,7 +640,7 @@ When code examples are used during a task:
 
    ```bash
    # Search for similar instructions
-   rg "pattern" .agent/
+   rg "pattern" .agents/
    
    # Check files that might have parallel instructions
    # Note potential conflicts if change is made
@@ -655,7 +655,7 @@ When code examples are used during a task:
 
    ```text
    > Agent Feedback: While [task], I noticed [issue] in 
-   > `.agent/[file].md`. Related instructions also exist in 
+   > `.agents/[file].md`. Related instructions also exist in 
    > `[other-files]`. Suggested improvement: [change]. 
    > Should I update these after completing your request?
    ```
@@ -750,7 +750,7 @@ See "Subagent YAML Frontmatter" section for full permission options.
 ### Folder Organization
 
 ```text
-.agent/
+.agents/
 ├── AGENTS.md                 # Entry point (ALLCAPS - special root file)
 ├── {domain}.md               # Main agents at root (lowercase)
 ├── {domain}/                 # Subagents for that domain
@@ -802,7 +802,7 @@ See "Subagent YAML Frontmatter" section for full permission options.
 - Location (root vs folder) already distinguishes main from subagents
 - ALLCAPS causes cross-platform issues (Linux is case-sensitive)
 - Matches common framework conventions (OpenCode, Cursor, Continue)
-- `ls .agent/*.md` instantly shows all main agents
+- `ls .agents/*.md` instantly shows all main agents
 
 **Why main agents stay at root (not inside folders)?**
 
@@ -825,7 +825,7 @@ Main agents provide overview and point to subagents for details (progressive dis
 
 ### Deployment Sync
 
-Agent changes in `.agent/` require `setup.sh` to deploy to `~/.aidevops/agents/`:
+Agent changes in `.agents/` require `setup.sh` to deploy to `~/.aidevops/agents/`:
 
 ```bash
 cd ~/Git/aidevops && ./setup.sh

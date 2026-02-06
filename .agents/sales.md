@@ -100,7 +100,7 @@ export FLUENTCRM_API_USERNAME="your_username"
 export FLUENTCRM_API_PASSWORD="your_application_password"
 ```
 
-See `.agent/services/crm/fluentcrm.md` for detailed setup instructions.
+See `.agents/services/crm/fluentcrm.md` for detailed setup instructions.
 
 ## Lead Management
 
@@ -262,7 +262,7 @@ fluentcrm_create_smart_link with:
 3. **Convert to invoice** via QuickFile integration
 4. **Track payment** status
 
-See `.agent/services/accounting/quickfile.md` for invoice generation.
+See `.agents/services/accounting/quickfile.md` for invoice generation.
 
 ## Sales Reporting
 
@@ -355,4 +355,4 @@ When marketing qualifies a lead:
 
 - FluentCRM Docs: https://fluentcrm.com/docs/
 - FluentCRM REST API: https://rest-api.fluentcrm.com/
-- See `.agent/services/crm/fluentcrm.md` for detailed troubleshooting
+- See `.agents/services/crm/fluentcrm.md` for detailed troubleshooting

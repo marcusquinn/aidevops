@@ -25,7 +25,7 @@ tools:
 - Config files: ~/.aider.conf.yml, ~/.claude/config.json, ~/.qwen/config.json, ~/.openai/config.yaml
 - Aliases: aider-guided, claude-guided, qwen-guided, openai-guided, ai-guided
 - Quick access: `agents` (view AGENTS.md), `cdai` (cd to framework)
-- Setup: Automated via setup.sh -> configure_ai_clis -> .agent/scripts/ai-cli-config.sh
+- Setup: Automated via setup.sh -> configure_ai_clis -> .agents/scripts/ai-cli-config.sh
 - Status: All tools verified working with AGENTS.md context
 <!-- AI-CONTEXT-END -->
 
@@ -122,7 +122,7 @@ alias cdai='cd ~/Git/aidevops'
 ### **✅ AUTOMATIC SETUP INTEGRATION:**
 
 - **Setup Script**: `setup.sh` includes `configure_ai_clis` function
-- **Configuration Script**: `.agent/scripts/ai-cli-config.sh`
+- **Configuration Script**: `.agents/scripts/ai-cli-config.sh`
 - **All new installations** get complete AI CLI configuration
 
 ## **🎯 COVERAGE SUMMARY:**

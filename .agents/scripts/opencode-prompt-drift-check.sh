@@ -72,7 +72,7 @@ main() {
             echo "  Upstream: $upstream_hash"
             echo ""
             echo "  View diff: https://github.com/${UPSTREAM_REPO}/compare/${local_hash}...${upstream_hash}"
-            echo "  To update: review changes and update .agent/prompts/build.txt"
+            echo "  To update: review changes and update .agents/prompts/build.txt"
         fi
         return 1
     fi

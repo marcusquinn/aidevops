@@ -18,8 +18,8 @@ tools:
 
 ## Quick Reference
 
-- Auto-fix command: `bash .agent/scripts/codacy-cli.sh analyze --fix`
-- Via manager: `bash .agent/scripts/quality-cli-manager.sh analyze codacy-fix`
+- Auto-fix command: `bash .agents/scripts/codacy-cli.sh analyze --fix`
+- Via manager: `bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix`
 - Fix types: Code style, best practices, security, performance, maintainability
 - Safety: Non-breaking, reversible, conservative (skips ambiguous)
 - Metrics: 70-90% time savings, 99%+ accuracy, 60-80% violation coverage
@@ -57,32 +57,32 @@ Codacy CLI v2 provides automated fix capabilities that mirror the "Fix Issues" f
 
 ```bash
 # Basic auto-fix analysis
-bash .agent/scripts/codacy-cli.sh analyze --fix
+bash .agents/scripts/codacy-cli.sh analyze --fix
 
 # Auto-fix with specific tool
-bash .agent/scripts/codacy-cli.sh analyze eslint --fix
+bash .agents/scripts/codacy-cli.sh analyze eslint --fix
 
 # Check what would be fixed (dry-run equivalent)
-bash .agent/scripts/codacy-cli.sh analyze
+bash .agents/scripts/codacy-cli.sh analyze
 ```
 
 #### **Method 2: Quality CLI Manager**
 
 ```bash
 # Auto-fix via unified manager
-bash .agent/scripts/quality-cli-manager.sh analyze codacy-fix
+bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix
 
 # Status check before auto-fix
-bash .agent/scripts/quality-cli-manager.sh status codacy
+bash .agents/scripts/quality-cli-manager.sh status codacy
 ```
 
 #### **Method 3: Integration with Quality Workflow**
 
 ```bash
 # Pre-commit auto-fix workflow
-bash .agent/scripts/linters-local.sh
-bash .agent/scripts/codacy-cli.sh analyze --fix
-bash .agent/scripts/linters-local.sh  # Verify improvements
+bash .agents/scripts/linters-local.sh
+bash .agents/scripts/codacy-cli.sh analyze --fix
+bash .agents/scripts/linters-local.sh  # Verify improvements
 ```
 
 ### **📊 EXPECTED RESULTS**
@@ -118,7 +118,7 @@ bash .agent/scripts/linters-local.sh  # Verify improvements
 # GitHub Actions example
 - name: Auto-fix code quality issues
   run: |
-    bash .agent/scripts/codacy-cli.sh analyze --fix
+    bash .agents/scripts/codacy-cli.sh analyze --fix
     git add .
     git diff --staged --quiet || git commit -m "🔧 AUTO-FIX: Applied Codacy automated fixes"
 ```

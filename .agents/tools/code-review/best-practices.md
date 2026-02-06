@@ -81,7 +81,7 @@ printf 'Price: %s50/month\n' '$'  # Not: echo "Price: $50/month"
 
 #### Pre-Development Checklist
 
-1. **Run quality check**: `bash .agent/scripts/linters-local.sh`
+1. **Run quality check**: `bash .agents/scripts/linters-local.sh`
 2. **Check current issues**: Note SonarCloud/Codacy/CodeFactor status
 3. **Plan improvements**: How will changes enhance quality?
 4. **Test functionality**: Ensure no feature loss
@@ -163,14 +163,14 @@ fi
 
 ```bash
 # CodeRabbit analysis
-bash .agent/scripts/coderabbit-cli.sh review
+bash .agents/scripts/coderabbit-cli.sh review
 
 # Comprehensive analysis
-bash .agent/scripts/quality-cli-manager.sh analyze all
+bash .agents/scripts/quality-cli-manager.sh analyze all
 
 # Individual platform analysis
-bash .agent/scripts/codacy-cli.sh analyze
-bash .agent/scripts/sonarscanner-cli.sh analyze
+bash .agents/scripts/codacy-cli.sh analyze
+bash .agents/scripts/sonarscanner-cli.sh analyze
 ```
 
 ### Success Metrics

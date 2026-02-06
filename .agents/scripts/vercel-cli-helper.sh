@@ -606,7 +606,7 @@ show_help() {
 Vercel CLI Helper - Comprehensive Vercel deployment and project management
 
 USAGE:
-  ./.agent/scripts/vercel-cli-helper.sh [COMMAND] [ACCOUNT] [OPTIONS...]
+  ./.agents/scripts/vercel-cli-helper.sh [COMMAND] [ACCOUNT] [OPTIONS...]
 
 COMMANDS:
   Project Management:
@@ -666,7 +666,7 @@ REQUIREMENTS:
   - Node.js (for local development server)
   - Valid Vercel authentication token (for deployment commands only)
 
-For more information, see the Vercel CLI documentation: https://vercel.com/.agent/cli
+For more information, see the Vercel CLI documentation: https://vercel.com/.agents/cli
 EOF
     return 0
 }

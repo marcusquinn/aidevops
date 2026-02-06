@@ -63,7 +63,7 @@ Update after completing each sub-task, not just parent tasks.
   - [ ] 5.3 Update CHANGELOG.md ~{Xm}
 
 - [ ] 6.0 Quality & Review ~{Xm} (ai:{Xm} test:{Xm})
-  - [ ] 6.1 Run linters: `.agent/scripts/linters-local.sh` ~{Xm}
+  - [ ] 6.1 Run linters: `.agents/scripts/linters-local.sh` ~{Xm}
   - [ ] 6.2 Self-review code changes ~{Xm}
   - [ ] 6.3 Commit with descriptive message ~{Xm}
   - [ ] 6.4 Push branch and create PR ~{Xm}

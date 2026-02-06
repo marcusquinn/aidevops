@@ -171,7 +171,7 @@ Regular commits following conventional format (`feat:`, `fix:`, `refactor:`, etc
 Run quality checks before pushing. Catches issues early.
 
 ```bash
-.agent/scripts/linters-local.sh --fast
+.agents/scripts/linters-local.sh --fast
 ```text
 
 **Agents**: `workflows/preflight.md`
@@ -181,7 +181,7 @@ Run quality checks before pushing. Catches issues early.
 Bump version for releases. Skip for WIP or intermediate commits.
 
 ```bash
-.agent/scripts/version-manager.sh bump [major|minor|patch]
+.agents/scripts/version-manager.sh bump [major|minor|patch]
 ```text
 
 **Agents**: `workflows/version-bump.md`, `workflows/changelog.md`
@@ -229,7 +229,7 @@ gh pr merge --squash --delete-branch
 Tag and publish for version releases.
 
 ```bash
-.agent/scripts/version-manager.sh release [major|minor|patch]
+.agents/scripts/version-manager.sh release [major|minor|patch]
 ```text
 
 **Agents**: `workflows/release.md`

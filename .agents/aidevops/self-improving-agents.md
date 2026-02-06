@@ -94,7 +94,7 @@ self-improve-helper.sh refine [--dry-run]
 
 ```json
 {
-  "file": ".agent/workflows/git-workflow.md",
+  "file": ".agents/workflows/git-workflow.md",
   "change_type": "edit",
   "description": "Add guidance for handling merge conflicts",
   "diff": "...",

@@ -28,10 +28,10 @@ jobs:
         echo ""
         
         # Make validation script executable
-        chmod +x .agent/scripts/validate-version-consistency.sh
+        chmod +x .agents/scripts/validate-version-consistency.sh
         
         # Run version validation
-        if ./.agent/scripts/validate-version-consistency.sh; then
+        if ./.agents/scripts/validate-version-consistency.sh; then
           echo ""
           echo "✅ Version Validation: PASSED"
           echo "All version references are consistent across the framework."
@@ -103,7 +103,7 @@ jobs:
         
         echo ""
         echo "💡 To create a release:"
-        echo "   ./.agent/scripts/version-manager.sh release [major|minor|patch]"
+        echo "   ./.agents/scripts/version-manager.sh release [major|minor|patch]"
         echo ""
         echo "✅ Framework is ready for release when version validation passes."
 

@@ -48,7 +48,7 @@ backup_files() {
     local backup_dir="backups/$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
 
-    cp .agent/scripts/*.sh "$backup_dir/"
+    cp .agents/scripts/*.sh "$backup_dir/"
     print_success "Backup created in $backup_dir"
     return 0
 }
@@ -58,7 +58,7 @@ fix_return_statements() {
     
     local files_fixed=0
     
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             # Find functions that don't end with return statement
             local temp_file
@@ -134,7 +134,7 @@ fix_positional_parameters() {
     
     local files_fixed=0
     
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             local temp_file
             temp_file=$(mktemp)
@@ -176,7 +176,7 @@ analyze_string_literals() {
     local constants_file
     constants_file=$(mktemp)
     
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then
             echo "=== $file ===" >> "$constants_file"
             
@@ -213,7 +213,7 @@ validate_fixes() {
     
     local validation_errors=0
     
-    for file in .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]] && ! shellcheck "$file" > /dev/null 2>&1; then
             ((validation_errors++))
             print_warning "ShellCheck issues remain in $file"

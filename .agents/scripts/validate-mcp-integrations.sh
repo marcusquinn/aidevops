@@ -210,12 +210,12 @@ generate_report() {
     if [[ $failed_tests -gt 0 ]]; then
         print_info "Next steps:"
         print_info "1. Review failed tests above"
-        print_info "2. Check .agent/MCP-TROUBLESHOOTING.md for solutions"
-        print_info "3. Run setup script: bash .agent/scripts/setup-mcp-integrations.sh"
+        print_info "2. Check .agents/MCP-TROUBLESHOOTING.md for solutions"
+        print_info "3. Run setup script: bash .agents/scripts/setup-mcp-integrations.sh"
         print_info "4. Configure missing API keys"
     else
         print_success "All MCP integrations are ready to use!"
-        print_info "Check .agent/MCP-INTEGRATIONS.md for usage examples"
+        print_info "Check .agents/MCP-INTEGRATIONS.md for usage examples"
     fi
     return 0
 }

@@ -216,13 +216,13 @@ curl -X GET "https://api.cloudflare.com/client/v4/zones" \
 
 ```bash
 # Create development subdomain
-./.agent/scripts/dns-helper.sh create-record personal dev.yourdomain.com A 192.168.1.100
+./.agents/scripts/dns-helper.sh create-record personal dev.yourdomain.com A 192.168.1.100
 
 # Setup SSL for local development
-./.agent/scripts/dns-helper.sh create-record personal local.yourdomain.com CNAME yourdomain.com
+./.agents/scripts/dns-helper.sh create-record personal local.yourdomain.com CNAME yourdomain.com
 
 # Manage staging environments
-./.agent/scripts/dns-helper.sh create-record business staging.company.com A 10.0.1.50
+./.agents/scripts/dns-helper.sh create-record business staging.company.com A 10.0.1.50
 ```
 
 ## 🚨 **Emergency Procedures**

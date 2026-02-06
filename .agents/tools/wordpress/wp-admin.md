@@ -577,13 +577,13 @@ For sites with MainWP Child connected, use `@mainwp` subagent for fleet operatio
 
 ```bash
 # List all sites
-./.agent/scripts/mainwp-helper.sh sites production
+./.agents/scripts/mainwp-helper.sh sites production
 
 # Bulk update plugins
-./.agent/scripts/mainwp-helper.sh bulk-update-plugins production 123 124 125
+./.agents/scripts/mainwp-helper.sh bulk-update-plugins production 123 124 125
 
 # Security scan
-./.agent/scripts/mainwp-helper.sh security-scan production 123
+./.agents/scripts/mainwp-helper.sh security-scan production 123
 ```
 
 ## SEO Tasks

@@ -107,7 +107,7 @@ SUPPORTED FORMATS:
     - .cursorrules (Cursor format)
     - Raw markdown files
 
-The skill will be converted to aidevops format and placed in .agent/
+The skill will be converted to aidevops format and placed in .agents/
 with symlinks created to other AI assistant locations by setup.sh.
 EOF
     return 0
@@ -256,7 +256,7 @@ to_kebab_case() {
     return 0
 }
 
-# Determine target path in .agent/ based on skill content
+# Determine target path in .agents/ based on skill content
 determine_target_path() {
     local skill_name="$1"
     local _description="$2"  # Reserved for future category detection
@@ -566,7 +566,7 @@ cmd_add() {
             skill_name=$(to_kebab_case "$skill_name")
             # openskills installs to ~/.config/opencode/skills/<name>/SKILL.md
             # Register with -skill suffix for consistency with direct imports
-            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agent/skills/${skill_name}-skill.md" "skill-md" "" "openskills" "Installed via openskills CLI"
+            register_skill "$skill_name" "https://github.com/$owner/$repo" ".agents/skills/${skill_name}-skill.md" "skill-md" "" "openskills" "Installed via openskills CLI"
             return 0
         fi
         log_warning "openskills failed, falling back to direct fetch"
@@ -626,7 +626,7 @@ cmd_add() {
     # Determine target path
     local target_path
     target_path=$(determine_target_path "$skill_name" "$description" "$skill_source_dir")
-    log_info "Target path: .agent/$target_path"
+    log_info "Target path: .agents/$target_path"
     
     # Check for conflicts (check_conflicts returns 1 when conflicts exist)
     local conflicts
@@ -697,20 +697,20 @@ cmd_add() {
     
     if [[ "$dry_run" == true ]]; then
         log_info "DRY RUN - Would create:"
-        echo "  .agent/${target_path}.md"
+        echo "  .agents/${target_path}.md"
         if [[ -d "$skill_source_dir/scripts" || -d "$skill_source_dir/references" ]]; then
-            echo "  .agent/${target_path}/"
+            echo "  .agents/${target_path}/"
         fi
         return 0
     fi
     
     # Create target directory
     local target_dir
-    target_dir=".agent/$(dirname "$target_path")"
+    target_dir=".agents/$(dirname "$target_path")"
     mkdir -p "$target_dir"
     
     # Convert and copy files
-    local target_file=".agent/${target_path}.md"
+    local target_file=".agents/${target_path}.md"
     
     case "$format" in
         skill-md|skill-md-nested)
@@ -750,7 +750,7 @@ cmd_add() {
     # Copy additional resources (scripts, references, assets)
     for resource_dir in scripts references assets; do
         if [[ -d "$skill_source_dir/$resource_dir" ]]; then
-            local target_resource_dir=".agent/${target_path}/$resource_dir"
+            local target_resource_dir=".agents/${target_path}/$resource_dir"
             mkdir -p "$target_resource_dir"
             cp -r "$skill_source_dir/$resource_dir/"* "$target_resource_dir/" 2>/dev/null || true
             log_success "Copied: $resource_dir/"
@@ -764,7 +764,7 @@ cmd_add() {
     fi
     
     # Register in skill-sources.json
-    register_skill "$skill_name" "https://github.com/$owner/$repo${subpath:+/$subpath}" ".agent/${target_path}.md" "$format" "$commit_hash" "added" ""
+    register_skill "$skill_name" "https://github.com/$owner/$repo${subpath:+/$subpath}" ".agents/${target_path}.md" "$format" "$commit_hash" "added" ""
     
     log_success "Skill '$skill_name' imported successfully"
     
@@ -821,7 +821,7 @@ cmd_add_clawdhub() {
     # Determine target path
     local target_path
     target_path=$(determine_target_path "$skill_name" "$summary" ".")
-    log_info "Target path: .agent/$target_path"
+    log_info "Target path: .agents/$target_path"
     
     # Check for conflicts
     local conflicts
@@ -857,7 +857,7 @@ cmd_add_clawdhub() {
     
     if [[ "$dry_run" == true ]]; then
         log_info "DRY RUN - Would create:"
-        echo "  .agent/${target_path}.md"
+        echo "  .agents/${target_path}.md"
         return 0
     fi
     
@@ -886,11 +886,11 @@ cmd_add_clawdhub() {
     
     # Create target directory
     local target_dir
-    target_dir=".agent/$(dirname "$target_path")"
+    target_dir=".agents/$(dirname "$target_path")"
     mkdir -p "$target_dir"
     
     # Convert to aidevops format
-    local target_file=".agent/${target_path}.md"
+    local target_file=".agents/${target_path}.md"
     
     # Write aidevops-style header
     local safe_summary
@@ -921,7 +921,7 @@ EOF
     
     # Register in skill-sources.json
     local upstream_url="https://clawdhub.com/${owner_handle}/${slug}"
-    register_skill "$skill_name" "$upstream_url" ".agent/${target_path}.md" "clawdhub" "$version" "added" "ClawdHub v${version} by @${owner_handle}"
+    register_skill "$skill_name" "$upstream_url" ".agents/${target_path}.md" "clawdhub" "$version" "added" "ClawdHub v${version} by @${owner_handle}"
     
     # Cleanup
     rm -rf "$fetch_dir"

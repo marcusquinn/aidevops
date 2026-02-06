@@ -29,7 +29,7 @@ readonly NC='\033[0m' # No Color
 readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration
 readonly AMPCODE_API_CONFIG="configs/ampcode-config.json"
-readonly AMPCODE_RESULTS_DIR=".agent/tmp/ampcode"
+readonly AMPCODE_RESULTS_DIR=".agents/tmp/ampcode"
 readonly ALLOWED_OUTPUT_FORMATS="json text csv html md"
 
 # Print functions
@@ -494,7 +494,7 @@ main() {
     local command="${1:-help}"
 
     # Ensure temp directory exists
-    mkdir -p .agent/tmp
+    mkdir -p .agents/tmp
 
     case "$command" in
         "install")

@@ -173,7 +173,7 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
    - Any `BREAKING CHANGE:` or `!` → major
 3. Run the single release command:
    ```bash
-   .agent/scripts/version-manager.sh release [type] --skip-preflight --force
+   .agents/scripts/version-manager.sh release [type] --skip-preflight --force
    ```
 4. Report the result with the GitHub release URL
 
@@ -1166,7 +1166,7 @@ Cancel the active Ralph loop.
 ~/.aidevops/agents/scripts/ralph-loop-helper.sh cancel
 ```
 
-This removes the state file at `.agent/loop-state/ralph-loop.local.state` and stops the loop.
+This removes the state file at `.agents/loop-state/ralph-loop.local.state` and stops the loop.
 
 If no loop is active, it will report "No active Ralph loop found."
 EOF
@@ -1367,7 +1367,7 @@ Task ID: $ARGUMENTS
 ```markdown
 - [ ] t042 Fix all ShellCheck violations #ralph ~2h
   ralph-promise: "SHELLCHECK_CLEAN"
-  ralph-verify: "shellcheck .agent/scripts/*.sh"
+  ralph-verify: "shellcheck .agents/scripts/*.sh"
   ralph-max: 10
 ```
 
@@ -1561,7 +1561,7 @@ echo -e "  ${GREEN}✓${NC} Created /recall command"
 # =============================================================================
 # AUTO-DISCOVERED COMMANDS FROM scripts/commands/
 # =============================================================================
-# Commands in .agent/scripts/commands/*.md are auto-generated
+# Commands in .agents/scripts/commands/*.md are auto-generated
 # Each file should have frontmatter with description and agent
 # This prevents needing to manually add new commands to this script
 

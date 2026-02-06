@@ -32,7 +32,7 @@ External Skill (GitHub or ClawdHub)
     ├── GitHub: git clone --depth 1
     └── ClawdHub: Playwright browser extraction (SPA)
         ↓
-    Check Conflicts with .agent/
+    Check Conflicts with .agents/
         ↓
     Present Merge Options (if conflicts)
         ↓
@@ -130,7 +130,7 @@ Overwrite existing with imported. Best when:
 - You want upstream as source of truth
 
 **Strategy:**
-1. Backup existing to `.agent/.backup/`
+1. Backup existing to `.agents/.backup/`
 2. Replace with imported content
 3. Note replacement in skill-sources.json
 
@@ -183,7 +183,7 @@ Default: `tools/{skill-name}/`
       "name": "cloudflare",
       "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
       "upstream_commit": "abc123def456...",
-      "local_path": ".agent/services/hosting/cloudflare.md",
+      "local_path": ".agents/services/hosting/cloudflare.md",
       "format_detected": "skill-md",
       "imported_at": "2026-01-21T00:00:00Z",
       "last_checked": "2026-01-21T00:00:00Z",
@@ -291,8 +291,8 @@ apt install jq   # Ubuntu/Debian
 ### Conflicts not detected
 
 The helper checks for:
-- Exact path match (`.agent/path/skill.md`)
-- Directory match (`.agent/path/skill/`)
+- Exact path match (`.agents/path/skill.md`)
+- Directory match (`.agents/path/skill/`)
 
 It does NOT check for semantic duplicates. Use `/add-skill list` to review.
 

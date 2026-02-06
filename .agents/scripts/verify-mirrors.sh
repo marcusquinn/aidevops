@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Verify AI Assistant Mirror Symlinks
-# Ensures all mirror directories are properly symlinked to .agent/
+# Ensures all mirror directories are properly symlinked to .agents/
 #
-# Usage: ./.agent/scripts/verify-mirrors.sh [--fix]
+# Usage: ./.agents/scripts/verify-mirrors.sh [--fix]
 #
 # Options:
 #   --fix      Create missing symlinks (default: report only)
@@ -46,7 +46,7 @@ FIX_MODE=false
 usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Verifies AI assistant mirror symlinks point to .agent/"
+    echo "Verifies AI assistant mirror symlinks point to .agents/"
     echo ""
     echo "Options:"
     echo "  --fix      Create missing symlinks"

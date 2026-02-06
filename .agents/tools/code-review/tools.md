@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- Linter manager: `bash .agent/scripts/linter-manager.sh detect|install-detected|install-all|install [lang]`
+- Linter manager: `bash .agents/scripts/linter-manager.sh detect|install-detected|install-all|install [lang]`
 - Languages: Python (pycodestyle, Pylint, Bandit, Ruff), JS/TS (Oxlint, ESLint), CSS (Stylelint), Shell (ShellCheck), Docker (Hadolint), YAML (Yamllint)
 - Platforms comparison:
   - CodeRabbit: AI code review, no auto-fix
@@ -68,16 +68,16 @@ CodeFactor uses a comprehensive collection of open-source analysis tools. Our fr
 
 ```bash
 # Detect languages in current project
-bash .agent/scripts/linter-manager.sh detect
+bash .agents/scripts/linter-manager.sh detect
 
 # Install linters for detected languages
-bash .agent/scripts/linter-manager.sh install-detected
+bash .agents/scripts/linter-manager.sh install-detected
 
 # Install all supported linters
-bash .agent/scripts/linter-manager.sh install-all
+bash .agents/scripts/linter-manager.sh install-all
 
 # Install linters for specific language
-bash .agent/scripts/linter-manager.sh install python
+bash .agents/scripts/linter-manager.sh install python
 ```
 
 ### Quality Analysis Platforms

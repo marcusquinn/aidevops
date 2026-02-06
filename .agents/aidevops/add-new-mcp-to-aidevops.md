@@ -31,11 +31,11 @@ tools:
 **Checklist**:
 
 1. Research MCP (official docs, npm/pip package, GitHub)
-2. Create `.agent/tools/{category}/{mcp-name}.md` documentation
+2. Create `.agents/tools/{category}/{mcp-name}.md` documentation
 3. Create `configs/{mcp-name}-config.json.txt` template
 4. Create `configs/mcp-templates/{mcp-name}.json` snippets
-5. Update `.agent/scripts/generate-opencode-agents.sh` (add to selected agents)
-6. Update `.agent/scripts/ai-cli-config.sh` (add configure function)
+5. Update `.agents/scripts/generate-opencode-agents.sh` (add to selected agents)
+6. Update `.agents/scripts/ai-cli-config.sh` (add configure function)
 7. Update `setup.sh` (add setup function if prerequisites needed)
 8. Run quality checks and linters
 9. Test with verification prompt
@@ -179,7 +179,7 @@ Record which agents and why:
 
 ## Step 3: Create Documentation File
 
-Create `.agent/tools/{category}/{mcp-name}.md`:
+Create `.agents/tools/{category}/{mcp-name}.md`:
 
 ### File Location Categories
 
@@ -195,7 +195,7 @@ Create `.agent/tools/{category}/{mcp-name}.md`:
 
 ### Documentation Template
 
-Use `.agent/tools/context/augment-context-engine.md` as a reference template.
+Use `.agents/tools/context/augment-context-engine.md` as a reference template.
 
 **Required Sections**:
 
@@ -239,7 +239,7 @@ Quick-reference snippets organized by tool.
 
 ## Step 5: Update generate-opencode-agents.sh
 
-Edit `.agent/scripts/generate-opencode-agents.sh`:
+Edit `.agents/scripts/generate-opencode-agents.sh`:
 
 ### Add MCP to Selected Agents Only
 
@@ -259,7 +259,7 @@ Based on the agent enablement decision from Step 2:
 
 ## Step 6: Update ai-cli-config.sh
 
-Edit `.agent/scripts/ai-cli-config.sh`:
+Edit `.agents/scripts/ai-cli-config.sh`:
 
 ### Add Configure Function
 
@@ -316,17 +316,17 @@ Add setup function if the MCP has prerequisites to validate.
 
 ```bash
 # ShellCheck for any modified shell scripts
-shellcheck .agent/scripts/ai-cli-config.sh
+shellcheck .agents/scripts/ai-cli-config.sh
 shellcheck setup.sh
 
 # Markdown linting
-npx markdownlint-cli .agent/tools/{category}/{mcp-name}.md
+npx markdownlint-cli .agents/tools/{category}/{mcp-name}.md
 
 # Comprehensive quality check
-.agent/scripts/linters-local.sh
+.agents/scripts/linters-local.sh
 
 # Check for credential leaks
-.agent/scripts/secretlint-helper.sh check
+.agents/scripts/secretlint-helper.sh check
 ```
 
 **Call the secretlint subagent:**
@@ -341,7 +341,7 @@ npx markdownlint-cli .agent/tools/{category}/{mcp-name}.md
 
 ```bash
 # Test OpenCode agent generation
-bash .agent/scripts/generate-opencode-agents.sh
+bash .agents/scripts/generate-opencode-agents.sh
 
 # Verify configuration
 cat ~/.config/opencode/opencode.json | python3 -c "
@@ -440,11 +440,11 @@ For reference, see the Augment Context Engine implementation:
 
 | File | Purpose |
 |------|---------|
-| `.agent/tools/context/augment-context-engine.md` | Documentation |
+| `.agents/tools/context/augment-context-engine.md` | Documentation |
 | `configs/augment-context-engine-config.json.txt` | Config template |
 | `configs/mcp-templates/augment-context-engine.json` | MCP snippets |
-| `.agent/scripts/generate-opencode-agents.sh` | Agent config |
-| `.agent/scripts/ai-cli-config.sh` | CLI config function |
+| `.agents/scripts/generate-opencode-agents.sh` | Agent config |
+| `.agents/scripts/ai-cli-config.sh` | CLI config function |
 | `setup.sh` | Setup function |
 
 Search for `augment-context-engine` in these files to see the patterns.

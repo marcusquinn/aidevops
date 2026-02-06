@@ -128,7 +128,7 @@ This starts the loop in the background and returns immediately. Use these comman
 
 This will:
 1. Initialize the Ralph loop for task development
-2. Set up state tracking in `.agent/loop-state/full-loop.local.md`
+2. Set up state tracking in `.agents/loop-state/full-loop.local.md`
 3. Begin iterating on the task
 
 **Note**: Foreground mode may timeout when called via MCP Bash tool (default 120s timeout). Use `--background` for long-running tasks.

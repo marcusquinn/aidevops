@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
+- **Full release**: `.agents/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
 - **CRITICAL**: This single command does everything - bump, commit, tag, push, GitHub release
 - **NEVER** run separate commands, manually edit VERSION, or bump versions yourself
 - **Files updated atomically**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties, .claude-plugin/marketplace.json
@@ -46,14 +46,14 @@ If you edit VERSION directly, the other 5 files become stale.
 **Always use**:
 
 ```bash
-.agent/scripts/version-manager.sh bump [major|minor|patch]
+.agents/scripts/version-manager.sh bump [major|minor|patch]
 # or for full release:
-.agent/scripts/version-manager.sh release [major|minor|patch]
+.agents/scripts/version-manager.sh release [major|minor|patch]
 ```
 
 ## The Primary Tool: version-manager.sh
 
-**Location**: `.agent/scripts/version-manager.sh`
+**Location**: `.agents/scripts/version-manager.sh`
 
 This script handles all version management tasks:
 
@@ -81,16 +81,16 @@ This script handles all version management tasks:
 
 ```bash
 # Standard release (runs preflight checks, requires changelog)
-.agent/scripts/version-manager.sh release patch
+.agents/scripts/version-manager.sh release patch
 
 # Bypass changelog check
-.agent/scripts/version-manager.sh release minor --force
+.agents/scripts/version-manager.sh release minor --force
 
 # Bypass preflight quality checks
-.agent/scripts/version-manager.sh release patch --skip-preflight
+.agents/scripts/version-manager.sh release patch --skip-preflight
 
 # Bypass both
-.agent/scripts/version-manager.sh release patch --force --skip-preflight
+.agents/scripts/version-manager.sh release patch --force --skip-preflight
 ```
 
 ## Files Updated Automatically
@@ -145,7 +145,7 @@ After (for version 1.6.0):
 
 ```bash
 # Preview suggested changelog entries from commits
-.agent/scripts/version-manager.sh changelog-preview
+.agents/scripts/version-manager.sh changelog-preview
 ```
 
 ## Recommended Workflow
@@ -153,7 +153,7 @@ After (for version 1.6.0):
 ### Step 1: Validate Current State
 
 ```bash
-.agent/scripts/version-manager.sh validate
+.agents/scripts/version-manager.sh validate
 ```
 
 This catches stale versions before you start. Fix any inconsistencies first.
@@ -166,13 +166,13 @@ Manually update the changelog (see gap section above).
 
 ```bash
 # For bug fixes
-.agent/scripts/version-manager.sh release patch
+.agents/scripts/version-manager.sh release patch
 
 # For new features
-.agent/scripts/version-manager.sh release minor
+.agents/scripts/version-manager.sh release minor
 
 # For breaking changes
-.agent/scripts/version-manager.sh release major
+.agents/scripts/version-manager.sh release major
 ```
 
 ### Step 4: Push Changes
@@ -212,12 +212,12 @@ The `validate` command checks:
 
 ## Preflight Quality Checks
 
-The `release` command automatically runs `.agent/scripts/linters-local.sh` before proceeding.
+The `release` command automatically runs `.agents/scripts/linters-local.sh` before proceeding.
 
 To bypass (not recommended):
 
 ```bash
-.agent/scripts/version-manager.sh release patch --skip-preflight
+.agents/scripts/version-manager.sh release patch --skip-preflight
 ```
 
 ## Troubleshooting
@@ -226,10 +226,10 @@ To bypass (not recommended):
 
 ```bash
 # See which files are out of sync
-.agent/scripts/version-manager.sh validate
+.agents/scripts/version-manager.sh validate
 
 # Sync all files to current VERSION
-.agent/scripts/version-manager.sh bump patch  # or use sync if available
+.agents/scripts/version-manager.sh bump patch  # or use sync if available
 ```
 
 ### GitHub Release Failed
@@ -246,7 +246,7 @@ gh auth login  # if needed
 Either update CHANGELOG.md or bypass:
 
 ```bash
-.agent/scripts/version-manager.sh release patch --force
+.agents/scripts/version-manager.sh release patch --force
 ```
 
 ## Related Workflows

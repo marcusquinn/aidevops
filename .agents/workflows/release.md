@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Full release**: `.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
+- **Full release**: `.agents/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
 - **CRITICAL**: Always use the script above - it updates all 6 version files atomically
 - **NEVER** manually edit VERSION, bump versions yourself, or use separate commands
 
@@ -30,11 +30,11 @@ git add -A && git commit -m "feat: description of changes"  # Commit if needed
 ```
 
 - **Auto-changelog**: Release script auto-generates CHANGELOG.md from conventional commits
-- **Create tag**: `.agent/scripts/version-manager.sh tag`
-- **GitHub release**: `.agent/scripts/version-manager.sh github-release`
-- **Postflight**: `.agent/scripts/postflight-check.sh` (verify after release)
+- **Create tag**: `.agents/scripts/version-manager.sh tag`
+- **GitHub release**: `.agents/scripts/version-manager.sh github-release`
+- **Postflight**: `.agents/scripts/postflight-check.sh` (verify after release)
 - **Deploy locally**: `./setup.sh` (aidevops repo only - deploys to ~/.aidevops/agents/)
-- **Validator**: `.agent/scripts/validate-version-consistency.sh`
+- **Validator**: `.agents/scripts/validate-version-consistency.sh`
 - **GitHub Actions**: `.github/workflows/version-validation.yml`
 - **Version bump only**: See `workflows/version-bump.md`
 - **Changelog format**: See `workflows/changelog.md`
@@ -126,7 +126,7 @@ The release script handles everything automatically:
 **MANDATORY**: Use this single command for ALL releases:
 
 ```bash
-./.agent/scripts/version-manager.sh release [major|minor|patch] --skip-preflight
+./.agents/scripts/version-manager.sh release [major|minor|patch] --skip-preflight
 ```
 
 **Flags**:
@@ -187,7 +187,7 @@ git checkout -b release/v{MAJOR}.{MINOR}.{PATCH}
 
 ```bash
 # For this framework
-./.agent/scripts/linters-local.sh
+./.agents/scripts/linters-local.sh
 
 # Generic checks
 npm run lint && npm test
@@ -201,10 +201,10 @@ The release script **automatically generates** CHANGELOG.md entries from convent
 
 ```bash
 # Preview what will be generated (optional)
-./.agent/scripts/version-manager.sh changelog-preview
+./.agents/scripts/version-manager.sh changelog-preview
 
 # Validate existing changelog (optional)
-./.agent/scripts/version-manager.sh changelog-check
+./.agents/scripts/version-manager.sh changelog-check
 ```
 
 The auto-generated changelog follows [Keep a Changelog](https://keepachangelog.com/) format:
@@ -235,7 +235,7 @@ git commit -m "chore(release): prepare v{MAJOR}.{MINOR}.{PATCH}"
 
 ```bash
 # Using version-manager (preferred)
-./.agent/scripts/version-manager.sh tag
+./.agents/scripts/version-manager.sh tag
 
 # Or manually
 git tag -a v{VERSION} -m "Release v{VERSION}"
@@ -257,7 +257,7 @@ git push gitlab main --tags
 **Using version-manager (preferred):**
 
 ```bash
-./.agent/scripts/version-manager.sh github-release
+./.agents/scripts/version-manager.sh github-release
 ```
 
 **Using GitHub CLI:**
@@ -349,10 +349,10 @@ The release script **automatically marks tasks complete** based on commit messag
 
 ```bash
 # Preview which tasks would be marked complete
-.agent/scripts/version-manager.sh list-task-ids
+.agents/scripts/version-manager.sh list-task-ids
 
 # Manually run auto-mark (without release)
-.agent/scripts/version-manager.sh auto-mark-tasks
+.agents/scripts/version-manager.sh auto-mark-tasks
 ```
 
 **Manual completion** (if needed):
@@ -402,10 +402,10 @@ After release publication, run postflight checks to verify release health:
 
 ```bash
 # Run full postflight verification
-./.agent/scripts/postflight-check.sh
+./.agents/scripts/postflight-check.sh
 
 # Quick check (CI/CD + SonarCloud only)
-./.agent/scripts/postflight-check.sh --quick
+./.agents/scripts/postflight-check.sh --quick
 
 # Or check CI/CD manually
 gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
@@ -480,7 +480,7 @@ curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user
 
 ```bash
 # Validate consistency
-./.agent/scripts/version-manager.sh validate
+./.agents/scripts/version-manager.sh validate
 
 # See version-bump.md for fixing
 ```

@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Validate we're in the correct repository
-if [[ ! -f "$REPO_ROOT/AGENTS.md" ]] || [[ ! -d "$REPO_ROOT/.agent" ]]; then
+if [[ ! -f "$REPO_ROOT/AGENTS.md" ]] || [[ ! -d "$REPO_ROOT/.agents" ]]; then
     print_error "This script must be run from within the aidevops repository"
     exit 1
 fi

@@ -19,9 +19,9 @@ tools:
 ## Quick Reference
 
 - **Purpose**: #1 AI/LLM web crawler - markdown output for RAG pipelines
-- **Install**: `./.agent/scripts/crawl4ai-helper.sh install`
-- **Docker**: `./.agent/scripts/crawl4ai-helper.sh docker-start`
-- **MCP Setup**: `./.agent/scripts/crawl4ai-helper.sh mcp-setup`
+- **Install**: `./.agents/scripts/crawl4ai-helper.sh install`
+- **Docker**: `./.agents/scripts/crawl4ai-helper.sh docker-start`
+- **MCP Setup**: `./.agents/scripts/crawl4ai-helper.sh mcp-setup`
 
 **Endpoints** (Docker):
 - API: http://localhost:11235
@@ -78,36 +78,36 @@ Crawl4AI is the #1 trending open-source web crawler on GitHub, specifically desi
 
 ```bash
 # Install Crawl4AI Python package
-./.agent/scripts/crawl4ai-helper.sh install
+./.agents/scripts/crawl4ai-helper.sh install
 
 # Setup Docker deployment with monitoring
-./.agent/scripts/crawl4ai-helper.sh docker-setup
+./.agents/scripts/crawl4ai-helper.sh docker-setup
 
 # Start Docker container
-./.agent/scripts/crawl4ai-helper.sh docker-start
+./.agents/scripts/crawl4ai-helper.sh docker-start
 
 # Setup MCP integration for AI assistants
-./.agent/scripts/crawl4ai-helper.sh mcp-setup
+./.agents/scripts/crawl4ai-helper.sh mcp-setup
 
 # Setup CapSolver for CAPTCHA solving
-./.agent/scripts/crawl4ai-helper.sh capsolver-setup
+./.agents/scripts/crawl4ai-helper.sh capsolver-setup
 
 # Check status
-./.agent/scripts/crawl4ai-helper.sh status
+./.agents/scripts/crawl4ai-helper.sh status
 ```
 
 ### Basic Usage
 
 ```bash
 # Crawl a single URL
-./.agent/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
 
 # Extract structured data
-./.agent/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
+./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
 
 # Crawl with CAPTCHA solving (requires CapSolver API key)
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
-./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
+./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
 ```
 
 ## 🐳 Docker Deployment
@@ -181,13 +181,13 @@ Crawl4AI integrates with CapSolver, the world's leading automated CAPTCHA solvin
 
 ```bash
 # Setup CapSolver integration
-./.agent/scripts/crawl4ai-helper.sh capsolver-setup
+./.agents/scripts/crawl4ai-helper.sh capsolver-setup
 
 # Get API key from https://dashboard.capsolver.com/
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 
 # Crawl with CAPTCHA solving
-./.agent/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 site_key_here
+./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://example.com recaptcha_v2 site_key_here
 ```
 
 ### Pricing & Performance
@@ -321,7 +321,7 @@ def handle_webhook():
 
 ```bash
 # Research articles and papers
-./.agent/scripts/crawl4ai-helper.sh extract https://research-paper.com '{
+./.agents/scripts/crawl4ai-helper.sh extract https://research-paper.com '{
   "title": "h1",
   "authors": ".authors",
   "abstract": ".abstract", 
@@ -339,7 +339,7 @@ def handle_webhook():
 
 ```bash
 # Product information extraction
-./.agent/scripts/crawl4ai-helper.sh extract https://ecommerce.com/product '{
+./.agents/scripts/crawl4ai-helper.sh extract https://ecommerce.com/product '{
   "name": "h1.product-title",
   "price": ".price-current",
   "description": ".product-description",
@@ -361,7 +361,7 @@ def handle_webhook():
 urls=("https://news1.com" "https://news2.com" "https://news3.com")
 
 for url in "${urls[@]}"; do
-    ./.agent/scripts/crawl4ai-helper.sh extract "$url" '{
+    ./.agents/scripts/crawl4ai-helper.sh extract "$url" '{
       "headline": "h1",
       "summary": ".article-summary",
       "author": ".byline",
@@ -375,7 +375,7 @@ done
 
 ```bash
 # API documentation extraction
-./.agent/scripts/crawl4ai-helper.sh extract https://api-docs.com '{
+./.agents/scripts/crawl4ai-helper.sh extract https://api-docs.com '{
   "endpoints": {
     "selector": ".endpoint",
     "fields": [
@@ -606,7 +606,7 @@ async with AsyncWebCrawler(config=browser_config) as crawler:
 
 ```bash
 # Check comprehensive status
-./.agent/scripts/crawl4ai-helper.sh status
+./.agents/scripts/crawl4ai-helper.sh status
 
 # View container logs
 docker logs crawl4ai --tail 50 --follow
@@ -621,11 +621,11 @@ curl -X POST http://localhost:11235/crawl \
 
 ### Framework Integration
 
-- **Helper Script**: `.agent/scripts/crawl4ai-helper.sh`
+- **Helper Script**: `.agents/scripts/crawl4ai-helper.sh`
 - **Configuration Template**: `configs/crawl4ai-config.json.txt`
 - **MCP Configuration**: `configs/mcp-templates/crawl4ai-mcp-config.json`
-- **Integration Guide**: `.agent/wiki/crawl4ai-integration.md`
-- **Usage Guide**: `.agent/spec/crawl4ai-usage.md`
+- **Integration Guide**: `.agents/wiki/crawl4ai-integration.md`
+- **Usage Guide**: `.agents/spec/crawl4ai-usage.md`
 
 ### Official Resources
 
@@ -636,11 +636,11 @@ curl -X POST http://localhost:11235/crawl \
 
 ## 🎯 Next Steps
 
-1. **Install and Setup**: Run `./.agent/scripts/crawl4ai-helper.sh install`
-2. **Start Docker Services**: Run `./.agent/scripts/crawl4ai-helper.sh docker-start`
+1. **Install and Setup**: Run `./.agents/scripts/crawl4ai-helper.sh install`
+2. **Start Docker Services**: Run `./.agents/scripts/crawl4ai-helper.sh docker-start`
 3. **Explore Dashboard**: Visit http://localhost:11235/dashboard
 4. **Try Playground**: Test crawling at http://localhost:11235/playground
-5. **Setup MCP**: Run `./.agent/scripts/crawl4ai-helper.sh mcp-setup`
+5. **Setup MCP**: Run `./.agents/scripts/crawl4ai-helper.sh mcp-setup`
 6. **Build Applications**: Use the API for your specific use cases
 
 Crawl4AI transforms web data into AI-ready formats, making it perfect for RAG systems, data pipelines, and AI-powered applications within the AI DevOps Framework.

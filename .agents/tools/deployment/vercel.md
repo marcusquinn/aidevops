@@ -21,17 +21,17 @@ tools:
 - **CLI**: `vercel` (install: `npm i -g vercel`)
 - **Auth**: `vercel login` → `vercel whoami`
 - **Config**: `configs/vercel-cli-config.json`
-- **Script**: `.agent/scripts/vercel-cli-helper.sh`
+- **Script**: `.agents/scripts/vercel-cli-helper.sh`
 - **Local Dev First**: Works without auth for immediate development
 
 **Commands**: `list-projects|deploy|get-project|list-deployments|list-env|add-env|remove-env|list-domains|add-domain|list-accounts|whoami|dev|build`
 
-**Usage**: `./.agent/scripts/vercel-cli-helper.sh [command] [account] [args]`
+**Usage**: `./.agents/scripts/vercel-cli-helper.sh [command] [account] [args]`
 
 **Environments**: development, preview, production
 **Frameworks**: Next.js, React, Vue, Nuxt, Svelte, Angular, static sites
 
-**Local Dev** (no auth): `./.agent/scripts/vercel-cli-helper.sh dev personal ./app 3000`
+**Local Dev** (no auth): `./.agents/scripts/vercel-cli-helper.sh dev personal ./app 3000`
 <!-- AI-CONTEXT-END -->
 
 Comprehensive Vercel deployment and project management using the Vercel CLI through the AI DevOps Framework.
@@ -133,52 +133,52 @@ nano configs/vercel-cli-config.json
 
 ```bash
 # List all projects
-./.agent/scripts/vercel-cli-helper.sh list-projects personal
+./.agents/scripts/vercel-cli-helper.sh list-projects personal
 
 # Deploy to preview environment
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./my-app preview
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./my-app preview
 
 # Deploy to production
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./my-app production
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./my-app production
 
 # Get project information
-./.agent/scripts/vercel-cli-helper.sh get-project personal my-app
+./.agents/scripts/vercel-cli-helper.sh get-project personal my-app
 
 # List recent deployments
-./.agent/scripts/vercel-cli-helper.sh list-deployments personal my-app 10
+./.agents/scripts/vercel-cli-helper.sh list-deployments personal my-app 10
 ```
 
 ### Environment Variables
 
 ```bash
 # List environment variables
-./.agent/scripts/vercel-cli-helper.sh list-env personal my-app development
+./.agents/scripts/vercel-cli-helper.sh list-env personal my-app development
 
 # Add environment variable
-./.agent/scripts/vercel-cli-helper.sh add-env personal my-app API_KEY "secret-value" production
+./.agents/scripts/vercel-cli-helper.sh add-env personal my-app API_KEY "secret-value" production
 
 # Remove environment variable
-./.agent/scripts/vercel-cli-helper.sh remove-env personal my-app OLD_VAR production
+./.agents/scripts/vercel-cli-helper.sh remove-env personal my-app OLD_VAR production
 ```
 
 ### Domain Management
 
 ```bash
 # List domains
-./.agent/scripts/vercel-cli-helper.sh list-domains personal
+./.agents/scripts/vercel-cli-helper.sh list-domains personal
 
 # Add domain to project
-./.agent/scripts/vercel-cli-helper.sh add-domain personal my-app example.com
+./.agents/scripts/vercel-cli-helper.sh add-domain personal my-app example.com
 ```
 
 ### Account Management
 
 ```bash
 # List configured accounts
-./.agent/scripts/vercel-cli-helper.sh list-accounts
+./.agents/scripts/vercel-cli-helper.sh list-accounts
 
 # Show current Vercel user
-./.agent/scripts/vercel-cli-helper.sh whoami
+./.agents/scripts/vercel-cli-helper.sh whoami
 ```
 
 ## Advanced Features
@@ -222,10 +222,10 @@ Perfect for immediate development without any setup:
 
 ```bash
 # Start development server (works immediately)
-./.agent/scripts/vercel-cli-helper.sh dev personal ./my-app 3000
+./.agents/scripts/vercel-cli-helper.sh dev personal ./my-app 3000
 
 # Build project locally
-./.agent/scripts/vercel-cli-helper.sh build personal ./my-app
+./.agents/scripts/vercel-cli-helper.sh build personal ./my-app
 
 # Works with any project type:
 # - Node.js projects with package.json
@@ -240,12 +240,12 @@ Support for development, preview, and production environments:
 
 ```bash
 # Local development (no auth required)
-./.agent/scripts/vercel-cli-helper.sh dev personal ./app 3000
+./.agents/scripts/vercel-cli-helper.sh dev personal ./app 3000
 
 # Deploy to specific environments (requires auth)
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./app development
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./app preview
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./app production
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./app development
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./app preview
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./app production
 ```
 
 ## Integration with CI/CD
@@ -265,7 +265,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deploy to Vercel
         run: |
-          ./.agent/scripts/vercel-cli-helper.sh deploy production ./ production
+          ./.agents/scripts/vercel-cli-helper.sh deploy production ./ production
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 ```
@@ -274,10 +274,10 @@ jobs:
 
 ```bash
 # Preview deployments for feature branches
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./app preview
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./app preview
 
 # Production deployments for main branch
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./app production
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./app production
 ```
 
 ## Security Best Practices
@@ -330,7 +330,7 @@ Enable verbose logging:
 ```bash
 # Set debug environment variable
 export DEBUG=1
-./.agent/scripts/vercel-cli-helper.sh deploy personal ./app
+./.agents/scripts/vercel-cli-helper.sh deploy personal ./app
 ```
 
 ## Framework Support

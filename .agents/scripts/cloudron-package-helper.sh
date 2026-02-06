@@ -153,7 +153,7 @@ DOCKERFILE
 .cloudron/
 
 # aidevops
-.agent/loop-state/
+.agents/loop-state/
 *.local.md
 
 # Build artifacts

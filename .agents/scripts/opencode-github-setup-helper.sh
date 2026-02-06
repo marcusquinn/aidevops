@@ -538,7 +538,7 @@ cmd_create_secure_workflow() {
 create_secure_workflow_inline() {
     cat > .github/workflows/opencode-agent.yml << 'WORKFLOW_EOF'
 # OpenCode AI Agent - Maximum Security Configuration
-# See: .agent/tools/git/opencode-github-security.md for documentation
+# See: .agents/tools/git/opencode-github-security.md for documentation
 name: OpenCode AI Agent
 
 on:

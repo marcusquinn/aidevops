@@ -48,7 +48,7 @@ Snyk provides four core security scanning capabilities:
 
 ```bash
 # Install via the helper script
-./.agent/scripts/snyk-helper.sh install
+./.agents/scripts/snyk-helper.sh install
 
 # Or install manually:
 # macOS (Homebrew)
@@ -66,7 +66,7 @@ chmod +x /usr/local/bin/snyk
 
 ```bash
 # Interactive OAuth authentication (recommended for local use)
-./.agent/scripts/snyk-helper.sh auth
+./.agents/scripts/snyk-helper.sh auth
 
 # Or set environment variable (recommended for CI/CD)
 export SNYK_TOKEN="your-api-token"
@@ -89,48 +89,48 @@ cp configs/snyk-config.json.txt configs/snyk-config.json
 
 ```bash
 # Check status and authentication
-./.agent/scripts/snyk-helper.sh status
+./.agents/scripts/snyk-helper.sh status
 
 # Scan current directory for dependency vulnerabilities
-./.agent/scripts/snyk-helper.sh test
+./.agents/scripts/snyk-helper.sh test
 
 # Scan source code for security issues
-./.agent/scripts/snyk-helper.sh code
+./.agents/scripts/snyk-helper.sh code
 
 # Scan a container image
-./.agent/scripts/snyk-helper.sh container nginx:latest
+./.agents/scripts/snyk-helper.sh container nginx:latest
 
 # Scan Infrastructure as Code files
-./.agent/scripts/snyk-helper.sh iac ./terraform/
+./.agents/scripts/snyk-helper.sh iac ./terraform/
 
 # Run all security scans
-./.agent/scripts/snyk-helper.sh full
+./.agents/scripts/snyk-helper.sh full
 ```
 
 ### Advanced Scanning
 
 ```bash
 # Scan with specific organization
-./.agent/scripts/snyk-helper.sh test . my-org
+./.agents/scripts/snyk-helper.sh test . my-org
 
 # Scan with JSON output for CI/CD
-./.agent/scripts/snyk-helper.sh test . "" "--json"
+./.agents/scripts/snyk-helper.sh test . "" "--json"
 
 # Scan with severity threshold
-./.agent/scripts/snyk-helper.sh test . "" "--severity-threshold=critical"
+./.agents/scripts/snyk-helper.sh test . "" "--severity-threshold=critical"
 
 # Scan all projects in a monorepo
-./.agent/scripts/snyk-helper.sh test . "" "--all-projects"
+./.agents/scripts/snyk-helper.sh test . "" "--all-projects"
 
 # Scan container with Dockerfile context
-./.agent/scripts/snyk-helper.sh container my-image:tag "" "--file=Dockerfile"
+./.agents/scripts/snyk-helper.sh container my-image:tag "" "--file=Dockerfile"
 ```
 
 ### Continuous Monitoring
 
 ```bash
 # Create project snapshot for monitoring
-./.agent/scripts/snyk-helper.sh monitor . my-org my-project-name
+./.agents/scripts/snyk-helper.sh monitor . my-org my-project-name
 
 # Monitor container image
 snyk container monitor nginx:latest --org=my-org
@@ -142,10 +142,10 @@ snyk container monitor nginx:latest --org=my-org
 
 ```bash
 # Generate CycloneDX SBOM (default)
-./.agent/scripts/snyk-helper.sh sbom . cyclonedx1.4+json sbom.json
+./.agents/scripts/snyk-helper.sh sbom . cyclonedx1.4+json sbom.json
 
 # Generate SPDX SBOM
-./.agent/scripts/snyk-helper.sh sbom . spdx2.3+json sbom-spdx.json
+./.agents/scripts/snyk-helper.sh sbom . spdx2.3+json sbom-spdx.json
 ```
 
 ## CI/CD Integration
@@ -264,7 +264,7 @@ Add to your MCP configuration file:
 snyk mcp
 
 # Or via helper script
-./.agent/scripts/snyk-helper.sh mcp
+./.agents/scripts/snyk-helper.sh mcp
 ```
 
 ## Severity Levels
@@ -546,16 +546,16 @@ The Snyk integration provides:
 
 ```bash
 # Status check
-./.agent/scripts/snyk-helper.sh status
+./.agents/scripts/snyk-helper.sh status
 
 # Full security scan
-./.agent/scripts/snyk-helper.sh full
+./.agents/scripts/snyk-helper.sh full
 
 # List configured organizations
-./.agent/scripts/snyk-helper.sh accounts
+./.agents/scripts/snyk-helper.sh accounts
 
 # Start MCP server
-./.agent/scripts/snyk-helper.sh mcp
+./.agents/scripts/snyk-helper.sh mcp
 ```
 
 ---

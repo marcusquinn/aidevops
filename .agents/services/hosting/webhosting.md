@@ -18,12 +18,12 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Local domain management for ~/Git projects with SSL
-- **Script**: `.agent/scripts/webhosting-helper.sh`
+- **Script**: `.agents/scripts/webhosting-helper.sh`
 - **Config**: `configs/webhosting-config.json`
 - **Requires**: LocalWP or nginx, OpenSSL, sudo access
 
 **Commands**: `setup|list|remove`
-**Usage**: `./.agent/scripts/webhosting-helper.sh setup PROJECT_NAME [PORT]`
+**Usage**: `./.agents/scripts/webhosting-helper.sh setup PROJECT_NAME [PORT]`
 
 **Frameworks** (auto-detected):
 - Next.js/React/Vue/Nuxt: port 3000
@@ -73,7 +73,7 @@ The Web Hosting Helper provides seamless local domain management for web applica
 2. **Make script executable**:
 
    ```bash
-   chmod +x .agent/scripts/webhosting-helper.sh
+   chmod +x .agents/scripts/webhosting-helper.sh
    ```
 
 ## 📖 Usage
@@ -82,22 +82,22 @@ The Web Hosting Helper provides seamless local domain management for web applica
 
 ```bash
 # Auto-detect framework and port
-./.agent/scripts/webhosting-helper.sh setup myapp
+./.agents/scripts/webhosting-helper.sh setup myapp
 
 # Specify custom port
-./.agent/scripts/webhosting-helper.sh setup myapp 3001
+./.agents/scripts/webhosting-helper.sh setup myapp 3001
 
 # Examples for different frameworks
-./.agent/scripts/webhosting-helper.sh setup nextjs-app 3000
-./.agent/scripts/webhosting-helper.sh setup vue-project 3000
-./.agent/scripts/webhosting-helper.sh setup svelte-app 5173
-./.agent/scripts/webhosting-helper.sh setup django-api 8000
+./.agents/scripts/webhosting-helper.sh setup nextjs-app 3000
+./.agents/scripts/webhosting-helper.sh setup vue-project 3000
+./.agents/scripts/webhosting-helper.sh setup svelte-app 5173
+./.agents/scripts/webhosting-helper.sh setup django-api 8000
 ```
 
 ### List Configured Domains
 
 ```bash
-./.agent/scripts/webhosting-helper.sh list
+./.agents/scripts/webhosting-helper.sh list
 ```
 
 Output example:
@@ -110,7 +110,7 @@ Output example:
 ### Remove a Domain
 
 ```bash
-./.agent/scripts/webhosting-helper.sh remove myapp
+./.agents/scripts/webhosting-helper.sh remove myapp
 ```
 
 ## 🔧 Framework Support
@@ -182,7 +182,7 @@ When setting up a local domain for an AI agent, follow these exact steps:
 1. **Run the setup command**:
 
    ```bash
-   ./.agent/scripts/webhosting-helper.sh setup PROJECT_NAME PORT
+   ./.agents/scripts/webhosting-helper.sh setup PROJECT_NAME PORT
    ```
 
 2. **⚠️ CRITICAL: Add domain to hosts file**:
@@ -230,7 +230,7 @@ When setting up a local domain for an AI agent, follow these exact steps:
 
 ```bash
 # 1. Setup domain
-./.agent/scripts/webhosting-helper.sh setup myapp 3000
+./.agents/scripts/webhosting-helper.sh setup myapp 3000
 
 # 2. Add to hosts file (REQUIRED - run in separate terminal)
 echo "127.0.0.1 myapp.local" | sudo tee -a /etc/hosts
@@ -269,7 +269,7 @@ open https://localwp.com/
 lsof -i :3000
 
 # Use a different port
-./.agent/scripts/webhosting-helper.sh setup myapp 3001
+./.agents/scripts/webhosting-helper.sh setup myapp 3001
 ```
 
 ### SSL Certificate Issues
@@ -277,7 +277,7 @@ lsof -i :3000
 ```bash
 # Regenerate certificates
 rm ~/.localhost-setup/certs/myapp.local.*
-./.agent/scripts/webhosting-helper.sh setup myapp
+./.agents/scripts/webhosting-helper.sh setup myapp
 ```
 
 ### Build Errors (Framework-Specific)
@@ -307,7 +307,7 @@ PORT=PORT_NUMBER pnpm dev
 
    ```bash
    cd ~/Git/aidevops
-   ./.agent/scripts/webhosting-helper.sh setup myapp
+   ./.agents/scripts/webhosting-helper.sh setup myapp
    ```
 
 3. **Start development server**:

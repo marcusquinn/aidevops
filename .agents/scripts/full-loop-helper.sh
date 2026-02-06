@@ -40,7 +40,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
-readonly STATE_DIR=".agent/loop-state"
+readonly STATE_DIR=".agents/loop-state"
 readonly STATE_FILE="${STATE_DIR}/full-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
@@ -606,7 +606,7 @@ cmd_run_foreground() {
 
     # Auto-advance when task phase completes in v2.
     # Legacy mode leaves a Ralph state file; in that case we must wait for manual completion.
-    if [[ -f ".agent/loop-state/ralph-loop.local.state" ]] || [[ -f ".claude/ralph-loop.local.state" ]]; then
+    if [[ -f ".agents/loop-state/ralph-loop.local.state" ]] || [[ -f ".claude/ralph-loop.local.state" ]]; then
         print_warning "Task loop still active (legacy mode). Run: full-loop-helper.sh resume when complete."
         return 0
     fi
@@ -628,7 +628,7 @@ cmd_resume() {
     case "$CURRENT_PHASE" in
         "$PHASE_TASK")
             # Check if task is complete (check both new and legacy locations)
-            if [[ -f ".agent/loop-state/ralph-loop.local.state" ]] || [[ -f ".claude/ralph-loop.local.state" ]]; then
+            if [[ -f ".agents/loop-state/ralph-loop.local.state" ]] || [[ -f ".claude/ralph-loop.local.state" ]]; then
                 print_info "Task loop still active. Complete it first."
                 return 0
             fi
@@ -728,8 +728,8 @@ cmd_cancel() {
     clear_state
     
     # Also cancel any sub-loops (both new and legacy locations)
-    rm -f ".agent/loop-state/ralph-loop.local.state" 2>/dev/null
-    rm -f ".agent/loop-state/quality-loop.local.state" 2>/dev/null
+    rm -f ".agents/loop-state/ralph-loop.local.state" 2>/dev/null
+    rm -f ".agents/loop-state/quality-loop.local.state" 2>/dev/null
     rm -f ".claude/ralph-loop.local.state" 2>/dev/null
     rm -f ".claude/quality-loop.local.state" 2>/dev/null
     

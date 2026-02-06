@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - Agno: Enterprise AI agent operating system (AgentOS) running locally
-- Setup: `bash .agent/scripts/agno-setup.sh setup`
+- Setup: `bash .agents/scripts/agno-setup.sh setup`
 - Start: `~/.aidevops/scripts/start-agno-stack.sh`
 - Stop: `~/.aidevops/scripts/stop-agno-stack.sh`
 - Status: `~/.aidevops/scripts/agno-status.sh`
@@ -74,7 +74,7 @@ npm --version      # Requires npm
 
 ```bash
 # Run the setup script
-bash .agent/scripts/agno-setup.sh setup
+bash .agents/scripts/agno-setup.sh setup
 
 # Configure API keys
 nano ~/.aidevops/agno/.env
@@ -222,7 +222,7 @@ PORT=3000
 
 ```bash
 # Convert documents for agent processing
-bash .agent/scripts/pandoc-helper.sh batch ./docs ./agent-ready "*.{docx,pdf}"
+bash .agents/scripts/pandoc-helper.sh batch ./docs ./agent-ready "*.{docx,pdf}"
 
 # Start Agno agents
 ~/.aidevops/scripts/start-agno-stack.sh
@@ -315,7 +315,7 @@ devops_agent.knowledge_base = kb
 
 ```bash
 # Setup (one-time)
-bash .agent/scripts/agno-setup.sh setup
+bash .agents/scripts/agno-setup.sh setup
 
 # Service control
 ~/.aidevops/scripts/start-agno-stack.sh    # Start services
@@ -323,9 +323,9 @@ bash .agent/scripts/agno-setup.sh setup
 ~/.aidevops/scripts/agno-status.sh         # Check status
 
 # Individual components
-bash .agent/scripts/agno-setup.sh agno          # Setup only AgentOS
-bash .agent/scripts/agno-setup.sh ui            # Setup only Agent-UI
-bash .agent/scripts/agno-setup.sh check         # Check prerequisites
+bash .agents/scripts/agno-setup.sh agno          # Setup only AgentOS
+bash .agents/scripts/agno-setup.sh ui            # Setup only Agent-UI
+bash .agents/scripts/agno-setup.sh check         # Check prerequisites
 ```
 
 ### **Development Commands**
@@ -433,7 +433,7 @@ model = OpenAIChat(
 
 ```bash
 # Convert documents for agent processing
-bash .agent/scripts/pandoc-helper.sh batch ./project-docs ./agent-ready
+bash .agents/scripts/pandoc-helper.sh batch ./project-docs ./agent-ready
 
 # Ask agent to analyze converted docs
 # "Analyze the converted documentation and create a deployment checklist"
@@ -443,7 +443,7 @@ bash .agent/scripts/pandoc-helper.sh batch ./project-docs ./agent-ready
 
 ```bash
 # Get current version for agent context
-VERSION=$(bash .agent/scripts/version-manager.sh get)
+VERSION=$(bash .agents/scripts/version-manager.sh get)
 
 # Ask agent to help with release
 # "Help me prepare release notes for version $VERSION"

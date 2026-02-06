@@ -90,7 +90,7 @@ get_todo_status() {
 get_ralph_status() {
     local project_root="$1"
     # Check new location first, then legacy
-    local ralph_file="$project_root/.agent/loop-state/ralph-loop.local.state"
+    local ralph_file="$project_root/.agents/loop-state/ralph-loop.local.state"
     local ralph_file_legacy="$project_root/.claude/ralph-loop.local.state"
     
     local active_file=""

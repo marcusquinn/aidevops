@@ -218,4 +218,4 @@ jobs:
         echo "Recommended actions:"
         echo "1. Review the failed checks in the workflow summary"
         echo "2. If critical issues found, consider rollback"
-        echo "3. See: .agent/workflows/postflight.md#rollback-procedures"
+        echo "3. See: .agents/workflows/postflight.md#rollback-procedures"

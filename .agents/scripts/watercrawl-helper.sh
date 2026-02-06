@@ -353,7 +353,7 @@ coolify_deploy() {
     print_info "  https://docs.watercrawl.dev/self-hosted/installation"
     print_info ""
     print_info "Or use coolify-helper.sh for automated deployment:"
-    print_info "  bash .agent/scripts/coolify-helper.sh deploy watercrawl"
+    print_info "  bash .agents/scripts/coolify-helper.sh deploy watercrawl"
     
     return 0
 }
@@ -984,7 +984,7 @@ show_help() {
     echo "  Self-hosted docs: https://docs.watercrawl.dev/self-hosted/"
     echo "  Cloud dashboard: https://app.watercrawl.dev"
     echo "  GitHub: https://github.com/watercrawl/WaterCrawl"
-    echo "  Framework docs: .agent/tools/browser/watercrawl.md"
+    echo "  Framework docs: .agents/tools/browser/watercrawl.md"
     return 0
 }
 

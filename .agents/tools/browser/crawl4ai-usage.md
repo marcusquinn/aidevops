@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Helper**: `.agent/scripts/crawl4ai-helper.sh`
+- **Helper**: `.agents/scripts/crawl4ai-helper.sh`
 - **API Port**: `localhost:11235`
 - **Commands**: `install | docker-setup | docker-start | status | crawl | extract | mcp-setup`
 - **Crawl**: `./crawl4ai-helper.sh crawl URL markdown output.json`
@@ -40,23 +40,23 @@ This guide provides AI assistants with comprehensive instructions for using Craw
 
 ```bash
 # Install Crawl4AI
-./.agent/scripts/crawl4ai-helper.sh install
+./.agents/scripts/crawl4ai-helper.sh install
 
 # Setup Docker deployment
-./.agent/scripts/crawl4ai-helper.sh docker-setup
+./.agents/scripts/crawl4ai-helper.sh docker-setup
 
 # Start services
-./.agent/scripts/crawl4ai-helper.sh docker-start
+./.agents/scripts/crawl4ai-helper.sh docker-start
 
 # Check status
-./.agent/scripts/crawl4ai-helper.sh status
+./.agents/scripts/crawl4ai-helper.sh status
 ```
 
 ### MCP Integration
 
 ```bash
 # Setup MCP server for AI assistants
-./.agent/scripts/crawl4ai-helper.sh mcp-setup
+./.agents/scripts/crawl4ai-helper.sh mcp-setup
 ```
 
 ## Core Operations
@@ -65,23 +65,23 @@ This guide provides AI assistants with comprehensive instructions for using Craw
 
 ```bash
 # Basic crawling - extract markdown
-./.agent/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
 
 # Crawl with specific format
-./.agent/scripts/crawl4ai-helper.sh crawl https://news.com html news.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://news.com html news.json
 
 # Save to file
-./.agent/scripts/crawl4ai-helper.sh crawl https://docs.com markdown ~/Downloads/docs.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://docs.com markdown ~/Downloads/docs.json
 ```
 
 ### 2. Structured Data Extraction
 
 ```bash
 # Extract with CSS selectors
-./.agent/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
+./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
 
 # Complex schema extraction
-./.agent/scripts/crawl4ai-helper.sh extract https://ecommerce.com '{
+./.agents/scripts/crawl4ai-helper.sh extract https://ecommerce.com '{
   "products": {
     "selector": ".product",
     "fields": [
@@ -159,10 +159,10 @@ response = requests.post("http://localhost:11235/crawl", json={
 
 ```bash
 # Research articles
-./.agent/scripts/crawl4ai-helper.sh crawl https://research-site.com markdown research.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://research-site.com markdown research.json
 
 # Extract key information
-./.agent/scripts/crawl4ai-helper.sh extract https://paper.com '{
+./.agents/scripts/crawl4ai-helper.sh extract https://paper.com '{
   "title": "h1",
   "authors": ".authors",
   "abstract": ".abstract",
@@ -175,7 +175,7 @@ response = requests.post("http://localhost:11235/crawl", json={
 ```bash
 # Multiple news sources
 for url in "https://news1.com" "https://news2.com" "https://news3.com"; do
-    ./.agent/scripts/crawl4ai-helper.sh crawl "$url" markdown "news-$(basename $url).json"
+    ./.agents/scripts/crawl4ai-helper.sh crawl "$url" markdown "news-$(basename $url).json"
 done
 ```
 
@@ -183,7 +183,7 @@ done
 
 ```bash
 # Product information
-./.agent/scripts/crawl4ai-helper.sh extract https://shop.com/product '{
+./.agents/scripts/crawl4ai-helper.sh extract https://shop.com/product '{
   "name": "h1.product-title",
   "price": ".price-current",
   "description": ".product-description",
@@ -201,7 +201,7 @@ done
 
 ```bash
 # API documentation
-./.agent/scripts/crawl4ai-helper.sh extract https://api-docs.com '{
+./.agents/scripts/crawl4ai-helper.sh extract https://api-docs.com '{
   "endpoints": {
     "selector": ".endpoint",
     "fields": [
@@ -230,7 +230,7 @@ urls=(
 
 for url in "${urls[@]}"; do
     echo "Processing: $url"
-    ./.agent/scripts/crawl4ai-helper.sh crawl "$url" markdown "output-$(date +%s).json"
+    ./.agents/scripts/crawl4ai-helper.sh crawl "$url" markdown "output-$(date +%s).json"
     sleep 2  # Rate limiting
 done
 ```
@@ -245,10 +245,10 @@ URL="https://example.com"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # 1. Basic crawl
-./.agent/scripts/crawl4ai-helper.sh crawl "$URL" markdown "raw-$TIMESTAMP.json"
+./.agents/scripts/crawl4ai-helper.sh crawl "$URL" markdown "raw-$TIMESTAMP.json"
 
 # 2. Extract structured data
-./.agent/scripts/crawl4ai-helper.sh extract "$URL" '{
+./.agents/scripts/crawl4ai-helper.sh extract "$URL" '{
   "title": "h1",
   "headings": "h2, h3",
   "links": {"selector": "a", "type": "attribute", "attribute": "href"},
@@ -288,7 +288,7 @@ export CRAWL4AI_MEMORY_THRESHOLD=90
 
 ```bash
 # Comprehensive status
-./.agent/scripts/crawl4ai-helper.sh status
+./.agents/scripts/crawl4ai-helper.sh status
 
 # Docker container status
 docker ps | grep crawl4ai
@@ -313,8 +313,8 @@ curl -s http://localhost:11235/metrics
 docker logs crawl4ai --tail 50
 
 # Restart services
-./.agent/scripts/crawl4ai-helper.sh docker-stop
-./.agent/scripts/crawl4ai-helper.sh docker-start
+./.agents/scripts/crawl4ai-helper.sh docker-stop
+./.agents/scripts/crawl4ai-helper.sh docker-start
 
 # Test basic functionality
 curl -X POST http://localhost:11235/crawl \
@@ -370,7 +370,7 @@ jq -r '.results[0].links.internal[]' output.json
 
 ```bash
 # Use cache mode for repeated requests
-./.agent/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
 
 # Clear cache when needed
 docker exec crawl4ai redis-cli FLUSHALL
@@ -382,25 +382,25 @@ docker exec crawl4ai redis-cli FLUSHALL
 
 ```bash
 # Combine with quality tools
-./.agent/scripts/crawl4ai-helper.sh crawl https://docs.com markdown docs.json
-cat docs.json | jq -r '.results[0].markdown' | ./.agent/scripts/pandoc-helper.sh convert - pdf docs.pdf
+./.agents/scripts/crawl4ai-helper.sh crawl https://docs.com markdown docs.json
+cat docs.json | jq -r '.results[0].markdown' | ./.agents/scripts/pandoc-helper.sh convert - pdf docs.pdf
 ```
 
 ### With AI Workflows
 
 ```bash
 # Extract content for AI processing
-./.agent/scripts/crawl4ai-helper.sh crawl https://article.com markdown article.json
+./.agents/scripts/crawl4ai-helper.sh crawl https://article.com markdown article.json
 CONTENT=$(jq -r '.results[0].markdown' article.json)
 echo "$CONTENT" | # Process with your AI pipeline
 ```
 
 ## Resources
 
-- **Helper Script**: `.agent/scripts/crawl4ai-helper.sh`
+- **Helper Script**: `.agents/scripts/crawl4ai-helper.sh`
 - **Configuration**: `configs/crawl4ai-config.json.txt`
 - **MCP Setup**: `configs/mcp-templates/crawl4ai-mcp-config.json`
-- **Integration Guide**: `.agent/wiki/crawl4ai-integration.md`
+- **Integration Guide**: `.agents/wiki/crawl4ai-integration.md`
 - **Official Docs**: https://docs.crawl4ai.com/
 
 ## Success Checklist

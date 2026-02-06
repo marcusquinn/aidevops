@@ -20,7 +20,7 @@ tools:
 
 - **Secrets Location**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
 - **Working Dirs**: `~/.aidevops/` (agno, stagehand, reports)
-- **Setup**: `bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh setup`
+- **Setup**: `bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup`
 
 **Commands**:
 - `set <service-name> <VALUE>` - Store API key (converts to UPPER_CASE export)
@@ -53,7 +53,7 @@ This file is automatically sourced by your shell (zsh and bash) on startup.
 ### 1. Initialize Secure Storage
 
 ```bash
-bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup
 ```
 
 This will:
@@ -68,10 +68,10 @@ This will:
 
 ```bash
 # Service name format (converted to UPPER_CASE)
-bash .agent/scripts/setup-local-api-keys.sh set vercel-token YOUR_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set vercel-token YOUR_TOKEN
 # Result: export VERCEL_TOKEN="YOUR_TOKEN"
 
-bash .agent/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN
 # Result: export SONAR="YOUR_TOKEN"
 ```
 
@@ -86,13 +86,13 @@ export VERCEL_TOKEN="abc123"
 Use the `add` command to parse and store it:
 
 ```bash
-bash .agent/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
+bash .agents/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
 ```
 
 #### Method C: Direct env var name
 
 ```bash
-bash .agent/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
+bash .agents/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
 # Result: export SUPABASE_KEY="abc123"
 ```
 
@@ -100,29 +100,29 @@ bash .agent/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
 
 ```bash
 # Codacy - https://app.codacy.com/account/api-tokens
-bash .agent/scripts/setup-local-api-keys.sh set codacy-project-token YOUR_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set codacy-project-token YOUR_TOKEN
 
 # SonarCloud - https://sonarcloud.io/account/security
-bash .agent/scripts/setup-local-api-keys.sh set sonar-token YOUR_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set sonar-token YOUR_TOKEN
 
 # CodeRabbit - https://app.coderabbit.ai/settings
-bash .agent/scripts/setup-local-api-keys.sh set coderabbit-api-key YOUR_KEY
+bash .agents/scripts/setup-local-api-keys.sh set coderabbit-api-key YOUR_KEY
 
 # Hetzner Cloud - https://console.hetzner.cloud/projects/*/security/tokens
-bash .agent/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_TOKEN
+bash .agents/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_TOKEN
 
 # OpenAI - https://platform.openai.com/api-keys
-bash .agent/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
+bash .agents/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
 ```
 
 ### 4. Verify Storage
 
 ```bash
 # List configured services (keys are not shown)
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 
 # Get a specific key
-bash .agent/scripts/setup-local-api-keys.sh get sonar-token
+bash .agents/scripts/setup-local-api-keys.sh get sonar-token
 
 # View the file directly (redacted)
 cat ~/.config/aidevops/mcp-env.sh | sed 's/=.*/=<REDACTED>/'
@@ -190,13 +190,13 @@ chmod 600 ~/.config/aidevops/mcp-env.sh
 
 ```bash
 # Check if stored
-bash .agent/scripts/setup-local-api-keys.sh get service-name
+bash .agents/scripts/setup-local-api-keys.sh get service-name
 
 # Check environment
 echo $SERVICE_NAME
 
 # Re-add if missing
-bash .agent/scripts/setup-local-api-keys.sh set service-name YOUR_KEY
+bash .agents/scripts/setup-local-api-keys.sh set service-name YOUR_KEY
 ```
 
 ### Changes Not Taking Effect
@@ -212,7 +212,7 @@ source ~/.zshrc  # or ~/.bashrc
 
 ```bash
 # Re-run setup to add sourcing to shell configs
-bash .agent/scripts/setup-local-api-keys.sh setup
+bash .agents/scripts/setup-local-api-keys.sh setup
 ```
 
 ## Multi-Tenant Support

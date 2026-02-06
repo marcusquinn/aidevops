@@ -915,13 +915,18 @@ cmd_init() {
 EOF
     print_success "Created .aidevops.json"
     
-    # Create .agent symlink
-    if [[ ! -e "$project_root/.agent" ]]; then
-        print_info "Creating .agent symlink..."
-        ln -s "$AGENTS_DIR" "$project_root/.agent"
-        print_success "Created .agent -> $AGENTS_DIR"
+    # Create .agents symlink (or migrate from legacy .agent)
+    if [[ -L "$project_root/.agent" || -d "$project_root/.agent" ]]; then
+        # Migrate legacy .agent symlink to .agents
+        rm -f "$project_root/.agent"
+        ln -s "$AGENTS_DIR" "$project_root/.agents"
+        print_success "Migrated .agent -> .agents symlink"
+    elif [[ ! -e "$project_root/.agents" ]]; then
+        print_info "Creating .agents symlink..."
+        ln -s "$AGENTS_DIR" "$project_root/.agents"
+        print_success "Created .agents -> $AGENTS_DIR"
     else
-        print_warning ".agent already exists, skipping symlink"
+        print_warning ".agents already exists, skipping symlink"
     fi
     
     # Create planning files if enabled
@@ -1080,13 +1085,17 @@ EOF
     # Add to .gitignore if needed
     local gitignore="$project_root/.gitignore"
     if [[ -f "$gitignore" ]]; then
-        if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+        if ! grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
             {
                 echo ""
                 echo "# aidevops"
-                echo ".agent"
+                echo ".agents"
             } >> "$gitignore"
-            print_success "Added .agent to .gitignore"
+            print_success "Added .agents to .gitignore"
+            # Also add legacy .agent for backward compatibility
+            if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+                echo ".agent" >> "$gitignore"
+            fi
         fi
         # Add .beads if beads is enabled
         if [[ "$enable_beads" == "true" ]]; then

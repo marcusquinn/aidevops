@@ -6,7 +6,7 @@
 
 # Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
+source "${SCRIPT_DIR}/../../.agents/scripts/shared-constants.sh"
 
 # Colors for output
 readonly BLUE='\033[0;34m'
@@ -401,7 +401,7 @@ main() {
             setup_mcp_integration
             print_success "Stagehand advanced setup completed!"
             print_info "Next steps:"
-            print_info "1. Run: bash .agent/scripts/stagehand-helper.sh install"
+            print_info "1. Run: bash .agents/scripts/stagehand-helper.sh install"
             print_info "2. Configure API keys in ~/.aidevops/stagehand/.env"
             print_info "3. Try examples: cd ~/.aidevops/stagehand && npm run search-products" || exit
             ;;

@@ -104,67 +104,67 @@ cp configs/cloudron-config.json.txt configs/cloudron-config.json
 
 ```bash
 # List all Cloudron servers
-./.agent/scripts/cloudron-helper.sh servers
+./.agents/scripts/cloudron-helper.sh servers
 
 # Connect to Cloudron server
-./.agent/scripts/cloudron-helper.sh connect production
+./.agents/scripts/cloudron-helper.sh connect production
 
 # Get server status
-./.agent/scripts/cloudron-helper.sh status production
+./.agents/scripts/cloudron-helper.sh status production
 
 # List installed apps
-./.agent/scripts/cloudron-helper.sh apps production
+./.agents/scripts/cloudron-helper.sh apps production
 ```
 
 ### **App Management:**
 
 ```bash
 # Install new app
-./.agent/scripts/cloudron-helper.sh install-app production wordpress blog.yourdomain.com
+./.agents/scripts/cloudron-helper.sh install-app production wordpress blog.yourdomain.com
 
 # Update app
-./.agent/scripts/cloudron-helper.sh update-app production app-id
+./.agents/scripts/cloudron-helper.sh update-app production app-id
 
 # Restart app
-./.agent/scripts/cloudron-helper.sh restart-app production app-id
+./.agents/scripts/cloudron-helper.sh restart-app production app-id
 
 # Get app logs
-./.agent/scripts/cloudron-helper.sh logs production app-id
+./.agents/scripts/cloudron-helper.sh logs production app-id
 
 # Backup app
-./.agent/scripts/cloudron-helper.sh backup-app production app-id
+./.agents/scripts/cloudron-helper.sh backup-app production app-id
 ```
 
 ### **Domain Management:**
 
 ```bash
 # List domains
-./.agent/scripts/cloudron-helper.sh domains production
+./.agents/scripts/cloudron-helper.sh domains production
 
 # Add domain
-./.agent/scripts/cloudron-helper.sh add-domain production newdomain.com
+./.agents/scripts/cloudron-helper.sh add-domain production newdomain.com
 
 # Configure DNS
-./.agent/scripts/cloudron-helper.sh configure-dns production newdomain.com
+./.agents/scripts/cloudron-helper.sh configure-dns production newdomain.com
 
 # Get SSL certificate status
-./.agent/scripts/cloudron-helper.sh ssl-status production newdomain.com
+./.agents/scripts/cloudron-helper.sh ssl-status production newdomain.com
 ```
 
 ### **User Management:**
 
 ```bash
 # List users
-./.agent/scripts/cloudron-helper.sh users production
+./.agents/scripts/cloudron-helper.sh users production
 
 # Add user
-./.agent/scripts/cloudron-helper.sh add-user production newuser@domain.com
+./.agents/scripts/cloudron-helper.sh add-user production newuser@domain.com
 
 # Update user permissions
-./.agent/scripts/cloudron-helper.sh update-user production user-id admin
+./.agents/scripts/cloudron-helper.sh update-user production user-id admin
 
 # Reset user password
-./.agent/scripts/cloudron-helper.sh reset-password production user-id
+./.agents/scripts/cloudron-helper.sh reset-password production user-id
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -189,16 +189,16 @@ cp configs/cloudron-config.json.txt configs/cloudron-config.json
 
 ```bash
 # Check app security status
-./.agent/scripts/cloudron-helper.sh security-status production
+./.agents/scripts/cloudron-helper.sh security-status production
 
 # Update all apps
-./.agent/scripts/cloudron-helper.sh update-all-apps production
+./.agents/scripts/cloudron-helper.sh update-all-apps production
 
 # Check SSL certificates
-./.agent/scripts/cloudron-helper.sh ssl-check production
+./.agents/scripts/cloudron-helper.sh ssl-check production
 
 # Review user access
-./.agent/scripts/cloudron-helper.sh audit-users production
+./.agents/scripts/cloudron-helper.sh audit-users production
 ```
 
 ## 🔍 **Troubleshooting**
@@ -329,13 +329,13 @@ openssl s_client -connect cloudron.yourdomain.com:443
 
 ```bash
 # Check available disk space
-./.agent/scripts/cloudron-helper.sh exec production 'df -h'
+./.agents/scripts/cloudron-helper.sh exec production 'df -h'
 
 # Check system resources
-./.agent/scripts/cloudron-helper.sh exec production 'free -h'
+./.agents/scripts/cloudron-helper.sh exec production 'free -h'
 
 # Review installation logs
-./.agent/scripts/cloudron-helper.sh logs production app-id
+./.agents/scripts/cloudron-helper.sh logs production app-id
 ```
 
 #### **App Startup Failures (Post-Update)**
@@ -358,10 +358,10 @@ dig cloudron.yourdomain.com
 nslookup cloudron.yourdomain.com
 
 # Verify domain ownership
-./.agent/scripts/cloudron-helper.sh verify-domain production yourdomain.com
+./.agents/scripts/cloudron-helper.sh verify-domain production yourdomain.com
 
 # Check SSL certificate status
-./.agent/scripts/cloudron-helper.sh ssl-status production yourdomain.com
+./.agents/scripts/cloudron-helper.sh ssl-status production yourdomain.com
 ```
 
 ### **App-Specific Troubleshooting**
@@ -377,25 +377,25 @@ For app-specific issues, check these subagents:
 
 ```bash
 # Get system status
-./.agent/scripts/cloudron-helper.sh status production
+./.agents/scripts/cloudron-helper.sh status production
 
 # Check resource usage
-./.agent/scripts/cloudron-helper.sh resources production
+./.agents/scripts/cloudron-helper.sh resources production
 
 # Monitor app health
-./.agent/scripts/cloudron-helper.sh health-check production
+./.agents/scripts/cloudron-helper.sh health-check production
 
 # Review system logs
-./.agent/scripts/cloudron-helper.sh system-logs production
+./.agents/scripts/cloudron-helper.sh system-logs production
 ```
 
 ### **App Monitoring:**
 
 ```bash
 # Monitor all apps
-for app_id in $(./.agent/scripts/cloudron-helper.sh apps production | awk '{print $1}'); do
+for app_id in $(./.agents/scripts/cloudron-helper.sh apps production | awk '{print $1}'); do
     echo "App $app_id status:"
-    ./.agent/scripts/cloudron-helper.sh app-status production $app_id
+    ./.agents/scripts/cloudron-helper.sh app-status production $app_id
 done
 ```
 
@@ -405,29 +405,29 @@ done
 
 ```bash
 # Create system backup
-./.agent/scripts/cloudron-helper.sh backup-system production
+./.agents/scripts/cloudron-helper.sh backup-system production
 
 # List backups
-./.agent/scripts/cloudron-helper.sh list-backups production
+./.agents/scripts/cloudron-helper.sh list-backups production
 
 # Restore from backup
-./.agent/scripts/cloudron-helper.sh restore-backup production backup-id
+./.agents/scripts/cloudron-helper.sh restore-backup production backup-id
 
 # Configure backup schedule
-./.agent/scripts/cloudron-helper.sh configure-backups production daily
+./.agents/scripts/cloudron-helper.sh configure-backups production daily
 ```
 
 ### **App-Specific Backups:**
 
 ```bash
 # Backup specific app
-./.agent/scripts/cloudron-helper.sh backup-app production app-id
+./.agents/scripts/cloudron-helper.sh backup-app production app-id
 
 # Restore app from backup
-./.agent/scripts/cloudron-helper.sh restore-app production app-id backup-id
+./.agents/scripts/cloudron-helper.sh restore-app production app-id backup-id
 
 # Export app data
-./.agent/scripts/cloudron-helper.sh export-app production app-id
+./.agents/scripts/cloudron-helper.sh export-app production app-id
 ```
 
 ## 📚 **Best Practices**

@@ -107,81 +107,81 @@ aws --version
 
 ```bash
 # List all SES accounts
-./.agent/scripts/ses-helper.sh accounts
+./.agents/scripts/ses-helper.sh accounts
 
 # Get sending quota
-./.agent/scripts/ses-helper.sh quota production
+./.agents/scripts/ses-helper.sh quota production
 
 # Get sending statistics
-./.agent/scripts/ses-helper.sh stats production
+./.agents/scripts/ses-helper.sh stats production
 
 # Monitor email delivery
-./.agent/scripts/ses-helper.sh monitor production
+./.agents/scripts/ses-helper.sh monitor production
 ```
 
 ### **Identity Management:**
 
 ```bash
 # List verified email addresses
-./.agent/scripts/ses-helper.sh verified-emails production
+./.agents/scripts/ses-helper.sh verified-emails production
 
 # List verified domains
-./.agent/scripts/ses-helper.sh verified-domains production
+./.agents/scripts/ses-helper.sh verified-domains production
 
 # Verify new email address
-./.agent/scripts/ses-helper.sh verify-email production newuser@yourdomain.com
+./.agents/scripts/ses-helper.sh verify-email production newuser@yourdomain.com
 
 # Verify new domain
-./.agent/scripts/ses-helper.sh verify-domain production newdomain.com
+./.agents/scripts/ses-helper.sh verify-domain production newdomain.com
 
 # Check identity verification status
-./.agent/scripts/ses-helper.sh verify-identity production yourdomain.com
+./.agents/scripts/ses-helper.sh verify-identity production yourdomain.com
 ```
 
 ### **DKIM Configuration:**
 
 ```bash
 # Get DKIM attributes
-./.agent/scripts/ses-helper.sh dkim production yourdomain.com
+./.agents/scripts/ses-helper.sh dkim production yourdomain.com
 
 # Enable DKIM for domain
-./.agent/scripts/ses-helper.sh enable-dkim production yourdomain.com
+./.agents/scripts/ses-helper.sh enable-dkim production yourdomain.com
 
 # Check DKIM status for email
-./.agent/scripts/ses-helper.sh dkim production noreply@yourdomain.com
+./.agents/scripts/ses-helper.sh dkim production noreply@yourdomain.com
 ```
 
 ### **Reputation & Deliverability:**
 
 ```bash
 # Check account reputation
-./.agent/scripts/ses-helper.sh reputation production
+./.agents/scripts/ses-helper.sh reputation production
 
 # List suppressed destinations (bounces/complaints)
-./.agent/scripts/ses-helper.sh suppressed production
+./.agents/scripts/ses-helper.sh suppressed production
 
 # Get details for suppressed email
-./.agent/scripts/ses-helper.sh suppression-details production user@example.com
+./.agents/scripts/ses-helper.sh suppression-details production user@example.com
 
 # Remove email from suppression list
-./.agent/scripts/ses-helper.sh remove-suppression production user@example.com
+./.agents/scripts/ses-helper.sh remove-suppression production user@example.com
 ```
 
 ### **Testing & Debugging:**
 
 ```bash
 # Send test email
-./.agent/scripts/ses-helper.sh send-test production noreply@yourdomain.com test@example.com "Test Subject" "Test message body"
+./.agents/scripts/ses-helper.sh send-test production noreply@yourdomain.com test@example.com "Test Subject" "Test message body"
 
 # Debug delivery issues for specific email
-./.agent/scripts/ses-helper.sh debug production problematic@example.com
+./.agents/scripts/ses-helper.sh debug production problematic@example.com
 
 # Audit complete SES configuration
-./.agent/scripts/ses-helper.sh audit production
+./.agents/scripts/ses-helper.sh audit production
 
 # Test with SES simulator addresses
-./.agent/scripts/ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
-./.agent/scripts/ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
+./.agents/scripts/ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
+./.agents/scripts/ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -245,17 +245,17 @@ aws sts get-caller-identity
 aws configure get region
 
 # Test SES access
-./.agent/scripts/ses-helper.sh quota production
+./.agents/scripts/ses-helper.sh quota production
 ```
 
 #### **Sending Limits:**
 
 ```bash
 # Check current quota
-./.agent/scripts/ses-helper.sh quota production
+./.agents/scripts/ses-helper.sh quota production
 
 # Monitor sending rate
-./.agent/scripts/ses-helper.sh stats production
+./.agents/scripts/ses-helper.sh stats production
 
 # Request limit increase through AWS Support if needed
 ```
@@ -264,26 +264,26 @@ aws configure get region
 
 ```bash
 # Check reputation
-./.agent/scripts/ses-helper.sh reputation production
+./.agents/scripts/ses-helper.sh reputation production
 
 # Look for suppressed destinations
-./.agent/scripts/ses-helper.sh suppressed production
+./.agents/scripts/ses-helper.sh suppressed production
 
 # Debug specific email
-./.agent/scripts/ses-helper.sh debug production problematic@example.com
+./.agents/scripts/ses-helper.sh debug production problematic@example.com
 
 # Check bounce/complaint rates
-./.agent/scripts/ses-helper.sh monitor production
+./.agents/scripts/ses-helper.sh monitor production
 ```
 
 #### **Verification Problems:**
 
 ```bash
 # Check verification status
-./.agent/scripts/ses-helper.sh verify-identity production yourdomain.com
+./.agents/scripts/ses-helper.sh verify-identity production yourdomain.com
 
 # Re-verify domain
-./.agent/scripts/ses-helper.sh verify-domain production yourdomain.com
+./.agents/scripts/ses-helper.sh verify-domain production yourdomain.com
 
 # Check DNS records
 dig TXT _amazonses.yourdomain.com
@@ -295,7 +295,7 @@ dig TXT _amazonses.yourdomain.com
 
 ```bash
 # Daily monitoring routine
-./.agent/scripts/ses-helper.sh monitor production
+./.agents/scripts/ses-helper.sh monitor production
 
 # Key metrics include:
 # - Send quota utilization
@@ -315,7 +315,7 @@ BOUNCE_THRESHOLD=5.0
 COMPLAINT_THRESHOLD=0.1
 
 # Get current stats
-STATS=$(./.agent/scripts/ses-helper.sh stats $ACCOUNT)
+STATS=$(./.agents/scripts/ses-helper.sh stats $ACCOUNT)
 
 # Parse and alert if thresholds exceeded
 # (Add your alerting logic here)
@@ -335,11 +335,11 @@ STATS=$(./.agent/scripts/ses-helper.sh stats $ACCOUNT)
 
 ```bash
 # Export SES configuration
-./.agent/scripts/ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
+./.agents/scripts/ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
 
 # Backup verified identities
-./.agent/scripts/ses-helper.sh verified-emails production > verified-emails-backup.txt
-./.agent/scripts/ses-helper.sh verified-domains production > verified-domains-backup.txt
+./.agents/scripts/ses-helper.sh verified-emails production > verified-emails-backup.txt
+./.agents/scripts/ses-helper.sh verified-domains production > verified-domains-backup.txt
 ```
 
 ### **Compliance Considerations:**

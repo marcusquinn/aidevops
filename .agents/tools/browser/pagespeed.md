@@ -18,9 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Helper**: `.agent/scripts/pagespeed-helper.sh`
+- **Helper**: `.agents/scripts/pagespeed-helper.sh`
 - **Commands**: `audit [url]` | `lighthouse [url] [format]` | `wordpress [url]` | `bulk [file]` | `report [json]`
-- **Install**: `brew install lighthouse jq bc` or `.agent/scripts/pagespeed-helper.sh install-deps`
+- **Install**: `brew install lighthouse jq bc` or `.agents/scripts/pagespeed-helper.sh install-deps`
 - **API Key**: Optional but recommended - https://console.cloud.google.com/ → Enable PageSpeed Insights API
 - **Core Web Vitals**: FCP (<1.8s), LCP (<2.5s), CLS (<0.1), FID (<100ms)
 - **Reports**: `~/.ai-devops/reports/pagespeed/`
@@ -47,7 +47,7 @@ This integration provides your AI assistant with powerful website performance au
 ```bash
 # Install required dependencies
 cd ~/Git/aidevops
-./.agent/scripts/pagespeed-helper.sh install-deps
+./.agents/scripts/pagespeed-helper.sh install-deps
 
 # This will install:
 # - jq (JSON parsing)
@@ -86,17 +86,17 @@ npm install -g lighthouse-mcp-server
 
 ```bash
 # Audit a website (desktop & mobile)
-./.agent/scripts/pagespeed-helper.sh audit https://example.com
+./.agents/scripts/pagespeed-helper.sh audit https://example.com
 
 # Lighthouse comprehensive audit
-./.agent/scripts/pagespeed-helper.sh lighthouse https://example.com html
+./.agents/scripts/pagespeed-helper.sh lighthouse https://example.com html
 ```
 
 ### **WordPress-Specific Analysis**
 
 ```bash
 # WordPress performance analysis with specific recommendations
-./.agent/scripts/pagespeed-helper.sh wordpress https://myblog.com
+./.agents/scripts/pagespeed-helper.sh wordpress https://myblog.com
 ```
 
 ### **Bulk Website Auditing**
@@ -110,14 +110,14 @@ https://site3.com
 EOF
 
 # Run bulk audit
-./.agent/scripts/pagespeed-helper.sh bulk websites.txt
+./.agents/scripts/pagespeed-helper.sh bulk websites.txt
 ```
 
 ### **Generate Actionable Reports**
 
 ```bash
 # Generate actionable recommendations from JSON report
-./.agent/scripts/pagespeed-helper.sh report ~/.ai-devops/reports/pagespeed/lighthouse_20241110_143022.json
+./.agents/scripts/pagespeed-helper.sh report ~/.ai-devops/reports/pagespeed/lighthouse_20241110_143022.json
 ```
 
 ## AI Assistant Integration
@@ -128,7 +128,7 @@ Add this to your AI assistant's system prompt:
 
 ```text
 For website performance optimization, use the PageSpeed and Lighthouse tools available in
-~/Git/aidevops/.agent/scripts/pagespeed-helper.sh. Always provide specific,
+~/Git/aidevops/.agents/scripts/pagespeed-helper.sh. Always provide specific,
 actionable recommendations focusing on Core Web Vitals and user experience.
 ```
 

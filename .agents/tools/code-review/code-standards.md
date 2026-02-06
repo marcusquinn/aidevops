@@ -39,8 +39,8 @@ tools:
 ~/.aidevops/agents/scripts/linters-local.sh
 
 # Check specific rules
-grep -L "return [01]" .agent/scripts/*.sh  # S7682
-grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'  # S7679
+grep -L "return [01]" .agents/scripts/*.sh  # S7682
+grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'  # S7679
 ```
 
 **Workflow Position**: Reference during development, validated by `/linters-local`
@@ -80,7 +80,7 @@ function_name() {
 **Validation**:
 
 ```bash
-grep -L "return [01]" .agent/scripts/*.sh
+grep -L "return [01]" .agents/scripts/*.sh
 ```
 
 ### S7679 - Positional Parameters
@@ -115,7 +115,7 @@ main() {
 **Validation**:
 
 ```bash
-grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
+grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
 ```
 
 ### S1192 - String Literals
@@ -140,7 +140,7 @@ print_error "Account name is required"  # Causes S1192 violation
 **Validation**:
 
 ```bash
-for file in .agent/scripts/*.sh; do
+for file in .agents/scripts/*.sh; do
     echo "=== $file ==="
     grep -o '"[^"]*"' "$file" | sort | uniq -c | sort -nr | head -5
 done
@@ -173,7 +173,7 @@ All shell scripts must pass ShellCheck with zero violations.
 
 ```bash
 # Validate all scripts
-find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
+find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 # Validate single script
 shellcheck script.sh
@@ -362,13 +362,13 @@ Before committing, verify:
 ~/.aidevops/agents/scripts/linters-local.sh
 
 # 2. Check return statements
-grep -L "return [01]" .agent/scripts/*.sh
+grep -L "return [01]" .agents/scripts/*.sh
 
 # 3. Check positional parameters
-grep -n '\$[1-9]' .agent/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
+grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
 
 # 4. Run ShellCheck
-find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
+find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 # 5. Check for secrets
 ~/.aidevops/agents/scripts/secretlint-helper.sh scan

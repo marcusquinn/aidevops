@@ -18,10 +18,10 @@ set -euo pipefail
 readonly SCRIPT_NAME="system-cleanup"
 # VERSION is kept for reference and future use
 readonly VERSION="1.0.0"
-readonly LOG_DIR="$HOME/.agent/logs"
+readonly LOG_DIR="$HOME/.agents/logs"
 readonly LOG_FILE="${LOG_DIR}/operations.log"
 readonly LOCK_FILE="/tmp/aidevops-${SCRIPT_NAME}.lock"
-readonly TMP_DIR="$HOME/.agent/tmp"
+readonly TMP_DIR="$HOME/.agents/tmp"
 readonly AGENT_DIR="$HOME/.agent"
 readonly PROJECT_DIR="$HOME/git/aidevops"
 readonly RETENTION_DAYS_LOGS=90

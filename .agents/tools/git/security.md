@@ -132,7 +132,7 @@ fi
 
 ### Tools
 
-- **secretlint**: `.agent/scripts/secretlint-helper.sh`
+- **secretlint**: `.agents/scripts/secretlint-helper.sh`
 - **git-secrets**: AWS secret detection
 - **trufflehog**: Historical secret scanning
 
@@ -140,7 +140,7 @@ fi
 
 ```bash
 # Scan for secrets
-./.agent/scripts/secretlint-helper.sh scan
+./.agents/scripts/secretlint-helper.sh scan
 
 # Scan git history
 trufflehog git file://. --only-verified

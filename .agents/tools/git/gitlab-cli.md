@@ -22,7 +22,7 @@ tools:
 - **Install**: `brew install glab` (macOS) | `apt install glab` (Ubuntu)
 - **Auth**: `glab auth login` (GitLab.com) | `glab auth login --hostname gitlab.company.com` (self-hosted)
 - **Config**: `configs/gitlab-cli-config.json`
-- **Script**: `.agent/scripts/gitlab-cli-helper.sh`
+- **Script**: `.agents/scripts/gitlab-cli-helper.sh`
 - **Requires**: `jq` for JSON parsing
 
 **Commands**: `list-projects|create-project|delete-project|list-issues|create-issue|close-issue|list-mrs|create-mr|merge-mr|list-branches|create-branch`

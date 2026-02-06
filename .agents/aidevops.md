@@ -53,12 +53,12 @@ subagents:
 - **Purpose**: Manage and extend the aidevops framework
 - **Repo**: `~/Git/aidevops/`
 - **User Install**: `~/.aidevops/agents/`
-- **Scripts**: `.agent/scripts/[service]-helper.sh [command] [account] [target]`
+- **Scripts**: `.agents/scripts/[service]-helper.sh [command] [account] [target]`
 
 **Key Operations**:
 - Setup: `./setup.sh`
-- Quality check: `.agent/scripts/linters-local.sh`
-- Release: `.agent/scripts/version-manager.sh release [major|minor|patch]`
+- Quality check: `.agents/scripts/linters-local.sh`
+- Release: `.agents/scripts/version-manager.sh release [major|minor|patch]`
 
 **Subagents** (`aidevops/`):
 - `setup.md` - AI guide to setup.sh
@@ -100,7 +100,7 @@ AI DevOps provides comprehensive infrastructure management for AI agents:
 All services follow unified patterns:
 
 ```bash
-.agent/scripts/[service]-helper.sh [command] [account] [target] [options]
+.agents/scripts/[service]-helper.sh [command] [account] [target] [options]
 
 # Common commands
 help                    # Show service-specific help

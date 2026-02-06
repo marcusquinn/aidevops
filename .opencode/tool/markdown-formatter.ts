@@ -8,7 +8,7 @@ export default tool({
   },
   async execute(args) {
     const target = args.target || "."
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/markdown-formatter.sh ${args.action} ${target}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/markdown-formatter.sh ${args.action} ${target}`.text()
     return result.trim()
   },
 })

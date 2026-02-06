@@ -13,22 +13,22 @@ URL/Repo: $ARGUMENTS
 ```bash
 # Import skill from GitHub (saved as *-skill.md)
 /add-skill dmmulroy/cloudflare-skill
-# → .agent/services/hosting/cloudflare-skill.md
+# → .agents/services/hosting/cloudflare-skill.md
 
 # Import specific skill from multi-skill repo
 /add-skill anthropics/skills/pdf
-# → .agent/tools/pdf-skill.md
+# → .agents/tools/pdf-skill.md
 
 # Import from ClawdHub (shorthand)
 /add-skill clawdhub:caldav-calendar
-# → .agent/tools/productivity/caldav-calendar-skill.md
+# → .agents/tools/productivity/caldav-calendar-skill.md
 
 # Import from ClawdHub (full URL)
 /add-skill https://clawdhub.com/Asleep123/caldav-calendar
 
 # Import with custom name
 /add-skill vercel-labs/agent-skills --name vercel-deploy
-# → .agent/tools/deployment/vercel-deploy-skill.md
+# → .agents/tools/deployment/vercel-deploy-skill.md
 
 # List imported skills
 /add-skill list
@@ -95,8 +95,8 @@ If the skill conflicts with existing files, the helper will prompt:
 
 After successful import:
 
-1. The skill is placed in `.agent/` following aidevops conventions
-2. Registered in `.agent/configs/skill-sources.json` for update tracking
+1. The skill is placed in `.agents/` following aidevops conventions
+2. Registered in `.agents/configs/skill-sources.json` for update tracking
 3. Run `./setup.sh` to create symlinks for other AI assistants
 
 ## Supported Sources & Formats
@@ -139,7 +139,7 @@ After successful import:
 
 ## Update Tracking
 
-Imported skills are tracked in `.agent/configs/skill-sources.json`:
+Imported skills are tracked in `.agents/configs/skill-sources.json`:
 
 ```json
 {
@@ -148,7 +148,7 @@ Imported skills are tracked in `.agent/configs/skill-sources.json`:
       "name": "cloudflare",
       "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
       "upstream_commit": "abc123...",
-      "local_path": ".agent/services/hosting/cloudflare-skill.md",
+      "local_path": ".agents/services/hosting/cloudflare-skill.md",
       "format_detected": "skill-md",
       "imported_at": "2026-01-21T00:00:00Z",
       "last_checked": "2026-01-21T00:00:00Z",

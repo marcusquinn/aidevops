@@ -34,7 +34,7 @@ tools:
 - Playwright: Install browsers (`bunx playwright install`)
 - API Auth: Verify keys with curl, check env vars
 - Debug: `DEBUG=chrome-devtools-mcp bunx chrome-devtools-mcp@latest`
-- Diagnostics: `bash .agent/scripts/collect-mcp-diagnostics.sh`
+- Diagnostics: `bash .agents/scripts/collect-mcp-diagnostics.sh`
 
 **Retry Strategy**: Use exponential backoff for transient failures
 <!-- AI-CONTEXT-END -->
@@ -343,7 +343,7 @@ cp ~/.config/mcp/config.json ~/.config/mcp/config.json.backup
 
 # Reset to defaults
 rm ~/.config/mcp/config.json
-bash .agent/scripts/setup-mcp-integrations.sh all
+bash .agents/scripts/setup-mcp-integrations.sh all
 ```
 
 ### **Clear Cache and Restart**
@@ -371,7 +371,7 @@ npx playwright-mcp@latest --basic-mode
 
 ```bash
 # Collect diagnostic information
-bash .agent/scripts/collect-mcp-diagnostics.sh
+bash .agents/scripts/collect-mcp-diagnostics.sh
 
 # This creates: mcp-diagnostics-$(date +%Y%m%d).tar.gz
 ```

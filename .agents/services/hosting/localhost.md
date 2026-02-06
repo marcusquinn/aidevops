@@ -168,67 +168,67 @@ cp configs/localhost-config.json.txt configs/localhost-config.json
 
 ```bash
 # List local environments
-./.agent/scripts/localhost-helper.sh environments
+./.agents/scripts/localhost-helper.sh environments
 
 # Start local environment
-./.agent/scripts/localhost-helper.sh start wordpress
+./.agents/scripts/localhost-helper.sh start wordpress
 
 # Stop local environment
-./.agent/scripts/localhost-helper.sh stop wordpress
+./.agents/scripts/localhost-helper.sh stop wordpress
 
 # Get environment status
-./.agent/scripts/localhost-helper.sh status wordpress
+./.agents/scripts/localhost-helper.sh status wordpress
 ```
 
 ### **LocalWP Integration:**
 
 ```bash
 # List LocalWP sites
-./.agent/scripts/localhost-helper.sh localwp-sites
+./.agents/scripts/localhost-helper.sh localwp-sites
 
 # Start LocalWP site
-./.agent/scripts/localhost-helper.sh start-site mysite.local
+./.agents/scripts/localhost-helper.sh start-site mysite.local
 
 # Stop LocalWP site
-./.agent/scripts/localhost-helper.sh stop-site mysite.local
+./.agents/scripts/localhost-helper.sh stop-site mysite.local
 
 # Get site info
-./.agent/scripts/localhost-helper.sh site-info mysite.local
+./.agents/scripts/localhost-helper.sh site-info mysite.local
 
 # Start MCP server for LocalWP
-./.agent/scripts/localhost-helper.sh start-mcp
+./.agents/scripts/localhost-helper.sh start-mcp
 ```
 
 ### **SSL Management:**
 
 ```bash
 # Generate local SSL certificate
-./.agent/scripts/localhost-helper.sh generate-ssl mysite.local
+./.agents/scripts/localhost-helper.sh generate-ssl mysite.local
 
 # Install SSL certificate
-./.agent/scripts/localhost-helper.sh install-ssl mysite.local
+./.agents/scripts/localhost-helper.sh install-ssl mysite.local
 
 # List SSL certificates
-./.agent/scripts/localhost-helper.sh list-ssl
+./.agents/scripts/localhost-helper.sh list-ssl
 
 # Renew SSL certificate
-./.agent/scripts/localhost-helper.sh renew-ssl mysite.local
+./.agents/scripts/localhost-helper.sh renew-ssl mysite.local
 ```
 
 ### **Port Management:**
 
 ```bash
 # List active ports
-./.agent/scripts/localhost-helper.sh list-ports
+./.agents/scripts/localhost-helper.sh list-ports
 
 # Check port availability
-./.agent/scripts/localhost-helper.sh check-port 3000
+./.agents/scripts/localhost-helper.sh check-port 3000
 
 # Kill process on port
-./.agent/scripts/localhost-helper.sh kill-port 3000
+./.agents/scripts/localhost-helper.sh kill-port 3000
 
 # Forward port
-./.agent/scripts/localhost-helper.sh forward-port 3000 8080
+./.agents/scripts/localhost-helper.sh forward-port 3000 8080
 ```
 
 ## 🛡️ **Security Best Practices**
@@ -245,16 +245,16 @@ cp configs/localhost-config.json.txt configs/localhost-config.json
 
 ```bash
 # Generate development CA
-./.agent/scripts/localhost-helper.sh generate-ca
+./.agents/scripts/localhost-helper.sh generate-ca
 
 # Create site certificate
-./.agent/scripts/localhost-helper.sh create-cert mysite.local
+./.agents/scripts/localhost-helper.sh create-cert mysite.local
 
 # Trust certificate in system
-./.agent/scripts/localhost-helper.sh trust-cert mysite.local
+./.agents/scripts/localhost-helper.sh trust-cert mysite.local
 
 # Verify certificate
-./.agent/scripts/localhost-helper.sh verify-cert mysite.local
+./.agents/scripts/localhost-helper.sh verify-cert mysite.local
 ```
 
 ## 🔍 **Troubleshooting**
@@ -282,10 +282,10 @@ ping mysite.local
 openssl x509 -in cert.pem -text -noout
 
 # Verify certificate chain
-./.agent/scripts/localhost-helper.sh verify-chain mysite.local
+./.agents/scripts/localhost-helper.sh verify-chain mysite.local
 
 # Regenerate certificate
-./.agent/scripts/localhost-helper.sh regenerate-ssl mysite.local
+./.agents/scripts/localhost-helper.sh regenerate-ssl mysite.local
 ```
 
 #### **Port Conflicts:**
@@ -296,10 +296,10 @@ lsof -i :3000
 netstat -tulpn | grep :3000
 
 # Kill conflicting process
-./.agent/scripts/localhost-helper.sh kill-port 3000
+./.agents/scripts/localhost-helper.sh kill-port 3000
 
 # Use alternative port
-./.agent/scripts/localhost-helper.sh start-on-port mysite.local 3001
+./.agents/scripts/localhost-helper.sh start-on-port mysite.local 3001
 ```
 
 ## 📊 **Development Workflow**
@@ -308,32 +308,32 @@ netstat -tulpn | grep :3000
 
 ```bash
 # Start development stack
-./.agent/scripts/localhost-helper.sh start-stack development
+./.agents/scripts/localhost-helper.sh start-stack development
 
 # Stop development stack
-./.agent/scripts/localhost-helper.sh stop-stack development
+./.agents/scripts/localhost-helper.sh stop-stack development
 
 # Restart services
-./.agent/scripts/localhost-helper.sh restart-services
+./.agents/scripts/localhost-helper.sh restart-services
 
 # Check service health
-./.agent/scripts/localhost-helper.sh health-check
+./.agents/scripts/localhost-helper.sh health-check
 ```
 
 ### **Project Management:**
 
 ```bash
 # Create new project
-./.agent/scripts/localhost-helper.sh create-project myproject
+./.agents/scripts/localhost-helper.sh create-project myproject
 
 # Clone project template
-./.agent/scripts/localhost-helper.sh clone-template react-app myproject
+./.agents/scripts/localhost-helper.sh clone-template react-app myproject
 
 # Set up project environment
-./.agent/scripts/localhost-helper.sh setup-env myproject
+./.agents/scripts/localhost-helper.sh setup-env myproject
 
 # Start project services
-./.agent/scripts/localhost-helper.sh start-project myproject
+./.agents/scripts/localhost-helper.sh start-project myproject
 ```
 
 ## 🔄 **Integration & Automation**
@@ -342,32 +342,32 @@ netstat -tulpn | grep :3000
 
 ```bash
 # Start LocalWP MCP server
-./.agent/scripts/localhost-helper.sh start-mcp
+./.agents/scripts/localhost-helper.sh start-mcp
 
 # Test MCP connection
-./.agent/scripts/localhost-helper.sh test-mcp
+./.agents/scripts/localhost-helper.sh test-mcp
 
 # Query WordPress database via MCP
-./.agent/scripts/localhost-helper.sh mcp-query "SELECT * FROM wp_posts LIMIT 5"
+./.agents/scripts/localhost-helper.sh mcp-query "SELECT * FROM wp_posts LIMIT 5"
 
 # Stop MCP server
-./.agent/scripts/localhost-helper.sh stop-mcp
+./.agents/scripts/localhost-helper.sh stop-mcp
 ```
 
 ### **Docker Integration:**
 
 ```bash
 # Start Docker development environment
-./.agent/scripts/localhost-helper.sh docker-up myproject
+./.agents/scripts/localhost-helper.sh docker-up myproject
 
 # Stop Docker environment
-./.agent/scripts/localhost-helper.sh docker-down myproject
+./.agents/scripts/localhost-helper.sh docker-down myproject
 
 # View Docker logs
-./.agent/scripts/localhost-helper.sh docker-logs myproject
+./.agents/scripts/localhost-helper.sh docker-logs myproject
 
 # Execute command in container
-./.agent/scripts/localhost-helper.sh docker-exec myproject "npm test"
+./.agents/scripts/localhost-helper.sh docker-exec myproject "npm test"
 ```
 
 ## 📚 **Best Practices**

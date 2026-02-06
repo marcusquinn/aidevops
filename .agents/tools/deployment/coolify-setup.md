@@ -22,7 +22,7 @@ tools:
 - **Install**: `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`
 - **Requirements**: 2GB+ RAM, Ubuntu 20.04+/Debian 11+, ports 22/80/443/8000
 - **Dashboard**: `https://your-server-ip:8000`
-- **Helper**: `.agent/scripts/coolify-helper.sh`
+- **Helper**: `.agents/scripts/coolify-helper.sh`
 - **Commands**: `list` | `connect [server]` | `open [server]` | `status [server]` | `apps [server]` | `exec [server] [cmd]`
 - **Config**: `configs/coolify-config.json`
 - **Features**: Git deployments, databases (PostgreSQL/MySQL/MongoDB/Redis), SSL automation, Docker containers
@@ -193,34 +193,34 @@ cp configs/coolify-config.json.txt configs/coolify-config.json
 
 ```bash
 # List Coolify servers
-./.agent/scripts/coolify-helper.sh list
+./.agents/scripts/coolify-helper.sh list
 
 # Connect to server via SSH
-./.agent/scripts/coolify-helper.sh connect coolify-main
+./.agents/scripts/coolify-helper.sh connect coolify-main
 
 # Open Coolify web interface
-./.agent/scripts/coolify-helper.sh open coolify-main
+./.agents/scripts/coolify-helper.sh open coolify-main
 
 # Check server status
-./.agent/scripts/coolify-helper.sh status coolify-main
+./.agents/scripts/coolify-helper.sh status coolify-main
 ```
 
 ### **Application Management:**
 
 ```bash
 # List applications on server
-./.agent/scripts/coolify-helper.sh apps main_server
+./.agents/scripts/coolify-helper.sh apps main_server
 
 # Execute commands on server
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker ps'
-./.agent/scripts/coolify-helper.sh exec coolify-main 'df -h'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
 ```
 
 ### **SSH Configuration:**
 
 ```bash
 # Generate SSH configs for easy access
-./.agent/scripts/coolify-helper.sh generate-ssh-configs
+./.agents/scripts/coolify-helper.sh generate-ssh-configs
 
 # Then you can simply use:
 ssh coolify-main
@@ -257,29 +257,29 @@ ssh coolify-main
 
 ```bash
 # Check Coolify service status
-./.agent/scripts/coolify-helper.sh exec coolify-main 'systemctl status coolify'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'systemctl status coolify'
 
 # Check Docker containers
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker ps'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
 
 # Check disk space
-./.agent/scripts/coolify-helper.sh exec coolify-main 'df -h'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
 
 # Check memory usage
-./.agent/scripts/coolify-helper.sh exec coolify-main 'free -h'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'free -h'
 ```
 
 ### **Log Management:**
 
 ```bash
 # View Coolify logs
-./.agent/scripts/coolify-helper.sh exec coolify-main 'docker logs coolify'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs coolify'
 
 # View application logs (in Coolify dashboard)
 # Go to Application → Logs tab
 
 # System logs
-./.agent/scripts/coolify-helper.sh exec coolify-main 'journalctl -u coolify -f'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'journalctl -u coolify -f'
 ```
 
 ### **Backup Strategy:**

@@ -51,23 +51,23 @@ TOON CLI is automatically available through npx (no installation required):
 npx @toon-format/cli --help
 
 # Or use the AI DevOps helper
-./.agent/scripts/toon-helper.sh info
+./.agents/scripts/toon-helper.sh info
 ```
 
 ### **Basic Usage**
 
 ```bash
 # Convert JSON to TOON
-./.agent/scripts/toon-helper.sh encode data.json output.toon
+./.agents/scripts/toon-helper.sh encode data.json output.toon
 
 # Convert TOON back to JSON
-./.agent/scripts/toon-helper.sh decode output.toon restored.json
+./.agents/scripts/toon-helper.sh decode output.toon restored.json
 
 # Show token efficiency comparison
-./.agent/scripts/toon-helper.sh compare large-dataset.json
+./.agents/scripts/toon-helper.sh compare large-dataset.json
 
 # Validate TOON format
-./.agent/scripts/toon-helper.sh validate data.toon
+./.agents/scripts/toon-helper.sh validate data.toon
 ```
 
 ## 📊 **Format Examples**
@@ -135,34 +135,34 @@ project:
 
 ```bash
 # Basic conversion
-./.agent/scripts/toon-helper.sh encode input.json output.toon
+./.agents/scripts/toon-helper.sh encode input.json output.toon
 
 # With tab delimiter (often more efficient)
-./.agent/scripts/toon-helper.sh encode input.json output.toon '\t' true
+./.agents/scripts/toon-helper.sh encode input.json output.toon '\t' true
 
 # Decode with lenient validation
-./.agent/scripts/toon-helper.sh decode input.toon output.json false
+./.agents/scripts/toon-helper.sh decode input.toon output.json false
 ```
 
 ### **Batch Processing**
 
 ```bash
 # Convert directory of JSON files to TOON
-./.agent/scripts/toon-helper.sh batch ./json-files ./toon-files json-to-toon
+./.agents/scripts/toon-helper.sh batch ./json-files ./toon-files json-to-toon
 
 # Convert directory of TOON files to JSON
-./.agent/scripts/toon-helper.sh batch ./toon-files ./json-files toon-to-json '\t'
+./.agents/scripts/toon-helper.sh batch ./toon-files ./json-files toon-to-json '\t'
 ```
 
 ### **Stream Processing**
 
 ```bash
 # Convert from stdin
-cat data.json | ./.agent/scripts/toon-helper.sh stdin-encode
-echo '{"name": "test"}' | ./.agent/scripts/toon-helper.sh stdin-encode '\t' true
+cat data.json | ./.agents/scripts/toon-helper.sh stdin-encode
+echo '{"name": "test"}' | ./.agents/scripts/toon-helper.sh stdin-encode '\t' true
 
 # Decode from stdin
-cat data.toon | ./.agent/scripts/toon-helper.sh stdin-decode
+cat data.toon | ./.agents/scripts/toon-helper.sh stdin-decode
 ```
 
 ## 🎯 **AI DevOps Use Cases**
@@ -173,7 +173,7 @@ Perfect for server configurations, deployment settings, and infrastructure data:
 
 ```bash
 # Convert server inventory to TOON for AI analysis
-./.agent/scripts/toon-helper.sh encode servers.json servers.toon '\t' true
+./.agents/scripts/toon-helper.sh encode servers.json servers.toon '\t' true
 ```
 
 ### **2. API Response Formatting**
@@ -182,7 +182,7 @@ Reduce token costs when sending API responses to LLMs:
 
 ```bash
 # Convert API responses for efficient LLM processing
-curl -s "https://api.example.com/data" | ./.agent/scripts/toon-helper.sh stdin-encode
+curl -s "https://api.example.com/data" | ./.agents/scripts/toon-helper.sh stdin-encode
 ```
 
 ### **3. Database Exports**
@@ -191,7 +191,7 @@ Efficient format for database query results:
 
 ```bash
 # Export database results in TOON format
-mysql -e "SELECT * FROM users" --json | ./.agent/scripts/toon-helper.sh stdin-encode '\t'
+mysql -e "SELECT * FROM users" --json | ./.agents/scripts/toon-helper.sh stdin-encode '\t'
 ```
 
 ### **4. Log Analysis**
@@ -200,7 +200,7 @@ Structure log data for AI analysis:
 
 ```bash
 # Convert structured logs to TOON
-./.agent/scripts/toon-helper.sh batch ./logs/json ./logs/toon json-to-toon
+./.agents/scripts/toon-helper.sh batch ./logs/json ./logs/toon json-to-toon
 ```
 
 ## 📈 **Token Efficiency**
@@ -260,13 +260,13 @@ Task: Return only users with role "user" as TOON.
 
 ```bash
 # Validate TOON format
-./.agent/scripts/toon-helper.sh validate data.toon
+./.agents/scripts/toon-helper.sh validate data.toon
 
 # Compare efficiency
-./.agent/scripts/toon-helper.sh compare large-dataset.json
+./.agents/scripts/toon-helper.sh compare large-dataset.json
 
 # Show format information
-./.agent/scripts/toon-helper.sh info
+./.agents/scripts/toon-helper.sh info
 ```
 
 ## 📚 **Resources**

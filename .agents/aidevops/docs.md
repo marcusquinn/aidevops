@@ -17,7 +17,7 @@ tools:
 
 ## Quick Reference
 
-- **Location**: All docs in `.agent/*.md` (lowercase filenames)
+- **Location**: All docs in `.agents/*.md` (lowercase filenames)
 - **Service guides**: hostinger.md, hetzner.md, coolify.md, mainwp.md, etc.
 - **Standard structure**: Overview, Configuration, Usage, Security, Troubleshooting, MCP Integration
 - **AI Context blocks**: `<!-- AI-CONTEXT-START -->` sections for quick reference
@@ -219,16 +219,16 @@ Each service guide includes:
 
 ```bash
 # Service-specific information
-.agent/[SERVICE-NAME].md
+.agents/[SERVICE-NAME].md
 
 # Framework overview
-.agent/AGENTS.md
+.agents/AGENTS.md
 
 # Provider selection guidance
-.agent/recommendations.md
+.agents/recommendations.md
 
 # Setup procedures
-.agent/[SERVICE]-SETUP.md
+.agents/[SERVICE]-SETUP.md
 ```
 
 ### **Search Patterns**

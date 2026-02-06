@@ -33,7 +33,7 @@ sed_inplace() {
 
 # Repository root directory
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
-VERSION_MANAGER="$REPO_ROOT/.agent/scripts/version-manager.sh"
+VERSION_MANAGER="$REPO_ROOT/.agents/scripts/version-manager.sh"
 
 # Function to determine version bump type from commit message
 determine_bump_type() {

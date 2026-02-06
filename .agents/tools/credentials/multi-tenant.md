@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Script**: `.agent/scripts/credential-helper.sh`
+- **Script**: `.agents/scripts/credential-helper.sh`
 - **Storage**: `~/.config/aidevops/tenants/{tenant}/mcp-env.sh`
 - **Active tenant**: `~/.config/aidevops/active-tenant`
 - **Project override**: `.aidevops-tenant` (gitignored)

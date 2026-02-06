@@ -17,7 +17,7 @@ tools:
 
 ## Quick Reference
 
-- **Location**: `.agent/scripts/[service]-helper.sh`
+- **Location**: `.agents/scripts/[service]-helper.sh`
 - **Pattern**: `./[service]-helper.sh [command] [account] [target] [options]`
 - **Standard commands**: `help | accounts | monitor | audit | status`
 - **Config**: `configs/[service]-config.json`

@@ -175,122 +175,122 @@ export TWILIO_AUTH_TOKEN="your_auth_token_here"
 
 ```bash
 # Send SMS
-./.agent/scripts/twilio-helper.sh sms production "+1234567890" "Hello from aidevops!"
+./.agents/scripts/twilio-helper.sh sms production "+1234567890" "Hello from aidevops!"
 
 # Send SMS with status callback
-./.agent/scripts/twilio-helper.sh sms production "+1234567890" "Order confirmed" --callback "https://your-webhook.com/status"
+./.agents/scripts/twilio-helper.sh sms production "+1234567890" "Order confirmed" --callback "https://your-webhook.com/status"
 
 # List recent messages
-./.agent/scripts/twilio-helper.sh messages production --limit 20
+./.agents/scripts/twilio-helper.sh messages production --limit 20
 
 # Get message status
-./.agent/scripts/twilio-helper.sh message-status production "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+./.agents/scripts/twilio-helper.sh message-status production "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 ### Voice Operations
 
 ```bash
 # Make outbound call with TwiML
-./.agent/scripts/twilio-helper.sh call production "+1234567890" --twiml "<Response><Say>Hello!</Say></Response>"
+./.agents/scripts/twilio-helper.sh call production "+1234567890" --twiml "<Response><Say>Hello!</Say></Response>"
 
 # Make call with URL
-./.agent/scripts/twilio-helper.sh call production "+1234567890" --url "https://your-server.com/voice.xml"
+./.agents/scripts/twilio-helper.sh call production "+1234567890" --url "https://your-server.com/voice.xml"
 
 # List recent calls
-./.agent/scripts/twilio-helper.sh calls production --limit 20
+./.agents/scripts/twilio-helper.sh calls production --limit 20
 
 # Get call details
-./.agent/scripts/twilio-helper.sh call-details production "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+./.agents/scripts/twilio-helper.sh call-details production "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 ### Call Recording & Transcription
 
 ```bash
 # List recordings for account
-./.agent/scripts/twilio-helper.sh recordings production
+./.agents/scripts/twilio-helper.sh recordings production
 
 # Get recording details
-./.agent/scripts/twilio-helper.sh recording production "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+./.agents/scripts/twilio-helper.sh recording production "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 # Download recording
-./.agent/scripts/twilio-helper.sh download-recording production "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ./recordings/
+./.agents/scripts/twilio-helper.sh download-recording production "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ./recordings/
 
 # Get transcription
-./.agent/scripts/twilio-helper.sh transcription production "TRxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+./.agents/scripts/twilio-helper.sh transcription production "TRxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 # List all transcriptions
-./.agent/scripts/twilio-helper.sh transcriptions production
+./.agents/scripts/twilio-helper.sh transcriptions production
 ```
 
 ### Phone Number Management
 
 ```bash
 # List owned numbers
-./.agent/scripts/twilio-helper.sh numbers production
+./.agents/scripts/twilio-helper.sh numbers production
 
 # Search available numbers
-./.agent/scripts/twilio-helper.sh search-numbers production US --area-code 415
+./.agents/scripts/twilio-helper.sh search-numbers production US --area-code 415
 
 # Search by capabilities
-./.agent/scripts/twilio-helper.sh search-numbers production GB --sms --voice
+./.agents/scripts/twilio-helper.sh search-numbers production GB --sms --voice
 
 # Purchase number (requires confirmation)
-./.agent/scripts/twilio-helper.sh buy-number production "+14155551234"
+./.agents/scripts/twilio-helper.sh buy-number production "+14155551234"
 
 # Release number (requires confirmation)
-./.agent/scripts/twilio-helper.sh release-number production "+14155551234"
+./.agents/scripts/twilio-helper.sh release-number production "+14155551234"
 ```
 
 ### Verify (2FA/OTP)
 
 ```bash
 # Create verification service (one-time setup)
-./.agent/scripts/twilio-helper.sh verify-create-service production "MyApp Verification"
+./.agents/scripts/twilio-helper.sh verify-create-service production "MyApp Verification"
 
 # Send verification code
-./.agent/scripts/twilio-helper.sh verify-send production "+1234567890" --channel sms
+./.agents/scripts/twilio-helper.sh verify-send production "+1234567890" --channel sms
 
 # Check verification code
-./.agent/scripts/twilio-helper.sh verify-check production "+1234567890" "123456"
+./.agents/scripts/twilio-helper.sh verify-check production "+1234567890" "123456"
 ```
 
 ### Lookup (Phone Validation)
 
 ```bash
 # Basic lookup
-./.agent/scripts/twilio-helper.sh lookup production "+1234567890"
+./.agents/scripts/twilio-helper.sh lookup production "+1234567890"
 
 # Carrier lookup
-./.agent/scripts/twilio-helper.sh lookup production "+1234567890" --type carrier
+./.agents/scripts/twilio-helper.sh lookup production "+1234567890" --type carrier
 
 # Caller name lookup
-./.agent/scripts/twilio-helper.sh lookup production "+1234567890" --type caller-name
+./.agents/scripts/twilio-helper.sh lookup production "+1234567890" --type caller-name
 ```
 
 ### WhatsApp
 
 ```bash
 # Send WhatsApp message (requires approved template or 24h window)
-./.agent/scripts/twilio-helper.sh whatsapp production "+1234567890" "Hello via WhatsApp!"
+./.agents/scripts/twilio-helper.sh whatsapp production "+1234567890" "Hello via WhatsApp!"
 
 # Send WhatsApp template
-./.agent/scripts/twilio-helper.sh whatsapp-template production "+1234567890" "appointment_reminder" '{"1":"John","2":"Tomorrow 3pm"}'
+./.agents/scripts/twilio-helper.sh whatsapp-template production "+1234567890" "appointment_reminder" '{"1":"John","2":"Tomorrow 3pm"}'
 ```
 
 ### Account Status & Audit
 
 ```bash
 # List all configured accounts
-./.agent/scripts/twilio-helper.sh accounts
+./.agents/scripts/twilio-helper.sh accounts
 
 # Get account balance
-./.agent/scripts/twilio-helper.sh balance production
+./.agents/scripts/twilio-helper.sh balance production
 
 # Get usage summary
-./.agent/scripts/twilio-helper.sh usage production
+./.agents/scripts/twilio-helper.sh usage production
 
 # Full account audit
-./.agent/scripts/twilio-helper.sh audit production
+./.agents/scripts/twilio-helper.sh audit production
 ```
 
 ## Number Acquisition
@@ -301,8 +301,8 @@ Most numbers can be purchased directly via the API:
 
 ```bash
 # Search and purchase
-./.agent/scripts/twilio-helper.sh search-numbers production US --area-code 212
-./.agent/scripts/twilio-helper.sh buy-number production "+12125551234"
+./.agents/scripts/twilio-helper.sh search-numbers production US --area-code 212
+./.agents/scripts/twilio-helper.sh buy-number production "+12125551234"
 ```
 
 ### Via Telfon App (Recommended for End Users)
@@ -326,7 +326,7 @@ Some numbers are not available via API and require contacting Twilio support:
 
 ```bash
 # If search returns empty
-./.agent/scripts/twilio-helper.sh search-numbers production GB --area-code 020
+./.agents/scripts/twilio-helper.sh search-numbers production GB --area-code 020
 # Result: No numbers available
 
 # AI should offer to help contact support
@@ -367,7 +367,7 @@ Configure webhooks for receiving messages and calls:
 
 ```bash
 # Update number webhook URLs
-./.agent/scripts/twilio-helper.sh configure-webhooks production "+1234567890" \
+./.agents/scripts/twilio-helper.sh configure-webhooks production "+1234567890" \
   --sms-url "https://your-server.com/sms" \
   --voice-url "https://your-server.com/voice"
 ```
@@ -435,7 +435,7 @@ app.post('/webhooks/twilio/sms-status', (req, res) => {
 
 ```bash
 # Enable recording on calls
-./.agent/scripts/twilio-helper.sh call production "+1234567890" \
+./.agents/scripts/twilio-helper.sh call production "+1234567890" \
   --record \
   --transcribe \
   --transcription-callback "https://your-server.com/webhooks/twilio/transcription"
@@ -493,7 +493,7 @@ const valid = twilio.validateRequest(
 
 ```bash
 # Verify credentials
-./.agent/scripts/twilio-helper.sh status production
+./.agents/scripts/twilio-helper.sh status production
 
 # Check environment variables
 echo $TWILIO_ACCOUNT_SID
@@ -503,7 +503,7 @@ echo $TWILIO_ACCOUNT_SID
 
 ```bash
 # Check message status
-./.agent/scripts/twilio-helper.sh message-status production "SMxxxxxxxx"
+./.agents/scripts/twilio-helper.sh message-status production "SMxxxxxxxx"
 
 # Common status codes:
 # - queued: Message queued for sending
@@ -517,7 +517,7 @@ echo $TWILIO_ACCOUNT_SID
 
 ```bash
 # Search returns empty - try different criteria
-./.agent/scripts/twilio-helper.sh search-numbers production US --contains "555"
+./.agents/scripts/twilio-helper.sh search-numbers production US --contains "555"
 
 # If still unavailable, contact Twilio support (see above)
 ```
@@ -538,10 +538,10 @@ curl -X POST https://your-server.com/webhooks/twilio/sms -d "test=1"
 
 ```bash
 # Daily usage summary
-./.agent/scripts/twilio-helper.sh usage production --period day
+./.agents/scripts/twilio-helper.sh usage production --period day
 
 # Monthly costs
-./.agent/scripts/twilio-helper.sh usage production --period month
+./.agents/scripts/twilio-helper.sh usage production --period month
 
 # Set up alerts in Twilio console for:
 # - Balance threshold
@@ -553,10 +553,10 @@ curl -X POST https://your-server.com/webhooks/twilio/sms -d "test=1"
 
 ```bash
 # Message delivery rates
-./.agent/scripts/twilio-helper.sh analytics production messages --days 7
+./.agents/scripts/twilio-helper.sh analytics production messages --days 7
 
 # Call completion rates
-./.agent/scripts/twilio-helper.sh analytics production calls --days 7
+./.agents/scripts/twilio-helper.sh analytics production calls --days 7
 ```
 
 ## Related Documentation

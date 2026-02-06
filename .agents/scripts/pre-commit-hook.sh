@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
 # Pre-commit hook for multi-platform quality validation
-# Install with: cp .agent/scripts/pre-commit-hook.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Install with: cp .agents/scripts/pre-commit-hook.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 set -euo pipefail
 
@@ -226,9 +226,9 @@ main() {
     echo ""
 
     # Optional CodeRabbit CLI review (if available)
-    if [[ -f ".agent/scripts/coderabbit-cli.sh" ]] && command -v coderabbit &> /dev/null; then
+    if [[ -f ".agents/scripts/coderabbit-cli.sh" ]] && command -v coderabbit &> /dev/null; then
         print_info "🤖 Running CodeRabbit CLI review..."
-        if bash .agent/scripts/coderabbit-cli.sh review > /dev/null 2>&1; then
+        if bash .agents/scripts/coderabbit-cli.sh review > /dev/null 2>&1; then
             print_success "CodeRabbit CLI review completed"
         else
             print_info "CodeRabbit CLI review skipped (setup required)"
@@ -244,10 +244,10 @@ main() {
         print_error "❌ Quality violations detected ($total_violations total)"
         echo ""
         print_info "To fix issues automatically, run:"
-        print_info "  ./.agent/scripts/quality-fix.sh"
+        print_info "  ./.agents/scripts/quality-fix.sh"
         echo ""
         print_info "To check current status, run:"
-        print_info "  ./.agent/scripts/linters-local.sh"
+        print_info "  ./.agents/scripts/linters-local.sh"
         echo ""
         print_info "To bypass this check (not recommended), use:"
         print_info "  git commit --no-verify"

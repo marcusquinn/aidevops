@@ -25,7 +25,7 @@ tools:
 - **MCP**: Real-time data access via MCP servers
 - **Categories**: Infrastructure, Deployment, Content, Security, Quality, Git, Email, DNS, Local
 - **Quality check**: `curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aidevops&metricKeys=bugs,vulnerabilities,code_smells"`
-- **ShellCheck**: `find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;`
+- **ShellCheck**: `find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;`
 <!-- AI-CONTEXT-END -->
 
 ## Core Requirements
@@ -87,7 +87,7 @@ curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aide
 curl -s "https://www.codefactor.io/repository/github/marcusquinn/aidevops"
 
 # ShellCheck validation
-find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
+find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 ```
 
 ## 🏗️ **Service Categories & Capabilities**

@@ -23,11 +23,11 @@ print_header() { local msg="$1"; echo -e "${PURPLE}[MONITOR]${NC} $msg"; return 
 
 # Configuration
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly MONITOR_LOG="$REPO_ROOT/.agent/tmp/code-review-monitor.log"
-readonly STATUS_FILE="$REPO_ROOT/.agent/tmp/quality-status.json"
+readonly MONITOR_LOG="$REPO_ROOT/.agents/tmp/code-review-monitor.log"
+readonly STATUS_FILE="$REPO_ROOT/.agents/tmp/quality-status.json"
 
 # Create directories
-mkdir -p "$REPO_ROOT/.agent/tmp"
+mkdir -p "$REPO_ROOT/.agents/tmp"
 
 # Initialize monitoring log
 init_monitoring() {
@@ -73,13 +73,13 @@ run_qlty_analysis() {
     print_info "Running Qlty analysis and auto-fixes..."
     
     # Run analysis with sample to get quick feedback
-    if bash "$REPO_ROOT/.agent/scripts/qlty-cli.sh" check 5 > "$REPO_ROOT/.agent/tmp/qlty-results.txt" 2>&1; then
+    if bash "$REPO_ROOT/.agents/scripts/qlty-cli.sh" check 5 > "$REPO_ROOT/.agents/tmp/qlty-results.txt" 2>&1; then
         local issues
-        issues=$(grep -o "ISSUES: [0-9]*" "$REPO_ROOT/.agent/tmp/qlty-results.txt" | grep -o "[0-9]*" || echo "0")
+        issues=$(grep -o "ISSUES: [0-9]*" "$REPO_ROOT/.agents/tmp/qlty-results.txt" | grep -o "[0-9]*" || echo "0")
         print_success "Qlty Analysis: $issues issues found"
         
         # Apply auto-formatting
-        if bash "$REPO_ROOT/.agent/scripts/qlty-cli.sh" fmt --all > "$REPO_ROOT/.agent/tmp/qlty-fmt.txt" 2>&1; then
+        if bash "$REPO_ROOT/.agents/scripts/qlty-cli.sh" fmt --all > "$REPO_ROOT/.agents/tmp/qlty-fmt.txt" 2>&1; then
             print_success "Qlty auto-formatting completed"
         fi
         
@@ -96,10 +96,10 @@ run_qlty_analysis() {
 run_codacy_analysis() {
     print_info "Running Codacy analysis (timeout: 5m)..."
     
-    local log_file="$REPO_ROOT/.agent/tmp/codacy-results.txt"
+    local log_file="$REPO_ROOT/.agents/tmp/codacy-results.txt"
     
     # Run in background
-    bash "$REPO_ROOT/.agent/scripts/codacy-cli.sh" analyze --fix > "$log_file" 2>&1 &
+    bash "$REPO_ROOT/.agents/scripts/codacy-cli.sh" analyze --fix > "$log_file" 2>&1 &
     local pid=$!
     
     # Wait loop with timeout (300 seconds)
@@ -156,7 +156,7 @@ apply_automatic_fixes() {
     local fixes_applied=0
     
     # Fix shellcheck issues in new files
-    for file in .agent/scripts/*.sh .agent/scripts/*.sh; do
+    for file in .agents/scripts/*.sh .agents/scripts/*.sh; do
         # Check if file exists and has been modified recently (within last hour)
         if [[ -f "$file" ]] && [[ $(find "$file" -mmin -60 2>/dev/null) ]]; then
             print_info "Checking recent file: $file"

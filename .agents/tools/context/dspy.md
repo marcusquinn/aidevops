@@ -20,7 +20,7 @@ tools:
 
 - DSPy: Framework for algorithmically optimizing LLM prompts and weights
 - Requires: Python 3.8+, OpenAI/Anthropic API key
-- Helper: `./.agent/scripts/dspy-helper.sh install|test|init [project]`
+- Helper: `./.agents/scripts/dspy-helper.sh install|test|init [project]`
 - Config: `configs/dspy-config.json` (copy from .txt template)
 - Projects: `data/dspy/[project-name]/`
 - Virtual env: `python-env/dspy-env/`
@@ -45,10 +45,10 @@ DSPy (Declarative Self-improving Python) is a framework for algorithmically opti
 
 ```bash
 # Install DSPy dependencies
-./.agent/scripts/dspy-helper.sh install
+./.agents/scripts/dspy-helper.sh install
 
 # Test installation
-./.agent/scripts/dspy-helper.sh test
+./.agents/scripts/dspy-helper.sh test
 ```
 
 ### **Configuration**
@@ -83,7 +83,7 @@ DSPy (Declarative Self-improving Python) is a framework for algorithmically opti
 
 ```text
 aidevops/
-├── .agent/scripts/dspy-helper.sh          # DSPy management script
+├── .agents/scripts/dspy-helper.sh          # DSPy management script
 ├── configs/dspy-config.json          # DSPy configuration
 ├── python-env/dspy-env/              # Python virtual environment
 ├── data/dspy/                        # DSPy projects and datasets
@@ -97,7 +97,7 @@ aidevops/
 
 ```bash
 # Create a new DSPy project
-./.agent/scripts/dspy-helper.sh init my-chatbot
+./.agents/scripts/dspy-helper.sh init my-chatbot
 
 # Navigate to project directory
 cd data/dspy/my-chatbot

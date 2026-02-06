@@ -6,7 +6,7 @@
 
 # Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/../../.agent/scripts/shared-constants.sh"
+source "${SCRIPT_DIR}/../../.agents/scripts/shared-constants.sh"
 
 # Colors for output
 readonly BLUE='\033[0;34m'
@@ -41,7 +41,7 @@ print_error() {
 }
 
 # Test configuration
-readonly TEST_RESULTS_DIR="${HOME}/.agent/tmp/stagehand-tests"
+readonly TEST_RESULTS_DIR="${HOME}/.agents/tmp/stagehand-tests"
 readonly TEST_LOG="${TEST_RESULTS_DIR}/test-results.log"
 
 # Create test directory
@@ -56,7 +56,7 @@ setup_test_environment() {
 test_helper_script() {
     print_info "Testing Stagehand helper script..."
     
-    local helper_script="${SCRIPT_DIR}/../../.agent/scripts/stagehand-helper.sh"
+    local helper_script="${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh"
     
     if [[ -f "$helper_script" ]]; then
         print_success "✅ Stagehand helper script exists"
@@ -84,8 +84,8 @@ test_documentation() {
     print_info "Testing Stagehand documentation..."
     
     local docs=(
-        "${SCRIPT_DIR}/../../.agent/STAGEHAND.md"
-        "${SCRIPT_DIR}/../../.agent/mcp-examples/stagehand-automation-examples.md"
+        "${SCRIPT_DIR}/../../.agents/STAGEHAND.md"
+        "${SCRIPT_DIR}/../../.agents/mcp-examples/stagehand-automation-examples.md"
     )
     
     for doc in "${docs[@]}"; do
@@ -131,7 +131,7 @@ test_mcp_integration() {
 test_helper_commands() {
     print_info "Testing Stagehand helper commands..."
     
-    local helper_script="${SCRIPT_DIR}/../../.agent/scripts/stagehand-helper.sh"
+    local helper_script="${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh"
     
     # Test help command
     if bash "$helper_script" help > /dev/null 2>&1; then
@@ -237,8 +237,8 @@ $(cat "$TEST_LOG")
 
 ## Next Steps
 
-1. Run full installation: \`bash .agent/scripts/stagehand-helper.sh setup\`
-2. Test MCP integration: \`bash .agent/scripts/setup-mcp-integrations.sh stagehand\`
+1. Run full installation: \`bash .agents/scripts/stagehand-helper.sh setup\`
+2. Test MCP integration: \`bash .agents/scripts/setup-mcp-integrations.sh stagehand\`
 3. Try examples: \`cd ~/.aidevops/stagehand && npm run search-products\` || exit
 
 ## Files Created

@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Helper**: `.agent/scripts/code-audit-helper.sh`
+- **Helper**: `.agents/scripts/code-audit-helper.sh`
 - **Services**: CodeRabbit (AI reviews), CodeFactor (quality), Codacy (enterprise), SonarCloud (security)
 - **Config**: `configs/code-audit-config.json`
 - **Commands**: `services` | `audit [repo]` | `report [repo] [file]` | `start-mcp [service] [port]`
@@ -106,36 +106,36 @@ cp configs/code-audit-config.json.txt configs/code-audit-config.json
 
 ```bash
 # List all configured services
-./.agent/scripts/code-audit-helper.sh services
+./.agents/scripts/code-audit-helper.sh services
 
 # Run comprehensive audit across all services
-./.agent/scripts/code-audit-helper.sh audit my-repository
+./.agents/scripts/code-audit-helper.sh audit my-repository
 
 # Generate detailed audit report
-./.agent/scripts/code-audit-helper.sh report my-repository audit-report.json
+./.agents/scripts/code-audit-helper.sh report my-repository audit-report.json
 ```
 
 ### **CodeRabbit Operations:**
 
 ```bash
 # List CodeRabbit repositories
-./.agent/scripts/code-audit-helper.sh coderabbit-repos personal
+./.agents/scripts/code-audit-helper.sh coderabbit-repos personal
 
 # Get analysis for repository
-./.agent/scripts/code-audit-helper.sh coderabbit-analysis personal repo-id
+./.agents/scripts/code-audit-helper.sh coderabbit-analysis personal repo-id
 
 # Start CodeRabbit MCP server
-./.agent/scripts/code-audit-helper.sh start-mcp coderabbit 3003
+./.agents/scripts/code-audit-helper.sh start-mcp coderabbit 3003
 ```
 
 ### **CodeFactor Operations:**
 
 ```bash
 # List CodeFactor repositories
-./.agent/scripts/code-audit-helper.sh codefactor-repos personal
+./.agents/scripts/code-audit-helper.sh codefactor-repos personal
 
 # Get issues for repository
-./.agent/scripts/code-audit-helper.sh codefactor-issues personal my-repo
+./.agents/scripts/code-audit-helper.sh codefactor-issues personal my-repo
 
 # Check repository grade
 curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/my-repo
@@ -145,26 +145,26 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 
 ```bash
 # List Codacy repositories
-./.agent/scripts/code-audit-helper.sh codacy-repos organization
+./.agents/scripts/code-audit-helper.sh codacy-repos organization
 
 # Get quality overview
-./.agent/scripts/code-audit-helper.sh codacy-quality organization my-repo
+./.agents/scripts/code-audit-helper.sh codacy-quality organization my-repo
 
 # Start Codacy MCP server
-./.agent/scripts/code-audit-helper.sh start-mcp codacy 3004
+./.agents/scripts/code-audit-helper.sh start-mcp codacy 3004
 ```
 
 ### **SonarCloud Operations:**
 
 ```bash
 # List SonarCloud projects
-./.agent/scripts/code-audit-helper.sh sonarcloud-projects personal
+./.agents/scripts/code-audit-helper.sh sonarcloud-projects personal
 
 # Get project measures
-./.agent/scripts/code-audit-helper.sh sonarcloud-measures personal project-key
+./.agents/scripts/code-audit-helper.sh sonarcloud-measures personal project-key
 
 # Start SonarCloud MCP server
-./.agent/scripts/code-audit-helper.sh start-mcp sonarcloud 3005
+./.agents/scripts/code-audit-helper.sh start-mcp sonarcloud 3005
 ```
 
 ## Security Best Practices
@@ -181,14 +181,14 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 
 ```bash
 # Regular security audits
-./.agent/scripts/code-audit-helper.sh audit my-repository
+./.agents/scripts/code-audit-helper.sh audit my-repository
 
 # Monitor for security vulnerabilities
 # Check SonarCloud security hotspots
-./.agent/scripts/code-audit-helper.sh sonarcloud-measures personal project-key
+./.agents/scripts/code-audit-helper.sh sonarcloud-measures personal project-key
 
 # Review Codacy security issues
-./.agent/scripts/code-audit-helper.sh codacy-quality organization my-repo
+./.agents/scripts/code-audit-helper.sh codacy-quality organization my-repo
 ```
 
 ## Quality Gates & Metrics
@@ -229,7 +229,7 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 
 ```bash
 # Start CodeRabbit MCP server
-./.agent/scripts/code-audit-helper.sh start-mcp coderabbit 3003
+./.agents/scripts/code-audit-helper.sh start-mcp coderabbit 3003
 
 # Configure in AI assistant
 {
@@ -250,7 +250,7 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 # https://github.com/codacy/codacy-mcp-server
 
 # Start server
-./.agent/scripts/code-audit-helper.sh start-mcp codacy 3004
+./.agents/scripts/code-audit-helper.sh start-mcp codacy 3004
 ```
 
 #### **SonarCloud MCP:**
@@ -260,7 +260,7 @@ curl -H "X-CF-TOKEN: $API_TOKEN" https://www.codefactor.io/api/v1/repositories/m
 # https://github.com/SonarSource/sonarqube-mcp-server
 
 # Start server
-./.agent/scripts/code-audit-helper.sh start-mcp sonarcloud 3005
+./.agents/scripts/code-audit-helper.sh start-mcp sonarcloud 3005
 ```
 
 ### **AI Assistant Capabilities:**
@@ -289,8 +289,8 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run Code Audit
         run: |
-          ./.agent/scripts/code-audit-helper.sh audit ${{ github.repository }}
-          ./.agent/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
+          ./.agents/scripts/code-audit-helper.sh audit ${{ github.repository }}
+          ./.agents/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
       - name: Upload Report
         uses: actions/upload-artifact@v3
         with:
@@ -307,8 +307,8 @@ REPO_NAME="$1"
 REPORT_FILE="audit-report-$(date +%Y%m%d-%H%M%S).json"
 
 # Run comprehensive audit
-./.agent/scripts/code-audit-helper.sh audit "$REPO_NAME"
-./.agent/scripts/code-audit-helper.sh report "$REPO_NAME" "$REPORT_FILE"
+./.agents/scripts/code-audit-helper.sh audit "$REPO_NAME"
+./.agents/scripts/code-audit-helper.sh report "$REPO_NAME" "$REPORT_FILE"
 
 # Check quality gates
 COVERAGE=$(jq -r '.coverage' "$REPORT_FILE")

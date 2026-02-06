@@ -43,7 +43,7 @@ if [[ -f "$SCRIPT_DIR/loop-common.sh" ]]; then
 fi
 
 # State directories
-readonly RALPH_STATE_DIR=".agent/loop-state"
+readonly RALPH_STATE_DIR=".agents/loop-state"
 readonly RALPH_STATE_FILE="${RALPH_STATE_DIR}/ralph-loop.local.state"
 
 # Legacy state directory (for backward compatibility during migration)
@@ -597,9 +597,9 @@ show_status_all() {
             local worktree_path="${BASH_REMATCH[1]}"
             
             # Check for v2 state (new location first, then legacy)
-            local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
+            local v2_state="$worktree_path/.agents/loop-state/loop-state.json"
             local v2_state_legacy="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+            local legacy_state="$worktree_path/.agents/loop-state/ralph-loop.local.state"
             local legacy_state_old="$worktree_path/.claude/ralph-loop.local.state"
             
             # Check any of the state file locations
@@ -669,9 +669,9 @@ check_other_loops() {
             fi
 
             # Check all possible state file locations (new and legacy)
-            local v2_state="$worktree_path/.agent/loop-state/loop-state.json"
+            local v2_state="$worktree_path/.agents/loop-state/loop-state.json"
             local v2_state_legacy="$worktree_path/.claude/loop-state.json"
-            local legacy_state="$worktree_path/.agent/loop-state/ralph-loop.local.state"
+            local legacy_state="$worktree_path/.agents/loop-state/ralph-loop.local.state"
             local legacy_state_old="$worktree_path/.claude/ralph-loop.local.state"
 
             if [[ -f "$v2_state" ]] || [[ -f "$v2_state_legacy" ]] || [[ -f "$legacy_state" ]] || [[ -f "$legacy_state_old" ]]; then

@@ -1,6 +1,6 @@
 {
   "_description": "WordPress Sites Registry",
-  "_docs": "See .agent/tools/wordpress/wp-admin.md for usage",
+  "_docs": "See .agents/tools/wordpress/wp-admin.md for usage",
   "_setup": "Copy to ~/.config/aidevops/wordpress-sites.json and fill in your sites",
 
   "sites": {

@@ -42,7 +42,7 @@ get_mcp_command() {
         "stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
         "stagehand-both") echo "both" ;;
         "dataforseo") echo "npx dataforseo-mcp-server" ;;
-        # serper - REMOVED: Uses curl subagent (.agent/seo/serper.md), no MCP needed
+        # serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
         "unstract") echo "docker:unstract/mcp-server" ;;
         *) echo "" ;;
     esac
@@ -173,7 +173,7 @@ install_mcp() {
             fi
 
             print_success "PageSpeed Insights MCP setup complete!"
-            print_info "Use: ./.agent/scripts/pagespeed-helper.sh for CLI access"
+            print_info "Use: ./.agents/scripts/pagespeed-helper.sh for CLI access"
             ;;
         "grep-vercel")
             print_info "Grep by Vercel MCP (grep.app) is no longer installed by aidevops"
@@ -199,9 +199,9 @@ install_mcp() {
             print_info "Setting up Stagehand AI Browser Automation MCP integration..."
 
             # First ensure Stagehand JavaScript is installed
-            if ! bash "${SCRIPT_DIR}/../../.agent/scripts/stagehand-helper.sh" status &> /dev/null; then
+            if ! bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh" status &> /dev/null; then
                 print_info "Installing Stagehand JavaScript first..."
-                bash "${SCRIPT_DIR}/../../.agent/scripts/stagehand-helper.sh" install
+                bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh" install
             fi
 
             # Setup advanced configuration
@@ -214,15 +214,15 @@ install_mcp() {
 
             print_success "Stagehand JavaScript MCP integration completed"
             print_info "Try: 'Ask Claude to help with browser automation using Stagehand'"
-            print_info "Use: ./.agent/scripts/stagehand-helper.sh for CLI access"
+            print_info "Use: ./.agents/scripts/stagehand-helper.sh for CLI access"
             ;;
         "stagehand-python")
             print_info "Setting up Stagehand Python AI Browser Automation MCP integration..."
 
             # First ensure Stagehand Python is installed
-            if ! bash "${SCRIPT_DIR}/../../.agent/scripts/stagehand-python-helper.sh" status &> /dev/null; then
+            if ! bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-python-helper.sh" status &> /dev/null; then
                 print_info "Installing Stagehand Python first..."
-                bash "${SCRIPT_DIR}/../../.agent/scripts/stagehand-python-helper.sh" install
+                bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-python-helper.sh" install
             fi
 
             # Setup advanced configuration
@@ -236,7 +236,7 @@ install_mcp() {
 
             print_success "Stagehand Python MCP integration completed"
             print_info "Try: 'Ask Claude to help with Python browser automation using Stagehand'"
-            print_info "Use: ./.agent/scripts/stagehand-python-helper.sh for CLI access"
+            print_info "Use: ./.agents/scripts/stagehand-python-helper.sh for CLI access"
             ;;
         "stagehand-both")
             print_info "Setting up both Stagehand JavaScript and Python MCP integrations..."
@@ -248,8 +248,8 @@ install_mcp() {
             bash "$0" stagehand-python
 
             print_success "Both Stagehand integrations completed"
-            print_info "JavaScript: ./.agent/scripts/stagehand-helper.sh"
-            print_info "Python: ./.agent/scripts/stagehand-python-helper.sh"
+            print_info "JavaScript: ./.agents/scripts/stagehand-helper.sh"
+            print_info "Python: ./.agents/scripts/stagehand-python-helper.sh"
             ;;
         "dataforseo")
             print_info "Setting up DataForSEO MCP for comprehensive SEO data..."
@@ -274,7 +274,7 @@ install_mcp() {
             print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
             print_info "Docs: https://docs.dataforseo.com/v3/"
             ;;
-        # "serper" - REMOVED: Uses curl subagent (.agent/seo/serper.md), no MCP needed
+        # "serper" - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
         # Get API key from https://serper.dev/ and set SERPER_API_KEY in mcp-env.sh
         "unstract")
             print_info "Setting up Unstract self-hosted document processing platform..."
@@ -473,7 +473,7 @@ main() {
     print_info "1. Configure API keys in your environment"
     print_info "2. Review configuration templates in configs/mcp-templates/"
     print_info "3. Test integrations with your AI assistant"
-    print_info "4. Check .agent/MCP-INTEGRATIONS.md for usage examples"
+    print_info "4. Check .agents/MCP-INTEGRATIONS.md for usage examples"
     return 0
 }
 

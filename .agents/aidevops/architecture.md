@@ -18,7 +18,7 @@ tools:
 ## Quick Reference
 
 - **Services**: 25+ integrated (hosting, DNS, Git, code quality, email, etc.)
-- **Pattern**: `./.agent/scripts/[service]-helper.sh [command] [account] [target] [options]`
+- **Pattern**: `./.agents/scripts/[service]-helper.sh [command] [account] [target] [options]`
 - **Config**: `configs/[service]-config.json.txt` (template) → `configs/[service]-config.json` (gitignored)
 
 **Categories**:
@@ -32,7 +32,7 @@ tools:
 
 **MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
 
-**Extension**: Follow standard patterns in `.agent/spec/extension.md`
+**Extension**: Follow standard patterns in `.agents/spec/extension.md`
 
 **Design Patterns**: aidevops implements industry-standard agent design patterns (see below)
 <!-- AI-CONTEXT-END -->
@@ -46,8 +46,8 @@ This file provides comprehensive context for AI assistants to understand, manage
 Key integrations:
 - **Agents**: Generated via `generate-opencode-agents.sh` with per-agent MCP tool filtering
 - **Commands**: 41 slash commands deployed to `~/.config/opencode/commands/`
-- **Plugins**: Compaction plugin at `.agent/plugins/opencode-aidevops/`
-- **Prompts**: Custom system prompt at `.agent/prompts/build.txt`
+- **Plugins**: Compaction plugin at `.agents/plugins/opencode-aidevops/`
+- **Prompts**: Custom system prompt at `.agents/prompts/build.txt`
 
 ## Agent Architecture
 
@@ -212,19 +212,19 @@ The AI DevOps Framework provides unified management across:
 All services follow consistent patterns for AI assistant efficiency:
 
 ```bash
-# Standard pattern: ./.agent/scripts/[service]-helper.sh [command] [account/instance] [target] [options]
+# Standard pattern: ./.agents/scripts/[service]-helper.sh [command] [account/instance] [target] [options]
 
 # List/Status Commands
-./.agent/scripts/[service]-helper.sh [accounts|instances|servers|sites]
+./.agents/scripts/[service]-helper.sh [accounts|instances|servers|sites]
 
 # Management Commands
-./.agent/scripts/[service]-helper.sh [action] [account/instance] [target] [options]
+./.agents/scripts/[service]-helper.sh [action] [account/instance] [target] [options]
 
 # Monitoring Commands
-./.agent/scripts/[service]-helper.sh [monitor|audit|status] [account/instance]
+./.agents/scripts/[service]-helper.sh [monitor|audit|status] [account/instance]
 
 # Help Commands
-./.agent/scripts/[service]-helper.sh help
+./.agents/scripts/[service]-helper.sh help
 ```
 
 ### **Configuration Structure**
@@ -251,9 +251,9 @@ configs/[service]-config.json      # Working config (gitignored)
 ### **Documentation Structure**
 
 ```bash
-.agent/AGENTS.md                      # AI assistant framework context
-.agent/[SERVICE].md                   # Complete service guide
-.agent/recommendations.md             # Provider selection guide
+.agents/AGENTS.md                      # AI assistant framework context
+.agents/[SERVICE].md                   # Complete service guide
+.agents/recommendations.md             # Provider selection guide
 ```
 
 ## 🚀 **Framework Usage Examples**
@@ -262,33 +262,33 @@ configs/[service]-config.json      # Working config (gitignored)
 
 ```bash
 # 1. Setup wizard for intelligent guidance
-./.agent/scripts/setup-wizard-helper.sh full-setup
+./.agents/scripts/setup-wizard-helper.sh full-setup
 
 # 2. Domain research and purchase
-./.agent/scripts/spaceship-helper.sh bulk-check personal myproject.com myproject.dev
-./.agent/scripts/spaceship-helper.sh purchase personal myproject.com 1 true
+./.agents/scripts/spaceship-helper.sh bulk-check personal myproject.com myproject.dev
+./.agents/scripts/spaceship-helper.sh purchase personal myproject.com 1 true
 
 # 3. Git repository creation
-./.agent/scripts/git-platforms-helper.sh github-create personal myproject "Description" false
-./.agent/scripts/git-platforms-helper.sh local-init ~/projects myproject
+./.agents/scripts/git-platforms-helper.sh github-create personal myproject "Description" false
+./.agents/scripts/git-platforms-helper.sh local-init ~/projects myproject
 
 # 4. Infrastructure provisioning
-./.agent/scripts/hetzner-helper.sh create-server production myproject
+./.agents/scripts/hetzner-helper.sh create-server production myproject
 
 # 5. DNS configuration
-./.agent/scripts/dns-helper.sh add cloudflare personal myproject.com @ A 192.168.1.100
+./.agents/scripts/dns-helper.sh add cloudflare personal myproject.com @ A 192.168.1.100
 
 # 6. Application deployment
-./.agent/scripts/coolify-helper.sh deploy production myproject
+./.agents/scripts/coolify-helper.sh deploy production myproject
 
 # 7. Security setup
-./.agent/scripts/vaultwarden-helper.sh create production "MyProject Creds" user pass
+./.agents/scripts/vaultwarden-helper.sh create production "MyProject Creds" user pass
 
 # 8. Code quality setup
-./.agent/scripts/code-audit-helper.sh audit myproject
+./.agents/scripts/code-audit-helper.sh audit myproject
 
 # 9. Monitoring setup
-./.agent/scripts/ses-helper.sh monitor production
+./.agents/scripts/ses-helper.sh monitor production
 ```
 
 ### **Multi-Service Operations**
@@ -296,16 +296,16 @@ configs/[service]-config.json      # Working config (gitignored)
 ```bash
 # Comprehensive infrastructure audit
 for service in hostinger hetzner coolify mainwp; do
-    ./.agent/scripts/${service}-helper.sh monitor production
+    ./.agents/scripts/${service}-helper.sh monitor production
 done
 
 # Bulk domain management
-./.agent/scripts/spaceship-helper.sh bulk-check personal \
+./.agents/scripts/spaceship-helper.sh bulk-check personal \
   project1.com project2.com project3.com
 
 # Cross-platform Git management
-./.agent/scripts/git-platforms-helper.sh audit github personal
-./.agent/scripts/git-platforms-helper.sh audit gitlab personal
+./.agents/scripts/git-platforms-helper.sh audit github personal
+./.agents/scripts/git-platforms-helper.sh audit gitlab personal
 ```
 
 ## 🔧 **MCP Server Ecosystem**
@@ -314,14 +314,14 @@ done
 
 ```bash
 # Complete MCP server stack for AI assistants:
-./.agent/scripts/localhost-helper.sh start-mcp          # Port 3001 - LocalWP access
-./.agent/scripts/vaultwarden-helper.sh start-mcp production 3002  # Secure credentials
-./.agent/scripts/code-audit-helper.sh start-mcp coderabbit 3003   # Code analysis
-./.agent/scripts/code-audit-helper.sh start-mcp codacy 3004       # Quality metrics
-./.agent/scripts/code-audit-helper.sh start-mcp sonarcloud 3005   # Security analysis
-./.agent/scripts/git-platforms-helper.sh start-mcp github 3006    # Git management
-./.agent/scripts/git-platforms-helper.sh start-mcp gitlab 3007    # GitLab access
-./.agent/scripts/git-platforms-helper.sh start-mcp gitea 3008     # Gitea access
+./.agents/scripts/localhost-helper.sh start-mcp          # Port 3001 - LocalWP access
+./.agents/scripts/vaultwarden-helper.sh start-mcp production 3002  # Secure credentials
+./.agents/scripts/code-audit-helper.sh start-mcp coderabbit 3003   # Code analysis
+./.agents/scripts/code-audit-helper.sh start-mcp codacy 3004       # Quality metrics
+./.agents/scripts/code-audit-helper.sh start-mcp sonarcloud 3005   # Security analysis
+./.agents/scripts/git-platforms-helper.sh start-mcp github 3006    # Git management
+./.agents/scripts/git-platforms-helper.sh start-mcp gitlab 3007    # GitLab access
+./.agents/scripts/git-platforms-helper.sh start-mcp gitea 3008     # Gitea access
 ```
 
 ### **MCP Integration Benefits**
@@ -339,7 +339,7 @@ done
 #### **1. Create Helper Script**
 
 ```bash
-# File: .agent/scripts/[service-name]-helper.sh
+# File: .agents/scripts/[service-name]-helper.sh
 #!/bin/bash
 
 # [Service Name] Helper Script
@@ -399,7 +399,7 @@ CONFIG_FILE="../configs/[service-name]-config.json"
 #### **3. Create Comprehensive Documentation**
 
 ```bash
-# File: .agent/[SERVICE-NAME].md
+# File: .agents/[SERVICE-NAME].md
 # [Service Name] Guide
 
 ## 🏢 **Provider Overview**

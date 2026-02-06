@@ -821,7 +821,7 @@ CONFIGURATION:
   Config file: configs/twilio-config.json
   Template: configs/twilio-config.json.txt
 
-For more information, see: .agent/services/communications/twilio.md
+For more information, see: .agents/services/communications/twilio.md
 EOF
     return 0
 }
