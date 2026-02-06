@@ -3730,6 +3730,12 @@ main() {
     
     parse_args "$@"
     
+    # Guard: --interactive and --non-interactive are mutually exclusive
+    if [[ "$INTERACTIVE_MODE" == "true" && "$NON_INTERACTIVE" == "true" ]]; then
+        print_error "--interactive and --non-interactive cannot be used together"
+        exit 1
+    fi
+    
     echo "🤖 AI DevOps Framework Setup"
     echo "============================="
     if [[ "$CLEAN_MODE" == "true" ]]; then
