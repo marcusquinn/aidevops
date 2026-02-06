@@ -55,8 +55,23 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t132 Cross-Provider Model Routing with Fallbacks #plan #orchestration #multi-model ~1d (ai:6h test:3h read:2h) logged:2026-02-06
+  - [ ] t132.1 Model availability checker (probe provider endpoints before dispatch) ~2h blocked-by:none
+    - Notes: Script or function that tests if a model is reachable and responding. Check API key validity, rate limits, model availability. Support: Anthropic (Claude), Google (Gemini), OpenAI, local (Ollama). Return latency estimate.
+  - [ ] t132.2 Fallback chain configuration (per-task and global defaults) ~2h blocked-by:t132.1
+    - Notes: Define fallback chains like: gemini-3-pro → gemini-2.5-pro → claude-sonnet-4 → claude-haiku. Configurable per subagent via frontmatter `fallback:` field, per runner via config, and global default in shared-constants.sh. Triggers: API error, timeout, rate limit, empty/malformed response.
+  - [ ] t132.3 Supervisor model resolution from subagent frontmatter ~2h blocked-by:t132.2
+    - Notes: supervisor-helper.sh reads `model:` from subagent YAML frontmatter and maps tier names (haiku/flash/sonnet/pro/opus) to actual provider/model strings. Uses availability checker before dispatch. Falls back through chain on failure.
+  - [ ] t132.4 Quality gate with model escalation ~3h blocked-by:t132.3
+    - Notes: After task completion, evaluate output quality. If unsatisfactory (heuristic or AI eval), re-dispatch to next tier up. Criteria: empty output, error patterns, user-defined quality checks, token-to-substance ratio. Max escalation depth configurable.
+  - [ ] t132.5 Runner and cron-helper multi-provider support ~2h blocked-by:t132.2
+    - Notes: Extend runner-helper.sh and cron-helper.sh --model flag to accept tier names (not just provider/model strings). Add --provider flag. Support Gemini CLI, OpenCode server, Claude CLI as dispatch backends. Auto-detect available backends.
+  - [ ] t132.6 Cross-model review workflow (second-opinion pattern) ~2h blocked-by:t132.5
+    - Notes: Dispatch same review task to multiple models (e.g., Claude + Gemini), collect results, merge/diff findings. Use case: code review, security audit, architecture review. Configurable via `review-models:` in task metadata.
+  - Notes: Currently model-routing.md exists as design doc and all 195 subagents have model: frontmatter, but nothing enforces it at runtime. Runner --model only works with single hardcoded provider. No fallback on failure, no availability checking, no quality-based escalation, no cross-provider dispatch. This blocks use cases like "get a Gemini review of the codebase from within a Claude session."
 - [ ] t131 gopass Integration & Credentials Rename #plan #security #credentials → [todo/PLANS.md#2026-02-06-gopass-integration--credentials-rename] ~2d (ai:1d test:4h read:4h) logged:2026-02-06 ref:todo/tasks/prd-gopass-credentials.md
   - [ ] t131.1 Part A: Rename mcp-env.sh to credentials.sh (83 files, 261 refs) ~4.5h blocked-by:none
+    - Notes: .gitignore line 32 has `*credential*` pattern that blocks any file with "credential" in the name. Must update this rule during rename to allow `credentials.sh` (and planning docs referencing it) while still blocking actual credential files. Consider narrowing to `credentials.sh.bak` or using `!credentials.sh` negation.
   - [ ] t131.2 Part B: gopass integration + aidevops secret wrapper ~6h blocked-by:t131.1
   - [ ] t131.3 Part C: Agent instructions + psst alternative docs ~2h blocked-by:t131.2
   - Notes: Replace plaintext mcp-env.sh with gopass (GPG-encrypted, git-versioned, team-shareable). Build AI-native wrapper (subprocess injection + output redaction) so agents use secrets without seeing values. Rename mcp-env.sh to credentials.sh for accuracy. Document psst as alternative for solo devs. gopass selected over psst (6.7k stars, 8+ years, zero runtime deps, team-ready) after evaluating psst, mcp-secrets-vault, rsec, cross-keychain.
