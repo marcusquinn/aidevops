@@ -265,6 +265,8 @@ await playwright.testFormValidation({
 
 ## 📱 **Mobile & Responsive Testing**
 
+> **Detailed guide**: See `playwright-emulation.md` for comprehensive device emulation including device presets, viewport/HiDPI, geolocation, locale/timezone, permissions, color scheme, offline mode, and responsive breakpoint recipes.
+
 ### **Device-Specific Testing**
 
 ```javascript
