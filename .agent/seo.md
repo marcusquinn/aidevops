@@ -18,6 +18,9 @@ subagents:
   - data-export
   - ranking-opportunities
   - analytics-tracking
+  - rich-results
+  - debug-opengraph
+  - debug-favicon
   - general
   - explore
 ---
@@ -49,6 +52,9 @@ subagents:
 | `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
 | `ranking-opportunities.md` | Analyze data for quick wins, striking distance, cannibalization |
 | `analytics-tracking.md` | GA4 setup, event tracking, conversions, UTM parameters, attribution |
+| `rich-results.md` | Google Rich Results Test via browser automation (API deprecated) |
+| `debug-opengraph.md` | Validate Open Graph meta tags for social sharing |
+| `debug-favicon.md` | Validate favicon setup across platforms |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
