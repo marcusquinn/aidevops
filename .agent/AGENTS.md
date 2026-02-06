@@ -258,6 +258,10 @@ aidevops features                # List available features
 
 **CLI**: `aidevops [init|update|status|repos|skill|detect|features|uninstall]`
 
+## Bot Reviewer Feedback
+
+AI code review bots (Gemini, CodeRabbit, Copilot) can provide incorrect suggestions. **Never blindly implement bot feedback.** Verify factual claims (versions, paths, APIs) against runtime/docs/project conventions before acting. Dismiss incorrect suggestions with evidence; address valid ones.
+
 ## Quality Workflow
 
 ```text

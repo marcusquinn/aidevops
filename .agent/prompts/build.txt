@@ -97,6 +97,13 @@ For loop mode: `pre-edit-check.sh --loop-mode --task "description"`
 - Use GitHub-flavored markdown
 - Use numbered options for user prompts (never "[Enter] to confirm")
 
+# AI Suggestion Verification
+Never apply AI tool suggestions (from code review bots, linters with AI explanations, or
+automated PR reviewers) without independent verification. AI reviewers can hallucinate —
+claiming Docker image versions don't exist, flagging correct file paths as wrong, or
+suggesting fixes that break working code. Always verify factual claims against runtime,
+documentation, or project conventions before acting on them.
+
 # Model-Specific Reinforcements
 These apply to all models but reinforce behaviours some need more than others:
 - NEVER end your turn without completing the task. Keep working until fully resolved.

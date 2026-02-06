@@ -334,7 +334,7 @@ loop until **PR is merged** (max: 20):
     session "Fix CI issues and push"
   
   if **changes requested**:
-    session "Address review feedback and push"
+    session "Evaluate review feedback: verify factual claims against runtime/docs/project conventions, dismiss incorrect suggestions with evidence, address valid ones, then push"
 
 # Phase 5: Postflight
 session "Verify release health"

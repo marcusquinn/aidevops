@@ -908,7 +908,8 @@ pr_review_loop() {
             CHANGES_REQUESTED)
                 print_warning "Changes requested. Getting feedback..."
                 get_pr_feedback "$pr_number"
-                print_info "Address the feedback and push updates."
+                print_warning "IMPORTANT: Verify AI bot suggestions before implementing — reviewers can hallucinate. Check claims against runtime/docs first."
+                print_info "Address verified feedback and push updates."
                 ;;
             WAITING)
                 print_info "Waiting for review..."
