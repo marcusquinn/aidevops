@@ -545,6 +545,17 @@ cmd_update() {
         
         if [[ "$local_hash" == "$remote_hash" ]]; then
             print_success "Framework already up to date!"
+            
+            # Even when repo is current, deployed agents may be stale
+            # (e.g., previous setup.sh was interrupted or failed)
+            local repo_version deployed_version
+            repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+            deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+            if [[ "$repo_version" != "$deployed_version" ]]; then
+                print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
+                print_info "Re-running setup to sync agents..."
+                bash "$INSTALL_DIR/setup.sh"
+            fi
         else
             print_info "Pulling latest changes..."
             if git pull --ff-only origin main; then
