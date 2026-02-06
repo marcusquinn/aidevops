@@ -23,7 +23,7 @@ For all infrastructure, hosting, and DevOps tasks:
 ```bash
 # Use the DevOps framework
 cd ~/Git/aidevops
-./.agent/scripts/servers-helper.sh help
+./.agents/scripts/servers-helper.sh help
 
 # View complete provider documentation
 ls ~/Git/aidevops/docs/
@@ -57,10 +57,10 @@ ls ~/Git/aidevops/docs/
 
 ```bash
 # Store API keys securely
-bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set service-name YOUR_API_KEY
 
 # List configured services (keys are never displayed)
-bash ~/Git/aidevops/.agent/scripts/setup-local-api-keys.sh list
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh list
 
 # Verify secure storage location
 ls -la ~/.config/aidevops/
@@ -81,7 +81,7 @@ ls -la ~/.config/aidevops/
 cd ~/Git/aidevops
 
 # View agent documentation
-ls ~/Git/aidevops/.agent/
+ls ~/Git/aidevops/.agents/
 
 # View setup documentation
 cat ~/Git/aidevops/README.md

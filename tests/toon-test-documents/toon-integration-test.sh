@@ -12,7 +12,7 @@ echo ""
 # Test 1: Basic conversion
 echo "📝 Test 1: Basic JSON to TOON conversion"
 echo '{"project": "AI DevOps", "version": "1.0", "active": true}' > test-basic.json
-./.agent/scripts/toon-helper.sh encode test-basic.json test-basic.toon
+./.agents/scripts/toon-helper.sh encode test-basic.json test-basic.toon
 echo "✅ Basic conversion completed"
 echo ""
 
@@ -27,19 +27,19 @@ cat > test-tabular.json << 'EOF'
   ]
 }
 EOF
-./.agent/scripts/toon-helper.sh encode test-tabular.json test-tabular.toon ',' true
+./.agents/scripts/toon-helper.sh encode test-tabular.json test-tabular.toon ',' true
 echo "✅ Tabular conversion with stats completed"
 echo ""
 
 # Test 3: Tab delimiter for better efficiency
 echo "🔤 Test 3: Tab delimiter conversion"
-./.agent/scripts/toon-helper.sh encode test-tabular.json test-tabular-tab.toon '\t' true
+./.agents/scripts/toon-helper.sh encode test-tabular.json test-tabular-tab.toon '\t' true
 echo "✅ Tab delimiter conversion completed"
 echo ""
 
 # Test 4: Round-trip validation
 echo "🔄 Test 4: Round-trip validation"
-./.agent/scripts/toon-helper.sh decode test-tabular.toon test-restored.json
+./.agents/scripts/toon-helper.sh decode test-tabular.toon test-restored.json
 # Use jq to normalize JSON for comparison (semantic comparison)
 if command -v jq &> /dev/null; then
     if jq -S . test-tabular.json > test-normalized.json && jq -S . test-restored.json > test-restored-normalized.json; then
@@ -59,17 +59,17 @@ echo ""
 
 # Test 5: TOON validation
 echo "✅ Test 5: TOON format validation"
-./.agent/scripts/toon-helper.sh validate test-tabular.toon
+./.agents/scripts/toon-helper.sh validate test-tabular.toon
 echo ""
 
 # Test 6: Stdin processing
 echo "📥 Test 6: Stdin processing"
-echo '{"name": "stdin-test", "items": ["a", "b", "c"]}' | ./.agent/scripts/toon-helper.sh stdin-encode ',' true
+echo '{"name": "stdin-test", "items": ["a", "b", "c"]}' | ./.agents/scripts/toon-helper.sh stdin-encode ',' true
 echo ""
 
 # Test 7: Comparison analysis
 echo "📈 Test 7: Token efficiency comparison"
-./.agent/scripts/toon-helper.sh compare test-tabular.json
+./.agents/scripts/toon-helper.sh compare test-tabular.json
 echo ""
 
 # Show generated files

@@ -66,7 +66,7 @@
       },
       "aidevops_workflows": {
         "enabled": true,
-        "helper_script": ".agent/scripts/langflow-helper.sh"
+        "helper_script": ".agents/scripts/langflow-helper.sh"
       }
     },
     "deployment": {
@@ -95,12 +95,12 @@
     }
   },
   "usage_examples": {
-    "setup": "bash .agent/scripts/langflow-helper.sh setup",
+    "setup": "bash .agents/scripts/langflow-helper.sh setup",
     "start": "~/.aidevops/scripts/start-langflow.sh",
     "stop": "~/.aidevops/scripts/stop-langflow.sh",
     "status": "~/.aidevops/scripts/langflow-status.sh",
-    "export_flows": "bash .agent/scripts/langflow-helper.sh export ./flows",
-    "import_flows": "bash .agent/scripts/langflow-helper.sh import ./flows",
+    "export_flows": "bash .agents/scripts/langflow-helper.sh export ./flows",
+    "import_flows": "bash .agents/scripts/langflow-helper.sh import ./flows",
     "access_ui": "http://localhost:7860",
     "access_api": "http://localhost:7860/docs"
   },

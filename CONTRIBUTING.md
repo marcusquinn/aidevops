@@ -21,7 +21,7 @@ cd aidevops
 ./setup.sh
 
 # Run quality checks before committing
-.agent/scripts/linters-local.sh
+.agents/scripts/linters-local.sh
 ```
 
 ## Commit Messages

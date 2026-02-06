@@ -7,6 +7,6 @@
       "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"
     ],
     "enabled": false,
-    "_comment": "Disabled globally. Enabled via fluentcrm_*: true in services/crm/fluentcrm.md subagent. Requires local build - see .agent/services/crm/fluentcrm.md for setup."
+    "_comment": "Disabled globally. Enabled via fluentcrm_*: true in services/crm/fluentcrm.md subagent. Requires local build - see .agents/services/crm/fluentcrm.md for setup."
   }
 }

@@ -73,10 +73,10 @@ jobs:
         CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
       run: |
         # Make scripts executable
-        chmod +x .agent/scripts/*.sh
+        chmod +x .agents/scripts/*.sh
         
         # Run monitoring with full analysis
-        ./.agent/scripts/monitor-code-review.sh monitor
+        ./.agents/scripts/monitor-code-review.sh monitor
     
     - name: 🔧 Apply Auto-Fixes
       run: |
@@ -85,12 +85,12 @@ jobs:
         # See: https://github.com/marcusquinn/aidevops/issues/333
         
         # Apply framework-specific fixes only
-        ./.agent/scripts/monitor-code-review.sh fix
+        ./.agents/scripts/monitor-code-review.sh fix
     
     - name: 📊 Generate Quality Report
       run: |
         # Generate comprehensive quality report
-        ./.agent/scripts/monitor-code-review.sh report > quality-report.md
+        ./.agents/scripts/monitor-code-review.sh report > quality-report.md
         
         # Add current metrics
         echo "## 📈 Current Quality Metrics" >> quality-report.md

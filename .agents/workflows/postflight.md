@@ -1,0 +1,657 @@
+---
+description: Verify release health after tag and GitHub release
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  webfetch: true
+  task: true
+---
+
+# Postflight Verification Workflow
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Verify release health after `release.md` completes
+- **Trigger**: After tag creation and GitHub release publication
+- **Timeout**: 10 minutes for CI/CD, 5 minutes for code review tools
+- **Mode**: Manual by default, can be automated via GitHub Actions
+- **Commands**:
+  - `gh run list --workflow=code-quality.yml --limit=5`
+  - `gh api repos/{owner}/{repo}/commits/{sha}/check-runs`
+  - `.agents/scripts/linters-local.sh`
+- **Rollback**: See [Rollback Procedures](#rollback-procedures)
+
+<!-- AI-CONTEXT-END -->
+
+This workflow monitors CI/CD pipelines and code review feedback AFTER a release is published. It ensures no regressions, security issues, or quality degradations were introduced.
+
+## Overview
+
+Postflight verification is the final gate after release. While pre-release checks catch most issues, postflight catches:
+
+- CI/CD failures triggered by the release tag
+- Delayed code review tool analysis (CodeRabbit, Codacy, SonarCloud)
+- Security vulnerabilities detected post-merge
+- Integration issues only visible in production-like environments
+
+## Critical: Avoiding Circular Dependencies
+
+When checking CI/CD status, **always exclude the postflight workflow itself** to avoid circular dependencies:
+
+```bash
+# WRONG - includes postflight workflow, causes infinite wait
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq '[.check_runs[] | select(.status != "completed")] | length'
+
+# CORRECT - excludes postflight workflow
+SELF_NAME="Verify Release Health"
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length"
+```
+
+## Checking Both Main and Tag Workflows
+
+After a release, workflows run on **two different refs**:
+1. **Main branch workflows** - triggered by the merge commit
+2. **Tag workflows** - triggered by the release/tag creation
+
+When running local postflight, check BOTH:
+
+```bash
+# Check main branch workflows
+gh run list --branch=main --limit=5
+
+# Check tag-triggered workflows (including postflight.yml)
+gh run list --branch=v{VERSION} --limit=5
+
+# Or check all recent runs
+gh run list --limit=10 --json name,status,conclusion,headBranch
+```
+
+## Postflight Checklist
+
+### 1. CI/CD Pipeline Status
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| GitHub Actions | `gh run list --limit=5` | All workflows passing |
+| Tag-triggered workflows | `gh run list --workflow=code-quality.yml` | Success status |
+| Version validation | `gh run list --workflow=version-validation.yml` | Success status |
+
+### 2. Code Quality Tools
+
+| Tool | Check Method | Threshold |
+|------|--------------|-----------|
+| SonarCloud | API or dashboard | No new bugs, vulnerabilities, or code smells |
+| Codacy | Dashboard or CLI | Grade maintained (A/B) |
+| CodeRabbit | PR comments | No blocking issues |
+| Qlty | CLI check | No new violations |
+
+### 3. Security Scanning
+
+| Tool | Check Method | Threshold |
+|------|--------------|-----------|
+| Snyk | `snyk test` | No new high/critical vulnerabilities |
+| Secretlint | `secretlint "**/*"` | No exposed secrets |
+| npm audit | `npm audit` | No high/critical issues |
+| Dependabot | GitHub Security tab | No new alerts |
+
+## Verification Commands
+
+### Check GitHub Actions Status
+
+```bash
+# List recent workflow runs (includes both main and tag branches)
+gh run list --limit=10
+
+# Check specific workflow
+gh run list --workflow=code-quality.yml --limit=5
+
+# IMPORTANT: Check tag-triggered workflows separately
+gh run list --branch=v{VERSION} --limit=5
+
+# Get detailed status for latest run
+gh run view $(gh run list --limit=1 --json databaseId -q '.[0].databaseId')
+
+# Check all workflows for a specific commit/tag (excluding postflight to avoid circular check)
+SELF_NAME="Verify Release Health"
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+  --jq ".check_runs[] | select(.name != \"$SELF_NAME\") | {name, status, conclusion}"
+
+# Wait for workflows to complete (with timeout)
+gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
+```
+
+**Important**: When running postflight locally after a release:
+1. Wait for the GH Actions postflight.yml workflow to complete first
+2. Check its status explicitly: `gh run list --workflow=postflight.yml --limit=1`
+3. Only declare success if ALL workflows (including postflight.yml) passed
+
+### Check SonarCloud Status
+
+```bash
+# Get project quality gate status
+curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq '.projectStatus.status'
+
+# Get current issues count
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&ps=1" | jq '.total'
+
+# Get detailed metrics
+curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aidevops&metricKeys=bugs,vulnerabilities,code_smells,security_hotspots" | jq '.component.measures'
+
+# Compare with previous analysis
+curl -s "https://sonarcloud.io/api/measures/search_history?component=marcusquinn_aidevops&metrics=bugs,vulnerabilities&ps=2" | jq '.measures'
+```
+
+### Check Codacy Status
+
+```bash
+# Using Codacy CLI (if configured)
+./.agents/scripts/codacy-cli.sh status
+
+# Check via API (requires CODACY_API_TOKEN)
+curl -s -H "api-token: $CODACY_API_TOKEN" \
+  "https://api.codacy.com/api/v3/organizations/gh/marcusquinn/repositories/aidevops" | jq '.data.grade'
+```
+
+### Check Security Status
+
+```bash
+# Run Snyk security scan
+./.agents/scripts/snyk-helper.sh test
+
+# Check for secrets
+secretlint "**/*" --format compact
+
+# npm audit (if applicable)
+npm audit --audit-level=high
+
+# Full security scan
+./.agents/scripts/snyk-helper.sh full
+```
+
+### Comprehensive Postflight Script
+
+```bash
+#!/bin/bash
+# postflight-check.sh - Run all postflight verifications
+
+set -euo pipefail
+
+TIMEOUT_CI=600      # 10 minutes for CI/CD
+TIMEOUT_TOOLS=300   # 5 minutes for code review tools
+POLL_INTERVAL=30    # Check every 30 seconds
+
+echo "=== Postflight Verification ==="
+echo "Started: $(date)"
+echo ""
+
+# 1. Check GitHub Actions
+echo "--- CI/CD Pipeline Status ---"
+LATEST_RUN=$(gh run list --limit=1 --json databaseId,status,conclusion -q '.[0]')
+RUN_ID=$(echo "$LATEST_RUN" | jq -r '.databaseId')
+STATUS=$(echo "$LATEST_RUN" | jq -r '.status')
+
+if [[ "$STATUS" == "in_progress" || "$STATUS" == "queued" ]]; then
+    echo "Waiting for workflow $RUN_ID to complete..."
+    timeout $TIMEOUT_CI gh run watch "$RUN_ID" --exit-status || {
+        echo "ERROR: CI/CD pipeline failed or timed out"
+        exit 1
+    }
+fi
+
+CONCLUSION=$(gh run view "$RUN_ID" --json conclusion -q '.conclusion')
+if [[ "$CONCLUSION" != "success" ]]; then
+    echo "ERROR: CI/CD pipeline conclusion: $CONCLUSION"
+    gh run view "$RUN_ID" --log-failed
+    exit 1
+fi
+echo "CI/CD: PASSED"
+
+# 2. Check SonarCloud
+echo ""
+echo "--- SonarCloud Status ---"
+SONAR_STATUS=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq -r '.projectStatus.status')
+if [[ "$SONAR_STATUS" != "OK" ]]; then
+    echo "WARNING: SonarCloud quality gate: $SONAR_STATUS"
+    curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&severities=BLOCKER,CRITICAL&ps=10" | jq '.issues[] | {rule, message, component}'
+else
+    echo "SonarCloud: PASSED"
+fi
+
+# 3. Check for new security issues
+echo ""
+echo "--- Security Status ---"
+if command -v snyk &> /dev/null; then
+    if snyk test --severity-threshold=high --json 2>/dev/null | jq -e '.vulnerabilities | length == 0' > /dev/null; then
+        echo "Snyk: PASSED (no high/critical vulnerabilities)"
+    else
+        echo "WARNING: Snyk found high/critical vulnerabilities"
+        snyk test --severity-threshold=high
+    fi
+else
+    echo "Snyk: SKIPPED (not installed)"
+fi
+
+# 4. Check Secretlint
+if command -v secretlint &> /dev/null; then
+    if secretlint "**/*" --format compact 2>/dev/null; then
+        echo "Secretlint: PASSED"
+    else
+        echo "ERROR: Secretlint found potential secrets"
+        exit 1
+    fi
+else
+    echo "Secretlint: SKIPPED (not installed)"
+fi
+
+echo ""
+echo "=== Postflight Verification Complete ==="
+echo "Finished: $(date)"
+```
+
+## Automated Postflight (GitHub Actions)
+
+Add this workflow to run postflight checks automatically after releases:
+
+```yaml
+# .github/workflows/postflight.yml
+name: Postflight Verification
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to verify'
+        required: false
+
+jobs:
+  postflight:
+    name: Verify Release Health
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.tag || github.ref }}
+        fetch-depth: 0
+    
+    - name: Wait for CI/CD Pipelines
+      run: |
+        echo "Waiting for all check runs to complete..."
+        sleep 60  # Initial wait for workflows to start
+        
+        # Poll for completion
+        for i in {1..20}; do
+          PENDING=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '[.check_runs[] | select(.status != "completed")] | length')
+          
+          if [[ "$PENDING" == "0" ]]; then
+            echo "All check runs completed"
+            break
+          fi
+          
+          echo "Waiting for $PENDING check runs... (attempt $i/20)"
+          sleep 30
+        done
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Verify CI/CD Status
+      run: |
+        FAILED=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          --jq '[.check_runs[] | select(.conclusion == "failure")] | length')
+        
+        if [[ "$FAILED" != "0" ]]; then
+          echo "::error::$FAILED check runs failed"
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '.check_runs[] | select(.conclusion == "failure") | "FAILED: \(.name)"'
+          exit 1
+        fi
+        
+        echo "All CI/CD checks passed"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Check SonarCloud Quality Gate
+      run: |
+        STATUS=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" \
+          | jq -r '.projectStatus.status')
+        
+        if [[ "$STATUS" != "OK" ]]; then
+          echo "::warning::SonarCloud quality gate status: $STATUS"
+          
+          # Get new issues since last analysis
+          curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&createdAfter=$(date -d '1 hour ago' -Iseconds)&ps=10" \
+            | jq '.issues[] | "[\(.severity)] \(.message) (\(.component))"'
+        else
+          echo "SonarCloud quality gate: PASSED"
+        fi
+    
+    - name: Security Scan
+      run: |
+        # Install Snyk
+        npm install -g snyk
+        
+        # Run security scan
+        snyk auth ${{ secrets.SNYK_TOKEN }} || true
+        snyk test --severity-threshold=high || echo "::warning::Security vulnerabilities found"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      continue-on-error: true
+    
+    - name: Check for Secrets
+      run: |
+        npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+        secretlint "**/*" --format compact || {
+          echo "::error::Potential secrets detected in codebase"
+          exit 1
+        }
+      continue-on-error: true
+    
+    - name: Generate Postflight Report
+      if: always()
+      run: |
+        echo "## Postflight Verification Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Add check run summary
+        echo "### CI/CD Status" >> $GITHUB_STEP_SUMMARY
+        gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          --jq '.check_runs[] | "- **\(.name)**: \(.conclusion // .status)"' >> $GITHUB_STEP_SUMMARY
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "::error::Postflight verification failed for release ${{ github.event.release.tag_name }}"
+        echo "Review the logs and consider rollback if critical issues found."
+```
+
+## Timeout Strategy
+
+| Phase | Timeout | Rationale |
+|-------|---------|-----------|
+| CI/CD completion | 10 min | Most workflows complete in 5-7 minutes |
+| SonarCloud analysis | 5 min | Analysis typically completes within 2-3 minutes |
+| Security scans | 5 min | Snyk/Secretlint are fast for small-medium projects |
+| Total postflight | 15 min | Allow buffer for retries and network latency |
+
+### Polling Strategy
+
+```bash
+# Recommended polling intervals
+INITIAL_WAIT=60     # Wait for workflows to start
+POLL_INTERVAL=30    # Check every 30 seconds
+MAX_ATTEMPTS=20     # 20 * 30s = 10 minutes max wait
+```
+
+## Manual vs Automatic Mode
+
+### Manual Mode (Default)
+
+Run postflight checks manually after release:
+
+```bash
+# After release.md completes
+./.agents/scripts/postflight-check.sh
+
+# Or individual checks
+gh run list --limit=5
+./.agents/scripts/linters-local.sh
+```
+
+**When to use manual mode:**
+
+- First-time releases
+- Major version releases
+- When you want to review before declaring success
+
+### Automatic Mode
+
+Enable via GitHub Actions workflow (see above).
+
+**When to use automatic mode:**
+
+- Patch releases with high confidence
+- Established CI/CD pipelines
+- When rollback procedures are well-tested
+
+## Rollback Procedures
+
+If postflight verification fails, follow these rollback steps:
+
+### 1. Assess Severity
+
+| Severity | Indicators | Action |
+|----------|------------|--------|
+| **Critical** | Security vulnerability, data loss risk, service outage | Immediate rollback |
+| **High** | Broken functionality, failed tests, quality gate failure | Rollback within 1 hour |
+| **Medium** | Code smell increase, minor regressions | Hotfix in next release |
+| **Low** | Style issues, documentation gaps | Fix in next release |
+
+### 2. Rollback Commands
+
+```bash
+# Option A: Revert the release commit
+git revert <release-commit-hash>
+git push origin main
+
+# Option B: Delete the tag and release (if not widely distributed)
+gh release delete v{VERSION} --yes
+git tag -d v{VERSION}
+git push origin --delete v{VERSION}
+
+# Option C: Create hotfix release
+git checkout -b hotfix/v{VERSION}.1
+# Fix the issue
+git commit -m "fix: resolve critical issue from v{VERSION}"
+./.agents/scripts/version-manager.sh release patch
+```
+
+### 3. Rollback Checklist
+
+- [ ] Identify the specific issue causing failure
+- [ ] Determine rollback strategy (revert, delete, or hotfix)
+- [ ] Execute rollback commands
+- [ ] Verify rollback was successful
+- [ ] Notify stakeholders
+- [ ] Document the incident
+- [ ] Create follow-up issue for proper fix
+
+### 4. Post-Rollback Verification
+
+```bash
+# Verify the rollback
+gh run list --limit=5  # Check CI/CD passes
+./.agents/scripts/linters-local.sh  # Verify quality restored
+
+# Check SonarCloud
+curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq '.projectStatus.status'
+```
+
+## Integration with release.md
+
+Add postflight as the final step in the release workflow:
+
+```markdown
+## Release Workflow (Updated)
+
+1. Bump version (see `workflows/version-bump.md`)
+2. Run code quality checks
+3. Update changelog
+4. Commit version changes
+5. Create version tags
+6. Push to remote
+7. Create GitHub/GitLab release
+8. **Postflight verification** (see `workflows/postflight.md`)
+```
+
+### Suggested release.md Addition
+
+Add to the "Post-Release Tasks" section:
+
+```markdown
+### Postflight Verification
+
+After release publication, run postflight checks:
+
+\`\`\`bash
+# Wait for CI/CD and verify
+gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
+
+# Or run full postflight
+./.agents/scripts/postflight-check.sh
+\`\`\`
+
+See `workflows/postflight.md` for detailed verification procedures and rollback guidance.
+```
+
+## Troubleshooting
+
+### CI/CD Stuck in Pending
+
+```bash
+# Check if workflows are queued
+gh run list --status=queued
+
+# Check GitHub Actions status
+curl -s https://www.githubstatus.com/api/v2/status.json | jq '.status'
+
+# Re-run failed workflow
+gh run rerun <run-id>
+```
+
+### SonarCloud Analysis Delayed
+
+```bash
+# Trigger manual analysis (if configured)
+curl -X POST "https://sonarcloud.io/api/project_analyses/create?project=marcusquinn_aidevops" \
+  -H "Authorization: Bearer $SONAR_TOKEN"
+
+# Check analysis queue
+curl -s "https://sonarcloud.io/api/ce/component?component=marcusquinn_aidevops" | jq '.queue'
+```
+
+### Security Scan Timeout
+
+```bash
+# Run with increased timeout
+snyk test --timeout=600
+
+# Run specific scan type only
+snyk test --all-projects=false
+```
+
+## Success Criteria
+
+Postflight verification is successful when:
+
+1. All CI/CD workflows show `success` conclusion (including postflight.yml itself)
+2. SonarCloud quality gate status is `OK`
+3. No new high/critical security vulnerabilities
+4. No exposed secrets detected
+5. Code review tools show no blocking issues
+
+## Handling SonarCloud Quality Gate Failures
+
+If postflight fails due to SonarCloud quality gate, check the specific cause:
+
+### Security Hotspots (Most Common)
+
+Security hotspots require **individual human review**, not blanket dismissal:
+
+```bash
+# Check hotspot count and types
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevops&status=TO_REVIEW" | \
+  jq '{total: .paging.total, by_rule: ([.hotspots[] | .ruleKey] | group_by(.) | map({rule: .[0], count: length}))}'
+```
+
+**Resolution process**:
+
+1. Open SonarCloud Security Hotspots page for the project
+2. Review each hotspot individually
+3. For each hotspot, choose:
+   - **Safe**: Code is secure (add comment explaining why)
+   - **Fixed**: Made code changes to address it
+   - **Acknowledged**: Known issue, accepted risk (add justification)
+
+**Common hotspot patterns in aidevops**:
+
+| Rule | Typical Cause | Typical Resolution |
+|------|---------------|-------------------|
+| `shell:S5332` | HTTP URLs for localhost | Mark Safe: "Localhost HTTP is intentional for local dev servers" |
+| `shell:S6505` | npm/bun install without --ignore-scripts | Mark Safe: "Postinstall scripts required for package setup" |
+| `shell:S6506` | Package manager commands | Mark Safe: "Installing from trusted npm registry" |
+
+**Why NOT to blanket-dismiss**:
+- Real vulnerabilities can hide among false positives
+- Audit trails require documented decisions
+- New code changes may introduce actual issues
+- Rule fatigue leads to missing real problems
+
+### Bugs, Vulnerabilities, or Code Smells
+
+For non-hotspot issues:
+
+```bash
+# Check specific issues
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&types=BUG,VULNERABILITY" | \
+  jq '.issues[] | {type: .type, severity: .severity, message: .message, file: .component}'
+```
+
+These should be fixed in code, not dismissed, unless they are clear false positives.
+
+### Quality Gate Configuration
+
+If the quality gate is too strict for your workflow, adjust it in SonarCloud settings rather than ignoring failures. Document any threshold changes in the project.
+
+**Critical**: When running local postflight, explicitly verify the GH Actions postflight.yml workflow completed successfully:
+
+```bash
+# Check postflight.yml workflow status
+gh run list --workflow=postflight.yml --limit=1 --json conclusion,status -q '.[0]'
+
+# Expected output for success:
+# {"conclusion":"success","status":"completed"}
+```
+
+If the postflight.yml workflow is still running or failed, the local postflight should NOT report success.
+
+## Worktree Cleanup
+
+After PR merge, clean up any worktrees used for the merged branch:
+
+```bash
+# Check for stale worktrees
+~/.aidevops/agents/scripts/worktree-helper.sh list
+
+# Auto-clean merged worktrees (detects squash merges too)
+~/.aidevops/agents/scripts/worktree-helper.sh clean
+```
+
+The `clean` command detects both traditional merges and squash merges (by checking for deleted remote branches).
+
+## Related Workflows
+
+- `release.md` - Pre-release and release process
+- `code-review.md` - Code review guidelines
+- `changelog.md` - Changelog management
+- `version-bump.md` - Version management
+- `worktree.md` - Parallel branch development

@@ -6,7 +6,7 @@ This template provides a comprehensive workflow for optimizing WordPress website
 
 ```bash
 # Comprehensive WordPress performance analysis
-./.agent/scripts/pagespeed-helper.sh wordpress https://your-wordpress-site.com
+./.agents/scripts/pagespeed-helper.sh wordpress https://your-wordpress-site.com
 
 # This will run:
 # 1. PageSpeed Insights (desktop & mobile)
@@ -20,7 +20,7 @@ This template provides a comprehensive workflow for optimizing WordPress website
 
 ```bash
 # Create baseline report
-./.agent/scripts/pagespeed-helper.sh audit https://your-site.com
+./.agents/scripts/pagespeed-helper.sh audit https://your-site.com
 ```text
 
 **Key Metrics to Track:**
@@ -97,7 +97,7 @@ SITE_URL="https://your-wordpress-site.com"
 DATE=$(date +"%Y-%m-%d")
 
 echo "Weekly Performance Check - $DATE"
-./.agent/scripts/pagespeed-helper.sh wordpress "$SITE_URL"
+./.agents/scripts/pagespeed-helper.sh wordpress "$SITE_URL"
 
 # Save results for comparison
 cp ~/.ai-devops/reports/pagespeed/lighthouse_*.json "weekly-reports/lighthouse-$DATE.json"
@@ -121,7 +121,7 @@ Add this to your AI assistant's system prompt:
 
 ```text
 For WordPress performance optimization, use the PageSpeed and Lighthouse tools in 
-~/git/aidevops/.agent/scripts/pagespeed-helper.sh. Focus on:
+~/git/aidevops/.agents/scripts/pagespeed-helper.sh. Focus on:
 
 1. Core Web Vitals improvement
 2. WordPress-specific optimizations (plugins, themes, caching)
@@ -137,14 +137,14 @@ Always provide specific, actionable recommendations with implementation steps.
 1. **"Audit my WordPress site performance"**
 
    ```bash
-   ./.agent/scripts/pagespeed-helper.sh wordpress https://your-site.com
+   ./.agents/scripts/pagespeed-helper.sh wordpress https://your-site.com
    ```
 
 2. **"Compare performance before and after optimization"**
 
    ```bash
-   ./.agent/scripts/pagespeed-helper.sh report before-optimization.json
-   ./.agent/scripts/pagespeed-helper.sh report after-optimization.json
+   ./.agents/scripts/pagespeed-helper.sh report before-optimization.json
+   ./.agents/scripts/pagespeed-helper.sh report after-optimization.json
    ```
 
 3. **"Monitor multiple WordPress sites"**
@@ -154,7 +154,7 @@ Always provide specific, actionable recommendations with implementation steps.
    echo "https://site1.com" > wordpress-sites.txt
    echo "https://site2.com" >> wordpress-sites.txt
    
-   ./.agent/scripts/pagespeed-helper.sh bulk wordpress-sites.txt
+   ./.agents/scripts/pagespeed-helper.sh bulk wordpress-sites.txt
    ```
 
 ## 📈 **Performance Targets**
@@ -201,8 +201,8 @@ Always provide specific, actionable recommendations with implementation steps.
 
 ```bash
 # Generate comprehensive report
-./.agent/scripts/pagespeed-helper.sh lighthouse https://your-site.com json
-./.agent/scripts/pagespeed-helper.sh report ~/.ai-devops/reports/pagespeed/lighthouse_*.json
+./.agents/scripts/pagespeed-helper.sh lighthouse https://your-site.com json
+./.agents/scripts/pagespeed-helper.sh report ~/.ai-devops/reports/pagespeed/lighthouse_*.json
 ```text
 
 ### **Track Improvements Over Time**

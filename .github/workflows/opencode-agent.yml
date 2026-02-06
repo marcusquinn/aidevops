@@ -1,7 +1,7 @@
 # OpenCode AI Agent - Maximum Security Configuration
 #
 # This workflow enables AI-powered issue resolution with strict security controls.
-# See: .agent/tools/git/opencode-github-security.md for full documentation
+# See: .agents/tools/git/opencode-github-security.md for full documentation
 #
 # Security features:
 # - Trusted users only (OWNER, MEMBER, COLLABORATOR)
@@ -277,7 +277,7 @@ jobs:
             - Create pull requests with clear descriptions
             - Add helpful comments explaining changes
             
-            Follow the project's coding standards in .agent/tools/code-review/code-standards.md
+            Follow the project's coding standards in .agents/tools/code-review/code-standards.md
       
       - name: Mark completion
         if: always()

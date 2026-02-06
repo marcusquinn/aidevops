@@ -167,7 +167,7 @@
     }
   },
   "usage_examples": {
-    "setup": "bash .agent/scripts/agno-setup.sh setup",
+    "setup": "bash .agents/scripts/agno-setup.sh setup",
     "start_services": "~/.aidevops/scripts/start-agno-stack.sh",
     "check_status": "~/.aidevops/scripts/agno-status.sh",
     "stop_services": "~/.aidevops/scripts/stop-agno-stack.sh",

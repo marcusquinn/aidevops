@@ -5,7 +5,7 @@
 ## Quick Reference
 
 - **Purpose**: Contributing to aidevops framework development
-- **User Guide**: `.agent/AGENTS.md` (deployed to `~/.aidevops/agents/`)
+- **User Guide**: `.agents/AGENTS.md` (deployed to `~/.aidevops/agents/`)
 - **Repo**: `~/Git/aidevops/`
 
 **OpenCode Paths** (aidevops recommends OpenCode as primary tool):
@@ -24,10 +24,10 @@
 ./setup.sh
 
 # Quality check
-.agent/scripts/linters-local.sh
+.agents/scripts/linters-local.sh
 
 # Release
-.agent/scripts/version-manager.sh release [major|minor|patch]
+.agents/scripts/version-manager.sh release [major|minor|patch]
 ```text
 
 **Quality Standards**: SonarCloud A-grade, ShellCheck zero violations,
@@ -43,7 +43,7 @@
 │   └── tasks/             # PRD and task files
 │       ├── prd-*.md       # Product requirement documents
 │       └── tasks-*.md     # Implementation task lists
-└── .agent/
+└── .agents/
     ├── AGENTS.md          # User guide (distributed)
     ├── {domain}.md        # Main agents (aidevops, wordpress, seo, etc.)
     ├── {domain}/          # Subagents for each domain
@@ -54,7 +54,7 @@
     └── scripts/           # Helper scripts
 ```
 
-**Before extending aidevops**: Read `.agent/aidevops/architecture.md` for:
+**Before extending aidevops**: Read `.agents/aidevops/architecture.md` for:
 - Agent design patterns (progressive disclosure, context offloading, Ralph loop)
 - Extension guide (adding services, tools, documentation standards)
 - Framework conventions (naming, code standards, security requirements)
@@ -68,13 +68,13 @@ This repository has two AGENTS.md files with different purposes:
 | File | Purpose | Audience |
 |------|---------|----------|
 | `~/Git/aidevops/AGENTS.md` | Development guide | Contributors |
-| `~/Git/aidevops/.agent/AGENTS.md` | User guide | Users of aidevops |
+| `~/Git/aidevops/.agents/AGENTS.md` | User guide | Users of aidevops |
 
-The `.agent/AGENTS.md` is copied to `~/.aidevops/agents/AGENTS.md` by `setup.sh`.
+The `.agents/AGENTS.md` is copied to `~/.aidevops/agents/AGENTS.md` by `setup.sh`.
 
 ## Contributing
 
-See `.agent/aidevops/` for framework development guidance:
+See `.agents/aidevops/` for framework development guidance:
 
 | File | Purpose |
 |------|---------|
@@ -105,13 +105,13 @@ From `tools/build-agent/build-agent.md`:
 
 ```bash
 # Before committing
-.agent/scripts/linters-local.sh
+.agents/scripts/linters-local.sh
 
 # ShellCheck all scripts
-find .agent/scripts/ -name "*.sh" -exec shellcheck {} \;
+find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 # Release new version
-.agent/scripts/version-manager.sh release [major|minor|patch]
+.agents/scripts/version-manager.sh release [major|minor|patch]
 ```text
 
 ## Self-Assessment Protocol
@@ -120,4 +120,4 @@ When developing agents, apply self-assessment from `tools/build-agent/build-agen
 
 - **Triggers**: Observable failure, user correction, contradiction, staleness
 - **Process**: Complete task, cite evidence, check duplicates, propose fix
-- **Duplicates**: Always `rg "pattern" .agent/` before adding instructions
+- **Duplicates**: Always `rg "pattern" .agents/` before adding instructions

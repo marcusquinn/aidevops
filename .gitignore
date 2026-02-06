@@ -8,7 +8,7 @@ configs/*.json
 !configs/mcp-templates/
 
 # Allow agent directory to be committed
-!.agent/
+!.agents/
 
 # Password files and credentials
 *.password
@@ -36,11 +36,11 @@ authorized_keys
 # Exceptions for secretlint tool (security linter, not actual secrets)
 !.secretlintrc.json
 !.secretlintignore
-!.agent/scripts/secretlint-helper.sh
-!.agent/secretlint.md
+!.agents/scripts/secretlint-helper.sh
+!.agents/secretlint.md
 
 # Exception for credential management script (not actual credentials)
-!.agent/scripts/credential-helper.sh
+!.agents/scripts/credential-helper.sh
 
 # Environment files
 .env*
@@ -56,11 +56,11 @@ credentials/
 .credentials/
 
 # Exception: agent credential documentation (not actual credentials)
-!.agent/tools/credentials/
-!.agent/tools/credentials/**
+!.agents/tools/credentials/
+!.agents/tools/credentials/**
 
 # Private scripts (never commit)
-.agent/scripts-private/
+.agents/scripts-private/
 scripts-private/
 
 # Backup files
@@ -136,10 +136,10 @@ tmp.*.json
 
 # AI Assistant working directories
 # Ignore all files in tmp and memory directories except README.md
-.agent/tmp/*
-!.agent/tmp/README.md
-.agent/memory/*
-!.agent/memory/README.md
+.agents/tmp/*
+!.agents/tmp/README.md
+.agents/memory/*
+!.agents/memory/README.md
 
 # Analysis reports and results
 *.sarif
@@ -165,7 +165,7 @@ test-*.yaml
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
 
-# AI Tool Symlinks - Track these (they point to .agent and AGENTS.md)
+# AI Tool Symlinks - Track these (they point to .agents and AGENTS.md)
 # Rules files - only actual files tracked, not symlinks
 !CLAUDE.md
 !GEMINI.md
@@ -183,7 +183,7 @@ test-*.yaml
 
 # AI tool directories removed - cause duplicate @ refs in OpenCode
 # These tools should use ~/.aidevops/agents/ (deployed location)
-# See .agent/AGENTS.md "AI Tool Configuration" section
+# See .agents/AGENTS.md "AI Tool Configuration" section
 .ai
 .kiro
 .continue
@@ -196,7 +196,7 @@ test-*.yaml
 .aidevops-tenant
 
 # Loop state files (local to each worktree, not committed)
-.agent/loop-state/
+.agents/loop-state/
 
 # Superset local config
 .superset/

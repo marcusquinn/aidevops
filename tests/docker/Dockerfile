@@ -7,7 +7,7 @@ RUN apk add --no-cache bash curl git jq sudo coreutils grep sed && \
 
 USER testuser
 WORKDIR /home/testuser
-RUN mkdir -p ~/git ~/.config/aidevops ~/.agent/{tmp,work,memory}
+RUN mkdir -p ~/git ~/.config/aidevops ~/.agents/{tmp,work,memory}
 
 ENV HOME=/home/testuser
 CMD ["/bin/bash"]

@@ -22,7 +22,7 @@ class Aidevops < Formula
     libexec.install "setup.sh"
     
     # Install agent files
-    (share/"aidevops").install ".agent"
+    (share/"aidevops").install ".agents"
     (share/"aidevops").install "VERSION"
     
     # Create wrapper in bin that calls the libexec script

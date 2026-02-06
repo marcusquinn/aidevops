@@ -9,7 +9,7 @@ export default tool({
   async execute(args) {
     const target = args.target || "."
     const fixFlag = args.fix ? "--fix" : ""
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/quality-check.sh ${target} ${fixFlag}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/quality-check.sh ${target} ${fixFlag}`.text()
     return result.trim()
   },
 })

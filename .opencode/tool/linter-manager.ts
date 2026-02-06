@@ -8,7 +8,7 @@ export default tool({
   },
   async execute(args) {
     const linter = args.linter || ""
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/linter-manager.sh ${args.action} ${linter}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/linter-manager.sh ${args.action} ${linter}`.text()
     return result.trim()
   },
 })

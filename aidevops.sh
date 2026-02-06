@@ -915,13 +915,18 @@ cmd_init() {
 EOF
     print_success "Created .aidevops.json"
     
-    # Create .agent symlink
-    if [[ ! -e "$project_root/.agent" ]]; then
-        print_info "Creating .agent symlink..."
-        ln -s "$AGENTS_DIR" "$project_root/.agent"
-        print_success "Created .agent -> $AGENTS_DIR"
+    # Create .agents symlink (or migrate from legacy .agent)
+    if [[ -L "$project_root/.agent" || -d "$project_root/.agent" ]]; then
+        # Migrate legacy .agent symlink to .agents
+        rm -f "$project_root/.agent"
+        ln -s "$AGENTS_DIR" "$project_root/.agents"
+        print_success "Migrated .agent -> .agents symlink"
+    elif [[ ! -e "$project_root/.agents" ]]; then
+        print_info "Creating .agents symlink..."
+        ln -s "$AGENTS_DIR" "$project_root/.agents"
+        print_success "Created .agents -> $AGENTS_DIR"
     else
-        print_warning ".agent already exists, skipping symlink"
+        print_warning ".agents already exists, skipping symlink"
     fi
     
     # Create planning files if enabled
@@ -981,7 +986,7 @@ Complex, multi-session work that requires detailed planning.
 
 ---
 
-*See `.agent/workflows/plans.md` for planning workflow*
+*See `.agents/workflows/plans.md` for planning workflow*
 EOF
                 print_success "Created todo/PLANS.md (minimal template)"
             fi
@@ -1005,7 +1010,7 @@ EOF
 
 Declarative schema files - source of truth for database structure.
 
-See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+See: `@sql-migrations` or `.agents/workflows/sql-migrations.md`
 EOF
             print_success "Created schemas/ directory"
         else
@@ -1020,7 +1025,7 @@ EOF
 
 Auto-generated versioned migration files. Do not edit manually.
 
-See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+See: `@sql-migrations` or `.agents/workflows/sql-migrations.md`
 EOF
             print_success "Created migrations/ directory"
         else
@@ -1035,7 +1040,7 @@ EOF
 
 Initial and reference data (roles, statuses, test accounts).
 
-See: `@sql-migrations` or `.agent/workflows/sql-migrations.md`
+See: `@sql-migrations` or `.agents/workflows/sql-migrations.md`
 EOF
             print_success "Created seeds/ directory"
         else
@@ -1080,13 +1085,17 @@ EOF
     # Add to .gitignore if needed
     local gitignore="$project_root/.gitignore"
     if [[ -f "$gitignore" ]]; then
-        if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+        if ! grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
             {
                 echo ""
                 echo "# aidevops"
-                echo ".agent"
+                echo ".agents"
             } >> "$gitignore"
-            print_success "Added .agent to .gitignore"
+            print_success "Added .agents to .gitignore"
+            # Also add legacy .agent for backward compatibility
+            if ! grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+                echo ".agent" >> "$gitignore"
+            fi
         fi
         # Add .beads if beads is enabled
         if [[ "$enable_beads" == "true" ]]; then
@@ -1130,7 +1139,7 @@ EOF
     elif [[ "$enable_database" == "true" ]]; then
         echo "  1. Add schema files to schemas/"
         echo "  2. Run diff to generate migrations"
-        echo "  3. See .agent/workflows/sql-migrations.md"
+        echo "  3. See .agents/workflows/sql-migrations.md"
     else
         echo "  1. Add tasks to TODO.md"
         echo "  2. Use /create-prd for complex features"

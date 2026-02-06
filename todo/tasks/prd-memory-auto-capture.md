@@ -223,9 +223,9 @@ privacy,1h,1.5h,,2.5h
 
 ### Related Documents
 
-- [memory/README.md](../../.agent/memory/README.md) - Current memory system docs
+- [memory/README.md](../../.agents/memory/README.md) - Current memory system docs
 - [claude-mem](https://github.com/thedotmack/claude-mem) - Reference implementation
-- [scripts/commands/remember.md](../../.agent/scripts/commands/remember.md) - Manual memory command
+- [scripts/commands/remember.md](../../.agents/scripts/commands/remember.md) - Manual memory command
 
 ### Comparison with claude-mem
 

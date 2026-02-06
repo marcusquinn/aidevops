@@ -979,14 +979,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Loop state migration in setup.sh from `.claude/` to `.agent/loop-state/` (#67)
+- Loop state migration in setup.sh from `.claude/` to `.agents/loop-state/` (#67)
 
 ## [2.51.0] - 2026-01-12
 
 ### Added
 
 - add FluentCRM MCP integration for sales and marketing (#64)
-- migrate loop state to .agent/loop-state and enhance re-anchor (#65)
+- migrate loop state to .agents/loop-state and enhance re-anchor (#65)
 
 ### Changed
 
@@ -1010,7 +1010,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Loop state directory migrated from `.claude/` to `.agent/loop-state/` (backward compatible) (#65)
+- Loop state directory migrated from `.claude/` to `.agents/loop-state/` (backward compatible) (#65)
 - Ralph loop documentation updated with context pollution prevention philosophy (#65)
 - Chrome DevTools docs: add individual network request throttling (#66)
 - Linter thresholds improved and preflight issues fixed (#62)
@@ -1545,7 +1545,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- auto-discover primary agents from .agent/*.md files
+- auto-discover primary agents from .agents/*.md files
 - add comprehensive git workflow with branch safety and preflight checks
 
 ### Changed
@@ -1879,7 +1879,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **YAML Frontmatter with Tool Permissions** - Added to ~120 subagent files
   - Standardized tool permission declarations across all subagents
   - Enables OpenCode to enforce tool access controls per agent
-- **Agent Directory Architecture Documentation** - Documented `.agent/` vs `.opencode/agent/` structure
+- **Agent Directory Architecture Documentation** - Documented `.agents/` vs `.opencode/agent/` structure
   - Clarified deployment paths and directory purposes
 
 ### Changed
@@ -1904,7 +1904,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **osgrep Local Semantic Search** - New tool integration for 100% private semantic code search
-  - Documentation in `.agent/tools/context/osgrep.md`
+  - Documentation in `.agents/tools/context/osgrep.md`
   - Config templates for osgrep MCP integration
   - Updated setup.sh and scripts for osgrep CLI support
   - GitHub issue comments submitted (#58, #26) for upstream bug tracking
@@ -2099,11 +2099,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Disabled `bash` tool to prevent shell command file writes
   - Disabled `task` tool to prevent spawning write-capable subagents (subagents don't inherit parent permissions)
   - Added explicit `write: deny` permission for defense in depth
-  - Updated `.agent/plan-plus.md` documentation to reflect strict read-only mode
+  - Updated `.agents/plan-plus.md` documentation to reflect strict read-only mode
 
 ### Added
 
-- **Permission Model Limitations Documentation** - New section in `.agent/tools/opencode/opencode.md`
+- **Permission Model Limitations Documentation** - New section in `.agents/tools/opencode/opencode.md`
   - Documents OpenCode permission inheritance behavior
   - Explains subagent permission isolation
   - Provides guidance for securing read-only agents
@@ -2115,7 +2115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Secretlint Integration** - Secret detection tool to prevent committing credentials
   - New `secretlint-helper.sh` for installation, scanning, and pre-commit hook management
   - Configuration files `.secretlintrc.json` and `.secretlintignore` for project-specific setup
-  - Comprehensive documentation in `.agent/secretlint.md`
+  - Comprehensive documentation in `.agents/secretlint.md`
   - Multi-provider detection: AWS, GCP, GitHub, OpenAI, Anthropic, Slack, npm tokens
   - Private key detection: RSA, DSA, EC, OpenSSH keys
   - Database connection string scanning
@@ -2141,7 +2141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Comprehensive AI Workflow Documentation** - 9 new workflow guides in `.agent/workflows/`:
+- **Comprehensive AI Workflow Documentation** - 9 new workflow guides in `.agents/workflows/`:
   - `git-workflow.md` - Git practices and branch strategies
   - `bug-fixing.md` - Bug fix and hotfix workflows
   - `feature-development.md` - Feature development lifecycle
@@ -2156,8 +2156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Grep by Vercel MCP server integration for GitHub code search
 - Cross-tool AI assistant symlinks (.cursorrules, .windsurfrules, CLAUDE.md, GEMINI.md)
 - OpenCode custom tool definitions in `.opencode/tool/`
-- Consolidated `.agent/` directory structure
-- Developer preferences guidance in `.agent/memory/README.md`
+- Consolidated `.agents/` directory structure
+- Developer preferences guidance in `.agents/memory/README.md`
 
 ### Changed
 

@@ -74,7 +74,7 @@
       },
       "aidevops_workflows": {
         "enabled": true,
-        "helper_script": ".agent/scripts/crewai-helper.sh"
+        "helper_script": ".agents/scripts/crewai-helper.sh"
       }
     }
   },
@@ -91,7 +91,7 @@
     }
   },
   "usage_examples": {
-    "setup": "bash .agent/scripts/crewai-helper.sh setup",
+    "setup": "bash .agents/scripts/crewai-helper.sh setup",
     "start_studio": "~/.aidevops/scripts/start-crewai-studio.sh",
     "stop_studio": "~/.aidevops/scripts/stop-crewai-studio.sh",
     "status": "~/.aidevops/scripts/crewai-status.sh",

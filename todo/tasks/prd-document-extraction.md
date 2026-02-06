@@ -234,9 +234,9 @@ testing,,2h,2h
 
 ### Related Documents
 
-- [Unstract Subagent](../../.agent/services/document-processing/unstract.md)
+- [Unstract Subagent](../../.agents/services/document-processing/unstract.md)
 - [OCR Invoice/Receipt Extraction Pipeline](../PLANS.md#ocr-invoicereceipt-extraction-pipeline)
-- [Pandoc Conversion Tool](../../.agent/tools/conversion/pandoc.md)
+- [Pandoc Conversion Tool](../../.agents/tools/conversion/pandoc.md)
 
 ### External References
 

@@ -3,7 +3,7 @@
   "_instructions": "Copy to context-builder-config.json and customize",
   
   "defaults": {
-    "output_directory": "~/.agent/work/context",
+    "output_directory": "~/.agents/work/context",
     "default_style": "xml",
     "default_mode": "compress",
     "auto_clipboard": true

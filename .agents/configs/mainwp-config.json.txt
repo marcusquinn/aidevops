@@ -1,0 +1,22 @@
+{
+  "_description": "MainWP Dashboard Configuration",
+  "_docs": "See .agents/tools/wordpress/mainwp.md for usage",
+  "_setup": "Copy to mainwp-config.json and fill in your credentials",
+
+  "instances": {
+    "production": {
+      "base_url": "https://mainwp.yourdomain.com",
+      "consumer_key": "YOUR_MAINWP_CONSUMER_KEY_HERE",
+      "consumer_secret": "YOUR_MAINWP_CONSUMER_SECRET_HERE",
+      "description": "Production MainWP instance",
+      "managed_sites_count": 0
+    },
+    "staging": {
+      "base_url": "https://staging-mainwp.yourdomain.com",
+      "consumer_key": "YOUR_STAGING_MAINWP_CONSUMER_KEY_HERE",
+      "consumer_secret": "YOUR_STAGING_MAINWP_CONSUMER_SECRET_HERE",
+      "description": "Staging MainWP instance",
+      "managed_sites_count": 0
+    }
+  }
+}

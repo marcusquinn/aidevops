@@ -7,7 +7,7 @@ export const setup = tool({
   },
   async execute(args) {
     const server = args.server || "all"
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/setup-mcp-integrations.sh setup ${server}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/setup-mcp-integrations.sh setup ${server}`.text()
     return result.trim()
   },
 })
@@ -19,7 +19,7 @@ export const validate = tool({
   },
   async execute(args) {
     const server = args.server || "all"
-    const result = await Bun.$`bash ${import.meta.dir}/../../.agent/scripts/validate-mcp-integrations.sh ${server}`.text()
+    const result = await Bun.$`bash ${import.meta.dir}/../../.agents/scripts/validate-mcp-integrations.sh ${server}`.text()
     return result.trim()
   },
 })
