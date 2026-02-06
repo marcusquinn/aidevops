@@ -157,7 +157,7 @@ cmd_setup() {
 
     # Download NLTK data
     print_info "Downloading NLTK data..."
-    python3 -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')" 2>/dev/null
+    python3 -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')" >/dev/null
 
     print_success "Setup complete. Run: speech-to-speech-helper.sh start"
     return 0
@@ -373,7 +373,7 @@ cmd_status() {
     local platform
     platform=$(detect_platform)
     local gpu
-    gpu=$(detect_gpu 2>/dev/null)
+    gpu=$(detect_gpu)
     print_info "Platform: $platform (accelerator: $gpu)"
 
     # Process
@@ -502,7 +502,9 @@ cmd_help() {
 
 main() {
     local command="${1:-help}"
-    shift 2>/dev/null || true
+    if [[ $# -gt 0 ]]; then
+        shift
+    fi
 
     case "$command" in
         setup)      cmd_setup "$@" ;;

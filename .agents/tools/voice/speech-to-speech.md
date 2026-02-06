@@ -215,12 +215,7 @@ Pair with the LLM stage to create voice-controlled DevOps:
 
 ### Transcription Pipeline
 
-Use STT stage standalone for meeting notes, podcast transcription:
-
-```bash
-# STT-only mode (pipe audio, get text)
-speech-to-speech-helper.sh transcribe --input recording.wav
-```
+Use STT stage standalone for meeting notes, podcast transcription. Run the pipeline with `--llm open_api` and a system prompt that outputs transcription only, or use the STT components directly via Python.
 
 ### Phone Integration (Twilio)
 
