@@ -143,11 +143,11 @@ SQLite-backed async communication between parallel agent sessions.
 
 **Message types**: task_dispatch, status_report, discovery, request, broadcast
 
-**Lifecycle**: send → check → read → auto-archive on prune (7-day, with memory capture)
+**Lifecycle**: send → check → read → archive (history preserved, prune is manual)
 
 **Runner integration**: Runners automatically check inbox before work and send status reports after. Unread messages are prepended as context to the runner's prompt.
 
-**Migration**: Run `mail-helper.sh migrate` to migrate existing TOON files to SQLite (backs up originals).
+**Storage**: `mail-helper.sh prune` shows storage report. Use `--force` to delete old archived messages. Migration from TOON files runs automatically on `aidevops update`.
 
 ## MCP On-Demand Loading
 

@@ -1952,6 +1952,17 @@ deploy_aidevops_agents() {
                 print_info "Injected OpenCode plan-reminder into Plan+"
             fi
         fi
+        # Migrate mailbox from TOON files to SQLite (if old files exist)
+        local aidevops_workspace_dir="${AIDEVOPS_WORKSPACE_DIR:-$HOME/.aidevops/.agent-workspace}"
+        local mail_dir="${AIDEVOPS_MAIL_DIR:-${aidevops_workspace_dir}/mail}"
+        local mail_script="$target_dir/scripts/mail-helper.sh"
+        if [[ -x "$mail_script" ]] && find "$mail_dir" -name "*.toon" 2>/dev/null | grep -q .; then
+            if "$mail_script" migrate; then
+                print_success "Mailbox migration complete"
+            else
+                print_warning "Mailbox migration had issues (non-critical, old files preserved)"
+            fi
+        fi
     else
         print_error "Failed to deploy agents"
         return 1
