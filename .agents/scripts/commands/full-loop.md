@@ -180,7 +180,7 @@ After task completion, the loop automatically:
 4. **Merge**: Squash merge (without `--delete-branch` when in worktree)
 5. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
 6. **Postflight**: Verifies release health after merge
-7. **Deploy**: Runs `setup.sh` (aidevops repos only)
+7. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
 
 **Worktree cleanup after merge:**
 

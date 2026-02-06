@@ -19,6 +19,7 @@ NC='\033[0m' # No Color
 # Global flags
 CLEAN_MODE=false
 INTERACTIVE_MODE=false
+NON_INTERACTIVE=false
 UPDATE_TOOLS_MODE=false
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 INSTALL_DIR="$HOME/Git/aidevops"
@@ -3681,6 +3682,10 @@ parse_args() {
                 INTERACTIVE_MODE=true
                 shift
                 ;;
+            --non-interactive|-n)
+                NON_INTERACTIVE=true
+                shift
+                ;;
             --update|-u)
                 UPDATE_TOOLS_MODE=true
                 shift
@@ -3689,16 +3694,16 @@ parse_args() {
                 echo "Usage: ./setup.sh [OPTIONS]"
                 echo ""
                 echo "Options:"
-                echo "  --clean        Remove stale files before deploying (cleans ~/.aidevops/agents/)"
-                echo "  --interactive  Ask confirmation before each step"
-                echo "  -i             Short for --interactive"
-                echo "  --update       Check for and offer to update outdated tools after setup"
-                echo "  -u             Short for --update"
-                echo "  --help         Show this help message"
+                echo "  --clean            Remove stale files before deploying (cleans ~/.aidevops/agents/)"
+                echo "  --interactive, -i  Ask confirmation before each step"
+                echo "  --non-interactive, -n  Deploy agents only, skip all optional installs (no prompts)"
+                echo "  --update, -u       Check for and offer to update outdated tools after setup"
+                echo "  --help             Show this help message"
                 echo ""
                 echo "Default behavior adds/overwrites files without removing deleted agents."
                 echo "Use --clean after removing or renaming agents to sync deletions."
                 echo "Use --interactive to control each step individually."
+                echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."
                 echo "Use --update to check for tool updates after setup completes."
                 exit 0
                 ;;
@@ -3723,7 +3728,9 @@ main() {
     if [[ "$CLEAN_MODE" == "true" ]]; then
         echo "Mode: Clean (removing stale files)"
     fi
-    if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        echo "Mode: Non-interactive (deploy + migrations only, no prompts)"
+    elif [[ "$INTERACTIVE_MODE" == "true" ]]; then
         echo "Mode: Interactive (confirm each step)"
         echo ""
         echo "Controls: [Y]es (default) / [n]o skip / [q]uit"
@@ -3733,54 +3740,73 @@ main() {
     fi
     echo ""
 
-    # Required steps (always run)
-    verify_location
-    check_requirements
-    
-    # Optional steps with confirmation in interactive mode
-    confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
-    confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
-    confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
-    confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
-    confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
-    confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
-    confirm_step "Setup SSH key" && setup_ssh_key
-    confirm_step "Setup configuration files" && setup_configs
-    confirm_step "Set secure permissions on config files" && set_permissions
-    confirm_step "Install aidevops CLI command" && install_aidevops_cli
-    confirm_step "Setup shell aliases" && setup_aliases
-    confirm_step "Setup terminal title integration" && setup_terminal_title
-    confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
-    confirm_step "Migrate old backups to new structure" && migrate_old_backups
-    confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
-    confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
-    confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
-    confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
-    confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
-    confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
-    confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
-    confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
-    confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
-    confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
-    confirm_step "Create symlinks for imported skills" && create_skill_symlinks
-    confirm_step "Check for skill updates from upstream" && check_skill_updates
-    confirm_step "Inject agents reference into AI configs" && inject_agents_reference
-    confirm_step "Update OpenCode configuration" && update_opencode_config
-    confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
-    confirm_step "Setup Node.js environment" && setup_nodejs_env
-    confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
-    confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-    confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
-    confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
-    confirm_step "Setup Beads task management" && setup_beads
-    confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
-    confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
-    confirm_step "Setup browser automation tools" && setup_browser_tools
-    confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
-    confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
-    confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
-    # Run AFTER all MCP setup functions (including OmO) to ensure disabled state persists
-    confirm_step "Disable on-demand MCPs globally (incl. OmO: grep_app, websearch)" && disable_ondemand_mcps
+    # Non-interactive mode: deploy agents only, skip all optional installs
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_info "Non-interactive mode: deploying agents and running safe migrations only"
+        verify_location
+        set_permissions
+        migrate_old_backups
+        migrate_loop_state_directories
+        migrate_agent_to_agents_folder
+        cleanup_deprecated_paths
+        cleanup_deprecated_mcps
+        validate_opencode_config
+        deploy_aidevops_agents
+        generate_agent_skills
+        create_skill_symlinks
+        inject_agents_reference
+        update_opencode_config
+        disable_ondemand_mcps
+    else
+        # Required steps (always run)
+        verify_location
+        check_requirements
+        
+        # Optional steps with confirmation in interactive mode
+        confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
+        confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
+        confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
+        confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
+        confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
+        confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
+        confirm_step "Setup SSH key" && setup_ssh_key
+        confirm_step "Setup configuration files" && setup_configs
+        confirm_step "Set secure permissions on config files" && set_permissions
+        confirm_step "Install aidevops CLI command" && install_aidevops_cli
+        confirm_step "Setup shell aliases" && setup_aliases
+        confirm_step "Setup terminal title integration" && setup_terminal_title
+        confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
+        confirm_step "Migrate old backups to new structure" && migrate_old_backups
+        confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
+        confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
+        confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
+        confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
+        confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
+        confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
+        confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
+        confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+        confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
+        confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
+        confirm_step "Create symlinks for imported skills" && create_skill_symlinks
+        confirm_step "Check for skill updates from upstream" && check_skill_updates
+        confirm_step "Inject agents reference into AI configs" && inject_agents_reference
+        confirm_step "Update OpenCode configuration" && update_opencode_config
+        confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
+        confirm_step "Setup Node.js environment" && setup_nodejs_env
+        confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
+        confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
+        confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
+        confirm_step "Setup osgrep (local semantic search)" && setup_osgrep
+        confirm_step "Setup Beads task management" && setup_beads
+        confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
+        confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
+        confirm_step "Setup browser automation tools" && setup_browser_tools
+        confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
+        confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
+        confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
+        # Run AFTER all MCP setup functions (including OmO) to ensure disabled state persists
+        confirm_step "Disable on-demand MCPs globally (incl. OmO: grep_app, websearch)" && disable_ondemand_mcps
+    fi
 
     echo ""
     print_success "🎉 Setup complete!"
@@ -3857,8 +3883,8 @@ echo "  aidevops uninstall    - Remove aidevops"
         check_tool_updates
     fi
     
-    # Offer to launch onboarding for new users (only if not running inside OpenCode)
-    if [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
+    # Offer to launch onboarding for new users (only if not running inside OpenCode and not non-interactive)
+    if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "🎯 Ready to configure your services?"
