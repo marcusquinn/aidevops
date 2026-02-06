@@ -1762,11 +1762,12 @@ extract_log_metadata() {
     timeout_count=$(grep -ci 'timeout\|timed out\|ETIMEDOUT' "$log_tail_file" 2>/dev/null || echo 0)
     oom_count=$(grep -ci 'out of memory\|OOM\|heap.*exceeded\|ENOMEM' "$log_tail_file" 2>/dev/null || echo 0)
 
-    rm -f "$log_tail_file"
-
-    # Backend infrastructure errors (opencode Antigravity, API gateway)
+    # Backend infrastructure errors - search FULL log (these are short error-only logs,
+    # not content false positives). Must be before rm of tail file.
     local backend_error_count=0
-    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway.*error\|service unavailable\|503' "$log_tail_file" 2>/dev/null || echo 0)
+    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway.*error\|service unavailable\|503' "$log_file" 2>/dev/null || echo 0)
+
+    rm -f "$log_tail_file"
 
     echo "rate_limit_count=$rate_limit_count"
     echo "auth_error_count=$auth_error_count"
@@ -3434,31 +3435,22 @@ send_task_notification() {
         fi
     fi
 
-    # macOS native notification (always available on Darwin)
+    # macOS audio alerts (say + afplay bypass notification permissions)
     if [[ "$(uname)" == "Darwin" ]]; then
-        local notif_title="aidevops supervisor"
-        local notif_subtitle=""
-        local notif_sound="Glass"
-
         case "$event_type" in
             complete)
-                notif_subtitle="$task_id complete"
-                notif_sound="Glass"
+                afplay /System/Library/Sounds/Glass.aiff 2>/dev/null &
+                say "$task_id complete" 2>/dev/null &
                 ;;
             blocked)
-                notif_subtitle="$task_id BLOCKED"
-                notif_sound="Basso"
+                afplay /System/Library/Sounds/Basso.aiff 2>/dev/null &
+                say "$task_id blocked. Needs attention." 2>/dev/null &
                 ;;
             failed)
-                notif_subtitle="$task_id FAILED"
-                notif_sound="Sosumi"
-                ;;
-            *)
-                notif_subtitle="$task_id: $event_type"
+                afplay /System/Library/Sounds/Sosumi.aiff 2>/dev/null &
+                say "$task_id failed. Needs attention." 2>/dev/null &
                 ;;
         esac
-
-        osascript -e "display notification \"$message\" with title \"$notif_title\" subtitle \"$notif_subtitle\" sound name \"$notif_sound\"" 2>/dev/null || true
     fi
 
     return 0
@@ -3485,16 +3477,17 @@ notify_batch_progress() {
         message="$message, $remaining remaining"
     fi
 
-    local sound="Glass"
     if [[ "$completed" -eq "$total" && "$failed" -eq 0 ]]; then
-        sound="Hero"
         message="All $total tasks complete!"
+        afplay /System/Library/Sounds/Hero.aiff 2>/dev/null &
+        say "Batch complete. All $total tasks finished successfully." 2>/dev/null &
     elif [[ "$remaining" -eq 0 ]]; then
-        sound="Purr"
         message="Batch finished: $message"
+        afplay /System/Library/Sounds/Purr.aiff 2>/dev/null &
+        say "Batch finished. $completed of $total done. $failed failed." 2>/dev/null &
+    else
+        afplay /System/Library/Sounds/Pop.aiff 2>/dev/null &
     fi
-
-    osascript -e "display notification \"$message\" with title \"aidevops supervisor\" subtitle \"$batch_name\" sound name \"$sound\"" 2>/dev/null || true
 
     return 0
 }
