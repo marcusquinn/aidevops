@@ -87,6 +87,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 - `aidevops init` - Initialize in any project
 - `aidevops update` - Update framework
+- `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 
 ### Agent Structure
@@ -782,6 +783,7 @@ The setup script offers to install these tools automatically.
 
 ### **Security & Code Quality**
 
+- **[gopass](https://github.com/gopasspw/gopass)**: GPG-encrypted secret management with AI-native wrapper (`aidevops secret`) - subprocess injection + output redaction keeps secrets out of AI context
 - **[Vaultwarden](https://github.com/dani-garcia/vaultwarden)**: Password and secrets management
 - **[SonarCloud](https://sonarcloud.io/)**: Security and quality analysis (A-grade ratings)
 - **[CodeFactor](https://www.codefactor.io/)**: Code quality metrics (A+ score)
