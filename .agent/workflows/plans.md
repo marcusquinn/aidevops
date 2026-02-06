@@ -685,6 +685,29 @@ A "always switch branches for TODO.md" rule fails the 80% universal applicabilit
 
 **Bottom line**: Use judgment. Related work stays together; unrelated backlog can optionally go to a dedicated branch.
 
+## MANDATORY: Commit, Push, and Merge After TODO Changes
+
+After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, you MUST complete the full git cycle:
+
+1. **Create branch** (if on main): `git stash && git checkout -b chore/todo-{slug} && git stash pop`
+2. **Commit**: `git add TODO.md && git commit -m "chore: add {description} to backlog"`
+3. **Push**: `git push -u origin chore/todo-{slug}`
+4. **Create PR and merge**: `gh pr create --fill && gh pr merge --squash --delete-branch`
+5. **Return to main**: `git checkout main && git pull`
+
+Do NOT leave TODO changes uncommitted or unmerged. Planning edits are low-risk and should flow through to main immediately so all sessions and agents see the updated task list.
+
+**Why this matters**: Uncommitted TODO changes are invisible to other sessions, agents, and the `/ready` command. They can be lost on branch switches or stash conflicts. The full cycle takes ~30 seconds and ensures task visibility.
+
+**Commit message conventions for TODO changes**:
+
+| Change | Message |
+|--------|---------|
+| New backlog item | `chore: add t{NNN} {short description} to backlog` |
+| Multiple items | `chore: add t{NNN}-t{NNN} backlog items` |
+| Status update | `chore: update task t{NNN} status` |
+| Plan creation | `chore: add plan for {title}` |
+
 ## Integration with Other Workflows
 
 | Workflow | Integration |

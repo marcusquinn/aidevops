@@ -211,6 +211,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: browser-use (77.8k stars, MIT, Python) - the most popular AI browser automation framework. Connects LLMs to browsers for web agent tasks. Features: multi-tab management, vision + HTML extraction, custom actions, self-correcting, supports GPT-4o/Claude/Gemini/DeepSeek/Llama. Install: `pip install browser-use`. Cloud option via browser-use.com. Significantly more mature than Neural-Chromium (declined t099). Create subagent at tools/browser/browser-use.md. Evaluate: 1) Integration with existing Playwright stack, 2) Comparison with Stagehand (already documented), 3) Custom action patterns for aidevops workflows.
 - [ ] t126 Add Skyvern subagent for computer vision browser automation #tools #browser #ai #automation ~1.5h (ai:1h test:20m read:10m) logged:2026-02-05 ref:https://github.com/Skyvern-AI/skyvern
   - Notes: Skyvern (20.3k stars, AGPL-3.0, Python) - automates browser workflows using LLMs and computer vision. Unlike CSS/XPath selectors, uses visual understanding to interact with elements. Features: real-time visual parsing, complex workflow chaining, proxy support, CAPTCHA solving, 2FA/TOTP handling. Cloud and self-hosted options. Install: Docker or pip. Create subagent at tools/browser/skyvern.md. Evaluate: 1) Visual approach vs Stagehand's natural language, 2) Self-hosted deployment for privacy, 3) Workflow chaining for multi-step automations.
+- [ ] t127 Add Buzz offline transcription support #tools #voice #transcription ~1.5h (ai:1h test:20m read:10m) logged:2026-02-06 related:t071,t072 ref:https://github.com/chidiwilliams/buzz
+  - Notes: Buzz (17.7k stars, MIT, Python) - offline audio/video transcription and translation powered by OpenAI Whisper. Desktop GUI app (macOS/Windows/Linux) with CLI support. Features: file import (audio/video/YouTube), live mic transcription, speaker diarization, speech separation (Demucs), multiple Whisper backends (whisper.cpp, faster-whisper), GPU acceleration (CUDA, Apple Silicon, Vulkan), export to TXT/SRT/VTT, watch folder for auto-transcription, advanced transcript viewer with search/playback. Install: `pip install buzz-captions && python -m buzz` (PyPI), or .dmg (macOS), or Flatpak/Snap (Linux). Evaluate: 1) Integration with t072 transcription subagent as a backend option, 2) CLI mode for scripted transcription workflows, 3) Watch folder pattern for automated pipelines, 4) Speaker diarization quality vs other options.
 - [ ] t100 Add AXe CLI for iOS simulator accessibility automation #tools #ios #testing #accessibility ~45m (ai:30m test:10m read:5m) logged:2026-01-30 related:t095,t097 ref:https://github.com/cameroncooke/AXe
   - Notes: AXe (1.1k stars, MIT) - CLI tool for iOS Simulator automation using Apple's Accessibility APIs and HID. By same author as XcodeBuildMCP. Features: tap (coordinates or accessibility ID/label), swipe, type, hardware buttons (home, lock, siri), gesture presets (scroll-up/down, edge swipes), screenshot, video recording/streaming, describe-ui (accessibility tree). Install: `brew install cameroncooke/axe/axe`. Single binary, no server required. Timing controls (pre/post delays). Complements XcodeBuildMCP for build+test workflow. Add to tools/mobile/ or tools/testing/.
 - [ ] t101 Create Mom Test UX/CRO agent framework #agents #ux #cro #conversion ~3h (ai:2h test:30m read:30m) logged:2026-01-30
@@ -406,6 +408,7 @@ t080,Set up Pipecat + NVIDIA Nemotron voice agents for Moltbot realtime calls,,t
 t081,Set up Pipecat local voice agent with Soniox STT + Cartesia TTS + OpenAI/Anthropic LLM,,tools|voice|ai|agents|pipecat|soniox|cartesia,4h,2h,1.5h,30m,2026-01-26T00:00Z,pending,,,
 t125,Add browser-use subagent for AI-native browser automation,,tools|browser|ai|automation,1.5h,1h,20m,10m,2026-02-05T00:00Z,pending,,,
 t126,Add Skyvern subagent for computer vision browser automation,,tools|browser|ai|automation,1.5h,1h,20m,10m,2026-02-05T00:00Z,pending,,,
+t127,Add Buzz offline transcription support,,tools|voice|transcription,1.5h,1h,20m,10m,2026-02-06T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
@@ -500,5 +503,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 -->
 
 <!--TOON:summary{total,pending,in_progress,in_review,done,declined,total_est,total_actual,blocked_count,ready_count}:
-183,97,2,0,84,2,~15d,~24h,5,85
+184,98,2,0,84,2,~15d,~24h,5,86
 -->

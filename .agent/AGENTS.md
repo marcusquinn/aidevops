@@ -102,6 +102,8 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
+**After ANY TODO/planning edit**: Always commit, push, create PR, and merge immediately. Do not leave planning changes uncommitted. See `workflows/plans.md` "Commit, Push, and Merge After TODO Changes" section.
+
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
 ## Memory
