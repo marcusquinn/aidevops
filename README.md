@@ -678,13 +678,60 @@ Test suites are JSON files with prompts and validation rules (`expect_contains`,
 
 ### Voice Integration
 
-Speech-to-speech AI conversations:
+Open-source speech-to-speech pipeline based on [huggingface/speech-to-speech](https://github.com/huggingface/speech-to-speech) (Apache-2.0). Modular four-stage architecture with swappable components:
+
+```text
+Microphone → [VAD] → [STT] → [LLM] → [TTS] → Speaker
+              Silero   Whisper  Any HF   Parler/Melo/
+              VAD v5   variants instruct Kokoro/ChatTTS
+```
+
+**Quick start:**
+
+```bash
+# Install the pipeline
+speech-to-speech-helper.sh setup
+
+# Run locally on Mac (auto-configures MPS acceleration)
+speech-to-speech-helper.sh start --local-mac
+
+# Run on NVIDIA GPU with torch compile
+speech-to-speech-helper.sh start --cuda
+
+# Server mode (clients connect remotely)
+speech-to-speech-helper.sh start --server
+speech-to-speech-helper.sh client --host 192.168.1.100
+
+# Configuration presets
+speech-to-speech-helper.sh config low-latency   # Fastest (CUDA + OpenAI API)
+speech-to-speech-helper.sh config low-vram       # Minimal GPU (~4GB)
+speech-to-speech-helper.sh config quality        # Best quality (24GB+ VRAM)
+speech-to-speech-helper.sh config mac            # Apple Silicon optimal
+speech-to-speech-helper.sh config multilingual   # Auto language detection (6 langs)
+```
+
+**Recommended hardware for voice:**
+
+| Setup | CPU | RAM | GPU | Use Case |
+|-------|-----|-----|-----|----------|
+| Mac (local) | Apple M1+ | 16GB+ | MPS (unified) | Development, personal use |
+| Workstation (CUDA) | Any modern | 16GB+ | NVIDIA 8GB+ VRAM | Low-latency local voice |
+| Quality (CUDA) | Any modern | 32GB+ | NVIDIA 24GB+ VRAM | Full Whisper large-v3 + Parler |
+| Cloud GPU | - | - | A100/H100 | Production server, multi-user |
+
+**Cloud GPU providers** for server/client deployment: NVIDIA Cloud, Vast.ai, RunPod, Lambda.
+
+**Supported languages:** English, French, Spanish, Chinese, Japanese, Korean (auto-detect or fixed).
+
+**Additional voice methods:**
 
 | Method | Description |
 |--------|-------------|
 | **VoiceInk + Shortcut** | macOS: transcription → OpenCode API → response |
 | **iPhone Shortcut** | iOS: dictate → HTTP → speak response |
 | **Pipecat STS** | Full voice pipeline: Soniox STT → AI → Cartesia TTS |
+
+**See:** [speech-to-speech.md](.agents/tools/voice/speech-to-speech.md) for full component options, CLI parameters, and integration patterns (Twilio phone, video narration, voice-driven DevOps).
 
 ### Scheduled Agent Tasks
 
@@ -698,6 +745,23 @@ Cron-based agent dispatch for automated workflows:
 **See:** [TODO.md](TODO.md) tasks t109-t118 for implementation status.
 
 ## **Requirements**
+
+### **Recommended Hardware**
+
+aidevops itself is lightweight (shell scripts + markdown), but AI model workloads benefit from capable hardware:
+
+| Tier | Machine | CPU | RAM | GPU | Best For |
+|------|---------|-----|-----|-----|----------|
+| **Minimum** | Any modern laptop | 4+ cores | 8GB | None | Framework only, cloud AI APIs |
+| **Recommended** | Mac Studio / desktop | Apple M1+ or 8+ cores | 16GB+ | MPS (Apple) or NVIDIA 8GB+ | Local voice, browser automation, dev servers |
+| **Power User** | Workstation | 8+ cores | 32GB+ | NVIDIA 24GB+ VRAM | Full voice pipeline, local LLMs, parallel agents |
+| **Server** | Cloud GPU | Any | 16GB+ | A100 / H100 | Production voice, multi-user, batch processing |
+
+**Cloud GPU providers** for on-demand GPU access: [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/), [Vast.ai](https://vast.ai/), [RunPod](https://www.runpod.io/), [Lambda](https://lambdalabs.com/).
+
+**Note:** Most aidevops features (infrastructure management, SEO, code quality, Git workflows) require no GPU. GPU is only needed for local AI model inference (voice pipeline, vision models, local LLMs).
+
+### **Software Dependencies**
 
 ```bash
 # Install dependencies (auto-detected by setup.sh)
@@ -842,6 +906,11 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 - **[Anime.js](https://animejs.com/)**: Lightweight JavaScript animation library for CSS, SVG, DOM attributes, and JS objects
 - **[Remotion](https://remotion.dev/)**: Programmatic video creation with React - create videos using code with 29 specialized rule files
 - **[Video Prompt Design](https://github.com/snubroot/Veo-3-Meta-Framework)**: Structured prompt engineering for AI video generation (Veo 3, 7-component framework, character consistency, audio design)
+
+### **Voice AI**
+
+- **[Speech-to-Speech](https://github.com/huggingface/speech-to-speech)**: Open-source modular voice pipeline (VAD → STT → LLM → TTS) with local GPU and cloud GPU deployment
+- **[Pipecat](https://github.com/pipecat-ai/pipecat)**: Real-time voice agent framework with Soniox STT, Cartesia TTS, and multi-LLM support
 
 ### **Performance & Monitoring**
 
