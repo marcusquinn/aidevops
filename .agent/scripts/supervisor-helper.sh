@@ -21,6 +21,9 @@
 #   supervisor-helper.sh list [--state queued|running|...] [--batch name] [--format json]
 #   supervisor-helper.sh reset <task_id>               Reset task to queued state
 #   supervisor-helper.sh cancel <task_id|batch_id>     Cancel task or batch
+#   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for #auto-dispatch tasks
+#   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
+#   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
 #   supervisor-helper.sh db [sql]                      Direct SQLite access
 #   supervisor-helper.sh help
 #
@@ -1923,6 +1926,23 @@ cmd_pulse() {
 
     log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
+    # Phase 0: Auto-pickup new tasks from TODO.md (t128.5)
+    # Scans for #auto-dispatch tags and Dispatch Queue section
+    local all_repos
+    all_repos=$(sqlite3 "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks;" 2>/dev/null || true)
+    if [[ -n "$all_repos" ]]; then
+        while IFS= read -r repo_path; do
+            if [[ -f "$repo_path/TODO.md" ]]; then
+                cmd_auto_pickup --repo "$repo_path" 2>/dev/null || true
+            fi
+        done <<< "$all_repos"
+    else
+        # No tasks yet - try current directory
+        if [[ -f "$(pwd)/TODO.md" ]]; then
+            cmd_auto_pickup --repo "$(pwd)" 2>/dev/null || true
+        fi
+    fi
+
     # Phase 1: Check running workers for completion
     local running_tasks
     running_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
@@ -2499,6 +2519,283 @@ cmd_notify() {
 }
 
 #######################################
+# Scan TODO.md for tasks tagged #auto-dispatch or in a
+# "Dispatch Queue" section. Auto-adds them to supervisor
+# if not already tracked, then queues them for dispatch.
+#######################################
+cmd_auto_pickup() {
+    local repo=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo) [[ $# -lt 2 ]] && { log_error "--repo requires a value"; return 1; }; repo="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$repo" ]]; then
+        repo="$(pwd)"
+    fi
+
+    local todo_file="$repo/TODO.md"
+    if [[ ! -f "$todo_file" ]]; then
+        log_warn "TODO.md not found at $todo_file"
+        return 1
+    fi
+
+    ensure_db
+
+    local picked_up=0
+
+    # Strategy 1: Find tasks tagged #auto-dispatch
+    # Matches: - [ ] tXXX description #auto-dispatch ...
+    local tagged_tasks
+    tagged_tasks=$(grep -E '^[[:space:]]*- \[ \] (t[0-9]+(\.[0-9]+)*) .*#auto-dispatch' "$todo_file" 2>/dev/null || true)
+
+    if [[ -n "$tagged_tasks" ]]; then
+        while IFS= read -r line; do
+            local task_id
+            task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+            if [[ -z "$task_id" ]]; then
+                continue
+            fi
+
+            # Check if already in supervisor
+            local existing
+            existing=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+            if [[ -n "$existing" ]]; then
+                if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
+                    continue
+                fi
+                log_info "  $task_id: already tracked (status: $existing)"
+                continue
+            fi
+
+            # Add to supervisor
+            if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
+                picked_up=$((picked_up + 1))
+                log_success "  Auto-picked: $task_id (tagged #auto-dispatch)"
+            fi
+        done <<< "$tagged_tasks"
+    fi
+
+    # Strategy 2: Find tasks in "Dispatch Queue" section
+    # Looks for a markdown section header containing "Dispatch Queue"
+    # and picks up all open tasks under it until the next section header
+    local in_dispatch_section=false
+    local section_tasks=""
+
+    while IFS= read -r line; do
+        # Detect section headers (## or ###)
+        if echo "$line" | grep -qE '^#{1,3} '; then
+            if echo "$line" | grep -qi 'dispatch.queue'; then
+                in_dispatch_section=true
+                continue
+            else
+                in_dispatch_section=false
+                continue
+            fi
+        fi
+
+        if [[ "$in_dispatch_section" == "true" ]]; then
+            # Match open task lines
+            if echo "$line" | grep -qE '^[[:space:]]*- \[ \] t[0-9]+'; then
+                section_tasks+="$line"$'\n'
+            fi
+        fi
+    done < "$todo_file"
+
+    if [[ -n "$section_tasks" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local task_id
+            task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+            if [[ -z "$task_id" ]]; then
+                continue
+            fi
+
+            local existing
+            existing=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+            if [[ -n "$existing" ]]; then
+                if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
+                    continue
+                fi
+                log_info "  $task_id: already tracked (status: $existing)"
+                continue
+            fi
+
+            if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
+                picked_up=$((picked_up + 1))
+                log_success "  Auto-picked: $task_id (Dispatch Queue section)"
+            fi
+        done <<< "$section_tasks"
+    fi
+
+    if [[ "$picked_up" -eq 0 ]]; then
+        log_info "No new tasks to pick up"
+    else
+        log_success "Picked up $picked_up new tasks"
+    fi
+
+    return 0
+}
+
+#######################################
+# Manage cron-based pulse scheduling
+# Installs/uninstalls a crontab entry that runs pulse every N minutes
+#######################################
+cmd_cron() {
+    local action="${1:-status}"
+    shift || true
+
+    local interval=5
+    local batch_arg=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --interval) [[ $# -lt 2 ]] && { log_error "--interval requires a value"; return 1; }; interval="$2"; shift 2 ;;
+            --batch) [[ $# -lt 2 ]] && { log_error "--batch requires a value"; return 1; }; batch_arg="--batch $2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
+    local cron_marker="# aidevops-supervisor-pulse"
+    local cron_cmd="*/${interval} * * * * ${script_path} pulse ${batch_arg} >> ${SUPERVISOR_DIR}/cron.log 2>&1 ${cron_marker}"
+
+    case "$action" in
+        install)
+            # Ensure supervisor dir exists for log file
+            mkdir -p "$SUPERVISOR_DIR"
+
+            # Check if already installed
+            if crontab -l 2>/dev/null | grep -qF "$cron_marker"; then
+                log_warn "Supervisor cron already installed. Use 'cron uninstall' first to change settings."
+                cmd_cron status
+                return 0
+            fi
+
+            # Add to crontab (preserve existing entries)
+            local existing_cron
+            existing_cron=$(crontab -l 2>/dev/null || true)
+            if [[ -n "$existing_cron" ]]; then
+                echo "${existing_cron}"$'\n'"${cron_cmd}" | crontab -
+            else
+                echo "$cron_cmd" | crontab -
+            fi
+
+            log_success "Installed supervisor cron (every ${interval} minutes)"
+            log_info "Log: ${SUPERVISOR_DIR}/cron.log"
+            if [[ -n "$batch_arg" ]]; then
+                log_info "Batch filter: $batch_arg"
+            fi
+            return 0
+            ;;
+
+        uninstall)
+            if ! crontab -l 2>/dev/null | grep -qF "$cron_marker"; then
+                log_info "No supervisor cron entry found"
+                return 0
+            fi
+
+            # Remove the supervisor line from crontab
+            crontab -l 2>/dev/null | grep -vF "$cron_marker" | crontab - 2>/dev/null || {
+                # If crontab is now empty, remove it entirely
+                crontab -r 2>/dev/null || true
+            }
+
+            log_success "Uninstalled supervisor cron"
+            return 0
+            ;;
+
+        status)
+            echo -e "${BOLD}=== Supervisor Cron Status ===${NC}"
+
+            if crontab -l 2>/dev/null | grep -qF "$cron_marker"; then
+                local cron_line
+                cron_line=$(crontab -l 2>/dev/null | grep -F "$cron_marker")
+                echo -e "  Status:   ${GREEN}installed${NC}"
+                echo "  Schedule: $cron_line"
+            else
+                echo -e "  Status:   ${YELLOW}not installed${NC}"
+                echo "  Install:  supervisor-helper.sh cron install [--interval N] [--batch id]"
+            fi
+
+            # Show cron log tail if it exists
+            local cron_log="${SUPERVISOR_DIR}/cron.log"
+            if [[ -f "$cron_log" ]]; then
+                local log_size
+                log_size=$(wc -c < "$cron_log" | tr -d ' ')
+                echo "  Log:      $cron_log ($log_size bytes)"
+                echo ""
+                echo "  Last 5 log lines:"
+                tail -5 "$cron_log" 2>/dev/null | while IFS= read -r line; do
+                    echo "    $line"
+                done
+            fi
+
+            return 0
+            ;;
+
+        *)
+            log_error "Usage: supervisor-helper.sh cron [install|uninstall|status] [--interval N] [--batch id]"
+            return 1
+            ;;
+    esac
+}
+
+#######################################
+# Watch TODO.md for changes using fswatch
+# Triggers auto-pickup + pulse on file modification
+# Alternative to cron for real-time responsiveness
+#######################################
+cmd_watch() {
+    local repo=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo) [[ $# -lt 2 ]] && { log_error "--repo requires a value"; return 1; }; repo="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$repo" ]]; then
+        repo="$(pwd)"
+    fi
+
+    local todo_file="$repo/TODO.md"
+    if [[ ! -f "$todo_file" ]]; then
+        log_error "TODO.md not found at $todo_file"
+        return 1
+    fi
+
+    # Check for fswatch
+    if ! command -v fswatch &>/dev/null; then
+        log_error "fswatch not found. Install with: brew install fswatch"
+        log_info "Alternative: use 'supervisor-helper.sh cron install' for cron-based scheduling"
+        return 1
+    fi
+
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/supervisor-helper.sh"
+
+    log_info "Watching $todo_file for changes..."
+    log_info "Press Ctrl+C to stop"
+    log_info "On change: auto-pickup + pulse"
+
+    # Use fswatch with a 2-second latency to debounce rapid edits
+    fswatch --latency 2 -o "$todo_file" | while read -r _count; do
+        log_info "TODO.md changed, running auto-pickup + pulse..."
+        "$script_path" auto-pickup --repo "$repo" 2>&1 || true
+        "$script_path" pulse 2>&1 || true
+        echo ""
+    done
+
+    return 0
+}
+
+#######################################
 # Show usage
 #######################################
 show_usage() {
@@ -2524,6 +2821,9 @@ Usage:
   supervisor-helper.sh running-count [batch_id]      Count active tasks
   supervisor-helper.sh reset <task_id>               Reset task to queued
   supervisor-helper.sh cancel <task_id|batch_id>     Cancel task or batch
+  supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for auto-dispatch tasks
+  supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
+  supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
 
@@ -2612,6 +2912,36 @@ TODO.md Auto-Update (t128.4):
   On task blocked/failed: adds Notes line with reason, commits+pushes
   Notifications sent via mail-helper.sh and Matrix (if configured)
   Triggered automatically during pulse cycle, or manually via update-todo command
+
+Cron Integration & Auto-Pickup (t128.5):
+  Auto-pickup scans TODO.md for tasks to automatically queue:
+    1. Tasks tagged with #auto-dispatch anywhere in the line
+    2. Tasks listed under a "## Dispatch Queue" section header
+  Both strategies skip tasks already tracked by the supervisor.
+
+  Cron scheduling runs pulse (which includes auto-pickup) every N minutes:
+    supervisor-helper.sh cron install              # Every 5 minutes (default)
+    supervisor-helper.sh cron install --interval 2 # Every 2 minutes
+    supervisor-helper.sh cron uninstall            # Remove cron entry
+    supervisor-helper.sh cron status               # Show cron status + log tail
+
+  fswatch alternative for real-time TODO.md monitoring:
+    supervisor-helper.sh watch                     # Watch current dir
+    supervisor-helper.sh watch --repo ~/Git/myapp  # Watch specific repo
+    Requires: brew install fswatch
+
+Options for 'auto-pickup':
+  --repo <path>          Repository with TODO.md (default: current directory)
+
+Options for 'cron':
+  install                Install cron entry for periodic pulse
+  uninstall              Remove cron entry
+  status                 Show cron status and recent log
+  --interval <N>         Minutes between pulses (default: 5)
+  --batch <batch_id>     Only pulse tasks in this batch
+
+Options for 'watch':
+  --repo <path>          Repository with TODO.md (default: current directory)
 EOF
 }
 
@@ -2634,6 +2964,9 @@ main() {
         cleanup) cmd_cleanup "$@" ;;
         update-todo) cmd_update_todo "$@" ;;
         notify) cmd_notify "$@" ;;
+        auto-pickup) cmd_auto_pickup "$@" ;;
+        cron) cmd_cron "$@" ;;
+        watch) cmd_watch "$@" ;;
         transition) cmd_transition "$@" ;;
         status) cmd_status "$@" ;;
         list) cmd_list "$@" ;;
