@@ -228,6 +228,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Page conversion rate optimization. A/B testing setup, CTA optimization, form optimization, landing page best practices. Referenced by seo-audit-skill. Add to seo/ or tools/marketing/.
 - [x] t094 Create analytics-tracking subagent #seo #analytics ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Analytics implementation and tracking. GA4 setup, event tracking, conversion tracking, UTM parameters, attribution. Referenced by seo-audit-skill. Add to seo/ or tools/analytics/.
+- [ ] t130 Post-release follow-up: .agent -> .agents rename regression testing #bugfix #migration #testing ~20m (ai:15m test:5m) logged:2026-02-06
+  - [ ] t130.1 Fix .claude-plugin/marketplace.json still referencing "./.agent" ~2m
+  - [ ] t130.2 Run setup.sh to deploy v2.104.0 agents and verify migration function works ~5m
+  - [ ] t130.3 Verify aidevops init creates .agents symlink (not .agent) in a test project ~3m
+  - [ ] t130.4 Verify setup.sh migrates existing .agent symlinks in ~/Git/ projects ~3m
+  - [ ] t130.5 Rebase stale worktrees (feature/claude-flow-inspirations, feature/i-ran-that-api-save-script-locally, refactor/disable-grep-app-globally, feature/setup-non-interactive) onto main to pick up rename ~5m
+  - Notes: v2.104.0 renamed .agent/ to .agents/ across the entire repo (#396). The migration function in setup.sh handles user projects but hasn't been exercised yet. One missed reference found in .claude-plugin/marketplace.json. Stale worktrees predate the rename and will have merge conflicts until rebased.
 - [ ] t095 Add XcodeBuildMCP for iOS/macOS app testing #tools #mcp #ios #xcode ~15m (ai:10m test:3m read:2m) logged:2026-01-30 ref:https://github.com/cameroncooke/XcodeBuildMCP
   - Notes: MCP server for Xcode integration with AI assistants (3.9k stars, MIT). Provides tools for building, testing, and running iOS/macOS apps via xcodebuild. Install: `npx -y @smithery/cli@latest install cameroncooke/xcodebuildmcp --client claude-code`. Requires macOS 14.5+, Xcode 16+, Node.js 18+. Features: build projects, run tests, deploy to simulators/devices, code signing support. Optional skill available for better tool discovery. Add to tools/mobile/ or tools/xcode/.
 - [ ] t096 Add Maestro for mobile and web E2E testing #tools #mobile #testing #e2e ~20m (ai:15m test:3m read:2m) logged:2026-01-30 related:t095 ref:https://github.com/mobile-dev-inc/maestro
