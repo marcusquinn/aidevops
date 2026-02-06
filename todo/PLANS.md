@@ -21,6 +21,137 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-06] Cross-Provider Model Routing with Fallbacks
+
+**Status:** Planning
+**Estimate:** ~1.5d (ai:8h test:4h read:2h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p022,Cross-Provider Model Routing with Fallbacks,planning,0,8,,orchestration|multi-model|routing|fallback|opencode,1.5d,8h,4h,2h,2026-02-06T22:00Z,
+-->
+
+#### Purpose
+
+Enable cross-provider model routing so that any aidevops session can dispatch tasks to the optimal model regardless of which provider the parent session runs on. A Claude session should be able to request a Gemini code review; a Gemini session should be able to escalate complex reasoning to Claude Opus. Models should fall back gracefully when unavailable, and the system should detect when provider/model names change upstream.
+
+#### Context from Discussion
+
+**Current state:**
+- `model-routing.md` exists as a design doc with 5 tiers (haiku/flash/sonnet/pro/opus) and routing rules
+- All 195 subagents have `model:` in YAML frontmatter, but it's advisory only
+- `runner-helper.sh` supports `--model` but hardcodes `DEFAULT_MODEL` to a single Claude model
+- No fallback, no availability checking, no quality-based escalation
+
+**Key discovery (Context7 research):**
+- OpenCode already supports per-agent model selection natively across 75+ providers
+- The Task tool does NOT accept a model parameter -- by design
+- Instead, each subagent definition in `opencode.json` can specify its own `model:` field
+- The primary agent selects a model by choosing WHICH subagent to invoke
+- Provider-level fallback is available via gateway providers (OpenRouter `allow_fallbacks`, Vercel AI Gateway `order`)
+- No application-level automatic fallback exists in OpenCode itself
+
+**Implication:** We don't need to patch the Task tool. We need to:
+1. Define model-specific subagents in opencode.json (e.g., `gemini-reviewer`, `claude-auditor`)
+2. Map our tier system to concrete agent definitions
+3. Build fallback/escalation logic in supervisor-helper.sh
+4. Periodically reconcile our model registry against upstream provider changes
+
+#### Progress
+
+- [ ] (2026-02-06) Phase 1: Define model-specific subagents in opencode.json ~2h (t132.1)
+  - Create subagent definitions: gemini-reviewer, gemini-analyst, gpt-reviewer, claude-auditor, etc.
+  - Map model-routing.md tiers to concrete agent definitions
+  - Each agent gets appropriate tool permissions and instructions
+  - Test cross-provider dispatch from Claude session to Gemini subagent
+- [ ] (2026-02-06) Phase 2: Provider/model registry with periodic sync ~2h (t132.2)
+  - Create model-registry-helper.sh
+  - Scrape available models from OpenCode config / Models.dev / provider APIs
+  - Compare against configured models in opencode.json and model-routing.md
+  - Flag deprecated/renamed/unavailable models
+  - Suggest new models worth adding (e.g., new Gemini/Claude/GPT releases)
+  - Run on `aidevops update` and optionally via cron
+  - Store registry in SQLite alongside memory/mail DBs
+- [ ] (2026-02-06) Phase 3: Model availability checker ~2h (t132.3)
+  - Probe provider endpoints before dispatch (lightweight health check)
+  - Check API key validity, rate limits, model availability
+  - Support: Anthropic, Google, OpenAI, local (Ollama)
+  - Return latency estimate, cache results with short TTL
+  - Integrate with registry (skip probing models already flagged unavailable)
+- [ ] (2026-02-06) Phase 4: Fallback chain configuration ~2h (t132.4)
+  - Define fallback chains: gemini-3-pro -> gemini-2.5-pro -> claude-sonnet-4 -> claude-haiku
+  - Configurable per subagent (frontmatter `fallback:` field), per runner, and global default
+  - Triggers: API error, timeout, rate limit, empty/malformed response
+  - Gateway-level fallback via OpenRouter/Vercel for provider failures
+  - Supervisor-level fallback via re-dispatch to different subagent for task failures
+- [ ] (2026-02-06) Phase 5: Supervisor model resolution ~2h (t132.5)
+  - supervisor-helper.sh reads `model:` from subagent frontmatter
+  - Maps tier names to corresponding subagent definitions in opencode.json
+  - Uses availability checker before dispatch
+  - Falls back through chain by re-dispatching to different model-specific subagent
+- [ ] (2026-02-06) Phase 6: Quality gate with model escalation ~3h (t132.6)
+  - After task completion, evaluate output quality (heuristic + AI eval)
+  - If unsatisfactory, re-dispatch to next tier up via higher-tier subagent
+  - Criteria: empty output, error patterns, token-to-substance ratio, user-defined checks
+  - Max escalation depth configurable (default: 2 levels)
+- [ ] (2026-02-06) Phase 7: Runner and cron-helper multi-provider support ~2h (t132.7)
+  - Extend --model flag to accept tier names (not just provider/model strings)
+  - Add --provider flag for explicit provider selection
+  - Support Gemini CLI, OpenCode server, Claude CLI as dispatch backends
+  - Auto-detect available backends at startup
+- [ ] (2026-02-06) Phase 8: Cross-model review workflow ~2h (t132.8)
+  - Second-opinion pattern: dispatch same task to multiple models
+  - Collect results, merge/diff findings
+  - Use cases: code review, security audit, architecture review
+  - Configurable via `review-models:` in task metadata or CLI flag
+
+<!--TOON:milestones[8]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m101,p022,Phase 1: Define model-specific subagents in opencode.json,2h,,2026-02-06T22:00Z,,pending
+m102,p022,Phase 2: Provider/model registry with periodic sync,2h,,2026-02-06T22:00Z,,pending
+m103,p022,Phase 3: Model availability checker,2h,,2026-02-06T22:00Z,,pending
+m104,p022,Phase 4: Fallback chain configuration,2h,,2026-02-06T22:00Z,,pending
+m105,p022,Phase 5: Supervisor model resolution,2h,,2026-02-06T22:00Z,,pending
+m106,p022,Phase 6: Quality gate with model escalation,3h,,2026-02-06T22:00Z,,pending
+m107,p022,Phase 7: Runner and cron-helper multi-provider support,2h,,2026-02-06T22:00Z,,pending
+m108,p022,Phase 8: Cross-model review workflow,2h,,2026-02-06T22:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Use OpenCode per-agent model selection, not Task tool model parameter
+  **Rationale:** OpenCode's architecture routes models via agent definitions, not per-call parameters. The Task tool selects a model by invoking a subagent that has that model configured. This is by design and works across 75+ providers.
+  **Date:** 2026-02-06
+
+- **Decision:** Periodic model registry sync rather than static configuration
+  **Rationale:** Provider/model names are a moving target -- models get renamed (e.g., gemini-2.0-flash-001 -> gemini-2.0-flash), deprecated, or replaced by new versions. A registry that periodically reconciles against upstream prevents silent dispatch failures.
+  **Date:** 2026-02-06
+
+- **Decision:** Two-layer fallback (gateway + supervisor)
+  **Rationale:** Gateway-level fallback (OpenRouter/Vercel) handles provider outages transparently. Supervisor-level fallback handles task-quality failures by re-dispatching to a different model-specific subagent. Neither layer alone covers both failure modes.
+  **Date:** 2026-02-06
+
+<!--TOON:decisions[3]{id,plan_id,decision,rationale,date,impact}:
+d053,p022,Use OpenCode per-agent model selection not Task tool param,Architecture routes models via agent definitions across 75+ providers,2026-02-06,Architecture
+d054,p022,Periodic model registry sync,Provider/model names change -- prevents silent dispatch failures,2026-02-06,Reliability
+d055,p022,Two-layer fallback gateway + supervisor,Gateway handles provider outages and supervisor handles task-quality failures,2026-02-06,Architecture
+-->
+
+#### Surprises & Discoveries
+
+- **Discovery:** OpenCode per-agent model selection already works but we never configured it
+  **Evidence:** Context7 research confirmed `model:` field in agent JSON config is a first-class feature. Our opencode.json has no model fields on any agent definition despite having 12+ agents configured.
+  **Impact:** Phase 1 is immediately actionable -- no upstream changes needed.
+  **Date:** 2026-02-06
+
+- **Discovery:** Duplicate TOON milestone IDs (m095-097) between p019 and p021
+  **Evidence:** Both Voice Integration Pipeline (p019) and gopass Integration (p021) use m095-097.
+  **Impact:** Need to renumber p021 milestones in a future cleanup. Using m101+ for this plan.
+  **Date:** 2026-02-06
+
+<!--TOON:discoveries[2]{id,plan_id,observation,evidence,impact,date}:
+s015,p022,OpenCode per-agent model selection already works but unconfigured,Context7 confirmed model field is first-class feature,Phase 1 immediately actionable,2026-02-06
+s016,p022,Duplicate TOON milestone IDs m095-097 between p019 and p021,Both plans use same IDs,Need renumbering cleanup,2026-02-06
+-->
+
 ### [2026-02-06] gopass Integration & Credentials Rename
 
 **Status:** Planning
@@ -2902,5 +3033,5 @@ p00X,Deliverable 1; Deliverable 2,Success 1; Success 2,Learning 1; Learning 2,Xd
 ## Analytics
 
 <!--TOON:analytics{total_plans,active,completed,archived,avg_lead_time_days,avg_variance_pct}:
-8,8,0,0,,
+9,9,0,0,,
 -->
