@@ -52,7 +52,9 @@ When referencing specific functions or code include the pattern `file_path:line_
 
 # Security Rules
 - NEVER expose credentials in output/logs
-- Store secrets ONLY in `~/.config/aidevops/credentials.sh` (600 permissions)
+- Store secrets via `aidevops secret set NAME` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback, 600 permissions)
+- When a user needs to store a secret, instruct them to run `aidevops secret set NAME` at their terminal. NEVER accept secret values in conversation.
+- NEVER run `gopass show`, `cat credentials.sh`, `echo $SECRET`, or any command that prints secret values
 - Confirm destructive operations before execution
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - Do not commit files containing secrets (.env, credentials.json, etc.)

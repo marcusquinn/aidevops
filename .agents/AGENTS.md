@@ -75,7 +75,7 @@ For long-running processes: use `&`, `nohup`, or `screen`/`tmux`. For parallel A
 - **Purpose**: DevOps automation across multiple services
 - **Getting Started**: `/onboarding` - Interactive setup wizard
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
-- **Credentials**: `~/.config/aidevops/credentials.sh` (600 permissions)
+- **Secrets**: `aidevops secret` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback)
 - **Subagent Index**: `subagent-index.toon` (agents, subagents, workflows, scripts)
 
 **Critical Rules**:
@@ -280,9 +280,14 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
 ## Security
 
-- Credentials: `~/.config/aidevops/credentials.sh` (600 permissions)
+- **Encrypted secrets** (recommended): `aidevops secret` (gopass backend, GPG-encrypted)
+- **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
 - Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored)
 - Confirm destructive operations before execution
+
+**Secret handling rule**: When a user needs to store a secret, ALWAYS instruct them to run `aidevops secret set NAME` at their terminal. NEVER accept secret values in conversation context. NEVER run `gopass show`, `cat credentials.sh`, or any command that prints secret values.
+
+**Full docs**: `tools/credentials/gopass.md`, `tools/credentials/api-key-setup.md`
 
 ## Working Directories
 

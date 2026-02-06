@@ -18,11 +18,20 @@ tools:
 
 ## Quick Reference
 
-- **Secrets Location**: `~/.config/aidevops/credentials.sh` (600 permissions)
+- **Recommended**: `aidevops secret set NAME` (gopass encrypted, AI-safe)
+- **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
 - **Working Dirs**: `~/.aidevops/` (agno, stagehand, reports)
 - **Setup**: `bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup`
 
-**Commands**:
+**Encrypted storage** (recommended):
+
+- `aidevops secret init` - Initialize gopass store
+- `aidevops secret set NAME` - Store secret (hidden input, GPG-encrypted)
+- `aidevops secret list` - List names (never values)
+- `aidevops secret run CMD` - Inject secrets + redact output
+
+**Plaintext storage** (fallback):
+
 - `set <service-name> <VALUE>` - Store API key (converts to UPPER_CASE export)
 - `add 'export VAR="value"'` - Parse and store export command
 - `get <service-name>` - Retrieve key value
@@ -30,7 +39,7 @@ tools:
 
 **Common Services**: codacy-project-token, sonar-token, coderabbit-api-key, hcloud-token-*, openai-api-key
 
-**Security**: Shell startup auto-sources credentials.sh, never commit keys to repo
+**Security**: NEVER accept secret values in AI conversation. Instruct users to run `aidevops secret set NAME` at their terminal.
 <!-- AI-CONTEXT-END -->
 
 ## Directory Structure
@@ -236,9 +245,22 @@ See `multi-tenant.md` for full documentation.
 
 ## Best Practices
 
-1. **Single source** - Always add keys via `setup-local-api-keys.sh` or `credential-helper.sh`
-2. **Regular rotation** - Rotate API keys every 90 days
-3. **Minimal permissions** - Use tokens with minimal required scopes
-4. **Monitor usage** - Check API usage in provider dashboards
-5. **Never commit** - API keys should never appear in git history
-6. **Use tenants** - Separate client/environment credentials with multi-tenant storage
+1. **Use gopass** - Prefer `aidevops secret set` for encrypted storage
+2. **Single source** - Always add keys via `aidevops secret set`, `setup-local-api-keys.sh`, or `credential-helper.sh`
+3. **Regular rotation** - Rotate API keys every 90 days
+4. **Minimal permissions** - Use tokens with minimal required scopes
+5. **Monitor usage** - Check API usage in provider dashboards
+6. **Never commit** - API keys should never appear in git history
+7. **Use tenants** - Separate client/environment credentials with multi-tenant storage
+8. **AI-safe** - Never accept secret values in AI conversation context
+
+## Encrypted Storage (Recommended)
+
+For encrypted secret storage with gopass, see `tools/credentials/gopass.md`.
+
+```bash
+# Quick start
+aidevops secret init              # One-time setup
+aidevops secret set API_KEY       # Store (hidden input)
+aidevops secret run some-command  # Use (injected + redacted)
+```

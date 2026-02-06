@@ -97,7 +97,8 @@ From `tools/build-agent/build-agent.md`:
 ## Security
 
 - Never commit credentials
-- Store secrets in `~/.config/aidevops/credentials.sh` (600 permissions)
+- Store secrets via `aidevops secret set NAME` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback, 600 permissions)
+- NEVER accept secret values in AI conversation context
 - Confirm destructive operations before execution
 - Use placeholders in examples, note secure storage location
 

@@ -42,6 +42,8 @@ Multi-tenant credential storage allows managing separate credential sets for:
 - **Multiple accounts** (personal, work, freelance)
 - **Multiple services** (different GitHub orgs, Cloudflare accounts)
 
+**Note**: For encrypted secret storage, see `tools/credentials/gopass.md`. gopass can be used alongside multi-tenant storage -- use `aidevops secret` for encrypted secrets and `credential-helper.sh` for tenant switching.
+
 ## Architecture
 
 ```text
