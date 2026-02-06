@@ -466,6 +466,23 @@ validate_opencode_config() {
     local needs_repair=false
     local issues=""
     
+    # Check 0: Remove deprecated top-level keys that OpenCode no longer recognizes
+    # "compaction" was removed in OpenCode v1.1.x - causes "Unrecognized key" error
+    local deprecated_keys=("compaction")
+    for key in "${deprecated_keys[@]}"; do
+        if jq -e ".[\"$key\"]" "$opencode_config" > /dev/null 2>&1; then
+            local tmp_fix
+            tmp_fix=$(mktemp)
+            if jq "del(.[\"$key\"])" "$opencode_config" > "$tmp_fix" 2>/dev/null; then
+                create_backup_with_rotation "$opencode_config" "opencode"
+                mv "$tmp_fix" "$opencode_config"
+                print_info "Removed deprecated '$key' key from OpenCode config"
+            else
+                rm -f "$tmp_fix"
+            fi
+        fi
+    done
+    
     # Check 1: MCP entries must have "type" field (usually "local")
     # Invalid: {"mcp": {"foo": {"command": "..."}}}
     # Valid:   {"mcp": {"foo": {"type": "local", "command": "..."}}}
