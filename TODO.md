@@ -93,7 +93,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~1d (ai:4h test:4h read:2h) logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~2h (ai:1h test:30m read:30m) logged:2025-12-21
 - [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~10m (ai:8m read:2m) logged:2025-12-21
-- [ ] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m (ai:10m read:5m) logged:2025-12-21
+- [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~2h (ai:1h test:30m read:30m) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~4h (ai:2h test:1h read:1h) logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~1d (ai:4h test:4h read:2h) logged:2025-12-21
