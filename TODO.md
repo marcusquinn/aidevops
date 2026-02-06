@@ -210,7 +210,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/ BLOCKED: Max retries exceeded: clean_exit_no_signal
 - [ ] t088 Create Sitebulb subagent #seo #tools #crawler ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
   - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
-- [ ] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
+- [x] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: ContentKing real-time SEO monitoring API. Track changes, alerts for SEO issues, content tracking. Add to seo/. Ref: https://www.contentkingapp.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
 - [ ] t090 Create WebPageTest subagent #tools #performance ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
   - Notes: WebPageTest API integration. Performance testing, filmstrip view, waterfall analysis, Core Web Vitals. Complement to existing pagespeed.md. Add to tools/performance/. Ref: https://www.webpagetest.org/ BLOCKED: Max retries exceeded: clean_exit_no_signal
