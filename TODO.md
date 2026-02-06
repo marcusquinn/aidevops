@@ -60,8 +60,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m (ai:20m test:10m) logged:2026-02-03
 - [ ] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m (ai:30m test:15m) logged:2026-02-03
 - [ ] t123 Resolve DSPy dependency conflict (gepa) in setup flow #python #dspy #deps ~45m (ai:30m test:15m) logged:2026-02-03
-- [ ] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m (ai:10m test:5m) logged:2026-01-29
-  - Notes: Release commit bd0695c bumped VERSION to 2.92.1 but missed syncing package.json, setup.sh, aidevops.sh, sonar-project.properties, .claude-plugin/marketplace.json. Either fix manually or ensure version-manager.sh is used for all releases.
+- [x] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m actual:0m (ai:10m test:5m) logged:2026-01-29 completed:2026-02-06
+  - Notes: Already fixed. All version files (VERSION, package.json, sonar-project.properties, .claude-plugin/marketplace.json) are in sync at 2.101.0. setup.sh and aidevops.sh read VERSION dynamically (no hardcoded version). version-manager.sh validate confirms consistency. Original issue from bd0695c was resolved by subsequent releases using version-manager.sh.
 - [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
   - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
