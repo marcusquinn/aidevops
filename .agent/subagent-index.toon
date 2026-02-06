@@ -114,4 +114,5 @@ cron-helper.sh,Cron job management for scheduled AI agent dispatch
 cron-dispatch.sh,Execute cron jobs via OpenCode server API
 runner-helper.sh,Named headless AI agent instances (create run status list edit logs stop destroy)
 matrix-dispatch-helper.sh,Matrix bot for dispatching messages to AI runners (setup start stop map test)
+supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init add batch transition status list next reset cancel db)
 -->
