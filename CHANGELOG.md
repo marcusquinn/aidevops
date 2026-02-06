@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.101.0] - 2026-02-06
+
+### Added
+
+- auto-migrate mailbox on update, replace auto-prune with storage report (#357)
+- migrate inter-agent mailbox from TOON files to SQLite (#356)
+- add memory namespace support for per-runner isolation (t109.3) (#351)
+- headless dispatch docs + runner-helper.sh (t109.1, t109.2) (#348)
+- Claude-Flow inspired features - model routing, semantic memory, pattern tracking (t102)
+- add Neural-Chromium subagent for agent-native browser automation (#340)
+
+### Changed
+
+- Refactor: use args array for opencode launch command (#354)
+- Documentation: add runner templates and parallel vs sequential guide (t109.5) (#353)
+- Documentation: mark t109.3 memory namespace integration complete
+- Documentation: update README headless dispatch section with runner-helper.sh examples
+- Documentation: add Pi agent review for aidevops inspiration (t103) (#347)
+- Documentation: add t102 features to README - semantic memory, pattern tracking, model routing (#345)
+
+### Fixed
+
+- resolve setup onboarding errors (macOS head -z, model selection, agent routing) (#346)
+- namespace maintenance - orphan cleanup, shared access tracking, migrate, embeddings (t109.3) (#352)
+- correct SQL single-quote escaping in memory-helper.sh (#350)
+- use gtimeout on macOS, fallback to no timeout if neither available (#349)
+- pattern-tracker stats now shows task type breakdown (#344)
+- add main-branch write restrictions for subagents (#343)
+- enforce README gate as mandatory step in loop workflows (#342)
 ## [2.100.20] - 2026-02-05
 
 ### Changed
