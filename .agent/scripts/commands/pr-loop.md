@@ -60,7 +60,7 @@ When a review bot (Gemini, CodeRabbit, Copilot, etc.) requests changes, **verify
 
 **Verification steps:**
 
-1. **Check factual claims** - Verify version numbers, file paths, API signatures against runtime/docs/project conventions
+1. **Check factual claims** - Verify version numbers, file paths, API signatures against runtime, documentation, or project conventions
 2. **Dismiss incorrect suggestions** - Reply with evidence (e.g., "Image exists: `docker manifest inspect image:tag`")
 3. **Address valid feedback** - Implement suggestions that are technically correct
 4. **Re-request review** - Push fixes and trigger re-review for remaining items
