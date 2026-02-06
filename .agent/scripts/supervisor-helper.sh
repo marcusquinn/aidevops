@@ -3059,6 +3059,11 @@ cmd_pulse() {
     local total_pr_review
     total_pr_review=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying');")
 
+    local total_failed
+    total_failed=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('failed', 'blocked');")
+    local total_tasks
+    total_tasks=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+
     echo ""
     log_info "Pulse summary:"
     log_info "  Evaluated:  $((completed_count + failed_count)) workers"
@@ -3068,7 +3073,13 @@ cmd_pulse() {
     log_info "  Running:    $total_running"
     log_info "  Queued:     $total_queued"
     log_info "  Post-PR:    $total_pr_review"
-    log_info "  Total done: $total_complete"
+    log_info "  Total done: $total_complete / $total_tasks"
+
+    # macOS notification on progress (when something changed this pulse)
+    if [[ $((completed_count + failed_count + dispatched_count)) -gt 0 ]]; then
+        local batch_label="${batch_id:-all tasks}"
+        notify_batch_progress "$total_complete" "$total_tasks" "$total_failed" "$batch_label" 2>/dev/null || true
+    fi
 
     return 0
 }
@@ -3422,6 +3433,68 @@ send_task_notification() {
             log_info "Notification sent via Matrix: $event_type for $task_id"
         fi
     fi
+
+    # macOS native notification (always available on Darwin)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local notif_title="aidevops supervisor"
+        local notif_subtitle=""
+        local notif_sound="Glass"
+
+        case "$event_type" in
+            complete)
+                notif_subtitle="$task_id complete"
+                notif_sound="Glass"
+                ;;
+            blocked)
+                notif_subtitle="$task_id BLOCKED"
+                notif_sound="Basso"
+                ;;
+            failed)
+                notif_subtitle="$task_id FAILED"
+                notif_sound="Sosumi"
+                ;;
+            *)
+                notif_subtitle="$task_id: $event_type"
+                ;;
+        esac
+
+        osascript -e "display notification \"$message\" with title \"$notif_title\" subtitle \"$notif_subtitle\" sound name \"$notif_sound\"" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
+#######################################
+# Send a macOS notification for batch progress milestones
+# Called from pulse summary when notable progress occurs
+#######################################
+notify_batch_progress() {
+    local completed="$1"
+    local total="$2"
+    local failed="${3:-0}"
+    local batch_name="${4:-batch}"
+
+    [[ "$(uname)" != "Darwin" ]] && return 0
+
+    local remaining=$((total - completed - failed))
+    local message="${completed}/${total} done"
+    if [[ "$failed" -gt 0 ]]; then
+        message="$message, $failed failed"
+    fi
+    if [[ "$remaining" -gt 0 ]]; then
+        message="$message, $remaining remaining"
+    fi
+
+    local sound="Glass"
+    if [[ "$completed" -eq "$total" && "$failed" -eq 0 ]]; then
+        sound="Hero"
+        message="All $total tasks complete!"
+    elif [[ "$remaining" -eq 0 ]]; then
+        sound="Purr"
+        message="Batch finished: $message"
+    fi
+
+    osascript -e "display notification \"$message\" with title \"aidevops supervisor\" subtitle \"$batch_name\" sound name \"$sound\"" 2>/dev/null || true
 
     return 0
 }
