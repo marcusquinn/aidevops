@@ -1975,13 +1975,6 @@ evaluate_worker() {
     meta_oom_count=$(_meta_get "oom_count" "0")
     meta_backend_error_count=$(_meta_get "backend_error_count" "0")
 
-    # Backend infrastructure error (Antigravity, API gateway) = transient, always retry
-    # These indicate the AI provider is overloaded, not a task failure
-    if [[ "$meta_backend_error_count" -gt 0 ]]; then
-        echo "retry:backend_infrastructure_error"
-        return 0
-    fi
-
     # FULL_LOOP_COMPLETE = definitive success
     if [[ "$meta_signal" == "FULL_LOOP_COMPLETE" ]]; then
         echo "complete:${meta_pr_url:-no_pr}"
@@ -2000,6 +1993,14 @@ evaluate_worker() {
     # API integration subagent that documents authentication flows)
     if [[ -n "$meta_pr_url" && "$meta_exit_code" == "0" ]]; then
         echo "complete:${meta_pr_url}"
+        return 0
+    fi
+
+    # Backend infrastructure error (Antigravity, quota, API gateway) = transient retry
+    # Checked AFTER success signals: a task can hit a backend error early, recover,
+    # and complete successfully. Only triggers if no success signal was found.
+    if [[ "$meta_backend_error_count" -gt 0 ]]; then
+        echo "retry:backend_infrastructure_error"
         return 0
     fi
 
