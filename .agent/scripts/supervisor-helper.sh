@@ -16,6 +16,8 @@
 #   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
+#   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
+#   supervisor-helper.sh retrospective [batch_id]      Run batch retrospective and store insights
 #   supervisor-helper.sh status [task_id|batch_id]     Show task/batch/overall status
 #   supervisor-helper.sh transition <task_id> <new_state> [--error "reason"]
 #   supervisor-helper.sh list [--state queued|running|...] [--batch name] [--format json]
@@ -556,6 +558,8 @@ check_batch_completion() {
                 WHERE id = '$escaped_batch' AND status = 'active';
             "
             log_success "Batch $batch_id is now complete"
+            # Run batch retrospective and store insights (t128.6)
+            run_batch_retrospective "$batch_id" 2>/dev/null || true
         fi
     done <<< "$batch_ids"
 
@@ -1103,12 +1107,21 @@ resolve_ai_cli() {
 #######################################
 # Build the dispatch command for a task
 # Outputs the command array elements, one per line
+# $5 (optional): memory context to inject into the prompt
 #######################################
 build_dispatch_cmd() {
     local task_id="$1"
     local worktree_path="$2"
     local log_file="$3"
     local ai_cli="$4"
+    local memory_context="${5:-}"
+
+    local prompt="/full-loop $task_id"
+    if [[ -n "$memory_context" ]]; then
+        prompt="/full-loop $task_id
+
+$memory_context"
+    fi
 
     if [[ "$ai_cli" == "opencode" ]]; then
         echo "opencode"
@@ -1117,12 +1130,12 @@ build_dispatch_cmd() {
         echo "json"
         echo "--title"
         echo "$task_id"
-        echo "/full-loop $task_id"
+        echo "$prompt"
     else
         # claude CLI
         echo "claude"
         echo "-p"
-        echo "/full-loop $task_id"
+        echo "$prompt"
         echo "--output-format"
         echo "json"
     fi
@@ -1310,6 +1323,13 @@ cmd_dispatch() {
     local dispatch_mode
     dispatch_mode=$(detect_dispatch_mode)
 
+    # Recall relevant memories before dispatch (t128.6)
+    local memory_context=""
+    memory_context=$(recall_task_memories "$task_id" "$tdesc" 2>/dev/null || echo "")
+    if [[ -n "$memory_context" ]]; then
+        log_info "Injecting ${#memory_context} bytes of memory context for $task_id"
+    fi
+
     log_info "Dispatching $task_id via $ai_cli ($dispatch_mode mode)"
     log_info "Worktree: $worktree_path"
     log_info "Log: $log_file"
@@ -1318,7 +1338,7 @@ cmd_dispatch() {
     local -a cmd_parts=()
     while IFS= read -r part; do
         cmd_parts+=("$part")
-    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli")
+    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context")
 
     # Ensure PID directory exists before dispatch
     mkdir -p "$SUPERVISOR_DIR/pids"
@@ -1976,6 +1996,10 @@ cmd_pulse() {
             # Worker is done - evaluate outcome
             log_info "  $tid: worker finished, evaluating..."
 
+            # Get task description for memory context (t128.6)
+            local tid_desc
+            tid_desc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+
             # Transition to evaluating
             cmd_transition "$tid" "evaluating" 2>/dev/null || true
 
@@ -1994,11 +2018,15 @@ cmd_pulse() {
                     # Auto-update TODO.md and send notification (t128.4)
                     update_todo_on_complete "$tid" 2>/dev/null || true
                     send_task_notification "$tid" "complete" "$outcome_detail" 2>/dev/null || true
+                    # Store success pattern in memory (t128.6)
+                    store_success_pattern "$tid" "$outcome_detail" "$tid_desc" 2>/dev/null || true
                     ;;
                 retry)
                     log_warn "  $tid: RETRY ($outcome_detail)"
                     cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>/dev/null || true
                     rm -f "$pid_file"
+                    # Store failure pattern in memory (t128.6)
+                    store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>/dev/null || true
                     # Re-prompt in existing worktree (continues context)
                     if cmd_reprompt "$tid" 2>/dev/null; then
                         dispatched_count=$((dispatched_count + 1))
@@ -2015,6 +2043,8 @@ cmd_pulse() {
                             # Auto-update TODO.md and send notification (t128.4)
                             update_todo_on_blocked "$tid" "Max retries exceeded: $outcome_detail" 2>/dev/null || true
                             send_task_notification "$tid" "blocked" "Max retries exceeded: $outcome_detail" 2>/dev/null || true
+                            # Store failure pattern in memory (t128.6)
+                            store_failure_pattern "$tid" "blocked" "Max retries exceeded: $outcome_detail" "$tid_desc" 2>/dev/null || true
                         else
                             log_error "  $tid: re-prompt failed, marking failed"
                             cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
@@ -2022,6 +2052,8 @@ cmd_pulse() {
                             # Auto-update TODO.md and send notification (t128.4)
                             update_todo_on_blocked "$tid" "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
                             send_task_notification "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
+                            # Store failure pattern in memory (t128.6)
+                            store_failure_pattern "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" "$tid_desc" 2>/dev/null || true
                         fi
                     fi
                     ;;
@@ -2032,6 +2064,8 @@ cmd_pulse() {
                     # Auto-update TODO.md and send notification (t128.4)
                     update_todo_on_blocked "$tid" "$outcome_detail" 2>/dev/null || true
                     send_task_notification "$tid" "blocked" "$outcome_detail" 2>/dev/null || true
+                    # Store failure pattern in memory (t128.6)
+                    store_failure_pattern "$tid" "blocked" "$outcome_detail" "$tid_desc" 2>/dev/null || true
                     ;;
                 failed)
                     log_error "  $tid: FAILED ($outcome_detail)"
@@ -2041,6 +2075,8 @@ cmd_pulse() {
                     # Auto-update TODO.md and send notification (t128.4)
                     update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>/dev/null || true
                     send_task_notification "$tid" "failed" "$outcome_detail" 2>/dev/null || true
+                    # Store failure pattern in memory (t128.6)
+                    store_failure_pattern "$tid" "failed" "$outcome_detail" "$tid_desc" 2>/dev/null || true
                     ;;
             esac
         done <<< "$running_tasks"
@@ -2433,6 +2469,333 @@ send_task_notification() {
 }
 
 #######################################
+# Recall relevant memories for a task before dispatch
+# Returns memory context as text (empty string if none found)
+# Used to inject prior learnings into the worker prompt
+#######################################
+recall_task_memories() {
+    local task_id="$1"
+    local description="${2:-}"
+
+    if [[ ! -x "$MEMORY_HELPER" ]]; then
+        return 0
+    fi
+
+    # Build search query from task ID and description
+    local query="$task_id"
+    if [[ -n "$description" ]]; then
+        query="$description"
+    fi
+
+    # Recall memories relevant to this task (limit 5, auto-captured preferred)
+    local memories=""
+    memories=$("$MEMORY_HELPER" recall --query "$query" --limit 5 --format text 2>/dev/null || echo "")
+
+    # Also check for failure patterns from previous attempts of this specific task
+    local task_memories=""
+    task_memories=$("$MEMORY_HELPER" recall --query "supervisor $task_id failure" --limit 3 --auto-only --format text 2>/dev/null || echo "")
+
+    local result=""
+    if [[ -n "$memories" && "$memories" != *"No memories found"* ]]; then
+        result="## Relevant Memories (from prior sessions)
+$memories"
+    fi
+
+    if [[ -n "$task_memories" && "$task_memories" != *"No memories found"* ]]; then
+        if [[ -n "$result" ]]; then
+            result="$result
+
+## Prior Failure Patterns for $task_id
+$task_memories"
+        else
+            result="## Prior Failure Patterns for $task_id
+$task_memories"
+        fi
+    fi
+
+    echo "$result"
+    return 0
+}
+
+#######################################
+# Store a failure pattern in memory after evaluation
+# Called when a task fails, is blocked, or retries
+# Tags with supervisor context for future recall
+#######################################
+store_failure_pattern() {
+    local task_id="$1"
+    local outcome_type="$2"
+    local outcome_detail="$3"
+    local description="${4:-}"
+
+    if [[ ! -x "$MEMORY_HELPER" ]]; then
+        return 0
+    fi
+
+    # Only store meaningful failure patterns (not transient retries)
+    case "$outcome_type" in
+        blocked|failed)
+            local memory_type="FAILED_APPROACH"
+            ;;
+        retry)
+            # Only store retry patterns if they indicate a recurring issue
+            # Skip transient ones like rate_limited, timeout, interrupted
+            case "$outcome_detail" in
+                rate_limited|timeout|interrupted_sigint|killed_sigkill|terminated_sigterm)
+                    return 0
+                    ;;
+            esac
+            local memory_type="ERROR_FIX"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    local content="Supervisor task $task_id ($outcome_type): $outcome_detail"
+    if [[ -n "$description" ]]; then
+        content="$content | Task: $description"
+    fi
+
+    "$MEMORY_HELPER" store \
+        --auto \
+        --type "$memory_type" \
+        --content "$content" \
+        --tags "supervisor,$task_id,$outcome_type,$outcome_detail" \
+        2>/dev/null || true
+
+    log_info "Stored failure pattern in memory: $task_id ($outcome_type: $outcome_detail)"
+    return 0
+}
+
+#######################################
+# Store a success pattern in memory after task completion
+# Records what worked for future reference
+#######################################
+store_success_pattern() {
+    local task_id="$1"
+    local detail="${2:-}"
+    local description="${3:-}"
+
+    if [[ ! -x "$MEMORY_HELPER" ]]; then
+        return 0
+    fi
+
+    local content="Supervisor task $task_id completed successfully"
+    if [[ -n "$detail" && "$detail" != "no_pr" ]]; then
+        content="$content | PR: $detail"
+    fi
+    if [[ -n "$description" ]]; then
+        content="$content | Task: $description"
+    fi
+
+    # Get retry count for context
+    local retries=0
+    retries=$(sqlite3 "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo 0)
+    if [[ "$retries" -gt 0 ]]; then
+        content="$content | Succeeded after $retries retries"
+    fi
+
+    "$MEMORY_HELPER" store \
+        --auto \
+        --type "WORKING_SOLUTION" \
+        --content "$content" \
+        --tags "supervisor,$task_id,complete" \
+        2>/dev/null || true
+
+    log_info "Stored success pattern in memory: $task_id"
+    return 0
+}
+
+#######################################
+# Run a retrospective after batch completion
+# Analyzes outcomes across all tasks in a batch and stores insights
+#######################################
+run_batch_retrospective() {
+    local batch_id="$1"
+
+    if [[ ! -x "$MEMORY_HELPER" ]]; then
+        log_warn "Memory helper not available, skipping retrospective"
+        return 0
+    fi
+
+    ensure_db
+
+    local escaped_batch
+    escaped_batch=$(sql_escape "$batch_id")
+
+    # Get batch info
+    local batch_name
+    batch_name=$(sqlite3 "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "$batch_id")
+
+    # Gather statistics
+    local total_tasks complete_count failed_count blocked_count cancelled_count
+    total_tasks=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks WHERE batch_id = '$escaped_batch';
+    ")
+    complete_count=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch' AND t.status = 'complete';
+    ")
+    failed_count=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch' AND t.status = 'failed';
+    ")
+    blocked_count=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch' AND t.status = 'blocked';
+    ")
+    cancelled_count=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch' AND t.status = 'cancelled';
+    ")
+
+    # Gather common error patterns
+    local error_patterns
+    error_patterns=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT error, count(*) as cnt FROM tasks t
+        JOIN batch_tasks bt ON t.id = bt.task_id
+        WHERE bt.batch_id = '$escaped_batch'
+        AND t.error IS NOT NULL AND t.error != ''
+        GROUP BY error ORDER BY cnt DESC LIMIT 5;
+    " 2>/dev/null || echo "")
+
+    # Calculate total retries
+    local total_retries
+    total_retries=$(sqlite3 "$SUPERVISOR_DB" "
+        SELECT COALESCE(SUM(t.retries), 0) FROM tasks t
+        JOIN batch_tasks bt ON t.id = bt.task_id
+        WHERE bt.batch_id = '$escaped_batch';
+    ")
+
+    # Build retrospective summary
+    local success_rate=0
+    if [[ "$total_tasks" -gt 0 ]]; then
+        success_rate=$(( (complete_count * 100) / total_tasks ))
+    fi
+
+    local retro_content="Batch retrospective: $batch_name ($batch_id) | "
+    retro_content+="$complete_count/$total_tasks completed (${success_rate}%) | "
+    retro_content+="Failed: $failed_count, Blocked: $blocked_count, Cancelled: $cancelled_count | "
+    retro_content+="Total retries: $total_retries"
+
+    if [[ -n "$error_patterns" ]]; then
+        retro_content+=" | Common errors: $(echo "$error_patterns" | tr '\n' '; ' | head -c 200)"
+    fi
+
+    # Store the retrospective
+    "$MEMORY_HELPER" store \
+        --auto \
+        --type "CODEBASE_PATTERN" \
+        --content "$retro_content" \
+        --tags "supervisor,retrospective,$batch_name,batch" \
+        2>/dev/null || true
+
+    # Store individual failure patterns if there are recurring errors
+    if [[ -n "$error_patterns" ]]; then
+        while IFS='|' read -r error_msg error_count; do
+            if [[ "$error_count" -gt 1 && -n "$error_msg" ]]; then
+                "$MEMORY_HELPER" store \
+                    --auto \
+                    --type "FAILED_APPROACH" \
+                    --content "Recurring error in batch $batch_name ($error_count occurrences): $error_msg" \
+                    --tags "supervisor,retrospective,$batch_name,recurring_error" \
+                    2>/dev/null || true
+            fi
+        done <<< "$error_patterns"
+    fi
+
+    log_success "Batch retrospective stored for $batch_name"
+    echo ""
+    echo -e "${BOLD}=== Batch Retrospective: $batch_name ===${NC}"
+    echo "  Total tasks:  $total_tasks"
+    echo "  Completed:    $complete_count (${success_rate}%)"
+    echo "  Failed:       $failed_count"
+    echo "  Blocked:      $blocked_count"
+    echo "  Cancelled:    $cancelled_count"
+    echo "  Total retries: $total_retries"
+    if [[ -n "$error_patterns" ]]; then
+        echo ""
+        echo "  Common errors:"
+        echo "$error_patterns" | while IFS='|' read -r emsg ecnt; do
+            echo "    [$ecnt] $emsg"
+        done
+    fi
+
+    return 0
+}
+
+#######################################
+# Command: retrospective - run batch retrospective
+#######################################
+cmd_retrospective() {
+    local batch_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        batch_id="$1"
+        shift
+    fi
+
+    if [[ -z "$batch_id" ]]; then
+        # Find the most recently completed batch
+        ensure_db
+        batch_id=$(sqlite3 "$SUPERVISOR_DB" "
+            SELECT id FROM batches WHERE status = 'complete'
+            ORDER BY updated_at DESC LIMIT 1;
+        " 2>/dev/null || echo "")
+
+        if [[ -z "$batch_id" ]]; then
+            log_error "No completed batches found. Usage: supervisor-helper.sh retrospective [batch_id]"
+            return 1
+        fi
+        log_info "Using most recently completed batch: $batch_id"
+    fi
+
+    run_batch_retrospective "$batch_id"
+    return 0
+}
+
+#######################################
+# Command: recall - recall memories relevant to a task
+#######################################
+cmd_recall() {
+    local task_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh recall <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local tdesc
+    tdesc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+    if [[ -z "$tdesc" ]]; then
+        # Try looking up from TODO.md in current repo
+        tdesc=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " TODO.md 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
+    fi
+
+    local memories
+    memories=$(recall_task_memories "$task_id" "$tdesc")
+
+    if [[ -n "$memories" ]]; then
+        echo "$memories"
+    else
+        log_info "No relevant memories found for $task_id"
+    fi
+
+    return 0
+}
+
+#######################################
 # Command: update-todo - manually trigger TODO.md update for a task
 #######################################
 cmd_update_todo() {
@@ -2814,6 +3177,8 @@ Usage:
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
   supervisor-helper.sh notify <task_id>              Send notification about task state
+  supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
+  supervisor-helper.sh retrospective [batch_id]      Run batch retrospective and store insights
   supervisor-helper.sh transition <id> <state>       Transition task state
   supervisor-helper.sh status [task_id|batch_id]     Show status
   supervisor-helper.sh list [--state X] [--batch Y]  List tasks
@@ -2930,6 +3295,13 @@ Cron Integration & Auto-Pickup (t128.5):
     supervisor-helper.sh watch --repo ~/Git/myapp  # Watch specific repo
     Requires: brew install fswatch
 
+Memory & Self-Assessment (t128.6):
+  Before dispatch: recalls relevant memories and injects into worker prompt
+  After evaluation: stores failure/success patterns via memory-helper.sh --auto
+  On batch completion: runs retrospective, stores insights and recurring errors
+  Manual commands: recall <task_id>, retrospective [batch_id]
+  Tags: supervisor,<task_id>,<outcome_type> for targeted recall
+
 Options for 'auto-pickup':
   --repo <path>          Repository with TODO.md (default: current directory)
 
@@ -2967,6 +3339,8 @@ main() {
         auto-pickup) cmd_auto_pickup "$@" ;;
         cron) cmd_cron "$@" ;;
         watch) cmd_watch "$@" ;;
+        recall) cmd_recall "$@" ;;
+        retrospective) cmd_retrospective "$@" ;;
         transition) cmd_transition "$@" ;;
         status) cmd_status "$@" ;;
         list) cmd_list "$@" ;;
