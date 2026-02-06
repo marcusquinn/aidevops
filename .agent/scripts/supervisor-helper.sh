@@ -1765,7 +1765,7 @@ extract_log_metadata() {
     # Backend infrastructure errors - search FULL log (these are short error-only logs,
     # not content false positives). Must be before rm of tail file.
     local backend_error_count=0
-    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway.*error\|service unavailable\|503' "$log_file" 2>/dev/null || echo 0)
+    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway.*error\|service unavailable\|503\|Quota protection\|over.*usage\|quota reset' "$log_file" 2>/dev/null || echo 0)
 
     rm -f "$log_tail_file"
 
