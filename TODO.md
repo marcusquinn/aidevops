@@ -148,8 +148,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Already implemented. Worktree Cleanup section exists in postflight.md at lines 584-596 with `worktree-helper.sh list` and `worktree-helper.sh clean` commands.
 - [ ] t049 Add timing analysis commands to ralph-loop workflow #workflow #automation ~15m (ai:10m test:5m) logged:2025-01-10
   - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
-- [ ] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~10m (ai:8m test:2m) logged:2025-01-11
-  - Notes: AGENTS.md lines 85-89 contain SonarCloud hotspot patterns (S5332, S6506 exclusions). Move to tools/code-review/ subagent to reduce root AGENTS.md size. Low priority - patterns work fine where they are.
+- [x] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~10m actual:0m (ai:8m test:2m) logged:2025-01-11 completed:2026-02-06
+  - Notes: Already complete. Hotspot patterns (S5332, S4423) were added to both AGENTS.md and code-standards.md in commit a229820, then removed from AGENTS.md during subsequent refactors. Patterns live in tools/code-review/code-standards.md lines 182-231. AGENTS.md line 205 points to code-standards.md for code quality details.
 - [x] t059 Review and merge unmerged feature branches #git #cleanup ~1h (ai:30m test:15m read:15m) logged:2026-01-11 started:2026-01-11T05:25Z completed:2026-01-11 actual:45m
   - Notes: Processed all 13 branches. PRs merged: #44, #46, #48, #51. PRs closed (already in main): #45, #47, #49, #50. Branches deleted (superseded): feature/beads-integration, feature/domain-research-subagent, feature/loop-system-v2, feature/memory-auto-capture, feature/session-review-command. All remote branches cleaned up.
 - [x] t052 Agent Design Pattern Improvements #plan → [todo/PLANS.md#agent-design-pattern-improvements] ~1d actual:1h45m (ai:6h test:4h read:2h) logged:2025-01-11 started:2026-01-21T05:04Z completed:2026-01-21
