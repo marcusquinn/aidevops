@@ -40,6 +40,7 @@ Commands:
                             Scopes: diff (default), staged, branch, full
   history [commits|range]   Scan git history for vulnerabilities
   scan-deps [path]          Scan dependencies for known vulnerabilities (OSV)
+  skill-scan [name|all]     Scan imported skills for threats (Cisco Skill Scanner)
   ferret [path]             Scan AI CLI configurations (Ferret)
   report [format]           Generate comprehensive security report
                             Formats: text (default), json, sarif
@@ -51,6 +52,8 @@ Examples:
   $(basename "$0") analyze full               # Full codebase scan
   $(basename "$0") history 50                 # Scan last 50 commits
   $(basename "$0") scan-deps                  # Scan dependencies
+  $(basename "$0") skill-scan                 # Scan all imported skills
+  $(basename "$0") skill-scan cloudflare      # Scan specific skill
   $(basename "$0") ferret                     # Scan AI CLI configs
   $(basename "$0") report --format=sarif      # Generate SARIF report
 EOF
@@ -96,6 +99,17 @@ cmd_status() {
         print_status "Ferret (via npx)" "true"
     else
         print_status "Ferret" "false"
+    fi
+    
+    # Cisco Skill Scanner
+    if check_command skill-scanner; then
+        local skillscanner_version
+        skillscanner_version=$(skill-scanner --version 2>/dev/null | head -1 || echo "unknown")
+        print_status "Skill Scanner" "true" "$skillscanner_version"
+    elif check_command uvx; then
+        print_status "Skill Scanner (via uvx)" "true"
+    else
+        print_status "Skill Scanner" "false"
     fi
     
     # Secretlint
@@ -359,6 +373,153 @@ cmd_scan_deps() {
     return 0
 }
 
+cmd_skill_scan() {
+    local target="${1:-all}"
+    shift || true
+    
+    print_header
+    ensure_output_dir
+    
+    echo -e "${BLUE}Agent Skill Security Scan (Cisco Skill Scanner)${NC}"
+    echo ""
+    
+    # Determine scanner command
+    local scanner_cmd=""
+    
+    if check_command skill-scanner; then
+        scanner_cmd="skill-scanner"
+    elif check_command uvx; then
+        scanner_cmd="uvx cisco-ai-skill-scanner"
+    elif check_command pipx; then
+        scanner_cmd="pipx run cisco-ai-skill-scanner"
+    else
+        echo -e "${YELLOW}Cisco Skill Scanner not installed.${NC}"
+        echo ""
+        echo "Install with:"
+        echo "  uv pip install cisco-ai-skill-scanner"
+        echo "  # or run without installing"
+        echo "  uvx cisco-ai-skill-scanner scan /path/to/skill"
+        echo "  # or via pip"
+        echo "  pip install cisco-ai-skill-scanner"
+        echo ""
+        return 1
+    fi
+    
+    local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+    local skill_sources="${agents_dir}/configs/skill-sources.json"
+    
+    if [[ "$target" == "all" ]]; then
+        # Scan all imported skills
+        if [[ ! -f "$skill_sources" ]] || ! check_command jq; then
+            echo -e "${YELLOW}No skill-sources.json found or jq not available.${NC}"
+            return 1
+        fi
+        
+        local skill_count
+        skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+        
+        if [[ "$skill_count" -eq 0 ]]; then
+            echo -e "${GREEN}No imported skills to scan.${NC}"
+            return 0
+        fi
+        
+        echo -e "Scanning ${skill_count} imported skills..."
+        echo ""
+        
+        local total_findings=0
+        local skills_with_issues=0
+        local skills_scanned=0
+        
+        while IFS= read -r skill_json; do
+            local name local_path
+            name=$(echo "$skill_json" | jq -r '.name')
+            local_path=$(echo "$skill_json" | jq -r '.local_path')
+            
+            local full_path="${agents_dir}/${local_path#.agents/}"
+            
+            if [[ ! -f "$full_path" ]]; then
+                echo -e "${YELLOW}SKIP${NC}: $name (file not found: $local_path)"
+                continue
+            fi
+            
+            # Skill scanner expects a directory with SKILL.md, so scan the parent dir
+            # or the file directly if it's a standalone markdown
+            local scan_target
+            local skill_dir="${full_path%.md}"
+            if [[ -d "$skill_dir" ]]; then
+                scan_target="$skill_dir"
+            else
+                scan_target="$(dirname "$full_path")"
+            fi
+            
+            echo -e "${CYAN}Scanning${NC}: $name ($local_path)"
+            
+            local scan_output
+            scan_output=$($scanner_cmd scan "$scan_target" --format json 2>/dev/null) || true
+            
+            if [[ -n "$scan_output" ]]; then
+                local findings
+                findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
+                local max_severity
+                max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
+                
+                if [[ "$findings" -gt 0 ]]; then
+                    total_findings=$((total_findings + findings))
+                    skills_with_issues=$((skills_with_issues + 1))
+                    echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
+                    
+                    # Show critical/high findings inline
+                    echo "$scan_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
+                else
+                    echo -e "  ${GREEN}SAFE${NC}"
+                fi
+            else
+                echo -e "  ${GREEN}SAFE${NC} (no output from scanner)"
+            fi
+            
+            skills_scanned=$((skills_scanned + 1))
+        done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+        
+        echo ""
+        echo "═══════════════════════════════════════"
+        echo -e "Skills scanned: ${skills_scanned}"
+        echo -e "Skills with issues: ${skills_with_issues}"
+        echo -e "Total findings: ${total_findings}"
+        echo "═══════════════════════════════════════"
+        
+        if [[ "$skills_with_issues" -gt 0 ]]; then
+            echo ""
+            echo -e "${YELLOW}Review skills with findings and consider removing unsafe ones:${NC}"
+            echo "  aidevops skill remove <name>"
+            return 1
+        fi
+        
+        echo ""
+        echo -e "${GREEN}All imported skills passed security scan.${NC}"
+        return 0
+    else
+        # Scan a specific skill by name or path
+        local scan_path="$target"
+        
+        # If target looks like a skill name (no slashes), resolve from registry
+        if [[ "$target" != */* && -f "$skill_sources" ]] && check_command jq; then
+            local resolved_path
+            resolved_path=$(jq -r --arg name "$target" '.skills[] | select(.name == $name) | .local_path' "$skill_sources" 2>/dev/null || echo "")
+            if [[ -n "$resolved_path" ]]; then
+                scan_path="${agents_dir}/${resolved_path#.agents/}"
+                scan_path="$(dirname "$scan_path")"
+                echo -e "Resolved skill '$target' to: $scan_path"
+            fi
+        fi
+        
+        echo -e "Scanning: ${scan_path}"
+        echo ""
+        
+        $scanner_cmd scan "$scan_path" --use-behavioral "$@"
+        return $?
+    fi
+}
+
 cmd_ferret() {
     local path="${1:-.}"
     shift || true
@@ -513,6 +674,17 @@ cmd_install() {
                 return 1
             fi
             ;;
+        skill-scanner|cisco-ai-skill-scanner)
+            echo "Installing Cisco Skill Scanner..."
+            if check_command uv; then
+                uv pip install cisco-ai-skill-scanner
+            elif check_command pip; then
+                pip install cisco-ai-skill-scanner
+            else
+                echo -e "${RED}Please install uv or pip first${NC}"
+                return 1
+            fi
+            ;;
         ferret|ferret-scan)
             echo "Installing Ferret..."
             npm install -g ferret-scan
@@ -535,6 +707,16 @@ cmd_install() {
                 fi
             fi
             
+            # Cisco Skill Scanner
+            if ! check_command skill-scanner; then
+                echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
+                if check_command uv; then
+                    uv pip install cisco-ai-skill-scanner || true
+                elif check_command pip; then
+                    pip install cisco-ai-skill-scanner || true
+                fi
+            fi
+            
             # Ferret
             if ! check_command ferret; then
                 echo -e "${CYAN}Installing Ferret...${NC}"
@@ -553,7 +735,7 @@ cmd_install() {
             ;;
         *)
             echo -e "${RED}Unknown tool: ${tool}${NC}"
-            echo "Valid tools: osv-scanner, ferret, secretlint, all"
+            echo "Valid tools: osv-scanner, skill-scanner, ferret, secretlint, all"
             return 1
             ;;
     esac
@@ -578,6 +760,9 @@ main() {
             ;;
         scan-deps|deps)
             cmd_scan_deps "$@"
+            ;;
+        skill-scan|skills)
+            cmd_skill_scan "$@"
             ;;
         ferret|ai-config)
             cmd_ferret "$@"
