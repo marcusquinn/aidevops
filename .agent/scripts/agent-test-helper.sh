@@ -77,10 +77,10 @@ AI_CLI="$(detect_cli)"
 readonly AI_CLI
 readonly DEFAULT_TIMEOUT="${AGENT_TEST_TIMEOUT:-120}"
 
-# OpenCode server defaults
+# OpenCode server defaults (localhost-only, HTTP is intentional for local dev server)
 readonly OPENCODE_HOST="${OPENCODE_HOST:-localhost}"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
-readonly OPENCODE_URL="http://${OPENCODE_HOST}:${OPENCODE_PORT}"
+readonly OPENCODE_URL="http://${OPENCODE_HOST}:${OPENCODE_PORT}" # NOSONAR - localhost dev server, no TLS needed
 
 # Colors
 readonly GREEN='\033[0;32m'
@@ -111,6 +111,7 @@ ensure_dirs() {
 # Check if OpenCode server is running
 #######################################
 check_opencode_server() {
+    # NOSONAR - localhost dev server health check, HTTP is intentional
     if curl -s --max-time 3 "${OPENCODE_URL}/global/health" > /dev/null 2>&1; then
         return 0
     fi
@@ -213,6 +214,7 @@ run_prompt_opencode_server() {
     local session_payload
     session_payload=$(jq -n --arg title "agent-test-$(date +%s)" '{"title": $title}')
     local session_response
+    # NOSONAR - localhost dev server API call, HTTP is intentional
     session_response=$(curl -s --max-time 10 -X POST "${OPENCODE_URL}/session" \
         -H "Content-Type: application/json" \
         -d "$session_payload")
@@ -231,6 +233,7 @@ run_prompt_opencode_server() {
     prompt_json=$(jq -n --arg text "$prompt" '{"parts": [{"type": "text", "text": $text}]}')
 
     local response
+    # NOSONAR - localhost dev server API call, HTTP is intentional
     response=$(curl -s --max-time "$timeout" -X POST \
         "${OPENCODE_URL}/session/${session_id}/message" \
         -H "Content-Type: application/json" \
@@ -244,7 +247,7 @@ run_prompt_opencode_server() {
         result=$(echo "$response" | jq -r '.content // .text // .message // empty' 2>/dev/null)
     fi
 
-    # Clean up session
+    # Clean up session (NOSONAR - localhost dev server, HTTP is intentional)
     curl -s -X DELETE "${OPENCODE_URL}/session/${session_id}" > /dev/null 2>&1 || true
 
     echo "$result"
