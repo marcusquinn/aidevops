@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - replace eval with safe array args in system-cleanup.sh find commands (#361)
 - correct TODO commit guidance to use main for planning-only and worktrees for mixed changes (#360)
 - re-run setup.sh when deployed agent VERSION mismatches repo (#358)
+
 ## [2.101.0] - 2026-02-06
 
 ### Added
@@ -62,11 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - pattern-tracker stats now shows task type breakdown (#344)
 - add main-branch write restrictions for subagents (#343)
 - enforce README gate as mandatory step in loop workflows (#342)
+
 ## [2.100.20] - 2026-02-05
 
 ### Changed
 
 - Documentation: add MCP auto-installation plan to PLANS.md (#338)
+
 ## [2.100.6] - 2026-02-05
 
 ### Fixed

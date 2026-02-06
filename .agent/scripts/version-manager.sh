@@ -325,6 +325,7 @@ EOF
         elif [[ "$line" == "## ["* ]] && [[ $in_unreleased -eq 1 ]]; then
             # Next version section found, stop skipping
             in_unreleased=0
+            echo ""
             echo "$line"
         elif [[ $in_unreleased -eq 0 ]]; then
             echo "$line"
