@@ -183,11 +183,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS learnings USING fts5(
     tokenize='porter unicode61'
 );
 
--- Separate table for access tracking (FTS5 doesn't support UPDATE)
+-- Separate table for access tracking and metadata (FTS5 doesn't support UPDATE)
 CREATE TABLE IF NOT EXISTS learning_access (
     id TEXT PRIMARY KEY,
     last_accessed_at TEXT,
-    access_count INTEGER DEFAULT 0
+    access_count INTEGER DEFAULT 0,
+    auto_captured INTEGER DEFAULT 0
 );
 
 -- Relational versioning table (inspired by Supermemory)
@@ -264,6 +265,14 @@ CREATE TABLE IF NOT EXISTS learning_relations (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 EOF
+    
+    # Add auto_captured column to learning_access if missing (t058 migration)
+    local has_auto_captured
+    has_auto_captured=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='auto_captured';" 2>/dev/null || echo "0")
+    if [[ "$has_auto_captured" == "0" ]]; then
+        sqlite3 "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" 2>/dev/null || true
+    fi
+    
     return 0
 }
 
@@ -290,6 +299,7 @@ cmd_store() {
     local event_date=""
     local supersedes_id=""
     local relation_type=""
+    local auto_captured=0
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -303,6 +313,7 @@ cmd_store() {
             --event-date) event_date="$2"; shift 2 ;;
             --supersedes) supersedes_id="$2"; shift 2 ;;
             --relation) relation_type="$2"; shift 2 ;;
+            --auto|--auto-captured) auto_captured=1; source="auto"; shift ;;
             *) 
                 # Allow content as positional argument
                 if [[ -z "$content" ]]; then
@@ -316,6 +327,22 @@ cmd_store() {
     if [[ -z "$content" ]]; then
         log_error "Content is required. Use --content \"your learning\""
         return 1
+    fi
+    
+    # Privacy filter: strip <private>...</private> blocks
+    content=$(echo "$content" | sed 's/<private>[^<]*<\/private>//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+    
+    # Privacy filter: reject content that looks like secrets
+    if echo "$content" | grep -qE '(sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|api[_-]?key["\s:=]+[a-zA-Z0-9_-]{16,})'; then
+        log_error "Content appears to contain secrets (API keys, tokens). Refusing to store."
+        log_error "Remove sensitive data or wrap in <private>...</private> tags to exclude."
+        return 1
+    fi
+    
+    # If content is empty after privacy filtering, skip
+    if [[ -z "$content" ]]; then
+        log_warn "Content is empty after privacy filtering. Skipping."
+        return 0
     fi
     
     # Validate type
@@ -398,6 +425,15 @@ INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_
 VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$event_date', '$escaped_project', '$source');
 EOF
     
+    # Store auto-captured flag in access table
+    if [[ "$auto_captured" -eq 1 ]]; then
+        sqlite3 "$MEMORY_DB" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count, auto_captured)
+VALUES ('$id', '$created_at', 0, 1)
+ON CONFLICT(id) DO UPDATE SET auto_captured = 1;
+EOF
+    fi
+    
     # Store relation if provided
     if [[ -n "$supersedes_id" ]]; then
         sqlite3 "$MEMORY_DB" <<EOF
@@ -424,6 +460,8 @@ cmd_recall() {
     local recent_mode=false
     local semantic_mode=false
     local shared_mode=false
+    local auto_only=false
+    local manual_only=false
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -435,6 +473,8 @@ cmd_recall() {
             --recent) recent_mode=true; limit="${2:-10}"; shift; [[ "${1:-}" =~ ^[0-9]+$ ]] && shift ;;
             --semantic|--similar) semantic_mode=true; shift ;;
             --shared) shared_mode=true; shift ;;
+            --auto-only) auto_only=true; shift ;;
+            --manual-only) manual_only=true; shift ;;
             --format) format="$2"; shift 2 ;;
             --json) format="json"; shift ;;
             --stats) cmd_stats; return 0 ;;
@@ -449,10 +489,18 @@ cmd_recall() {
     
     init_db
     
+    # Build auto-capture filter clause
+    local auto_filter=""
+    if [[ "$auto_only" == true ]]; then
+        auto_filter="AND COALESCE(a.auto_captured, 0) = 1"
+    elif [[ "$manual_only" == true ]]; then
+        auto_filter="AND COALESCE(a.auto_captured, 0) = 0"
+    fi
+    
     # Handle --recent mode (no query required)
     if [[ "$recent_mode" == true ]]; then
         local results
-        results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id ORDER BY l.created_at DESC LIMIT $limit;")
+        results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE 1=1 $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
         if [[ "$format" == "json" ]]; then
             echo "$results"
         else
@@ -518,6 +566,14 @@ cmd_recall() {
         extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%'"
     fi
     
+    # Build auto-capture filter for main query
+    local auto_join_filter=""
+    if [[ "$auto_only" == true ]]; then
+        auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 1"
+    elif [[ "$manual_only" == true ]]; then
+        auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 0"
+    fi
+    
     # Search using FTS5 with BM25 ranking
     # Note: FTS5 tables require special handling - can't use table alias in bm25()
     local results
@@ -531,10 +587,11 @@ SELECT
     learnings.created_at,
     COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
     COALESCE(learning_access.access_count, 0) as access_count,
+    COALESCE(learning_access.auto_captured, 0) as auto_captured,
     bm25(learnings) as score
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
-WHERE learnings MATCH '$escaped_query' $extra_filters
+WHERE learnings MATCH '$escaped_query' $extra_filters $auto_join_filter
 ORDER BY score
 LIMIT $limit;
 EOF
@@ -829,6 +886,11 @@ cmd_stats() {
 SELECT 'Total learnings' as metric, COUNT(*) as value FROM learnings
 UNION ALL
 SELECT 'By type: ' || type, COUNT(*) FROM learnings GROUP BY type
+UNION ALL
+SELECT 'Auto-captured', COUNT(*) FROM learning_access WHERE auto_captured = 1
+UNION ALL
+SELECT 'Manual', COUNT(*) FROM learnings l 
+    LEFT JOIN learning_access a ON l.id = a.id WHERE COALESCE(a.auto_captured, 0) = 0
 UNION ALL
 SELECT 'Never accessed', COUNT(*) FROM learnings l 
     LEFT JOIN learning_access a ON l.id = a.id WHERE a.id IS NULL
@@ -1430,6 +1492,63 @@ EOF
 }
 
 #######################################
+# Show auto-capture log
+# Convenience command: recall --recent --auto-only
+#######################################
+cmd_log() {
+    local limit=20
+    local format="text"
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --limit|-l) limit="$2"; shift 2 ;;
+            --json) format="json"; shift ;;
+            --format) format="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    
+    init_db
+    
+    local results
+    results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, l.source, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE COALESCE(a.auto_captured, 0) = 1 ORDER BY l.created_at DESC LIMIT $limit;")
+    
+    if [[ "$format" == "json" ]]; then
+        echo "$results"
+    else
+        local header_suffix=""
+        if [[ -n "$MEMORY_NAMESPACE" ]]; then
+            header_suffix=" [namespace: $MEMORY_NAMESPACE]"
+        fi
+        
+        echo ""
+        echo "=== Auto-Capture Log (last $limit)${header_suffix} ==="
+        echo ""
+        
+        if [[ -z "$results" || "$results" == "[]" ]]; then
+            log_info "No auto-captured memories yet."
+            echo ""
+            echo "Auto-capture stores memories when AI agents detect:"
+            echo "  - Working solutions after debugging"
+            echo "  - Failed approaches to avoid"
+            echo "  - Architecture decisions"
+            echo "  - Tool configurations"
+            echo ""
+            echo "Use --auto flag when storing: memory-helper.sh store --auto --content \"...\""
+        else
+            echo "$results" | format_results_text
+            
+            # Show summary
+            local total_auto
+            total_auto=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learning_access WHERE auto_captured = 1;")
+            echo "---"
+            echo "Total auto-captured: $total_auto"
+        fi
+    fi
+    return 0
+}
+
+#######################################
 # Show help
 #######################################
 cmd_help() {
@@ -1445,6 +1564,7 @@ USAGE:
 COMMANDS:
     store       Store a new learning
     recall      Search and retrieve learnings
+    log         Show recent auto-captured memories (alias for recall --recent --auto-only)
     history     Show version history for a memory (ancestors/descendants)
     latest      Find the latest version of a memory chain
     stats       Show memory statistics
@@ -1469,6 +1589,7 @@ STORE OPTIONS:
     --event-date <ISO>    When the event occurred (default: now)
     --supersedes <id>     ID of memory this updates/extends/derives from
     --relation <type>     Relation type: updates, extends, derives
+    --auto                Mark as auto-captured (sets source=auto, tracked separately)
 
 VALID TYPES:
     WORKING_SOLUTION, FAILED_APPROACH, CODEBASE_PATTERN, USER_PREFERENCE,
@@ -1491,6 +1612,8 @@ RECALL OPTIONS:
     --project <path>      Filter by project path
     --recent [n]          Show n most recent entries (default: 10)
     --shared              Also search global memory (when using --namespace)
+    --auto-only           Show only auto-captured memories
+    --manual-only         Show only manually stored memories
     --semantic            Use semantic similarity search (requires embeddings setup)
     --similar             Alias for --semantic
     --stats               Show memory statistics
@@ -1505,6 +1628,11 @@ DUAL TIMESTAMPS:
     - created_at:  When the memory was stored in the database
     - event_date:  When the event described actually occurred
     This enables temporal reasoning like "what happened last week?"
+
+PRIVACY FILTERS:
+    - <private>...</private> tags are stripped from content before storage
+    - Content matching secret patterns (API keys, tokens) is rejected
+    - Use privacy-filter-helper.sh for comprehensive scanning
 
 STALENESS PREVENTION:
     - Entries track created_at and last_accessed_at
@@ -1533,8 +1661,17 @@ EXAMPLES:
     # Find latest version in a chain
     memory-helper.sh latest mem_xxx
 
+    # Store an auto-captured memory (from AI agent)
+    memory-helper.sh store --auto --content "Fixed CORS with nginx headers" --type WORKING_SOLUTION
+
     # Recall learnings (keyword search - default)
     memory-helper.sh recall --query "database search" --limit 10
+
+    # Recall only auto-captured memories
+    memory-helper.sh recall --recent --auto-only
+
+    # Recall only manually stored memories
+    memory-helper.sh recall --query "cors" --manual-only
 
     # Recall learnings (semantic similarity - opt-in, requires setup)
     memory-helper.sh recall --query "how to optimize queries" --semantic
@@ -1609,6 +1746,7 @@ main() {
     case "$command" in
         store) cmd_store "$@" ;;
         recall) cmd_recall "$@" ;;
+        log) cmd_log "$@" ;;
         history) cmd_history "$@" ;;
         latest) cmd_latest "$@" ;;
         stats) cmd_stats ;;
