@@ -54,7 +54,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [ ] t104 Install script integrity hardening (replace curl|sh with verified downloads) #security #supply-chain #plan → [todo/PLANS.md#2026-02-03-install-script-integrity-hardening] ~4h (ai:2h test:1h read:1h) logged:2026-02-03
 - [ ] t105 Remove eval in ampcode-cli.sh (use arrays + whitelist formats) #security #shell ~1h (ai:45m test:15m) logged:2026-02-03
-- [ ] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h (ai:45m test:15m) logged:2026-02-03
+- [x] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
 - [ ] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h (ai:45m test:15m) logged:2026-02-03
 - [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~3h (ai:1.5h test:1h read:30m) logged:2026-02-03
 - [ ] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m (ai:20m test:10m) logged:2026-02-03
