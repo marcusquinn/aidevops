@@ -57,7 +57,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
 - [x] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h actual:20m (ai:20m) logged:2026-02-03 completed:2026-02-06
 - [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~3h (ai:1.5h test:1h read:30m) logged:2026-02-03
-- [ ] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m (ai:20m test:10m) logged:2026-02-03
+- [x] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m actual:0m (ai:0m) logged:2026-02-03 completed:2026-02-06
+  - Notes: Already fixed in PR #346. deploy-templates.sh replaced GNU-only `head -z` with macOS-compatible `while read -r` loop. No remaining `head -z` usage in codebase.
 - [ ] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m (ai:30m test:15m) logged:2026-02-03
 - [x] t123 Resolve DSPy dependency conflict (gepa) in setup flow #python #dspy #deps ~45m actual:0m (ai:0m test:0m) logged:2026-02-03 completed:2026-02-06
   - Notes: Already resolved. dspy 3.1.3 pulls gepa 0.0.26 as transitive dep with no conflicts. Fresh venv install of requirements.txt succeeds, pip check passes, both dspy and gepa import cleanly. Original conflict was likely version-specific and no longer reproduces.
@@ -309,7 +310,7 @@ t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|sh
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,3h,1.5h,1h,2026-02-03T00:00Z,pending,,,
-t121,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,20m,10m,2026-02-03T00:00Z,pending,,,
+t121,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,0m,0m,2026-02-03T00:00Z,completed,2026-02-06T00:00Z,,
 t122,Resolve awk newline warnings during setup deploy (system-reminder),,setup|deploy|bugfix,45m,30m,15m,2026-02-03T00:00Z,pending,,,
 t123,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m,0m,0m,2026-02-03T00:00Z,completed,,,
 t109,Parallel Agents & Headless Dispatch,,plan|agents|parallel|headless|dispatch|matrix|memory,3d,1.5d,1d,2026-02-03T00:00Z,in_progress,,,
