@@ -111,7 +111,7 @@ rotate_logs() {
     
     # Filter the log file: Keep lines where date >= cutoff_date
     # This is a string comparison which works for ISO 8601 dates
-    awk -v cutoff="$cutoff_date" '$_arg1 >= cutoff' "$LOG_FILE" > "$temp_log"
+    awk -v cutoff="$cutoff_date" '$1 >= cutoff' "$LOG_FILE" > "$temp_log"
     
     mv "$temp_log" "$LOG_FILE"
     
@@ -176,23 +176,23 @@ cleanup_directory() {
     
     log "INFO" "Scanning $desc ($dir)..."
     
-    local find_cmd="find \"$dir\" -name \"$pattern\""
+    # Build find arguments as an array (safe, no eval needed)
+    local find_args=("$dir" "-name" "$pattern")
     
     # Add depth limit to avoid scanning entire system if path is wrong
-    find_cmd="$find_cmd -maxdepth 4"
+    find_args+=("-maxdepth" "4")
     
     # Add age filter if specified
     if [[ "$days" -gt 0 ]]; then
-         # BSD/macOS find uses +7d, GNU uses -mtime +7
-         find_cmd="$find_cmd -mtime +${days}"
+        find_args+=("-mtime" "+${days}")
     fi
     
     # Exclude common directories
-    find_cmd="$find_cmd -not -path \"*/.git/*\" -not -path \"*/node_modules/*\""
+    find_args+=("-not" "-path" "*/.git/*" "-not" "-path" "*/node_modules/*")
     
-    # Execute find
+    # Execute find with safe array expansion
     local files_found
-    files_found=$(eval "$find_cmd" || echo "")
+    files_found=$(find "${find_args[@]}" 2>/dev/null || echo "")
     
     if [[ -z "$files_found" ]]; then
         log "DEBUG" "No matching files found for $desc"
@@ -231,14 +231,16 @@ cleanup_tmp_dir() {
     
     log "INFO" "Cleaning temporary directory ($TMP_DIR) - items older than $RETENTION_DAYS_TMP days..."
     
+    # Build find arguments as an array (safe, no eval needed)
     # Using -mindepth 1 to not delete the dir itself
-    local find_cmd="find \"$TMP_DIR\" -mindepth 1 -mtime +${RETENTION_DAYS_TMP}"
+    local find_args=("$TMP_DIR" "-mindepth" "1" "-mtime" "+${RETENTION_DAYS_TMP}")
     
     # Exclude README.md
-    find_cmd="$find_cmd -not -name \"README.md\""
+    find_args+=("-not" "-name" "README.md")
     
+    # Execute find with safe array expansion
     local items
-    items=$(eval "$find_cmd" || echo "")
+    items=$(find "${find_args[@]}" 2>/dev/null || echo "")
     
     if [[ -z "$items" ]]; then
         log "DEBUG" "No old temporary items found"
@@ -251,7 +253,7 @@ cleanup_tmp_dir() {
         if [[ "$DRY_RUN" == "true" ]]; then
             log "INFO" "[DRY-RUN] Would delete: $item"
         else
-             # Use rm -rf for directories
+            # Use rm -rf for directories
             if rm -rf "$item"; then
                 log "INFO" "Deleted: $item"
             else
@@ -281,7 +283,7 @@ show_help() {
 main() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
-        case "$_arg1" in
+        case "$1" in
             --force)
                 DRY_RUN=false
                 shift
@@ -295,7 +297,7 @@ main() {
                 exit 0
                 ;;
             *)
-                log "ERROR" "Unknown option: $_arg1"
+                log "ERROR" "Unknown option: $1"
                 show_help
                 exit 1
                 ;;
