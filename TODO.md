@@ -231,7 +231,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Added --namespace/-n flag to memory-helper.sh and memory-embeddings-helper.sh. Per-runner isolated DBs at memory/namespaces/<name>/memory.db. --shared flag on recall searches both namespace and global. namespaces command (list/prune/migrate). Runner destroy cleans up namespace. Shared recall updates global access tracking. PRs #351, #352.
   - [ ] t109.4 Matrix bot integration (optional) ~6h blocked-by:t109.2
     - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-runner mapping. Message → opencode run → response flow.
-  - [ ] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3
+  - [x] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3 completed:2026-02-05
     - Notes: Update AGENTS.md with parallel agent guidance. Create example runners (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
 - [x] t110 Cron agent for scheduled task management #tools #automation #agents ~3h actual:1h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T03:47Z completed:2026-02-04
   - Notes: Implemented cron-agent.md subagent, cron-helper.sh (list/add/remove/pause/resume/logs/debug/status/run), cron-dispatch.sh (OpenCode server API). Security hardened for remote use (HTTPS by default, proper array expansion). PRs #304, #305 merged.
@@ -243,7 +243,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: iOS Shortcut for voice-to-AI dispatch. Flow: Dictate (iOS STT) → HTTP POST to OpenCode server (via Tailscale/local network) → wait for response → Speak (iOS TTS). Requires OpenCode server accessible from phone. Document in tools/voice/ios-shortcut.md.
 - [ ] t114 Pipecat STS integration with OpenCode #tools #voice #ai ~4h (ai:2.5h test:1h read:30m) logged:2026-02-04 related:t080,t081
   - Notes: Full speech-to-speech conversation with AI via Pipecat pipeline. Flow: Mic → Soniox STT → OpenCode API → Cartesia TTS → Speaker. Real-time voice conversation without typing. Builds on t080/t081 Pipecat setup. Add to tools/voice/pipecat-opencode.md.
-- [ ] t115 OpenCode server subagent documentation #docs #tools #ai-assistants ~2h (ai:1.5h test:20m read:10m) logged:2026-02-04 started:2026-02-04T12:00Z
+- [x] t115 OpenCode server subagent documentation #docs #tools #ai-assistants ~2h (ai:1.5h test:20m read:10m) logged:2026-02-04 started:2026-02-04T12:00Z completed:2026-02-04
   - Notes: Document OpenCode server mode (opencode serve) patterns for aidevops. Cover: server setup, SDK usage, session management, async prompts, SSE events, TUI control, authentication. Reference https://opencode.ai/docs/server/ and https://opencode.ai/docs/sdk/. Add to tools/ai-assistants/opencode-server.md.
 - [x] t116 Self-improving agent system #plan → [todo/PLANS.md#2026-02-04-self-improving-agent-system] ~6h actual:2h (ai:4h test:1.5h read:30m) logged:2026-02-04 started:2026-02-04T12:30Z completed:2026-02-04
   - [x] t116.1 Review phase - pattern analysis from memory ~1.5h actual:30m blocked-by:none completed:2026-02-04
@@ -316,13 +316,13 @@ t109.1,Document headless dispatch patterns,,agents|headless|dispatch,4h,4h,,2026
 t109.2,Create runner-helper.sh,,agents|scripts|dispatch,4h,4h,,2026-02-03T00:00Z,completed,,,t109
 t109.3,Memory namespace integration,,memory|agents,3h,3h,,2026-02-03T00:00Z,completed,t109.2,,t109
 t109.4,Matrix bot integration (optional),,matrix|chat|dispatch,6h,6h,,2026-02-03T00:00Z,pending,t109.2,,t109
-t109.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,pending,t109.1|t109.2|t109.3,,t109
+t109.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,completed,t109.1|t109.2|t109.3,,t109
 t110,Cron agent for scheduled task management,,tools|automation|agents,3h,2h,45m,2026-02-04T00:00Z,done,,,
 t111,Objective runner with safety guardrails,,tools|automation|agents,4h,2.5h,1h,2026-02-04T00:00Z,pending,,,
 t112,VoiceInk to OpenCode via macOS Shortcut,,tools|voice|automation,1h,45m,15m,2026-02-04T00:00Z,pending,,,
 t113,iPhone Shortcut for voice dispatch to OpenCode,,tools|voice|mobile,1h,45m,15m,2026-02-04T00:00Z,pending,,,
 t114,Pipecat STS integration with OpenCode,,tools|voice|ai,4h,2.5h,1h,2026-02-04T00:00Z,pending,,,
-t115,OpenCode server subagent documentation,,docs|tools|ai-assistants,2h,1.5h,20m,2026-02-04T00:00Z,pending,,,
+t115,OpenCode server subagent documentation,,docs|tools|ai-assistants,2h,1.5h,20m,2026-02-04T00:00Z,done,,,
 t116,Self-improving agent system,,plan|agents|self-improvement|automation,6h,4h,1.5h,2026-02-04T00:00Z,done,,,
 t116.1,Review phase - pattern analysis from memory,,agents|memory|analysis,1.5h,1.5h,,2026-02-04T00:00Z,done,,,t116
 t116.2,Refine phase - generate and apply improvements,,agents|refactor,2h,2h,,2026-02-04T00:00Z,done,t116.1,,t116
