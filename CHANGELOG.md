@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.102.0] - 2026-02-06
+
+### Added
+
+- add agent testing framework with isolated AI sessions (t118)
+- add Playwright device emulation subagent (t098) (#367)
+- add auto-capture flag, privacy filters, and /memory-log command (t058) (#365)
+- add MinerU subagent for PDF-to-markdown conversion (#364)
+- add Matrix bot integration for runner dispatch (t109.4) (#363)
+
+### Changed
+
+- Documentation: update README for recently merged PRs (#370)
+- Documentation: add agent testing framework section to README
+- Documentation: add Playwright device emulation to README Browser Automation section
+- Documentation: add curl-copy authenticated scraping workflow subagent (#368)
+
+### Fixed
+
+- pass directory param to OpenCode session rename API
+- replace awk -v with while-read to avoid BSD awk newline warnings (#371)
+- improve secret detection regex to catch hyphenated API keys (t058) (#369)
+- remove eval-based patterns from credential-helper.sh (t107) (#366)
+- replace eval with safe array args in system-cleanup.sh find commands (#361)
+- correct TODO commit guidance to use main for planning-only and worktrees for mixed changes (#360)
+- re-run setup.sh when deployed agent VERSION mismatches repo (#358)
 ## [2.101.0] - 2026-02-06
 
 ### Added
