@@ -892,7 +892,7 @@ disc001,p009,Implementation faster than estimated,All core functionality already
 p009,beads-sync-helper.sh; todo-ready.sh; beads.md subagent; blocked-by/blocks syntax; hierarchical IDs; TOON schema; setup.sh integration; AGENTS.md docs,Robust sync script; comprehensive docs; seamless integration,Add optional UI installation to setup.sh,2d,1.5d,-25,1
 -->
 
-<!--TOON:active_plans[12]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+<!--TOON:active_plans[14]{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p016,Install Script Integrity Hardening,planning,0,4,,security|supply-chain|setup,4h,2h,1h,1h,2026-02-03T00:00Z,
 p017,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
 p001,aidevops-opencode Plugin,planning,0,4,,opencode|plugin,2d,1d,0.5d,0.5d,2025-12-21T01:50Z,
@@ -906,6 +906,8 @@ p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,open
 p010,Agent Design Pattern Improvements,planning,0,5,,architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,
 p011,Memory Auto-Capture,planning,0,5,,memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,
 p018,MCP Auto-Installation in setup.sh,planning,0,4,,mcp|setup|installation,4h,2h,1h,1h,2026-02-05T03:00Z,
+p019,Voice Integration Pipeline,planning,0,6,,voice|ai|pipecat|transcription|tts|stt|local|api,3d,1.5d,1d,0.5d,2026-02-05T00:00Z,
+p020,SEO Tool Subagents Sprint,planning,0,3,,seo|tools|subagents|sprint,1.5d,1d,4h,2h,2026-02-05T00:00Z,
 -->
 
 ### [2026-02-05] MCP Auto-Installation in setup.sh
@@ -2331,6 +2333,294 @@ d046,p017,Worktree isolation for all changes,Easy rollback and doesn't affect ma
 | t117 | Privacy filter for public PRs | Blocks t116.4 |
 | t118 | Agent testing framework | Related |
 | t115 | OpenCode server documentation | Prerequisite knowledge |
+
+---
+
+### [2026-02-05] SEO Tool Subagents Sprint
+
+**Status:** Planning
+**Estimate:** ~1.5d (ai:1d test:4h read:2h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p020,SEO Tool Subagents Sprint,planning,0,3,,seo|tools|subagents|sprint,1.5d,1d,4h,2h,2026-02-05T00:00Z,
+-->
+
+#### Purpose
+
+Batch-create 12 SEO tool subagents (t083-t094) in a single sprint. All follow an identical pattern: create a markdown subagent with API docs, install commands, usage examples, and integration notes. The existing 16 SEO subagents in `seo/` provide perfect templates.
+
+**Estimated total:** ~11.5h across 12 tasks, but parallelizable to ~4-5h actual since they follow the same pattern and an AI agent can generate multiple in a single session.
+
+#### Context from Discussion
+
+**Corrections identified during audit (2026-02-05):**
+
+| Task | Issue | Fix |
+|------|-------|-----|
+| t084 Rich Results Test | Google deprecated the standalone API | Use URL-based testing only; document browser automation approach |
+| t086 Screaming Frog | CLI requires paid license ($259/yr) | Document free tier limits (500 URLs); note license requirement |
+| t088 Sitebulb | No public API or CLI exists | Change scope to "document manual workflow" or decline |
+| t089 ContentKing | Acquired by Conductor in 2022 | Verify post-acquisition API status; may need different endpoint |
+| t087 Semrush | API has pricing tiers | Document free tier (10 requests/day) and paid tiers |
+
+#### Progress
+
+- [ ] (2026-02-05) Phase 1: API-based subagents (7 tasks, ~6h) ~6h
+  - t083 Bing Webmaster Tools - API key from Bing portal, URL submission, indexation, analytics
+  - t084 Rich Results Test - URL-based testing (API deprecated), browser automation for validation
+  - t085 Schema Validator - schema.org validator + Google structured data testing tool
+  - t087 Semrush - API integration, note pricing tiers (free: 10 req/day)
+  - t090 WebPageTest - API integration, differentiate from existing pagespeed.md
+  - t092 Schema Markup - JSON-LD templates for Article, Product, FAQ, HowTo, Organization, LocalBusiness
+  - t094 Analytics Tracking - GA4 setup, event tracking, UTM parameters, attribution
+
+- [ ] (2026-02-05) Phase 2: Workflow-based subagents (3 tasks, ~4h) ~4h
+  - t091 Programmatic SEO - Template engine decision, keyword clustering, internal linking automation
+  - t093 Page CRO - A/B testing setup, CTA optimization, landing page best practices
+  - t089 ContentKing/Conductor - Verify API status post-acquisition, real-time SEO monitoring
+
+- [ ] (2026-02-05) Phase 3: Special cases + integration (2 tasks, ~2h) ~2h
+  - t086 Screaming Frog - Document CLI with license requirement, free tier limits (500 URLs)
+  - t088 Sitebulb - Document manual workflow only (no API/CLI exists), or decline
+  - Update subagent-index.toon with all new subagents
+  - Update seo.md main agent with references to new subagents
+
+<!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m101,p020,Phase 1: API-based subagents (7 tasks),6h,,2026-02-05T00:00Z,,pending
+m102,p020,Phase 2: Workflow-based subagents (3 tasks),4h,,2026-02-05T00:00Z,,pending
+m103,p020,Phase 3: Special cases + integration (2 tasks),2h,,2026-02-05T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Batch all 12 SEO tasks into a single sprint
+  **Rationale:** All follow identical subagent creation pattern; existing 16 SEO subagents provide templates. Parallelizable to ~4-5h actual.
+  **Date:** 2026-02-05
+
+- **Decision:** t088 (Sitebulb) scope changed to manual workflow documentation
+  **Rationale:** Sitebulb has no public API or CLI. Desktop-only application.
+  **Date:** 2026-02-05
+
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d051,p020,Batch all 12 SEO tasks into single sprint,Identical pattern; existing templates; parallelizable,2026-02-05,Efficiency
+d052,p020,t088 Sitebulb scope changed to manual workflow,No public API or CLI exists,2026-02-05,Scope
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
+#### Related Tasks
+
+| Task | Description | Phase |
+|------|-------------|-------|
+| t083 | Bing Webmaster Tools | 1 |
+| t084 | Rich Results Test | 1 |
+| t085 | Schema Validator | 1 |
+| t086 | Screaming Frog | 3 |
+| t087 | Semrush | 1 |
+| t088 | Sitebulb | 3 |
+| t089 | ContentKing/Conductor | 2 |
+| t090 | WebPageTest | 1 |
+| t091 | Programmatic SEO | 2 |
+| t092 | Schema Markup | 1 |
+| t093 | Page CRO | 2 |
+| t094 | Analytics Tracking | 1 |
+
+---
+
+### [2026-02-05] Voice Integration Pipeline
+
+**Status:** Planning
+**Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p019,Voice Integration Pipeline,planning,0,6,,voice|ai|pipecat|transcription|tts|stt|local|api,3d,1.5d,1d,0.5d,2026-02-05T00:00Z,
+-->
+
+#### Purpose
+
+Create a comprehensive voice integration for aidevops supporting both local and cloud-based speech capabilities. This enables hands-free AI interaction via voice-to-text, text-to-speech, and full speech-to-speech conversation loops with OpenCode.
+
+**Dual-track philosophy:** Every voice capability should have both a local option (privacy, offline, no cost) and an API option (higher quality, lower latency, easier setup). Users choose based on their needs.
+
+**Key capabilities:**
+1. **Transcription** (audio/video → text) - Local: Whisper/faster-whisper. API: Groq, ElevenLabs Scribe, Deepgram, Soniox
+2. **TTS** (text → speech) - Local: Qwen3-TTS, Piper. API: Cartesia Sonic, ElevenLabs, OpenAI TTS
+3. **STT** (realtime speech → text) - Local: Whisper.cpp. API: Soniox, Deepgram, Google
+4. **S2S** (speech → speech, no intermediate text) - API: OpenAI Realtime, AWS Nova Sonic, Gemini Multimodal Live, Ultravox
+5. **Voice agent pipeline** - Pipecat framework orchestrating STT+LLM+TTS or S2S
+6. **Dispatch shortcuts** - macOS/iOS shortcuts for voice-triggered OpenCode commands
+
+#### Context from Discussion
+
+**Pipecat ecosystem (v0.0.101, 10.2k stars, Feb 2026):**
+- Python framework for voice/multimodal AI agents
+- 50+ service integrations (STT, TTS, LLM, S2S, transport)
+- Daily.co WebRTC transport for real-time audio
+- S2S support: OpenAI Realtime, AWS Nova Sonic, Gemini Multimodal Live, Grok Voice Agent, Ultravox
+- Voice UI Kit for web-based voice interfaces
+
+**Local model options:**
+- **Qwen3-TTS** (0.6B/1.7B, Apache-2.0): 10 languages, voice clone/design, streaming, vLLM support
+- **Piper** (MIT): Fast local TTS, many voices, low resource usage
+- **Whisper Large v3 Turbo** (1.5GB): Best accuracy/speed tradeoff for local transcription
+- **faster-whisper**: CTranslate2-optimized Whisper, 4x faster than original
+
+**Task sequencing:**
+
+| Phase | Tasks | Dependency | Rationale |
+|-------|-------|------------|-----------|
+| 1 | t072 Transcription | None | Foundation - most broadly useful |
+| 2 | t071 TTS/STT Models | None (parallel with Phase 1) | Model catalog for other phases |
+| 3 | t081 Local Pipecat | t071, t072 | Local voice agent pipeline |
+| 4 | t080 NVIDIA Nemotron | t081 | Cloud voice agent with open models |
+| 5 | t114 OpenCode bridge | t081 | Connect voice pipeline to AI |
+| 6 | t112, t113 Shortcuts | t114 | Quick dispatch from desktop/mobile |
+
+#### Progress
+
+- [ ] (2026-02-05) Phase 1: Transcription subagent (t072) ~6h
+  - Create `tools/voice/transcription.md` subagent
+  - Create `scripts/transcription-helper.sh` (transcribe, models, configure)
+  - Document local models: Whisper Large v3 Turbo (recommended), faster-whisper, NVIDIA Parakeet
+  - Document cloud APIs: Groq Whisper, ElevenLabs Scribe v2, Deepgram Nova, Soniox
+  - Support inputs: YouTube (yt-dlp), URLs, local audio/video files
+  - Output formats: plain text, SRT, VTT
+
+- [ ] (2026-02-05) Phase 2: Voice AI models catalog (t071) ~4h
+  - Create `tools/voice/voice-models.md` subagent
+  - Document TTS options: local (Qwen3-TTS, Piper) vs API (Cartesia Sonic, ElevenLabs, OpenAI)
+  - Document STT options: local (Whisper.cpp, faster-whisper) vs API (Soniox, Deepgram)
+  - Document S2S options: OpenAI Realtime, AWS Nova Sonic, Gemini Multimodal Live, Ultravox
+  - Include model selection guide (quality vs speed vs cost vs privacy)
+  - GPU requirements and benchmarks for local models
+
+- [ ] (2026-02-05) Phase 3: Local Pipecat voice agent (t081) ~4h
+  - Create `tools/voice/pipecat.md` subagent
+  - Create `scripts/pipecat-helper.sh` (setup, start, stop, configure)
+  - Document pipeline: Mic → STT → LLM → TTS → Speaker
+  - Support both STT+LLM+TTS pipeline and S2S mode (OpenAI Realtime)
+  - Configure local fallback: Whisper.cpp + llama.cpp + Piper for offline use
+  - Configure cloud default: Soniox + OpenAI/Anthropic + Cartesia Sonic
+  - Test on macOS using kwindla/macos-local-voice-agents as reference
+
+- [ ] (2026-02-05) Phase 4: Cloud voice agents and S2S models (t080) ~6h
+  - Extend pipecat.md with cloud S2S provider configurations
+  - **S2S providers (no separate STT/TTS needed):** GPT-4o-Realtime (OpenAI), AWS Nova Sonic, Gemini Multimodal Live, Ultravox
+  - **NVIDIA Nemotron:** Cloud-only via NVIDIA API (requires NVIDIA GPU for local; use cloud credits for low usage). Clone pipecat-ai/nemotron-january-2026 repo
+  - **Local S2S alternative:** MiniCPM-o 4.5 (23k stars, Apache-2.0, 9B params) - runs on Mac via llama.cpp-omni, supports full-duplex voice+vision+text, WebRTC demo available. Also MiniCPM-o 2.6 for lighter-weight local use
+  - Test voice pipeline with Daily.co WebRTC transport
+  - Build customer service agent template with configurable personas
+  - Document integration with OpenClaw for messaging platform voice calls
+
+- [ ] (2026-02-05) Phase 5: OpenCode voice bridge (t114) ~4h
+  - Create `tools/voice/pipecat-opencode.md` subagent
+  - Pipeline: Mic → Soniox STT → OpenCode API → Cartesia TTS → Speaker
+  - Use OpenCode server API for prompt submission and response streaming
+  - Support session continuity (resume voice conversation)
+  - Handle long responses (streaming TTS as text arrives)
+
+- [ ] (2026-02-05) Phase 6: Voice dispatch shortcuts (t112, t113) ~2h
+  - Create `tools/voice/voiceink-shortcut.md` (macOS)
+  - Create `tools/voice/ios-shortcut.md` (iPhone)
+  - macOS: VoiceInk transcription → Shortcut → HTTP POST to OpenCode → response
+  - iOS: Dictate → HTTP POST to OpenCode (via Tailscale) → Speak response
+  - Include AppleScript/Shortcuts app instructions
+
+<!--TOON:milestones[6]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m095,p019,Phase 1: Transcription subagent (t072),6h,,2026-02-05T00:00Z,,pending
+m096,p019,Phase 2: Voice AI models catalog (t071),4h,,2026-02-05T00:00Z,,pending
+m097,p019,Phase 3: Local Pipecat voice agent (t081),4h,,2026-02-05T00:00Z,,pending
+m098,p019,Phase 4: NVIDIA Nemotron voice agents (t080),6h,,2026-02-05T00:00Z,,pending
+m099,p019,Phase 5: OpenCode voice bridge (t114),4h,,2026-02-05T00:00Z,,pending
+m100,p019,Phase 6: Voice dispatch shortcuts (t112 t113),2h,,2026-02-05T00:00Z,,pending
+-->
+
+#### Decision Log
+
+- **Decision:** Dual-track local + API for every capability
+  **Rationale:** Privacy-sensitive users need local options; quality-focused users need cloud APIs. Both must be first-class.
+  **Date:** 2026-02-05
+
+- **Decision:** Pipecat as the orchestration framework
+  **Rationale:** 10.2k stars, 50+ service integrations, Python, actively maintained, S2S support. No viable alternative at this scale.
+  **Date:** 2026-02-05
+
+- **Decision:** Whisper Large v3 Turbo as default local transcription model
+  **Rationale:** Best accuracy/speed tradeoff (9.7 accuracy, 7.5 speed). Half the size of Large v3 (1.5GB vs 2.9GB) with near-identical accuracy.
+  **Date:** 2026-02-05
+
+- **Decision:** S2S as preferred mode when available
+  **Rationale:** OpenAI Realtime, AWS Nova Sonic, and Gemini Multimodal Live provide lower latency and more natural conversation than STT+LLM+TTS pipeline. Fall back to pipeline when S2S unavailable.
+  **Date:** 2026-02-05
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d047,p019,Dual-track local + API for every capability,Privacy-sensitive users need local; quality-focused need cloud,2026-02-05,Architecture
+d048,p019,Pipecat as orchestration framework,10.2k stars 50+ integrations Python actively maintained,2026-02-05,Architecture
+d049,p019,Whisper Large v3 Turbo as default local model,Best accuracy/speed tradeoff at half the size,2026-02-05,None
+d050,p019,S2S as preferred mode when available,Lower latency and more natural than STT+LLM+TTS pipeline,2026-02-05,Architecture
+-->
+
+#### Surprises & Discoveries
+
+- **Observation:** Pipecat v0.0.101 now supports 5 S2S providers natively
+  **Evidence:** OpenAI Realtime, AWS Nova Sonic, Gemini Multimodal Live, Grok Voice Agent, Ultravox all documented in pipecat.ai/docs
+  **Impact:** Simplifies t081 significantly - S2S may replace STT+LLM+TTS for cloud use
+  **Date:** 2026-02-05
+
+- **Observation:** MiniCPM-o 4.5 (23k stars, Apache-2.0) provides local full-duplex S2S on Mac
+  **Evidence:** 9B param model runs via llama.cpp-omni with WebRTC demo. Supports simultaneous vision+audio+text. Approaches Gemini 2.5 Flash quality.
+  **Impact:** Provides a strong local S2S alternative to cloud-only options. NVIDIA Nemotron requires NVIDIA GPU locally but MiniCPM-o runs on Mac/CPU.
+  **Date:** 2026-02-05
+
+- **Observation:** GPT-4o-Realtime is the most mature S2S option via Pipecat
+  **Evidence:** First S2S provider supported by Pipecat, well-documented, lowest latency
+  **Impact:** Recommended as default cloud S2S provider for Phase 4
+  **Date:** 2026-02-05
+
+<!--TOON:discoveries[3]{id,plan_id,observation,evidence,impact,date}:
+disc006,p019,Pipecat v0.0.101 supports 5 S2S providers natively,All documented in pipecat.ai/docs,Simplifies t081 - S2S may replace STT+LLM+TTS for cloud,2026-02-05
+disc007,p019,MiniCPM-o 4.5 provides local full-duplex S2S on Mac,9B params via llama.cpp-omni with WebRTC demo,Strong local S2S alternative - runs on Mac/CPU unlike Nemotron,2026-02-05
+disc008,p019,GPT-4o-Realtime is most mature S2S option,First Pipecat S2S provider well-documented lowest latency,Recommended as default cloud S2S provider,2026-02-05
+-->
+
+#### Files to Create
+
+| File | Purpose | Phase |
+|------|---------|-------|
+| `tools/voice/transcription.md` | Transcription subagent | 1 |
+| `scripts/transcription-helper.sh` | Transcription CLI | 1 |
+| `tools/voice/voice-models.md` | Voice AI model catalog | 2 |
+| `tools/voice/pipecat.md` | Pipecat voice agent subagent | 3 |
+| `scripts/pipecat-helper.sh` | Pipecat CLI | 3 |
+| `tools/voice/pipecat-opencode.md` | OpenCode voice bridge | 5 |
+| `tools/voice/voiceink-shortcut.md` | macOS voice shortcut | 6 |
+| `tools/voice/ios-shortcut.md` | iPhone voice shortcut | 6 |
+
+#### Files to Modify
+
+| File | Changes | Phase |
+|------|---------|-------|
+| `subagent-index.toon` | Add voice subagents | 1-6 |
+| `AGENTS.md` | Add voice integration to progressive disclosure table | 6 |
+| `README.md` | Update Voice Integration section | 6 |
+
+#### Related Tasks
+
+| Task | Description | Phase |
+|------|-------------|-------|
+| t072 | Audio/Video Transcription subagent | 1 |
+| t071 | Voice AI models catalog | 2 |
+| t081 | Local Pipecat voice agent | 3 |
+| t080 | NVIDIA Nemotron voice agents | 4 |
+| t114 | Pipecat-OpenCode bridge | 5 |
+| t112 | VoiceInk macOS shortcut | 6 |
+| t113 | iPhone voice shortcut | 6 |
+| t027 | hyprwhspr Linux STT (related) | - |
 
 ---
 
