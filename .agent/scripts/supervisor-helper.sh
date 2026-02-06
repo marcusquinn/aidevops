@@ -2836,10 +2836,11 @@ cmd_pulse() {
     fi
 
     # Phase 1: Check running workers for completion
+    # Also check 'evaluating' tasks - AI eval may have timed out, leaving them stuck
     local running_tasks
     running_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
         SELECT id, log_file FROM tasks
-        WHERE status IN ('running', 'dispatched')
+        WHERE status IN ('running', 'dispatched', 'evaluating')
         ORDER BY started_at ASC;
     ")
 
@@ -2867,17 +2868,30 @@ cmd_pulse() {
             fi
 
             # Worker is done - evaluate outcome
-            log_info "  $tid: worker finished, evaluating..."
+            # Check current state to handle already-evaluating tasks (AI eval timeout)
+            local current_task_state
+            current_task_state=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+
+            if [[ "$current_task_state" == "evaluating" ]]; then
+                log_info "  $tid: stuck in evaluating (AI eval likely timed out), re-evaluating without AI..."
+            else
+                log_info "  $tid: worker finished, evaluating..."
+                # Transition to evaluating
+                cmd_transition "$tid" "evaluating" 2>/dev/null || true
+            fi
 
             # Get task description for memory context (t128.6)
             local tid_desc
             tid_desc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
-            # Transition to evaluating
-            cmd_transition "$tid" "evaluating" 2>/dev/null || true
+            # Skip AI eval for stuck tasks (it already timed out once)
+            local skip_ai="false"
+            if [[ "$current_task_state" == "evaluating" ]]; then
+                skip_ai="true"
+            fi
 
             local outcome
-            outcome=$(evaluate_worker "$tid")
+            outcome=$(evaluate_worker "$tid" "$skip_ai")
             local outcome_type="${outcome%%:*}"
             local outcome_detail="${outcome#*:}"
 
