@@ -91,7 +91,13 @@ If the skill conflicts with existing files, the helper will prompt:
 3. **Separate** - Use a different name for the imported skill
 4. **Skip** - Cancel the import
 
-### Step 4: Post-Import
+### Step 4: Security Scan
+
+Before registration, the skill is scanned using [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) (if installed). CRITICAL/HIGH findings block the import. Use `--skip-security` to bypass (not recommended). The `--force` flag only controls file overwrite, not security bypass.
+
+Security scanning also runs on updates (`aidevops skill update`) -- pulling a new version triggers the same checks as the initial import.
+
+### Step 5: Post-Import
 
 After successful import:
 
