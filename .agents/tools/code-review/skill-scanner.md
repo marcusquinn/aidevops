@@ -83,6 +83,12 @@ Non-blocking: findings are reported but don't halt setup.
 `skill-update-helper.sh update` re-imports via `add-skill-helper.sh --force`,
 which triggers the security scan on the updated content.
 
+### Results log
+
+Scan results are appended to `.agents/SKILL-SCAN-RESULTS.md` automatically by
+`security-helper.sh skill-scan` (batch) and `add-skill-helper.sh` (per-import).
+The file contains the latest full scan summary and a history table for audit trail.
+
 ## CLI Usage
 
 ```bash

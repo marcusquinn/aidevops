@@ -12,6 +12,7 @@ export SCRIPT_DIR
 readonly SCRIPT_DIR
 readonly OUTPUT_DIR=".security-analysis"
 readonly VERSION="1.0.0"
+readonly SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -373,6 +374,46 @@ cmd_scan_deps() {
     return 0
 }
 
+update_scan_results_log() {
+    local skills_scanned="$1"
+    local safe_count="$2"
+    local critical_count="$3"
+    local high_count="$4"
+    local medium_count="$5"
+    local notes="$6"
+    
+    # Find the repo root containing .agents/SKILL-SCAN-RESULTS.md
+    local repo_root=""
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    
+    if [[ -z "$repo_root" ]]; then
+        return 0
+    fi
+    
+    local results_file="${repo_root}/${SCAN_RESULTS_FILE}"
+    
+    if [[ ! -f "$results_file" ]]; then
+        return 0
+    fi
+    
+    local scan_date
+    scan_date=$(date -u +"%Y-%m-%d")
+    local scan_timestamp
+    scan_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    # Update the "Latest Full Scan" date
+    sed -i '' "s/^\*\*Date\*\*: .*/**Date**: ${scan_timestamp}/" "$results_file" 2>/dev/null || true
+    sed -i '' "s/^\*\*Skills scanned\*\*: .*/**Skills scanned**: ${skills_scanned}/" "$results_file" 2>/dev/null || true
+    sed -i '' "s/^\*\*Safe\*\*: .*/**Safe**: ${safe_count}/" "$results_file" 2>/dev/null || true
+    
+    # Append to scan history table
+    local history_row="| ${scan_date} | ${skills_scanned} | ${safe_count} | ${critical_count} | ${high_count} | ${medium_count} | ${notes} |"
+    echo "$history_row" >> "$results_file"
+    
+    echo -e "${GREEN}Scan results logged to ${SCAN_RESULTS_FILE}${NC}"
+    return 0
+}
+
 cmd_skill_scan() {
     local target="${1:-all}"
     shift || true
@@ -429,6 +470,9 @@ cmd_skill_scan() {
         local total_findings=0
         local skills_with_issues=0
         local skills_scanned=0
+        local total_critical=0
+        local total_high=0
+        local total_medium=0
         
         while IFS= read -r skill_json; do
             local name local_path
@@ -468,6 +512,15 @@ cmd_skill_scan() {
                     skills_with_issues=$((skills_with_issues + 1))
                     echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
                     
+                    # Track severity counts
+                    local skill_critical skill_high skill_medium
+                    skill_critical=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
+                    skill_high=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
+                    skill_medium=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
+                    total_critical=$((total_critical + skill_critical))
+                    total_high=$((total_high + skill_high))
+                    total_medium=$((total_medium + skill_medium))
+                    
                     # Show critical/high findings inline
                     echo "$scan_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
                 else
@@ -480,12 +533,21 @@ cmd_skill_scan() {
             skills_scanned=$((skills_scanned + 1))
         done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
         
+        local safe_count=$((skills_scanned - skills_with_issues))
+        
         echo ""
         echo "═══════════════════════════════════════"
         echo -e "Skills scanned: ${skills_scanned}"
         echo -e "Skills with issues: ${skills_with_issues}"
         echo -e "Total findings: ${total_findings}"
         echo "═══════════════════════════════════════"
+        
+        # Log results to SKILL-SCAN-RESULTS.md
+        local notes="Routine scan"
+        if [[ "$skills_with_issues" -gt 0 ]]; then
+            notes="${skills_with_issues} skill(s) with findings"
+        fi
+        update_scan_results_log "$skills_scanned" "$safe_count" "$total_critical" "$total_high" "$total_medium" "$notes"
         
         if [[ "$skills_with_issues" -gt 0 ]]; then
             echo ""

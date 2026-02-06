@@ -27,6 +27,7 @@ set -euo pipefail
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 TEMP_DIR="${TMPDIR:-/tmp}/aidevops-skill-import"
+SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
 
 # Colors
 RED='\033[0;31m'
@@ -510,6 +511,7 @@ scan_skill_security() {
     
     if [[ -z "$scan_output" ]]; then
         log_success "Security scan: SAFE (no findings)"
+        log_skill_scan_result "$skill_name" "0" "SAFE" "import"
         return 0
     fi
     
@@ -521,6 +523,7 @@ scan_skill_security() {
     
     if [[ "$findings" -eq 0 ]]; then
         log_success "Security scan: SAFE (no findings)"
+        log_skill_scan_result "$skill_name" "0" "SAFE" "import"
         return 0
     fi
     
@@ -536,6 +539,7 @@ scan_skill_security() {
     if [[ "$critical_count" -gt 0 || "$high_count" -gt 0 ]]; then
         if [[ "$skip_security" == true ]]; then
             log_warning "CRITICAL/HIGH findings detected but --skip-security specified, proceeding"
+            log_skill_scan_result "$skill_name" "$findings" "$max_severity" "import (--skip-security)"
             return 0
         fi
         
@@ -562,10 +566,12 @@ scan_skill_security() {
         case "$choice" in
             2)
                 log_warning "Proceeding despite security findings"
+                log_skill_scan_result "$skill_name" "$findings" "$max_severity" "import (user override)"
                 return 0
                 ;;
             *)
                 log_error "Import cancelled due to security findings"
+                log_skill_scan_result "$skill_name" "$findings" "$max_severity" "import BLOCKED"
                 return 1
                 ;;
         esac
@@ -573,6 +579,44 @@ scan_skill_security() {
     
     # MEDIUM/LOW findings: warn but allow
     log_warning "Security scan found $findings issue(s) (max: $max_severity) - review recommended"
+    log_skill_scan_result "$skill_name" "$findings" "$max_severity" "import"
+    return 0
+}
+
+# Log a single skill scan result to SKILL-SCAN-RESULTS.md
+log_skill_scan_result() {
+    local skill_name="$1"
+    local findings="$2"
+    local max_severity="$3"
+    local action="$4"
+    
+    local repo_root=""
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    
+    if [[ -z "$repo_root" || ! -f "${repo_root}/${SCAN_RESULTS_FILE}" ]]; then
+        return 0
+    fi
+    
+    local scan_date
+    scan_date=$(date -u +"%Y-%m-%d")
+    local safe="1"
+    local critical="0"
+    local high="0"
+    local medium="0"
+    
+    if [[ "$max_severity" == "CRITICAL" ]]; then
+        critical="$findings"
+        safe="0"
+    elif [[ "$max_severity" == "HIGH" ]]; then
+        high="$findings"
+        safe="0"
+    elif [[ "$max_severity" == "MEDIUM" ]]; then
+        medium="$findings"
+    fi
+    
+    local notes="Skill ${action}: ${skill_name} (${max_severity:-SAFE})"
+    echo "| ${scan_date} | 1 | ${safe} | ${critical} | ${high} | ${medium} | ${notes} |" >> "${repo_root}/${SCAN_RESULTS_FILE}"
+    
     return 0
 }
 
