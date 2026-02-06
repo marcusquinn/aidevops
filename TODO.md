@@ -67,8 +67,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m actual:0m (ai:10m test:5m) logged:2026-01-29 completed:2026-02-06
   - Notes: Already fixed. All version files (VERSION, package.json, sonar-project.properties, .claude-plugin/marketplace.json) are in sync at 2.101.0. setup.sh and aidevops.sh read VERSION dynamically (no hardcoded version). version-manager.sh validate confirms consistency. Original issue from bd0695c was resolved by subsequent releases using version-manager.sh.
 - [ ] t128 Autonomous Supervisor Loop #plan #orchestration #runners → [todo/PLANS.md#2026-02-06-autonomous-supervisor-loop] ~8h (ai:5h test:2h read:1h) logged:2026-02-06 ref:todo/tasks/prd-autonomous-supervisor.md
-  - [ ] t128.1 Supervisor SQLite schema and state machine ~1h blocked-by:none
-    - Notes: Create supervisor.db with tasks, batches, batch_tasks tables. State transitions: queued->dispatched->running->evaluating->retrying->complete/blocked/failed. Extend coordinator-helper.sh or create supervisor-helper.sh.
+  - [x] t128.1 Supervisor SQLite schema and state machine ~1h actual:30m (ai:30m) blocked-by:none started:2026-02-06T04:00Z completed:2026-02-06
+    - Notes: Created supervisor-helper.sh (~700 lines) with SQLite schema (tasks, batches, batch_tasks, state_log tables), 9-state machine with 18 validated transitions, 12 commands (init, add, batch, transition, status, list, next, running-count, reset, cancel, db, help). Zero ShellCheck violations. PR #376 merged.
   - [ ] t128.2 Worker dispatch with worktree isolation ~1.5h blocked-by:t128.1
     - Notes: For each task: wt switch -c feature/tXXX, then opencode run --format json --title "tXXX" "/full-loop tXXX" in worktree. Concurrency semaphore (default 4). Tabby tab detection for visual mode.
   - [ ] t128.3 Outcome evaluation and re-prompt cycle ~2h blocked-by:t128.2
