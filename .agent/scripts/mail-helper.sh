@@ -414,29 +414,30 @@ cmd_prune() {
     db_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
     local db_size_kb=$(( db_size_bytes / 1024 ))
 
+    # Single query for all counts (reduces sqlite3 invocations)
     local total_messages unread_messages read_messages archived_messages
-    total_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages;")
-    unread_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'unread';")
-    read_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'read';")
-    archived_messages=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'archived';")
-
-    local prunable
-    prunable=$(sqlite3 "$MAIL_DB" "
-        SELECT count(*) FROM messages
-        WHERE status = 'archived'
-        AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
+    IFS='|' read -r total_messages unread_messages read_messages archived_messages < <(sqlite3 -separator '|' "$MAIL_DB" "
+        SELECT count(*),
+            coalesce(sum(CASE WHEN status = 'unread' THEN 1 ELSE 0 END), 0),
+            coalesce(sum(CASE WHEN status = 'read' THEN 1 ELSE 0 END), 0),
+            coalesce(sum(CASE WHEN status = 'archived' THEN 1 ELSE 0 END), 0)
+        FROM messages;
     ")
 
-    local archivable
-    archivable=$(sqlite3 "$MAIL_DB" "
-        SELECT count(*) FROM messages
-        WHERE status = 'read'
-        AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
+    # Single query for prunable + archivable counts
+    local prunable archivable
+    IFS='|' read -r prunable archivable < <(sqlite3 -separator '|' "$MAIL_DB" "
+        SELECT
+            coalesce(sum(CASE WHEN status = 'archived' AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days') THEN 1 ELSE 0 END), 0),
+            coalesce(sum(CASE WHEN status = 'read' AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days') THEN 1 ELSE 0 END), 0)
+        FROM messages;
     ")
 
+    # Single query for date range
     local oldest_msg newest_msg
-    oldest_msg=$(sqlite3 "$MAIL_DB" "SELECT min(created_at) FROM messages;" 2>/dev/null || echo "none")
-    newest_msg=$(sqlite3 "$MAIL_DB" "SELECT max(created_at) FROM messages;" 2>/dev/null || echo "none")
+    IFS='|' read -r oldest_msg newest_msg < <(sqlite3 -separator '|' "$MAIL_DB" "
+        SELECT coalesce(min(created_at), 'none'), coalesce(max(created_at), 'none') FROM messages;
+    ")
 
     # Per-type breakdown
     local type_breakdown
