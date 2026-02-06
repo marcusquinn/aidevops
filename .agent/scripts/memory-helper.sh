@@ -333,7 +333,7 @@ cmd_store() {
     content=$(echo "$content" | sed 's/<private>[^<]*<\/private>//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
     
     # Privacy filter: reject content that looks like secrets
-    if echo "$content" | grep -qE '(sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|api[_-]?key["\s:=]+[a-zA-Z0-9_-]{16,})'; then
+    if echo "$content" | grep -qE '(sk-[a-zA-Z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|xoxb-[a-zA-Z0-9-]{20,}|api[_-]?key[[:space:]"'"'"':=]+[a-zA-Z0-9_-]{16,})'; then
         log_error "Content appears to contain secrets (API keys, tokens). Refusing to store."
         log_error "Remove sensitive data or wrap in <private>...</private> tags to exclude."
         return 1
