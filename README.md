@@ -489,6 +489,8 @@ Imported skills are automatically security-scanned using [Cisco Skill Scanner](h
 
 The `--force` flag only controls file overwrite behavior (replacing an existing skill without prompting). To bypass security blocking, use `--skip-security` explicitly -- this separation ensures that routine updates and re-imports never silently skip security checks.
 
+Scan results are logged to [`.agents/SKILL-SCAN-RESULTS.md`](.agents/SKILL-SCAN-RESULTS.md) automatically on each batch scan and skill import, providing a transparent audit trail of security posture over time.
+
 **Browse community skills:** [skills.sh](https://skills.sh) | [ClawdHub](https://clawdhub.com) | **Specification:** [agentskills.io](https://agentskills.io)
 
 **Reference:**
