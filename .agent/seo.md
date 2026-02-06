@@ -16,6 +16,7 @@ subagents:
   - google-analytics
   - data-export
   - ranking-opportunities
+  - analytics-tracking
   - general
   - explore
 ---
@@ -45,6 +46,7 @@ subagents:
 | `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
 | `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
 | `ranking-opportunities.md` | Analyze data for quick wins, striking distance, cannibalization |
+| `analytics-tracking.md` | GA4 setup, event tracking, conversions, UTM parameters, attribution |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
