@@ -589,7 +589,23 @@ OpenCode Server (opencode serve)
 
 **Example runner templates:** [code-reviewer](.agent/tools/ai-assistants/runners/code-reviewer.md), [seo-analyst](.agent/tools/ai-assistants/runners/seo-analyst.md) - copy and customize for your own runners.
 
-**See:** [headless-dispatch.md](.agent/tools/ai-assistants/headless-dispatch.md) for full documentation including parallel vs sequential decision guide, SDK examples, CI/CD integration, and custom agent configuration.
+**Matrix bot dispatch** (optional): Bridge Matrix chat rooms to runners for chat-triggered AI.
+
+```bash
+# Setup Matrix bot (interactive wizard)
+matrix-dispatch-helper.sh setup
+
+# Map rooms to runners
+matrix-dispatch-helper.sh map '!dev-room:server' code-reviewer
+matrix-dispatch-helper.sh map '!seo-room:server' seo-analyst
+
+# Start bot (daemon mode)
+matrix-dispatch-helper.sh start --daemon
+
+# In Matrix room: "!ai Review src/auth.ts for security issues"
+```
+
+**See:** [headless-dispatch.md](.agent/tools/ai-assistants/headless-dispatch.md) for full documentation including parallel vs sequential decision guide, SDK examples, CI/CD integration, and custom agent configuration. [matrix-bot.md](.agent/services/communications/matrix-bot.md) for Matrix bot setup including Cloudron Synapse guide.
 
 ### Self-Improving Agent System
 
@@ -764,6 +780,7 @@ See `.agent/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peeka
 
 - **[Twilio](https://www.twilio.com/)**: SMS, voice calls, WhatsApp, phone verification (Verify API), call recording & transcription
 - **[Telfon](https://mytelfon.com/)**: Twilio-powered cloud phone system with iOS/Android/Chrome apps for end-user calling interface
+- **[Matrix](https://matrix.org/)**: Self-hosted chat with bot integration for AI runner dispatch (`matrix-dispatch-helper.sh`)
 
 ### **Animation & Video**
 

@@ -1973,12 +1973,12 @@ d038,p015,Use all-MiniLM-L6-v2 via ONNX for embeddings,Small fast no Python requ
 
 ### [2026-02-03] Parallel Agents & Headless Dispatch
 
-**Status:** In Progress (Phase 2/5)
+**Status:** In Progress (Phase 4/5)
 **Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
 **Source:** [alexfazio's X post on droids](https://gist.github.com/alexfazio/dcf2f253d346d8ed2702935b57184582)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p016,Parallel Agents & Headless Dispatch,in_progress,2,5,,agents|parallel|headless|dispatch|runners|memory,3d,1.5d,1d,0.5d,2026-02-03T00:00Z,2026-02-05T00:00Z
+p016,Parallel Agents & Headless Dispatch,in_progress,4,5,,agents|parallel|headless|dispatch|runners|memory,3d,1.5d,1d,0.5d,2026-02-03T00:00Z,2026-02-05T00:00Z
 -->
 
 #### Purpose
@@ -2064,26 +2064,30 @@ Users can choose any provider supported by OpenCode via `opencode auth login`.
   - Commands: create, run, status, list, edit, logs, stop, destroy
   - Integration with `opencode run --attach` for warm server dispatch
   - Run logging and metadata tracking
-- [ ] (2026-02-03) Phase 3: Memory namespace integration ~3h
-  - Extend memory-helper.sh with `--namespace` flag
-  - Per-runner memory isolation (optional)
-  - Shared memory access when needed
-- [ ] (2026-02-03) Phase 4: Matrix bot integration (optional) ~6h
-  - Document Matrix bot setup on Cloudron
-  - Create matrix-dispatch-helper.sh
-  - Room-to-runner mapping
-  - Message → opencode run → response flow
-- [ ] (2026-02-03) Phase 5: Documentation & examples ~3h
-  - Update AGENTS.md with parallel agent guidance
-  - Create example runners (code-reviewer, seo-analyst)
-  - Document when to use parallel vs sequential
+- [x] (2026-02-05) Phase 3: Memory namespace integration ~3h
+  - Added `--namespace/-n` flag to memory-helper.sh and memory-embeddings-helper.sh
+  - Per-runner isolated DBs at `memory/namespaces/<name>/memory.db`
+  - `--shared` flag on recall searches both namespace and global
+  - `namespaces` command (list/prune/migrate)
+- [x] (2026-02-06) Phase 4: Matrix bot integration (optional) ~6h
+  - Created `scripts/matrix-dispatch-helper.sh` (setup, start, stop, map, test, logs)
+  - Created `services/communications/matrix-bot.md` subagent documentation
+  - Room-to-runner mapping with configurable bot prefix (`!ai`)
+  - Node.js bot using `matrix-bot-sdk` with auto-join, typing indicators, reactions
+  - Dispatch via `runner-helper.sh` with fallback to OpenCode HTTP API
+  - Cloudron Synapse setup guide included
+  - User allowlist, concurrency control, response truncation
+- [x] (2026-02-05) Phase 5: Documentation & examples ~3h
+  - Updated AGENTS.md with parallel agent guidance
+  - Created example runners (code-reviewer, seo-analyst) in `tools/ai-assistants/runners/`
+  - Documented when to use parallel vs sequential in headless-dispatch.md
 
 <!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
 m064,p016,Phase 1: Document headless dispatch patterns,4h,,2026-02-03T00:00Z,,pending
 m065,p016,Phase 2: Create droid-helper.sh,4h,,2026-02-03T00:00Z,,pending
-m066,p016,Phase 3: Memory namespace integration,3h,,2026-02-03T00:00Z,,pending
-m067,p016,Phase 4: Matrix bot integration (optional),6h,,2026-02-03T00:00Z,,pending
-m068,p016,Phase 5: Documentation & examples,3h,,2026-02-03T00:00Z,,pending
+m066,p016,Phase 3: Memory namespace integration,3h,,2026-02-03T00:00Z,2026-02-05T00:00Z,completed
+m067,p016,Phase 4: Matrix bot integration (optional),6h,,2026-02-03T00:00Z,2026-02-06T00:00Z,completed
+m068,p016,Phase 5: Documentation & examples,3h,,2026-02-03T00:00Z,2026-02-05T00:00Z,completed
 -->
 
 #### Decision Log

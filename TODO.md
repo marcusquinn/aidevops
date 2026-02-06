@@ -229,8 +229,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Created runner-helper.sh (create/run/status/list/edit/logs/stop/destroy). Renamed from "droid" to "runner" to avoid Factory.ai naming conflict. Runners are named headless agent instances with per-runner AGENTS.md, config.json, and run logs. Uses `opencode run` for dispatch with `--attach` support for warm server.
   - [x] t109.3 Memory namespace integration ~3h blocked-by:t109.2 completed:2026-02-05
     - Notes: Added --namespace/-n flag to memory-helper.sh and memory-embeddings-helper.sh. Per-runner isolated DBs at memory/namespaces/<name>/memory.db. --shared flag on recall searches both namespace and global. namespaces command (list/prune/migrate). Runner destroy cleans up namespace. Shared recall updates global access tracking. PRs #351, #352.
-  - [ ] t109.4 Matrix bot integration (optional) ~6h blocked-by:t109.2
-    - Notes: Document Matrix bot setup on Cloudron. Create matrix-dispatch-helper.sh. Room-to-runner mapping. Message → opencode run → response flow.
+  - [x] t109.4 Matrix bot integration (optional) ~6h blocked-by:t109.2 completed:2026-02-06
+    - Notes: Created matrix-dispatch-helper.sh (setup/start/stop/map/unmap/mappings/test/logs) and services/communications/matrix-bot.md subagent. Node.js bot using matrix-bot-sdk with auto-join, typing indicators, emoji reactions. Room-to-runner mapping with configurable !ai prefix. Dispatch via runner-helper.sh with OpenCode HTTP API fallback. Cloudron Synapse setup guide. User allowlist, concurrency control, response truncation.
   - [x] t109.5 Documentation & examples ~3h blocked-by:t109.1,t109.2,t109.3 completed:2026-02-05
     - Notes: Update AGENTS.md with parallel agent guidance. Create example runners (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
 - [x] t110 Cron agent for scheduled task management #tools #automation #agents ~3h actual:1h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T03:47Z completed:2026-02-04
