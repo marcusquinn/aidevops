@@ -30,7 +30,7 @@ tools:
 | Agent files | `~/.config/opencode/agent/*.md` |
 | Alternative config | `~/.opencode/` (some installations) |
 | aidevops agents | `~/.aidevops/agents/` (after setup.sh) |
-| Credentials | `~/.config/aidevops/mcp-env.sh` |
+| Credentials | `~/.config/aidevops/credentials.sh` |
 
 **Key Commands**:
 
@@ -392,7 +392,7 @@ Use the helper script for common testing tasks:
 
 ### Required Environment Variables
 
-Store in `~/.config/aidevops/mcp-env.sh`:
+Store in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 # Hostinger
@@ -496,7 +496,7 @@ This pattern:
 | Path | Purpose | Notes |
 |------|---------|-------|
 | `~/.aidevops/agents/` | Deployed aidevops agents | Created by setup.sh |
-| `~/.config/aidevops/mcp-env.sh` | API credentials | 600 permissions |
+| `~/.config/aidevops/credentials.sh` | API credentials | 600 permissions |
 | `~/Git/aidevops/.agents/` | Source agents | Development repo |
 | `~/Git/aidevops/setup.sh` | Deployment script | Copies to ~/.aidevops/ |
 

@@ -17,7 +17,7 @@ tools:
 
 - **Purpose**: Google Search results (web, images, news, places, shopping, scholar)
 - **API**: `https://google.serper.dev`
-- **Auth**: API key in `~/.config/aidevops/mcp-env.sh` as `SERPER_API_KEY`
+- **Auth**: API key in `~/.config/aidevops/credentials.sh` as `SERPER_API_KEY`
 - **Dashboard**: https://serper.dev/
 - **No MCP required** - uses curl directly
 
@@ -26,7 +26,7 @@ tools:
 ## Authentication
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 ## API Endpoints
@@ -107,7 +107,7 @@ curl -s -X POST https://google.serper.dev/autocomplete \
 
 ## Setup
 
-Get API key from https://serper.dev/ and add to `~/.config/aidevops/mcp-env.sh`:
+Get API key from https://serper.dev/ and add to `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export SERPER_API_KEY="your_key_here"

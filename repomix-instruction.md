@@ -32,7 +32,7 @@ Focus on `.agents/` for the authoritative content.
 1. **Token efficiency**: Agents use progressive disclosure (pointers to subagents)
 2. **AI-CONTEXT sections**: Quick reference blocks at top of each file
 3. **No duplication**: Check existing content before adding instructions
-4. **Security-first**: Credentials stored in `~/.config/aidevops/mcp-env.sh`
+4. **Security-first**: Credentials stored in `~/.config/aidevops/credentials.sh`
 
 ## When Analyzing This Codebase
 

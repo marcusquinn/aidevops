@@ -117,7 +117,7 @@ claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
 
 ```bash
 # Get your standard 40-char API key (NOT JWT tokens) from https://ahrefs.com/api
-# Store in ~/.config/aidevops/mcp-env.sh:
+# Store in ~/.config/aidevops/credentials.sh:
 export AHREFS_API_KEY="your_40_char_api_key"
 
 # For Claude Desktop:
@@ -167,7 +167,7 @@ cd fluentcrm-mcp-server
 npm install
 npm run build
 
-# 2. Store credentials in ~/.config/aidevops/mcp-env.sh:
+# 2. Store credentials in ~/.config/aidevops/credentials.sh:
 export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
 export FLUENTCRM_API_USERNAME="your_username"
 export FLUENTCRM_API_PASSWORD="your_application_password"
@@ -179,7 +179,7 @@ export FLUENTCRM_API_PASSWORD="your_application_password"
 {
   "fluentcrm": {
     "type": "local",
-    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
     "enabled": false
   }
 }
@@ -215,10 +215,10 @@ See `services/crm/fluentcrm.md` for detailed documentation.
 # 1. Self-hosted (recommended): unstract-helper.sh install
 # 2. Or cloud: Sign up at https://unstract.com/start-for-free/
 # 3. Create a Prompt Studio project, define schema, deploy as API
-# 4. Store credentials in ~/.config/aidevops/mcp-env.sh:
+# 4. Store credentials in ~/.config/aidevops/credentials.sh:
 export UNSTRACT_API_KEY="your_api_key_here"
 export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 **Note**: The MCP expects `API_BASE_URL` (not prefixed) - this matches the official Unstract spec.
@@ -229,7 +229,7 @@ chmod 600 ~/.config/aidevops/mcp-env.sh
 {
   "unstract": {
     "type": "local",
-    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL -e DISABLE_TELEMETRY=true unstract/mcp-server:${UNSTRACT_IMAGE_TAG:-latest} unstract"],
+    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && docker run -i --rm -v /tmp:/tmp -e UNSTRACT_API_KEY -e API_BASE_URL -e DISABLE_TELEMETRY=true unstract/mcp-server:${UNSTRACT_IMAGE_TAG:-latest} unstract"],
     "enabled": false
   }
 }

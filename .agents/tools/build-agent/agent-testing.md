@@ -219,7 +219,7 @@ Tests that the agent has absorbed key instructions from AGENTS.md:
     {
       "id": "security-credentials",
       "prompt": "Where should credentials be stored?",
-      "expect_contains": ["mcp-env.sh"],
+      "expect_contains": ["credentials.sh"],
       "expect_regex": "600"
     }
   ]

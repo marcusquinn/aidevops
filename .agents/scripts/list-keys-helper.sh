@@ -18,7 +18,7 @@ readonly DIM='\033[2m'
 readonly NC='\033[0m'
 
 # Key storage locations
-readonly MCP_ENV_FILE="$HOME/.config/aidevops/mcp-env.sh"
+readonly CREDENTIALS_FILE="$HOME/.config/aidevops/credentials.sh"
 readonly CODERABBIT_KEY_FILE="$HOME/.config/coderabbit/api_key"
 readonly REPO_CONFIGS_DIR="./configs"
 
@@ -125,13 +125,13 @@ check_key_loaded() {
     return 0
 }
 
-# List keys from mcp-env.sh
+# List keys from credentials.sh
 list_mcp_env_keys() {
-    if [[ ! -f "$MCP_ENV_FILE" ]]; then
+    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
         return 0
     fi
     
-    print_source "$MCP_ENV_FILE"
+    print_source "$CREDENTIALS_FILE"
     
     while IFS= read -r line; do
         # Extract variable name from export statements
@@ -141,21 +141,21 @@ list_mcp_env_keys() {
             status=$(check_key_loaded "$key_name")
             print_key "$key_name" "$status"
         fi
-    done < "$MCP_ENV_FILE"
+    done < "$CREDENTIALS_FILE"
     
     echo ""
     return 0
 }
 
-# List environment-only keys (not from mcp-env.sh)
+# List environment-only keys (not from credentials.sh)
 # Scans all env vars for credential patterns: *_KEY, *_TOKEN, *_SECRET, *_PASSWORD, *_API_*
 list_env_only_keys() {
     local mcp_keys=""
     local found_env_only=0
     
-    # Get list of keys from mcp-env.sh for comparison
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        mcp_keys=$(grep -oE '^export[[:space:]]+[A-Z_][A-Z0-9_]*' "$MCP_ENV_FILE" 2>/dev/null | sed 's/export[[:space:]]*//' || true)
+    # Get list of keys from credentials.sh for comparison
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        mcp_keys=$(grep -oE '^export[[:space:]]+[A-Z_][A-Z0-9_]*' "$CREDENTIALS_FILE" 2>/dev/null | sed 's/export[[:space:]]*//' || true)
     fi
     
     # Scan all environment variables for credential patterns
@@ -164,7 +164,7 @@ list_env_only_keys() {
     env_keys=$(env | grep -E '^[A-Z_][A-Z0-9_]*=.' | cut -d= -f1 | grep -E '(_KEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIAL|_API_|_AUTH_|_ACCESS_)' | sort || true)
     
     for key_name in $env_keys; do
-        # Skip if already in mcp-env.sh
+        # Skip if already in credentials.sh
         if echo "$mcp_keys" | grep -q "^${key_name}$"; then
             continue
         fi
@@ -197,14 +197,14 @@ list_env_only_keys() {
 }
 
 # List keys from shell config files (.zshrc, .bashrc, .bash_profile)
-# These are exports defined directly in shell configs, not via mcp-env.sh
+# These are exports defined directly in shell configs, not via credentials.sh
 list_shell_config_keys() {
     local mcp_keys=""
     local found_shell_keys=0
     
-    # Get list of keys from mcp-env.sh for comparison
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        mcp_keys=$(grep -oE '^export[[:space:]]+[A-Z_][A-Z0-9_]*' "$MCP_ENV_FILE" 2>/dev/null | sed 's/export[[:space:]]*//' || true)
+    # Get list of keys from credentials.sh for comparison
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        mcp_keys=$(grep -oE '^export[[:space:]]+[A-Z_][A-Z0-9_]*' "$CREDENTIALS_FILE" 2>/dev/null | sed 's/export[[:space:]]*//' || true)
     fi
     
     # Shell config files to scan
@@ -228,7 +228,7 @@ list_shell_config_keys() {
             sed 's/.*export[[:space:]]*//' | cut -d= -f1 | sort -u || true)
         
         for key_name in $shell_keys; do
-            # Skip if already in mcp-env.sh
+            # Skip if already in credentials.sh
             if echo "$mcp_keys" | grep -q "^${key_name}$"; then
                 continue
             fi
@@ -315,7 +315,7 @@ show_help() {
     echo "  --json        Output in JSON format (for programmatic use)"
     echo ""
     echo "Sources checked:"
-    echo "  1. ~/.config/aidevops/mcp-env.sh  (primary credential store)"
+    echo "  1. ~/.config/aidevops/credentials.sh  (primary credential store)"
     echo "  2. ~/.zshrc, ~/.bashrc, etc.      (shell config exports)"
     echo "  3. Environment variables          (session-only, pattern match)"
     echo "  4. ~/.config/coderabbit/api_key   (CodeRabbit CLI)"
@@ -334,17 +334,17 @@ output_json() {
     local first_source=1
     local mcp_keys=""
     
-    # Get list of keys from mcp-env.sh for comparison
-    if [[ -f "$MCP_ENV_FILE" ]]; then
-        mcp_keys=$(grep -oE '^export[[:space:]]+[A-Z_][A-Z0-9_]*' "$MCP_ENV_FILE" 2>/dev/null | sed 's/export[[:space:]]*//' || true)
+    # Get list of keys from credentials.sh for comparison
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        mcp_keys=$(grep -oE '^export[[:space:]]+[A-Z_][A-Z0-9_]*' "$CREDENTIALS_FILE" 2>/dev/null | sed 's/export[[:space:]]*//' || true)
     fi
     
-    # 1. mcp-env.sh keys
-    if [[ -f "$MCP_ENV_FILE" ]]; then
+    # 1. credentials.sh keys
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
         [[ $first_source -eq 0 ]] && echo ","
         first_source=0
         echo "    {"
-        echo "      \"path\": \"$MCP_ENV_FILE\","
+        echo "      \"path\": \"$CREDENTIALS_FILE\","
         echo '      "keys": ['
         
         local first_key=1
@@ -357,14 +357,14 @@ output_json() {
                 first_key=0
                 echo -n "        {\"name\": \"$key_name\", \"status\": \"$status\"}"
             fi
-        done < "$MCP_ENV_FILE"
+        done < "$CREDENTIALS_FILE"
         
         echo ""
         echo "      ]"
         echo -n "    }"
     fi
     
-    # 2. Shell config keys (not in mcp-env.sh)
+    # 2. Shell config keys (not in credentials.sh)
     local shell_configs=("$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zprofile")
     local shell_keys_json=""
     local found_shell=0
@@ -401,14 +401,14 @@ output_json() {
         echo -n "    }"
     fi
     
-    # 3. Environment-only keys (pattern match, not in mcp-env.sh or shell configs)
+    # 3. Environment-only keys (pattern match, not in credentials.sh or shell configs)
     local env_keys
     env_keys=$(env | grep -E '^[A-Z_][A-Z0-9_]*=.' | cut -d= -f1 | grep -E '(_KEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIAL|_API_|_AUTH_|_ACCESS_)' | sort || true)
     local env_keys_json=""
     local found_env=0
     
     for key_name in $env_keys; do
-        # Skip if in mcp-env.sh
+        # Skip if in credentials.sh
         if echo "$mcp_keys" | grep -q "^${key_name}$"; then
             continue
         fi

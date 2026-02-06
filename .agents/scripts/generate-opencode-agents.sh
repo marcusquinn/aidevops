@@ -615,7 +615,7 @@ if 'outscraper_*' not in config['tools']:
 if 'dataforseo' not in config['mcp']:
     config['mcp']['dataforseo'] = {
         "type": "local",
-        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD {pkg_runner} dataforseo-mcp-server"],
+        "command": ["/bin/bash", "-c", f"source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD {pkg_runner} dataforseo-mcp-server"],
         "enabled": False
     }
     print("  Added dataforseo MCP (lazy load - SEO agent/@dataforseo subagent)")

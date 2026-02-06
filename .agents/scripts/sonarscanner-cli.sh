@@ -213,14 +213,14 @@ install_sonar_scanner() {
 init_sonar_config() {
     print_header "Initializing SonarQube Configuration"
 
-    # Check for required environment variables (set via mcp-env.sh, sourced by .zshrc)
+    # Check for required environment variables (set via credentials.sh, sourced by .zshrc)
     local sonar_token="${SONAR_TOKEN:-}"
     local sonar_organization="${SONAR_ORGANIZATION:-}"
     local sonar_project_key="${SONAR_PROJECT_KEY:-}"
 
     if [[ -z "$sonar_token" ]]; then
         print_error "SONAR_TOKEN not found in environment"
-        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "Add to ~/.config/aidevops/credentials.sh:"
         print_info "  export SONAR_TOKEN=\"your-token\""
         print_info "Get your token from: https://sonarcloud.io/account/security/"
         return 1
@@ -290,11 +290,11 @@ run_sonar_analysis() {
         print_info "Attempting to run with environment variables..."
     fi
 
-    # Check for required token (set via mcp-env.sh, sourced by .zshrc)
+    # Check for required token (set via credentials.sh, sourced by .zshrc)
     local sonar_token="${SONAR_TOKEN:-}"
     if [[ -z "$sonar_token" ]]; then
         print_error "SONAR_TOKEN not found in environment"
-        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "Add to ~/.config/aidevops/credentials.sh:"
         print_info "  export SONAR_TOKEN=\"your-token\""
         return 1
     fi

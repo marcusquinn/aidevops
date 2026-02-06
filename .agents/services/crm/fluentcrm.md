@@ -78,7 +78,7 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
   "mcp": {
     "fluentcrm": {
       "type": "local",
-      "command": ["/bin/bash", "-c", "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
+      "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
       "enabled": false
     }
   }

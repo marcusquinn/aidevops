@@ -34,7 +34,7 @@
       "mcp_server": "mcp-adapter-default-server",
       "http_config": {
         "username": "YOUR_WP_USERNAME",
-        "_app_password": "STORE_IN_MCP_ENV_FILE",
+        "_app_password": "STORE_IN_CREDENTIALS_FILE",
         "_env_var": "WP_PRODUCTION_APP_PASSWORD"
       }
     },
@@ -75,7 +75,7 @@
       "mcp_server": "mcp-adapter-default-server",
       "http_config": {
         "username": "YOUR_WP_USERNAME",
-        "_app_password": "STORE_IN_MCP_ENV_FILE",
+        "_app_password": "STORE_IN_CREDENTIALS_FILE",
         "_env_var": "WP_CLOSTE_APP_PASSWORD"
       },
       "_note": "Closte uses password-based SSH - prefer HTTP transport"
@@ -88,7 +88,7 @@
       "mcp_server": "mcp-adapter-default-server",
       "http_config": {
         "username": "YOUR_WP_USERNAME",
-        "_app_password": "STORE_IN_MCP_ENV_FILE",
+        "_app_password": "STORE_IN_CREDENTIALS_FILE",
         "_env_var": "WP_CLOUDRON_APP_PASSWORD"
       }
     },
@@ -122,7 +122,7 @@
     }
   },
   "_credential_storage": {
-    "location": "~/.config/aidevops/mcp-env.sh",
+    "location": "~/.config/aidevops/credentials.sh",
     "example": [
       "export WP_PRODUCTION_APP_PASSWORD='xxxx xxxx xxxx xxxx'",
       "export WP_CLOSTE_APP_PASSWORD='xxxx xxxx xxxx xxxx'"

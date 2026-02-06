@@ -30,7 +30,7 @@ If only a keyword is provided (no subcommand), default to `analyze`.
 ### Step 2: Check API Key
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 if [[ -z "$NEURONWRITER_API_KEY" ]]; then
   echo "NEURONWRITER_API_KEY not configured." >&2
   echo "Set it with: bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set NEURONWRITER_API_KEY \"your_key\"" >&2

@@ -118,7 +118,7 @@ configs/[service]-config.json.txt
 configs/[service]-config.json
 
 # Credentials
-~/.config/aidevops/mcp-env.sh
+~/.config/aidevops/credentials.sh
 ```text
 
 ## Quality Standards

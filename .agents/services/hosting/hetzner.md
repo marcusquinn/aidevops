@@ -18,7 +18,7 @@ tools:
 
 - **Type**: Cloud VPS, dedicated servers, storage
 - **API**: REST at `https://api.hetzner.cloud/v1`
-- **Auth**: Bearer token per project (stored in `~/.config/aidevops/mcp-env.sh`)
+- **Auth**: Bearer token per project (stored in `~/.config/aidevops/credentials.sh`)
 - **Token format**: `HCLOUD_TOKEN_{PROJECT}` (e.g. `HCLOUD_TOKEN_MYPROJECT`)
 - **Locations**: Germany (fsn1, nbg1), Finland (hel1), USA (ash, hil)
 - **Server types**: CX (shared), CPX (dedicated vCPU), CCX (dedicated CPU)
@@ -32,7 +32,7 @@ tools:
 
 ```bash
 # Load token for a specific project
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 export HCLOUD_TOKEN="$HCLOUD_TOKEN_MYPROJECT"
 
 # Verify access
@@ -152,7 +152,7 @@ for i in json.load(sys.stdin)['images']:
 
 ## Multi-Project Setup
 
-Each Hetzner Cloud project gets its own API token. Store them in `~/.config/aidevops/mcp-env.sh`:
+Each Hetzner Cloud project gets its own API token. Store them in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export HCLOUD_TOKEN_PROJECTA="hc_..."
@@ -172,7 +172,7 @@ For frequent interactive use, enable the MCP server in `opencode.json`:
 "hetzner-myproject": {
   "type": "local",
   "command": ["/bin/bash", "-c",
-    "source ~/.config/aidevops/mcp-env.sh && HCLOUD_TOKEN=$HCLOUD_TOKEN_MYPROJECT /Users/you/.local/bin/mcp-hetzner"],
+    "source ~/.config/aidevops/credentials.sh && HCLOUD_TOKEN=$HCLOUD_TOKEN_MYPROJECT /Users/you/.local/bin/mcp-hetzner"],
   "enabled": true
 }
 ```

@@ -40,7 +40,7 @@ wp theme install kadence --activate
 ```
 
 **Pro/Premium plugins**: Require license activation via vendor dashboards
-**License keys**: Store in `~/.config/aidevops/mcp-env.sh` (see api-key-setup.md)
+**License keys**: Store in `~/.config/aidevops/credentials.sh` (see api-key-setup.md)
 **Updates**: Git Updater available for managing plugin updates from Git repositories
 <!-- AI-CONTEXT-END -->
 

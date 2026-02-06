@@ -31,13 +31,13 @@ readonly DIM='\033[2m'
 readonly NC='\033[0m'
 
 # Credential file locations
-readonly MCP_ENV_FILE="$HOME/.config/aidevops/mcp-env.sh"
+readonly CREDENTIALS_FILE="$HOME/.config/aidevops/credentials.sh"
 readonly CODERABBIT_KEY_FILE="$HOME/.config/coderabbit/api_key"
 
-# Source mcp-env.sh if it exists
-if [[ -f "$MCP_ENV_FILE" ]]; then
+# Source credentials.sh if it exists
+if [[ -f "$CREDENTIALS_FILE" ]]; then
     # shellcheck source=/dev/null
-    source "$MCP_ENV_FILE"
+    source "$CREDENTIALS_FILE"
 fi
 
 # Check if an environment variable is set and not a placeholder
@@ -521,7 +521,7 @@ show_guide() {
             echo "1. Get API key: https://platform.openai.com/api-keys"
             echo "2. Store key:"
             echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set OPENAI_API_KEY \"sk-...\""
-            echo "3. Restart terminal or: source ~/.config/aidevops/mcp-env.sh"
+            echo "3. Restart terminal or: source ~/.config/aidevops/credentials.sh"
             ;;
         anthropic)
             echo -e "${BLUE}Anthropic API Setup${NC}"
@@ -529,7 +529,7 @@ show_guide() {
             echo "1. Get API key: https://console.anthropic.com/settings/keys"
             echo "2. Store key:"
             echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set ANTHROPIC_API_KEY \"sk-ant-...\""
-            echo "3. Restart terminal or: source ~/.config/aidevops/mcp-env.sh"
+            echo "3. Restart terminal or: source ~/.config/aidevops/credentials.sh"
             ;;
         hetzner)
             echo -e "${BLUE}Hetzner Cloud Setup${NC}"

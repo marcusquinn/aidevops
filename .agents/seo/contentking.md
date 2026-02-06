@@ -19,7 +19,7 @@ tools:
 - **Brand**: ContentKing was acquired by Conductor in 2022; now branded as "Conductor Website Monitoring"
 - **API Base**: `https://api.contentkingapp.com`
 - **App**: `https://app.contentkingapp.com`
-- **Auth**: Bearer token in `Authorization` header, stored in `~/.config/aidevops/mcp-env.sh` as `CONTENTKING_API_TOKEN`
+- **Auth**: Bearer token in `Authorization` header, stored in `~/.config/aidevops/credentials.sh` as `CONTENTKING_API_TOKEN`
 - **Docs**: `https://support.conductor.com/en_US/conductor-monitoring-apis`
 - **No MCP required** - uses curl directly
 
@@ -38,7 +38,7 @@ tools:
 ## Authentication
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 All requests require these headers:
@@ -172,7 +172,7 @@ Response: `{"status": "ok"}`
 ### Health Check Dashboard
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 CK_API="https://api.contentkingapp.com"
 CK_HEADERS=(-H "Authorization: token $CONTENTKING_API_TOKEN" -H "Content-Type: application/json")
 
@@ -193,7 +193,7 @@ done
 ### Find Pages with SEO Issues
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 CK_API="https://api.contentkingapp.com"
 CK_HEADERS=(-H "Authorization: token $CONTENTKING_API_TOKEN" -H "Content-Type: application/json")
 
@@ -211,7 +211,7 @@ curl -s "$CK_API/v2/data/pages?website_id=$WEBSITE_ID&per_page=1000" \
 ### Trigger Audit After CMS Publish
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 CK_HEADERS=(-H "Authorization: token $CONTENTKING_API_TOKEN" -H "Content-Type: application/json")
 
 # After publishing a page, trigger priority audit
@@ -265,7 +265,7 @@ bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set CONTENTKING_API_TOKE
 4. Verify:
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 curl -s "https://api.contentkingapp.com/v2/entities/websites" \
   -H "Authorization: token $CONTENTKING_API_TOKEN" \
   -H "Content-Type: application/json" | jq .

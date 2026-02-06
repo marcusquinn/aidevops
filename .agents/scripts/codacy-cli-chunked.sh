@@ -138,7 +138,7 @@ check_codacy_ready() {
         return 1
     fi
 
-    # Load API key from environment (set via mcp-env.sh, sourced by .zshrc)
+    # Load API key from environment (set via credentials.sh, sourced by .zshrc)
     # CODACY_PROJECT_TOKEN is the standard env var name
     if [[ -z "${CODACY_API_TOKEN:-}" && -n "${CODACY_PROJECT_TOKEN:-}" ]]; then
         export CODACY_API_TOKEN="$CODACY_PROJECT_TOKEN"

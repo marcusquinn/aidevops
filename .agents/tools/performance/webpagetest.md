@@ -21,7 +21,7 @@ tools:
 - **Purpose**: Real-world performance testing from global locations with filmstrip, waterfall, and Core Web Vitals
 - **API Base**: `https://www.webpagetest.org`
 - **API Key**: Required for public instance. Get from https://www.webpagetest.org/signup
-- **Credential Storage**: `~/.config/aidevops/mcp-env.sh` as `WEBPAGETEST_API_KEY`
+- **Credential Storage**: `~/.config/aidevops/credentials.sh` as `WEBPAGETEST_API_KEY`
 - **Node.js Wrapper**: `npm install -g webpagetest` (CLI + API)
 - **Docs**: https://docs.webpagetest.org/api/reference/
 - **Related**: `tools/performance/performance.md`, `tools/browser/pagespeed.md`
@@ -48,8 +48,8 @@ WebPageTest (by Catchpoint) provides real-browser performance testing from 40+ g
 ```bash
 # Sign up at https://www.webpagetest.org/signup
 # Store key securely
-echo 'export WEBPAGETEST_API_KEY="your-key-here"' >> ~/.config/aidevops/mcp-env.sh
-source ~/.config/aidevops/mcp-env.sh
+echo 'export WEBPAGETEST_API_KEY="your-key-here"' >> ~/.config/aidevops/credentials.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 ### Node.js CLI (Optional)

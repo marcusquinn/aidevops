@@ -44,7 +44,7 @@ tools:
 
 **SDKs**: Node.js (`@watercrawl/nodejs`), Python (`watercrawl-py`), Go, PHP
 
-**Env Vars**: `WATERCRAWL_API_KEY`, `WATERCRAWL_API_URL` (stored in `~/.config/aidevops/mcp-env.sh`)
+**Env Vars**: `WATERCRAWL_API_KEY`, `WATERCRAWL_API_URL` (stored in `~/.config/aidevops/credentials.sh`)
 
 **vs Crawl4AI**: Both self-hostable. WaterCrawl has web search + full web UI; Crawl4AI has CAPTCHA solving + Python-native. Use WaterCrawl for web search and team dashboards. Use Crawl4AI for CAPTCHA-heavy sites.
 

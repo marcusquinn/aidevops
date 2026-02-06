@@ -25,7 +25,7 @@ tools:
 | "Config file is invalid" | Unrecognized key in config | Remove unsupported keys (see below) |
 | "Connection closed" | Wrong command or outdated version | Update tool, check command syntax |
 | "Command not found" | Tool not installed | `npm install -g {package}` |
-| "Permission denied" | Missing credentials | Check `~/.config/aidevops/mcp-env.sh` |
+| "Permission denied" | Missing credentials | Check `~/.config/aidevops/credentials.sh` |
 | "Timeout" | Server not starting | Check Node.js version, run manually |
 | "unauthorized" | HTTP server instead of MCP | Use correct MCP command (not serve) |
 

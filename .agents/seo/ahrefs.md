@@ -17,7 +17,7 @@ tools:
 
 - **Purpose**: Backlink analysis, keyword research, site audit, rank tracking
 - **API**: REST at `https://api.ahrefs.com/v3/`
-- **Auth**: Bearer token in `~/.config/aidevops/mcp-env.sh` as `AHREFS_API_KEY`
+- **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `AHREFS_API_KEY`
 - **Docs**: https://docs.ahrefs.com/reference
 - **No MCP required** - uses curl directly
 
@@ -26,7 +26,7 @@ tools:
 ## Authentication
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 ## API Endpoints
@@ -107,7 +107,7 @@ curl -s "https://api.ahrefs.com/v3/keywords-explorer/google/keyword-ideas?keywor
 
 ## Setup
 
-Get API key from https://app.ahrefs.com/user/api and add to `~/.config/aidevops/mcp-env.sh`:
+Get API key from https://app.ahrefs.com/user/api and add to `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export AHREFS_API_KEY="your_key_here"

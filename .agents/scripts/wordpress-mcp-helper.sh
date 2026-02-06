@@ -49,7 +49,7 @@ print_error() {
 # Configuration paths (XDG-compliant user config)
 CONFIG_FILE="${HOME}/.config/aidevops/wordpress-sites-config.json"
 TEMPLATE_FILE="${HOME}/.aidevops/agents/configs/wordpress-sites-config.json.txt"
-MCP_ENV_FILE="${HOME}/.config/aidevops/mcp-env.sh"
+CREDENTIALS_FILE="${HOME}/.config/aidevops/credentials.sh"
 LOCAL_SITES_PATH="${HOME}/Local Sites"
 
 # Check dependencies
@@ -65,9 +65,9 @@ check_dependencies() {
 
 # Load MCP environment variables
 load_mcp_env() {
-    if [[ -f "$MCP_ENV_FILE" ]]; then
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
         # shellcheck source=/dev/null
-        source "$MCP_ENV_FILE"
+        source "$CREDENTIALS_FILE"
     fi
     return 0
 }
@@ -437,7 +437,7 @@ Environment Variables:
 Configuration:
   Sites config: ~/.config/aidevops/wordpress-sites-config.json
   Template:     ~/.aidevops/agents/configs/wordpress-sites-config.json.txt
-  MCP env:      ~/.config/aidevops/mcp-env.sh
+  MCP env:      ~/.config/aidevops/credentials.sh
 
 Setup:
   mkdir -p ~/.config/aidevops

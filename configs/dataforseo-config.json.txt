@@ -2,7 +2,7 @@
   "_comments": {
     "note": "DataForSEO MCP configuration for different AI assistants",
     "signup": "Get credentials from https://app.dataforseo.com/",
-    "env_setup": "Store as DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/mcp-env.sh",
+    "env_setup": "Store as DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/credentials.sh",
     "docs": "https://docs.dataforseo.com/v3/"
   },
   "opencode": {
@@ -12,7 +12,7 @@
       "command": [
         "/bin/bash",
         "-c",
-        "source ~/.config/aidevops/mcp-env.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"
+        "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"
       ],
       "enabled": true
     }

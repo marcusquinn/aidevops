@@ -97,7 +97,7 @@ From `tools/build-agent/build-agent.md`:
 ## Security
 
 - Never commit credentials
-- Store secrets in `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- Store secrets in `~/.config/aidevops/credentials.sh` (600 permissions)
 - Confirm destructive operations before execution
 - Use placeholders in examples, note secure storage location
 

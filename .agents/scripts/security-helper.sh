@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # shellcheck source=/dev/null
-[[ -f "${HOME}/.config/aidevops/mcp-env.sh" ]] && source "${HOME}/.config/aidevops/mcp-env.sh"
+[[ -f "${HOME}/.config/aidevops/credentials.sh" ]] && source "${HOME}/.config/aidevops/credentials.sh"
 
 # Script directory (exported for subprocesses)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit

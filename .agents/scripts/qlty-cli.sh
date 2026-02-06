@@ -51,7 +51,7 @@ print_header() {
 load_api_config() {
     local org="${1:-marcusquinn}"  # Default to marcusquinn organization
     
-    # First check environment variables (set via mcp-env.sh, sourced by .zshrc)
+    # First check environment variables (set via credentials.sh, sourced by .zshrc)
     local account_api_key="${QLTY_ACCOUNT_API_KEY:-}"
     local api_key="${QLTY_API_KEY:-}"
     local workspace_id="${QLTY_WORKSPACE_ID:-}"
@@ -90,7 +90,7 @@ load_api_config() {
     else
         # No credentials found
         print_warning "No Qlty credentials found"
-        print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+        print_info "Add to ~/.config/aidevops/credentials.sh:"
         print_info "  export QLTY_ACCOUNT_API_KEY=\"your-key\""
         print_info "  export QLTY_WORKSPACE_ID=\"your-workspace-id\""
         return 1
@@ -288,7 +288,7 @@ show_help() {
     echo "  ⚡ Performance: Fast, concurrent execution"
     echo ""
     echo "Qlty Credential Management:"
-    echo "  Add to ~/.config/aidevops/mcp-env.sh:"
+    echo "  Add to ~/.config/aidevops/credentials.sh:"
     echo "    export QLTY_ACCOUNT_API_KEY=\"qltp_...\""
     echo "    export QLTY_API_KEY=\"qltcw_...\""
     echo "    export QLTY_WORKSPACE_ID=\"...\""

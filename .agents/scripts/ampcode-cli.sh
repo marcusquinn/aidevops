@@ -71,7 +71,7 @@ ensure_results_dir() {
 
 # Load API configuration
 load_api_config() {
-    # Check environment variable first (set via mcp-env.sh, sourced by .zshrc)
+    # Check environment variable first (set via credentials.sh, sourced by .zshrc)
     if [[ -n "${AMPCODE_API_KEY:-}" ]]; then
         print_info "Using AmpCode API key from environment"
         return 0
@@ -89,7 +89,7 @@ load_api_config() {
     fi
 
     print_warning "AMPCODE_API_KEY not found in environment"
-    print_info "Add to ~/.config/aidevops/mcp-env.sh:"
+    print_info "Add to ~/.config/aidevops/credentials.sh:"
     print_info "  export AMPCODE_API_KEY=\"your-api-key\""
     return 1
 }
@@ -175,7 +175,7 @@ setup_ampcode_config() {
     # Load existing config
     if ! load_api_config; then
         print_info "Please visit https://ampcode.com to get your API key"
-        print_info "Then run: Add AMPCODE_API_KEY to ~/.config/aidevops/mcp-env.sh"
+        print_info "Then run: Add AMPCODE_API_KEY to ~/.config/aidevops/credentials.sh"
         return 1
     fi
 
@@ -478,7 +478,7 @@ show_help() {
     echo "Setup:"
     echo "  1. Visit https://ampcode.com to create account"
     echo "  2. Get your API key"
-    echo "  3. Run: Add AMPCODE_API_KEY to ~/.config/aidevops/mcp-env.sh"
+    echo "  3. Run: Add AMPCODE_API_KEY to ~/.config/aidevops/credentials.sh"
     echo "  4. Run: $0 setup"
     echo ""
     echo "This script integrates AmpCode's professional AI coding assistant"

@@ -72,7 +72,7 @@ check_dependencies() {
 load_config() {
     local api_key
     
-    # First try environment variable (preferred - set via mcp-env.sh)
+    # First try environment variable (preferred - set via credentials.sh)
     api_key="${UPDOWN_API_KEY:-}"
     
     # Fallback to config file if env var not set
@@ -82,7 +82,7 @@ load_config() {
 
     if [[ -z "$api_key" ]]; then
         print_error "$ERROR_API_KEY_MISSING"
-        print_error "Set UPDOWN_API_KEY in ~/.config/aidevops/mcp-env.sh"
+        print_error "Set UPDOWN_API_KEY in ~/.config/aidevops/credentials.sh"
         return 1
     fi
 

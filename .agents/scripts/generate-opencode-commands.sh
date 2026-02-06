@@ -387,7 +387,7 @@ Parse the JSON output and present as markdown tables grouped by source.
 Format with padded columns for readability:
 
 ```
-### ~/.config/aidevops/mcp-env.sh
+### ~/.config/aidevops/credentials.sh
 
 | Key                        | Status        |
 |----------------------------|---------------|

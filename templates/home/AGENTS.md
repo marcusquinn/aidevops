@@ -32,12 +32,12 @@ AI assistants operating in this environment should:
 
 | Location | Purpose |
 |----------|---------|
-| `~/.config/aidevops/` | **Secrets only** - `mcp-env.sh` (600 perms) |
+| `~/.config/aidevops/` | **Secrets only** - `credentials.sh` (600 perms) |
 | `~/.aidevops/` | **Working directories** - agno, stagehand, reports |
 
 ### **✅ APPROVED Storage Location:**
 
-- **API Keys & Tokens**: `~/.config/aidevops/mcp-env.sh`
+- **API Keys & Tokens**: `~/.config/aidevops/credentials.sh`
 - **File Permissions**: 600 (owner read/write only)
 - **Sourced by**: `~/.zshrc` and `~/.bashrc` automatically
 

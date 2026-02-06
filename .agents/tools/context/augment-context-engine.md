@@ -361,7 +361,7 @@ TOKEN={"accessToken":"your-access-token","tenantURL":"your-tenant-url","scopes":
 
 ### 2. Configure Environment Variables
 
-Add to your CI/CD environment or `~/.config/aidevops/mcp-env.sh`:
+Add to your CI/CD environment or `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export AUGMENT_API_TOKEN="your-access-token"
@@ -406,7 +406,7 @@ droid mcp add augment-code "auggie" --mcp --env AUGMENT_API_TOKEN=your-access-to
 |--------|----------|----------|
 | Interactive | `~/.augment/session.json` | Local development |
 | Environment | `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` | CI/CD, automation |
-| aidevops pattern | `~/.config/aidevops/mcp-env.sh` | Consistent with other services |
+| aidevops pattern | `~/.config/aidevops/credentials.sh` | Consistent with other services |
 
 ## Troubleshooting
 

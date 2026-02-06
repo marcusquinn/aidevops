@@ -23,7 +23,7 @@ mcp:
 - **Purpose**: Dependency security scanning for npm/pip packages
 - **MCP**: Remote at `https://mcp.socket.dev/`
 - **Auth**: API token from socket.dev
-- **Credentials**: `~/.config/aidevops/mcp-env.sh` → `SOCKET_YOURNAME`
+- **Credentials**: `~/.config/aidevops/credentials.sh` → `SOCKET_YOURNAME`
 
 **When to use**:
 
@@ -49,8 +49,8 @@ mcp:
 4. Save token:
 
 ```bash
-echo 'export SOCKET_YOURNAME="sktsec_..."' >> ~/.config/aidevops/mcp-env.sh
-chmod 600 ~/.config/aidevops/mcp-env.sh
+echo 'export SOCKET_YOURNAME="sktsec_..."' >> ~/.config/aidevops/credentials.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### 3. Configure OpenCode MCP
@@ -67,7 +67,7 @@ jq '.mcp.socket = {"type": "remote", "url": "https://mcp.socket.dev/", "enabled"
 ### 4. Test Connection
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 curl -s -H "Authorization: Bearer $SOCKET_YOURNAME" "https://api.socket.dev/v0/organizations" | jq '.organizations'
 ```
 
@@ -108,7 +108,7 @@ socket npm info lodash
 
 ### "Unauthorized" error
 
-1. Verify token: `source ~/.config/aidevops/mcp-env.sh && echo $SOCKET_YOURNAME`
+1. Verify token: `source ~/.config/aidevops/credentials.sh && echo $SOCKET_YOURNAME`
 2. Check token has correct permissions in socket.dev dashboard
 3. Token format should start with `sktsec_`
 

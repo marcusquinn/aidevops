@@ -75,7 +75,7 @@ For long-running processes: use `&`, `nohup`, or `screen`/`tmux`. For parallel A
 - **Purpose**: DevOps automation across multiple services
 - **Getting Started**: `/onboarding` - Interactive setup wizard
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
-- **Credentials**: `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- **Credentials**: `~/.config/aidevops/credentials.sh` (600 permissions)
 - **Subagent Index**: `subagent-index.toon` (agents, subagents, workflows, scripts)
 
 **Critical Rules**:
@@ -280,7 +280,7 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
 ## Security
 
-- Credentials: `~/.config/aidevops/mcp-env.sh` (600 permissions)
+- Credentials: `~/.config/aidevops/credentials.sh` (600 permissions)
 - Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored)
 - Confirm destructive operations before execution
 

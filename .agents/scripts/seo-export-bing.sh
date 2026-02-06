@@ -47,11 +47,11 @@ print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0;
 
 # Get API key from environment
 get_api_key() {
-    source "$CONFIG_DIR/mcp-env.sh" 2>/dev/null || true
+    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
         print_error "BING_WEBMASTER_API_KEY not configured"
-        print_error "Set it in ~/.config/aidevops/mcp-env.sh"
+        print_error "Set it in ~/.config/aidevops/credentials.sh"
         return 1
     fi
     
@@ -227,7 +227,7 @@ Output:
     ~/.aidevops/.agent-workspace/work/seo-data/{domain}/bing-{start}-{end}.toon
 
 Requirements:
-    - BING_WEBMASTER_API_KEY set in ~/.config/aidevops/mcp-env.sh
+    - BING_WEBMASTER_API_KEY set in ~/.config/aidevops/credentials.sh
     - Site must be verified in Bing Webmaster Tools
 
 API Key Setup:
@@ -235,7 +235,7 @@ API Key Setup:
     2. Sign in and verify your site
     3. Go to Settings > API Access
     4. Generate API Key
-    5. Add to mcp-env.sh: export BING_WEBMASTER_API_KEY="your_key"
+    5. Add to credentials.sh: export BING_WEBMASTER_API_KEY="your_key"
 
 EOF
     return 0

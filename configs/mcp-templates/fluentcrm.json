@@ -4,7 +4,7 @@
     "command": [
       "/bin/bash",
       "-c",
-      "source ~/.config/aidevops/mcp-env.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"
+      "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"
     ],
     "enabled": false,
     "_comment": "Disabled globally. Enabled via fluentcrm_*: true in services/crm/fluentcrm.md subagent. Requires local build - see .agents/services/crm/fluentcrm.md for setup."

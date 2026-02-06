@@ -17,7 +17,7 @@ tools:
 
 - **Purpose**: Domain analytics, keyword research, backlink analysis, competitor research, position tracking, site audit
 - **API**: REST at `https://api.semrush.com/` (Analytics v3) and `https://api.semrush.com/management/v1/` (Projects)
-- **Auth**: API key as query parameter `key=` in `~/.config/aidevops/mcp-env.sh` as `SEMRUSH_API_KEY`
+- **Auth**: API key as query parameter `key=` in `~/.config/aidevops/credentials.sh` as `SEMRUSH_API_KEY`
 - **Docs**: https://developer.semrush.com/api/
 - **Response format**: CSV (semicolon-delimited) for Analytics v3
 - **No MCP required** - uses curl directly (Semrush also offers an official MCP server for AI tool integration)
@@ -39,7 +39,7 @@ Additional units can be purchased. Use `display_limit` to control unit consumpti
 ## Authentication
 
 ```bash
-source ~/.config/aidevops/mcp-env.sh
+source ~/.config/aidevops/credentials.sh
 ```
 
 ## API Unit Balance
@@ -227,7 +227,7 @@ curl -s "https://api.semrush.com/?key=$SEMRUSH_API_KEY&type=domain_organic&expor
 
 ## Setup
 
-Get API key from Semrush account > Subscription Info > API Units tab, and add to `~/.config/aidevops/mcp-env.sh`:
+Get API key from Semrush account > Subscription Info > API Units tab, and add to `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export SEMRUSH_API_KEY="your_key_here"

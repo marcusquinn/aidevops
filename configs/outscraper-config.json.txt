@@ -27,7 +27,7 @@
   },
 
   "aidevops_env_setup": {
-    "_file": "~/.config/aidevops/mcp-env.sh",
+    "_file": "~/.config/aidevops/credentials.sh",
     "_permissions": "chmod 600",
     "content": "export OUTSCRAPER_API_KEY=\"your_api_key_here\""
   },

@@ -128,7 +128,7 @@ export VIRUSTOTAL_API_KEY="your_key"
 export AI_DEFENSE_API_KEY="your_key"
 ```
 
-Store keys in `~/.config/aidevops/mcp-env.sh` (600 permissions).
+Store keys in `~/.config/aidevops/credentials.sh` (600 permissions).
 
 ## Response Guidelines
 

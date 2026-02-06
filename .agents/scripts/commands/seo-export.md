@@ -59,7 +59,7 @@ Target: $ARGUMENTS
 | Ahrefs | API key | `AHREFS_API_KEY` |
 | DataForSEO | Username/password | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` |
 
-All credentials should be set in `~/.config/aidevops/mcp-env.sh`.
+All credentials should be set in `~/.config/aidevops/credentials.sh`.
 
 ## Next Steps
 

@@ -539,7 +539,7 @@ Read subagents only when task requires them.
 
    ```bash
    # Pattern for credential storage (authoritative)
-   # Store actual values in ~/.config/aidevops/mcp-env.sh
+   # Store actual values in ~/.config/aidevops/credentials.sh
    export SERVICE_API_KEY="${SERVICE_API_KEY:-}"
    ```
 

@@ -23,7 +23,7 @@ mcp:
 - **Purpose**: Extract structured data from unstructured documents (PDFs, images, DOCX, etc.)
 - **MCP Server**: `unstract/mcp-server` (Docker) or `@unstract/mcp-server` (npx)
 - **Tool**: `unstract_tool` - submits files to Unstract API, polls for completion, returns structured JSON
-- **Credentials**: `UNSTRACT_API_KEY` + `API_BASE_URL` in `~/.config/aidevops/mcp-env.sh` (chmod 600)
+- **Credentials**: `UNSTRACT_API_KEY` + `API_BASE_URL` in `~/.config/aidevops/credentials.sh` (chmod 600)
 - **Docs**: https://docs.unstract.com/unstract/unstract_platform/mcp/unstract_platform_mcp_server/
 - **GitHub**: https://github.com/Zipstack/unstract
 
@@ -74,10 +74,10 @@ The MCP server is a thin client that connects to any Unstract API endpoint - clo
 4. Copy the API key and deployment URL
 
 ```bash
-# Add to ~/.config/aidevops/mcp-env.sh:
+# Add to ~/.config/aidevops/credentials.sh:
 export UNSTRACT_API_KEY="your_api_key_here"
 export API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ### Option B: Self-Hosted (Local) - Recommended
@@ -111,7 +111,7 @@ Self-hosted gives full data privacy - no documents leave your machine.
 
 ### Using Your Existing LLM API Keys
 
-Unstract uses "Adapters" to connect to LLM providers. Your existing API keys from `~/.config/aidevops/mcp-env.sh` work directly - just add them as adapters in the Unstract UI (Settings > Adapters):
+Unstract uses "Adapters" to connect to LLM providers. Your existing API keys from `~/.config/aidevops/credentials.sh` work directly - just add them as adapters in the Unstract UI (Settings > Adapters):
 
 | Your Key | Unstract Adapter |
 |----------|-----------------|
@@ -128,12 +128,12 @@ For fully local/offline operation, use **Ollama** as the LLM adapter - no cloud 
 
 ### 2. Store Credentials
 
-Whichever option you chose, ensure credentials are in `~/.config/aidevops/mcp-env.sh`:
+Whichever option you chose, ensure credentials are in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
 export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
-chmod 600 ~/.config/aidevops/mcp-env.sh
+chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 **Note**: The MCP expects `API_BASE_URL` (not prefixed). This matches the official Unstract spec.

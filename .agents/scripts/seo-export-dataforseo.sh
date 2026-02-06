@@ -53,11 +53,11 @@ print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0;
 
 # Get auth header from environment
 get_auth_header() {
-    source "$CONFIG_DIR/mcp-env.sh" 2>/dev/null || true
+    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
     
     if [[ -z "${DATAFORSEO_USERNAME:-}" ]] || [[ -z "${DATAFORSEO_PASSWORD:-}" ]]; then
         print_error "DataForSEO credentials not configured"
-        print_error "Set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/mcp-env.sh"
+        print_error "Set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/credentials.sh"
         return 1
     fi
     
@@ -274,12 +274,12 @@ Data Fields:
     - difficulty: Competition level
 
 Requirements:
-    - DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/mcp-env.sh
+    - DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/credentials.sh
 
 Setup:
     1. Sign up at https://app.dataforseo.com/
     2. Get API credentials from dashboard
-    3. Add to mcp-env.sh:
+    3. Add to credentials.sh:
        export DATAFORSEO_USERNAME="your_username"
        export DATAFORSEO_PASSWORD="your_password"
 
