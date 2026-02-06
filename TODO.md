@@ -198,7 +198,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~10m (ai:8m read:2m) logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
   - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem.
 - [ ] t064 Add seo-regex subagent with Search Console regex workflow #seo #tools ~5m (ai:4m read:1m) logged:2026-01-15
-- [ ] t083 Create Bing Webmaster Tools subagent #seo #tools ~15m (ai:10m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill
+- [x] t083 Create Bing Webmaster Tools subagent #seo #tools ~15m actual:10m (ai:10m test:3m read:2m) logged:2026-01-29 completed:2026-02-06 related:seo-audit-skill
+  - Notes: Created .agent/seo/bing-webmaster-tools.md with curl-based API integration. Added to subagent-index.toon.
   - Notes: API integration for Bing Webmaster Tools. Features: submit URLs, check indexation status, view search analytics, manage sitemaps. Ref: https://www.bing.com/webmasters/help/webmaster-api-5f3c5e1e
 - [ ] t084 Create Rich Results Test subagent #seo #tools #schema ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
   - Notes: Google Rich Results Test API integration. Validate structured data, preview rich snippets, check eligibility for rich results. Add to tools/seo/ or seo/. Ref: https://search.google.com/test/rich-results BLOCKED: auth_error BLOCKED: Max retries exceeded: clean_exit_no_signal
