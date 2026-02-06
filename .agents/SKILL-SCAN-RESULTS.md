@@ -32,6 +32,8 @@ Updated on each `aidevops skill scan`, `aidevops update`, or skill import.
 
 ## Scan History
 
+Source of truth for audit trail. The "Latest Full Scan" header is updated automatically; the severity table above reflects the initial baseline and should be manually updated when significant changes occur.
+
 | Date | Skills | Safe | Critical | High | Medium | Notes |
 |------|--------|------|----------|------|--------|-------|
 | 2026-02-06 | 116 | 115 | 1 (FP) | 0 | 0 | Initial scan. 1 false positive in credentials SKILL.md |
