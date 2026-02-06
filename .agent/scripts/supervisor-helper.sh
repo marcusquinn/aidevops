@@ -1172,6 +1172,80 @@ resolve_ai_cli() {
 }
 
 #######################################
+# Pre-dispatch model health check
+# Sends a trivial prompt to verify the model/provider is responding.
+# Returns 0 if healthy, 1 if unhealthy. Timeout: 15 seconds.
+# Result is cached for 5 minutes to avoid repeated probes.
+#######################################
+check_model_health() {
+    local ai_cli="$1"
+    local model="${2:-}"
+
+    # Cache key: cli + model, stored as a file with timestamp
+    local cache_dir="$SUPERVISOR_DIR/health"
+    mkdir -p "$cache_dir"
+    local cache_key="${ai_cli}-${model//\//_}"
+    local cache_file="$cache_dir/${cache_key}"
+
+    # Check cache (valid for 300 seconds / 5 minutes)
+    if [[ -f "$cache_file" ]]; then
+        local cached_at
+        cached_at=$(cat "$cache_file")
+        local now
+        now=$(date +%s)
+        local age=$(( now - cached_at ))
+        if [[ "$age" -lt 300 ]]; then
+            log_info "Model health: cached OK ($age seconds ago)"
+            return 0
+        fi
+    fi
+
+    # Send a trivial prompt
+    local probe_result=""
+    local probe_exit=1
+
+    if [[ "$ai_cli" == "opencode" ]]; then
+        local -a probe_cmd=(opencode run --format json)
+        if [[ -n "$model" ]]; then
+            probe_cmd+=(-m "$model")
+        fi
+        probe_cmd+=(--title "health-check" "Reply with exactly: OK")
+        probe_result=$(timeout 15 "${probe_cmd[@]}" 2>&1) || true
+        probe_exit=$?
+    else
+        local -a probe_cmd=(claude -p "Reply with exactly: OK" --output-format text)
+        if [[ -n "$model" ]]; then
+            probe_cmd+=(--model "$model")
+        fi
+        probe_result=$(timeout 15 "${probe_cmd[@]}" 2>&1) || true
+        probe_exit=$?
+    fi
+
+    # Check for known failure patterns
+    if echo "$probe_result" | grep -qi 'endpoints failed\|Quota protection\|over.*usage\|quota reset\|503\|service unavailable' 2>/dev/null; then
+        log_warn "Model health check FAILED: provider error detected"
+        return 1
+    fi
+
+    # Timeout (exit 124) = unhealthy
+    if [[ "$probe_exit" -eq 124 ]]; then
+        log_warn "Model health check FAILED: timeout (15s)"
+        return 1
+    fi
+
+    # Empty response with non-zero exit = unhealthy
+    if [[ -z "$probe_result" && "$probe_exit" -ne 0 ]]; then
+        log_warn "Model health check FAILED: empty response (exit $probe_exit)"
+        return 1
+    fi
+
+    # Healthy - cache the result
+    date +%s > "$cache_file"
+    log_info "Model health: OK (cached for 5m)"
+    return 0
+}
+
+#######################################
 # Build the dispatch command for a task
 # Outputs the command array elements, one per line
 # $5 (optional): memory context to inject into the prompt
@@ -1182,6 +1256,7 @@ build_dispatch_cmd() {
     local log_file="$3"
     local ai_cli="$4"
     local memory_context="${5:-}"
+    local model="${6:-}"
 
     local prompt="/full-loop $task_id"
     if [[ -n "$memory_context" ]]; then
@@ -1195,6 +1270,10 @@ $memory_context"
         echo "run"
         echo "--format"
         echo "json"
+        if [[ -n "$model" ]]; then
+            echo "-m"
+            echo "$model"
+        fi
         echo "--title"
         echo "$task_id"
         echo "$prompt"
@@ -1203,6 +1282,10 @@ $memory_context"
         echo "claude"
         echo "-p"
         echo "$prompt"
+        if [[ -n "$model" ]]; then
+            echo "--model"
+            echo "$model"
+        fi
         echo "--output-format"
         echo "json"
     fi
@@ -1530,6 +1613,14 @@ cmd_dispatch() {
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
 
+    # Pre-dispatch model health check - send a trivial prompt to verify the
+    # model/provider is responding before creating worktrees and burning retries
+    if ! check_model_health "$ai_cli" "$tmodel"; then
+        log_error "Model health check failed for $task_id ($tmodel via $ai_cli)"
+        log_error "Provider may be down or quota exhausted. Skipping dispatch."
+        return 3  # Return 3 = provider unavailable (distinct from concurrency limit 2)
+    fi
+
     # Create worktree
     log_info "Creating worktree for $task_id..."
     local worktree_path
@@ -1572,7 +1663,7 @@ cmd_dispatch() {
     local -a cmd_parts=()
     while IFS= read -r part; do
         cmd_parts+=("$part")
-    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context")
+    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$tmodel")
 
     # Ensure PID directory exists before dispatch
     mkdir -p "$SUPERVISOR_DIR/pids"
@@ -2999,8 +3090,10 @@ cmd_pulse() {
                 else
                     local dispatch_exit=$?
                     if [[ "$dispatch_exit" -eq 2 ]]; then
-                        # Concurrency limit reached
                         log_info "Concurrency limit reached, stopping dispatch"
+                        break
+                    elif [[ "$dispatch_exit" -eq 3 ]]; then
+                        log_warn "Provider unavailable, stopping dispatch until next pulse"
                         break
                     fi
                 fi
@@ -3019,6 +3112,9 @@ cmd_pulse() {
                     local dispatch_exit=$?
                     if [[ "$dispatch_exit" -eq 2 ]]; then
                         log_info "Concurrency limit reached, stopping dispatch"
+                        break
+                    elif [[ "$dispatch_exit" -eq 3 ]]; then
+                        log_warn "Provider unavailable, stopping dispatch until next pulse"
                         break
                     fi
                 fi
