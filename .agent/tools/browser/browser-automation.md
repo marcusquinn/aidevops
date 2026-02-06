@@ -34,6 +34,7 @@ What do you need?
     |       |
     |       +-> Need web search + crawl? --> WaterCrawl (cloud API with search)
     |       +-> Bulk pages / structured CSS/XPath? --> Crawl4AI (fastest extraction, parallel)
+    |       +-> One-off from authenticated page? --> curl-copy (DevTools → Copy as cURL)
     |       +-> Need to login/interact first? --> Playwright or dev-browser, then extract
     |       +-> Unknown structure, need AI to parse? --> Crawl4AI LLM mode or Stagehand extract()
     |       +-> Quick API without infrastructure? --> WaterCrawl (managed service)
