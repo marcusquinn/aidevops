@@ -625,6 +625,30 @@ Agents that learn from experience and contribute improvements:
 - Dry-run default, explicit opt-in for PR creation
 - Audit log to memory
 
+### Agent Testing Framework
+
+Test agent behavior through isolated AI sessions with automated validation:
+
+```bash
+# Create a test suite
+agent-test-helper.sh create my-tests
+
+# Run tests (auto-detects claude or opencode CLI)
+agent-test-helper.sh run my-tests
+
+# Quick single-prompt test
+agent-test-helper.sh run-one "What tools do you have?" --expect "bash"
+
+# Before/after comparison for agent changes
+agent-test-helper.sh baseline my-tests   # Save current behavior
+# ... modify agents ...
+agent-test-helper.sh compare my-tests    # Detect regressions
+```
+
+Test suites are JSON files with prompts and validation rules (`expect_contains`, `expect_not_contains`, `expect_regex`, `min_length`, `max_length`). Results are saved for historical tracking.
+
+**See:** `agent-testing.md` subagent for full documentation and example test suites.
+
 ### Voice Integration
 
 Speech-to-speech AI conversations:
