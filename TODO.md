@@ -339,8 +339,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Implemented complete system for importing skills from external GitHub repos. Created add-skill-helper.sh (~630 lines) for fetching, format detection (SKILL.md, AGENTS.md, .cursorrules, raw markdown), conversion, and registration. Created skill-update-helper.sh (~280 lines) for upstream update checking. Added skill-sources.json registry, /add-skill command, add-skill.md subagent. Updated setup.sh with create_skill_symlinks() for cross-tool compatibility. PR #135.
 - [x] t067 Optimise OpenCode MCP loading with on-demand activation #opencode #performance #mcp ~4h (ai:2h test:1h read:1h) logged:2026-01-21 blocked-by:t056 started:2026-01-21T06:15Z completed:2026-01-21 actual:30m
   - Notes: Implemented on-demand MCP loading pattern. Updated generate-opencode-agents.sh to sync MCP index on agent generation. Added MCP On-Demand Loading section to AGENTS.md. Pattern: MCPs disabled globally, enabled per-subagent via frontmatter, discoverable via mcp-index-helper.sh search.
+- [ ] t131 Create tools/vision/ category for visual AI models #tools #vision #ai ~30m (ai:20m test:5m read:5m) logged:2026-02-06 related:t080
+  - Notes: New tool category for visual AI / computer vision models. Initial candidates: MiniCPM-o 4.5 (vision+voice+text, 9B params, Apache-2.0), LLaVA, CogVLM. Create tools/vision/ directory with overview.md covering model selection, local GPU deployment, cloud GPU options. Cross-reference from tools/voice/ for multimodal models.
+- [ ] t132 Evaluate tools/multimodal/ vs cross-references for models spanning voice+vision #architecture #tools #ai ~15m (ai:10m read:5m) logged:2026-02-06 related:t131,t080
+  - Notes: MiniCPM-o 4.5 does voice+vision+text. Decision needed: 1) Put in tools/vision/ with cross-refs from tools/voice/ (simpler), 2) Create tools/multimodal/ category (cleaner taxonomy but more dirs), 3) Put in whichever is the primary use case and cross-ref. Recommend option 1 initially, revisit when we have 3+ multimodal models.
+- [ ] t133 Cloud GPU deployment guide for AI model hosting #tools #infrastructure #gpu ~45m (ai:30m test:10m read:5m) logged:2026-02-06 related:t080,t071
+  - Notes: Shared guide for deploying GPU-intensive models to cloud providers. Covers: NVIDIA Cloud (A100/H100, official), Vast.ai (auction pricing, cheapest), RunPod (balanced), Lambda (research). Common patterns: SSH setup, Docker deployment, model caching, cost optimization. Referenced by tools/voice/speech-to-speech.md and future tools/vision/ subagents. Could live at tools/infrastructure/cloud-gpu.md or services/hosting/cloud-gpu.md.
 
-<!--TOON:backlog[85]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[89]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,1.5h,45m,30m,2026-02-03T00:00Z,pending,,,
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,15m,10m,5m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
@@ -447,6 +453,9 @@ t081,Set up Pipecat local voice agent with Soniox STT + Cartesia TTS + OpenAI/An
 t125,Add browser-use subagent for AI-native browser automation,,tools|browser|ai|automation,15m,10m,3m,2m,2026-02-05T00:00Z,pending,,,
 t126,Add Skyvern subagent for computer vision browser automation,,tools|browser|ai|automation,15m,10m,3m,2m,2026-02-05T00:00Z,pending,,,
 t127,Add Buzz offline transcription support,,tools|voice|transcription,15m,10m,3m,2m,2026-02-06T00:00Z,pending,,,
+t131,Create tools/vision/ category for visual AI models,,tools|vision|ai,30m,20m,5m,5m,2026-02-06T00:00Z,pending,,,
+t132,Evaluate tools/multimodal/ vs cross-references for models spanning voice+vision,,architecture|tools|ai,15m,10m,,5m,2026-02-06T00:00Z,pending,,,
+t133,Cloud GPU deployment guide for AI model hosting,,tools|infrastructure|gpu,45m,30m,10m,5m,2026-02-06T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
