@@ -8,6 +8,12 @@
 #   supervisor-helper.sh init                          Initialize supervisor database
 #   supervisor-helper.sh add <task_id> [--repo path] [--description "desc"] [--model model] [--max-retries N]
 #   supervisor-helper.sh batch <name> [--concurrency N] [--tasks "t001,t002,t003"]
+#   supervisor-helper.sh dispatch <task_id> [--batch id] Dispatch a task (worktree + worker)
+#   supervisor-helper.sh reprompt <task_id> [--prompt ""] Re-prompt a retrying task
+#   supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
+#   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
+#   supervisor-helper.sh worker-status <task_id>       Check worker process status
+#   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
 #   supervisor-helper.sh status [task_id|batch_id]     Show task/batch/overall status
 #   supervisor-helper.sh transition <task_id> <new_state> [--error "reason"]
 #   supervisor-helper.sh list [--state queued|running|...] [--batch name] [--format json]
@@ -18,9 +24,14 @@
 #
 # State machine:
 #   queued -> dispatched -> running -> evaluating -> complete
-#                                   -> retrying   -> dispatched (retry cycle)
-#                                   -> blocked    (needs human input)
-#                                   -> failed     (max retries exceeded)
+#                                   -> retrying   -> reprompt -> dispatched (retry cycle)
+#                                   -> blocked    (needs human input / max retries)
+#                                   -> failed     (dispatch failure / unrecoverable)
+#
+# Outcome evaluation (3-tier):
+#   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
+#   2. Heuristic: error pattern matching (rate limit, auth, conflict, OOM)
+#   3. AI eval: Sonnet dispatch (~30s) for ambiguous outcomes
 #
 # Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
 #
@@ -1424,11 +1435,95 @@ cmd_worker_status() {
 }
 
 #######################################
-# Evaluate a completed worker's outcome
-# Returns: complete, retry, blocked, failed
+# Extract the last N lines from a log file (for AI eval context)
+# Avoids sending entire multi-MB logs to the evaluator
+#######################################
+extract_log_tail() {
+    local log_file="$1"
+    local lines="${2:-200}"
+
+    if [[ ! -f "$log_file" ]]; then
+        echo "(no log file)"
+        return 0
+    fi
+
+    tail -n "$lines" "$log_file" 2>/dev/null || echo "(failed to read log)"
+    return 0
+}
+
+#######################################
+# Extract structured outcome data from a log file
+# Outputs key=value pairs for: pr_url, exit_code, signals, errors
+#######################################
+extract_log_metadata() {
+    local log_file="$1"
+
+    if [[ ! -f "$log_file" ]]; then
+        echo "log_exists=false"
+        return 0
+    fi
+
+    echo "log_exists=true"
+    echo "log_bytes=$(wc -c < "$log_file" | tr -d ' ')"
+
+    # Completion signals
+    if grep -q 'FULL_LOOP_COMPLETE' "$log_file" 2>/dev/null; then
+        echo "signal=FULL_LOOP_COMPLETE"
+    elif grep -q 'TASK_COMPLETE' "$log_file" 2>/dev/null; then
+        echo "signal=TASK_COMPLETE"
+    else
+        echo "signal=none"
+    fi
+
+    # PR URL (GitHub or GitLab)
+    local pr_url
+    pr_url=$(grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' "$log_file" 2>/dev/null | tail -1 || true)
+    if [[ -z "$pr_url" ]]; then
+        pr_url=$(grep -oE 'https://gitlab\.[^/]+/[^/]+/[^/]+/-/merge_requests/[0-9]+' "$log_file" 2>/dev/null | tail -1 || true)
+    fi
+    echo "pr_url=${pr_url:-}"
+
+    # Exit code
+    local exit_line
+    exit_line=$(grep '^EXIT:' "$log_file" 2>/dev/null | tail -1 || true)
+    echo "exit_code=${exit_line#EXIT:}"
+
+    # Error patterns (count occurrences for severity assessment)
+    local rate_limit_count=0 auth_error_count=0 conflict_count=0 timeout_count=0 oom_count=0
+    rate_limit_count=$(grep -ci 'rate.limit\|429\|too many requests' "$log_file" 2>/dev/null || echo 0)
+    auth_error_count=$(grep -ci 'permission denied\|unauthorized\|403\|401' "$log_file" 2>/dev/null || echo 0)
+    conflict_count=$(grep -ci 'merge conflict\|CONFLICT\|conflict marker' "$log_file" 2>/dev/null || echo 0)
+    timeout_count=$(grep -ci 'timeout\|timed out\|ETIMEDOUT' "$log_file" 2>/dev/null || echo 0)
+    oom_count=$(grep -ci 'out of memory\|OOM\|heap.*exceeded\|ENOMEM' "$log_file" 2>/dev/null || echo 0)
+
+    echo "rate_limit_count=$rate_limit_count"
+    echo "auth_error_count=$auth_error_count"
+    echo "conflict_count=$conflict_count"
+    echo "timeout_count=$timeout_count"
+    echo "oom_count=$oom_count"
+
+    # JSON parse errors (opencode --format json output)
+    if grep -q '"error"' "$log_file" 2>/dev/null; then
+        local json_error
+        json_error=$(grep -o '"error"[[:space:]]*:[[:space:]]*"[^"]*"' "$log_file" 2>/dev/null | tail -1 || true)
+        echo "json_error=${json_error:-}"
+    fi
+
+    return 0
+}
+
+#######################################
+# Evaluate a completed worker's outcome using log analysis
+# Returns: complete:<detail>, retry:<reason>, blocked:<reason>, failed:<reason>
+#
+# Three-tier evaluation:
+#   1. Deterministic: check for known signals and error patterns
+#   2. Heuristic: analyze exit codes and error counts
+#   3. AI eval: dispatch cheap Sonnet call for ambiguous outcomes
 #######################################
 evaluate_worker() {
     local task_id="$1"
+    local skip_ai_eval="${2:-false}"
 
     ensure_db
 
@@ -1436,7 +1531,7 @@ evaluate_worker() {
     escaped_id=$(sql_escape "$task_id")
     local task_row
     task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
-        SELECT status, log_file, retries, max_retries
+        SELECT status, log_file, retries, max_retries, session_id
         FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -1445,62 +1540,366 @@ evaluate_worker() {
         return 1
     fi
 
-    local tstatus tlog tretries tmax_retries
-    IFS='|' read -r tstatus tlog tretries tmax_retries <<< "$task_row"
+    local tstatus tlog tretries tmax_retries tsession
+    IFS='|' read -r tstatus tlog tretries tmax_retries tsession <<< "$task_row"
 
     if [[ -z "$tlog" || ! -f "$tlog" ]]; then
         echo "failed:no_log_file"
         return 0
     fi
 
-    # Check for FULL_LOOP_COMPLETE (best outcome)
-    if grep -q 'FULL_LOOP_COMPLETE' "$tlog" 2>/dev/null; then
-        # Extract PR URL if present
-        local pr_url
-        pr_url=$(grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' "$tlog" 2>/dev/null | tail -1 || true)
-        echo "complete:${pr_url:-no_pr}"
+    # --- Tier 1: Deterministic signal detection ---
+
+    # Parse structured metadata from log
+    local -A meta=()
+    while IFS='=' read -r key value; do
+        meta["$key"]="$value"
+    done < <(extract_log_metadata "$tlog")
+
+    # FULL_LOOP_COMPLETE = definitive success
+    if [[ "${meta[signal]:-}" == "FULL_LOOP_COMPLETE" ]]; then
+        echo "complete:${meta[pr_url]:-no_pr}"
         return 0
     fi
 
-    # Check for EXIT code
-    local exit_line
-    exit_line=$(grep '^EXIT:' "$tlog" 2>/dev/null | tail -1 || true)
-    local exit_code="${exit_line#EXIT:}"
-
-    if [[ "$exit_code" == "0" ]]; then
-        # Exited cleanly but no FULL_LOOP_COMPLETE - partial success
-        if grep -q 'TASK_COMPLETE' "$tlog" 2>/dev/null; then
-            echo "complete:task_only"
-        else
-            echo "retry:clean_exit_no_signal"
-        fi
+    # TASK_COMPLETE with clean exit = partial success (PR phase may have failed)
+    if [[ "${meta[signal]:-}" == "TASK_COMPLETE" && "${meta[exit_code]:-}" == "0" ]]; then
+        echo "complete:task_only"
         return 0
     fi
 
-    # Check for common error patterns
-    if grep -qi 'rate.limit\|429\|too many requests' "$tlog" 2>/dev/null; then
-        echo "retry:rate_limited"
-        return 0
-    fi
+    # --- Tier 2: Heuristic error pattern matching ---
 
-    if grep -qi 'permission denied\|unauthorized\|403\|401' "$tlog" 2>/dev/null; then
+    # Auth errors are always blocking (human must fix credentials)
+    if [[ "${meta[auth_error_count]:-0}" -gt 0 ]]; then
         echo "blocked:auth_error"
         return 0
     fi
 
-    if grep -qi 'merge conflict\|CONFLICT' "$tlog" 2>/dev/null; then
+    # Merge conflicts require human resolution
+    if [[ "${meta[conflict_count]:-0}" -gt 0 ]]; then
         echo "blocked:merge_conflict"
         return 0
     fi
 
-    # Check if retries exhausted
+    # OOM is infrastructure - blocking
+    if [[ "${meta[oom_count]:-0}" -gt 0 ]]; then
+        echo "blocked:out_of_memory"
+        return 0
+    fi
+
+    # Rate limiting is transient - retry with backoff
+    if [[ "${meta[rate_limit_count]:-0}" -gt 0 ]]; then
+        echo "retry:rate_limited"
+        return 0
+    fi
+
+    # Timeout is transient - retry
+    if [[ "${meta[timeout_count]:-0}" -gt 0 ]]; then
+        echo "retry:timeout"
+        return 0
+    fi
+
+    # Clean exit with no completion signal = likely interrupted or incomplete
+    if [[ "${meta[exit_code]:-}" == "0" && "${meta[signal]:-}" == "none" ]]; then
+        echo "retry:clean_exit_no_signal"
+        return 0
+    fi
+
+    # Non-zero exit with known code
+    if [[ -n "${meta[exit_code]:-}" && "${meta[exit_code]:-}" != "0" ]]; then
+        # Exit code 130 = SIGINT (Ctrl+C), 137 = SIGKILL, 143 = SIGTERM
+        case "${meta[exit_code]:-}" in
+            130) echo "retry:interrupted_sigint"; return 0 ;;
+            137) echo "retry:killed_sigkill"; return 0 ;;
+            143) echo "retry:terminated_sigterm"; return 0 ;;
+        esac
+    fi
+
+    # Check if retries exhausted before attempting AI eval
     if [[ "$tretries" -ge "$tmax_retries" ]]; then
         echo "failed:max_retries"
         return 0
     fi
 
-    # Default: retry
-    echo "retry:unknown_error"
+    # --- Tier 3: AI evaluation for ambiguous outcomes ---
+
+    if [[ "$skip_ai_eval" == "true" ]]; then
+        echo "retry:ambiguous_skipped_ai"
+        return 0
+    fi
+
+    local ai_verdict
+    ai_verdict=$(evaluate_with_ai "$task_id" "$tlog" 2>/dev/null || echo "")
+
+    if [[ -n "$ai_verdict" ]]; then
+        echo "$ai_verdict"
+        return 0
+    fi
+
+    # AI eval failed or unavailable - default to retry
+    echo "retry:ambiguous_ai_unavailable"
+    return 0
+}
+
+#######################################
+# Dispatch a cheap AI call to evaluate ambiguous worker outcomes
+# Uses Sonnet for speed (~30s) and cost efficiency
+# Returns: complete:<detail>, retry:<reason>, blocked:<reason>
+#######################################
+evaluate_with_ai() {
+    local task_id="$1"
+    local log_file="$2"
+
+    local ai_cli
+    ai_cli=$(resolve_ai_cli 2>/dev/null) || return 1
+
+    # Extract last 200 lines of log for context (avoid sending huge logs)
+    local log_tail
+    log_tail=$(extract_log_tail "$log_file" 200)
+
+    # Get task description for context
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_desc
+    task_desc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+    local eval_prompt
+    eval_prompt="You are evaluating the outcome of an automated task worker. Respond with EXACTLY one line in the format: VERDICT:<type>:<detail>
+
+Types:
+- complete:<what_succeeded> (task finished successfully)
+- retry:<reason> (transient failure, worth retrying)
+- blocked:<reason> (needs human intervention)
+
+Task: $task_id
+Description: ${task_desc:-unknown}
+
+Last 200 lines of worker log:
+---
+$log_tail
+---
+
+Analyze the log and determine the outcome. Look for:
+1. Did the task complete its objective? (code changes, PR created, tests passing)
+2. Is there a transient error that a retry would fix? (network, rate limit, timeout)
+3. Is there a permanent blocker? (auth, permissions, merge conflict, missing dependency)
+
+Respond with ONLY the verdict line, nothing else."
+
+    local ai_result=""
+    local eval_timeout=60
+
+    if [[ "$ai_cli" == "opencode" ]]; then
+        ai_result=$(timeout "$eval_timeout" opencode run \
+            -m "anthropic/claude-sonnet-4-20250514" \
+            --format text \
+            --title "eval-${task_id}" \
+            "$eval_prompt" 2>/dev/null || echo "")
+    else
+        ai_result=$(timeout "$eval_timeout" claude \
+            -p "$eval_prompt" \
+            --model claude-sonnet-4-20250514 \
+            --output-format text 2>/dev/null || echo "")
+    fi
+
+    # Parse the VERDICT line from AI response
+    local verdict_line
+    verdict_line=$(echo "$ai_result" | grep -o 'VERDICT:[a-z]*:[a-z_]*' | head -1 || true)
+
+    if [[ -n "$verdict_line" ]]; then
+        # Strip VERDICT: prefix and return
+        local verdict="${verdict_line#VERDICT:}"
+        log_info "AI eval for $task_id: $verdict"
+
+        # Store AI evaluation in state log for audit trail
+        sqlite3 "$SUPERVISOR_DB" "
+            INSERT INTO state_log (task_id, from_state, to_state, reason)
+            VALUES ('$(sql_escape "$task_id")', 'evaluating', 'evaluating',
+                    'AI eval verdict: $verdict');
+        " 2>/dev/null || true
+
+        echo "$verdict"
+        return 0
+    fi
+
+    # AI didn't return a parseable verdict
+    log_warn "AI eval for $task_id returned unparseable result"
+    return 1
+}
+
+#######################################
+# Re-prompt a worker session to continue/retry
+# Uses opencode run -c (continue last session) or -s <id> (specific session)
+# Returns 0 on successful dispatch, 1 on failure
+#######################################
+cmd_reprompt() {
+    local task_id=""
+    local prompt_override=""
+
+    # First positional arg is task_id
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --prompt) [[ $# -lt 2 ]] && { log_error "--prompt requires a value"; return 1; }; prompt_override="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh reprompt <task_id> [--prompt \"custom prompt\"]"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, repo, description, status, session_id, worktree, log_file, retries, max_retries, error
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror
+    IFS='|' read -r tid trepo tdesc tstatus tsession tworktree tlog tretries tmax_retries terror <<< "$task_row"
+
+    # Validate state - must be in retrying state
+    if [[ "$tstatus" != "retrying" ]]; then
+        log_error "Task $task_id is in '$tstatus' state, must be 'retrying' to re-prompt"
+        return 1
+    fi
+
+    # Check max retries
+    if [[ "$tretries" -ge "$tmax_retries" ]]; then
+        log_error "Task $task_id has exceeded max retries ($tretries/$tmax_retries)"
+        cmd_transition "$task_id" "failed" --error "Max retries exceeded during re-prompt"
+        return 1
+    fi
+
+    local ai_cli
+    ai_cli=$(resolve_ai_cli) || return 1
+
+    # Build re-prompt message with context about the failure
+    local reprompt_msg
+    if [[ -n "$prompt_override" ]]; then
+        reprompt_msg="$prompt_override"
+    else
+        reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
+
+Please continue the /full-loop for $task_id. Pick up where the previous attempt left off.
+If the task was partially completed, verify what's done and continue from there.
+If it failed entirely, start fresh with /full-loop $task_id.
+
+Task description: ${tdesc:-$task_id}"
+    fi
+
+    # Set up log file for this retry attempt
+    local log_dir="$SUPERVISOR_DIR/logs"
+    mkdir -p "$log_dir"
+    local new_log_file
+    new_log_file="$log_dir/${task_id}-retry${tretries}-$(date +%Y%m%d%H%M%S).log"
+
+    # Determine working directory
+    local work_dir="$trepo"
+    if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+        work_dir="$tworktree"
+    fi
+
+    # Transition to dispatched
+    cmd_transition "$task_id" "dispatched" --log-file "$new_log_file"
+
+    log_info "Re-prompting $task_id (retry $tretries/$tmax_retries)"
+    log_info "Working dir: $work_dir"
+    log_info "Log: $new_log_file"
+
+    # Dispatch the re-prompt
+    local -a cmd_parts=()
+    if [[ "$ai_cli" == "opencode" ]]; then
+        cmd_parts=(opencode run --format json --title "${task_id}-retry${tretries}" "$reprompt_msg")
+    else
+        cmd_parts=(claude -p "$reprompt_msg" --output-format json)
+    fi
+
+    # Ensure PID directory exists
+    mkdir -p "$SUPERVISOR_DIR/pids"
+
+    (cd "$work_dir" && "${cmd_parts[@]}" > "$new_log_file" 2>&1; echo "EXIT:$?" >> "$new_log_file") &
+    local worker_pid=$!
+
+    echo "$worker_pid" > "$SUPERVISOR_DIR/pids/${task_id}.pid"
+
+    # Transition to running
+    cmd_transition "$task_id" "running" --session "pid:$worker_pid"
+
+    log_success "Re-prompted $task_id (PID: $worker_pid, retry $tretries/$tmax_retries)"
+    echo "$worker_pid"
+    return 0
+}
+
+#######################################
+# Manually evaluate a task's worker outcome
+# Useful for debugging or forcing evaluation of a stuck task
+#######################################
+cmd_evaluate() {
+    local task_id="" skip_ai="false"
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-ai) skip_ai=true; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh evaluate <task_id> [--no-ai]"
+        return 1
+    fi
+
+    ensure_db
+
+    # Show metadata first
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local tlog
+    tlog=$(sqlite3 "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';")
+
+    if [[ -n "$tlog" && -f "$tlog" ]]; then
+        echo -e "${BOLD}=== Log Metadata: $task_id ===${NC}"
+        extract_log_metadata "$tlog"
+        echo ""
+    fi
+
+    # Run evaluation
+    echo -e "${BOLD}=== Evaluation Result ===${NC}"
+    local outcome
+    outcome=$(evaluate_worker "$task_id" "$skip_ai")
+    local outcome_type="${outcome%%:*}"
+    local outcome_detail="${outcome#*:}"
+
+    local color="$NC"
+    case "$outcome_type" in
+        complete) color="$GREEN" ;;
+        retry) color="$YELLOW" ;;
+        blocked) color="$RED" ;;
+        failed) color="$RED" ;;
+    esac
+
+    echo -e "Verdict: ${color}${outcome_type}${NC}: $outcome_detail"
     return 0
 }
 
@@ -1574,13 +1973,33 @@ cmd_pulse() {
                 retry)
                     log_warn "  $tid: RETRY ($outcome_detail)"
                     cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>/dev/null || true
-                    # Re-queue for dispatch
-                    cmd_transition "$tid" "dispatched" 2>/dev/null || {
-                        # If transition fails (e.g., max retries), mark failed
-                        log_error "  $tid: could not re-queue, marking failed"
-                        failed_count=$((failed_count + 1))
-                    }
                     rm -f "$pid_file"
+                    # Re-prompt in existing worktree (continues context)
+                    if cmd_reprompt "$tid" 2>/dev/null; then
+                        dispatched_count=$((dispatched_count + 1))
+                        log_info "  $tid: re-prompted successfully"
+                    else
+                        # Re-prompt failed - check if max retries exceeded
+                        local current_retries
+                        current_retries=$(sqlite3 "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
+                        local max_retries_val
+                        max_retries_val=$(sqlite3 "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
+                        if [[ "$current_retries" -ge "$max_retries_val" ]]; then
+                            log_error "  $tid: max retries exceeded ($current_retries/$max_retries_val), marking blocked"
+                            cmd_transition "$tid" "blocked" --error "Max retries exceeded: $outcome_detail" 2>/dev/null || true
+                            # Send escalation
+                            if [[ -x "$MAIL_HELPER" ]]; then
+                                "$MAIL_HELPER" send \
+                                    --to coordinator \
+                                    --type status_report \
+                                    --payload "Task $tid blocked after $current_retries retries: $outcome_detail" 2>/dev/null || true
+                            fi
+                        else
+                            log_error "  $tid: re-prompt failed, marking failed"
+                            cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
+                            failed_count=$((failed_count + 1))
+                        fi
+                    fi
                     ;;
                 blocked)
                     log_warn "  $tid: BLOCKED ($outcome_detail)"
@@ -1757,6 +2176,8 @@ Usage:
   supervisor-helper.sh add <task_id> [options]       Add a task
   supervisor-helper.sh batch <name> [options]        Create a batch of tasks
   supervisor-helper.sh dispatch <task_id> [options]  Dispatch a task (worktree + worker)
+  supervisor-helper.sh reprompt <task_id> [options]  Re-prompt a retrying task
+  supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
   supervisor-helper.sh pulse [--batch id]            Run supervisor pulse cycle
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
@@ -1772,9 +2193,19 @@ Usage:
 
 State Machine:
   queued -> dispatched -> running -> evaluating -> complete
-                                  -> retrying   -> dispatched (retry cycle)
-                                  -> blocked    (needs human input)
-                                  -> failed     (max retries exceeded)
+                                  -> retrying   -> reprompt -> dispatched -> running (retry cycle)
+                                  -> blocked    (needs human input / max retries exceeded)
+                                  -> failed     (dispatch failure / unrecoverable)
+
+Outcome Evaluation (3-tier):
+  1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
+  2. Heuristic: error pattern matching (rate limit, auth, conflict, OOM, timeout)
+  3. AI eval: Sonnet dispatch (~30s) for ambiguous outcomes
+
+Re-prompt Cycle:
+  On retry, the supervisor re-prompts the worker in its existing worktree
+  with context about the previous failure. After max_retries, the task is
+  marked blocked (not failed) so a human can investigate and reset.
 
 Worker Dispatch:
   For each task: creates a worktree (wt switch -c feature/tXXX), then
@@ -1799,6 +2230,12 @@ Options for 'batch':
 
 Options for 'dispatch':
   --batch <batch_id>     Dispatch within batch concurrency limits
+
+Options for 'reprompt':
+  --prompt "text"        Custom re-prompt message (default: auto-generated with failure context)
+
+Options for 'evaluate':
+  --no-ai                Skip AI evaluation tier (deterministic + heuristic only)
 
 Options for 'pulse':
   --batch <batch_id>     Only pulse tasks in this batch
@@ -1847,6 +2284,8 @@ main() {
         add) cmd_add "$@" ;;
         batch) cmd_batch "$@" ;;
         dispatch) cmd_dispatch "$@" ;;
+        reprompt) cmd_reprompt "$@" ;;
+        evaluate) cmd_evaluate "$@" ;;
         pulse) cmd_pulse "$@" ;;
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
