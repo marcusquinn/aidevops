@@ -71,8 +71,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Created supervisor-helper.sh (~700 lines) with SQLite schema (tasks, batches, batch_tasks, state_log tables), 9-state machine with 18 validated transitions, 12 commands (init, add, batch, transition, status, list, next, running-count, reset, cancel, db, help). Zero ShellCheck violations. PR #376 merged.
   - [x] t128.2 Worker dispatch with worktree isolation ~1.5h actual:30m (ai:30m) blocked-by:t128.1 started:2026-02-06T04:30Z completed:2026-02-06
     - Notes: Added 4 commands to supervisor-helper.sh: dispatch (worktree + worker), pulse (stateless check/dispatch cycle), worker-status (PID/log monitoring), cleanup (worktree removal). Concurrency semaphore (default 4, env/batch configurable). Tabby tab detection. Log-based outcome evaluation. opencode/claude CLI auto-detection. Zero ShellCheck violations. PR #377 merged.
-  - [ ] t128.3 Outcome evaluation and re-prompt cycle ~2h blocked-by:t128.2
-    - Notes: Parse JSON logs for FULL_LOOP_COMPLETE/PR URL/errors. For ambiguous outcomes, dispatch cheap AI eval (Sonnet ~30s). Re-prompt via opencode run --session <id> --continue. Max retries before marking blocked.
+  - [x] t128.3 Outcome evaluation and re-prompt cycle ~2h actual:30m (ai:30m) blocked-by:t128.2 started:2026-02-06T05:00Z completed:2026-02-06
+    - Notes: 3-tier evaluation: deterministic (signals/EXIT codes), heuristic (error pattern counting), AI eval (Sonnet ~30s for ambiguous). Added extract_log_metadata(), evaluate_with_ai(), cmd_reprompt (re-prompt in existing worktree with failure context), cmd_evaluate (manual debugging). Max retries marks blocked (not failed). Pulse uses re-prompt instead of naive re-dispatch. Zero ShellCheck violations. PR #378 merged.
   - [ ] t128.4 TODO.md auto-update on completion/failure ~1h blocked-by:t128.3
     - Notes: On complete: add completed:date, commit+push. On blocked: add blocked-by:user "reason", send mail/Matrix notification, commit+push.
   - [ ] t128.5 Cron integration and auto-pickup ~30m blocked-by:t128.4
