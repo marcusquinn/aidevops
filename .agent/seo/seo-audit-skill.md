@@ -106,9 +106,9 @@ Before auditing, understand:
 - Font loading
 
 **Tools**
-- PageSpeed Insights
-- WebPageTest
-- Chrome DevTools
+- PageSpeed Insights (`tools/browser/pagespeed.md`)
+- WebPageTest (`tools/performance/webpagetest.md`)
+- Chrome DevTools (`tools/browser/chrome-devtools.md`)
 - Search Console Core Web Vitals report
 
 ### Mobile-Friendliness

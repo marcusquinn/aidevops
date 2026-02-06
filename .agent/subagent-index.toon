@@ -36,7 +36,7 @@ tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overv
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy
 tools/mobile/,Mobile development - iOS/Android emulators,minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
-tools/performance/,Web performance - Core Web Vitals and network analysis,performance
+tools/performance/,Web performance - Core Web Vitals and network analysis,performance|webpagetest
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing
