@@ -13,6 +13,7 @@ subagents:
   - site-crawler
   - screaming-frog
   - eeat-score
+  - contentking
   - domain-research
   - pagespeed
   - google-analytics
@@ -52,6 +53,7 @@ subagents:
 | `google-analytics.md` | GA4 reporting, traffic analysis, and user behavior (see `services/analytics/`) |
 | `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
 | `semrush.md` | Semrush API - domain analytics, keyword research, competitor analysis |
+| `contentking.md` | Conductor Monitoring (ContentKing) real-time SEO monitoring |
 | `ranking-opportunities.md` | Analyze data for quick wins, striking distance, cannibalization |
 | `analytics-tracking.md` | GA4 setup, event tracking, conversions, UTM parameters, attribution |
 | `rich-results.md` | Google Rich Results Test via browser automation (API deprecated) |
@@ -100,6 +102,7 @@ subagents:
 | `serper` | Serper.dev API | Google search results (web, images, news, places) |
 | `ahrefs` | Ahrefs REST API v3 | Backlinks, organic keywords, domain rating |
 | `semrush` | Semrush Analytics API v3 | Domain analytics, keywords, backlinks, competitor research |
+| `contentking` | Conductor Monitoring API v2 | Real-time SEO monitoring, change tracking, issues |
 
 Each subagent has curl examples. Load the relevant one when needed.
 
@@ -171,6 +174,7 @@ Combine tools:
 - Structured data validation
 - On-page analysis (DataForSEO)
 - **Site crawling**: Use `site-crawler.md` for comprehensive audits
+- **Real-time monitoring**: Use `contentking.md` for 24/7 SEO monitoring and change tracking
 
 ### Site Auditing
 
