@@ -25,7 +25,7 @@ pro,gemini-2.5-pro,Capable large context
 <!--TOON:subagents[39]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison
 memory/,Cross-session memory - SQLite FTS5 storage,README
-seo/,Search optimization - keywords and rankings,dataforseo|serper|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking
+seo/,Search optimization - keywords and rankings,dataforseo|serper|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools
 content/,Content creation - copywriting and editorial,guidelines|humanise
 tools/content/,Content tools - summarization and extraction,summarize
 tools/social-media/,Social media tools - X/Twitter CLI,bird
