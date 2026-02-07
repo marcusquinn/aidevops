@@ -310,7 +310,7 @@ voice-helper.sh benchmark         # Test component speeds
 - Session handback (transcript output on exit for calling agent)
 - Esc key interrupt in terminal, graceful degradation in TUI subprocess
 
-The full S2S pipeline below is for advanced use cases (custom LLMs, server/client deployment, multi-language, phone integration).
+The full S2S pipeline above is for advanced use cases (custom LLMs, server/client deployment, multi-language, phone integration).
 
 ## See Also
 
