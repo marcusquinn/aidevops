@@ -55,14 +55,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-07 ref:GH#437
-  - [ ] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none
-  - [ ] t148.2 Add triage_review_feedback() to classify threads by severity ~1.5h blocked-by:t148.1
-  - [ ] t148.3 Add review_triage state to supervisor state machine ~30m blocked-by:t148.1
-  - [ ] t148.4 Modify cmd_pr_lifecycle to include triage before merge ~1h blocked-by:t148.2,t148.3
-  - [ ] t148.5 Add worker dispatch for fixing valid review feedback ~1.5h blocked-by:t148.4
-  - [ ] t148.6 Add --skip-review-triage emergency bypass flag ~15m blocked-by:t148.4
-  - Notes: 11 of last 50 merged PRs had CHANGES_REQUESTED. 50 unresolved review threads, 12 high/critical. Bot reviews post as COMMENTED not CHANGES_REQUESTED so reviewDecision stays NONE. Need to check unresolved threads directly, not just reviewDecision.
+- [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
+  - [x] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none completed:2026-02-07
+  - [x] t148.2 Add triage_review_feedback() to classify threads by severity ~1.5h blocked-by:t148.1 completed:2026-02-07
+  - [x] t148.3 Add review_triage state to supervisor state machine ~30m blocked-by:t148.1 completed:2026-02-07
+  - [x] t148.4 Modify cmd_pr_lifecycle to include triage before merge ~1h blocked-by:t148.2,t148.3 completed:2026-02-07
+  - [x] t148.5 Add worker dispatch for fixing valid review feedback ~1.5h blocked-by:t148.4 completed:2026-02-07
+  - [x] t148.6 Add --skip-review-triage emergency bypass flag ~15m blocked-by:t148.4 completed:2026-02-07
+  - Notes: PR #489 merged. Added review_triage state, check_review_threads() via GraphQL, triage_review_feedback(), --skip-review-triage bypass. 7 new tests, all 53 pass. Bot reviews checked via unresolved threads (not reviewDecision).
 - [x] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h actual:3h (ai:3h) logged:2026-02-07 ref:GH#438 completed:2026-02-07
   - [x] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none completed:2026-02-07
   - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
