@@ -625,7 +625,7 @@ s020,p018,opencode run --format json streams structured events,Captured step_sta
 **Estimate:** ~3h (ai:1.5h test:1h read:30m)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p017,Dashboard Token Storage Hardening,planning,0,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,
+p017,Dashboard Token Storage Hardening,completed,3,3,,security|auth|dashboard,3h,1.5h,1h,30m,2026-02-03T00:00Z,2026-02-07T00:00Z
 -->
 
 #### Purpose
@@ -638,14 +638,14 @@ Current usage persists `dashboardToken` in `localStorage` in the MCP dashboard U
 
 #### Progress
 
-- [ ] (2026-02-03) Phase 1: Trace token flow and identify all storage/read paths ~45m
-- [ ] (2026-02-03) Phase 2: Migrate to session/memory storage and update auth flow ~1.5h
-- [ ] (2026-02-03) Phase 3: Add reset/clear UI flow and verify behavior ~45m
+- [x] (2026-02-07) Phase 1: Trace token flow and identify all storage/read paths ~45m actual:5m
+- [x] (2026-02-07) Phase 2: Migrate to session/memory storage and update auth flow ~1.5h actual:10m
+- [x] (2026-02-07) Phase 3: Add reset/clear UI flow and verify behavior ~45m actual:5m
 
 <!--TOON:milestones[3]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m088,p017,Phase 1: Trace token flow and storage paths,45m,,2026-02-03T00:00Z,,pending
-m089,p017,Phase 2: Migrate to session/memory storage and update auth flow,1.5h,,2026-02-03T00:00Z,,pending
-m090,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,,2026-02-03T00:00Z,,pending
+m088,p017,Phase 1: Trace token flow and storage paths,45m,5m,2026-02-03T00:00Z,2026-02-07T00:00Z,completed
+m089,p017,Phase 2: Migrate to session/memory storage and update auth flow,1.5h,10m,2026-02-03T00:00Z,2026-02-07T00:00Z,completed
+m090,p017,Phase 3: Add reset/clear UI flow and verify behavior,45m,5m,2026-02-03T00:00Z,2026-02-07T00:00Z,completed
 -->
 
 #### Decision Log
@@ -850,9 +850,12 @@ m011,p003,Phase 3: Implement chosen approach and test,1.5h,,2025-12-21T14:00Z,,p
 
 #### Decision Log
 
-(To be populated during analysis)
+- **d001**: Use `sessionStorage` over in-memory variable. Rationale: sessionStorage auto-clears on tab close (matching security goal) while surviving in-page navigation/refresh (better UX than pure in-memory). Still scoped to same-origin, not accessible cross-tab.
+- **d002**: Clear input field after token submission. Rationale: prevents token from sitting in a visible/inspectable input field. Status indicator shows "Token set (session only)" instead.
 
-<!--TOON:decisions[0]{id,plan_id,decision,rationale,date,impact}:
+<!--TOON:decisions[2]{id,plan_id,decision,rationale,date,impact}:
+d001,p017,sessionStorage over in-memory variable,Auto-clears on tab close while surviving refresh; same-origin scoped,2026-02-07,security+ux
+d002,p017,Clear input after token set,Prevents token sitting in inspectable input field,2026-02-07,security
 -->
 
 #### Surprises & Discoveries
