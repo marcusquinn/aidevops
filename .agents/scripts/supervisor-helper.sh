@@ -1378,18 +1378,21 @@ resolve_model() {
     local tier="${1:-coding}"
     local ai_cli="${2:-opencode}"
 
+    # Allow env var override for all tiers
+    if [[ -n "${SUPERVISOR_MODEL:-}" ]]; then
+        echo "$SUPERVISOR_MODEL"
+        return 0
+    fi
+
     case "$tier" in
         coding)
             # Best Anthropic model - primary for all code tasks
             echo "anthropic/claude-opus-4-6"
             ;;
-        eval)
-            # Fast + cheap for evaluation decisions
-            echo "anthropic/claude-sonnet-4"
-            ;;
-        health)
-            # Cheapest possible for health probes
-            echo "anthropic/claude-sonnet-4"
+        eval|health)
+            # Fast + cheap for evaluation and health probes
+            # Note: OpenCode requires full model IDs (e.g., claude-sonnet-4-5, not claude-sonnet-4)
+            echo "anthropic/claude-sonnet-4-5"
             ;;
     esac
 
@@ -1425,6 +1428,14 @@ check_model_health() {
         fi
     fi
 
+    # Resolve timeout command (macOS lacks coreutils timeout)
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout"
+    fi
+
     # Send a trivial prompt
     local probe_result=""
     local probe_exit=1
@@ -1435,15 +1446,60 @@ check_model_health() {
             probe_cmd+=(-m "$model")
         fi
         probe_cmd+=(--title "health-check" "Reply with exactly: OK")
-        probe_result=$(timeout 15 "${probe_cmd[@]}" 2>&1) || true
-        probe_exit=$?
+        if [[ -n "$timeout_cmd" ]]; then
+            probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
+            probe_exit=$?
+        else
+            # Fallback: background process with manual kill after 15s
+            local probe_pid probe_tmpfile
+            probe_tmpfile=$(mktemp)
+            ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
+            probe_pid=$!
+            local waited=0
+            while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
+                sleep 1
+                waited=$((waited + 1))
+            done
+            if kill -0 "$probe_pid" 2>/dev/null; then
+                kill "$probe_pid" 2>/dev/null || true
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=124  # Simulate timeout exit code
+            else
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=$?
+            fi
+            probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
+            rm -f "$probe_tmpfile"
+        fi
     else
         local -a probe_cmd=(claude -p "Reply with exactly: OK" --output-format text)
         if [[ -n "$model" ]]; then
             probe_cmd+=(--model "$model")
         fi
-        probe_result=$(timeout 15 "${probe_cmd[@]}" 2>&1) || true
-        probe_exit=$?
+        if [[ -n "$timeout_cmd" ]]; then
+            probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
+            probe_exit=$?
+        else
+            local probe_pid probe_tmpfile
+            probe_tmpfile=$(mktemp)
+            ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
+            probe_pid=$!
+            local waited=0
+            while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
+                sleep 1
+                waited=$((waited + 1))
+            done
+            if kill -0 "$probe_pid" 2>/dev/null; then
+                kill "$probe_pid" 2>/dev/null || true
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=124
+            else
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=$?
+            fi
+            probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
+            rm -f "$probe_tmpfile"
+        fi
     fi
 
     # Check for known failure patterns
@@ -2159,6 +2215,20 @@ evaluate_worker() {
     meta_pr_url=$(_meta_get "pr_url" "")
     meta_exit_code=$(_meta_get "exit_code" "")
 
+    # Fallback PR URL detection: if log didn't contain a PR URL, check GitHub
+    # for a PR matching the task's branch (feature/tXXX)
+    if [[ -z "$meta_pr_url" ]]; then
+        local task_repo
+        task_repo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        if [[ -n "$task_repo" ]]; then
+            local repo_slug_detect
+            repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+            if [[ -n "$repo_slug_detect" ]]; then
+                meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+            fi
+        fi
+    fi
+
     local meta_rate_limit_count meta_auth_error_count meta_conflict_count
     local meta_timeout_count meta_oom_count meta_backend_error_count
     meta_rate_limit_count=$(_meta_get "rate_limit_count" "0")
@@ -2557,9 +2627,31 @@ check_pr_status() {
     local pr_url
     pr_url=$(sqlite3 "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
 
+    # If no PR URL stored, try to find one via branch name lookup
     if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
-        echo "no_pr"
-        return 0
+        local task_repo_check
+        task_repo_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        if [[ -n "$task_repo_check" ]]; then
+            local repo_slug_check
+            repo_slug_check=$(git -C "$task_repo_check" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+            if [[ -n "$repo_slug_check" ]]; then
+                local found_pr_url
+                found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                if [[ -n "$found_pr_url" ]]; then
+                    pr_url="$found_pr_url"
+                    sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr_url")' WHERE id = '$escaped_id';" 2>/dev/null || true
+                else
+                    echo "no_pr"
+                    return 0
+                fi
+            else
+                echo "no_pr"
+                return 0
+            fi
+        else
+            echo "no_pr"
+            return 0
+        fi
     fi
 
     # Extract owner/repo and PR number from URL
@@ -2569,16 +2661,8 @@ check_pr_status() {
     repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
 
     if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
-        # Try to get PR from branch in the worktree
-        local tworktree
-        tworktree=$(sqlite3 "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';")
-        if [[ -n "$tworktree" && -d "$tworktree" ]]; then
-            pr_number=$(gh pr view --json number --jq '.number' 2>/dev/null --repo "$repo_slug" || echo "")
-        fi
-        if [[ -z "$pr_number" ]]; then
-            echo "no_pr"
-            return 0
-        fi
+        echo "no_pr"
+        return 0
     fi
 
     # Check PR state
@@ -2955,12 +3039,28 @@ cmd_pr_lifecycle() {
     # Step 1: Transition to pr_review if still in complete
     if [[ "$tstatus" == "complete" ]]; then
         if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
-            log_warn "No PR for $task_id - skipping post-PR lifecycle"
-            # Mark as deployed directly (no PR to merge)
-            if [[ "$dry_run" == "false" ]]; then
-                cmd_transition "$task_id" "deployed" 2>/dev/null || true
+            # Before marking deployed, try to find a PR via gh pr list
+            local found_pr=""
+            if [[ -n "$trepo" ]]; then
+                local repo_slug_lifecycle
+                repo_slug_lifecycle=$(git -C "$trepo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+                if [[ -n "$repo_slug_lifecycle" ]]; then
+                    found_pr=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                fi
             fi
-            return 0
+            if [[ -n "$found_pr" ]]; then
+                log_info "Found PR for $task_id via branch lookup: $found_pr"
+                if [[ "$dry_run" == "false" ]]; then
+                    sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr")' WHERE id = '$escaped_id';"
+                    tpr="$found_pr"
+                fi
+            else
+                log_warn "No PR for $task_id - skipping post-PR lifecycle"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "deployed" 2>/dev/null || true
+                fi
+                return 0
+            fi
         fi
         if [[ "$dry_run" == "false" ]]; then
             cmd_transition "$task_id" "pr_review" 2>/dev/null || true
@@ -3021,9 +3121,12 @@ cmd_pr_lifecycle() {
                 ;;
             no_pr)
                 log_warn "No PR found for $task_id"
-                if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "deployed" 2>/dev/null || true
-                fi
+                # PR URL in DB is stale or wrong - the PR may not exist yet
+                # or the stored URL was incorrect. Log for investigation.
+                log_warn "  -> merging"
+                log_warn "  -> blocked"
+                log_warn "  -> cancelled"
+                # Don't auto-deploy - leave in pr_review for next pulse to retry
                 return 0
                 ;;
         esac
@@ -3458,7 +3561,7 @@ cmd_pulse() {
             local cleanup_status
             cleanup_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$cleanup_tid")';" 2>/dev/null || echo "")
             case "$cleanup_status" in
-                complete|failed|cancelled|blocked)
+                complete|failed|cancelled|blocked|deployed|pr_review|merging|merged|deploying)
                     cleanup_worker_processes "$cleanup_tid" 2>/dev/null || true
                     orphan_killed=$((orphan_killed + 1))
                     ;;
