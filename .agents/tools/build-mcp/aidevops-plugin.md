@@ -20,7 +20,7 @@ tools:
 - **Status**: Design phase (not yet implemented)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Approach**: Thin wrapper that loads existing aidevops agents/MCPs
-- **Compatibility**: Works alongside oh-my-opencode
+- **Compatibility**: Works with OpenCode plugin system
 
 **Key Decision**: aidevops is built for OpenCode (TUI, Desktop, Extension).
 The plugin provides additional OpenCode-specific enhancements.
@@ -319,8 +319,6 @@ const configSchema = z.object({
     qualityCheck: z.boolean().default(true),
   }).default({}),
   
-  // Integration with oh-my-opencode
-  omoCompatibility: z.boolean().default(true),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -375,52 +373,6 @@ export async function loadConfig(): Promise<Config> {
 }
 ```
 
-## Integration with oh-my-opencode
-
-### Compatibility Mode
-
-When both plugins are installed:
-
-```json
-// ~/.config/opencode/opencode.json
-{
-  "plugin": [
-    "oh-my-opencode",
-    "aidevops-opencode",
-    "opencode-antigravity-auth@latest"
-  ]
-}
-```
-
-The aidevops plugin should:
-
-1. **Detect OmO presence** and adjust behavior
-2. **Disable duplicate MCPs** (Context7 if OmO provides it)
-3. **Namespace agents** to avoid conflicts
-4. **Complement hooks** rather than duplicate
-
-```typescript
-// src/index.ts - OmO compatibility
-async setup(input: PluginInput) {
-  const config = await loadConfig();
-  
-  // Check if oh-my-opencode is loaded
-  const omoLoaded = input.plugins?.includes('oh-my-opencode');
-  
-  if (omoLoaded && config.omoCompatibility) {
-    // Disable MCPs that OmO provides (websearch_exa, context7, grep_app)
-    // aidevops doesn't add these - OmO handles them
-    // We just need to avoid conflicts with agent names
-    config.disabledMcps.push('context7', 'websearch_exa');
-    
-    // Note: OmO provides grep_app for GitHub search
-    // aidevops uses @github-search subagent (CLI-based, zero token overhead)
-  }
-  
-  // Continue with setup...
-}
-```
-
 ## Implementation Roadmap
 
 ### Phase 1: Core Plugin (MVP)
@@ -441,12 +393,6 @@ async setup(input: PluginInput) {
 - [ ] Dynamic agent reloading
 - [ ] MCP health monitoring
 - [ ] Integration with aidevops update system
-
-### Phase 4: OmO Integration
-
-- [ ] Compatibility detection
-- [ ] Shared configuration
-- [ ] Combined workflows
 
 ## Decision: Plugin vs Current Approach
 
@@ -469,10 +415,9 @@ Build the plugin when:
 1. OpenCode becomes dominant AI CLI tool
 2. Users request native plugin experience
 3. Hooks become essential (quality gates, etc.)
-4. oh-my-opencode integration needs tighter coupling
+4. Plugin hooks become essential (quality gates, etc.)
 
 ## References
 
 - [OpenCode Plugin SDK](https://opencode.ai/docs/plugins)
-- [oh-my-opencode Source](https://github.com/code-yeongyu/oh-my-opencode)
 - [aidevops Framework](https://github.com/marcusquinn/aidevops)

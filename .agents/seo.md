@@ -276,24 +276,4 @@ Integrate with `content.md` for:
 | Position Tracking | No | No | No | No | Yes (Projects API) |
 | Pricing | Free | Subscription | Pay-per-search | Subscription | Unit-based |
 
-## Oh-My-OpenCode Integration
 
-When oh-my-opencode is installed, leverage these specialized agents for enhanced SEO workflows:
-
-| OmO Agent | When to Use | Example |
-|-----------|-------------|---------|
-| `@document-writer` | Content optimization, meta descriptions, SEO copywriting | "Ask @document-writer to optimize this article for 'keyword'" |
-| `@librarian` | Research SEO best practices, find implementation examples | "Ask @librarian for schema markup examples" |
-| `@multimodal-looker` | Analyze competitor screenshots, infographics | "Ask @multimodal-looker to analyze this competitor's page layout" |
-
-**Content Optimization Workflow**:
-
-```text
-1. /keyword-research "topic" → identify targets
-2. @document-writer → create optimized content
-3. E-E-A-T analysis → validate quality
-4. Technical SEO → implement schema, meta
-```
-
-**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
-See `tools/opencode/oh-my-opencode.md` for installation.

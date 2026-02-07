@@ -292,38 +292,6 @@ opencode auth login
 - **Automatic token refresh** - No manual re-authentication needed
 - **Beta features enabled** - Extended thinking modes and latest features
 
-### Oh-My-OpenCode Plugin (Optional)
-
-The setup offers to install [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) - a complementary plugin that adds **coding productivity features**:
-
-| Feature | Description |
-|---------|-------------|
-| **Async Background Agents** | Run multiple agents in parallel (like Claude Code) |
-| **LSP Tools** | 11 tools: hover, goto definition, references, rename, code actions |
-| **AST-Grep** | Semantic code search and replace across 25 languages |
-| **Curated Agents** | OmO (Opus 4.5), Oracle (GPT 5.2), Librarian (Sonnet 4.5), Explore (Grok) |
-| **Claude Code Compatibility** | Full support for hooks, commands, skills from `.claude/` directories |
-| **21 Lifecycle Hooks** | Comment checker, todo enforcer, context window monitor, session recovery |
-
-**How they complement each other:**
-
-- **aidevops** provides DevOps infrastructure (30+ services: hosting, DNS, WordPress, SEO, code quality)
-- **oh-my-opencode** provides coding productivity (LSP, AST, background agents, hooks)
-
-**Usage after installation:**
-
-```bash
-# Trigger maximum performance mode
-> ultrawork implement the authentication system
-
-# Use curated agents
-> @oracle review this architecture
-> @librarian find examples of this pattern on GitHub
-> @explore search for authentication handling
-```
-
-See `.agents/tools/opencode/oh-my-opencode.md` for the full compatibility guide.
-
 ### GitHub AI Agent Integration
 
 Enable AI-powered issue resolution directly from GitHub. Comment `/oc fix this` on any issue and the AI creates a branch, implements the fix, and opens a PR.

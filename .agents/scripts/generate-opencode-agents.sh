@@ -233,13 +233,13 @@ AGENT_MODEL_TIERS = {
     # "Build+": "sonnet",
     # "Research": "flash",
     # "Content": "sonnet",
-    # "Sisyphus": "opus",
-    # "Planner-Sisyphus": "sonnet",
+
 }
 
 # Files to skip (not primary agents)
 # Includes SKIP_PRIMARY_AGENTS (demoted agents that are now subagents)
-SKIP_FILES = {"AGENTS.md", "README.md"} | SKIP_PRIMARY_AGENTS
+# SKILL-SCAN-RESULTS.md is a generated report, not an agent
+SKIP_FILES = {"AGENTS.md", "README.md", "SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
 
 def parse_frontmatter(filepath):
     """Parse YAML frontmatter from markdown file."""
@@ -383,54 +383,6 @@ def sort_key(name):
     return (1, name.lower())
 
 sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])))
-
-# =============================================================================
-# OH-MY-OPENCODE AGENTS - Added after WordPress (end of alphabetical list)
-# These are OmO's agents, disabled from replacing build/plan via omo_agent.disabled
-# We re-add them here with controlled ordering
-# =============================================================================
-
-# Check if oh-my-opencode is installed
-omo_config_path = os.path.expanduser("~/.config/opencode/oh-my-opencode.json")
-if os.path.exists(omo_config_path):
-    try:
-        with open(omo_config_path, 'r') as f:
-            omo_config = json.load(f)
-        
-        # Only add if omo_agent is disabled (we're taking control of ordering)
-        if omo_config.get('omo_agent', {}).get('disabled', False):
-            # Add Sisyphus after all other agents
-            # Include custom prompt for consistent identity (same as other primary agents)
-            prompt_file = os.path.expanduser(DEFAULT_PROMPT)
-            prompt_config = {"{file:" + DEFAULT_PROMPT + "}"} if os.path.exists(prompt_file) else {}
-            
-            sorted_agents["Sisyphus"] = {
-                "description": "OmO orchestrator - aggressive parallel execution with background agents (Claude Opus 4.5)",
-                "mode": "primary",
-                "temperature": 0.2,
-                "permission": {"external_directory": "allow"},
-                "tools": {
-                    "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
-                    "webfetch": True, "task": True, "todoread": True, "todowrite": True,
-                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
-                },
-                "prompt": "{file:" + DEFAULT_PROMPT + "}"
-            }
-            sorted_agents["Planner-Sisyphus"] = {
-                "description": "OmO planning agent - analysis and architecture without modifications",
-                "mode": "primary",
-                "temperature": 0.2,
-                "permission": {"edit": "deny", "write": "deny", "bash": "deny"},
-                "tools": {
-                    "write": False, "edit": False, "bash": False,
-                    "read": True, "glob": True, "grep": True, "webfetch": True, "task": False,
-                    "context7_*": True, "osgrep_*": True, "augment-context-engine_*": True
-                },
-                "prompt": "{file:" + DEFAULT_PROMPT + "}"
-            }
-            print("  Added OmO agents: Sisyphus, Planner-Sisyphus (after WordPress)")
-    except:
-        pass  # OmO config not readable, skip
 
 # =============================================================================
 # DISABLE DEFAULT BUILD/PLAN AGENTS AND DEMOTED AGENTS

@@ -91,27 +91,4 @@ Integrate with WordPress workflow:
 - Technical documentation
 - Marketing copy
 
-## Oh-My-OpenCode Integration
 
-When oh-my-opencode is installed, leverage these specialized agents for enhanced content creation:
-
-| OmO Agent | When to Use | Example |
-|-----------|-------------|---------|
-| `@document-writer` | Technical writing, documentation, long-form content | "Ask @document-writer to create a comprehensive guide on [topic]" |
-| `@librarian` | Research best practices, find reference materials | "Ask @librarian for content structure examples" |
-| `@multimodal-looker` | Analyze visual content, infographics, competitor layouts | "Ask @multimodal-looker to describe this infographic for alt text" |
-
-**Enhanced Content Workflow**:
-
-```text
-1. Research → @librarian finds examples and best practices
-2. Outline → Content agent structures the piece
-3. Draft → @document-writer creates polished prose
-4. Humanise → /humanise removes AI patterns, adds voice
-5. Optimize → SEO agent adds keywords, meta
-6. Visual → @multimodal-looker analyzes/describes images
-7. Publish → WordPress agent deploys
-```
-
-**Note**: These agents require [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) plugin.
-See `tools/opencode/oh-my-opencode.md` for installation.

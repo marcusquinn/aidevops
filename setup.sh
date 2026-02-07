@@ -212,6 +212,8 @@ cleanup_deprecated_paths() {
         "$agents_dir/tools/ai-assistants/windsurf.md"
         "$agents_dir/tools/ai-assistants/configuration.md"
         "$agents_dir/tools/ai-assistants/status.md"
+        # Removed oh-my-opencode integration (no longer supported)
+        "$agents_dir/tools/opencode/oh-my-opencode.md"
     )
     
     for path in "${deprecated_paths[@]}"; do
@@ -499,7 +501,6 @@ disable_ondemand_mcps() {
         "augment-context-engine"
         "gh_grep"
         "google-analytics-mcp"
-        # Oh-My-OpenCode MCPs - replaced by @github-search subagent
         "grep_app"
         "websearch"
         # KEEP ENABLED: osgrep (semantic code search), context7 (library docs)
@@ -523,13 +524,6 @@ disable_ondemand_mcps() {
             fi
         fi
     done
-    
-    # Remove oh-my-opencode plugin if present (it adds unwanted MCPs like grep_app, websearch)
-    # Users who want OmO can re-add it manually
-    if jq -e '.plugin | index("oh-my-opencode")' "$tmp_config" > /dev/null 2>&1; then
-        jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-        print_info "Removed oh-my-opencode plugin (adds unwanted MCPs)"
-    fi
     
     # Remove invalid MCP entries added by v2.100.16 bug
     # These have type "stdio" (invalid - only "local" or "remote" are valid)
@@ -3439,110 +3433,10 @@ setup_opencode_plugins() {
     return 0
 }
 
-# Setup Oh-My-OpenCode Plugin (coding productivity features)
+# Setup Oh-My-OpenCode Plugin (removed - no longer supported)
+# Kept as stub for backward compatibility with any callers
 setup_oh_my_opencode() {
-    print_info "Setting up Oh-My-OpenCode plugin..."
-    
-    # Check if OpenCode is installed
-    if ! command -v opencode &> /dev/null; then
-        print_warning "OpenCode not found - Oh-My-OpenCode setup skipped"
-        return 0
-    fi
-    
-    # Check if config exists
-    local opencode_config
-    if ! opencode_config=$(find_opencode_config); then
-        print_warning "OpenCode config not found - Oh-My-OpenCode setup skipped"
-        return 0
-    fi
-    
-    # Check if jq is available
-    if ! command -v jq &> /dev/null; then
-        print_warning "jq not found - cannot update OpenCode config"
-        return 0
-    fi
-    
-    echo ""
-    print_info "Oh-My-OpenCode adds coding productivity features:"
-    echo "  • Async background agents (parallel task execution)"
-    echo "  • LSP tools (11 tools: hover, goto, references, rename, etc.)"
-    echo "  • AST-Grep (semantic code search/replace)"
-    echo "  • Curated agents (OmO, Oracle, Librarian, Explore, Frontend)"
-    echo "  • Claude Code compatibility (hooks, commands, skills)"
-    echo "  • Context window monitoring and session recovery"
-    echo ""
-    echo "  Note: aidevops provides DevOps infrastructure (hosting, DNS, WordPress, SEO)"
-    echo "        Oh-My-OpenCode provides coding productivity (LSP, AST, background agents)"
-    echo "        They are complementary and work well together."
-    echo ""
-    
-    read -r -p "Install Oh-My-OpenCode plugin? [Y/n]: " install_omo
-    
-    if [[ ! "$install_omo" =~ ^[Yy]?$ ]]; then
-        print_info "Skipped Oh-My-OpenCode installation"
-        return 0
-    fi
-    
-    local plugin_name="oh-my-opencode"
-    
-    # Check if plugin array exists
-    local has_plugin_array
-    has_plugin_array=$(jq -e '.plugin' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
-    
-    if [[ "$has_plugin_array" == "true" ]]; then
-        # Check if plugin is already in the array
-        local plugin_exists
-        plugin_exists=$(jq -e --arg p "$plugin_name" '.plugin | map(select(. == $p or startswith($p + "@"))) | length > 0' "$opencode_config" >/dev/null 2>&1 && echo "true" || echo "false")
-        
-        if [[ "$plugin_exists" == "true" ]]; then
-            print_info "Oh-My-OpenCode already configured"
-        else
-            # Add plugin to existing array
-            local temp_file
-            temp_file=$(mktemp)
-            jq --arg p "$plugin_name" '.plugin += [$p]' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
-            print_success "Added Oh-My-OpenCode plugin to OpenCode config"
-        fi
-    else
-        # Create plugin array with the plugin
-        local temp_file
-        temp_file=$(mktemp)
-        jq --arg p "$plugin_name" '. + {plugin: [$p]}' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
-        print_success "Created plugin array with Oh-My-OpenCode"
-    fi
-    
-    # Create oh-my-opencode config if it doesn't exist
-    local omo_config="$HOME/.config/opencode/oh-my-opencode.json"
-    if [[ ! -f "$omo_config" ]]; then
-        print_info "Creating Oh-My-OpenCode configuration..."
-        cat > "$omo_config" << 'EOF'
-{
-  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json",
-  "google_auth": false,
-  "disabled_mcps": ["context7"],
-  "agents": {}
-}
-EOF
-        print_success "Created $omo_config"
-        print_info "Note: context7 MCP disabled in OmO (aidevops configures it separately)"
-    fi
-    
-    print_success "Oh-My-OpenCode plugin configured"
-    echo ""
-    print_info "Oh-My-OpenCode features now available:"
-    echo "  • Type 'ultrawork' or 'ulw' for maximum performance mode"
-    echo "  • Background agents run in parallel"
-    echo "  • LSP tools: lsp_hover, lsp_goto_definition, lsp_rename, etc."
-    echo "  • AST-Grep: ast_grep_search, ast_grep_replace"
-    echo ""
-    print_info "Curated agents (use @agent-name):"
-    echo "  • @oracle     - Architecture, code review (GPT 5.2)"
-    echo "  • @librarian  - Docs lookup, GitHub examples (Sonnet 4.5)"
-    echo "  • @explore    - Fast codebase exploration (Grok)"
-    echo "  • @frontend-ui-ux-engineer - UI development (Gemini 3 Pro)"
-    echo ""
-    print_info "Documentation: https://github.com/code-yeongyu/oh-my-opencode"
-    
+    # Removed - oh-my-opencode no longer supported
     return 0
 }
 
@@ -3953,9 +3847,8 @@ main() {
         confirm_step "Setup browser automation tools" && setup_browser_tools
         confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
         confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
-        confirm_step "Setup Oh-My-OpenCode" && setup_oh_my_opencode
-        # Run AFTER all MCP setup functions (including OmO) to ensure disabled state persists
-        confirm_step "Disable on-demand MCPs globally (incl. OmO: grep_app, websearch)" && disable_ondemand_mcps
+        # Run AFTER all MCP setup functions to ensure disabled state persists
+        confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
     fi
 
     echo ""
