@@ -5,9 +5,10 @@
 #
 # Version: 2.105.4
 #
-# Quick Install (one-liner):
-#   bash <(curl -fsSL https://aidevops.dev/install)
-#   OR: bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
+# Quick Install:
+#   npm install -g aidevops && aidevops update          (recommended)
+#   brew install marcusquinn/tap/aidevops && aidevops update  (Homebrew)
+#   curl -fsSL https://aidevops.sh -o /tmp/aidevops-setup.sh && bash /tmp/aidevops-setup.sh  (manual)
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -62,6 +63,73 @@ run_with_spinner() {
     fi
     
     return $exit_code
+}
+
+# Verified install: download script to temp file, inspect, then execute
+# Replaces unsafe curl|sh patterns with download-verify-execute
+# Usage: verified_install "description" "url" [extra_args...]
+# Options (set before calling):
+#   VERIFIED_INSTALL_SUDO="true"  - run with sudo
+#   VERIFIED_INSTALL_SHELL="sh"  - use sh instead of bash (default: bash)
+# Returns: 0 on success, 1 on failure
+verified_install() {
+    local description="$1"
+    local url="$2"
+    shift 2
+    local extra_args=("$@")
+    local shell="${VERIFIED_INSTALL_SHELL:-bash}"
+    local use_sudo="${VERIFIED_INSTALL_SUDO:-false}"
+
+    # Reset options for next call
+    VERIFIED_INSTALL_SUDO="false"
+    VERIFIED_INSTALL_SHELL="bash"
+
+    # Create secure temp file
+    local tmp_script
+    tmp_script=$(mktemp "${TMPDIR:-/tmp}/aidevops-install-XXXXXX.sh") || {
+        print_error "Failed to create temp file for $description"
+        return 1
+    }
+
+    # Ensure cleanup on exit from this function
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp_script'" RETURN
+
+    # Download script to file (not piped to shell)
+    print_info "Downloading $description install script..."
+    if ! curl -fsSL "$url" -o "$tmp_script" 2>/dev/null; then
+        print_error "Failed to download $description install script from $url"
+        return 1
+    fi
+
+    # Verify download is non-empty and looks like a script
+    if [[ ! -s "$tmp_script" ]]; then
+        print_error "Downloaded $description script is empty"
+        return 1
+    fi
+
+    # Basic content safety check: reject binary content
+    if file "$tmp_script" 2>/dev/null | grep -qv 'text'; then
+        print_error "Downloaded $description script appears to be binary, not a shell script"
+        return 1
+    fi
+
+    # Make executable
+    chmod +x "$tmp_script"
+
+    # Execute from file
+    local cmd=("$shell" "$tmp_script" "${extra_args[@]}")
+    if [[ "$use_sudo" == "true" ]]; then
+        cmd=(sudo "$shell" "$tmp_script" "${extra_args[@]}")
+    fi
+
+    if "${cmd[@]}"; then
+        print_success "$description installed"
+        return 0
+    else
+        print_error "$description installation failed"
+        return 1
+    fi
 }
 
 # Find OpenCode config file (checks multiple possible locations)
@@ -1227,8 +1295,9 @@ setup_oh_my_zsh() {
     
     if [[ "$install_omz" =~ ^[Yy]$ ]]; then
         print_info "Installing Oh My Zsh..."
-        # Use --unattended to avoid changing the shell or starting zsh
-        if sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended; then
+        # Use verified download + --unattended to avoid changing the shell or starting zsh
+        VERIFIED_INSTALL_SHELL="sh"
+        if verified_install "Oh My Zsh" "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh" --unattended; then
             print_success "Oh My Zsh installed"
             
             # Ensure .zshrc exists (Oh My Zsh creates it, but verify)
@@ -1251,11 +1320,11 @@ setup_oh_my_zsh() {
             fi
         else
             print_warning "Oh My Zsh installation failed"
-            print_info "Install manually: sh -c \"\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\""
+            print_info "Install manually: curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o /tmp/omz-install.sh && sh /tmp/omz-install.sh"
         fi
     else
         print_info "Skipped Oh My Zsh installation"
-        print_info "Install later: sh -c \"\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\""
+        print_info "Install later: curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o /tmp/omz-install.sh && sh /tmp/omz-install.sh"
     fi
     
     return 0
@@ -1736,15 +1805,17 @@ setup_recommended_tools() {
                     pkg_manager=$(detect_package_manager)
                     case "$pkg_manager" in
                         apt)
-                            # Add packagecloud repo for Tabby
-                            print_info "Adding Tabby repository..."
-                            curl -s https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh | sudo bash
-                            sudo apt-get install -y tabby-terminal
+                            # Add packagecloud repo for Tabby (verified download, not piped to sudo)
+                            VERIFIED_INSTALL_SUDO="true"
+                            if verified_install "Tabby repository (apt)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh"; then
+                                sudo apt-get install -y tabby-terminal
+                            fi
                             ;;
                         dnf|yum)
-                            print_info "Adding Tabby repository..."
-                            curl -s https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh | sudo bash
-                            sudo "$pkg_manager" install -y tabby-terminal
+                            VERIFIED_INSTALL_SUDO="true"
+                            if verified_install "Tabby repository (rpm)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh"; then
+                                sudo "$pkg_manager" install -y tabby-terminal
+                            fi
                             ;;
                         pacman)
                             # AUR package
@@ -1780,10 +1851,9 @@ setup_recommended_tools() {
                         echo "  Download manually: https://zed.dev/download"
                     fi
                 elif [[ "$(uname)" == "Linux" ]]; then
-                    # Zed provides an install script for Linux (interactive, can't use spinner)
-                    print_info "Running Zed install script..."
-                    if curl -f https://zed.dev/install.sh | sh; then
-                        print_success "Zed installed successfully"
+                    # Zed provides an install script for Linux (verified download)
+                    VERIFIED_INSTALL_SHELL="sh"
+                    if verified_install "Zed" "https://zed.dev/install.sh"; then
                         zed_installed=true
                     else
                         print_warning "Failed to install Zed"
@@ -2951,7 +3021,7 @@ install_mcp_packages() {
         install_cmd="npm install -g"
     else
         print_warning "Neither bun nor npm found - cannot install MCP packages"
-        print_info "Install bun (recommended): curl -fsSL https://bun.sh/install | bash"
+        print_info "Install bun (recommended): npm install -g bun OR brew install oven-sh/bun/bun"
         return 0
     fi
 
@@ -3382,15 +3452,15 @@ setup_beads_ui() {
                     print_warning "Go install failed"
                 fi
             else
-                # Offer curl install script
+                # Offer verified install script (download-then-execute, not piped)
                 read -r -p "  Install bv via install script? [Y/n]: " use_script
                 if [[ "$use_script" =~ ^[Yy]?$ ]]; then
-                    if run_with_spinner "Installing bv via script" bash -c 'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh" | bash'; then
+                    if verified_install "bv (beads viewer)" "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"; then
                         print_info "Run: bv (in a beads-enabled project)"
                         ((installed_count++))
                     else
                         print_warning "Install script failed - try manually:"
-                        print_info "  curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash"
+                        print_info "  Homebrew: brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
                     fi
                 else
                     print_info "Install later:"
@@ -3464,7 +3534,7 @@ setup_browser_tools() {
     # Install Bun if not present (required for dev-browser)
     if [[ "$has_bun" == "false" ]]; then
         print_info "Installing Bun (required for dev-browser)..."
-        if curl -fsSL https://bun.sh/install | bash 2>/dev/null; then
+        if verified_install "Bun" "https://bun.sh/install"; then
             # Source the updated PATH
             export BUN_INSTALL="$HOME/.bun"
             export PATH="$BUN_INSTALL/bin:$PATH"

@@ -588,8 +588,24 @@ cmd_update() {
         fi
     else
         print_warning "Repository not found, performing fresh install..."
-        # shellcheck disable=SC2312  # curl|bash is intentional for install
-        bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)
+        # Download setup script to temp file first (not piped to shell)
+        local tmp_setup
+        tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX.sh") || {
+            print_error "Failed to create temp file for setup script"
+            return 1
+        }
+        if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
+            chmod +x "$tmp_setup"
+            bash "$tmp_setup"
+            local setup_exit=$?
+            rm -f "$tmp_setup"
+            [[ $setup_exit -ne 0 ]] && return 1
+        else
+            rm -f "$tmp_setup"
+            print_error "Failed to download setup script"
+            print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"
+            return 1
+        fi
     fi
     
     # Check registered repos for updates
@@ -798,7 +814,8 @@ cmd_uninstall() {
     echo ""
     print_success "Uninstall complete!"
     print_info "To reinstall, run:"
-    echo "  bash <(curl -fsSL https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh)"
+    echo "  npm install -g aidevops && aidevops update"
+    echo "  OR: brew install marcusquinn/tap/aidevops && aidevops update"
 }
 
 # Init command - initialize aidevops in a project
@@ -2019,9 +2036,9 @@ cmd_help() {
     echo "  aidevops skill remove <name> # Remove an imported skill"
     echo ""
     echo "Installation:"
-    echo "  npm install -g aidevops && aidevops update      # via npm"
+    echo "  npm install -g aidevops && aidevops update      # via npm (recommended)"
     echo "  brew install marcusquinn/tap/aidevops && aidevops update  # via Homebrew"
-    echo "  bash <(curl -fsSL https://aidevops.sh) # via curl"
+    echo "  curl -fsSL https://aidevops.sh -o /tmp/aidevops-setup.sh && bash /tmp/aidevops-setup.sh  # manual"
     echo ""
     echo "Documentation: https://github.com/marcusquinn/aidevops"
 }
