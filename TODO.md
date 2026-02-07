@@ -55,6 +55,61 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) logged:2026-02-07
+  - [ ] t135.1 P0-A: Add set -euo pipefail to 70 scripts missing strict mode ~4h blocked-by:none
+    - [ ] t135.1.1 Audit 70 scripts for intentional failures needing || true guards ~2h
+    - [ ] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1
+    - [ ] t135.1.3 Run bash -n + shellcheck on all modified scripts ~15m blocked-by:t135.1.2
+    - [ ] t135.1.4 Smoke test help command for each modified script ~15m blocked-by:t135.1.3
+  - [ ] t135.2 P0-B: Replace blanket ShellCheck disables with targeted inline disables (95 scripts) ~8h blocked-by:none
+    - [ ] t135.2.1 Run shellcheck without blanket disable, categorize actual violations per-script ~2h
+    - [ ] t135.2.2 Fix genuine violations (SC2086, SC2155) where safe ~3h blocked-by:t135.2.1
+    - [ ] t135.2.3 Add targeted inline disables with reason comments for intentional patterns ~2h blocked-by:t135.2.2
+    - [ ] t135.2.4 Remove blanket disable line from each script ~30m blocked-by:t135.2.3
+    - [ ] t135.2.5 Verify zero violations with linters-local.sh ~15m blocked-by:t135.2.4
+  - [ ] t135.3 P0-C: Add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers ~2h blocked-by:none
+    - [ ] t135.3.1 Understand current DB init patterns in all 3 helpers ~30m
+    - [ ] t135.3.2 Add PRAGMA journal_mode=WAL and busy_timeout=5000 to DB init ~30m blocked-by:t135.3.1
+    - [ ] t135.3.3 Test concurrent access scenarios ~1h blocked-by:t135.3.2
+  - [ ] t135.4 P1-A: Fix 2 corrupted JSON config files ~1h blocked-by:none
+    - [ ] t135.4.1 Fix configs/pandoc-config.json (invalid control char line 5) ~15m
+    - [ ] t135.4.2 Fix configs/mcp-templates/chrome-devtools.json (shell code after JSON) ~15m
+    - [ ] t135.4.3 Add JSON validation step to CI workflow ~30m blocked-by:t135.4.1,t135.4.2
+  - [ ] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none
+    - [ ] t135.5.1 git rm --cached .scannerwork/ and .playwright-cli/ ~10m
+    - [ ] t135.5.2 Add .playwright-cli/ to .gitignore ~5m
+    - [ ] t135.5.3 Verify .scannerwork/ already in .gitignore ~5m
+  - [ ] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none
+    - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
+    - [ ] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m
+    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
+  - [ ] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none
+    - [ ] t135.7.1 Read each eval context to understand construction and purpose ~30m
+    - [ ] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1
+    - [ ] t135.7.3 Test affected command paths ~30m blocked-by:t135.7.2
+  - [ ] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 80%+ ~4h blocked-by:none
+    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m
+    - [ ] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1
+    - [ ] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2
+  - [ ] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none
+    - [ ] t135.9.1 Identify all mktemp usages without trap cleanup ~15m
+    - [ ] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1
+  - [ ] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none
+  - [ ] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none
+    - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
+    - [ ] t135.11.2 Add formula version/SHA update to version-manager.sh ~1.5h blocked-by:t135.11.1
+  - [ ] t135.12 P3-A: Archive fix scripts safely (12 scripts, 0 refs, completed purpose) ~1h blocked-by:none
+    - [ ] t135.12.1 Read each script, document purpose and what it fixed (preserve knowledge) ~30m
+    - [ ] t135.12.2 Create .agents/scripts/archive/ with README explaining completed one-time scripts ~10m blocked-by:t135.12.1
+    - [ ] t135.12.3 Move to archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2
+    - [ ] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3
+  - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
+    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
+    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
+    - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
+    - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
+  - [ ] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none
+  - Notes: From Claude Opus 4.6 codebase review (2026-02-07). Review corrected: 100/170 scripts already have set -e (not 2 as initially reported). 29/170 use shared-constants.sh. 95 scripts have blanket 20+ rule ShellCheck disable. 12 fix scripts have 0 references and only exist from the .agent->.agents rename commit. All subtasks designed for /runners dispatch. IMPORTANT: Review recommendation #10 (organize scripts by domain subdirectories) was REJECTED - scripts are cross-domain and flat namespace with naming convention is the intentional design. Recommendation #13 (remove dead fix scripts) changed to ARCHIVE non-destructively. Every subtask requires reading existing code to understand intent before changes.
 - [ ] t132 Cross-Provider Model Routing with Fallbacks #plan #orchestration #multi-model → [todo/PLANS.md#2026-02-06-cross-provider-model-routing-with-fallbacks] ~1.5d (ai:8h test:4h read:2h) logged:2026-02-06
   - [ ] t132.1 Define model-specific subagents in opencode.json ~2h blocked-by:none
     - Notes: OpenCode supports per-agent model selection natively -- the Task tool doesn't accept a model param, but each subagent definition can specify its own model. Create subagents like gemini-reviewer (google/gemini-3-pro-preview), gemini-analyst (google/gemini-3-flash-preview), gpt-reviewer (openai/gpt-4.1), etc. Map existing model-routing.md tiers (haiku/flash/sonnet/pro/opus) to concrete agent definitions. Primary agent selects model by choosing which subagent to invoke.

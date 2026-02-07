@@ -21,6 +21,114 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-07] Codebase Quality Hardening
+
+**Status:** Planning
+**Estimate:** ~3d (ai:1.5d test:1d read:0.5d)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p023,Codebase Quality Hardening,planning,0,14,,quality|hardening|shell|security|testing|ci,3d,1.5d,1d,0.5d,2026-02-07T00:00Z,
+-->
+
+#### Purpose
+
+Address findings from Claude Opus 4.6 full codebase review. Harden shell script quality, fix security issues, improve CI enforcement, and build test infrastructure. All tasks designed for autonomous `/runners` dispatch with non-destructive approach (archive, don't delete).
+
+#### Context from Review
+
+**Review corrections (verified against actual codebase):**
+- Review claimed 168/170 scripts missing `set -e` -- actual count is **70/170** (100 already have it)
+- Review claimed 17% shared-constants.sh adoption -- confirmed **29/170 scripts** source it
+- Review claimed 95 scripts with blanket ShellCheck disable -- confirmed **95 scripts**
+- Review claimed 12 dead fix scripts -- confirmed **12 scripts with 0 non-script references**, all only touched by `.agent->.agents` rename commit
+
+**Rejected recommendation:**
+- **#10 (organize scripts by domain subdirectories)** -- REJECTED. Scripts are intentionally cross-domain (e.g., `seo-export-helper.sh` used by SEO, git, and content workflows). Flat namespace with `{service}-helper.sh` naming convention is the design pattern. Subdirectories would create import path complexity and break existing references.
+
+**Key design principles for all changes:**
+1. Read existing code to understand intent before modifying
+2. Non-destructive: archive, don't delete; preserve knowledge
+3. Test for regressions after every change
+4. Each subtask is self-contained for `/runners` dispatch
+5. Respect existing patterns -- don't impose new conventions without understanding why current ones exist
+
+#### Decision Log
+
+- (2026-02-07) REJECTED script subdirectory organization -- cross-domain usage makes flat namespace correct
+- (2026-02-07) Changed "remove dead scripts" to "archive non-destructively" -- scripts contain fix patterns that may be useful reference
+- (2026-02-07) Corrected review's `set -e` count from 168 to 70 missing -- review overcounted significantly
+
+#### Progress
+
+- [ ] (2026-02-07) Phase 1 (P0-A): Add `set -euo pipefail` to 70 scripts ~4h (t135.1)
+  - Audit each script for commands that intentionally return non-zero (grep no-match, diff, test)
+  - Add `|| true` guards where needed before enabling strict mode
+  - Add `set -euo pipefail` after shebang/shellcheck-disable line
+  - Run `bash -n` syntax check + shellcheck on all modified scripts
+  - Smoke test `help` command for each modified script
+  - **Scripts without set -e:** 101domains-helper, add-missing-returns, agent-browser-helper, agno-setup, ampcode-cli, auto-version-bump, closte-helper, cloudron-helper, codacy-cli-chunked, codacy-cli, code-audit-helper, coderabbit-cli, coderabbit-pro-analysis, comprehensive-quality-fix, coolify-helper, crawl4ai-examples, crawl4ai-helper, dns-helper, domain-research-helper, dspy-helper, dspyground-helper, efficient-return-fix, find-missing-returns, fix-auth-headers, fix-common-strings, fix-content-type, fix-error-messages, fix-misplaced-returns, fix-remaining-literals, fix-return-statements, fix-s131-default-cases, fix-sc2155-simple, fix-shellcheck-critical, fix-string-literals, git-platforms-helper, hetzner-helper, hostinger-helper, linter-manager, localhost-helper, markdown-formatter, markdown-lint-fix, mass-fix-returns, monitor-code-review, pandoc-helper, peekaboo-helper, qlty-cli, quality-cli-manager, secretlint-helper, servers-helper, ses-helper, setup-linters-wizard, setup-local-api-keys, shared-constants, sonarscanner-cli, spaceship-helper, stagehand-helper, stagehand-python-helper, stagehand-python-setup, stagehand-setup, test-stagehand-both-integration, test-stagehand-integration, test-stagehand-python-integration, toon-helper, twilio-helper, vaultwarden-helper, version-manager, watercrawl-helper, webhosting-helper, webhosting-verify, wordpress-mcp-helper, yt-dlp-helper
+- [ ] (2026-02-07) Phase 2 (P0-B): Replace blanket ShellCheck disables ~8h (t135.2)
+  - Run shellcheck without blanket disable on each of 95 scripts
+  - Categorize violations: genuine bugs vs intentional patterns
+  - Fix SC2086 (unquoted vars) and SC2155 (declare/assign) where safe
+  - Add targeted inline `# shellcheck disable=SCXXXX` with reason comments
+  - Remove blanket disable line from each script
+  - Verify zero violations with `linters-local.sh`
+- [ ] (2026-02-07) Phase 3 (P0-C): SQLite WAL mode + busy_timeout ~2h (t135.3)
+  - Read DB init in supervisor-helper.sh, memory-helper.sh, mail-helper.sh
+  - Add `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;` to init functions
+  - Test concurrent access from parallel agent sessions
+  - Currently: no WAL mode, no busy_timeout in any of the 3 SQLite-backed systems
+- [ ] (2026-02-07) Phase 4 (P1-A): Fix corrupted JSON configs ~1h (t135.4)
+  - `configs/pandoc-config.json` -- invalid control character at line 5 column 6
+  - `configs/mcp-templates/chrome-devtools.json` -- shell code (`return 0`) appended after valid JSON at line 15
+  - Add JSON validation step to CI workflow
+- [ ] (2026-02-07) Phase 5 (P1-B): Remove tracked artifacts ~30m (t135.5)
+  - `git rm --cached` 6 files: `.scannerwork/.sonar_lock`, `.scannerwork/report-task.txt`, `.playwright-cli/` (4 files)
+  - Add `.playwright-cli/` to `.gitignore`
+  - `.scannerwork/` already in `.gitignore` (just needs cache clearing)
+- [ ] (2026-02-07) Phase 6 (P1-C): Fix CI code-quality.yml ~1h (t135.6)
+  - Line 31: `.agent` typo (should be `.agents`)
+  - References to non-existent `.agents/spec` and `docs/` directories
+  - Add enforcement steps that actually fail the build on violations
+- [ ] (2026-02-07) Phase 7 (P2-A): Eliminate eval in 4 scripts ~3h (t135.7)
+  - `wp-helper.sh:240` -- `eval "$ssh_command"` (SSH command construction)
+  - `coderabbit-cli.sh:322,365` -- `eval "$cmd"` (CLI command construction)
+  - `codacy-cli.sh:260,315` -- `eval "$cmd"` (CLI command construction)
+  - `pandoc-helper.sh:120` -- `eval "$pandoc_cmd"` (pandoc command construction)
+  - Replace with array-based command construction (same pattern used in t105 for ampcode-cli.sh)
+  - Read each context first to understand what's being constructed and why
+- [ ] (2026-02-07) Phase 8 (P2-B): Increase shared-constants.sh adoption ~4h (t135.8)
+  - Currently 29/170 scripts source shared-constants.sh (17%)
+  - 431 duplicate print_info/error/success/warning definitions across scripts
+  - Audit what shared-constants.sh provides vs what scripts duplicate
+  - Create migration script, run in batches with regression testing
+- [ ] (2026-02-07) Phase 9 (P2-C): Add trap cleanup for temp files ~1h (t135.9)
+  - 14 mktemp usages in setup.sh, only 4 scripts total have trap cleanup
+  - Add `trap 'rm -f "$tmpfile"' EXIT` patterns
+  - Respect existing cleanup logic (don't double-cleanup)
+- [ ] (2026-02-07) Phase 10 (P2-D): Fix package.json main field ~15m (t135.10)
+  - `"main": "index.js"` but index.js doesn't exist
+  - Determine if index.js is needed or remove main field
+- [ ] (2026-02-07) Phase 11 (P2-E): Fix Homebrew formula ~2h (t135.11)
+  - Frozen at v2.52.1 with `PLACEHOLDER_SHA256`
+  - Current version is v2.104.0
+  - Add formula version/SHA update to version-manager.sh release workflow
+- [ ] (2026-02-07) Phase 12 (P3-A): Archive fix scripts non-destructively ~1h (t135.12)
+  - 12 scripts with 0 references outside scripts/: add-missing-returns, comprehensive-quality-fix, efficient-return-fix, find-missing-returns, fix-common-strings, fix-misplaced-returns, fix-remaining-literals, fix-return-statements, fix-sc2155-simple, fix-shellcheck-critical, fix-string-literals, mass-fix-returns
+  - All only touched by `.agent->.agents` rename commit (c91e0be)
+  - Read each to document purpose and patterns (preserve knowledge)
+  - Create `.agents/scripts/archive/` with README
+  - Move (not delete) so git history and fix patterns are preserved
+- [ ] (2026-02-07) Phase 13 (P3-B): Build test suite ~4h (t135.13)
+  - Fix `tests/docker/run-tests.sh:5` path case (`git` vs `Git`)
+  - Add help command smoke tests for all 170 scripts
+  - Add unit tests for supervisor-helper.sh state machine
+  - Add unit tests for memory-helper.sh and mail-helper.sh
+- [ ] (2026-02-07) Phase 14 (P3-C): Standardize shebangs ~30m (t135.14)
+  - Most use `#!/bin/bash`, supervisor-helper.sh uses `#!/usr/bin/env bash`
+  - Standardize all to `#!/usr/bin/env bash` for portability
+
 ### [2026-02-06] Cross-Provider Model Routing with Fallbacks
 
 **Status:** Planning
