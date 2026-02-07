@@ -72,6 +72,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
   - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
+- [ ] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h (ai:1.5h test:30m) logged:2026-02-07 ref:GH#455
+  - Notes: Supervisor creates tasks in SQLite but never creates GitHub issues. Add gh issue create to cmd_add/cmd_batch, update TODO.md with ref:GH#N. Prerequisite for t020/t047 (full bi-directional sync). Immediate need: all dispatched tasks should have GH issue visibility.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
   - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435.
 - [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
