@@ -132,6 +132,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
     - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
     - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2 ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.6.3
+      - Notes: BLOCKED by supervisor: FAILED: no_log_file
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Replaced 9 eval calls with bash arrays. wp-helper refactored build_ssh_command to execute_wp_via_ssh (direct execution). All pass ShellCheck -S error.
     - [x] t135.7.1 Read each eval context to understand construction and purpose ~30m completed:2026-02-07
