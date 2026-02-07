@@ -78,7 +78,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
 - [ ] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h (ai:2h test:30m read:30m) logged:2026-02-07 ref:GH#441
   - Notes: Supervisor, voice helper, and other scripts suppress stderr extensively. Replace with log file redirect or remove where errors matter. From reviews on PRs #392, #403, #410.
-- [ ] t143 quality: test script BRE alternation -> ERE style improvement #quality #tests ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#442
+- [x] t143 quality: test script BRE alternation -> ERE style improvement #quality #tests ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#442 completed:2026-02-07
   - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
 - [ ] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443
   - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
