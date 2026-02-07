@@ -2707,8 +2707,11 @@ inject_agents_reference() {
     local template_source="$SCRIPT_DIR/templates/opencode-config-agents.md"
     
     if [[ -d "$opencode_config_dir" && -f "$template_source" ]]; then
-        cp "$template_source" "$opencode_config_agents"
-        print_success "Deployed greeting template to $opencode_config_agents"
+        if cp "$template_source" "$opencode_config_agents"; then
+            print_success "Deployed greeting template to $opencode_config_agents"
+        else
+            print_error "Failed to deploy greeting template to $opencode_config_agents"
+        fi
     fi
     
     return 0
