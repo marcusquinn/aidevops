@@ -21,6 +21,166 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-07] Plugin System for Private Extension Repos
+
+**Status:** Planning
+**Estimate:** ~1d (ai:6h test:3h read:3h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p024,Plugin System for Private Extension Repos,planning,0,5,,architecture|plugins|private-repos|extensibility,1d,6h,3h,3h,2026-02-07T00:00Z,
+-->
+
+#### Purpose
+
+Create a plugin architecture for aidevops that allows private extension repos (`aidevops-pro`, `aidevops-anon`) to overlay additional agents and scripts onto the base framework. Plugins are git repos that extend aidevops without modifying the core, enabling tiered access (public/pro/private) and fast evolution of specialized features.
+
+#### Context from Discussion
+
+**Repos to support:**
+- `~/Git/aidevops-pro` (github.com/marcusquinn/aidevops-pro) - Pro features
+- `~/Git/aidevops-anon` (gitea.marcusquinn.com/marcus/aidevops-anon) - Anonymous/private features
+
+**Key design decisions:**
+
+1. **Namespaced directories** - Plugins get their own namespace to avoid clashes:
+   ```
+   ~/.aidevops/agents/
+   ├── tools/              # Main repo
+   ├── pro.md              # Plugin entry point (like wordpress.md)
+   ├── pro/                # Plugin subagents
+   │   ├── enterprise.md
+   │   └── advanced.md
+   └── scripts/
+       └── pro-*.sh        # Prefixed scripts
+   ```
+
+2. **Plugin structure mirrors main** - Same `.agent/` pattern:
+   ```
+   ~/Git/aidevops-pro/
+   ├── AGENTS.md           # Points to main framework
+   ├── README.md
+   ├── VERSION
+   ├── .aidevops.json      # Plugin config with base_repo reference
+   └── .agent/
+       ├── pro.md          # Main plugin agent
+       ├── pro/            # Subagents
+       └── scripts/
+           └── pro-*.sh    # Prefixed scripts
+   ```
+
+3. **Plugin AGENTS.md points to base** - Minimal, references main framework:
+   ```markdown
+   # aidevops-pro Plugin
+   
+   For framework documentation: `~/.aidevops/agents/AGENTS.md`
+   For architecture: `~/.aidevops/agents/aidevops/architecture.md`
+   
+   ## Plugin Development
+   This plugin deploys to `~/.aidevops/agents/pro/` (namespaced).
+   ```
+
+4. **`.aidevops.json` plugin config**:
+   ```json
+   {
+     "version": "2.93.2",
+     "features": ["planning"],
+     "plugin": {
+       "name": "pro",
+       "base_repo": "~/Git/aidevops",
+       "namespace": "pro"
+     }
+   }
+   ```
+
+5. **`aidevops update` deploys main + plugins** - Single command updates everything
+
+**CI/CD for private repos (simplified):**
+- No SonarCloud/Codacy/CodeRabbit (require public repos for free tier)
+- Local-only: `linters-local.sh` (ShellCheck, Secretlint, Markdownlint)
+- Minimal GHA: ShellCheck + Secretlint + Markdownlint only
+- Gitea: Local linting only (or Gitea Actions if enabled)
+
+**Development workflow:**
+- Work in plugin repo directly (`~/Git/aidevops-pro/`)
+- Run `aidevops update` to redeploy all (main + plugins)
+- Plugin changes immediately visible in `~/.aidevops/agents/pro/`
+- AI assistant reads plugin AGENTS.md which points to main framework docs
+
+**Symlink option for rapid iteration:**
+- `.plugin-dev/` in main repo (gitignored)
+- Symlinks to plugin `.agent/` directories
+- Useful when testing plugin content against main repo changes
+
+#### Decision Log
+
+- **Decision:** Namespaced directories (`pro.md` + `pro/`) not overlay
+  **Rationale:** Overlay model causes collisions if main adds same path later. Namespace guarantees no conflicts.
+  **Date:** 2026-02-07
+
+- **Decision:** Plugin AGENTS.md points to main framework, not duplicates
+  **Rationale:** Single source of truth for framework docs. Plugins only document their additions.
+  **Date:** 2026-02-07
+
+- **Decision:** Minimal CI for private repos (local linting only)
+  **Rationale:** SonarCloud/Codacy/CodeRabbit require public repos for free tier. ShellCheck/Secretlint/Markdownlint work locally.
+  **Date:** 2026-02-07
+
+- **Decision:** `aidevops init` detects plugin repos via `.aidevops.json` plugin field
+  **Rationale:** Consistent initialization, AI assistants know it's a plugin context.
+  **Date:** 2026-02-07
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d056,p024,Namespaced directories not overlay,Overlay causes collisions if main adds same path later,2026-02-07,Architecture
+d057,p024,Plugin AGENTS.md points to main framework,Single source of truth for framework docs,2026-02-07,Maintenance
+d058,p024,Minimal CI for private repos,Cloud tools require public repos for free tier,2026-02-07,DevOps
+d059,p024,aidevops init detects plugin repos,Consistent initialization and AI context,2026-02-07,UX
+-->
+
+#### Open Questions
+
+1. **License** - Same MIT for plugins, or proprietary for pro/anon?
+2. **Gitea Actions** - Is it enabled on gitea.marcusquinn.com, or local-only linting?
+3. **Plugin order** - If multiple plugins, what's the deploy order? (alphabetical? config-defined?)
+4. **Subagent index** - Should plugins add entries to main `subagent-index.toon` or have their own?
+
+#### Progress
+
+- [ ] (2026-02-07) Phase 1: Add plugin support to `.aidevops.json` schema ~1h (t136.1)
+  - Add `plugin` field with `name`, `base_repo`, `namespace`
+  - Update `aidevops init` to detect and configure plugin repos
+  - Add `features: ["plugin"]` option
+- [ ] (2026-02-07) Phase 2: Add `plugins.json` config and CLI commands ~2h (t136.2)
+  - Create `~/.config/aidevops/plugins.json` schema
+  - Add `aidevops plugin add/list/enable/disable/remove/update` commands
+  - Support GitHub and Gitea URLs
+- [ ] (2026-02-07) Phase 3: Extend `setup.sh` to deploy plugins ~2h (t136.3)
+  - Add `deploy_plugins()` function after `deploy_aidevops_agents()`
+  - Respect namespace (deploy to `~/.aidevops/agents/{namespace}/`)
+  - Handle script prefix convention (`{namespace}-*.sh`)
+- [ ] (2026-02-07) Phase 4: Create plugin template ~1h (t136.4)
+  - `aidevops plugin create <name>` scaffolds structure
+  - Template AGENTS.md, README.md, .aidevops.json, .github/workflows/ci.yml
+  - Minimal GHA (ShellCheck + Secretlint + Markdownlint)
+- [ ] (2026-02-07) Phase 5: Scaffold aidevops-pro and aidevops-anon repos ~2h (t136.5)
+  - Create repos on GitHub and Gitea
+  - Initialize with plugin template
+  - Test full workflow: clone → init → update → verify deployment
+
+<!--TOON:milestones[5]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m109,p024,Phase 1: Add plugin support to .aidevops.json schema,1h,,2026-02-07T00:00Z,,pending
+m110,p024,Phase 2: Add plugins.json config and CLI commands,2h,,2026-02-07T00:00Z,,pending
+m111,p024,Phase 3: Extend setup.sh to deploy plugins,2h,,2026-02-07T00:00Z,,pending
+m112,p024,Phase 4: Create plugin template,1h,,2026-02-07T00:00Z,,pending
+m113,p024,Phase 5: Scaffold aidevops-pro and aidevops-anon repos,2h,,2026-02-07T00:00Z,,pending
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
 ### [2026-02-07] Codebase Quality Hardening
 
 **Status:** Planning

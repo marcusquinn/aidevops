@@ -55,6 +55,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) logged:2026-02-07
+  - [ ] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none
+  - [ ] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1
+  - [ ] t136.3 Extend setup.sh to deploy plugins ~2h blocked-by:t136.2
+  - [ ] t136.4 Create plugin template ~1h blocked-by:t136.2
+  - [ ] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4
+  - Notes: Namespaced plugin architecture (pro.md + pro/) to avoid clashes. Plugin AGENTS.md points to main framework. Minimal CI (local linting only) for private repos. aidevops update deploys main + all plugins. Open questions: license (MIT vs proprietary), Gitea Actions availability, plugin deploy order, subagent index strategy.
 - [ ] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) logged:2026-02-07
   - [ ] t135.1 P0-A: Add set -euo pipefail to 70 scripts missing strict mode ~4h blocked-by:none
     - [ ] t135.1.1 Audit 70 scripts for intentional failures needing || true guards ~2h
