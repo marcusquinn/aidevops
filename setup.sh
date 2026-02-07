@@ -227,6 +227,25 @@ cleanup_deprecated_paths() {
         print_info "Cleaned up $cleaned deprecated agent path(s)"
     fi
     
+    # Remove oh-my-opencode config file if present
+    local omo_config="$HOME/.config/opencode/oh-my-opencode.json"
+    if [[ -f "$omo_config" ]]; then
+        rm -f "$omo_config"
+        print_info "Removed deprecated oh-my-opencode config"
+    fi
+    
+    # Remove oh-my-opencode from plugin array in opencode.json if present
+    local opencode_config
+    opencode_config=$(find_opencode_config 2>/dev/null) || true
+    if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
+        if jq -e '.plugin | index("oh-my-opencode")' "$opencode_config" >/dev/null 2>&1; then
+            local tmp_file
+            tmp_file=$(mktemp)
+            jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" > "$tmp_file" && mv "$tmp_file" "$opencode_config"
+            print_info "Removed oh-my-opencode from OpenCode plugin list"
+        fi
+    fi
+    
     return 0
 }
 
