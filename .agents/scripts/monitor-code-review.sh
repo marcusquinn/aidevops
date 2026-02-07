@@ -151,37 +151,12 @@ run_codacy_analysis() {
 
 # Apply automatic fixes based on common patterns
 apply_automatic_fixes() {
-    print_info "Applying automatic fixes for common issues..."
-    
-    local fixes_applied=0
-    
-    # Fix shellcheck issues in new files
-    for file in .agents/scripts/*.sh .agents/scripts/*.sh; do
-        # Check if file exists and has been modified recently (within last hour)
-        if [[ -f "$file" ]] && [[ $(find "$file" -mmin -60 2>/dev/null) ]]; then
-            print_info "Checking recent file: $file"
-            
-            # Apply common fixes
-            if grep -q "cd " "$file" && ! grep -q "cd .*||" "$file"; then
-                print_info "Fixing cd commands in $file"
-                # Use portable sed syntax (GNU vs BSD)
-                if sed --version 2>/dev/null | grep -q GNU; then
-                    sed -i 's/cd \([^|]*\)$/cd \1 || exit/g' "$file"
-                else
-                    sed -i '' 's/cd \([^|]*\)$/cd \1 || exit/g' "$file"
-                fi
-                ((fixes_applied++))
-            fi
-        fi
-    done
-    
-    if [[ $fixes_applied -gt 0 ]]; then
-        print_success "Applied $fixes_applied automatic fixes"
-        echo "$(date): Applied $fixes_applied automatic fixes" >> "$MONITOR_LOG"
-    else
-        print_info "No automatic fixes needed"
-    fi
-    
+    # DISABLED: The cd || exit sed regex is too broad and introduces invalid syntax
+    # when cd appears inside subshells within if conditions, e.g.:
+    #   if (cd "$dir" && cmd); then  →  if (cd "$dir" && cmd); then || exit
+    # This caused ShellCheck SC1073/SC1072 regressions (PR #435, commit aa276b3).
+    # Safe auto-fixes should validate with shellcheck before committing.
+    print_info "Automatic fixes disabled (see monitor-code-review.sh for details)"
     return 0
 }
 
