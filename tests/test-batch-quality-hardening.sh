@@ -175,18 +175,19 @@ else
     fail "pandoc-config.json.txt still has embedded newline in keys"
 fi
 
-# Test: All .json and .json.txt config files are valid
+# Test: All git-tracked .json and .json.txt config files are valid
+# Note: gitignored working copies (configs/*.json) are excluded -- only tracked files matter
 json_invalid=0
 while IFS= read -r f; do
-    if ! python3 -m json.tool "$f" > /dev/null 2>&1; then
+    if ! python3 -m json.tool "$REPO_DIR/$f" > /dev/null 2>&1; then
         json_invalid=$((json_invalid + 1))
         [[ "$VERBOSE" == "--verbose" ]] && echo "       Invalid: $f"
     fi
-done < <(find "$REPO_DIR/configs" -name "*.json" -o -name "*.json.txt" 2>/dev/null)
+done < <(git -C "$REPO_DIR" ls-files 'configs/*.json' 'configs/*.json.txt' 'configs/**/*.json' 'configs/**/*.json.txt' 2>/dev/null)
 if [[ "$json_invalid" -eq 0 ]]; then
-    pass "All JSON config files in configs/ are valid"
+    pass "All git-tracked JSON config files in configs/ are valid"
 else
-    fail "$json_invalid JSON config file(s) are invalid in configs/"
+    fail "$json_invalid git-tracked JSON config file(s) are invalid in configs/"
 fi
 
 # ============================================================
