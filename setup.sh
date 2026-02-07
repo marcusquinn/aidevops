@@ -1020,8 +1020,20 @@ check_requirements() {
     
     # Also check Intel Mac Homebrew location
     if [[ -x "/usr/local/bin/brew" ]] && ! echo "$PATH" | grep -q "/usr/local/bin"; then
-        export PATH="/usr/local/bin:$PATH"
+        eval "$(/usr/local/bin/brew shellenv)"
         print_warning "Homebrew (/usr/local/bin) not in PATH - added for this session"
+        
+        local intel_brew_line='eval "$(/usr/local/bin/brew shellenv)"'
+        local intel_rc
+        while IFS= read -r intel_rc; do
+            [[ -z "$intel_rc" ]] && continue
+            if ! grep -q '/usr/local/bin/brew' "$intel_rc" 2>/dev/null; then
+                echo "" >> "$intel_rc"
+                echo "# Homebrew Intel Mac (added by aidevops setup)" >> "$intel_rc"
+                echo "$intel_brew_line" >> "$intel_rc"
+                print_success "Added Homebrew to PATH in $intel_rc"
+            fi
+        done < <(get_all_shell_rcs)
     fi
     
     local missing_deps=()
@@ -3400,7 +3412,9 @@ setup_browser_tools() {
                 local bun_rc
                 while IFS= read -r bun_rc; do
                     [[ -z "$bun_rc" ]] && continue
-                    [[ ! -f "$bun_rc" ]] && continue
+                    if [[ ! -f "$bun_rc" ]]; then
+                        touch "$bun_rc"
+                    fi
                     if ! grep -q '\.bun' "$bun_rc" 2>/dev/null; then
                         echo "" >> "$bun_rc"
                         echo "# Bun (added by aidevops setup)" >> "$bun_rc"
