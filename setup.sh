@@ -721,7 +721,8 @@ migrate_mcp_env_to_credentials() {
     for rc_file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
         if [[ -f "$rc_file" ]] && grep -q 'source.*mcp-env\.sh' "$rc_file" 2>/dev/null; then
             # shellcheck disable=SC2016
-            sed -i '' 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file"
+            sed -i '' 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file" 2>/dev/null || \
+            sed -i 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file" 2>/dev/null || true
             ((migrated++))
             print_info "Updated $rc_file to source credentials.sh"
         fi
@@ -993,10 +994,34 @@ check_requirements() {
     if [[ -x "/opt/homebrew/bin/brew" ]] && ! echo "$PATH" | grep -q "/opt/homebrew/bin"; then
         eval "$(/opt/homebrew/bin/brew shellenv)"
         print_warning "Homebrew not in PATH - added for this session"
-        echo ""
-        echo "  To fix permanently, add to ~/.bash_profile or ~/.zshrc:"
-        echo "    eval \"\$(/opt/homebrew/bin/brew shellenv)\""
-        echo ""
+        
+        # Auto-fix: add Homebrew to all existing shell rc files
+        local brew_line='eval "$(/opt/homebrew/bin/brew shellenv)"'
+        local fixed_rc=false
+        local rc_file
+        while IFS= read -r rc_file; do
+            [[ -z "$rc_file" ]] && continue
+            if ! grep -q '/opt/homebrew/bin/brew' "$rc_file" 2>/dev/null; then
+                echo "" >> "$rc_file"
+                echo "# Homebrew (added by aidevops setup)" >> "$rc_file"
+                echo "$brew_line" >> "$rc_file"
+                print_success "Added Homebrew to PATH in $rc_file"
+                fixed_rc=true
+            fi
+        done < <(get_all_shell_rcs)
+        
+        if [[ "$fixed_rc" == "false" ]]; then
+            echo ""
+            echo "  To fix permanently, add to your shell rc file:"
+            echo "    $brew_line"
+            echo ""
+        fi
+    fi
+    
+    # Also check Intel Mac Homebrew location
+    if [[ -x "/usr/local/bin/brew" ]] && ! echo "$PATH" | grep -q "/usr/local/bin"; then
+        export PATH="/usr/local/bin:$PATH"
+        print_warning "Homebrew (/usr/local/bin) not in PATH - added for this session"
     fi
     
     local missing_deps=()
@@ -1049,6 +1074,163 @@ check_requirements() {
     fi
     
     print_success "All required dependencies found"
+}
+
+# Detect the current running shell (not $SHELL which is the login default)
+# On a fresh Mac, $SHELL is /bin/zsh but setup may be run via bash <(curl ...)
+# Returns: "bash" or "zsh" or the shell name
+detect_running_shell() {
+    if [[ -n "${ZSH_VERSION:-}" ]]; then
+        echo "zsh"
+    elif [[ -n "${BASH_VERSION:-}" ]]; then
+        echo "bash"
+    else
+        basename "${SHELL:-/bin/bash}"
+    fi
+    return 0
+}
+
+# Detect the user's preferred/default shell (what they'll use day-to-day)
+# This is $SHELL (login shell), not necessarily what's running setup.sh
+detect_default_shell() {
+    basename "${SHELL:-/bin/bash}"
+    return 0
+}
+
+# Get the appropriate shell rc file for a given shell
+# Usage: get_shell_rc "zsh" or get_shell_rc "bash"
+get_shell_rc() {
+    local shell_name="$1"
+    case "$shell_name" in
+        zsh)
+            echo "$HOME/.zshrc"
+            ;;
+        bash)
+            if [[ "$(uname)" == "Darwin" ]]; then
+                echo "$HOME/.bash_profile"
+            else
+                echo "$HOME/.bashrc"
+            fi
+            ;;
+        fish)
+            echo "$HOME/.config/fish/config.fish"
+            ;;
+        ksh)
+            echo "$HOME/.kshrc"
+            ;;
+        *)
+            # Fallback: check common rc files
+            if [[ -f "$HOME/.zshrc" ]]; then
+                echo "$HOME/.zshrc"
+            elif [[ -f "$HOME/.bashrc" ]]; then
+                echo "$HOME/.bashrc"
+            elif [[ -f "$HOME/.bash_profile" ]]; then
+                echo "$HOME/.bash_profile"
+            else
+                echo ""
+            fi
+            ;;
+    esac
+    return 0
+}
+
+# Get ALL shell rc files that should be updated (both bash and zsh on macOS)
+# On macOS, users may switch between bash and zsh, so we update both if they exist
+# Returns newline-separated list of rc files
+get_all_shell_rcs() {
+    local rcs=()
+    
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS: always include zsh (default since Catalina) and bash_profile
+        [[ -f "$HOME/.zshrc" ]] && rcs+=("$HOME/.zshrc")
+        [[ -f "$HOME/.bash_profile" ]] && rcs+=("$HOME/.bash_profile")
+        # If neither exists, create .zshrc (macOS default)
+        if [[ ${#rcs[@]} -eq 0 ]]; then
+            touch "$HOME/.zshrc"
+            rcs+=("$HOME/.zshrc")
+        fi
+    else
+        # Linux: use the default shell's rc file
+        local default_shell
+        default_shell=$(detect_default_shell)
+        local rc
+        rc=$(get_shell_rc "$default_shell")
+        if [[ -n "$rc" ]]; then
+            rcs+=("$rc")
+        fi
+    fi
+    
+    printf '%s\n' "${rcs[@]}"
+    return 0
+}
+
+# Setup Oh My Zsh (optional, offered early so later tools benefit from zsh)
+# On a fresh Mac, the default shell is zsh but Oh My Zsh is not installed.
+# Many tools (completions, plugins, themes) work better with Oh My Zsh.
+# This is opt-in (lowercase y, not capital Y) since some users prefer plain zsh.
+setup_oh_my_zsh() {
+    # Only relevant if zsh is available
+    if ! command -v zsh >/dev/null 2>&1; then
+        print_info "zsh not found - skipping Oh My Zsh setup"
+        return 0
+    fi
+    
+    # Check if Oh My Zsh is already installed
+    if [[ -d "$HOME/.oh-my-zsh" ]]; then
+        print_success "Oh My Zsh already installed"
+        return 0
+    fi
+    
+    local default_shell
+    default_shell=$(detect_default_shell)
+    
+    # Only offer if zsh is the default shell (or on macOS where it's the system default)
+    if [[ "$default_shell" != "zsh" && "$(uname)" != "Darwin" ]]; then
+        print_info "Default shell is $default_shell (not zsh) - skipping Oh My Zsh"
+        return 0
+    fi
+    
+    print_info "Oh My Zsh enhances zsh with themes, plugins, and completions"
+    echo "  Many tools installed later (git, fd, brew) benefit from Oh My Zsh plugins."
+    echo "  This is optional - plain zsh works fine without it."
+    echo ""
+    
+    read -r -p "Install Oh My Zsh? [y/N]: " install_omz
+    
+    if [[ "$install_omz" =~ ^[Yy]$ ]]; then
+        print_info "Installing Oh My Zsh..."
+        # Use --unattended to avoid changing the shell or starting zsh
+        if sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended; then
+            print_success "Oh My Zsh installed"
+            
+            # Ensure .zshrc exists (Oh My Zsh creates it, but verify)
+            if [[ ! -f "$HOME/.zshrc" ]]; then
+                print_warning ".zshrc not created - Oh My Zsh may not have installed correctly"
+            fi
+            
+            # If the user's default shell isn't zsh, offer to change it
+            if [[ "$default_shell" != "zsh" ]]; then
+                echo ""
+                read -r -p "Change default shell to zsh? [y/N]: " change_shell
+                if [[ "$change_shell" =~ ^[Yy]$ ]]; then
+                    if chsh -s "$(command -v zsh)"; then
+                        print_success "Default shell changed to zsh"
+                        print_info "Restart your terminal for the change to take effect"
+                    else
+                        print_warning "Failed to change shell - run manually: chsh -s $(command -v zsh)"
+                    fi
+                fi
+            fi
+        else
+            print_warning "Oh My Zsh installation failed"
+            print_info "Install manually: sh -c \"\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\""
+        fi
+    else
+        print_info "Skipped Oh My Zsh installation"
+        print_info "Install later: sh -c \"\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\""
+    fi
+    
+    return 0
 }
 
 # Check for optional dependencies
@@ -1313,37 +1495,31 @@ setup_worktrunk() {
         wt_version=$(wt --version 2>/dev/null | head -1 || echo "unknown")
         print_success "Worktrunk already installed: $wt_version"
         
-        # Check if shell integration is installed
-        local shell_name
-        shell_name=$(basename "${SHELL:-/bin/bash}")
-        local shell_rc=""
-        case "$shell_name" in
-            zsh)  shell_rc="$HOME/.zshrc" ;;
-            bash) 
-                if [[ "$(uname)" == "Darwin" ]]; then
-                    shell_rc="$HOME/.bash_profile"
-                else
-                    shell_rc="$HOME/.bashrc"
-                fi
-                ;;
-        esac
-        
-        if [[ -n "$shell_rc" ]] && [[ -f "$shell_rc" ]]; then
-            if ! grep -q "worktrunk" "$shell_rc" 2>/dev/null; then
-                print_info "Shell integration not detected"
-                read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " install_shell
-                if [[ "$install_shell" =~ ^[Yy]?$ ]]; then
-                    print_info "Installing shell integration..."
-                    if wt config shell install; then
-                        print_success "Shell integration installed"
-                        print_info "Restart your terminal or run: source $shell_rc"
-                    else
-                        print_warning "Shell integration failed - run manually: wt config shell install"
-                    fi
-                fi
-            else
-                print_success "Shell integration already configured"
+        # Check if shell integration is installed (check all rc files)
+        local wt_integrated=false
+        local rc_file
+        while IFS= read -r rc_file; do
+            [[ -z "$rc_file" ]] && continue
+            if [[ -f "$rc_file" ]] && grep -q "worktrunk" "$rc_file" 2>/dev/null; then
+                wt_integrated=true
+                break
             fi
+        done < <(get_all_shell_rcs)
+        
+        if [[ "$wt_integrated" == "false" ]]; then
+            print_info "Shell integration not detected"
+            read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " install_shell
+            if [[ "$install_shell" =~ ^[Yy]?$ ]]; then
+                print_info "Installing shell integration..."
+                if wt config shell install; then
+                    print_success "Shell integration installed"
+                    print_info "Restart your terminal for the change to take effect"
+                else
+                    print_warning "Shell integration failed - run manually: wt config shell install"
+                fi
+            fi
+        else
+            print_success "Shell integration already configured"
         fi
         return 0
     fi
@@ -1757,51 +1933,47 @@ set_permissions() {
 }
 
 # Add ~/.local/bin to PATH in shell config
+# Writes to ALL existing shell rc files (bash + zsh on macOS) for cross-shell compat
 add_local_bin_to_path() {
-    local shell_rc=""
     local path_line='export PATH="$HOME/.local/bin:$PATH"'
+    local added_to=""
+    local already_in=""
     
-    # Detect shell config file
-    if [[ "$SHELL" == *"zsh"* ]] || [[ -n "$ZSH_VERSION" ]]; then
-        shell_rc="$HOME/.zshrc"
-    elif [[ "$SHELL" == *"bash"* ]] || [[ -n "$BASH_VERSION" ]]; then
-        if [[ "$(uname)" == "Darwin" ]]; then
-            shell_rc="$HOME/.bash_profile"
-        else
-            shell_rc="$HOME/.bashrc"
+    local rc_file
+    while IFS= read -r rc_file; do
+        [[ -z "$rc_file" ]] && continue
+        
+        # Create the rc file if it doesn't exist
+        if [[ ! -f "$rc_file" ]]; then
+            touch "$rc_file"
         fi
-    elif [[ -f "$HOME/.zshrc" ]]; then
-        shell_rc="$HOME/.zshrc"
-    elif [[ -f "$HOME/.bashrc" ]]; then
-        shell_rc="$HOME/.bashrc"
-    elif [[ -f "$HOME/.bash_profile" ]]; then
-        shell_rc="$HOME/.bash_profile"
+        
+        # Check if already added
+        if grep -q '\.local/bin' "$rc_file" 2>/dev/null; then
+            already_in="${already_in:+$already_in, }$rc_file"
+            continue
+        fi
+        
+        # Add to shell config
+        echo "" >> "$rc_file"
+        echo "# Added by aidevops setup" >> "$rc_file"
+        echo "$path_line" >> "$rc_file"
+        added_to="${added_to:+$added_to, }$rc_file"
+    done < <(get_all_shell_rcs)
+    
+    if [[ -n "$added_to" ]]; then
+        print_success "Added $HOME/.local/bin to PATH in: $added_to"
+        print_info "Restart your terminal to use 'aidevops' command"
     fi
     
-    if [[ -z "$shell_rc" ]]; then
+    if [[ -n "$already_in" ]]; then
+        print_info "$HOME/.local/bin already in PATH in: $already_in"
+    fi
+    
+    if [[ -z "$added_to" && -z "$already_in" ]]; then
         print_warning "Could not detect shell config file"
         print_info "Add this to your shell config: $path_line"
-        return 0
     fi
-    
-    # Create the rc file if it doesn't exist
-    if [[ ! -f "$shell_rc" ]]; then
-        touch "$shell_rc"
-    fi
-    
-    # Check if already added
-    if grep -q '\.local/bin' "$shell_rc" 2>/dev/null; then
-        print_info "~/.local/bin already in PATH (found in $shell_rc)"
-        return 0
-    fi
-    
-    # Add to shell config
-    echo "" >> "$shell_rc"
-    echo "# Added by aidevops setup" >> "$shell_rc"
-    echo "$path_line" >> "$shell_rc"
-    
-    print_success "Added ~/.local/bin to PATH in $shell_rc"
-    print_info "Run 'source $shell_rc' or restart your terminal to use 'aidevops' command"
     
     # Also export for current session
     export PATH="$HOME/.local/bin:$PATH"
@@ -1853,90 +2025,21 @@ install_aidevops_cli() {
 }
 
 # Setup shell aliases
+# Writes to all existing shell rc files for cross-shell compatibility
 setup_aliases() {
     print_info "Setting up shell aliases..."
     
-    local shell_rc=""
-    local shell_name=""
+    local default_shell
+    default_shell=$(detect_default_shell)
     
-    # Detect shell - check $SHELL first, then try to detect from process
-    if [[ "$SHELL" == *"zsh"* ]]; then
-        shell_rc="$HOME/.zshrc"
-        shell_name="zsh"
-    elif [[ "$SHELL" == *"bash"* ]]; then
-        # macOS: use .bash_profile (login shell), Linux: use .bashrc
-        if [[ "$(uname)" == "Darwin" ]]; then
-            shell_rc="$HOME/.bash_profile"
-        else
-            shell_rc="$HOME/.bashrc"
-        fi
-        shell_name="bash"
-    elif [[ "$SHELL" == *"fish"* ]]; then
-        shell_rc="$HOME/.config/fish/config.fish"
-        shell_name="fish"
-    elif [[ "$SHELL" == *"ksh"* ]]; then
-        shell_rc="$HOME/.kshrc"
-        shell_name="ksh"
-    elif [[ -n "$ZSH_VERSION" ]]; then
-        shell_rc="$HOME/.zshrc"
-        shell_name="zsh"
-    elif [[ -n "$BASH_VERSION" ]]; then
-        if [[ "$(uname)" == "Darwin" ]]; then
-            shell_rc="$HOME/.bash_profile"
-        else
-            shell_rc="$HOME/.bashrc"
-        fi
-        shell_name="bash"
-    else
-        # Fallback: check common rc files
-        if [[ -f "$HOME/.zshrc" ]]; then
-            shell_rc="$HOME/.zshrc"
-            shell_name="zsh"
-        elif [[ -f "$HOME/.bashrc" ]]; then
-            shell_rc="$HOME/.bashrc"
-            shell_name="bash"
-        elif [[ -f "$HOME/.bash_profile" ]]; then
-            shell_rc="$HOME/.bash_profile"
-            shell_name="bash"
-        else
-            print_warning "Could not detect shell configuration file"
-            print_info "Supported shells: bash, zsh, fish, ksh"
-            print_info "You can manually add aliases to your shell config"
-            return 0
-        fi
+    # Fish shell uses different alias syntax
+    local is_fish=false
+    if [[ "$default_shell" == "fish" ]]; then
+        is_fish=true
     fi
     
-    # Create the rc file if it doesn't exist (common on fresh systems)
-    if [[ ! -f "$shell_rc" ]]; then
-        print_info "Creating $shell_rc (file did not exist)"
-        touch "$shell_rc"
-    fi
-    
-    # Check if aliases already exist
-    if grep -q "# AI Assistant Server Access" "$shell_rc" 2>/dev/null; then
-        print_info "Server Access aliases already configured in $shell_rc - Skipping"
-        return 0
-    fi
-    
-    print_info "Detected shell: $shell_name"
-    read -r -p "Add shell aliases to $shell_rc? [Y/n]: " add_aliases
-    
-    if [[ "$add_aliases" =~ ^[Yy]?$ ]]; then
-        # Fish shell uses different syntax
-        if [[ "$shell_name" == "fish" ]]; then
-            mkdir -p "$HOME/.config/fish"
-            cat >> "$shell_rc" << 'EOF'
-
-# AI Assistant Server Access Framework
-alias servers './.agents/scripts/servers-helper.sh'
-alias servers-list './.agents/scripts/servers-helper.sh list'
-alias hostinger './.agents/scripts/hostinger-helper.sh'
-alias hetzner './.agents/scripts/hetzner-helper.sh'
-alias aws-helper './.agents/scripts/aws-helper.sh'
-EOF
-        else
-            # Bash, zsh, ksh use same syntax
-            cat >> "$shell_rc" << 'EOF'
+    local alias_block_bash
+    alias_block_bash=$(cat << 'ALIASES'
 
 # AI Assistant Server Access Framework
 alias servers='./.agents/scripts/servers-helper.sh'
@@ -1944,10 +2047,73 @@ alias servers-list='./.agents/scripts/servers-helper.sh list'
 alias hostinger='./.agents/scripts/hostinger-helper.sh'
 alias hetzner='./.agents/scripts/hetzner-helper.sh'
 alias aws-helper='./.agents/scripts/aws-helper.sh'
-EOF
+ALIASES
+)
+    
+    local alias_block_fish
+    alias_block_fish=$(cat << 'ALIASES'
+
+# AI Assistant Server Access Framework
+alias servers './.agents/scripts/servers-helper.sh'
+alias servers-list './.agents/scripts/servers-helper.sh list'
+alias hostinger './.agents/scripts/hostinger-helper.sh'
+alias hetzner './.agents/scripts/hetzner-helper.sh'
+alias aws-helper './.agents/scripts/aws-helper.sh'
+ALIASES
+)
+    
+    # Check if aliases already exist in any rc file
+    local any_configured=false
+    local rc_file
+    while IFS= read -r rc_file; do
+        [[ -z "$rc_file" ]] && continue
+        if grep -q "# AI Assistant Server Access" "$rc_file" 2>/dev/null; then
+            any_configured=true
+            break
         fi
-        print_success "Aliases added to $shell_rc"
-        print_info "Run 'source $shell_rc' or restart your terminal to use aliases"
+    done < <(get_all_shell_rcs)
+    
+    if [[ "$any_configured" == "true" ]]; then
+        print_info "Server Access aliases already configured - Skipping"
+        return 0
+    fi
+    
+    print_info "Detected default shell: $default_shell"
+    read -r -p "Add shell aliases? [Y/n]: " add_aliases
+    
+    if [[ "$add_aliases" =~ ^[Yy]?$ ]]; then
+        local added_to=""
+        
+        # Handle fish separately
+        if [[ "$is_fish" == "true" ]]; then
+            local fish_rc="$HOME/.config/fish/config.fish"
+            mkdir -p "$HOME/.config/fish"
+            echo "$alias_block_fish" >> "$fish_rc"
+            added_to="$fish_rc"
+        else
+            # Add to all bash/zsh rc files
+            while IFS= read -r rc_file; do
+                [[ -z "$rc_file" ]] && continue
+                
+                # Create if it doesn't exist
+                if [[ ! -f "$rc_file" ]]; then
+                    touch "$rc_file"
+                fi
+                
+                # Skip if already has aliases
+                if grep -q "# AI Assistant Server Access" "$rc_file" 2>/dev/null; then
+                    continue
+                fi
+                
+                echo "$alias_block_bash" >> "$rc_file"
+                added_to="${added_to:+$added_to, }$rc_file"
+            done < <(get_all_shell_rcs)
+        fi
+        
+        if [[ -n "$added_to" ]]; then
+            print_success "Aliases added to: $added_to"
+            print_info "Restart your terminal to use aliases"
+        fi
     else
         print_info "Skipped alias setup by user request"
     fi
@@ -1965,19 +2131,19 @@ setup_terminal_title() {
         return 0
     fi
     
-    # Check if already installed
-    local shell_name
-    shell_name=$(basename "${SHELL:-/bin/bash}")
-    local rc_file=""
+    # Check if already installed (check all rc files)
+    local title_configured=false
+    local rc_file
+    while IFS= read -r rc_file; do
+        [[ -z "$rc_file" ]] && continue
+        if [[ -f "$rc_file" ]] && grep -q "aidevops terminal-title" "$rc_file" 2>/dev/null; then
+            title_configured=true
+            break
+        fi
+    done < <(get_all_shell_rcs)
     
-    case "$shell_name" in
-        zsh)  rc_file="$HOME/.zshrc" ;;
-        bash) rc_file="$HOME/.bashrc" ;;
-        fish) rc_file="$HOME/.config/fish/config.fish" ;;
-    esac
-    
-    if [[ -n "$rc_file" ]] && [[ -f "$rc_file" ]] && grep -q "aidevops terminal-title" "$rc_file" 2>/dev/null; then
-        print_info "Terminal title integration already configured in $rc_file - Skipping"
+    if [[ "$title_configured" == "true" ]]; then
+        print_info "Terminal title integration already configured - Skipping"
         return 0
     fi
     
@@ -1989,6 +2155,8 @@ setup_terminal_title() {
     echo "Current status:"
     
     # Shell info
+    local shell_name
+    shell_name=$(detect_default_shell)
     local shell_info="$shell_name"
     if [[ "$shell_name" == "zsh" ]] && [[ -d "$HOME/.oh-my-zsh" ]]; then
         shell_info="$shell_name (Oh-My-Zsh)"
@@ -3224,6 +3392,23 @@ setup_browser_tools() {
             if command -v bun &> /dev/null; then
                 has_bun=true
                 print_success "Bun installed: $(bun --version)"
+                
+                # Bun's installer may only write to the running shell's rc file.
+                # Ensure Bun PATH is in all shell rc files for cross-shell compat.
+                local bun_path_line='export BUN_INSTALL="$HOME/.bun"'
+                local bun_export_line='export PATH="$BUN_INSTALL/bin:$PATH"'
+                local bun_rc
+                while IFS= read -r bun_rc; do
+                    [[ -z "$bun_rc" ]] && continue
+                    [[ ! -f "$bun_rc" ]] && continue
+                    if ! grep -q '\.bun' "$bun_rc" 2>/dev/null; then
+                        echo "" >> "$bun_rc"
+                        echo "# Bun (added by aidevops setup)" >> "$bun_rc"
+                        echo "$bun_path_line" >> "$bun_rc"
+                        echo "$bun_export_line" >> "$bun_rc"
+                        print_info "Added Bun to PATH in $bun_rc"
+                    fi
+                done < <(get_all_shell_rcs)
             fi
         else
             print_warning "Bun installation failed - dev-browser will need manual setup"
@@ -3822,6 +4007,9 @@ main() {
         # Required steps (always run)
         verify_location
         check_requirements
+        
+        # Shell environment setup (early, so later tools benefit from zsh/Oh My Zsh)
+        confirm_step "Setup Oh My Zsh (optional, enhances zsh)" && setup_oh_my_zsh
         
         # Optional steps with confirmation in interactive mode
         confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
