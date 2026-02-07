@@ -22,7 +22,7 @@ tools:
 - **Source**: [huggingface/speech-to-speech](https://github.com/huggingface/speech-to-speech) (Apache-2.0)
 - **Purpose**: Modular, open-source GPT-4o-style voice assistant pipeline
 - **Pipeline**: VAD -> STT -> LLM -> TTS (each component swappable)
-- **Helper**: `speech-to-speech-helper.sh [setup|start|stop|status|config|benchmark] [options]`
+- **Helper**: `speech-to-speech-helper.sh [setup|start|stop|status|client|config|benchmark] [options]`
 - **Install dir**: `~/.aidevops/.agent-workspace/work/speech-to-speech/`
 - **Languages**: English, French, Spanish, Chinese, Japanese, Korean (auto-detect or fixed)
 
@@ -207,17 +207,21 @@ Full reference: `python s2s_pipeline.py -h` or see [arguments_classes/](https://
 
 ## Integration with aidevops
 
-### Voice-Driven DevOps
+### Voice-Driven DevOps (Conceptual)
 
-Pair with the LLM stage to create voice-controlled DevOps:
+The pipeline can be paired with the LLM stage to create voice-controlled DevOps. This is an integration pattern, not a built-in command:
 
 1. STT captures voice command
 2. LLM interprets as DevOps action (via system prompt)
 3. TTS confirms action and reports result
 
-### Transcription Pipeline
+For a ready-to-use voice interface, see the Voice Bridge section below.
 
-Use STT stage standalone for meeting notes, podcast transcription. Run the pipeline with `--llm open_api` and a system prompt that outputs transcription only, or use the STT components directly via Python.
+### Transcription
+
+For standalone transcription (meeting notes, podcasts), use Whisper directly instead of the full S2S pipeline. See `tools/voice/transcription.md` for model options and cloud APIs.
+
+To use the S2S pipeline for transcription, run with `--llm open_api` and a system prompt that outputs transcription only, or use the STT components directly via Python.
 
 ### Phone Integration (Twilio)
 

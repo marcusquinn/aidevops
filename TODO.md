@@ -69,9 +69,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07
   - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07
   - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
-    - Notes: BLOCKED by supervisor: FAILED: no_log_file  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
+  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
-  - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first. BLOCKED: FAILED: no_log_file
+  - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
 - [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
   - [x] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h completed:2026-02-07
   - [x] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m completed:2026-02-07
@@ -82,7 +82,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h actual:30m (ai:30m) logged:2026-02-07 ref:GH#455 completed:2026-02-07
   - Notes: PR #469 merged. create_github_issue() + update_todo_with_issue_ref() + --no-issue flag + SUPERVISOR_AUTO_ISSUE env.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
-  - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435. BLOCKED: FAILED: no_log_file
+  - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435.
 - [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
   - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
 - [x] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h actual:1h (ai:1h) logged:2026-02-07 ref:GH#441 completed:2026-02-07
@@ -91,8 +91,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
 - [x] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443 completed:2026-02-07
   - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
-- [ ] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m (ai:20m test:10m) logged:2026-02-07 ref:GH#445
-  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal). BLOCKED: FAILED: no_log_file
+- [x] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m actual:15m (ai:15m) logged:2026-02-07 ref:GH#445 started:2026-02-07 completed:2026-02-07
+  - Notes: All 12 PR #403 review threads verified fixed and resolved. transcribe command removed (PR #447), nltk.download stderr visible, cmd_stop uses polling loop, CPU fallback to --server, PyTorch version corrected, IP placeholders, API key guidance added, docker guard added.
 - [x] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#415. Already fixed: fallback chain (uv -> pipx -> venv+symlink -> pip3 --user) implemented at setup.sh lines 2608-2661. Verified working.
 - [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
@@ -130,7 +130,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Already resolved. Neither .scannerwork/ nor .playwright-cli/ are tracked in git (git ls-files --error-unmatch confirms).
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
     - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
-    - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
+    - [ ] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m
     - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Replaced 9 eval calls with bash arrays. wp-helper refactored build_ssh_command to execute_wp_via_ssh (direct execution). All pass ShellCheck -S error.
@@ -157,7 +157,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3 completed:2026-02-07
   - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
     - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
-      - Notes: BLOCKED by supervisor: FAILED: no_log_file    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
+    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
   - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
@@ -200,8 +200,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Replaced all 4 eval usages with bash arrays. Added ALLOWED_OUTPUT_FORMATS whitelist. Fixed broken JSON heredoc. Removed 5 unreachable returns. Reduced shellcheck disables from 23 to 2. PR #375 merged.
 - [x] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
 - [x] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h actual:20m (ai:20m) logged:2026-02-03 completed:2026-02-06
-- [x] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h actual:20m (ai:20m) logged:2026-02-03 started:2026-02-07 completed:2026-02-07
-  - Notes: Replaced all 3 localStorage calls with sessionStorage (auto-clears on tab close). Added Clear Token button with red styling. Input cleared after token set. Status shows "session only" indicator. Enter key support on input.
+- [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h (ai:30m test:20m read:10m) logged:2026-02-03
 - [x] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m actual:0m (ai:0m) logged:2026-02-03 completed:2026-02-06
   - Notes: Already fixed in PR #346. deploy-templates.sh replaced GNU-only `head -z` with macOS-compatible `while read -r` loop. No remaining `head -z` usage in codebase.
 - [x] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
@@ -239,7 +238,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4 completed:2026-01-24
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
-  - [ ] t068.8 TUI Dashboard (supervisor-helper.sh dashboard) ~1h blocked-by:t068.4,t068.5 started:2026-02-07
+  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
@@ -502,7 +501,7 @@ t104,Install script integrity hardening (replace curl|sh with verified downloads
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,15m,10m,5m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
-t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,1h,20m,0m,2026-02-03T00:00Z,completed,2026-02-07T00:00Z,,
+t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,1h,30m,20m,2026-02-03T00:00Z,pending,,,
 t121,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,0m,0m,2026-02-03T00:00Z,completed,2026-02-06T00:00Z,,
 t122,Resolve awk newline warnings during setup deploy (system-reminder),,setup|deploy|bugfix,45m,30m,15m,2026-02-03T00:00Z,pending,,,
 t123,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m,0m,0m,2026-02-03T00:00Z,completed,,,
