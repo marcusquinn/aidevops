@@ -62,12 +62,12 @@ set -euo pipefail
 
 # Ensure common tool paths are available (cron has minimal PATH: /usr/bin:/bin)
 # Without this, gh, opencode, node, etc. are unreachable from cron-triggered pulses
-if [[ -z "${HOMEBREW_PREFIX:-}" ]]; then
-    for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.cargo/bin"; do
-        [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
-    done
-    unset _p
-fi
+# No HOMEBREW_PREFIX guard: the idempotent ":$PATH:" check prevents duplicates,
+# and cron may have HOMEBREW_PREFIX set without all tool paths present
+for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+    [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
+done
+unset _p
 
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
