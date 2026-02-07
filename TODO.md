@@ -68,10 +68,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
   - [ ] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none
     - Notes: BLOCKED by supervisor: Max retries exceeded: backend_infrastructure_error  - [ ] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none
-  - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
+  - [x] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none completed:2026-02-07
+    - Notes: All 3 threads already fixed in prior PRs (#447 for sed-i, current code for severity attribution). Replied with evidence.
   - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
   - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
+- [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h (ai:2h test:30m read:30m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
+  - Notes: On task failure/block, supervisor auto-creates diagnostic subtask (t001.diag) that investigates root cause. When diagnostic completes, parent is re-queued with fresh retries. Eligibility checks prevent infinite loops (no self-heal for auth_error, OOM, merge_conflict; max 1 heal attempt per task). Integrated into pulse cycle Phase 1b/1c. Manual: self-heal command.
 - [ ] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h (ai:1.5h test:30m) logged:2026-02-07 ref:GH#455
   - Notes: Supervisor creates tasks in SQLite but never creates GitHub issues. Add gh issue create to cmd_add/cmd_batch, update TODO.md with ref:GH#N. Prerequisite for t020/t047 (full bi-directional sync). Immediate need: all dispatched tasks should have GH issue visibility.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439

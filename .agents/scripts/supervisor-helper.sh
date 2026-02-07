@@ -26,6 +26,7 @@
 #   supervisor-helper.sh cancel <task_id|batch_id>     Cancel task or batch
 #   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for #auto-dispatch tasks
 #   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
+#   supervisor-helper.sh self-heal [task_id] [--batch id] Trigger self-healing for blocked/failed tasks
 #   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
 #   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] Handle post-PR merge/deploy lifecycle
 #   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
@@ -38,6 +39,10 @@
 #                                   -> retrying   -> reprompt -> dispatched (retry cycle)
 #                                   -> blocked    (needs human input / max retries)
 #                                   -> failed     (dispatch failure / unrecoverable)
+#
+# Self-healing (t150):
+#   blocked/failed -> [create diag subtask] -> diag complete -> parent re-queued
+#   Automatic during pulse cycle. Manual: self-heal <task_id>
 #
 # Post-PR lifecycle (t128.8):
 #   complete -> pr_review -> merging -> merged -> deploying -> deployed
@@ -403,6 +408,17 @@ MIGRATE
         log_success "Added max_load_factor column to batches"
     fi
 
+    # Migrate: add self-healing columns if missing (t150)
+    local has_parent_task
+    has_parent_task=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='parent_task_id';" 2>/dev/null || echo "0")
+    if [[ "$has_parent_task" -eq 0 ]]; then
+        log_info "Migrating tasks table: adding self-healing columns (t150)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;" 2>/dev/null || true
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN is_diagnostic INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN heal_attempts INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        log_success "Added self-healing columns (parent_task_id, is_diagnostic, heal_attempts)"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -439,6 +455,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     model           TEXT DEFAULT 'anthropic/claude-opus-4-6',
     error           TEXT,
     pr_url          TEXT,
+    parent_task_id  TEXT,
+    is_diagnostic   INTEGER NOT NULL DEFAULT 0,
+    heal_attempts   INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,
@@ -448,6 +467,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo);
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
 
 CREATE TABLE IF NOT EXISTS batches (
     id              TEXT PRIMARY KEY,
@@ -921,6 +941,19 @@ cmd_status() {
 
         echo ""
 
+        # Self-healing stats (t150)
+        local diag_active diag_complete healed_total
+        diag_active=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE is_diagnostic = 1 AND status NOT IN ('complete','deployed','failed','cancelled');" 2>/dev/null || echo "0")
+        diag_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE is_diagnostic = 1 AND status IN ('complete','deployed');" 2>/dev/null || echo "0")
+        healed_total=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE heal_attempts > 0;" 2>/dev/null || echo "0")
+        if [[ "$diag_active" -gt 0 || "$diag_complete" -gt 0 || "$healed_total" -gt 0 ]]; then
+            echo "Self-Healing:"
+            echo -e "  ${YELLOW}active diagnostics${NC}: $diag_active"
+            echo -e "  ${GREEN}completed diagnostics${NC}: $diag_complete"
+            echo "  tasks healed: $healed_total"
+            echo ""
+        fi
+
         # DB file size
         if [[ -f "$SUPERVISOR_DB" ]]; then
             local db_size
@@ -974,6 +1007,34 @@ cmd_status() {
                 echo "    $ts: $from -> $to ($reason)"
             fi
         done
+
+        # Show self-healing info (t150)
+        local task_parent task_is_diag task_heal_attempts
+        task_parent=$(db "$SUPERVISOR_DB" "SELECT parent_task_id FROM tasks WHERE id = '$(sql_escape "$target")';" 2>/dev/null || echo "")
+        task_is_diag=$(db "$SUPERVISOR_DB" "SELECT is_diagnostic FROM tasks WHERE id = '$(sql_escape "$target")';" 2>/dev/null || echo "0")
+        task_heal_attempts=$(db "$SUPERVISOR_DB" "SELECT heal_attempts FROM tasks WHERE id = '$(sql_escape "$target")';" 2>/dev/null || echo "0")
+
+        if [[ "$task_is_diag" -eq 1 || -n "$task_parent" || "$task_heal_attempts" -gt 0 ]]; then
+            echo ""
+            echo "  Self-Healing:"
+            [[ "$task_is_diag" -eq 1 ]] && echo -e "    ${YELLOW}This is a diagnostic subtask${NC}"
+            [[ -n "$task_parent" ]] && echo "    Parent task: $task_parent"
+            [[ "$task_heal_attempts" -gt 0 ]] && echo "    Heal attempts: $task_heal_attempts"
+
+            # Show diagnostic subtasks if any
+            local diag_subtasks
+            diag_subtasks=$(db -separator '|' "$SUPERVISOR_DB" "
+                SELECT id, status FROM tasks
+                WHERE parent_task_id = '$(sql_escape "$target")' AND is_diagnostic = 1
+                ORDER BY created_at ASC;
+            " 2>/dev/null || echo "")
+            if [[ -n "$diag_subtasks" ]]; then
+                echo "    Diagnostic subtasks:"
+                while IFS='|' read -r did dstatus; do
+                    echo "      $did ($dstatus)"
+                done <<< "$diag_subtasks"
+            fi
+        fi
 
         # Show batch membership
         local batch_membership
@@ -3520,6 +3581,12 @@ cmd_pulse() {
         done <<< "$running_tasks"
     fi
 
+    # Phase 1b: Self-healing - check completed diagnostics and re-queue parents (t150)
+    check_diagnostic_completions 2>/dev/null || true
+
+    # Phase 1c: Self-healing - create diagnostic subtasks for blocked/failed tasks (t150)
+    attempt_self_healing "${batch_id:-}" 2>/dev/null || true
+
     # Phase 2: Dispatch queued tasks up to concurrency limit
 
     if [[ -n "$batch_id" ]]; then
@@ -4218,6 +4285,331 @@ store_success_pattern() {
 }
 
 #######################################
+# Self-healing: determine if a failed/blocked task is eligible for
+# automatic diagnostic subtask creation (t150)
+#
+# Eligible when:
+#   - Task is not itself a diagnostic subtask (no infinite loops)
+#   - Task has not already been healed (heal_attempts < max_heal)
+#   - Failure type is actionable (not auth_error, not out_of_memory)
+#   - No existing pending/running diagnostic subtask for this parent
+#
+# Returns 0 if eligible, 1 if not (reason on stdout)
+#######################################
+is_self_heal_eligible() {
+    local task_id="$1"
+    local failure_reason="$2"
+    local max_heal_attempts="${3:-${SUPERVISOR_MAX_HEAL_ATTEMPTS:-1}}"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+
+    # Check if this task is itself a diagnostic subtask
+    local is_diag
+    is_diag=$(db "$SUPERVISOR_DB" "SELECT is_diagnostic FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+    if [[ "$is_diag" -eq 1 ]]; then
+        echo "skip:is_diagnostic_task"
+        return 1
+    fi
+
+    # Check heal attempts
+    local heal_count
+    heal_count=$(db "$SUPERVISOR_DB" "SELECT heal_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+    if [[ "$heal_count" -ge "$max_heal_attempts" ]]; then
+        echo "skip:max_heal_attempts_reached"
+        return 1
+    fi
+
+    # Check for existing active diagnostic subtask
+    local active_diag
+    active_diag=$(db "$SUPERVISOR_DB" "
+        SELECT count(*) FROM tasks
+        WHERE parent_task_id = '$escaped_id'
+        AND is_diagnostic = 1
+        AND status NOT IN ('complete', 'deployed', 'failed', 'cancelled');
+    " 2>/dev/null || echo "0")
+    if [[ "$active_diag" -gt 0 ]]; then
+        echo "skip:diagnostic_already_active"
+        return 1
+    fi
+
+    # Non-healable failure types (require human intervention)
+    case "$failure_reason" in
+        auth_error)
+            echo "skip:requires_credentials"
+            return 1
+            ;;
+        out_of_memory)
+            echo "skip:infrastructure_issue"
+            return 1
+            ;;
+        merge_conflict)
+            echo "skip:requires_human_resolution"
+            return 1
+            ;;
+    esac
+
+    echo "eligible"
+    return 0
+}
+
+#######################################
+# Self-healing: create a diagnostic subtask for a failed/blocked task (t150)
+#
+# Creates a new task with:
+#   - ID: {parent_id}.diag (or .diag2, .diag3 for subsequent attempts)
+#   - Description: diagnostic prompt with failure context
+#   - parent_task_id: links back to the original task
+#   - is_diagnostic: 1
+#
+# The diagnostic task's prompt instructs the worker to:
+#   1. Read the parent task's log file
+#   2. Identify the root cause of the failure
+#   3. Fix the issue (code change, config fix, etc.)
+#   4. Commit the fix
+#
+# When the diagnostic task completes, the pulse cycle will detect it
+# and re-queue the parent task.
+#######################################
+create_diagnostic_subtask() {
+    local task_id="$1"
+    local failure_reason="$2"
+    # $3 (failure_detail) reserved for future use; error is read from DB
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+
+    # Get parent task info
+    local task_row
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT repo, description, log_file, error, model, heal_attempts
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local trepo tdesc tlog terror tmodel theal
+    IFS='|' read -r trepo tdesc tlog terror tmodel theal <<< "$task_row"
+
+    # Generate diagnostic task ID
+    local diag_num=$((theal + 1))
+    local diag_id="${task_id}.diag"
+    if [[ "$diag_num" -gt 1 ]]; then
+        diag_id="${task_id}.diag${diag_num}"
+    fi
+
+    # Check if diag task already exists
+    local existing
+    existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$diag_id")';" 2>/dev/null || echo "")
+    if [[ -n "$existing" ]]; then
+        log_warn "Diagnostic task $diag_id already exists (status: $existing)"
+        return 1
+    fi
+
+    # Build diagnostic description with failure context
+    # Use semicolons as separators (pipes conflict with SQLite -separator '|')
+    local diag_desc="Diagnose and fix failure in task $task_id"
+    diag_desc="$diag_desc; Error: ${terror:-$failure_reason}"
+    if [[ -n "$tdesc" ]]; then
+        diag_desc="$diag_desc; Original task: $(echo "$tdesc" | head -c 120)"
+    fi
+    if [[ -n "$tlog" && -f "$tlog" ]]; then
+        diag_desc="$diag_desc; Log: $tlog"
+    fi
+
+    # Create the diagnostic task
+    local escaped_diag_id
+    escaped_diag_id=$(sql_escape "$diag_id")
+    local escaped_diag_desc
+    escaped_diag_desc=$(sql_escape "$diag_desc")
+    local escaped_repo
+    escaped_repo=$(sql_escape "$trepo")
+    local escaped_model
+    escaped_model=$(sql_escape "$tmodel")
+    local escaped_parent
+    escaped_parent=$(sql_escape "$task_id")
+
+    db "$SUPERVISOR_DB" "
+        INSERT INTO tasks (id, repo, description, model, max_retries, parent_task_id, is_diagnostic)
+        VALUES ('$escaped_diag_id', '$escaped_repo', '$escaped_diag_desc', '$escaped_model', 2, '$escaped_parent', 1);
+    "
+
+    # Log the creation
+    db "$SUPERVISOR_DB" "
+        INSERT INTO state_log (task_id, from_state, to_state, reason)
+        VALUES ('$escaped_diag_id', '', 'queued', 'Auto-created diagnostic subtask for $task_id ($failure_reason)');
+    "
+
+    # Increment heal_attempts on the parent
+    db "$SUPERVISOR_DB" "
+        UPDATE tasks SET heal_attempts = heal_attempts + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE id = '$escaped_parent';
+    "
+
+    # Add to same batch as parent (if any)
+    local parent_batch
+    parent_batch=$(db "$SUPERVISOR_DB" "
+        SELECT batch_id FROM batch_tasks WHERE task_id = '$escaped_parent' LIMIT 1;
+    " 2>/dev/null || echo "")
+
+    if [[ -n "$parent_batch" ]]; then
+        local max_pos
+        max_pos=$(db "$SUPERVISOR_DB" "
+            SELECT COALESCE(MAX(position), 0) + 1 FROM batch_tasks WHERE batch_id = '$(sql_escape "$parent_batch")';
+        " 2>/dev/null || echo "0")
+        db "$SUPERVISOR_DB" "
+            INSERT OR IGNORE INTO batch_tasks (batch_id, task_id, position)
+            VALUES ('$(sql_escape "$parent_batch")', '$escaped_diag_id', $max_pos);
+        "
+        log_info "Added diagnostic task $diag_id to batch $parent_batch"
+    fi
+
+    log_success "Created diagnostic subtask: $diag_id for parent $task_id (reason: $failure_reason)"
+    echo "$diag_id"
+    return 0
+}
+
+#######################################
+# Self-healing: check if completed diagnostic tasks should re-queue parents (t150)
+#
+# Called during pulse Phase 1 after evaluating workers.
+# For each recently completed diagnostic task:
+#   1. Find the parent task
+#   2. If parent is still blocked/failed, re-queue it
+#   3. Log the self-healing cycle
+#######################################
+check_diagnostic_completions() {
+    ensure_db
+
+    # Find completed diagnostic tasks whose parents are still blocked/failed
+    local healed_tasks
+    healed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT d.id, d.parent_task_id, p.status, p.error
+        FROM tasks d
+        JOIN tasks p ON d.parent_task_id = p.id
+        WHERE d.is_diagnostic = 1
+        AND d.status = 'complete'
+        AND p.status IN ('blocked', 'failed')
+        ORDER BY d.completed_at ASC;
+    " 2>/dev/null || echo "")
+
+    if [[ -z "$healed_tasks" ]]; then
+        return 0
+    fi
+
+    local healed_count=0
+    while IFS='|' read -r diag_id parent_id parent_status parent_error; do
+        log_info "Diagnostic task $diag_id completed - re-queuing parent $parent_id"
+
+        # Re-queue the parent task
+        if cmd_transition "$parent_id" "queued" --error "Re-queued after diagnostic $diag_id completed" 2>/dev/null; then
+            # Reset retries so the parent gets fresh attempts
+            db "$SUPERVISOR_DB" "
+                UPDATE tasks SET retries = 0, error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                WHERE id = '$(sql_escape "$parent_id")';
+            "
+            healed_count=$((healed_count + 1))
+            log_success "Re-queued parent task $parent_id (was: $parent_status)"
+
+            # Store self-healing success in memory
+            if [[ -x "$MEMORY_HELPER" ]]; then
+                "$MEMORY_HELPER" store \
+                    --auto \
+                    --type "WORKING_SOLUTION" \
+                    --content "Self-healing: diagnostic $diag_id fixed $parent_id (was: $parent_status, error: $parent_error)" \
+                    --tags "supervisor,self-healing,$parent_id,$diag_id" \
+                    2>/dev/null || true
+            fi
+
+            # Send notification about self-healing
+            send_task_notification "$parent_id" "self_healed" "Re-queued after diagnostic $diag_id" 2>/dev/null || true
+        else
+            log_warn "Failed to re-queue parent $parent_id from state $parent_status"
+        fi
+    done <<< "$healed_tasks"
+
+    if [[ "$healed_count" -gt 0 ]]; then
+        log_success "Self-healing: re-queued $healed_count parent task(s)"
+    fi
+
+    return 0
+}
+
+#######################################
+# Self-healing: attempt to create diagnostic subtasks for blocked/failed tasks (t150)
+#
+# Called during pulse after Phase 1 evaluation.
+# Scans for newly blocked/failed tasks and creates diagnostic subtasks
+# for eligible ones.
+#######################################
+attempt_self_healing() {
+    local batch_id="${1:-}"
+
+    ensure_db
+
+    # Find blocked/failed tasks that might be healable
+    local batch_filter=""
+    if [[ -n "$batch_id" ]]; then
+        batch_filter="AND t.id IN (SELECT task_id FROM batch_tasks WHERE batch_id = '$(sql_escape "$batch_id")')"
+    fi
+
+    local failed_tasks
+    failed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT t.id, t.error, t.status
+        FROM tasks t
+        WHERE t.status IN ('blocked', 'failed')
+        AND t.is_diagnostic = 0
+        AND t.heal_attempts = 0
+        $batch_filter
+        ORDER BY t.updated_at DESC
+        LIMIT 5;
+    " 2>/dev/null || echo "")
+
+    if [[ -z "$failed_tasks" ]]; then
+        return 0
+    fi
+
+    local heal_count=0
+    while IFS='|' read -r tid terror tstatus; do
+        # Extract failure reason from error field
+        local failure_reason="${terror%%:*}"
+        # Normalize: "Max retries exceeded: backend_infrastructure_error" -> "backend_infrastructure_error"
+        if [[ "$terror" == *": "* ]]; then
+            failure_reason="${terror##*: }"
+        fi
+
+        # Check eligibility
+        local eligibility
+        eligibility=$(is_self_heal_eligible "$tid" "$failure_reason")
+        if [[ "$eligibility" != "eligible" ]]; then
+            log_info "Self-healing skip for $tid ($tstatus): $eligibility"
+            continue
+        fi
+
+        # Create diagnostic subtask
+        local diag_id
+        diag_id=$(create_diagnostic_subtask "$tid" "$failure_reason" "$terror")
+        if [[ $? -eq 0 && -n "$diag_id" ]]; then
+            heal_count=$((heal_count + 1))
+            log_success "Self-healing: created $diag_id for $tstatus task $tid"
+        fi
+    done <<< "$failed_tasks"
+
+    if [[ "$heal_count" -gt 0 ]]; then
+        log_success "Self-healing: created $heal_count diagnostic subtask(s)"
+    fi
+
+    return 0
+}
+
+#######################################
 # Run a retrospective after batch completion
 # Analyzes outcomes across all tasks in a batch and stores insights
 #######################################
@@ -4719,6 +5111,76 @@ cmd_cron() {
 }
 
 #######################################
+# Command: self-heal - manually trigger self-healing for a task or batch (t150)
+#######################################
+cmd_self_heal() {
+    local task_id="" batch_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --batch) [[ $# -lt 2 ]] && { log_error "--batch requires a value"; return 1; }; batch_id="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    ensure_db
+
+    if [[ -n "$task_id" ]]; then
+        # Heal a specific task
+        local escaped_id
+        escaped_id=$(sql_escape "$task_id")
+        local tstatus terror
+        tstatus=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+        if [[ -z "$tstatus" ]]; then
+            log_error "Task not found: $task_id"
+            return 1
+        fi
+
+        if [[ "$tstatus" != "blocked" && "$tstatus" != "failed" ]]; then
+            log_error "Task $task_id is in '$tstatus' state, must be 'blocked' or 'failed' to self-heal"
+            return 1
+        fi
+
+        local failure_reason="${terror%%:*}"
+        if [[ "$terror" == *": "* ]]; then
+            failure_reason="${terror##*: }"
+        fi
+
+        local eligibility
+        eligibility=$(is_self_heal_eligible "$task_id" "$failure_reason")
+        if [[ "$eligibility" != "eligible" ]]; then
+            log_warn "Task $task_id not eligible for self-healing: $eligibility"
+            return 1
+        fi
+
+        local diag_id
+        diag_id=$(create_diagnostic_subtask "$task_id" "$failure_reason" "$terror")
+        if [[ $? -eq 0 && -n "$diag_id" ]]; then
+            log_success "Created diagnostic subtask: $diag_id"
+            echo "$diag_id"
+            return 0
+        else
+            log_error "Failed to create diagnostic subtask for $task_id"
+            return 1
+        fi
+    elif [[ -n "$batch_id" ]]; then
+        attempt_self_healing "$batch_id"
+        return $?
+    else
+        # Heal all eligible tasks
+        attempt_self_healing ""
+        return $?
+    fi
+}
+
+#######################################
 # Watch TODO.md for changes using fswatch
 # Triggers auto-pickup + pulse on file modification
 # Alternative to cron for real-time responsiveness
@@ -4801,6 +5263,7 @@ Usage:
   supervisor-helper.sh cancel <task_id|batch_id>     Cancel task or batch
   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for auto-dispatch tasks
   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
+  supervisor-helper.sh self-heal [task_id] [--batch id] Trigger self-healing for blocked/failed tasks
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
@@ -4810,6 +5273,12 @@ State Machine (worker lifecycle):
                                   -> retrying   -> reprompt -> dispatched -> running (retry cycle)
                                   -> blocked    (needs human input / max retries exceeded)
                                   -> failed     (dispatch failure / unrecoverable)
+
+Self-Healing (t150 - automatic diagnostic subtask creation):
+  blocked/failed -> [create diag subtask] -> diag queued -> diag complete -> parent re-queued
+  Eligible failures: backend errors, clean_exit_no_signal, ambiguous outcomes
+  Ineligible: auth_error, out_of_memory, merge_conflict (require human intervention)
+  Limit: 1 heal attempt per task (prevents infinite loops)
 
 Post-PR Lifecycle (t128.8 - supervisor handles directly, no worker needed):
   complete -> pr_review -> merging -> merged -> deploying -> deployed
@@ -4876,9 +5345,10 @@ Options for 'list':
   --format json          Output as JSON
 
 Environment:
-  SUPERVISOR_MAX_CONCURRENCY  Global concurrency limit (default: 4)
-  SUPERVISOR_DISPATCH_MODE    Force dispatch mode: headless|tabby
-  AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
+  SUPERVISOR_MAX_CONCURRENCY    Global concurrency limit (default: 4)
+  SUPERVISOR_DISPATCH_MODE      Force dispatch mode: headless|tabby
+  SUPERVISOR_MAX_HEAL_ATTEMPTS  Max self-heal attempts per task (default: 1)
+  AIDEVOPS_SUPERVISOR_DIR       Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
 
@@ -4957,6 +5427,23 @@ Options for 'cron':
   --interval <N>         Minutes between pulses (default: 5)
   --batch <batch_id>     Only pulse tasks in this batch
 
+Self-Healing (t150):
+  On task failure/block, the supervisor can auto-create a diagnostic subtask
+  that investigates the root cause and attempts a fix. When the diagnostic
+  task completes, the parent task is automatically re-queued with fresh retries.
+
+  Automatic: pulse cycle Phase 1b/1c runs self-healing checks each pulse
+  Manual: supervisor-helper.sh self-heal <task_id>    # Heal specific task
+          supervisor-helper.sh self-heal --batch <id> # Heal all in batch
+
+  Diagnostic tasks have IDs like t001.diag, t001.diag2, etc.
+  They inherit the parent's repo, model, and batch membership.
+  Max 1 heal attempt per task (configurable via SUPERVISOR_MAX_HEAL_ATTEMPTS).
+
+Options for 'self-heal':
+  <task_id>              Heal a specific blocked/failed task
+  --batch <batch_id>     Heal all eligible tasks in a batch
+
 Options for 'watch':
   --repo <path>          Repository with TODO.md (default: current directory)
 EOF
@@ -4988,6 +5475,7 @@ main() {
         auto-pickup) cmd_auto_pickup "$@" ;;
         cron) cmd_cron "$@" ;;
         watch) cmd_watch "$@" ;;
+        self-heal) cmd_self_heal "$@" ;;
         recall) cmd_recall "$@" ;;
         retrospective) cmd_retrospective "$@" ;;
         transition) cmd_transition "$@" ;;
