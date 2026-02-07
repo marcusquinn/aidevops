@@ -60,6 +60,15 @@
 
 set -euo pipefail
 
+# Ensure common tool paths are available (cron has minimal PATH: /usr/bin:/bin)
+# Without this, gh, opencode, node, etc. are unreachable from cron-triggered pulses
+if [[ -z "${HOMEBREW_PREFIX:-}" ]]; then
+    for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+        [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
+    done
+    unset _p
+fi
+
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
@@ -3150,13 +3159,28 @@ cmd_pr_lifecycle() {
                 return 1
                 ;;
             no_pr)
-                log_warn "No PR found for $task_id"
-                # PR URL in DB is stale or wrong - the PR may not exist yet
-                # or the stored URL was incorrect. Log for investigation.
-                log_warn "  -> merging"
-                log_warn "  -> blocked"
-                log_warn "  -> cancelled"
-                # Don't auto-deploy - leave in pr_review for next pulse to retry
+                # Track consecutive no_pr failures to avoid infinite retry loop
+                local no_pr_key="no_pr_retries_${task_id}"
+                local no_pr_count
+                no_pr_count=$(db "SELECT COALESCE(
+                    (SELECT CAST(json_extract(error, '$.no_pr_retries') AS INTEGER)
+                     FROM tasks WHERE id='$task_id'), 0);" 2>/dev/null || echo "0")
+                no_pr_count=$((no_pr_count + 1))
+
+                if [[ "$no_pr_count" -ge 5 ]]; then
+                    log_warn "No PR found for $task_id after $no_pr_count attempts -- blocking"
+                    if ! command -v gh &>/dev/null; then
+                        log_warn "  ROOT CAUSE: 'gh' CLI not in PATH ($(echo "$PATH" | tr ':' '\n' | head -5 | tr '\n' ':'))"
+                    fi
+                    if [[ "$dry_run" == "false" ]]; then
+                        cmd_transition "$task_id" "blocked" --error "PR unreachable after $no_pr_count attempts (gh in PATH: $(command -v gh 2>/dev/null || echo 'NOT FOUND'))" 2>/dev/null || true
+                    fi
+                    return 1
+                fi
+
+                log_warn "No PR found for $task_id (attempt $no_pr_count/5)"
+                # Store retry count in error field as JSON
+                db "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
                 return 0
                 ;;
         esac
