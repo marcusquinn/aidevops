@@ -152,7 +152,9 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 - Deploy agents to `~/.aidevops/agents/`
 - Install the `aidevops` CLI command
 - Configure your AI assistants automatically
+- Offer to install Oh My Zsh (optional, opt-in) for enhanced shell experience
 - Guide you through recommended tools (Tabby, Zed, Git CLIs)
+- Ensure all PATH and alias changes work in both bash and zsh
 
 **New users: Start [OpenCode](https://opencode.ai/) and type `/onboarding`** to configure your services interactively. OpenCode is the recommended tool for aidevops - all features, agents, and workflows are designed and tested for it first. The onboarding wizard will:
 - Explain what **[aidevops](https://aidevops.sh)** can do
