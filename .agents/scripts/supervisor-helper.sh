@@ -1409,6 +1409,13 @@ check_model_health() {
     local ai_cli="$1"
     local model="${2:-}"
 
+    # Pulse-level fast path: if health was already verified in this pulse
+    # invocation, skip the probe entirely (avoids 8s per task)
+    if [[ -n "${_PULSE_HEALTH_VERIFIED:-}" ]]; then
+        log_info "Model health: pulse-verified OK (skipping probe)"
+        return 0
+    fi
+
     # Cache key: cli + model, stored as a file with timestamp
     local cache_dir="$SUPERVISOR_DIR/health"
     mkdir -p "$cache_dir"
@@ -1424,6 +1431,7 @@ check_model_health() {
         local age=$(( now - cached_at ))
         if [[ "$age" -lt 300 ]]; then
             log_info "Model health: cached OK ($age seconds ago)"
+            _PULSE_HEALTH_VERIFIED="true"
             return 0
         fi
     fi
@@ -1522,6 +1530,7 @@ check_model_health() {
 
     # Healthy - cache the result
     date +%s > "$cache_file"
+    _PULSE_HEALTH_VERIFIED="true"
     log_info "Model health: OK (cached for 5m)"
     return 0
 }
@@ -1958,13 +1967,17 @@ cmd_dispatch() {
         tab_cmd="cd '${worktree_path}' && ${cmd_parts[*]} > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'"
         printf '\e]1337;NewTab=%s\a' "$tab_cmd" 2>/dev/null || true
         # Also start background process as fallback (Tabby may not support OSC 1337)
-        (cd "$worktree_path" && "${cmd_parts[@]}" > "$log_file" 2>&1; echo "EXIT:$?" >> "$log_file") &
+        # Use nohup + disown to survive parent (cron) exit
+        nohup bash -c "cd '${worktree_path}' && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
     else
         # Headless: background process
-        (cd "$worktree_path" && "${cmd_parts[@]}" > "$log_file" 2>&1; echo "EXIT:$?" >> "$log_file") &
+        # Use nohup + disown to survive parent (cron) exit — without this,
+        # workers die after ~2 minutes when the cron pulse script exits
+        nohup bash -c "cd '${worktree_path}' && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
     fi
 
     local worker_pid=$!
+    disown "$worker_pid" 2>/dev/null || true
 
     # Store PID for monitoring
     echo "$worker_pid" > "$SUPERVISOR_DIR/pids/${task_id}.pid"
@@ -2543,8 +2556,10 @@ Task description: ${tdesc:-$task_id}"
     # Ensure PID directory exists
     mkdir -p "$SUPERVISOR_DIR/pids"
 
-    (cd "$work_dir" && "${cmd_parts[@]}" > "$new_log_file" 2>&1; echo "EXIT:$?" >> "$new_log_file") &
+    # Use nohup + disown to survive parent (cron) exit
+    nohup bash -c "cd '${work_dir}' && $(printf '%q ' "${cmd_parts[@]}") > '${new_log_file}' 2>&1; echo \"EXIT:\$?\" >> '${new_log_file}'" &>/dev/null &
     local worker_pid=$!
+    disown "$worker_pid" 2>/dev/null || true
 
     echo "$worker_pid" > "$SUPERVISOR_DIR/pids/${task_id}.pid"
 
@@ -3258,6 +3273,10 @@ cmd_pulse() {
 
     log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
+    # Pulse-level health check flag: once health is confirmed in this pulse,
+    # skip subsequent checks to avoid 8-second probes per task
+    _PULSE_HEALTH_VERIFIED=""
+
     # Phase 0: Auto-pickup new tasks from TODO.md (t128.5)
     # Scans for #auto-dispatch tags and Dispatch Queue section
     local all_repos
@@ -3420,17 +3439,18 @@ cmd_pulse() {
 
         if [[ -n "$next_tasks" ]]; then
             while IFS='|' read -r tid trepo tdesc tmodel; do
-                if cmd_dispatch "$tid" --batch "$batch_id" 2>/dev/null; then
+                local dispatch_exit=0
+                cmd_dispatch "$tid" --batch "$batch_id" || dispatch_exit=$?
+                if [[ "$dispatch_exit" -eq 0 ]]; then
                     dispatched_count=$((dispatched_count + 1))
+                elif [[ "$dispatch_exit" -eq 2 ]]; then
+                    log_info "Concurrency limit reached, stopping dispatch"
+                    break
+                elif [[ "$dispatch_exit" -eq 3 ]]; then
+                    log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
+                    break
                 else
-                    local dispatch_exit=$?
-                    if [[ "$dispatch_exit" -eq 2 ]]; then
-                        log_info "Concurrency limit reached, stopping dispatch"
-                        break
-                    elif [[ "$dispatch_exit" -eq 3 ]]; then
-                        log_warn "Provider unavailable, stopping dispatch until next pulse"
-                        break
-                    fi
+                    log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
                 fi
             done <<< "$next_tasks"
         fi
@@ -3441,17 +3461,18 @@ cmd_pulse() {
 
         if [[ -n "$next_tasks" ]]; then
             while IFS='|' read -r tid trepo tdesc tmodel; do
-                if cmd_dispatch "$tid" 2>/dev/null; then
+                local dispatch_exit=0
+                cmd_dispatch "$tid" || dispatch_exit=$?
+                if [[ "$dispatch_exit" -eq 0 ]]; then
                     dispatched_count=$((dispatched_count + 1))
+                elif [[ "$dispatch_exit" -eq 2 ]]; then
+                    log_info "Concurrency limit reached, stopping dispatch"
+                    break
+                elif [[ "$dispatch_exit" -eq 3 ]]; then
+                    log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
+                    break
                 else
-                    local dispatch_exit=$?
-                    if [[ "$dispatch_exit" -eq 2 ]]; then
-                        log_info "Concurrency limit reached, stopping dispatch"
-                        break
-                    elif [[ "$dispatch_exit" -eq 3 ]]; then
-                        log_warn "Provider unavailable, stopping dispatch until next pulse"
-                        break
-                    fi
+                    log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
                 fi
             done <<< "$next_tasks"
         fi
