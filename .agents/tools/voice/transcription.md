@@ -55,29 +55,28 @@ transcription-helper.sh models
 ### via faster-whisper (Recommended)
 
 CTranslate2-based, 4x faster than OpenAI Whisper with same accuracy.
+See `voice-bridge.py:99-115` for the repo's `FasterWhisperSTT` implementation.
 
 ```bash
-# Install
 pip install faster-whisper
-
-# Python usage
-from faster_whisper import WhisperModel
-model = WhisperModel("large-v3-turbo", device="auto", compute_type="float16")
-segments, info = model.transcribe("audio.wav", beam_size=5)
-for segment in segments:
-    print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
 ```
+
+Official usage: https://github.com/SYSTRAN/faster-whisper#usage
 
 ### via whisper.cpp (C++ native)
 
 Optimized for Apple Silicon and CPU inference.
 
 ```bash
-# Install (macOS)
-brew install whisper-cpp
+# Build from source (no Homebrew formula)
+git clone https://github.com/ggml-org/whisper.cpp.git
+cd whisper.cpp && cmake -B build && cmake --build build -j --config Release
+
+# Download model
+sh ./models/download-ggml-model.sh large-v3-turbo
 
 # Transcribe
-whisper-cpp -m models/ggml-large-v3-turbo.bin -f audio.wav -otxt -osrt
+./build/bin/whisper-cli -f audio.wav -otxt -osrt
 ```
 
 ### Model Comparison
@@ -121,10 +120,13 @@ whisper-cpp -m models/ggml-large-v3-turbo.bin -f audio.wav -otxt -osrt
 ```bash
 curl https://api.groq.com/openai/v1/audio/transcriptions \
   -H "Authorization: Bearer ${GROQ_API_KEY}" \
+  -H "Content-Type: multipart/form-data" \
   -F "file=@audio.wav" \
-  -F "model=whisper-large-v3-turbo" \
+  -F "model=whisper-large-v3" \
   -F "response_format=verbose_json"
 ```
+
+Docs: https://console.groq.com/docs/speech-text
 
 ### OpenAI Whisper API
 
@@ -136,14 +138,18 @@ curl https://api.openai.com/v1/audio/transcriptions \
   -F "response_format=srt"
 ```
 
+Docs: https://platform.openai.com/docs/api-reference/audio/createTranscription
+
 ### ElevenLabs Scribe
 
 ```bash
 curl -X POST "https://api.elevenlabs.io/v1/speech-to-text" \
   -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
   -F "file=@audio.wav" \
-  -F "model_id=scribe_v2"
+  -F "model_id=scribe_v1"
 ```
+
+Docs: https://elevenlabs.io/docs/api-reference/speech-to-text
 
 ## Output Formats
 
@@ -187,12 +193,7 @@ apt install yt-dlp ffmpeg     # Ubuntu/Debian
 
 # Local inference (pick one)
 pip install faster-whisper     # Python (recommended)
-brew install whisper-cpp       # C++ native (macOS)
-
-# Model download
-faster-whisper-download large-v3-turbo
-# or
-whisper-cpp --download-model large-v3-turbo
+# whisper.cpp: build from source (see above)
 ```
 
 ## Related
