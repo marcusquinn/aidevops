@@ -55,7 +55,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-07 ref:GH#437 completed:2026-02-07
+- [ ] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-07 ref:GH#437
   - [ ] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none
   - [ ] t148.2 Add triage_review_feedback() to classify threads by severity ~1.5h blocked-by:t148.1
   - [ ] t148.3 Add review_triage state to supervisor state machine ~30m blocked-by:t148.1
@@ -63,15 +63,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t148.5 Add worker dispatch for fixing valid review feedback ~1.5h blocked-by:t148.4
   - [ ] t148.6 Add --skip-review-triage emergency bypass flag ~15m blocked-by:t148.4
   - Notes: 11 of last 50 merged PRs had CHANGES_REQUESTED. 50 unresolved review threads, 12 high/critical. Bot reviews post as COMMENTED not CHANGES_REQUESTED so reviewDecision stays NONE. Need to check unresolved threads directly, not just reviewDecision.
-- [ ] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h (ai:3h test:30m read:30m) logged:2026-02-07 ref:GH#438
+- [x] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h actual:3h (ai:3h) logged:2026-02-07 ref:GH#438 completed:2026-02-07
   - [x] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none completed:2026-02-07
   - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
   - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07
   - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07
   - [x] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none completed:2026-02-07
+    - Notes: Threads resolved on GitHub. sed -i fix tracked separately in t145.
   - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
-  - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
-  - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first. BLOCKED: Max retries exceeded: backend_infrastructure_error
+  - [x] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none completed:2026-02-07
+  - Notes: All 50 review threads across 11 PRs resolved. Valid bugs fixed in code, false positives dismissed with evidence. sed -i portability tracked in t145.
 - [x] t151 fix: supervisor PR URL detection and adaptive concurrency #bugfix #supervisor ~1h actual:30m (ai:30m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07 ref:GH#461,GH#454
   - Notes: PR #465 merged. Replaced broad log grep PR URL detection with authoritative gh pr list --head lookup. Wired calculate_adaptive_concurrency() into pulse dispatch loop. Min concurrency enforced at 6.
 - [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07

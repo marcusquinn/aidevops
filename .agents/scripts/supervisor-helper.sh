@@ -1810,7 +1810,7 @@ check_model_health() {
     # NOTE: Patterns must not match inside JSON fields (e.g. timestamps contain digits
     # like "1770503..." which falsely matched bare "503"). Use word boundaries or
     # anchored patterns. The probe returns JSON lines from opencode run --format json.
-    if echo "$probe_result" | grep -qiE 'endpoints failed|Quota protection|over[_ -]?usage|quota reset|"status":\s*503|HTTP 503|503 Service|service unavailable' 2>/dev/null; then
+    if echo "$probe_result" | grep -qiE 'endpoints failed|Quota protection|over[_ -]?usage|quota reset|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable' 2>/dev/null; then
         log_warn "Model health check FAILED: provider error detected"
         return 1
     fi
