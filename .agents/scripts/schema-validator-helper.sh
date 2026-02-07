@@ -94,11 +94,14 @@ install_deps() {
             tmp=$(mktemp)
             jq '. + {"type": "module"}' "$TOOL_DIR/package.json" > "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
         else
-            # Fallback: use sed to inject "type": "module" after the opening brace
+            # Fallback: write "type": "module" into package.json without jq
             local tmp
             tmp=$(mktemp)
-            sed 's/^{$/{\'$'\n''  "type": "module",/' "$TOOL_DIR/package.json" > "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
-            print_info "Added \"type\": \"module\" to package.json via sed (jq not available)"
+            printf '{\n  "type": "module",\n' > "$tmp"
+            # Append everything after the opening brace
+            tail -n +2 "$TOOL_DIR/package.json" >> "$tmp"
+            mv "$tmp" "$TOOL_DIR/package.json"
+            print_info "Added \"type\": \"module\" to package.json (jq not available)"
         fi
     fi
 
