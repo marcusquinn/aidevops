@@ -40,9 +40,9 @@
 #                                   -> failed     (dispatch failure / unrecoverable)
 #
 # Post-PR lifecycle (t128.8):
-#   complete -> pr_review -> merging -> merged -> deploying -> deployed
+#   complete -> pr_review -> review_triage -> merging -> merged -> deploying -> deployed
 #   Workers exit after PR creation. Supervisor handles remaining stages:
-#   wait for CI, merge (squash), postflight, deploy, worktree cleanup.
+#   wait for CI, triage review threads (t148), merge (squash), postflight, deploy, worktree cleanup.
 #
 # Outcome evaluation (3-tier):
 #   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
@@ -79,7 +79,7 @@ readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"   # Used by pulse comman
 export MAIL_HELPER MEMORY_HELPER
 
 # Valid states for the state machine
-readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review merging merged deploying deployed blocked failed cancelled"
+readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed blocked failed cancelled"
 
 # Valid state transitions (from:to pairs)
 # Format: "from_state:to_state" - checked by validate_transition()
@@ -105,9 +105,14 @@ readonly -a VALID_TRANSITIONS=(
     # Post-PR lifecycle transitions (t128.8)
     "complete:pr_review"
     "complete:deployed"
+    "pr_review:review_triage"
     "pr_review:merging"
     "pr_review:blocked"
     "pr_review:cancelled"
+    # Review triage transitions (t148) - triage unresolved review threads before merge
+    "review_triage:merging"
+    "review_triage:blocked"
+    "review_triage:pr_review"
     "merging:merged"
     "merging:blocked"
     "merging:failed"
@@ -365,7 +370,7 @@ CREATE TABLE tasks (
     repo            TEXT NOT NULL,
     description     TEXT,
     status          TEXT NOT NULL DEFAULT 'queued'
-                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','blocked','failed','cancelled')),
     session_id      TEXT,
     worktree        TEXT,
     branch          TEXT,
@@ -389,6 +394,44 @@ COMMIT;
 PRAGMA foreign_keys=ON;
 MIGRATE
         log_success "Database schema migrated for post-PR lifecycle states"
+    fi
+
+    # Migrate: add review_triage to status CHECK constraint (t148)
+    if [[ -n "$check_sql" ]] && ! echo "$check_sql" | grep -q 'review_triage'; then
+        log_info "Migrating database schema for review_triage state (t148)..."
+        db "$SUPERVISOR_DB" << 'MIGRATE_TRIAGE'
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+ALTER TABLE tasks RENAME TO tasks_old_t148;
+CREATE TABLE tasks (
+    id              TEXT PRIMARY KEY,
+    repo            TEXT NOT NULL,
+    description     TEXT,
+    status          TEXT NOT NULL DEFAULT 'queued'
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+    session_id      TEXT,
+    worktree        TEXT,
+    branch          TEXT,
+    log_file        TEXT,
+    retries         INTEGER NOT NULL DEFAULT 0,
+    max_retries     INTEGER NOT NULL DEFAULT 3,
+    model           TEXT DEFAULT 'anthropic/claude-opus-4-6',
+    error           TEXT,
+    pr_url          TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    started_at      TEXT,
+    completed_at    TEXT,
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+INSERT INTO tasks SELECT * FROM tasks_old_t148;
+DROP TABLE tasks_old_t148;
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo);
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
+COMMIT;
+PRAGMA foreign_keys=ON;
+MIGRATE_TRIAGE
+        log_success "Database schema migrated for review_triage state"
     fi
 
     # Migrate: add max_load_factor column to batches if missing (t135.15.4)
@@ -426,7 +469,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     repo            TEXT NOT NULL,
     description     TEXT,
     status          TEXT NOT NULL DEFAULT 'queued'
-                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','blocked','failed','cancelled')),
     session_id      TEXT,
     worktree        TEXT,
     branch          TEXT,
@@ -2541,13 +2584,48 @@ cmd_reprompt() {
     if [[ -n "$prompt_override" ]]; then
         reprompt_msg="$prompt_override"
     else
-        reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
+        # Detect if this was a compaction/context-limit exit (clean exit, no signal)
+        # and tailor the reprompt accordingly
+        local is_compaction_retry=false
+        if [[ "$terror" == *"clean_exit_no_signal"* || "$terror" == *"context"* ]]; then
+            is_compaction_retry=true
+        fi
+
+        if [[ "$is_compaction_retry" == "true" ]]; then
+            # Compaction-specific reprompt: the worker likely ran out of context
+            # window and exited cleanly without completing. Give it targeted guidance.
+            local worktree_status=""
+            if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+                worktree_status=$(git -C "$tworktree" status --short 2>/dev/null | head -20 || echo "")
+                local recent_commits
+                recent_commits=$(git -C "$tworktree" log --oneline -5 2>/dev/null || echo "")
+                if [[ -n "$recent_commits" ]]; then
+                    worktree_status="${worktree_status}
+
+Recent commits on this branch:
+${recent_commits}"
+                fi
+            fi
+
+            reprompt_msg="The previous attempt for task $task_id likely hit context compaction and exited without completing.
+
+/full-loop $task_id
+
+IMPORTANT: Check the worktree for partial progress before starting fresh. The previous session may have made commits or uncommitted changes.
+${worktree_status:+
+Current worktree state:
+${worktree_status}}
+
+Task description: ${tdesc:-$task_id}"
+        else
+            reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
 
 Please continue the /full-loop for $task_id. Pick up where the previous attempt left off.
 If the task was partially completed, verify what's done and continue from there.
 If it failed entirely, start fresh with /full-loop $task_id.
 
 Task description: ${tdesc:-$task_id}"
+        fi
     fi
 
     # Set up log file for this retry attempt
@@ -2775,6 +2853,157 @@ check_pr_status() {
 
     # CI passed, no blocking reviews
     echo "ready_to_merge"
+    return 0
+}
+
+#######################################
+# Check for unresolved review threads on a PR (t148)
+# Returns JSON: {"total": N, "unresolved": N, "threads": [...]}
+# Each thread: {"author": "...", "body": "...", "is_bot": bool, "path": "...", "line": N}
+#######################################
+check_review_threads() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local pr_url
+    pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
+
+    if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
+        echo '{"total":0,"unresolved":0,"threads":[]}'
+        return 0
+    fi
+
+    local pr_number
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+    local repo_slug
+    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+
+    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+        echo '{"total":0,"unresolved":0,"threads":[]}'
+        return 0
+    fi
+
+    local owner repo_name
+    owner="${repo_slug%%/*}"
+    repo_name="${repo_slug##*/}"
+
+    # Fetch review threads via GraphQL (REST API doesn't expose thread resolution)
+    local graphql_result
+    graphql_result=$(gh api graphql -f query='
+        query($owner: String!, $repo: String!, $pr: Int!) {
+            repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                    reviewThreads(first: 100) {
+                        totalCount
+                        nodes {
+                            isResolved
+                            comments(first: 1) {
+                                nodes {
+                                    author { login }
+                                    body
+                                    path
+                                    line
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ' -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" 2>/dev/null || echo "")
+
+    if [[ -z "$graphql_result" ]]; then
+        echo '{"total":0,"unresolved":0,"threads":[],"error":"graphql_failed"}'
+        return 0
+    fi
+
+    # Known bot accounts that leave COMMENTED reviews
+    local bot_pattern='coderabbitai|github-actions|dependabot|renovate|copilot|gemini|sonarcloud|codecov'
+
+    # Parse and classify threads
+    local result
+    result=$(echo "$graphql_result" | jq --arg bots "$bot_pattern" '
+        .data.repository.pullRequest.reviewThreads as $threads |
+        {
+            total: $threads.totalCount,
+            unresolved: [$threads.nodes[] | select(.isResolved == false)] | length,
+            threads: [
+                $threads.nodes[]
+                | select(.isResolved == false)
+                | .comments.nodes[0] as $c
+                | {
+                    author: ($c.author.login // "unknown"),
+                    body: ($c.body // "" | .[0:500]),
+                    is_bot: (($c.author.login // "") | test($bots; "i")),
+                    path: ($c.path // ""),
+                    line: ($c.line // 0)
+                }
+            ]
+        }
+    ' 2>/dev/null || echo '{"total":0,"unresolved":0,"threads":[]}')
+
+    echo "$result"
+    return 0
+}
+
+#######################################
+# Triage review feedback for a PR (t148)
+# Classifies unresolved threads by severity and source (bot vs human)
+# Returns: triage_pass (safe to merge), triage_block (needs attention), triage_skip (no threads)
+#######################################
+triage_review_feedback() {
+    local task_id="$1"
+    local skip_triage="${2:-false}"
+
+    if [[ "$skip_triage" == "true" ]]; then
+        echo "triage_skip"
+        return 0
+    fi
+
+    local threads_json
+    threads_json=$(check_review_threads "$task_id")
+
+    local unresolved
+    unresolved=$(echo "$threads_json" | jq -r '.unresolved // 0' 2>/dev/null || echo "0")
+
+    if [[ "$unresolved" -eq 0 ]]; then
+        log_info "Review triage for $task_id: no unresolved threads"
+        echo "triage_pass"
+        return 0
+    fi
+
+    # Count bot vs human threads
+    local bot_count human_count
+    bot_count=$(echo "$threads_json" | jq '[.threads[] | select(.is_bot == true)] | length' 2>/dev/null || echo "0")
+    human_count=$(echo "$threads_json" | jq '[.threads[] | select(.is_bot == false)] | length' 2>/dev/null || echo "0")
+
+    log_info "Review triage for $task_id: $unresolved unresolved ($bot_count bot, $human_count human)"
+
+    # Human review threads always block
+    if [[ "$human_count" -gt 0 ]]; then
+        log_warn "  $human_count human review thread(s) unresolved - blocking merge"
+        echo "$threads_json" | jq -r '.threads[] | select(.is_bot == false) | "  - \(.author) on \(.path):\(.line): \(.body[0:120])"' 2>/dev/null || true
+        echo "triage_block"
+        return 0
+    fi
+
+    # Bot-only threads: classify by severity keywords
+    local high_severity_count
+    high_severity_count=$(echo "$threads_json" | jq '[.threads[] | select(.is_bot == true) | select(.body | test("bug|security|vulnerability|critical|error|crash|data.loss|injection|XSS|CSRF"; "i"))] | length' 2>/dev/null || echo "0")
+
+    if [[ "$high_severity_count" -gt 0 ]]; then
+        log_warn "  $high_severity_count high-severity bot finding(s) - blocking merge"
+        echo "$threads_json" | jq -r '.threads[] | select(.is_bot == true) | select(.body | test("bug|security|vulnerability|critical|error|crash|data.loss|injection|XSS|CSRF"; "i")) | "  - \(.author) on \(.path):\(.line): \(.body[0:120])"' 2>/dev/null || true
+        echo "triage_block"
+        return 0
+    fi
+
+    # Bot-only, low severity (style, naming, docs suggestions) - pass with warning
+    log_info "  $bot_count bot thread(s) are low-severity - safe to merge"
+    echo "triage_pass"
     return 0
 }
 
@@ -3033,7 +3262,7 @@ cleanup_after_merge() {
 # Checks CI, merges, runs postflight, deploys, cleans up worktree
 #######################################
 cmd_pr_lifecycle() {
-    local task_id="" dry_run="false"
+    local task_id="" dry_run="false" skip_review_triage="false"
 
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
         task_id="$1"
@@ -3043,6 +3272,7 @@ cmd_pr_lifecycle() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run) dry_run=true; shift ;;
+            --skip-review-triage) skip_review_triage=true; shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -3115,10 +3345,35 @@ cmd_pr_lifecycle() {
 
         case "$pr_status" in
             ready_to_merge)
-                if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "merging" 2>/dev/null || true
+                # Review triage gate (t148): check unresolved threads before merge
+                if [[ "$skip_review_triage" == "false" && "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "review_triage" 2>/dev/null || true
+                    local triage_result
+                    triage_result=$(triage_review_feedback "$task_id")
+                    case "$triage_result" in
+                        triage_pass|triage_skip)
+                            log_info "Review triage passed for $task_id"
+                            cmd_transition "$task_id" "merging" 2>/dev/null || true
+                            tstatus="merging"
+                            ;;
+                        triage_block)
+                            log_warn "Review triage blocked $task_id - unresolved review threads need attention"
+                            cmd_transition "$task_id" "blocked" --error "Unresolved review threads (t148 triage)" 2>/dev/null || true
+                            send_task_notification "$task_id" "blocked" "Unresolved review threads need attention before merge" 2>/dev/null || true
+                            return 1
+                            ;;
+                        *)
+                            log_warn "Review triage returned unexpected result: $triage_result"
+                            cmd_transition "$task_id" "merging" 2>/dev/null || true
+                            tstatus="merging"
+                            ;;
+                    esac
+                else
+                    if [[ "$dry_run" == "false" ]]; then
+                        cmd_transition "$task_id" "merging" 2>/dev/null || true
+                    fi
+                    tstatus="merging"
                 fi
-                tstatus="merging"
                 ;;
             already_merged)
                 if [[ "$dry_run" == "false" ]]; then
@@ -3160,9 +3415,8 @@ cmd_pr_lifecycle() {
                 ;;
             no_pr)
                 # Track consecutive no_pr failures to avoid infinite retry loop
-                local no_pr_key="no_pr_retries_${task_id}"
                 local no_pr_count
-                no_pr_count=$(db "SELECT COALESCE(
+                no_pr_count=$(db "$SUPERVISOR_DB" "SELECT COALESCE(
                     (SELECT CAST(json_extract(error, '$.no_pr_retries') AS INTEGER)
                      FROM tasks WHERE id='$task_id'), 0);" 2>/dev/null || echo "0")
                 no_pr_count=$((no_pr_count + 1))
@@ -3180,8 +3434,37 @@ cmd_pr_lifecycle() {
 
                 log_warn "No PR found for $task_id (attempt $no_pr_count/5)"
                 # Store retry count in error field as JSON
-                db "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
+                db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
                 return 0
+                ;;
+        esac
+    fi
+
+    # Step 2b: Re-triage if already in review_triage state (t148)
+    if [[ "$tstatus" == "review_triage" ]]; then
+        local triage_result
+        triage_result=$(triage_review_feedback "$task_id" "$skip_review_triage")
+        case "$triage_result" in
+            triage_pass|triage_skip)
+                log_info "Review triage passed for $task_id"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "merging" 2>/dev/null || true
+                fi
+                tstatus="merging"
+                ;;
+            triage_block)
+                log_warn "Review triage still blocking $task_id"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "blocked" --error "Unresolved review threads (t148 triage)" 2>/dev/null || true
+                fi
+                return 1
+                ;;
+            *)
+                log_warn "Review triage returned unexpected: $triage_result - proceeding"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "merging" 2>/dev/null || true
+                fi
+                tstatus="merging"
                 ;;
         esac
     fi
@@ -3245,7 +3528,7 @@ process_post_pr_lifecycle() {
     ensure_db
 
     # Find tasks eligible for post-PR processing
-    local where_clause="t.status IN ('complete', 'pr_review', 'merging', 'merged', 'deploying')"
+    local where_clause="t.status IN ('complete', 'pr_review', 'review_triage', 'merging', 'merged', 'deploying')"
     if [[ -n "$batch_id" ]]; then
         where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_id")')"
     fi
@@ -3632,6 +3915,14 @@ cmd_pulse() {
         log_info "  Cleaned:    $orphan_killed stale worker processes"
     fi
 
+    # Phase 5: Persist pulse checkpoint for orchestrator compaction resilience
+    # Writes state to disk so an AI orchestrating session can re-orient after
+    # context compaction by reading this file. Cron pulses are stateless bash
+    # and don't need this, but interactive orchestrators do.
+    save_pulse_checkpoint "${batch_id:-}" "$total_running" "$total_queued" \
+        "$total_complete" "$total_tasks" "$total_failed" "$total_pr_review" \
+        "$completed_count" "$dispatched_count" 2>/dev/null || true
+
     return 0
 }
 
@@ -3824,6 +4115,80 @@ update_todo_on_complete() {
     }
 
     log_success "Committed and pushed TODO.md update for $task_id"
+
+    # Sync matching GitHub issue (close on completion)
+    sync_github_issue "$task_id" "complete" 2>/dev/null || true
+
+    return 0
+}
+
+#######################################
+# Sync GitHub issue state for a task
+# Closes matching issue on completion, adds blocked comment on failure
+# Convention: issue titles prefixed with "t{NNN}: "
+# TODO.md tasks reference issues with "ref:GH#{NNN}"
+#######################################
+sync_github_issue() {
+    local task_id="$1"
+    local event_type="$2"  # complete, blocked
+    local detail="${3:-}"
+
+    # Require gh CLI
+    if ! command -v gh &>/dev/null; then
+        log_info "gh CLI not available, skipping GitHub issue sync"
+        return 0
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local trepo
+    trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+    if [[ -z "$trepo" ]]; then
+        return 0
+    fi
+
+    # Determine repo slug from git remote
+    local repo_slug
+    repo_slug=$(git -C "$trepo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        return 0
+    fi
+
+    # Search for matching issue by t-number prefix in title
+    local issue_number
+    issue_number=$(gh issue list --repo "$repo_slug" --state open --search "${task_id}:" --json number,title --jq ".[] | select(.title | startswith(\"${task_id}:\") or startswith(\"${task_id} \")) | .number" 2>/dev/null | head -1 || echo "")
+
+    if [[ -z "$issue_number" ]]; then
+        log_info "No matching GitHub issue found for $task_id"
+        return 0
+    fi
+
+    case "$event_type" in
+        complete)
+            local pr_url
+            pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+            local close_comment="Completed by supervisor."
+            if [[ -n "$pr_url" && "$pr_url" != "no_pr" && "$pr_url" != "task_only" ]]; then
+                close_comment="Completed via ${pr_url}"
+            fi
+            gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null || {
+                log_warn "Failed to close GitHub issue #$issue_number for $task_id"
+                return 1
+            }
+            log_success "Closed GitHub issue #$issue_number for $task_id"
+            ;;
+        blocked)
+            gh issue comment "$issue_number" --repo "$repo_slug" --body "Blocked by supervisor: ${detail}" 2>/dev/null || {
+                log_warn "Failed to comment on GitHub issue #$issue_number for $task_id"
+                return 1
+            }
+            log_info "Added blocked comment to GitHub issue #$issue_number for $task_id"
+            ;;
+    esac
+
     return 0
 }
 
@@ -3917,6 +4282,10 @@ ${notes_line}" "$todo_file"
     }
 
     log_success "Committed and pushed TODO.md blocked update for $task_id"
+
+    # Sync matching GitHub issue (add blocked comment)
+    sync_github_issue "$task_id" "blocked" "$reason" 2>/dev/null || true
+
     return 0
 }
 
@@ -3995,6 +4364,134 @@ send_task_notification() {
             failed)   afplay /System/Library/Sounds/Sosumi.aiff 2>/dev/null & ;;
         esac
     fi
+
+    return 0
+}
+
+#######################################
+# Persist pulse state to disk for orchestrator compaction resilience
+# An AI session orchestrating batch tasks can read this file after context
+# compaction to re-orient without losing track of progress.
+# File: $SUPERVISOR_DIR/pulse-checkpoint.md
+#######################################
+save_pulse_checkpoint() {
+    local batch_id="$1"
+    local running="$2"
+    local queued="$3"
+    local complete="$4"
+    local total="$5"
+    local failed="$6"
+    local pr_review="$7"
+    local just_completed="$8"
+    local just_dispatched="$9"
+
+    local checkpoint_file="$SUPERVISOR_DIR/pulse-checkpoint.md"
+    local timestamp
+    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    # Collect per-task state for running/queued tasks
+    local running_details
+    running_details=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, description, worktree, status
+        FROM tasks WHERE status IN ('running', 'dispatched', 'evaluating')
+        ORDER BY started_at ASC;
+    " 2>/dev/null || echo "")
+
+    local queued_details
+    queued_details=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, description
+        FROM tasks WHERE status = 'queued'
+        ORDER BY rowid ASC LIMIT 10;
+    " 2>/dev/null || echo "")
+
+    local blocked_details
+    blocked_details=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, description, error
+        FROM tasks WHERE status IN ('blocked', 'failed')
+        ORDER BY updated_at DESC LIMIT 5;
+    " 2>/dev/null || echo "")
+
+    local pr_details
+    pr_details=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, description, status, pr_url
+        FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying')
+        ORDER BY updated_at DESC;
+    " 2>/dev/null || echo "")
+
+    # Build checkpoint
+    {
+        echo "# Supervisor Pulse Checkpoint"
+        echo ""
+        echo "Updated: ${timestamp}"
+        echo "Batch: ${batch_id:-all}"
+        echo ""
+        echo "## Summary"
+        echo ""
+        echo "| Metric | Count |"
+        echo "|--------|-------|"
+        echo "| Running | ${running} |"
+        echo "| Queued | ${queued} |"
+        echo "| Complete | ${complete} |"
+        echo "| Failed/Blocked | ${failed} |"
+        echo "| Post-PR | ${pr_review} |"
+        echo "| Total | ${total} |"
+        echo "| Just Completed | ${just_completed} |"
+        echo "| Just Dispatched | ${just_dispatched} |"
+        echo ""
+
+        if [[ -n "$running_details" ]]; then
+            echo "## Running Tasks"
+            echo ""
+            while IFS='|' read -r tid tdesc tworktree tstatus; do
+                echo "- **${tid}** (${tstatus}): ${tdesc}"
+                if [[ -n "$tworktree" ]]; then
+                    echo "  Worktree: ${tworktree}"
+                fi
+            done <<< "$running_details"
+            echo ""
+        fi
+
+        if [[ -n "$queued_details" ]]; then
+            echo "## Next Queued (up to 10)"
+            echo ""
+            while IFS='|' read -r tid tdesc; do
+                echo "- **${tid}**: ${tdesc}"
+            done <<< "$queued_details"
+            echo ""
+        fi
+
+        if [[ -n "$pr_details" ]]; then
+            echo "## Post-PR Lifecycle"
+            echo ""
+            while IFS='|' read -r tid tdesc tstatus tpr; do
+                echo "- **${tid}** (${tstatus}): ${tdesc}"
+                if [[ -n "$tpr" ]]; then
+                    echo "  PR: ${tpr}"
+                fi
+            done <<< "$pr_details"
+            echo ""
+        fi
+
+        if [[ -n "$blocked_details" ]]; then
+            echo "## Blocked/Failed (recent)"
+            echo ""
+            while IFS='|' read -r tid tdesc terror; do
+                echo "- **${tid}**: ${tdesc}"
+                if [[ -n "$terror" ]]; then
+                    echo "  Error: ${terror}"
+                fi
+            done <<< "$blocked_details"
+            echo ""
+        fi
+
+        echo "## Re-orientation Instructions"
+        echo ""
+        echo "If you are an AI orchestrator reading this after context compaction:"
+        echo "1. Run \`supervisor-helper.sh status\` for full current state"
+        echo "2. Run \`supervisor-helper.sh pulse\` to trigger the next cycle"
+        echo "3. Check \`supervisor-helper.sh cron status\` to verify cron is running"
+        echo "4. Blocked/failed tasks may need manual intervention"
+    } > "$checkpoint_file"
 
     return 0
 }
@@ -4768,10 +5265,12 @@ State Machine (worker lifecycle):
                                   -> blocked    (needs human input / max retries exceeded)
                                   -> failed     (dispatch failure / unrecoverable)
 
-Post-PR Lifecycle (t128.8 - supervisor handles directly, no worker needed):
-  complete -> pr_review -> merging -> merged -> deploying -> deployed
+Post-PR Lifecycle (t128.8 + t148 review triage):
+  complete -> pr_review -> review_triage -> merging -> merged -> deploying -> deployed
   Workers exit after PR creation. Supervisor detects complete tasks with PR URLs
-  and handles: CI wait, merge (squash), postflight, deploy, worktree cleanup.
+  and handles: CI wait, review thread triage, merge (squash), postflight, deploy,
+  worktree cleanup. Review triage checks unresolved threads via GraphQL and blocks
+  merge if human reviews or high-severity bot findings are unaddressed.
 
 Outcome Evaluation (3-tier):
   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
@@ -4815,6 +5314,10 @@ Options for 'evaluate':
 
 Options for 'pulse':
   --batch <batch_id>     Only pulse tasks in this batch
+
+Options for 'pr-lifecycle':
+  --dry-run              Show what would happen without doing it
+  --skip-review-triage   Skip review thread triage (merge without checking threads)
 
 Options for 'cleanup':
   --dry-run              Show what would be cleaned without doing it
