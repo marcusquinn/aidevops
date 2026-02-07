@@ -9,14 +9,6 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
-
 # Configuration
 CERT_DIR="$HOME/.localhost-setup/certs"
 NGINX_CONF_DIR="/Users/$(whoami)/Library/Application Support/Local/run/router/nginx/conf"
@@ -28,30 +20,6 @@ print_header() {
     echo -e "${PURPLE}================================${NC}"
     echo -e "${PURPLE}$message${NC}"
     echo -e "${PURPLE}================================${NC}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[INFO]${NC} $message"
-    return 0
-}
-
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $message"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $message"
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}[ERROR]${NC} $message" >&2
     return 0
 }
 
@@ -404,7 +372,11 @@ remove_domain() {
     # Remove from hosts file (requires manual intervention due to sudo)
     if grep -q "$domain" /etc/hosts; then
         print_warning "Please manually remove '$domain' from /etc/hosts"
-        print_info "Run: sudo sed -i '' '/$domain/d' /etc/hosts"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            print_info "Run: sudo sed -i '' '/$domain/d' /etc/hosts"
+        else
+            print_info "Run: sudo sed -i '/$domain/d' /etc/hosts"
+        fi
     fi
 
     print_success "Domain removal complete!"

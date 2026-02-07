@@ -6,6 +6,10 @@
 #
 # Usage: unstract-helper.sh [install|start|stop|status|logs|uninstall|configure-llm]
 
+# Source shared constants (provides sed_inplace, print_*, color constants)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Constants
@@ -14,18 +18,6 @@ readonly UNSTRACT_REPO="https://github.com/Zipstack/unstract.git"
 readonly CREDENTIALS_FILE="${HOME}/.config/aidevops/credentials.sh"
 readonly FRONTEND_URL="http://frontend.unstract.localhost"
 readonly BACKEND_URL="http://backend.unstract.localhost"
-
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
-print_success() { local msg="$1"; echo -e "${GREEN}[OK] ${msg}${NC}"; return 0; }
-print_info() { local msg="$1"; echo -e "${BLUE}[INFO] ${msg}${NC}"; return 0; }
-print_warning() { local msg="$1"; echo -e "${YELLOW}[WARN] ${msg}${NC}"; return 0; }
-print_error() { local msg="$1"; echo -e "${RED}[ERROR] ${msg}${NC}" >&2; return 0; }
 
 # Check prerequisites
 check_prerequisites() {
@@ -88,7 +80,7 @@ do_install() {
     local frontend_env="${UNSTRACT_DIR}/frontend/.env"
     if [[ -f "$frontend_env" ]]; then
         if grep -q "REACT_APP_ENABLE_POSTHOG" "$frontend_env"; then
-            sed -i.bak 's/REACT_APP_ENABLE_POSTHOG=.*/REACT_APP_ENABLE_POSTHOG=false/' "$frontend_env"
+            sed_inplace 's/REACT_APP_ENABLE_POSTHOG=.*/REACT_APP_ENABLE_POSTHOG=false/' "$frontend_env"
         else
             echo "REACT_APP_ENABLE_POSTHOG=false" >> "$frontend_env"
         fi
@@ -237,9 +229,8 @@ do_uninstall() {
 
     # Remove MCP env entries
     if [[ -f "$CREDENTIALS_FILE" ]]; then
-        sed -i.bak '/UNSTRACT_API_KEY/d' "$CREDENTIALS_FILE"
-        sed -i.bak '/^export API_BASE_URL.*unstract/d' "$CREDENTIALS_FILE"
-        rm -f "${CREDENTIALS_FILE}.bak"
+        sed_inplace '/UNSTRACT_API_KEY/d' "$CREDENTIALS_FILE"
+        sed_inplace '/^export API_BASE_URL.*unstract/d' "$CREDENTIALS_FILE"
     fi
 
     print_success "Unstract uninstalled"

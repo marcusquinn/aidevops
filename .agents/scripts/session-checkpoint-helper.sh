@@ -31,20 +31,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly CHECKPOINT_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
 
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
-readonly NC='\033[0m'
-
-print_success() { printf "${GREEN}%s${NC}\n" "$1"; }
-print_warning() { printf "${YELLOW}%s${NC}\n" "$1"; }
-print_error() { printf "${RED}%s${NC}\n" "$1" >&2; }
-print_info() { printf "${DIM}%s${NC}\n" "$1"; }
 
 ensure_dir() {
     if [[ ! -d "$CHECKPOINT_DIR" ]]; then

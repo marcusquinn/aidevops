@@ -383,15 +383,14 @@ This document provides direct links to all services and platforms mentioned in t
 
 - [Main README](https://github.com/marcusquinn/aidevops)
 - [AGENTS.md Guide](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-- [Security Best Practices](docs/SECURITY.md)
-- [API Integration Guide](docs/API-INTEGRATIONS.md)
+- [Security Best Practices](.agents/aidevops/security.md)
+- [API Integration Guide](.agents/aidevops/api-integrations.md)
 
 ### **Platform-Specific Guides**
 
-- [MCP Integrations](docs/MCP-INTEGRATIONS.md)
-- [SSH Management](docs/SSH-MANAGEMENT.md)
-- [Quality Control](docs/QUALITY-CONTROL.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [MCP Integrations](.agents/aidevops/mcp-integrations.md)
+- [Quality Control](.agents/tools/code-review/code-standards.md)
+- [Troubleshooting](.agents/aidevops/troubleshooting.md)
 
 ---
 

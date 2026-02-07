@@ -73,6 +73,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
   - [x] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none completed:2026-02-07
   - Notes: All 50 review threads across 11 PRs resolved. Valid bugs fixed in code, false positives dismissed with evidence. sed -i portability tracked in t145.
+- [x] t151 fix: supervisor PR URL detection and adaptive concurrency #bugfix #supervisor ~1h actual:30m (ai:30m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07 ref:GH#461,GH#454
+  - Notes: PR #465 merged. Replaced broad log grep PR URL detection with authoritative gh pr list --head lookup. Wired calculate_adaptive_concurrency() into pulse dispatch loop. Min concurrency enforced at 6.
 - [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
   - [x] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h completed:2026-02-07
   - [x] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m completed:2026-02-07
@@ -82,18 +84,18 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: PR #462 merged. Self-healing auto-creates diagnostic subtasks on failure/block.
 - [x] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h actual:30m (ai:30m) logged:2026-02-07 ref:GH#455 completed:2026-02-07
   - Notes: PR #469 merged. create_github_issue() + update_todo_with_issue_ref() + --no-issue flag + SUPERVISOR_AUTO_ISSUE env.
-- [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
-  - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435. BLOCKED: FAILED: no_log_file
-- [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
-  - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
+- [x] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439 completed:2026-02-07
+  - Notes: Fixed in PR #450 (t147.1). Added missing $SUPERVISOR_DB arg to db() calls at lines 3165 and 3183.
+- [x] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440 completed:2026-02-07
+  - Notes: PR #479 merged. Added sed_inplace() and sed_append_after() wrappers to shared-constants.sh. Replaced all sed -i usage across 17 files.
 - [x] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h actual:1h (ai:1h) logged:2026-02-07 ref:GH#441 completed:2026-02-07
   - Notes: PR #463 merged. Replaced excessive 2>/dev/null with log file redirects across supervisor and helper scripts.
 - [x] t143 quality: test script BRE alternation -> ERE style improvement #quality #tests ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#442 completed:2026-02-07
   - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
 - [x] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443 completed:2026-02-07
   - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
-- [ ] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m (ai:20m test:10m) logged:2026-02-07 ref:GH#445
-  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal). BLOCKED: FAILED: no_log_file
+- [x] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m actual:15m (ai:15m) logged:2026-02-07 ref:GH#445 started:2026-02-07 completed:2026-02-07
+  - Notes: All 12 PR #403 review threads verified fixed and resolved. transcribe command removed (PR #447), nltk.download stderr visible, cmd_stop uses polling loop, CPU fallback to --server, PyTorch version corrected, IP placeholders, API key guidance added, docker guard added.
 - [x] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#415. Already fixed: fallback chain (uv -> pipx -> venv+symlink -> pip3 --user) implemented at setup.sh lines 2608-2661. Verified working.
 - [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
@@ -101,7 +103,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t138 aidevops update output overwhelms tool buffer on large updates #bugfix #setup ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#398. Raw git pull diff stat exceeds 51KB tool output limit on large updates (e.g. 500 file rename). Fix: quiet pull + filtered commit log (feat/fix/refactor only, head -20) in cmd_update(). Low severity, only affects large updates.
 - [x] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
-  - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint). BLOCKED: Max retries exceeded: backend_infrastructure_error
+  - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint).
 - [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) logged:2026-02-07
   - [ ] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none
   - [ ] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1
@@ -130,22 +132,24 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none completed:2026-02-07
     - Notes: Already resolved. Neither .scannerwork/ nor .playwright-cli/ are tracked in git (git ls-files --error-unmatch confirms).
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
-    - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
-    - [ ] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m
-    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
+    - [x] t135.6.1 Fix .agent typo to .agents on line 31 ~5m completed:2026-02-07
+    - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
+    - [x] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m completed:2026-02-07
+      - Notes: Already implemented in code-quality.yml. JSON validation (lines 75-108) and ShellCheck -S error (lines 110-131) both exit 1 on failure.
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Replaced 9 eval calls with bash arrays. wp-helper refactored build_ssh_command to execute_wp_via_ssh (direct execution). All pass ShellCheck -S error.
     - [x] t135.7.1 Read each eval context to understand construction and purpose ~30m completed:2026-02-07
     - [x] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1 completed:2026-02-07
     - [x] t135.7.3 Test affected command paths ~30m blocked-by:t135.7.2 completed:2026-02-07
   - [ ] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 80%+ ~4h blocked-by:none
-    - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: backend_infrastructure_error    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m BLOCKED: Max retries exceeded: backend_infrastructure_error
+    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m
     - [ ] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1
     - [ ] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2
   - [x] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none started:2026-02-07 completed:2026-02-07
     - [x] t135.9.1 Identify all mktemp usages without trap cleanup ~15m completed:2026-02-07
     - Notes: 33 scripts use mktemp, 31 without trap. Critical scripts (secret-helper, version-manager) fixed in PR #436.
-    - [ ] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1
+    - [x] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 completed:2026-02-07
+      - Notes: PR #485 merged. Added trap RETURN guards after mktemp calls across 14 scripts (20 files, 29 sites).
   - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
   - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-07
     - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
@@ -157,8 +161,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.12.3 Move to _archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2 completed:2026-02-07
     - [x] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3 completed:2026-02-07
   - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
-    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
-      - Notes: BLOCKED by supervisor: FAILED: no_log_file    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
+    - [x] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m completed:2026-02-07
+      - Notes: PR #481 merged. Fixed git->Git path case in Dockerfile and docker-compose.yml.
+    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
   - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
@@ -244,8 +249,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
-- [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24
-  - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
+- [x] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 completed:2026-02-07
+  - Notes: seo/backlink-checker.md created (106 lines). Covers Ahrefs/DataForSEO backlink APIs, WHOIS expired domain detection, reclamation workflow, and integration with existing SEO subagents.
 - [ ] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~30m (ai:20m test:5m read:5m) logged:2026-01-24 related:t027
   - Notes: Add support for voice AI models covering both TTS (speech generation) and STT (transcription). API providers: Hugging Face Inference API (TTS/STT endpoints), ElevenLabs, OpenAI TTS/Whisper. Local models: Qwen3-TTS (0.6B/1.7B, Apache-2.0, 10 languages, voice clone/design/custom, streaming, vLLM support - https://github.com/QwenLM/Qwen3-TTS), Whisper (transcription), Bark, Coqui TTS. Create subagent at tools/voice/ or tools/ai/voice.md covering: model selection (local vs API, quality vs speed), installation (pip install qwen-tts, HF download), usage patterns (TTS generation, voice cloning, voice design, transcription), streaming support, GPU requirements. Related to t027 (hyprwhspr speech-to-text).
 - [ ] t072 Audio/Video Transcription subagent #tools #voice #transcription #ai ~1.5h (ai:45m test:30m read:15m) logged:2026-01-24 related:t071,t027
@@ -261,31 +266,36 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) logged:2025-12-20
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
-- [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21
+- [x] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21 completed:2026-02-07
+  - Notes: tools/context/rapidfuzz.md created (122 lines). Covers core functions, process module, distance functions, performance tips, and aidevops integration patterns.
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [x] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~30m (ai:20m test:10m) logged:2025-12-22 completed:2026-01-25
-- [ ] t023 Evaluate Shannon AI pentester for security testing integration #security #tools ~10m (ai:8m read:2m) logged:2025-01-03
-- [ ] t024 Evaluate Dexter autonomous financial research agent #research #finance #agents ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://github.com/virattt/dexter
-  - Notes: Dexter (10.6k stars, actively maintained, last commit Feb 2026). TypeScript multi-step autonomous agent for deep financial research. Evaluate: 1) Integration as optional financial-research subagent, 2) Adoption of its tool-chaining patterns for other research domains (SEO, competitive analysis), 3) Potential as imported skill via `aidevops skill add virattt/dexter`.
-- [ ] t025 Create terminal optimization /command and @subagent using Claude #tools #terminal #productivity ~20m (ai:15m test:3m read:2m) logged:2025-01-03 ref:https://x.com/deedydas/status/2007342412335927400
-- [ ] t026 Create subscription audit /command and @subagent for accounts agent #accounts #subscriptions #automation ~30m (ai:20m test:5m read:5m) logged:2025-01-03 ref:https://x.com/frankdegods/status/2007199488776253597
+- [x] t023 Evaluate Shannon AI pentester for security testing integration #security #tools ~10m (ai:8m read:2m) logged:2025-01-03 completed:2026-02-07
+  - Notes: No public repo found. GitHub search for "shannon pentester", "shannon ai security" returns no results. The project appears to not exist as open source. Closing as not actionable.
+- [x] t024 Evaluate Dexter autonomous financial research agent #research #finance #agents ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://github.com/virattt/dexter completed:2026-02-07
+  - Notes: Dexter (11.4k stars, TypeScript, actively maintained Feb 2026). Autonomous agent for deep financial research with task planning, self-reflection, and real-time market data (Financial Datasets API + Exa). Uses Bun runtime + OpenAI. Evaluation: 1) Too domain-specific for core aidevops (financial data APIs only), 2) Task planning/self-validation patterns already implemented in supervisor and ralph-loop, 3) Could be imported as optional skill for finance-focused users. Recommendation: No integration needed. Users can install directly if needed.
+- [x] t025 Create terminal optimization /command and @subagent using Claude #tools #terminal #productivity ~20m (ai:15m test:3m read:2m) logged:2025-01-03 ref:https://x.com/deedydas/status/2007342412335927400 completed:2026-02-07
+  - Notes: Already implemented. tools/terminal/terminal-optimization.md exists.
+- [x] t026 Create subscription audit /command and @subagent for accounts agent #accounts #subscriptions #automation ~30m (ai:20m test:5m read:5m) logged:2025-01-03 ref:https://x.com/frankdegods/status/2007199488776253597 completed:2026-02-07
+  - Notes: Already implemented. tools/accounts/subscription-audit.md exists.
 - [ ] t027 Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only) #tools #accessibility #linux ~10m (ai:8m read:2m) logged:2025-01-03
 - [x] t028 Setup sisyphus-dev-ai style GitHub collaborator for autonomous issue resolution #git #automation #agents ~1d (ai:4h test:4h read:2h) logged:2025-01-03 completed:2025-01-09 ref:https://github.com/code-yeongyu/oh-my-opencode/issues/425
   - Notes: Implemented secure OpenCode GitHub integration with max security approach. Created `.github/workflows/opencode-agent.yml` with trusted-user-only access, ai-approved label requirement, prompt injection detection, audit logging, and 15-min timeout. Documentation in `.agents/tools/git/opencode-github-security.md`. Helper script updated with `create-secure` and `create-labels` commands.
 - [x] t051 Loop System v2 - Fresh sessions per iteration #workflow #automation ~4h (ai:2h test:1h read:1h) logged:2025-01-11 started:2025-01-11T00:00Z completed:2025-01-11 ref:https://github.com/gmickel/gmickel-claude-marketplace/tree/main/plugins/flow-next
   - Notes: Implemented flow-next inspired architecture for ralph-loop and full-loop. Created loop-common.sh (~700 lines) with JSON state management, re-anchor prompt generator (reads TODO.md, git state, memories), receipt verification, memory integration hooks, and task blocking after N failures. PR #38 merged. Prevents context drift by spawning fresh AI sessions per iteration.
-- [ ] t029 Research Penberg's Weave project (deterministic execution for AI agents) #research #tools #agents ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://x.com/penberg/status/2007533204622770214,https://github.com/penberg/weave
-  - Notes: Petri Penberg (@penberg) - systems/database researcher. His "Weave" project (13 stars, Jan 2026) provides deterministic execution for reproducible debugging of AI agents. Evaluate: 1) Session reproducibility benefits for aidevops, 2) Debugging improvements for agent workflows, 3) Integration with ralph-loop and session-manager.
-- [ ] t030 Research irl_danB's progressive-memory and clawdbot projects #research #tools #memory ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://x.com/irl_danB/status/2007259356103094523,https://github.com/irl-dan/progressive-memory
-  - Notes: irl_danB's projects (active Feb 2026): progressive-memory (filesystem-based progressive disclosure for agent memory), clawdbot (multi-platform AI assistant), agentsy-live. Evaluate: 1) Progressive-memory pattern vs aidevops's SQLite FTS5 memory, 2) Multi-platform deployment lessons from clawdbot, 3) Potential collaboration or feature adoption.
+- [x] t029 Research Penberg's Weave project (deterministic execution for AI agents) #research #tools #agents ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://x.com/penberg/status/2007533204622770214,https://github.com/penberg/weave completed:2026-02-07
+  - Notes: Weave (14 stars, Rust, MIT, early development). Intercepts system calls to make execution deterministic (time, RNG, thread scheduling). Only supports Darwin/arm64 and Linux/x86. Evaluation: 1) Interesting concept but too early-stage (limited platform support, small community), 2) aidevops agents are inherently non-deterministic (LLM responses vary) so deterministic syscalls alone don't help, 3) Better suited for traditional software testing than AI agent debugging. Recommendation: Monitor for maturity, no integration now.
+- [x] t030 Research irl_danB's progressive-memory and clawdbot projects #research #tools #memory ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://x.com/irl_danB/status/2007259356103094523,https://github.com/irl-dan/progressive-memory completed:2026-02-07
+  - Notes: progressive-memory (0 stars, Shell, MIT): Filesystem-based progressive disclosure for agent memory. Uses 3-level files (one-liner / summary / full detail) loaded via head/sed/cat. clawdbot (0 stars): Multi-platform AI assistant, minimal content. Evaluation: 1) Progressive disclosure pattern is sound -- aidevops already uses this for subagents (AI-CONTEXT-START blocks, YAML frontmatter), 2) aidevops memory-helper.sh with SQLite FTS5 is more capable (search, consolidation, auto-capture, cross-session), 3) The filesystem approach is simpler but doesn't scale for search/dedup. Recommendation: No adoption needed. aidevops already implements the progressive disclosure pattern more robustly.
 - [ ] t031 Company orchestration agent/workflow inspired by @DanielleMorrill #plan #agents #business ~20m (ai:15m test:3m read:2m) logged:2025-01-03 ref:https://x.com/DanielleMorrill/status/2007508036584341899
   - Notes: Company-level agent orchestration - AI agents managing company functions (HR, Finance, Operations, Marketing) coordinating via runner-helper.sh. Extends t109 (Parallel Agents). Scope: 1) Document company-level agent patterns, 2) Create example runners for common company functions (hiring-coordinator, finance-reviewer, ops-monitor), 3) Integrate with coordinator-helper.sh for cross-function task dispatch.
 - [x] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~30m actual:25m (ai:20m test:5m read:5m) logged:2025-01-03 started:2026-01-25T15:00Z completed:2026-01-25 ref:https://x.com/elithrar/status/2007455910218871067
   - Notes: Created tools/performance/performance.md subagent and /performance command. Uses Chrome DevTools MCP for Core Web Vitals (FCP, LCP, CLS, FID, TTFB), network dependency analysis, and accessibility auditing. Actionable output format with file:line references. PR #209 merged.
-- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
+- [x] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f completed:2026-02-07
+  - Notes: scripts/x-helper.sh created (188 lines). Commands: fetch (single post), thread, user. Supports --json and --format md/text. Uses fxtwitter.com API (no auth required).
 - [x] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
   - Notes: Created tools/content/summarize.md subagent. steipete/summarize (726+ stars) - CLI for URL/YouTube/podcast summarization with AI. Supports multiple providers (OpenAI, Anthropic, Google, xAI, OpenRouter). Install: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`.
 - [x] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
@@ -294,29 +304,30 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Fixed CLI commands in coderabbit-cli.sh - changed `coderabbit review` to `coderabbit --plain --type uncommitted`. Added --prompt-only mode, --type flag, --base flag. Replaced setup_api_key() with auth_login() (browser OAuth). Rewrote coderabbit.md with comprehensive CLI docs. PR #124 merged.
 - [x] t037 Review ALwrity for SEO/marketing capabilities or inspiration #research #seo #marketing ~30m actual:25m (ai:20m read:10m) logged:2025-01-03 started:2026-01-25T15:00Z completed:2026-01-25
   - Notes: Reviewed ALwrity (908 stars, Python/React). Full-stack AI content platform with phased workflows (Research→Outline→Write→SEO→Publish). Key inspirations for aidevops: 1) Content Calendar AI planning, 2) Persona system with platform adaptations, 3) Google grounding + RAG for factual content, 4) Multi-platform publishing (LinkedIn, Instagram, YouTube). Recommendation: aidevops already has strong SEO tools; consider adding content calendar workflow and persona-based content generation. See todo/research/alwrity-review.md for full analysis.
-- [ ] t038 Add CDN origin IP leak detection subagent (Cloudmare-inspired) #security #dns #hosting ~15m (ai:10m test:3m read:2m) logged:2025-01-03
+- [x] t038 Add CDN origin IP leak detection subagent (Cloudmare-inspired) #security #dns #hosting ~15m (ai:10m test:3m read:2m) logged:2025-01-03 completed:2026-02-07
+  - Notes: Created tools/security/cdn-origin-ip.md (142 lines). Covers 5 detection techniques: DNS history (SecurityTrails), SSL cert search (Censys/crt.sh), Shodan favicon hash, email header analysis, subdomain enumeration. Includes verification and remediation steps. Cloudmare (1.7k stars) is archived; referenced IP.X as active alternative.
 - [x] t039 Add anti-detect browser subagent for multi-account automation #tools #browser #privacy ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-24T19:37Z completed:2026-01-24 ref:https://github.com/daijro/camoufox
   - Notes: Implemented full anti-detect stack: anti-detect-browser.md (main decision tree), stealth-patches.md (rebrowser-patches for Chromium), fingerprint-profiles.md (Camoufox for Firefox), browser-profiles.md (multi-profile management), proxy-integration.md (residential/SOCKS5/VPN), anti-detect-helper.sh (CLI for setup/profiles/launch/test/warmup). Replicates AdsPower/GoLogin/OctoBrowser features. Supports persistent, clean, warm, and disposable profile types.
-- [ ] t040 Add Reddit CLI/API integration for reading and posting #tools #social-media ~15m (ai:10m test:3m read:2m) logged:2025-01-05 ref:https://github.com/praw-dev/praw
-  - Notes: PRAW (Python Reddit API Wrapper) 4k stars. JSON endpoints (.json suffix) still work but rate-limited: 96 calls/10min unauthenticated (per IP), 996/10min authenticated (per account). CORS now enforced so web frontends blocked. For heavy scraping: use OAuth + rotating residential proxies, or anti-detect browser with account rotation.
+- [x] t040 Add Reddit CLI/API integration for reading and posting #tools #social-media ~15m (ai:10m test:3m read:2m) logged:2025-01-05 ref:https://github.com/praw-dev/praw completed:2026-02-07
+  - Notes: Created tools/social-media/reddit.md. Covers JSON endpoints (no auth), PRAW authenticated access, OAuth app setup, rate limit handling.
 - [x] t041 Document curl-copy authenticated scraping workflow #tools #browser #scraping ~15m actual:10m (ai:10m read:5m) logged:2025-01-05 started:2026-02-06T12:00Z completed:2026-02-06
   - Notes: Created tools/browser/curl-copy.md subagent documenting DevTools "Copy as cURL" workflow for authenticated scraping. Added to browser-automation.md decision tree and subagent-index.toon. PR #368 merged.
 - [x] t042 Create email-health-check /command and @subagent #services #email #deliverability ~1h actual:30m (ai:40m test:10m read:10m) logged:2025-01-05 started:2026-01-25T15:02Z completed:2026-01-25
   - Notes: Implemented email-health-check.md subagent, email-health-check-helper.sh script, and /email-health-check command. Checks SPF/DKIM/DMARC/MX/blacklist status using checkdmarc CLI (optional) or dig fallback. Includes common DKIM selector detection for major providers. PR #213 merged.
-- [ ] t043 Create Bitwarden agent using official Bitwarden CLI #tools #credentials #security ~10m (ai:8m test:1m read:1m) logged:2025-01-08
-  - Notes: Official Bitwarden CLI (`bw`) for cloud Bitwarden accounts. Separate from Vaultwarden (self-hosted). Commands: login, unlock, list, get, create, edit, delete, generate, export, import. Install: `npm install -g @bitwarden/cli`. Add to tools/credentials/bitwarden.md.
-- [ ] t044 Enhance Vaultwarden agent with bitwarden-cli MCP integration #tools #credentials #security ~10m (ai:8m read:2m) logged:2025-01-08
-  - Notes: Existing vaultwarden.md uses Bitwarden CLI but could be enhanced with official bitwarden-cli MCP server. Review https://github.com/bitwarden/cli for latest features. Consider bitwarden-sdk-server for programmatic access.
-- [ ] t045 Create Enpass agent using enpass-cli #tools #credentials #security ~15m (ai:10m test:3m read:2m) logged:2025-01-08
-  - Notes: Use https://github.com/hazcod/enpass-cli (156 stars, Go). BLOCKER: Issue #151 - SQLCipher v4 incompatibility with Enpass v6.8+. May need to fork and PR fix for SQLCipher v4 support. Install: `brew install enpass-cli` or `go install github.com/hazcod/enpass-cli@latest`. Commands: list, show, copy, pass. Add to tools/credentials/enpass.md.
+- [x] t043 Create Bitwarden agent using official Bitwarden CLI #tools #credentials #security ~10m (ai:8m test:1m read:1m) logged:2025-01-08 completed:2026-02-07
+  - Notes: Created tools/credentials/bitwarden.md. Covers CLI setup, common commands, automation patterns, security notes.
+- [x] t044 Enhance Vaultwarden agent with bitwarden-cli MCP integration #tools #credentials #security ~10m (ai:8m read:2m) logged:2025-01-08 completed:2026-02-07
+  - Notes: Vaultwarden helper (vaultwarden-helper.sh) already exists. New bitwarden.md subagent covers the official CLI. Both reference each other in Related sections.
+- [x] t045 Create Enpass agent using enpass-cli #tools #credentials #security ~15m (ai:10m test:3m read:2m) logged:2025-01-08 completed:2026-02-07
+  - Notes: Created tools/credentials/enpass.md. Covers CLI setup, vault access, security notes. Notes SQLCipher v4 incompatibility with community CLI tools.
 - [x] t046 Review OpenClaw (formerly Moltbot, Clawdbot) for inspiration and incorporation into aidevops #research #agents #messaging ~4h (ai:2h test:1h read:1h) logged:2025-01-09 started:2026-01-18T10:00Z completed:2026-01-18 actual:2h ref:https://github.com/openclaw/openclaw
   - Notes: Added OpenClaw integration to aidevops. Created .agents/tools/ai-assistants/openclaw.md subagent with full documentation. Updated overview.md and onboarding.md with OpenClaw recommendations. OpenClaw provides mobile AI access via WhatsApp/Telegram/Slack/Discord/Signal/iMessage/Teams with local gateway, voice wake, and skills system compatible with aidevops agents.
 - [ ] t047 TODO/PLANS sync with GitHub/GitLab/Gitea issues + cross-platform tools research #git #sync #planning ~45m (ai:25m test:10m read:10m) logged:2025-01-09
   - Notes: Evaluate bi-directional sync between TODO.md/PLANS.md and git platform issues. Research tools for syncing issues/PRs across multiple git platforms (GitHub, GitLab, Gitea). Related to t020 (Git Issues Bi-directional Sync). Consider: gitea-github-migrator, gitlab-github-sync, issue-sync tools, Allspice Hub, Linear/Jira integrations. Key questions: 1) Should tasks auto-create issues? 2) Should issue updates sync back to TODO.md? 3) How to handle cross-platform mirroring for multi-platform projects?
 - [x] t048 Add worktree cleanup reminder to postflight workflow #workflow #git ~10m actual:0m (ai:8m test:2m) logged:2025-01-10 completed:2026-01-25
   - Notes: Already implemented. Worktree Cleanup section exists in postflight.md at lines 584-596 with `worktree-helper.sh list` and `worktree-helper.sh clean` commands.
-- [ ] t049 Add timing analysis commands to ralph-loop workflow #workflow #automation ~5m (ai:4m test:1m) logged:2025-01-10
-  - Notes: Document how to analyze CI timing data for adaptive wait optimization. Include commands for extracting timing from GitHub Actions logs and updating shared-constants.sh.
+- [x] t049 Add timing analysis commands to ralph-loop workflow #workflow #automation ~5m actual:0m (ai:4m test:1m) logged:2025-01-10 completed:2026-02-07
+  - Notes: Already implemented. ralph-loop.md lines 462-511 has full "CI/CD Wait Time Optimization" section with evidence-based timing table, adaptive waiting strategy, customization guide (shared-constants.sh CI_WAIT_* constants), and data gathering commands (gh run list).
 - [x] t050 Move SonarCloud hotspot patterns from AGENTS.md to code-review subagent #refactor #docs ~10m actual:0m (ai:8m test:2m) logged:2025-01-11 completed:2026-02-06
   - Notes: Already complete. Hotspot patterns (S5332, S4423) were added to both AGENTS.md and code-standards.md in commit a229820, then removed from AGENTS.md during subsequent refactors. Patterns live in tools/code-review/code-standards.md lines 182-231. AGENTS.md line 205 points to code-standards.md for code quality details.
 - [x] t059 Review and merge unmerged feature branches #git #cleanup ~1h (ai:30m test:15m read:15m) logged:2026-01-11 started:2026-01-11T05:25Z completed:2026-01-11 actual:45m
@@ -337,11 +348,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Implemented remaining 40% of PRD. Added --auto/--auto-captured flag to memory-helper.sh store (marks auto-captured in DB). Added privacy filters (<private> tag stripping, secret pattern rejection). Added --auto-only/--manual-only recall filters. Added `log` command and /memory-log slash command. Added auto-capture stats to `stats` output. DB migration adds auto_captured column to learning_access table. AGENTS.md updated with auto-capture instructions and privacy guidance. ~60% was already done by prior work (t052 session distillation, proactive memory triggers, consolidation, pattern tracking).
 - [ ] t060 Research jj (Jujutsu) VCS for aidevops advantages #research #git #tools ~15m (ai:10m read:5m) logged:2026-01-13 ref:https://github.com/jj-vcs/jj
   - Notes: Git-compatible VCS (24.7k stars) with unique features: working-copy-as-commit (no staging area), operation log with undo, conflicts as first-class objects, automatic rebase of descendants, anonymous branches. Could simplify worktree workflows, enable safer experimentation, and provide better conflict handling. Evaluate: 1) Integration with existing git workflows 2) Colocated mode compatibility 3) Benefits for AI-assisted development 4) Learning curve vs productivity gains.
-- [ ] t061 Create debug-opengraph and debug-favicon subagents #tools #seo #browser ~10m (ai:8m test:1m read:1m) logged:2026-01-14 ref:https://opengraphdebug.com/
-  - Notes: Inspired by opengraphdebug.com. Two subagents: 1) debug-opengraph.md - validate Open Graph meta tags (og:title, og:description, og:image, og:url, twitter:card), preview social sharing appearance, check image dimensions/accessibility. 2) debug-favicon.md - validate favicon setup across platforms (favicon.ico, apple-touch-icon, manifest icons), check sizes/formats, verify PWA manifest. Could use browser automation (Stagehand/Playwright) or direct HTML parsing. Add to tools/seo/ or tools/browser/.
+- [x] t061 Create debug-opengraph and debug-favicon subagents #tools #seo #browser ~10m (ai:8m test:1m read:1m) logged:2026-01-14 ref:https://opengraphdebug.com/ completed:2026-02-07
+  - Notes: Already implemented. seo/debug-opengraph.md and seo/debug-favicon.md both exist in .agents/seo/.
 - [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~10m (ai:8m read:2m) logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
   - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem.
-- [ ] t064 Add seo-regex subagent with Search Console regex workflow #seo #tools ~5m (ai:4m read:1m) logged:2026-01-15
+- [x] t064 Add seo-regex subagent with Search Console regex workflow #seo #tools ~5m (ai:4m read:1m) logged:2026-01-15 completed:2026-02-07
+  - Notes: Created seo/seo-regex.md. Covers GSC RE2 regex patterns for brand/non-brand, questions, intent classification, long-tail, page filters, URL analysis, keyword grouping.
 - [x] t083 Create Bing Webmaster Tools subagent #seo #tools ~15m actual:10m (ai:10m test:3m read:2m) logged:2026-01-29 completed:2026-02-06 related:seo-audit-skill
   - Notes: Created .agents/seo/bing-webmaster-tools.md with curl-based API integration. Added to subagent-index.toon.
   - Notes: API integration for Bing Webmaster Tools. Features: submit URLs, check indexation status, view search analytics, manage sitemaps. Ref: https://www.bing.com/webmasters/help/webmaster-api-5f3c5e1e
@@ -354,7 +366,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t087 Create Semrush subagent #seo #tools ~20m (ai:15m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/
 - [x] t088 Create Sitebulb subagent #seo #tools #crawler ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-07
-  - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
+  - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/
 - [x] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: ContentKing real-time SEO monitoring API. Track changes, alerts for SEO issues, content tracking. Add to seo/. Ref: https://www.contentkingapp.com/
 - [x] t090 Create WebPageTest subagent #tools #performance ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
@@ -384,12 +396,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Document Playwright's device emulation capabilities for mobile/tablet testing. Features: device registry (iPhone, iPad, Pixel, Galaxy), viewport/screen size, userAgent, touch events, geolocation, locale/timezone, permissions, colorScheme, offline mode. Config via playwright.config.ts or per-test. Complements native mobile testing (Maestro, iOS Simulator MCP) for web-based mobile testing. Add to tools/browser/playwright-emulation.md or extend existing playwright.md.
 - [-] t099 ~~Add Neural-Chromium for agent-native browser automation~~ #tools #browser #ai #automation ~2h logged:2026-01-30 declined:2026-02-05
   - Notes: DECLINED - Neural-Chromium has only 4 stars, no releases, and is Windows-only. Not viable for macOS/Linux users. Better alternatives: browser-use (77.8k stars, cross-platform), Stagehand (20.8k stars, already documented), Skyvern (20.3k stars). The existing neural-chromium.md subagent should be removed. Features: 1.3s interaction latency (4.7x faster than Playwright), semantic DOM understanding via accessibility tree, VLM-powered vision (Llama 3.2 via Ollama), stealth capabilities (no navigator.webdriver), deep iframe access. Uses shared memory + gRPC for direct browser state access. Tools: click(element_id), type(element_id, text), observe() for DOM snapshots. Early stage but promising for agent automation. Evaluate for: CAPTCHA solving, dynamic SPA interaction, form filling. Add to tools/browser/ as experimental option.
-- [ ] t125 Add browser-use subagent for AI-native browser automation #tools #browser #ai #automation ~15m (ai:10m test:3m read:2m) logged:2026-02-05 ref:https://github.com/browser-use/browser-use
-  - Notes: browser-use (77.8k stars, MIT, Python) - the most popular AI browser automation framework. Connects LLMs to browsers for web agent tasks. Features: multi-tab management, vision + HTML extraction, custom actions, self-correcting, supports GPT-4o/Claude/Gemini/DeepSeek/Llama. Install: `pip install browser-use`. Cloud option via browser-use.com. Significantly more mature than Neural-Chromium (declined t099). Create subagent at tools/browser/browser-use.md. Evaluate: 1) Integration with existing Playwright stack, 2) Comparison with Stagehand (already documented), 3) Custom action patterns for aidevops workflows.
-- [ ] t126 Add Skyvern subagent for computer vision browser automation #tools #browser #ai #automation ~15m (ai:10m test:3m read:2m) logged:2026-02-05 ref:https://github.com/Skyvern-AI/skyvern
-  - Notes: Skyvern (20.3k stars, AGPL-3.0, Python) - automates browser workflows using LLMs and computer vision. Unlike CSS/XPath selectors, uses visual understanding to interact with elements. Features: real-time visual parsing, complex workflow chaining, proxy support, CAPTCHA solving, 2FA/TOTP handling. Cloud and self-hosted options. Install: Docker or pip. Create subagent at tools/browser/skyvern.md. Evaluate: 1) Visual approach vs Stagehand's natural language, 2) Self-hosted deployment for privacy, 3) Workflow chaining for multi-step automations.
-- [ ] t127 Add Buzz offline transcription support #tools #voice #transcription ~15m (ai:10m test:3m read:2m) logged:2026-02-06 related:t071,t072 ref:https://github.com/chidiwilliams/buzz
-  - Notes: Buzz (17.7k stars, MIT, Python) - offline audio/video transcription and translation powered by OpenAI Whisper. Desktop GUI app (macOS/Windows/Linux) with CLI support. Features: file import (audio/video/YouTube), live mic transcription, speaker diarization, speech separation (Demucs), multiple Whisper backends (whisper.cpp, faster-whisper), GPU acceleration (CUDA, Apple Silicon, Vulkan), export to TXT/SRT/VTT, watch folder for auto-transcription, advanced transcript viewer with search/playback. Install: `pip install buzz-captions && python -m buzz` (PyPI), or .dmg (macOS), or Flatpak/Snap (Linux). Evaluate: 1) Integration with t072 transcription subagent as a backend option, 2) CLI mode for scripted transcription workflows, 3) Watch folder pattern for automated pipelines, 4) Speaker diarization quality vs other options.
+- [x] t125 Add browser-use subagent for AI-native browser automation #tools #browser #ai #automation ~15m (ai:10m test:3m read:2m) logged:2026-02-05 ref:https://github.com/browser-use/browser-use completed:2026-02-07
+  - Notes: Created tools/browser/browser-use.md. Covers setup, basic usage, custom actions, comparison with Playwright/Stagehand.
+- [x] t126 Add Skyvern subagent for computer vision browser automation #tools #browser #ai #automation ~15m (ai:10m test:3m read:2m) logged:2026-02-05 ref:https://github.com/Skyvern-AI/skyvern completed:2026-02-07
+  - Notes: Created tools/browser/skyvern.md. Covers Docker/pip setup, API usage, workflow YAML, comparison with browser-use/Playwright.
+- [x] t127 Add Buzz offline transcription support #tools #voice #transcription ~15m (ai:10m test:3m read:2m) logged:2026-02-06 related:t071,t072 ref:https://github.com/chidiwilliams/buzz completed:2026-02-07
+  - Notes: Created tools/voice/buzz.md. Covers CLI usage, model selection (tiny to large-v3), backends (whisper/faster-whisper/whisper.cpp), batch transcription patterns.
 - [ ] t100 Add AXe CLI for iOS simulator accessibility automation #tools #ios #testing #accessibility ~10m (ai:8m test:1m read:1m) logged:2026-01-30 related:t095,t097 ref:https://github.com/cameroncooke/AXe
   - Notes: AXe (1.1k stars, MIT) - CLI tool for iOS Simulator automation using Apple's Accessibility APIs and HID. By same author as XcodeBuildMCP. Features: tap (coordinates or accessibility ID/label), swipe, type, hardware buttons (home, lock, siri), gesture presets (scroll-up/down, edge swipes), screenshot, video recording/streaming, describe-ui (accessibility tree). Install: `brew install cameroncooke/axe/axe`. Single binary, no server required. Timing controls (pre/post delays). Complements XcodeBuildMCP for build+test workflow. Add to tools/mobile/ or tools/testing/.
 - [ ] t101 Create Mom Test UX/CRO agent framework #agents #ux #cro #conversion ~30m (ai:20m test:5m read:5m) logged:2026-01-30
@@ -547,7 +559,7 @@ t006,Add Playwright MCP auto-setup to setup.sh,,browser,1d,0.5d,0.5d,,2025-12-20
 t007,Create MCP server for QuickFile accounting API,,accounting,2h,1h,40m,20m,2025-12-20T00:00Z,pending,,,
 t012,OCR Invoice/Receipt Extraction Pipeline,,plan|accounting|ocr|automation,3h,1.5h,1h,30m,2025-12-21T22:00Z,pending,,,
 t013,Image SEO Enhancement with AI Vision,,plan|seo|images|ai|accessibility,45m,25m,10m,10m,2025-12-21T23:30Z,pending,,,
-t014,Document RapidFuzz library for fuzzy string matching,,tools|context,5m,4m,,1m,2025-12-21T12:00Z,pending,,,
+t014,Document RapidFuzz library for fuzzy string matching,,tools|context,5m,4m,,1m,2025-12-21T12:00Z,done,,,
 t015,Add MinerU subagent as alternative to Pandoc for PDF conversion,,tools|conversion,1h,30m,,30m,2025-12-21T15:00Z,pending,,,
 t016,Uncloud Integration for aidevops,,plan|deployment|docker|orchestration,45m,25m,10m,10m,2025-12-21T04:00Z,pending,,,
 t017,SEO Machine Integration for aidevops,,plan|seo|content|agents,1.5h,45m,30m,15m,2025-12-21T15:00Z,pending,,,
@@ -564,7 +576,7 @@ t029,Review @penberg post for aidevops inclusion or similar approach,,research|t
 t030,Evaluate @irl_danB post for useful advantages,,research|tools,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
 t031,Company orchestration agent/workflow inspired by @DanielleMorrill,,plan|agents|business,20m,15m,3m,2m,2025-01-03T00:00Z,pending,,,
 t032,Create performance skill/subagent/command inspired by @elithrar,,tools|performance,30m,20m,5m,5m,2025-01-03T00:00Z,done,,,
-t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,10m,8m,2m,,2025-01-03T00:00Z,pending,,,
+t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,10m,8m,2m,,2025-01-03T00:00Z,done,,,
 t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,done,,,
@@ -591,7 +603,7 @@ t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,
 t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,done,t052,,
 t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
 t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,15m,10m,,5m,2026-01-13T00:00Z,pending,,,
-t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,10m,8m,1m,1m,2026-01-14T00:00Z,pending,,,
+t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,10m,8m,1m,1m,2026-01-14T00:00Z,done,,,
 t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,10m,8m,,2m,2026-01-14T00:00Z,pending,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,5m,4m,,1m,2026-01-15T00:00Z,pending,,,
 t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,

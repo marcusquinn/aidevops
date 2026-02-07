@@ -16,42 +16,12 @@
 
 set -euo pipefail
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly CONFIG_FILE="${SCRIPT_DIR}/../../.opencode/server/mcp-test-config.json"
-
-print_info() { 
-    local msg="$1"
-    echo -e "${BLUE}ℹ️  ${msg}${NC}"
-    return 0
-}
-
-print_success() { 
-    local msg="$1"
-    echo -e "${GREEN}✅ ${msg}${NC}"
-    return 0
-}
-
-print_warning() { 
-    local msg="$1"
-    echo -e "${YELLOW}⚠️  ${msg}${NC}"
-    return 0
-}
-
-print_error() { 
-    local msg="$1"
-    echo -e "${RED}❌ ${msg}${NC}"
-    return 0
-}
 
 print_header() { 
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

@@ -17,18 +17,15 @@
 #   - Default: full build permissions with common context tools
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 AGENTS_DIR="$HOME/.aidevops/agents"
 OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
 OPENCODE_AGENT_DIR="$OPENCODE_CONFIG_DIR/agent"
 OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
-
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
 
 echo -e "${BLUE}Generating OpenCode agent configuration...${NC}"
 

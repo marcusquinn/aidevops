@@ -21,17 +21,12 @@
 #   quality-feedback-helper.sh annotations --commit abc123
 #   quality-feedback-helper.sh watch --pr 4
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
-
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Get repository info
 get_repo() {
     local repo

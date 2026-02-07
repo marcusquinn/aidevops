@@ -32,7 +32,7 @@ tools:
 
 **MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
 
-**Extension**: Follow standard patterns in `.agents/spec/extension.md`
+**Extension**: Follow standard patterns in `.agents/aidevops/extension.md`
 
 **Design Patterns**: aidevops implements industry-standard agent design patterns (see below)
 <!-- AI-CONTEXT-END -->

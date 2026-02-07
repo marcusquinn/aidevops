@@ -5,14 +5,10 @@
 # Manages HuggingFace speech-to-speech pipeline
 # Supports local GPU (CUDA/MPS), Docker, and remote server deployment
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
+set -euo pipefail
 
 # Defaults
 readonly S2S_REPO="https://github.com/huggingface/speech-to-speech.git"
@@ -21,30 +17,6 @@ readonly S2S_PID_FILE="${S2S_DIR}/.s2s.pid"
 readonly S2S_LOG_FILE="${S2S_DIR}/.s2s.log"
 readonly DEFAULT_RECV_PORT=12345
 readonly DEFAULT_SEND_PORT=12346
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[OK]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARN]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 # ─── Dependency checks ───────────────────────────────────────────────
 

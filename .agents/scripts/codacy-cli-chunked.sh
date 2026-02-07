@@ -16,17 +16,10 @@
 # Version: 1.0.0
 # License: MIT
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly PURPLE='\033[0;35m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration
 readonly CODACY_CONFIG_DIR=".codacy"
 readonly CODACY_CONFIG_FILE="$CODACY_CONFIG_DIR/codacy.yaml"
@@ -42,30 +35,6 @@ PROGRESS_FILE=".agents/tmp/codacy-progress.log"
 TIMESTAMP_FILE=".agents/tmp/codacy-timestamp.log"
 
 # Print functions
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}✅ $message${NC}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}ℹ️  $message${NC}"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}⚠️  $message${NC}"
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}❌ $message${NC}" >&2
-    return 0
-}
-
 print_header() {
     local message="$1"
     echo -e "${PURPLE}🔍 $message${NC}"

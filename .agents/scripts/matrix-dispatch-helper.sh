@@ -32,6 +32,9 @@
 #   - Room-to-runner mapping prevents unauthorized dispatch
 #   - Only responds to messages from allowed users (configurable)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -45,13 +48,7 @@ readonly RUNNER_HELPER="$HOME/.aidevops/agents/scripts/runner-helper.sh"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[0;33m'
-readonly BLUE='\033[0;34m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 #######################################
 # Logging
@@ -123,8 +120,8 @@ config_set() {
 
     local temp_file
     temp_file=$(mktemp)
-    jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
+    trap 'rm -f "$temp_file"' RETURN
+    jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 }
 

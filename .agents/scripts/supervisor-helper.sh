@@ -28,6 +28,7 @@
 #   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for #auto-dispatch tasks
 #   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
 #   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
+#   supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard (t068.8)
 #   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] Handle post-PR merge/deploy lifecycle
 #   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
 #   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
@@ -77,6 +78,8 @@ unset _p
 
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
@@ -124,14 +127,7 @@ readonly -a VALID_TRANSITIONS=(
     "deployed:cancelled"
 )
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[0;33m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[SUPERVISOR]${NC} $*"; }
 log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }
@@ -160,8 +156,6 @@ log_cmd() {
     return $rc
 }
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 #######################################
 # Get the number of CPU cores on this system
@@ -4440,13 +4434,7 @@ update_todo_on_blocked() {
     else
         # Insert a new Notes line after the task
         local notes_line="${indent}  - Notes: BLOCKED by supervisor: ${safe_reason}"
-        # sed append syntax differs between BSD and GNU - sed_inplace can't abstract this
-        if [[ "$(uname)" == "Darwin" ]]; then
-            sed -i '' "${line_num}a\\
-${notes_line}" "$todo_file"
-        else
-            sed -i "${line_num}a\\${notes_line}" "$todo_file"
-        fi
+        sed_append_after "$line_num" "$notes_line" "$todo_file"
     fi
 
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"
@@ -5682,6 +5670,522 @@ cmd_watch() {
 }
 
 #######################################
+# TUI Dashboard - live-updating terminal UI for supervisor monitoring (t068.8)
+#
+# Renders a full-screen dashboard with:
+#   - Header: batch name, uptime, refresh interval
+#   - Task table: ID, status (color-coded), description, retries, PR URL
+#   - Batch progress bar
+#   - System resources: load, memory, worker processes
+#   - Keyboard controls: q=quit, p=pause/resume, r=refresh, j/k=scroll
+#
+# Zero dependencies beyond bash + sqlite3 + tput (standard on macOS/Linux).
+# Refreshes every N seconds (default 2). Reads from supervisor.db.
+#######################################
+cmd_dashboard() {
+    local refresh_interval=2
+    local batch_filter=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --interval) [[ $# -lt 2 ]] && { log_error "--interval requires a value"; return 1; }; refresh_interval="$2"; shift 2 ;;
+            --batch) [[ $# -lt 2 ]] && { log_error "--batch requires a value"; return 1; }; batch_filter="$2"; shift 2 ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    ensure_db
+
+    # Terminal setup
+    local term_cols term_rows
+    term_cols=$(tput cols 2>/dev/null || echo 120)
+    term_rows=$(tput lines 2>/dev/null || echo 40)
+
+    # State
+    local paused=false
+    local scroll_offset=0
+    local start_time
+    start_time=$(date +%s)
+
+    # Save terminal state and hide cursor
+    tput smcup 2>/dev/null || true
+    tput civis 2>/dev/null || true
+    stty -echo -icanon min 0 time 0 2>/dev/null || true
+
+    # Cleanup on exit
+    _dashboard_cleanup() {
+        tput rmcup 2>/dev/null || true
+        tput cnorm 2>/dev/null || true
+        stty echo icanon 2>/dev/null || true
+    }
+    trap _dashboard_cleanup EXIT INT TERM
+
+    # Color helpers using tput for portability
+    local c_reset c_bold c_dim c_red c_green c_yellow c_blue c_cyan c_magenta c_white c_bg_black
+    c_reset=$(tput sgr0 2>/dev/null || printf '\033[0m')
+    c_bold=$(tput bold 2>/dev/null || printf '\033[1m')
+    c_dim=$(tput dim 2>/dev/null || printf '\033[2m')
+    c_red=$(tput setaf 1 2>/dev/null || printf '\033[31m')
+    c_green=$(tput setaf 2 2>/dev/null || printf '\033[32m')
+    c_yellow=$(tput setaf 3 2>/dev/null || printf '\033[33m')
+    c_blue=$(tput setaf 4 2>/dev/null || printf '\033[34m')
+    c_cyan=$(tput setaf 6 2>/dev/null || printf '\033[36m')
+    c_white=$(tput setaf 7 2>/dev/null || printf '\033[37m')
+
+    # Format elapsed time as Xh Xm Xs
+    _fmt_elapsed() {
+        local secs="$1"
+        local h=$((secs / 3600))
+        local m=$(( (secs % 3600) / 60 ))
+        local s=$((secs % 60))
+        if [[ "$h" -gt 0 ]]; then
+            printf '%dh %dm %ds' "$h" "$m" "$s"
+        elif [[ "$m" -gt 0 ]]; then
+            printf '%dm %ds' "$m" "$s"
+        else
+            printf '%ds' "$s"
+        fi
+    }
+
+    # Render a progress bar: _render_bar <current> <total> <width>
+    _render_bar() {
+        local current="$1" total="$2" width="${3:-30}"
+        local filled=0
+        if [[ "$total" -gt 0 ]]; then
+            filled=$(( (current * width) / total ))
+        fi
+        local empty=$((width - filled))
+        local pct=0
+        if [[ "$total" -gt 0 ]]; then
+            pct=$(( (current * 100) / total ))
+        fi
+        printf '%s' "${c_green}"
+        local i
+        for ((i = 0; i < filled; i++)); do printf '%s' "█"; done
+        printf '%s' "${c_dim}"
+        for ((i = 0; i < empty; i++)); do printf '%s' "░"; done
+        printf '%s %3d%%' "${c_reset}" "$pct"
+    }
+
+    # Color for a task status
+    _status_color() {
+        local status="$1"
+        case "$status" in
+            running|dispatched) printf '%s' "${c_green}" ;;
+            evaluating|retrying|pr_review|merging|deploying) printf '%s' "${c_yellow}" ;;
+            blocked|failed) printf '%s' "${c_red}" ;;
+            complete|merged) printf '%s' "${c_cyan}" ;;
+            deployed) printf '%s' "${c_green}${c_bold}" ;;
+            queued) printf '%s' "${c_white}" ;;
+            cancelled) printf '%s' "${c_dim}" ;;
+            *) printf '%s' "${c_reset}" ;;
+        esac
+    }
+
+    # Status icon
+    _status_icon() {
+        local status="$1"
+        case "$status" in
+            running) printf '%s' ">" ;;
+            dispatched) printf '%s' "~" ;;
+            evaluating) printf '%s' "?" ;;
+            retrying) printf '%s' "!" ;;
+            complete) printf '%s' "+" ;;
+            pr_review) printf '%s' "R" ;;
+            merging) printf '%s' "M" ;;
+            merged) printf '%s' "=" ;;
+            deploying) printf '%s' "D" ;;
+            deployed) printf '%s' "*" ;;
+            blocked) printf '%s' "X" ;;
+            failed) printf '%s' "x" ;;
+            queued) printf '%s' "." ;;
+            cancelled) printf '%s' "-" ;;
+            *) printf '%s' " " ;;
+        esac
+    }
+
+    # Truncate string to width
+    _trunc() {
+        local str="$1" max="$2"
+        if [[ "${#str}" -gt "$max" ]]; then
+            printf '%s' "${str:0:$((max - 1))}…"
+        else
+            printf '%-*s' "$max" "$str"
+        fi
+    }
+
+    # Render one frame
+    _render_frame() {
+        # Refresh terminal size
+        term_cols=$(tput cols 2>/dev/null || echo 120)
+        term_rows=$(tput lines 2>/dev/null || echo 40)
+
+        local now
+        now=$(date +%s)
+        local elapsed=$((now - start_time))
+
+        # Move cursor to top-left, clear screen
+        tput home 2>/dev/null || printf '\033[H'
+        tput ed 2>/dev/null || printf '\033[J'
+
+        local line=0
+        local max_lines=$((term_rows - 1))
+
+        # === HEADER ===
+        local header_left="SUPERVISOR DASHBOARD"
+        local header_right
+        if [[ "$paused" == "true" ]]; then
+            header_right="[PAUSED] $(date '+%H:%M:%S') | up $(_fmt_elapsed "$elapsed")"
+        else
+            header_right="$(date '+%H:%M:%S') | up $(_fmt_elapsed "$elapsed") | refresh ${refresh_interval}s"
+        fi
+        local header_pad=$((term_cols - ${#header_left} - ${#header_right}))
+        [[ "$header_pad" -lt 1 ]] && header_pad=1
+        printf '%s%s%s%*s%s%s\n' "${c_bold}${c_cyan}" "$header_left" "${c_reset}" "$header_pad" "" "${c_dim}" "$header_right${c_reset}"
+        line=$((line + 1))
+
+        # Separator
+        printf '%s' "${c_dim}"
+        printf '%*s' "$term_cols" '' | tr ' ' '─'
+        printf '%s\n' "${c_reset}"
+        line=$((line + 1))
+
+        # === BATCH SUMMARY ===
+        local batch_where=""
+        if [[ -n "$batch_filter" ]]; then
+            batch_where="AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_filter")')"
+        fi
+
+        local counts
+        counts=$(db "$SUPERVISOR_DB" "
+            SELECT
+                count(*) as total,
+                sum(CASE WHEN t.status = 'queued' THEN 1 ELSE 0 END),
+                sum(CASE WHEN t.status IN ('dispatched','running') THEN 1 ELSE 0 END),
+                sum(CASE WHEN t.status = 'evaluating' THEN 1 ELSE 0 END),
+                sum(CASE WHEN t.status = 'retrying' THEN 1 ELSE 0 END),
+                sum(CASE WHEN t.status IN ('complete','pr_review','merging','merged','deploying','deployed') THEN 1 ELSE 0 END),
+                sum(CASE WHEN t.status IN ('blocked','failed') THEN 1 ELSE 0 END),
+                sum(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END)
+            FROM tasks t WHERE 1=1 $batch_where;
+        " 2>/dev/null)
+
+        local total queued active evaluating retrying finished errored cancelled
+        IFS='|' read -r total queued active evaluating retrying finished errored cancelled <<< "$counts"
+        total=${total:-0}; queued=${queued:-0}; active=${active:-0}
+        evaluating=${evaluating:-0}; retrying=${retrying:-0}
+        finished=${finished:-0}; errored=${errored:-0}; cancelled=${cancelled:-0}
+
+        # Batch info line
+        local batch_label="All Tasks"
+        if [[ -n "$batch_filter" ]]; then
+            local batch_name
+            batch_name=$(db "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$(sql_escape "$batch_filter")';" 2>/dev/null || echo "$batch_filter")
+            batch_label="Batch: ${batch_name:-$batch_filter}"
+        fi
+
+        printf ' %s%s%s  ' "${c_bold}" "$batch_label" "${c_reset}"
+        printf '%s%d total%s | ' "${c_white}" "$total" "${c_reset}"
+        printf '%s%d queued%s | ' "${c_white}" "$queued" "${c_reset}"
+        printf '%s%d active%s | ' "${c_green}" "$active" "${c_reset}"
+        printf '%s%d eval%s | ' "${c_yellow}" "$evaluating" "${c_reset}"
+        printf '%s%d retry%s | ' "${c_yellow}" "$retrying" "${c_reset}"
+        printf '%s%d done%s | ' "${c_cyan}" "$finished" "${c_reset}"
+        printf '%s%d err%s' "${c_red}" "$errored" "${c_reset}"
+        if [[ "$cancelled" -gt 0 ]]; then
+            printf ' | %s%d cancel%s' "${c_dim}" "$cancelled" "${c_reset}"
+        fi
+        printf '\n'
+        line=$((line + 1))
+
+        # Progress bar
+        local completed_for_bar=$((finished + cancelled))
+        printf ' Progress: '
+        _render_bar "$completed_for_bar" "$total" 40
+        printf '  (%d/%d)\n' "$completed_for_bar" "$total"
+        line=$((line + 1))
+
+        # Separator
+        printf '%s' "${c_dim}"
+        printf '%*s' "$term_cols" '' | tr ' ' '─'
+        printf '%s\n' "${c_reset}"
+        line=$((line + 1))
+
+        # === TASK TABLE ===
+        # Column widths (adaptive to terminal width)
+        local col_icon=3 col_id=8 col_status=12 col_retry=7 col_pr=0 col_error=0
+        local col_desc_min=20
+        local remaining=$((term_cols - col_icon - col_id - col_status - col_retry - 8))
+
+        # Allocate PR column if any tasks have PR URLs
+        local has_prs
+        has_prs=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE pr_url IS NOT NULL AND pr_url != '' $batch_where;" 2>/dev/null || echo 0)
+        if [[ "$has_prs" -gt 0 ]]; then
+            col_pr=12
+            remaining=$((remaining - col_pr))
+        fi
+
+        # Allocate error column if any tasks have errors
+        local has_errors
+        has_errors=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE error IS NOT NULL AND error != '' $batch_where;" 2>/dev/null || echo 0)
+        if [[ "$has_errors" -gt 0 ]]; then
+            col_error=25
+            remaining=$((remaining - col_error))
+        fi
+
+        local col_desc=$remaining
+        [[ "$col_desc" -lt "$col_desc_min" ]] && col_desc=$col_desc_min
+
+        # Table header
+        printf ' %s' "${c_bold}${c_dim}"
+        printf '%-*s' "$col_icon" " "
+        printf '%-*s' "$col_id" "TASK"
+        printf '%-*s' "$col_status" "STATUS"
+        printf '%-*s' "$col_desc" "DESCRIPTION"
+        printf '%-*s' "$col_retry" "RETRY"
+        [[ "$col_pr" -gt 0 ]] && printf '%-*s' "$col_pr" "PR"
+        [[ "$col_error" -gt 0 ]] && printf '%-*s' "$col_error" "ERROR"
+        printf '%s\n' "${c_reset}"
+        line=$((line + 1))
+
+        # Fetch tasks
+        local tasks
+        tasks=$(db -separator '	' "$SUPERVISOR_DB" "
+            SELECT t.id, t.status, t.description, t.retries, t.max_retries,
+                   COALESCE(t.pr_url, ''), COALESCE(t.error, '')
+            FROM tasks t
+            WHERE 1=1 $batch_where
+            ORDER BY
+                CASE t.status
+                    WHEN 'running' THEN 1
+                    WHEN 'dispatched' THEN 2
+                    WHEN 'evaluating' THEN 3
+                    WHEN 'retrying' THEN 4
+                    WHEN 'queued' THEN 5
+                    WHEN 'pr_review' THEN 6
+                    WHEN 'merging' THEN 7
+                    WHEN 'deploying' THEN 8
+                    WHEN 'blocked' THEN 9
+                    WHEN 'failed' THEN 10
+                    WHEN 'complete' THEN 11
+                    WHEN 'merged' THEN 12
+                    WHEN 'deployed' THEN 13
+                    WHEN 'cancelled' THEN 14
+                END, t.created_at ASC;
+        " 2>/dev/null)
+
+        local task_count=0
+        local visible_start=$scroll_offset
+        local visible_rows=$((max_lines - line - 6))
+        [[ "$visible_rows" -lt 3 ]] && visible_rows=3
+
+        if [[ -n "$tasks" ]]; then
+            local task_idx=0
+            while IFS='	' read -r tid tstatus tdesc tretries tmax tpr terror; do
+                task_count=$((task_count + 1))
+                if [[ "$task_idx" -lt "$visible_start" ]]; then
+                    task_idx=$((task_idx + 1))
+                    continue
+                fi
+                if [[ "$task_idx" -ge $((visible_start + visible_rows)) ]]; then
+                    task_idx=$((task_idx + 1))
+                    continue
+                fi
+
+                local sc
+                sc=$(_status_color "$tstatus")
+                local si
+                si=$(_status_icon "$tstatus")
+
+                printf ' %s%s%s ' "$sc" "$si" "${c_reset}"
+                printf '%-*s' "$col_id" "$tid"
+                printf '%s%-*s%s' "$sc" "$col_status" "$tstatus" "${c_reset}"
+                _trunc "${tdesc:-}" "$col_desc"
+                printf ' '
+                if [[ "$tretries" -gt 0 ]]; then
+                    printf '%s%d/%d%s' "${c_yellow}" "$tretries" "$tmax" "${c_reset}"
+                    local pad=$((col_retry - ${#tretries} - ${#tmax} - 1))
+                    [[ "$pad" -gt 0 ]] && printf '%*s' "$pad" ''
+                else
+                    printf '%-*s' "$col_retry" "0/$tmax"
+                fi
+                if [[ "$col_pr" -gt 0 ]]; then
+                    if [[ -n "$tpr" ]]; then
+                        local pr_num
+                        pr_num=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "$tpr")
+                        printf ' %s#%-*s%s' "${c_blue}" $((col_pr - 2)) "$pr_num" "${c_reset}"
+                    else
+                        printf ' %-*s' "$col_pr" ""
+                    fi
+                fi
+                if [[ "$col_error" -gt 0 && -n "$terror" ]]; then
+                    printf ' %s' "${c_red}"
+                    _trunc "$terror" "$col_error"
+                    printf '%s' "${c_reset}"
+                fi
+                printf '\n'
+                line=$((line + 1))
+                task_idx=$((task_idx + 1))
+            done <<< "$tasks"
+        else
+            printf ' %s(no tasks)%s\n' "${c_dim}" "${c_reset}"
+            line=$((line + 1))
+        fi
+
+        # Scroll indicator
+        if [[ "$task_count" -gt "$visible_rows" ]]; then
+            local scroll_end=$((scroll_offset + visible_rows))
+            [[ "$scroll_end" -gt "$task_count" ]] && scroll_end=$task_count
+            printf ' %s[%d-%d of %d tasks]%s\n' "${c_dim}" "$((scroll_offset + 1))" "$scroll_end" "$task_count" "${c_reset}"
+            line=$((line + 1))
+        fi
+
+        # === SYSTEM RESOURCES ===
+        # Only show if we have room
+        if [[ "$line" -lt $((max_lines - 4)) ]]; then
+            printf '%s' "${c_dim}"
+            printf '%*s' "$term_cols" '' | tr ' ' '─'
+            printf '%s\n' "${c_reset}"
+            line=$((line + 1))
+
+            local load_output
+            load_output=$(check_system_load 2>/dev/null || echo "")
+
+            if [[ -n "$load_output" ]]; then
+                local sys_cores sys_load1 sys_load5 sys_load15 sys_procs sys_sup_procs sys_mem sys_overloaded
+                sys_cores=$(echo "$load_output" | grep '^cpu_cores=' | cut -d= -f2)
+                sys_load1=$(echo "$load_output" | grep '^load_1m=' | cut -d= -f2)
+                sys_load5=$(echo "$load_output" | grep '^load_5m=' | cut -d= -f2)
+                sys_load15=$(echo "$load_output" | grep '^load_15m=' | cut -d= -f2)
+                sys_procs=$(echo "$load_output" | grep '^process_count=' | cut -d= -f2)
+                sys_sup_procs=$(echo "$load_output" | grep '^supervisor_process_count=' | cut -d= -f2)
+                sys_mem=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
+                sys_overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
+
+                printf ' %sSYSTEM%s  ' "${c_bold}" "${c_reset}"
+                printf 'Load: %s%s%s %s %s (%s cores)  ' \
+                    "$([[ "$sys_overloaded" == "true" ]] && printf '%s' "${c_red}${c_bold}" || printf '%s' "${c_green}")" \
+                    "$sys_load1" "${c_reset}" "$sys_load5" "$sys_load15" "$sys_cores"
+                printf 'Procs: %s (%s supervisor)  ' "$sys_procs" "$sys_sup_procs"
+                printf 'Mem: %s%s%s' \
+                    "$([[ "$sys_mem" == "high" ]] && printf '%s' "${c_red}" || ([[ "$sys_mem" == "medium" ]] && printf '%s' "${c_yellow}" || printf '%s' "${c_green}"))" \
+                    "$sys_mem" "${c_reset}"
+                if [[ "$sys_overloaded" == "true" ]]; then
+                    printf '  %s!! OVERLOADED !!%s' "${c_red}${c_bold}" "${c_reset}"
+                fi
+                printf '\n'
+                line=$((line + 1))
+            fi
+
+            # Active workers with PIDs
+            if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+                local worker_info=""
+                local worker_count=0
+                for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+                    [[ -f "$pid_file" ]] || continue
+                    local wpid wtask_id
+                    wpid=$(cat "$pid_file")
+                    wtask_id=$(basename "$pid_file" .pid)
+                    if kill -0 "$wpid" 2>/dev/null; then
+                        worker_count=$((worker_count + 1))
+                        if [[ -n "$worker_info" ]]; then
+                            worker_info="$worker_info, "
+                        fi
+                        worker_info="${worker_info}${wtask_id}(pid:${wpid})"
+                    fi
+                done
+                if [[ "$worker_count" -gt 0 ]]; then
+                    printf ' %sWORKERS%s %d active: %s\n' "${c_bold}" "${c_reset}" "$worker_count" "$worker_info"
+                    line=$((line + 1))
+                fi
+            fi
+        fi
+
+        # === FOOTER ===
+        # Move to last line
+        local footer_line=$((max_lines))
+        tput cup "$footer_line" 0 2>/dev/null || printf '\033[%d;0H' "$footer_line"
+        printf '%s q%s=quit  %sp%s=pause  %sr%s=refresh  %sj/k%s=scroll  %s?%s=help' \
+            "${c_bold}" "${c_reset}" "${c_bold}" "${c_reset}" "${c_bold}" "${c_reset}" \
+            "${c_bold}" "${c_reset}" "${c_bold}" "${c_reset}"
+    }
+
+    # Main loop
+    while true; do
+        if [[ "$paused" != "true" ]]; then
+            _render_frame
+        fi
+
+        # Read keyboard input (non-blocking)
+        local key=""
+        local wait_count=0
+        local wait_max=$((refresh_interval * 10))
+
+        while [[ "$wait_count" -lt "$wait_max" ]]; do
+            key=""
+            read -rsn1 -t 0.1 key 2>/dev/null || true
+
+            case "$key" in
+                q|Q)
+                    return 0
+                    ;;
+                p|P)
+                    if [[ "$paused" == "true" ]]; then
+                        paused=false
+                    else
+                        paused=true
+                        # Show paused indicator
+                        tput cup 0 $((term_cols - 10)) 2>/dev/null || true
+                        printf '%s[PAUSED]%s' "${c_yellow}${c_bold}" "${c_reset}"
+                    fi
+                    ;;
+                r|R)
+                    _render_frame
+                    wait_count=0
+                    ;;
+                j|J)
+                    local max_task_count
+                    max_task_count=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;" 2>/dev/null || echo 0)
+                    if [[ "$scroll_offset" -lt $((max_task_count - 1)) ]]; then
+                        scroll_offset=$((scroll_offset + 1))
+                        _render_frame
+                    fi
+                    ;;
+                k|K)
+                    if [[ "$scroll_offset" -gt 0 ]]; then
+                        scroll_offset=$((scroll_offset - 1))
+                        _render_frame
+                    fi
+                    ;;
+                '?')
+                    tput home 2>/dev/null || printf '\033[H'
+                    tput ed 2>/dev/null || printf '\033[J'
+                    printf '%s%sSupervisor Dashboard Help%s\n\n' "${c_bold}" "${c_cyan}" "${c_reset}"
+                    printf '  %sq%s     Quit dashboard\n' "${c_bold}" "${c_reset}"
+                    printf '  %sp%s     Pause/resume auto-refresh\n' "${c_bold}" "${c_reset}"
+                    printf '  %sr%s     Force refresh now\n' "${c_bold}" "${c_reset}"
+                    printf '  %sj/k%s   Scroll task list down/up\n' "${c_bold}" "${c_reset}"
+                    printf '  %s?%s     Show this help\n\n' "${c_bold}" "${c_reset}"
+                    printf '%sStatus Icons:%s\n' "${c_bold}" "${c_reset}"
+                    printf '  %s>%s running  %s~%s dispatched  %s?%s evaluating  %s!%s retrying\n' \
+                        "${c_green}" "${c_reset}" "${c_green}" "${c_reset}" "${c_yellow}" "${c_reset}" "${c_yellow}" "${c_reset}"
+                    printf '  %s+%s complete %s=%s merged      %s*%s deployed    %s.%s queued\n' \
+                        "${c_cyan}" "${c_reset}" "${c_cyan}" "${c_reset}" "${c_green}" "${c_reset}" "${c_white}" "${c_reset}"
+                    printf '  %sX%s blocked  %sx%s failed      %s-%s cancelled   %sR%s pr_review\n\n' \
+                        "${c_red}" "${c_reset}" "${c_red}" "${c_reset}" "${c_dim}" "${c_reset}" "${c_yellow}" "${c_reset}"
+                    printf 'Press any key to return...'
+                    read -rsn1 _ 2>/dev/null || true
+                    _render_frame
+                    wait_count=0
+                    ;;
+            esac
+
+            wait_count=$((wait_count + 1))
+        done
+    done
+}
+
+#######################################
 # Show usage
 #######################################
 show_usage() {
@@ -5717,6 +6221,7 @@ Usage:
   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for auto-dispatch tasks
   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
+  supervisor-helper.sh dashboard [--batch id] [--interval N] Live TUI dashboard
   supervisor-helper.sh db [sql]                      Direct SQLite access
   supervisor-helper.sh help                          Show this help
 
@@ -5926,6 +6431,22 @@ Options for 'release':
   --enable               Enable release_on_complete for the batch
   --disable              Disable release_on_complete for the batch
   --dry-run              Show what would happen without executing
+
+TUI Dashboard (t068.8):
+  Live-updating terminal dashboard for monitoring supervisor tasks.
+  Shows task states, batch progress, system resources, and active workers.
+  Zero dependencies beyond bash + sqlite3 + tput.
+
+  Keyboard controls:
+    q     Quit dashboard
+    p     Pause/resume auto-refresh
+    r     Force refresh now
+    j/k   Scroll task list down/up
+    ?     Show help overlay
+
+Options for 'dashboard':
+  --batch <batch_id>     Filter to a specific batch
+  --interval <N>         Refresh interval in seconds (default: 2)
 EOF
 }
 
@@ -5956,6 +6477,7 @@ main() {
         auto-pickup) cmd_auto_pickup "$@" ;;
         cron) cmd_cron "$@" ;;
         watch) cmd_watch "$@" ;;
+        dashboard) cmd_dashboard "$@" ;;
         recall) cmd_recall "$@" ;;
         release) cmd_release "$@" ;;
         retrospective) cmd_retrospective "$@" ;;

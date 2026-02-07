@@ -7,39 +7,7 @@
 # Author: AI DevOps Framework
 # Version: 2.1.0
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
-print_success() {
-    local _arg1="$1"
-    echo -e "${GREEN}[OK] $_arg1${NC}"
-    return 0
-}
-
-print_info() {
-    local _arg1="$1"
-    echo -e "${BLUE}[INFO] $_arg1${NC}"
-    return 0
-}
-
-print_warning() {
-    local _arg1="$1"
-    echo -e "${YELLOW}[WARN] $_arg1${NC}"
-    return 0
-}
-
-print_error() {
-    local _arg1="$1"
-    echo -e "${RED}[ERROR] $_arg1${NC}" >&2
-    return 0
-}
-
 # Secure API key directory and file
 readonly API_KEY_DIR="$HOME/.config/aidevops"
 readonly CREDENTIALS_FILE="$API_KEY_DIR/credentials.sh"
@@ -318,6 +286,8 @@ main() {
             # Delegate to multi-tenant credential helper
             local script_dir
             script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
             bash "$script_dir/credential-helper.sh" "$@"
             ;;
         "help"|"--help"|"-h"|"")

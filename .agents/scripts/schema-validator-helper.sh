@@ -25,13 +25,6 @@ readonly SCRIPT_DIR
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
 # Constants
 readonly TOOL_DIR="$HOME/.aidevops/tools/schema-validator"
 readonly JS_SCRIPT="$TOOL_DIR/validate.mjs"
@@ -39,30 +32,6 @@ readonly SCHEMA_CACHE="$TOOL_DIR/schemaorg-all-https.jsonld"
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [target]"
 readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[OK]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARN]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[FAIL]${NC} $msg" >&2
-    return 0
-}
 
 # Check if a command exists
 command_exists() {
@@ -93,14 +62,15 @@ install_deps() {
             local tmp
             tmp=$(mktemp)
             jq '. + {"type": "module"}' "$TOOL_DIR/package.json" > "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
+            rm -f "$tmp"
         else
             # Fallback: write "type": "module" into package.json without jq
             local tmp
             tmp=$(mktemp)
             printf '{\n  "type": "module",\n' > "$tmp"
             # Append everything after the opening brace
-            tail -n +2 "$TOOL_DIR/package.json" >> "$tmp"
-            mv "$tmp" "$TOOL_DIR/package.json"
+            tail -n +2 "$TOOL_DIR/package.json" >> "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
+            rm -f "$tmp"
             print_info "Added \"type\": \"module\" to package.json (jq not available)"
         fi
     fi

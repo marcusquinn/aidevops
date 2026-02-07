@@ -47,7 +47,10 @@
 set -euo pipefail
 
 # Configuration
+# Source shared constants (provides sed_inplace, print_*, color constants)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # shellcheck disable=SC2034
 readonly SCRIPT_DIR
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
@@ -75,22 +78,14 @@ detect_cli() {
 
 AI_CLI="$(detect_cli)"
 readonly AI_CLI
-readonly DEFAULT_TIMEOUT="${AGENT_TEST_TIMEOUT:-120}"
 
 # OpenCode server defaults (localhost-only, HTTP is intentional for local dev server)
 readonly OPENCODE_HOST="${OPENCODE_HOST:-localhost}"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_URL="http://${OPENCODE_HOST}:${OPENCODE_PORT}" # NOSONAR - localhost dev server, no TLS needed
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly PURPLE='\033[0;35m'
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
-readonly NC='\033[0m'
 
 # Logging
 log_info() { echo -e "${BLUE}[TEST]${NC} $*"; }
@@ -99,8 +94,6 @@ log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_header() { echo -e "${PURPLE}${BOLD}$*${NC}"; }
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 #######################################
 # Ensure workspace directories exist
@@ -174,6 +167,7 @@ run_prompt_claude() {
     # Run with timeout
     local stderr_file
     stderr_file=$(mktemp)
+    trap 'rm -f "$stderr_file"' RETURN
     timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
         local exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
@@ -181,10 +175,8 @@ run_prompt_claude() {
         elif [[ -s "$stderr_file" ]]; then
             echo "[ERROR: $(cat "$stderr_file")]"
         fi
-        rm -f "$stderr_file"
         return $exit_code
     }
-    rm -f "$stderr_file"
 }
 
 #######################################
@@ -278,6 +270,7 @@ run_prompt_opencode_cli() {
 
     local stderr_file
     stderr_file=$(mktemp)
+    trap 'rm -f "$stderr_file"' RETURN
     timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
         local exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
@@ -285,10 +278,8 @@ run_prompt_opencode_cli() {
         elif [[ -s "$stderr_file" ]]; then
             echo "[ERROR: $(cat "$stderr_file")]"
         fi
-        rm -f "$stderr_file"
         return $exit_code
     }
-    rm -f "$stderr_file"
 }
 
 #######################################

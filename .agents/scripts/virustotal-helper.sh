@@ -24,14 +24,6 @@ readonly VT_API_BASE="https://www.virustotal.com/api/v3"
 readonly VERSION="1.0.0"
 readonly RATE_LIMIT_DELAY=16  # 4 req/min = 1 every 15s, add 1s buffer
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -120,6 +112,8 @@ resolve_api_key() {
     # Try aidevops secret helper
     local script_dir=""
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+source "${SCRIPT_DIR}/shared-constants.sh"
+
     if [[ -x "${script_dir}/secret-helper.sh" ]]; then
         local key=""
         key=$("${script_dir}/secret-helper.sh" get VIRUSTOTAL_MARCUSQUINN 2>/dev/null || true)

@@ -8,6 +8,7 @@ set -euo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)" || exit
 AGENT_DIR="$REPO_ROOT/.agent"
 
@@ -222,16 +223,13 @@ update_readme_counts() {
     
     # Update patterns
     # ~N main agents or ~N domain agents
-    sed -i.tmp -E "s/~[0-9]+ (main|domain) agents/~$main_agents \1 agents/g" "$readme_file"
+    sed_inplace -E "s/~[0-9]+ (main|domain) agents/~$main_agents \1 agents/g" "$readme_file"
     
     # N+ helper scripts
-    sed -i.tmp -E "s/[0-9]+\+ helper scripts/${approx_scripts}+ helper scripts/g" "$readme_file"
+    sed_inplace -E "s/[0-9]+\+ helper scripts/${approx_scripts}+ helper scripts/g" "$readme_file"
     
     # N+ subagent markdown files
-    sed -i.tmp -E "s/[0-9]+\+ subagent/${approx_subagents}+ subagent/g" "$readme_file"
-    
-    # Clean up temp files
-    rm -f "$readme_file.tmp"
+    sed_inplace -E "s/[0-9]+\+ subagent/${approx_subagents}+ subagent/g" "$readme_file"
     
     print_success "Updated README counts"
     print_info "Backup saved to $readme_file.bak"

@@ -34,17 +34,15 @@
 # VERSION: 1.0.0
 # LICENSE: MIT
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # ------------------------------------------------------------------------------
 # CONFIGURATION & CONSTANTS
 # ------------------------------------------------------------------------------
 
-readonly BLUE='\033[0;34m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
 
 readonly GITHUB_APP_URL="https://github.com/apps/opencode-agent"
 readonly OPENCODE_GITHUB_DOCS="https://opencode.ai/docs/github/"
@@ -58,42 +56,18 @@ readonly OPENCODE_GITLAB_DOCS="https://opencode.ai/docs/gitlab/"
 # Arguments:
 #   $1 - Message to print
 # Returns: 0
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
 # Print a success message in green
 # Arguments:
 #   $1 - Message to print
 # Returns: 0
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[OK]${NC} $msg"
-    return 0
-}
-
 # Print a warning message in yellow
 # Arguments:
 #   $1 - Message to print
 # Returns: 0
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARN]${NC} $msg"
-    return 0
-}
-
 # Print an error/missing message in red
 # Arguments:
 #   $1 - Message to print
 # Returns: 0
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[MISSING]${NC} $msg"
-    return 0
-}
-
 # ------------------------------------------------------------------------------
 # DETECTION FUNCTIONS
 # ------------------------------------------------------------------------------

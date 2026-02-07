@@ -25,6 +25,10 @@
 # Version: 1.2.0
 # License: MIT
 
+# Source shared constants (provides sed_inplace and other utilities)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 # Colors for output
 readonly GREEN='\033[0;32m'
 readonly BLUE='\033[0;34m'
@@ -131,18 +135,16 @@ apply_coderabbit_fixes() {
         print_info "Applying markdown formatting fixes..."
 
         # Fix heading spacing (add blank line after headings)
-        sed -i.tmp '/^#.*$/{
+        sed_inplace '/^#.*$/{
             N
             /\n$/!s/$/\n/
         }' "$file"
 
         # Fix list spacing (ensure blank lines around lists)
-        sed -i.tmp '/^[[:space:]]*[-*+][[:space:]]/{
+        sed_inplace '/^[[:space:]]*[-*+][[:space:]]/{
             i\
 
         }' "$file"
-
-        rm -f "$file.tmp"
         print_success "Applied markdown formatting fixes"
     fi
 

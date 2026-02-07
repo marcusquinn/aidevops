@@ -23,20 +23,14 @@ set -euo pipefail
 
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"
 readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"
 readonly MAIL_DIR="${AIDEVOPS_MAIL_DIR:-$HOME/.aidevops/.agent-workspace/mail}"
 readonly MAIL_DB="$MAIL_DIR/mailbox.db"
 readonly COORDINATOR_ID="coordinator"
-
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[0;33m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[COORD]${NC} $*"; }
 log_success() { echo -e "${GREEN}[COORD]${NC} $*"; }

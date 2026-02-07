@@ -440,8 +440,8 @@ bash .agents/scripts/stagehand-helper.sh clean        # Clean cache and logs
 
 ### **AI DevOps Framework Integration**
 
-- **Browser Automation**: docs/BROWSER-AUTOMATION.md
-- **MCP Integrations**: docs/MCP-INTEGRATIONS.md
+- **Browser Automation**: .agents/tools/browser/browser-automation.md
+- **MCP Integrations**: .agents/aidevops/mcp-integrations.md
 - **Quality Standards**: .agents/tools/code-review/code-standards.md
 
 ### **Community & Support**

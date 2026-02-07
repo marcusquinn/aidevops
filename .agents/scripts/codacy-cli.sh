@@ -17,16 +17,10 @@
 # Version: 1.1.1
 # License: MIT
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Configuration
 readonly CODACY_CLI_VERSION="1.0.0-main.361.sha.f961a76"
 readonly CODACY_CONFIG_DIR=".codacy"
@@ -35,24 +29,6 @@ readonly CODACY_API_CONFIG="configs/codacy-config.json"
 # API token loaded from environment variable CODACY_API_TOKEN
 
 # Print functions
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}✅ $message${NC}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}ℹ️  $message${NC}"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}⚠️  $message${NC}"
-    return 0
-}
-
 # Load API configuration
 load_api_config() {
     # Check environment variable first (set via credentials.sh, sourced by .zshrc)
@@ -96,12 +72,6 @@ load_api_config() {
         fi
         return 1
     fi
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}❌ $message${NC}" >&2
     return 0
 }
 

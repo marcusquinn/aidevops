@@ -67,25 +67,11 @@ readonly THRESHOLD_HIGH_SPAM=50
 readonly THRESHOLD_OLD_CONTENT_YEARS=2
 readonly THRESHOLD_UGC_HEAVY=3
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly PURPLE='\033[0;35m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
 # =============================================================================
 # Utility Functions
 # =============================================================================
 
 print_header() { local msg="$1"; echo -e "${PURPLE}═══ $msg ═══${NC}"; return 0; }
-print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; return 0; }
-print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 0; }
-print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
-print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
-
 # Ensure directories exist
 ensure_directories() {
     mkdir -p "$CONFIG_DIR"
@@ -803,6 +789,7 @@ do_webmaster_research() {
     # Combine and deduplicate keywords
     local combined_keywords
     combined_keywords=$(mktemp)
+    trap 'rm -f "$combined_keywords"' RETURN
     
     # Process GSC data
     if [[ -n "$gsc_data" ]]; then

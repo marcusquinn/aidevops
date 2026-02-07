@@ -21,6 +21,9 @@
 #   add-skill-helper.sh check-updates
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -28,13 +31,6 @@ AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 TEMP_DIR="${TMPDIR:-/tmp}/aidevops-skill-import"
 SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
 
 # =============================================================================
 # Helper Functions
@@ -440,8 +436,8 @@ register_skill() {
         log_info "Updating existing skill registration: $name"
         local tmp_file
         tmp_file=$(mktemp)
-        jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file"
-        mv "$tmp_file" "$SKILL_SOURCES"
+        jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+        rm -f "$tmp_file"
     fi
     
     local timestamp
@@ -473,8 +469,8 @@ register_skill() {
     
     local tmp_file
     tmp_file=$(mktemp)
-    jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" > "$tmp_file"
-    mv "$tmp_file" "$SKILL_SOURCES"
+    jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+    rm -f "$tmp_file"
     
     return 0
 }
@@ -1277,8 +1273,8 @@ cmd_remove() {
     # Remove from registry
     local tmp_file
     tmp_file=$(mktemp)
-    jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file"
-    mv "$tmp_file" "$SKILL_SOURCES"
+    trap 'rm -f "$tmp_file"' RETURN
+    jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
     
     log_success "Skill '$name' removed"
     

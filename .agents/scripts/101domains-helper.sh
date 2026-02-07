@@ -4,46 +4,17 @@
 # 101domains Registrar Helper Script
 # Comprehensive domain and DNS management for AI assistants
 
-# Colors for output
-# String literal constants
-readonly ERROR_DOMAIN_NAME_REQUIRED="Domain name is required"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+# String literal constants
+
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 CONFIG_FILE="../configs/101domains-config.json"
 API_BASE_URL="https://api.101domain.com/v4"

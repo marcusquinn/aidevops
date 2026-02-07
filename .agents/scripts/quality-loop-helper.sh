@@ -30,6 +30,8 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agents/loop-state"
 readonly STATE_FILE="${STATE_DIR}/quality-loop.local.state"
@@ -73,14 +75,6 @@ readonly BACKOFF_BASE=15
 readonly BACKOFF_MAX=120
 readonly BACKOFF_MULTIPLIER=2
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -88,39 +82,15 @@ readonly NC='\033[0m'
 # Print error message to stderr with prefix
 # Arguments: $1 - Error message
 # Returns: 0
-print_error() {
-    local message="$1"
-    echo -e "${RED}[quality-loop] Error:${NC} ${message}" >&2
-    return 0
-}
-
 # Print success message in green with prefix
 # Arguments: $1 - Success message
 # Returns: 0
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[quality-loop]${NC} ${message}"
-    return 0
-}
-
 # Print warning message in yellow with prefix
 # Arguments: $1 - Warning message
 # Returns: 0
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[quality-loop]${NC} ${message}"
-    return 0
-}
-
 # Print info message in blue with prefix
 # Arguments: $1 - Info message
 # Returns: 0
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[quality-loop]${NC} ${message}"
-    return 0
-}
-
 # Print step message in cyan with prefix
 # Arguments: $1 - Step message
 # Returns: 0
@@ -431,7 +401,6 @@ run_preflight_checks() {
     fi
 
 
-    
     # Check 2: Secretlint (skip if not installed)
     print_info "  Checking secrets..."
     if command -v secretlint &>/dev/null; then

@@ -15,14 +15,10 @@
 #   status     Check current installation status
 #   help       Show this help message
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+set -euo pipefail
 
 # Logging
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
@@ -109,6 +105,7 @@ tabby_enable_dynamic_titles() {
     # Replace all instances (cross-platform: works on both macOS and Linux)
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     sed 's/disableDynamicTitle: true/disableDynamicTitle: false/g' "$TABBY_CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$TABBY_CONFIG_FILE"
     
     local count
@@ -307,6 +304,7 @@ remove_integration() {
     # Remove our integration block (cross-platform: works on both macOS and Linux)
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     sed "/$MARKER_START/,/$MARKER_END/d" "$rc_file" > "$temp_file" && mv "$temp_file" "$rc_file"
     
     log_success "Removed integration from $rc_file (backup: ${rc_file}.aidevops-backup)"

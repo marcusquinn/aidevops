@@ -18,19 +18,15 @@
 #   clawdhub-helper.sh info caldav-calendar
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
 CLAWDHUB_BASE_URL="https://clawdhub.com"
 CLAWDHUB_API="${CLAWDHUB_BASE_URL}/api/v1"
 TEMP_DIR="${TMPDIR:-/tmp}/clawdhub-fetch"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
 
 log_info() {
     echo -e "${BLUE}[clawdhub]${NC} $1"
@@ -161,6 +157,7 @@ fetch_skill_content_playwright() {
     # Create a temporary Node.js project with Playwright to extract SKILL.md
     local pw_dir
     pw_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawdhub-pw-XXXXXX")
+    trap 'rm -rf "$pw_dir"' RETURN
 
     # Create package.json for the temporary project
     cat > "$pw_dir/package.json" << 'PKGJSON'

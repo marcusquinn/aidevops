@@ -8,14 +8,10 @@
 # - Configuration errors
 # - Known breaking changes
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
+set -euo pipefail
 
 MCP_NAME="${1:-}"
 

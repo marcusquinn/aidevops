@@ -13,38 +13,7 @@ if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
     source "${SCRIPT_DIR}/shared-constants.sh"
 fi
 
-# Colors for output
-readonly BLUE='\033[0;34m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
 # Print functions
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
-
 # Dev-browser specific constants
 readonly DEV_BROWSER_DIR="${HOME}/.aidevops/dev-browser"
 readonly DEV_BROWSER_SKILL_DIR="${DEV_BROWSER_DIR}/skills/dev-browser"
