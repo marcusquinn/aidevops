@@ -107,6 +107,29 @@ jobs:
         echo ""
         echo "✅ All JSON files valid"
 
+    - name: ShellCheck Lint
+      run: |
+        echo "Validating shell scripts with ShellCheck..."
+        errors=0
+
+        while IFS= read -r file; do
+          if shellcheck -S error "$file" > /dev/null 2>&1; then
+            echo "OK $file"
+          else
+            echo "FAIL $file"
+            shellcheck -S error -f gcc "$file" 2>&1
+            errors=$((errors + 1))
+          fi
+        done < <(git ls-files '*.sh')
+
+        if [ "$errors" -gt 0 ]; then
+          echo ""
+          echo "$errors script(s) failed ShellCheck (severity: error)"
+          exit 1
+        fi
+        echo ""
+        echo "All shell scripts passed ShellCheck"
+
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
