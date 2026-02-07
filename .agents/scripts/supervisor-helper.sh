@@ -253,25 +253,20 @@ check_system_load() {
 
     # Memory pressure
     if [[ "$(uname)" == "Darwin" ]]; then
-        # macOS: use memory_pressure command or vm_stat
+        # macOS: use memory_pressure command for system-wide free percentage
+        # vm_stat "Pages free" is misleading — macOS keeps it near zero by design,
+        # using inactive/purgeable/compressed pages as available memory instead.
         local pressure="low"
-        local vm_output
-        vm_output=$(vm_stat 2>/dev/null || echo "")
-        if [[ -n "$vm_output" ]]; then
-            local pages_free pages_active pages_inactive page_size
-            page_size=$(vm_stat 2>/dev/null | head -1 | grep -oE '[0-9]+' || echo "16384")
-            pages_free=$(echo "$vm_output" | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
-            pages_active=$(echo "$vm_output" | awk '/Pages active/ {gsub(/\./,"",$3); print $3}')
-            pages_inactive=$(echo "$vm_output" | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
-            local free_mb=0
-            if [[ -n "$pages_free" && -n "$page_size" ]]; then
-                free_mb=$(( (pages_free * page_size) / 1048576 ))
-            fi
-            if [[ "$free_mb" -lt 512 ]]; then
-                pressure="high"
-            elif [[ "$free_mb" -lt 2048 ]]; then
-                pressure="medium"
-            fi
+        local free_pct=100
+        local mp_output
+        mp_output=$(memory_pressure 2>/dev/null || echo "")
+        if [[ -n "$mp_output" ]]; then
+            free_pct=$(echo "$mp_output" | grep -oE 'free percentage: [0-9]+' | grep -oE '[0-9]+' || echo "100")
+        fi
+        if [[ "$free_pct" -lt 10 ]]; then
+            pressure="high"
+        elif [[ "$free_pct" -lt 25 ]]; then
+            pressure="medium"
         fi
         echo "memory_pressure=$pressure"
     else
