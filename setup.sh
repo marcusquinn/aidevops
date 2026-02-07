@@ -2704,9 +2704,15 @@ inject_agents_reference() {
     # This controls the session greeting (auto-loaded by OpenCode from config root)
     local opencode_config_dir="$HOME/.config/opencode"
     local opencode_config_agents="$opencode_config_dir/AGENTS.md"
-    local template_source="$SCRIPT_DIR/templates/opencode-config-agents.md"
+    local template_source="$INSTALL_DIR/templates/opencode-config-agents.md"
     
     if [[ -d "$opencode_config_dir" && -f "$template_source" ]]; then
+        # Backup if file exists and differs from template
+        if [[ -f "$opencode_config_agents" ]]; then
+            if ! diff -q "$template_source" "$opencode_config_agents" &>/dev/null; then
+                create_backup_with_rotation "$opencode_config_agents" "opencode-agents"
+            fi
+        fi
         if cp "$template_source" "$opencode_config_agents"; then
             print_success "Deployed greeting template to $opencode_config_agents"
         else
