@@ -730,6 +730,52 @@ Uncommitted TODO changes are invisible to other sessions, agents, and the `/read
 | Status update | `chore: update task t{NNN} status` |
 | Plan creation | `chore: add plan for {title}` |
 
+## GitHub Issue Sync
+
+Tasks and GitHub issues MUST stay in sync with matching identifiers.
+
+### Convention
+
+- **GitHub issue titles** MUST be prefixed with their TODO.md task ID: `t{NNN}: {title}`
+- **TODO.md tasks** MUST reference their GitHub issue: `ref:GH#{NNN}`
+- Both directions must be maintained whenever either is created or updated
+
+### When Creating a GitHub Issue
+
+```bash
+# Always prefix with t-number
+gh issue create --title "t146: bug: supervisor no_pr retry counter non-functional" ...
+```
+
+### When Creating a TODO.md Task from an Issue
+
+```markdown
+- [ ] t146 bug: supervisor no_pr retry counter #bugfix ~15m logged:2026-02-07 ref:GH#439
+```
+
+### When Creating Both Together
+
+1. Assign the next available t-number
+2. Create the GitHub issue with `t{NNN}: ` prefix in the title
+3. Add the task to TODO.md with `ref:GH#{issue_number}`
+4. Commit and push TODO.md immediately
+
+### Automated Enforcement
+
+The supervisor's `update_todo_on_complete()` and `send_task_notification()` functions should maintain this sync. When the supervisor creates issues or updates TODO.md, it must:
+
+1. Check if a matching GitHub issue exists (search by `t{NNN}` in title)
+2. If not, create one with the `t{NNN}: ` prefix
+3. If the TODO.md task lacks `ref:GH#`, add it after issue creation
+4. When closing a task, close the matching GitHub issue with a comment
+
+### Why This Matters
+
+Without consistent t-number prefixes on issues, there's no way to:
+- Quickly find the GitHub issue for a TODO.md task (or vice versa)
+- Automate status sync between the two systems
+- Track which issues correspond to which batch of work
+
 ## Integration with Other Workflows
 
 | Workflow | Integration |

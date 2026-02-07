@@ -129,11 +129,23 @@ Labels: bug (or enhancement, question, documentation)
 4. Cancel
 ```
 
+### Step 5b: Assign Task ID and Sync
+
+Before creating the issue, assign a TODO.md task ID:
+
+1. Read TODO.md to find the highest existing t-number
+2. Assign the next sequential t-number (e.g., if highest is t148, use t149)
+3. Prefix the issue title with `t{NNN}: `
+4. After issue creation, add the task to TODO.md with `ref:GH#{issue_number}`
+5. Commit and push TODO.md
+
+This ensures bidirectional sync between GitHub issues and TODO.md. See `workflows/plans.md` "GitHub Issue Sync" section.
+
 ### Step 6: Create the Issue
 
 ```bash
 gh issue create -R marcusquinn/aidevops \
-  --title "TITLE" \
+  --title "t{NNN}: TITLE" \
   --body "$(cat <<'EOF'
 BODY_CONTENT
 EOF

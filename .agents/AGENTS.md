@@ -102,6 +102,8 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
+**GitHub issue sync**: Issue titles MUST be prefixed with `t{NNN}: `. TODO.md tasks MUST include `ref:GH#{issue}`. Always maintain both directions. See `workflows/plans.md` "GitHub Issue Sync" section.
+
 **After ANY TODO/planning edit**: Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main — no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. See `workflows/plans.md` "Commit and Push After TODO Changes" section.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
