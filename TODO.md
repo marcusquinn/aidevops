@@ -76,7 +76,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.2.3 Add targeted inline disables with reason comments for intentional patterns ~2h blocked-by:t135.2.2
     - [ ] t135.2.4 Remove blanket disable line from each script ~30m blocked-by:t135.2.3
     - [ ] t135.2.5 Verify zero violations with linters-local.sh ~15m blocked-by:t135.2.4
-  - [ ] t135.3 P0-C: Add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers ~2h blocked-by:none
+  - [x] t135.3 P0-C: Add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers ~2h blocked-by:none completed:2026-02-07
     - [ ] t135.3.1 Understand current DB init patterns in all 3 helpers ~30m
     - [ ] t135.3.2 Add PRAGMA journal_mode=WAL and busy_timeout=5000 to DB init ~30m blocked-by:t135.3.1
     - [ ] t135.3.3 Test concurrent access scenarios ~1h blocked-by:t135.3.2
