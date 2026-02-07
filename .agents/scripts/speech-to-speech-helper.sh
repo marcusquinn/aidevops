@@ -131,8 +131,8 @@ cmd_setup() {
     # Clone or update repo
     if [[ -d "$S2S_DIR/.git" ]]; then
         print_info "Updating existing installation..."
-        git -C "$S2S_DIR" pull --ff-only 2>/dev/null || {
-            print_warning "Could not fast-forward, repo may have local changes"
+        git -C "$S2S_DIR" pull --ff-only 2>>"$S2S_LOG_FILE" || {
+            print_warning "Could not fast-forward, repo may have local changes (see $S2S_LOG_FILE)"
         }
     else
         print_info "Cloning speech-to-speech..."
@@ -393,7 +393,7 @@ cmd_stop() {
 
     # Stop Docker if running
     if command -v docker &>/dev/null && [[ -f "${S2S_DIR}/docker-compose.yml" ]]; then
-        if docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>/dev/null | grep -q .; then
+        if docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>>"$S2S_LOG_FILE" | grep -q .; then
             print_info "Stopping Docker containers..."
             (cd "$S2S_DIR" && docker compose down) || return 1
             print_success "Docker containers stopped"
@@ -444,7 +444,7 @@ cmd_status() {
     # Docker
     if command -v docker &>/dev/null && [[ -f "${S2S_DIR}/docker-compose.yml" ]]; then
         local docker_status
-        docker_status=$(docker compose -f "${S2S_DIR}/docker-compose.yml" ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || echo "not running")
+        docker_status=$(docker compose -f "${S2S_DIR}/docker-compose.yml" ps --format "table {{.Name}}\t{{.Status}}" 2>>"$S2S_LOG_FILE" || echo "not running")
         if echo "$docker_status" | grep -qi "up"; then
             print_success "Docker: running"
             echo "$docker_status"

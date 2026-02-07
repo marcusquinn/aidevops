@@ -222,7 +222,7 @@ EOF
     local current_mode
     current_mode=$(db "$MEMORY_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
     if [[ "$current_mode" != "wal" ]]; then
-        db "$MEMORY_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
+        db "$MEMORY_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || echo "[WARN] Failed to enable WAL mode for memory DB" >&2
     fi
 
     return 0
@@ -290,7 +290,7 @@ EOF
     local has_auto_captured
     has_auto_captured=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='auto_captured';" 2>/dev/null || echo "0")
     if [[ "$has_auto_captured" == "0" ]]; then
-        db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" 2>/dev/null || true
+        db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" || echo "[WARN] Failed to add auto_captured column (may already exist)" >&2
     fi
     
     return 0
@@ -1194,7 +1194,7 @@ EOF
             fi
             
             # Transfer access history
-            db "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" 2>/dev/null || true
+            db "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" || echo "[WARN] Failed to transfer access history from $newer_id_esc to $older_id_esc" >&2
             
             # Re-point relations that referenced the deleted memory to the surviving one
             db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
