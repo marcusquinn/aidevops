@@ -229,6 +229,22 @@ validate_command_exists() {
 }
 
 # =============================================================================
+# Portable sed -i wrapper (macOS vs GNU/Linux)
+# macOS sed requires -i '' while GNU sed requires -i (no argument)
+# Usage: sed_inplace 'pattern' file
+#        sed_inplace -E 'pattern' file
+# =============================================================================
+
+sed_inplace() {
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+    return $?
+}
+
+# =============================================================================
 # Export all constants for use in other scripts
 # =============================================================================
 

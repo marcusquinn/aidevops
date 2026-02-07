@@ -42,6 +42,9 @@ print_info() {
     return 0
 }
 
+# Cross-platform sed in-place edit (macOS vs GNU/Linux)
+sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
 backup_files() {
     print_info "Creating backup of provider files..."
 
@@ -102,7 +105,7 @@ fix_return_statements() {
                         
                         if [[ ! $last_line =~ return[[:space:]]+[01] ]]; then
                             # Remove the closing brace and add return statement
-                            sed -i '' '$ d' "$temp_file"
+                            sed_inplace '$ d' "$temp_file"
                             echo "    return 0" >> "$temp_file"
                             echo "}" >> "$temp_file"
                             ((fixed_functions++))
@@ -153,7 +156,7 @@ fix_positional_parameters() {
                 }' "$file" > "$temp_file"
                 
                 # Replace direct positional parameter usage in case statements
-                sed -i '' 's/\$_arg1/$command/g; s/\$2/$account_name/g; s/\$3/$target/g; s/\$4/$options/g' "$temp_file"
+                sed_inplace 's/\$_arg1/$command/g; s/\$2/$account_name/g; s/\$3/$target/g; s/\$4/$options/g' "$temp_file"
                 
                 if ! diff -q "$file" "$temp_file" > /dev/null; then
                     mv "$temp_file" "$file"

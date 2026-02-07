@@ -714,10 +714,10 @@ auto_mark_tasks_complete() {
             # Check if line already has completed: field
             if grep -E "$sed_unchecked_pattern" "$todo_file" | grep -q "completed:"; then
                 # Just change checkbox
-                sed -i '' "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]]\\)/\\1- [x] \\2/" "$todo_file"
+                sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]]\\)/\\1- [x] \\2/" "$todo_file"
             else
                 # Change checkbox and add completed: timestamp
-                sed -i '' "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2 completed:$today_short/" "$todo_file"
+                sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2 completed:$today_short/" "$todo_file"
             fi
             
             count=$((count + 1))

@@ -176,9 +176,11 @@ cmd_setup() {
         "$venv_dir/bin/pip" install -r "${S2S_DIR}/${req_file}"
     fi
 
-    # Download NLTK data
+    # Download NLTK data (suppress progress output, keep errors visible)
     print_info "Downloading NLTK data..."
-    "$venv_dir/bin/python" -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')" >/dev/null
+    if ! "$venv_dir/bin/python" -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')" >/dev/null; then
+        print_warning "NLTK data download failed (non-fatal, some TTS engines may not work)"
+    fi
 
     print_success "Setup complete. Run: speech-to-speech-helper.sh start"
     return 0
@@ -366,9 +368,14 @@ cmd_stop() {
         if kill -0 "$pid" 2>/dev/null; then
             print_info "Stopping pipeline (PID $pid)..."
             kill "$pid"
-            sleep 2
+            # Wait up to 5 seconds for graceful shutdown
+            local wait_count=0
+            while kill -0 "$pid" 2>/dev/null && [[ $wait_count -lt 10 ]]; do
+                sleep 0.5
+                wait_count=$((wait_count + 1))
+            done
             if kill -0 "$pid" 2>/dev/null; then
-                print_warning "Force killing..."
+                print_warning "Force killing (did not exit after 5s)..."
                 kill -9 "$pid" 2>/dev/null || true
             fi
             print_success "Pipeline stopped"
