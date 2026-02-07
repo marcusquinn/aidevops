@@ -134,8 +134,9 @@ list_sites_by_category() {
     return 0
 }
 
-# Build SSH command based on hosting type
-build_ssh_command() {
+# Execute WP-CLI command via SSH based on hosting type
+# Directly executes instead of building a string for eval
+execute_wp_via_ssh() {
     local site_config="$1"
     local wp_command="$2"
     
@@ -154,31 +155,20 @@ build_ssh_command() {
     local password_file
     password_file=$(echo "$site_config" | jq -r '.password_file // empty')
     
-    # Quote wp_command for safe execution
-    local quoted_wp_command
-    quoted_wp_command=$(printf %q "$wp_command")
-    
     case "$site_type" in
         localwp)
             # LocalWP - direct local access
-            # Expand ~ safely without eval
             local expanded_path="${local_path/#\~/$HOME}"
-            # Quote path for safe execution
-            local quoted_local_path
-            quoted_local_path=$(printf %q "$expanded_path")
-            echo "cd $quoted_local_path && wp $quoted_wp_command" || exit
+            (cd "$expanded_path" && wp $wp_command)
+            return $?
             ;;
         hostinger|closte)
             # Hostinger/Closte - sshpass with password file
-            # Note: sshpass is required due to hosting provider limitations
-            # SSH key auth is preferred when available
             check_sshpass
             local expanded_password_file
             if [[ -n "$password_file" ]]; then
-                # Expand ~ safely without eval
                 expanded_password_file="${password_file/#\~/$HOME}"
             else
-                # Default password file locations
                 if [[ "$site_type" == "hostinger" ]]; then
                     expanded_password_file="${HOME}/.ssh/hostinger_password"
                 else
@@ -189,27 +179,23 @@ build_ssh_command() {
             if [[ ! -f "$expanded_password_file" ]]; then
                 print_error "Password file not found: $expanded_password_file"
                 print_info "Create the password file with your SSH password (chmod 600)"
-                exit 1
+                return 1
             fi
             
-            # Quote wp_path for safe remote execution
-            local quoted_wp_path
-            quoted_wp_path=$(printf %q "$wp_path")
-            echo "sshpass -f \"$expanded_password_file\" ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $quoted_wp_command\"" || exit
+            # Use array for sshpass + ssh command
+            sshpass -f "$expanded_password_file" ssh -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
+            return $?
             ;;
         hetzner|cloudways|cloudron)
             # SSH key-based authentication (preferred)
-            # Quote wp_path for safe remote execution
-            local quoted_wp_path
-            quoted_wp_path=$(printf %q "$wp_path")
-            echo "ssh -p $ssh_port $ssh_user@$ssh_host \"cd $quoted_wp_path && wp $quoted_wp_command\"" || exit
+            ssh -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
+            return $?
             ;;
         *)
             print_error "Unknown hosting type: $site_type"
-            exit 1
+            return 1
             ;;
     esac
-    return 0
 }
 
 # Run WP-CLI command on a site
@@ -233,11 +219,8 @@ run_wp_command() {
     
     print_info "Running on $site_name ($site_type): wp $wp_command"
     
-    local ssh_command
-    ssh_command=$(build_ssh_command "$site_config" "$wp_command")
-    
-    # Execute the command
-    eval "$ssh_command"
+    # Execute directly without eval
+    execute_wp_via_ssh "$site_config" "$wp_command"
     return $?
 }
 

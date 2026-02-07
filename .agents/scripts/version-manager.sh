@@ -295,10 +295,12 @@ EOF
 "
     fi
     
-    # Create temp files for the update
+    # Create temp files for the update with trap cleanup
     local temp_file content_file
     temp_file=$(mktemp)
     content_file=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f '$temp_file' '$content_file'" EXIT
     
     # Write the new version section to a temp file (avoids awk multiline issues)
     cat > "$content_file" << EOF
@@ -336,6 +338,7 @@ EOF
     # Replace original file
     mv "$temp_file" "$changelog_file"
     rm -f "$content_file"
+    trap - EXIT
     
     print_success "Updated CHANGELOG.md: [Unreleased] → [$version] - $today"
     return 0

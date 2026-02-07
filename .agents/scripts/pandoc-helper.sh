@@ -91,33 +91,34 @@ convert_to_markdown() {
         output_file="${input_file%.*}.md"
     fi
     
-    # Build pandoc command
-    local pandoc_cmd="pandoc"
+    # Build pandoc command as array to avoid eval
+    local pandoc_cmd=("pandoc")
     
     # Add input format if specified
     if [[ -n "$input_format" ]]; then
-        pandoc_cmd="$pandoc_cmd -f $input_format"
+        pandoc_cmd+=("-f" "$input_format")
     fi
     
     # Add output format (always markdown)
-    pandoc_cmd="$pandoc_cmd -t markdown"
+    pandoc_cmd+=("-t" "markdown")
     
     # Add common options for better markdown output
-    pandoc_cmd="$pandoc_cmd --wrap=none --markdown-headings=atx"
+    pandoc_cmd+=("--wrap=none" "--markdown-headings=atx")
     
     # Add custom options if provided
     if [[ -n "$options" ]]; then
-        pandoc_cmd="$pandoc_cmd $options"
+        # shellcheck disable=SC2206
+        pandoc_cmd+=($options)
     fi
     
     # Add input and output files
-    pandoc_cmd="$pandoc_cmd \"$input_file\" -o \"$output_file\""
+    pandoc_cmd+=("$input_file" "-o" "$output_file")
     
     print_info "Converting: $input_file → $output_file"
-    print_info "Command: $pandoc_cmd"
+    print_info "Command: ${pandoc_cmd[*]}"
     
     # Execute conversion
-    if eval "$pandoc_cmd"; then
+    if "${pandoc_cmd[@]}"; then
         print_success "Converted successfully: $output_file"
         
         # Show file size and preview

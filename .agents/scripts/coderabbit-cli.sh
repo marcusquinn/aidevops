@@ -299,27 +299,27 @@ review_changes() {
     
     print_info "Analyzing uncommitted git changes..."
     
-    # Build command based on mode
-    local cmd="coderabbit"
+    # Build command as array to avoid eval
+    local cmd=("coderabbit")
     case "$mode" in
         "plain")
-            cmd="$cmd --plain --type uncommitted"
+            cmd+=("--plain" "--type" "uncommitted")
             ;;
         "prompt-only")
-            cmd="$cmd --prompt-only --type uncommitted"
+            cmd+=("--prompt-only" "--type" "uncommitted")
             ;;
         "interactive")
-            cmd="$cmd --type uncommitted"
+            cmd+=("--type" "uncommitted")
             ;;
     esac
     
     # Add base branch if specified
     if [[ -n "$base_branch" ]]; then
-        cmd="$cmd --base $base_branch"
+        cmd+=("--base" "$base_branch")
     fi
     
-    print_info "Running: $cmd"
-    if eval "$cmd"; then
+    print_info "Running: ${cmd[*]}"
+    if "${cmd[@]}"; then
         print_success "Code review completed"
         return 0
     else
@@ -342,27 +342,27 @@ review_all_changes() {
     
     print_info "Analyzing all git changes (committed + uncommitted)..."
     
-    # Build command based on mode
-    local cmd="coderabbit"
+    # Build command as array to avoid eval
+    local cmd=("coderabbit")
     case "$mode" in
         "plain")
-            cmd="$cmd --plain --type all"
+            cmd+=("--plain" "--type" "all")
             ;;
         "prompt-only")
-            cmd="$cmd --prompt-only --type all"
+            cmd+=("--prompt-only" "--type" "all")
             ;;
         "interactive")
-            cmd="$cmd --type all"
+            cmd+=("--type" "all")
             ;;
     esac
     
     # Add base branch if specified
     if [[ -n "$base_branch" ]]; then
-        cmd="$cmd --base $base_branch"
+        cmd+=("--base" "$base_branch")
     fi
     
-    print_info "Running: $cmd"
-    if eval "$cmd"; then
+    print_info "Running: ${cmd[*]}"
+    if "${cmd[@]}"; then
         print_success "Code review completed"
         return 0
     else
