@@ -6,7 +6,7 @@
 # - Task lifecycle (add -> dispatch -> run -> evaluate -> complete)
 # - Retry logic
 # - Batch completion detection
-# - Post-PR lifecycle (complete -> pr_review -> merging -> merged -> deployed)
+# - Post-PR lifecycle (complete -> pr_review -> review_triage -> merging -> merged -> deployed)
 #
 # Uses an isolated temp DB to avoid touching production data.
 #
@@ -233,6 +233,102 @@ if [[ "$(get_status test-t001)" == "deployed" ]]; then
     pass "deploying -> deployed"
 else
     fail "deploying -> deployed failed"
+fi
+
+# ============================================================
+# SECTION 4b: Review Triage Transitions (t148)
+# ============================================================
+section "Review Triage Transitions (t148)"
+
+# Add a fresh task and move through to pr_review
+sup add test-t148a --repo /tmp/test --description "Review triage test" >/dev/null
+sup transition test-t148a dispatched >/dev/null
+sup transition test-t148a running >/dev/null
+sup transition test-t148a evaluating >/dev/null
+sup transition test-t148a complete >/dev/null
+sup transition test-t148a pr_review >/dev/null
+
+# pr_review -> review_triage
+sup transition test-t148a review_triage >/dev/null
+if [[ "$(get_status test-t148a)" == "review_triage" ]]; then
+    pass "pr_review -> review_triage"
+else
+    fail "pr_review -> review_triage failed"
+fi
+
+# review_triage -> merging (no issues found, proceed to merge)
+sup transition test-t148a merging >/dev/null
+if [[ "$(get_status test-t148a)" == "merging" ]]; then
+    pass "review_triage -> merging (clean triage)"
+else
+    fail "review_triage -> merging failed"
+fi
+
+# Test review_triage -> blocked (critical review threads)
+sup add test-t148b --repo /tmp/test --description "Review triage block test" >/dev/null
+sup transition test-t148b dispatched >/dev/null
+sup transition test-t148b running >/dev/null
+sup transition test-t148b evaluating >/dev/null
+sup transition test-t148b complete >/dev/null
+sup transition test-t148b pr_review >/dev/null
+sup transition test-t148b review_triage >/dev/null
+sup transition test-t148b blocked --error "Critical review thread requires human review" >/dev/null
+if [[ "$(get_status test-t148b)" == "blocked" ]]; then
+    pass "review_triage -> blocked (critical threads)"
+else
+    fail "review_triage -> blocked failed"
+fi
+
+# Test review_triage -> dispatched (fix worker dispatched)
+sup add test-t148c --repo /tmp/test --description "Review triage dispatch test" >/dev/null
+sup transition test-t148c dispatched >/dev/null
+sup transition test-t148c running >/dev/null
+sup transition test-t148c evaluating >/dev/null
+sup transition test-t148c complete >/dev/null
+sup transition test-t148c pr_review >/dev/null
+sup transition test-t148c review_triage >/dev/null
+sup transition test-t148c dispatched >/dev/null
+if [[ "$(get_status test-t148c)" == "dispatched" ]]; then
+    pass "review_triage -> dispatched (fix worker)"
+else
+    fail "review_triage -> dispatched failed"
+fi
+
+# Test review_triage -> cancelled
+sup add test-t148d --repo /tmp/test --description "Review triage cancel test" >/dev/null
+sup transition test-t148d dispatched >/dev/null
+sup transition test-t148d running >/dev/null
+sup transition test-t148d evaluating >/dev/null
+sup transition test-t148d complete >/dev/null
+sup transition test-t148d pr_review >/dev/null
+sup transition test-t148d review_triage >/dev/null
+sup transition test-t148d cancelled >/dev/null
+if [[ "$(get_status test-t148d)" == "cancelled" ]]; then
+    pass "review_triage -> cancelled"
+else
+    fail "review_triage -> cancelled failed"
+fi
+
+# Test invalid: review_triage -> complete (not a valid transition)
+sup add test-t148e --repo /tmp/test --description "Review triage invalid test" >/dev/null
+sup transition test-t148e dispatched >/dev/null
+sup transition test-t148e running >/dev/null
+sup transition test-t148e evaluating >/dev/null
+sup transition test-t148e complete >/dev/null
+sup transition test-t148e pr_review >/dev/null
+sup transition test-t148e review_triage >/dev/null
+invalid_triage=$(sup transition test-t148e complete 2>&1 || true)
+if echo "$invalid_triage" | grep -qi "invalid transition"; then
+    pass "review_triage -> complete rejected (invalid)"
+else
+    fail "review_triage -> complete was not rejected" "$invalid_triage"
+fi
+
+# Verify state unchanged after invalid transition
+if [[ "$(get_status test-t148e)" == "review_triage" ]]; then
+    pass "State unchanged after invalid review_triage transition"
+else
+    fail "State changed despite invalid transition: $(get_status test-t148e)"
 fi
 
 # ============================================================
