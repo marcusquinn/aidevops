@@ -2519,10 +2519,12 @@ extract_log_metadata() {
     timeout_count=$(grep -ci 'timeout\|timed out\|ETIMEDOUT' "$log_tail_file" 2>/dev/null || echo 0)
     oom_count=$(grep -ci 'out of memory\|OOM\|heap.*exceeded\|ENOMEM' "$log_tail_file" 2>/dev/null || echo 0)
 
-    # Backend infrastructure errors - search FULL log (these are short error-only logs,
-    # not content false positives). Must be before rm of tail file.
+    # Backend infrastructure errors - search tail only (same as other heuristics).
+    # Full-log search caused false positives: worker logs embed tool output that
+    # discusses errors, APIs, status codes as documentation content.
+    # Anchored patterns prevent substring matches (e.g., 503 in timestamps).
     local backend_error_count=0
-    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway.*error\|service unavailable\|503\|Quota protection\|over.*usage\|quota reset' "$log_file" 2>/dev/null || echo 0)
+    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway[[:space:]].*error\|service unavailable\|HTTP 503\|503 Service\|"status":[[:space:]]*503\|Quota protection\|over[_ -]\{0,1\}usage\|quota reset' "$log_tail_file" 2>/dev/null || echo 0)
 
     rm -f "$log_tail_file"
 
@@ -2642,14 +2644,6 @@ evaluate_worker() {
         return 0
     fi
 
-    # Backend infrastructure error (Antigravity, quota, API gateway) = transient retry
-    # Checked AFTER success signals: a task can hit a backend error early, recover,
-    # and complete successfully. Only triggers if no success signal was found.
-    if [[ "$meta_backend_error_count" -gt 0 ]]; then
-        echo "retry:backend_infrastructure_error"
-        return 0
-    fi
-
     # Clean exit with no completion signal and no PR = likely incomplete
     # but NOT an error - the agent finished cleanly, just didn't emit a signal.
     # This should retry (agent may have run out of context or hit a soft limit).
@@ -2664,6 +2658,14 @@ evaluate_worker() {
     # are content (e.g., subagents documenting auth flows), not real failures.
 
     if [[ "$meta_exit_code" != "0" ]]; then
+        # Backend infrastructure error (Antigravity, quota, API gateway) = transient retry
+        # Only checked on non-zero exit: a clean exit with backend error strings in
+        # the log is content discussion, not a real infrastructure failure.
+        if [[ "$meta_backend_error_count" -gt 0 ]]; then
+            echo "retry:backend_infrastructure_error"
+            return 0
+        fi
+
         # Auth errors are always blocking (human must fix credentials)
         if [[ "$meta_auth_error_count" -gt 0 ]]; then
             echo "blocked:auth_error"
@@ -4270,6 +4272,12 @@ cmd_pulse() {
 
         if [[ -n "$next_tasks" ]]; then
             while IFS=$'\t' read -r tid trepo tdesc tmodel; do
+                # Guard: skip malformed task IDs (e.g., from embedded newlines
+                # in diagnostic task descriptions containing EXIT:0 or markers)
+                if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+                    log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
+                    continue
+                fi
                 local dispatch_exit=0
                 cmd_dispatch "$tid" --batch "$batch_id" || dispatch_exit=$?
                 if [[ "$dispatch_exit" -eq 0 ]]; then
@@ -4292,6 +4300,11 @@ cmd_pulse() {
 
         if [[ -n "$next_tasks" ]]; then
             while IFS=$'\t' read -r tid trepo tdesc tmodel; do
+                # Guard: skip malformed task IDs (same as batch dispatch above)
+                if [[ -z "$tid" || "$tid" =~ [[:space:]:] || ! "$tid" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+                    log_warn "Skipping malformed task ID in cmd_next output: '${tid:0:40}'"
+                    continue
+                fi
                 local dispatch_exit=0
                 cmd_dispatch "$tid" || dispatch_exit=$?
                 if [[ "$dispatch_exit" -eq 0 ]]; then
@@ -5266,16 +5279,20 @@ create_diagnostic_subtask() {
     local diag_id="${task_id}-diag-${diag_num}"
 
     # Extract failure context from log (last 100 lines)
+    # CRITICAL: Replace newlines with spaces. The description is stored in SQLite
+    # and returned by cmd_next as tab-separated output parsed with `read`. Embedded
+    # newlines (e.g., EXIT:0 from log tail) would be parsed as separate task rows,
+    # causing malformed task IDs like "EXIT:0" or "DIAGNOSTIC_CONTEXT_END".
     local failure_context=""
     if [[ -n "$tlog" && -f "$tlog" ]]; then
-        failure_context=$(tail -100 "$tlog" 2>/dev/null | head -c 4000 || echo "")
+        failure_context=$(tail -100 "$tlog" 2>/dev/null | head -c 4000 | tr '\n' ' ' | tr '\t' ' ' || echo "")
     fi
 
-    # Build diagnostic task description
+    # Build diagnostic task description (single line - no embedded newlines)
     local diag_desc="Diagnose and fix failure in ${task_id}: ${failure_reason}."
     diag_desc="${diag_desc} Original task: ${tdesc:-unknown}."
     if [[ -n "$terror" ]]; then
-        diag_desc="${diag_desc} Error: $(echo "$terror" | head -c 200)"
+        diag_desc="${diag_desc} Error: $(echo "$terror" | tr '\n' ' ' | head -c 200)"
     fi
     diag_desc="${diag_desc} Analyze the failure log, identify root cause, and apply a fix."
     diag_desc="${diag_desc} If the fix requires code changes, make them and create a PR."
