@@ -88,10 +88,10 @@ tools:
 
 ### Documentation Files
 
-- **Main Guide**: `.agents/crawl4ai.md`
-- **Integration Guide**: `.agents/wiki/crawl4ai-integration.md`
-- **Usage Guide**: `.agents/spec/crawl4ai-usage.md`
-- **Resources**: `.agents/links/crawl4ai-resources.md` (this file)
+- **Main Guide**: `.agents/tools/browser/crawl4ai.md`
+- **Integration Guide**: `.agents/tools/browser/crawl4ai-integration.md`
+- **Usage Guide**: `.agents/tools/browser/crawl4ai-usage.md`
+- **Resources**: `.agents/tools/browser/crawl4ai-resources.md` (this file)
 
 ## MCP Integration
 

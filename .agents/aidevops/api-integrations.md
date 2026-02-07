@@ -329,7 +329,7 @@ bash .agents/scripts/test-all-apis.sh
 ## 📚 **Additional Resources**
 
 - [MCP Integration Guide](MCP-INTEGRATIONS.md)
-- [Security Best Practices](.agents/spec/security.md)
+- [Security Best Practices](.agents/aidevops/security.md)
 - [Configuration Templates](../configs/)
 - [Helper Scripts](../.agents/scripts/)
 - [API Testing Scripts](.agents/scripts/)

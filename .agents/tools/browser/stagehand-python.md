@@ -464,9 +464,9 @@ bash .agents/scripts/stagehand-python-helper.sh clean       # Clean cache and lo
 
 ### **AI DevOps Framework Integration**
 
-- **JavaScript Version**: docs/STAGEHAND.md
-- **MCP Integrations**: docs/MCP-INTEGRATIONS.md
-- **Browser Automation**: docs/BROWSER-AUTOMATION.md
+- **JavaScript Version**: .agents/tools/browser/stagehand.md
+- **MCP Integrations**: .agents/aidevops/mcp-integrations.md
+- **Browser Automation**: .agents/tools/browser/browser-automation.md
 
 ### **Python Ecosystem**
 
