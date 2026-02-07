@@ -54,14 +54,14 @@ Create a plugin architecture for aidevops that allows private extension repos (`
        └── pro-*.sh        # Prefixed scripts
    ```
 
-2. **Plugin structure mirrors main** - Same `.agent/` pattern:
+2. **Plugin structure mirrors main** - Same `.agents/` pattern:
    ```
    ~/Git/aidevops-pro/
    ├── AGENTS.md           # Points to main framework
    ├── README.md
    ├── VERSION
    ├── .aidevops.json      # Plugin config with base_repo reference
-   └── .agent/
+   └── .agents/
        ├── pro.md          # Main plugin agent
        ├── pro/            # Subagents
        └── scripts/
@@ -108,7 +108,7 @@ Create a plugin architecture for aidevops that allows private extension repos (`
 
 **Symlink option for rapid iteration:**
 - `.plugin-dev/` in main repo (gitignored)
-- Symlinks to plugin `.agent/` directories
+- Symlinks to plugin `.agents/` directories
 - Useful when testing plugin content against main repo changes
 
 #### Decision Log

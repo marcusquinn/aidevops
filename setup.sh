@@ -310,20 +310,36 @@ migrate_agent_to_agents_folder() {
         done < <(jq -r '.initialized_repos[].path' "$repos_file" 2>/dev/null)
     fi
     
-    # 2. Also scan ~/Git/ for any .agent symlinks not in repos.json
+    # 2. Also scan ~/Git/ for any .agent symlinks or directories not in repos.json
     if [[ -d "$HOME/Git" ]]; then
-        while IFS= read -r -d '' agent_link; do
+        while IFS= read -r -d '' agent_path; do
             local repo_dir
-            repo_dir=$(dirname "$agent_link")
-            if [[ -L "$agent_link" ]] && [[ ! -e "$repo_dir/.agents" ]]; then
-                local target
-                target=$(readlink "$agent_link")
-                rm -f "$agent_link"
-                ln -s "$target" "$repo_dir/.agents" 2>/dev/null || true
-                print_info "  Migrated symlink: $agent_link -> .agents"
-                ((migrated++))
+            repo_dir=$(dirname "$agent_path")
+            
+            if [[ -L "$agent_path" ]]; then
+                # Symlink: migrate or clean up stale
+                if [[ ! -e "$repo_dir/.agents" ]]; then
+                    local target
+                    target=$(readlink "$agent_path")
+                    rm -f "$agent_path"
+                    ln -s "$target" "$repo_dir/.agents" 2>/dev/null || true
+                    print_info "  Migrated symlink: $agent_path -> .agents"
+                    ((migrated++))
+                else
+                    # .agents already exists, remove stale .agent symlink
+                    rm -f "$agent_path"
+                    print_info "  Removed stale symlink: $agent_path (.agents already exists)"
+                    ((migrated++))
+                fi
+            elif [[ -d "$agent_path" ]]; then
+                # Directory: rename to .agents if .agents doesn't exist
+                if [[ ! -e "$repo_dir/.agents" ]]; then
+                    mv "$agent_path" "$repo_dir/.agents"
+                    print_info "  Renamed directory: $agent_path -> .agents"
+                    ((migrated++))
+                fi
             fi
-        done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" -type l -print0 2>/dev/null)
+        done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" \( -type l -o -type d \) -print0 2>/dev/null)
     fi
     
     # 3. Update AI assistant config files that reference .agent/
