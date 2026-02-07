@@ -99,6 +99,7 @@ todo-ready.sh,Show tasks with no open blockers
 ralph-loop-helper.sh,Iterative AI development loops
 full-loop-helper.sh,End-to-end development loop (task to PR to deploy)
 session-review-helper.sh,Gather session context for review
+session-checkpoint-helper.sh,Persist session state to survive context compaction
 mail-helper.sh,TOON-based inter-agent mailbox system
 memory-helper.sh,Cross-session memory (SQLite FTS5)
 memory-embeddings-helper.sh,Semantic memory search with vector embeddings (opt-in)
