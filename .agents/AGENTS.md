@@ -254,8 +254,8 @@ npm install -g aidevops && aidevops update
 # Homebrew
 brew install marcusquinn/tap/aidevops && aidevops update
 
-# curl (manual)
-bash <(curl -fsSL https://aidevops.sh)
+# curl (manual - download then execute, not piped)
+curl -fsSL https://aidevops.sh -o /tmp/aidevops-setup.sh && bash /tmp/aidevops-setup.sh
 ```
 
 **Initialize in any project:**

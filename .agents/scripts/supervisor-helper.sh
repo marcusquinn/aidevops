@@ -459,6 +459,15 @@ MIGRATE
         log_success "Added diagnostic_of column to tasks"
     fi
 
+    # Migrate: add issue_url column (t149)
+    local has_issue_url
+    has_issue_url=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='issue_url';" 2>/dev/null || echo "0")
+    if [[ "$has_issue_url" -eq 0 ]]; then
+        log_info "Migrating tasks table: adding issue_url column (t149)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN issue_url TEXT;" 2>/dev/null || true
+        log_success "Added issue_url column to tasks"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -495,6 +504,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     model           TEXT DEFAULT 'anthropic/claude-opus-4-6',
     error           TEXT,
     pr_url          TEXT,
+    issue_url       TEXT,
     diagnostic_of   TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
@@ -592,6 +602,7 @@ cmd_init() {
 #######################################
 cmd_add() {
     local task_id="" repo="" description="" model="anthropic/claude-opus-4-6" max_retries=3
+    local skip_issue=false
 
     # First positional arg is task_id
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -605,6 +616,7 @@ cmd_add() {
             --description) [[ $# -lt 2 ]] && { log_error "--description requires a value"; return 1; }; description="$2"; shift 2 ;;
             --model) [[ $# -lt 2 ]] && { log_error "--model requires a value"; return 1; }; model="$2"; shift 2 ;;
             --max-retries) [[ $# -lt 2 ]] && { log_error "--max-retries requires a value"; return 1; }; max_retries="$2"; shift 2 ;;
+            --no-issue) skip_issue=true; shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -661,6 +673,16 @@ cmd_add() {
     if [[ -n "$description" ]]; then
         log_info "Description: $(echo "$description" | head -c 80)"
     fi
+
+    # Create GitHub issue unless opted out (t149)
+    if [[ "$skip_issue" == "false" ]]; then
+        local issue_number
+        issue_number=$(create_github_issue "$task_id" "$description" "$repo")
+        if [[ -n "$issue_number" ]]; then
+            update_todo_with_issue_ref "$task_id" "$issue_number" "$repo"
+        fi
+    fi
+
     return 0
 }
 
@@ -4056,6 +4078,185 @@ cmd_cleanup() {
 }
 
 #######################################
+# Create a GitHub issue for a task
+# Returns the issue number on success, empty on failure
+# Requires: gh CLI authenticated, repo with GitHub remote
+#######################################
+create_github_issue() {
+    local task_id="$1"
+    local description="$2"
+    local repo_path="$3"
+
+    # Check if auto-issue is disabled
+    if [[ "${SUPERVISOR_AUTO_ISSUE:-true}" == "false" ]]; then
+        log_info "GitHub issue creation disabled (SUPERVISOR_AUTO_ISSUE=false)"
+        return 0
+    fi
+
+    # Verify gh CLI is available and authenticated
+    if ! command -v gh &>/dev/null; then
+        log_warn "gh CLI not found, skipping GitHub issue creation"
+        return 0
+    fi
+
+    if ! gh auth status &>/dev/null 2>&1; then
+        log_warn "gh CLI not authenticated, skipping GitHub issue creation"
+        return 0
+    fi
+
+    # Detect repo slug from git remote
+    local repo_slug
+    repo_slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        log_warn "Could not detect GitHub repo slug, skipping issue creation"
+        return 0
+    fi
+
+    # Build issue title with t{NNN}: prefix convention
+    local issue_title="${task_id}: ${description}"
+
+    # Build issue body from TODO.md context if available
+    local issue_body="Created by supervisor-helper.sh during task dispatch."
+    local todo_file="$repo_path/TODO.md"
+    if [[ -f "$todo_file" ]]; then
+        local todo_context
+        todo_context=$(grep -E "^[[:space:]]*- \[( |x|-)\] ${task_id}( |$)" "$todo_file" 2>/dev/null | head -1 || echo "")
+        if [[ -n "$todo_context" ]]; then
+            issue_body="From TODO.md:\n\n\`\`\`\n${todo_context}\n\`\`\`\n\nCreated by supervisor-helper.sh during task dispatch."
+        fi
+    fi
+
+    # Detect labels from description/TODO.md tags
+    local labels=""
+    if echo "$description" | grep -qiE "bug|fix"; then
+        labels="bug"
+    elif echo "$description" | grep -qiE "feat|enhancement|add"; then
+        labels="enhancement"
+    fi
+
+    # Check if an issue with this task ID prefix already exists
+    local existing_issue
+    existing_issue=$(gh issue list --repo "$repo_slug" --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>>"$SUPERVISOR_LOG" || echo "")
+    if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+        log_info "GitHub issue #${existing_issue} already exists for $task_id"
+        echo "$existing_issue"
+        return 0
+    fi
+
+    # Create the issue
+    local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$issue_title" "--body" "$(printf '%b' "$issue_body")")
+    if [[ -n "$labels" ]]; then
+        gh_args+=("--label" "$labels")
+    fi
+
+    local issue_url
+    issue_url=$(gh "${gh_args[@]}" 2>>"$SUPERVISOR_LOG" || echo "")
+
+    if [[ -z "$issue_url" ]]; then
+        log_warn "Failed to create GitHub issue for $task_id"
+        return 0
+    fi
+
+    # Extract issue number from URL
+    local issue_number
+    issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$' || echo "")
+
+    if [[ -n "$issue_number" ]]; then
+        log_success "Created GitHub issue #${issue_number} for $task_id: $issue_url"
+
+        # Store issue_url in the database
+        local escaped_id
+        escaped_id=$(sql_escape "$task_id")
+        local escaped_url
+        escaped_url=$(sql_escape "$issue_url")
+        db "$SUPERVISOR_DB" "UPDATE tasks SET issue_url = '$escaped_url' WHERE id = '$escaped_id';"
+
+        echo "$issue_number"
+    fi
+
+    return 0
+}
+
+#######################################
+# Update TODO.md to add ref:GH#N for a task
+# Appends the GitHub issue reference to the task line
+# Then commits and pushes the change
+#######################################
+update_todo_with_issue_ref() {
+    local task_id="$1"
+    local issue_number="$2"
+    local repo_path="$3"
+
+    local todo_file="$repo_path/TODO.md"
+    if [[ ! -f "$todo_file" ]]; then
+        log_warn "TODO.md not found at $todo_file"
+        return 0
+    fi
+
+    # Check if ref:GH# already exists on this task line
+    if grep -qE "^[[:space:]]*- \[( |x|-)\] ${task_id} .*ref:GH#" "$todo_file"; then
+        log_info "Task $task_id already has a GitHub issue reference in TODO.md"
+        return 0
+    fi
+
+    # Find the task line and append ref:GH#N
+    # Insert before any trailing date fields or at end of line
+    local line_num
+    line_num=$(grep -nE "^[[:space:]]*- \[( |x|-)\] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+
+    if [[ -z "$line_num" ]]; then
+        log_warn "Task $task_id not found in $todo_file"
+        return 0
+    fi
+
+    # Append ref:GH#N to the task line (before any logged: or started: timestamps if present)
+    local task_line
+    task_line=$(sed -n "${line_num}p" "$todo_file")
+
+    local new_line
+    if echo "$task_line" | grep -qE " logged:"; then
+        # Insert ref:GH#N before logged:
+        new_line=$(echo "$task_line" | sed -E "s/ logged:/ ref:GH#${issue_number} logged:/")
+    elif echo "$task_line" | grep -qE " started:"; then
+        # Insert ref:GH#N before started:
+        new_line=$(echo "$task_line" | sed -E "s/ started:/ ref:GH#${issue_number} started:/")
+    else
+        # Append at end
+        new_line="${task_line} ref:GH#${issue_number}"
+    fi
+
+    sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
+
+    # Verify the change
+    if ! grep -qE "^[[:space:]]*- \[( |x|-)\] ${task_id} .*ref:GH#${issue_number}" "$todo_file"; then
+        log_warn "Failed to add ref:GH#${issue_number} to $task_id in TODO.md"
+        return 0
+    fi
+
+    log_success "Added ref:GH#${issue_number} to $task_id in TODO.md"
+
+    # Commit and push (TODO.md lives on main)
+    if git -C "$repo_path" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
+        log_info "No changes to commit (TODO.md unchanged)"
+        return 0
+    fi
+
+    git -C "$repo_path" add TODO.md
+    git -C "$repo_path" commit -m "chore: add GH#${issue_number} ref to $task_id in TODO.md" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
+        log_warn "Failed to commit TODO.md issue ref update"
+        return 0
+    }
+
+    git -C "$repo_path" push 2>>"$SUPERVISOR_LOG" || {
+        log_warn "Failed to push TODO.md issue ref update"
+        return 0
+    }
+
+    log_success "Committed and pushed issue ref for $task_id"
+    return 0
+}
+
+#######################################
 # Update TODO.md when a task completes
 # Marks the task checkbox as [x], adds completed:YYYY-MM-DD
 # Then commits and pushes the change
@@ -5517,6 +5718,7 @@ Options for 'add':
   --description "desc"   Task description (auto-detected from TODO.md)
   --model <model>        AI model (default: anthropic/claude-opus-4-6)
   --max-retries <N>      Max retry attempts (default: 3)
+  --no-issue             Skip GitHub issue creation for this task
 
 Options for 'batch':
   --concurrency <N>      Max parallel workers (default: 4)
@@ -5560,6 +5762,7 @@ Environment:
   SUPERVISOR_MAX_CONCURRENCY  Global concurrency limit (default: 4)
   SUPERVISOR_DISPATCH_MODE    Force dispatch mode: headless|tabby
   SUPERVISOR_SELF_HEAL        Enable/disable self-healing (default: true)
+  SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: true)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
@@ -5571,12 +5774,19 @@ Integration:
   - Memory: memory-helper.sh for cross-batch learning
   - Git: wt/worktree-helper.sh for isolation
   - TODO: auto-updates TODO.md on task completion/failure
+  - GitHub: auto-creates issues on task add (t149)
 
 TODO.md Auto-Update (t128.4):
   On task completion: marks [ ] -> [x], adds completed:YYYY-MM-DD, commits+pushes
   On task blocked/failed: adds Notes line with reason, commits+pushes
   Notifications sent via mail-helper.sh and Matrix (if configured)
   Triggered automatically during pulse cycle, or manually via update-todo command
+
+GitHub Issue Auto-Creation (t149):
+  On task add: creates a GitHub issue with t{NNN}: prefix title, adds ref:GH#N
+  to TODO.md, stores issue_url in supervisor DB. Skips if issue already exists
+  (dedup by title search). Requires: gh CLI authenticated.
+  Disable: --no-issue flag on add, or SUPERVISOR_AUTO_ISSUE=false globally.
 
 Cron Integration & Auto-Pickup (t128.5):
   Auto-pickup scans TODO.md for tasks to automatically queue:
