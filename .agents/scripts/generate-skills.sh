@@ -8,7 +8,7 @@
 #
 # This script generates lightweight SKILL.md stubs that reference the actual
 # content in existing .md files, enabling cross-tool compatibility with:
-# - OpenCode, Cursor, Claude Code, VS Code, GitHub Copilot, etc.
+# - Any tool supporting the Agent Skills standard (agentskills.io)
 #
 # Pattern:
 #   wordpress.md + wordpress/ → wordpress/SKILL.md (generated)

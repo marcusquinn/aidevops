@@ -492,12 +492,8 @@ cmd_status() {
     
     local ai_configs=(
         "$HOME/.config/opencode/opencode.json:OpenCode"
-        "$HOME/.cursor/rules:Cursor"
-        "$HOME/.claude/commands:Claude Code"
-        "$HOME/.continue:Continue.dev"
+        "$HOME/.claude/commands:Claude Code CLI"
         "$HOME/CLAUDE.md:Claude Code memory"
-        "$HOME/GEMINI.md:Gemini CLI memory"
-        "$HOME/.cursorrules:Cursor rules"
     )
     
     for config in "${ai_configs[@]}"; do
@@ -724,10 +720,7 @@ cmd_uninstall() {
     
     local ai_agent_files=(
         "$HOME/.config/opencode/agent/AGENTS.md"
-        "$HOME/.cursor/rules/AGENTS.md"
         "$HOME/.claude/commands/AGENTS.md"
-        "$HOME/.continue/AGENTS.md"
-        "$HOME/.cody/AGENTS.md"
         "$HOME/.opencode/AGENTS.md"
     )
     
@@ -760,10 +753,6 @@ cmd_uninstall() {
     print_info "Removing AI memory files..."
     local memory_files=(
         "$HOME/CLAUDE.md"
-        "$HOME/GEMINI.md"
-        "$HOME/WINDSURF.md"
-        "$HOME/.qwen/QWEN.md"
-        "$HOME/.factory/DROID.md"
     )
     
     for file in "${memory_files[@]}"; do
@@ -1104,6 +1093,24 @@ EOF
                 print_success "Added .beads to .gitignore"
             fi
         fi
+    fi
+    
+    # Generate collaborator pointer files (lightweight AGENTS.md references)
+    local pointer_content="Read AGENTS.md for all project context and instructions."
+    local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules" ".github/copilot-instructions.md")
+    local pointer_created=0
+    for pf in "${pointer_files[@]}"; do
+        local pf_path="$project_root/$pf"
+        if [[ ! -f "$pf_path" ]]; then
+            mkdir -p "$(dirname "$pf_path")"
+            echo "$pointer_content" > "$pf_path"
+            ((pointer_created++))
+        fi
+    done
+    if [[ $pointer_created -gt 0 ]]; then
+        print_success "Created $pointer_created collaborator pointer file(s) (.cursorrules, etc.)"
+    else
+        print_info "Collaborator pointer files already exist"
     fi
     
     # Build features string for registration

@@ -42,8 +42,7 @@ mcp:
 What is this project? Please use codebase retrieval tool to get the answer.
 ```
 
-**Supported AI Tools**: OpenCode, Claude Code, Cursor, Zed, GitHub Copilot,
-Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid (Factory.AI)
+**Configured for**: OpenCode (as MCP). Works with any tool that supports MCP.
 
 **Enabled for Agents**: All 14 primary agents (as fallback to osgrep)
 

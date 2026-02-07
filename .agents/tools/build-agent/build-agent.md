@@ -279,7 +279,7 @@ This repository has two agent directories with different purposes:
 
 **Frontmatter in `.agents/` files** serves as:
 - Documentation of intended permissions
-- Reference for non-OpenCode AI assistants (Claude, Cursor, etc.)
+- Reference for AI assistants that read AGENTS.md
 - Template for what the generated stubs should enable
 
 #### Decision Framework
@@ -801,7 +801,7 @@ See "Subagent YAML Frontmatter" section for full permission options.
 
 - Location (root vs folder) already distinguishes main from subagents
 - ALLCAPS causes cross-platform issues (Linux is case-sensitive)
-- Matches common framework conventions (OpenCode, Cursor, Continue)
+- Matches common framework conventions
 - `ls .agents/*.md` instantly shows all main agents
 
 **Why main agents stay at root (not inside folders)?**

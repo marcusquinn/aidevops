@@ -208,6 +208,10 @@ cleanup_deprecated_paths() {
         # v2.93.3: moltbot renamed to openclaw (formerly clawdbot)
         "$agents_dir/tools/ai-assistants/clawdbot.md"
         "$agents_dir/tools/ai-assistants/moltbot.md"
+        # Removed non-OpenCode AI tool docs (focus on OpenCode only)
+        "$agents_dir/tools/ai-assistants/windsurf.md"
+        "$agents_dir/tools/ai-assistants/configuration.md"
+        "$agents_dir/tools/ai-assistants/status.md"
     )
     
     for path in "${deprecated_paths[@]}"; do
@@ -305,10 +309,7 @@ migrate_agent_to_agents_folder() {
     local ai_config_files=(
         "$HOME/.config/opencode/agent/AGENTS.md"
         "$HOME/.config/Claude/AGENTS.md"
-        "$HOME/.cursor/rules/AGENTS.md"
         "$HOME/.claude/commands/AGENTS.md"
-        "$HOME/.continue/AGENTS.md"
-        "$HOME/.cody/AGENTS.md"
         "$HOME/.opencode/AGENTS.md"
     )
     
@@ -2218,7 +2219,6 @@ generate_agent_skills() {
     if [[ -f "$skills_script" ]]; then
         if bash "$skills_script" 2>/dev/null; then
             print_success "Agent Skills SKILL.md files generated"
-            print_info "Skills compatible with: Cursor, Claude Code, VS Code, GitHub Copilot"
         else
             print_warning "Agent Skills generation encountered issues (non-critical)"
         fi
@@ -2454,12 +2454,10 @@ inject_agents_reference() {
     
     # AI assistant agent directories - these get cleaned and receive AGENTS.md reference
     # Format: "config_dir:agents_subdir" where agents_subdir is the folder containing agent files
+    # Only OpenCode and Claude Code (companion CLI) are actively supported
     local ai_agent_dirs=(
         "$HOME/.config/opencode:agent"
-        "$HOME/.cursor:rules"
         "$HOME/.claude:commands"
-        "$HOME/.continue:."
-        "$HOME/.cody:."
         "$HOME/.opencode:."
     )
     
@@ -2951,11 +2949,11 @@ setup_augment_context_engine() {
     print_success "Auggie CLI found and authenticated"
 
     # MCP configuration is handled by generate-opencode-agents.sh for OpenCode
-    # Other tools (Cursor, Claude Code, etc.) discover skills via SKILL.md files
 
-    print_info "Augment Context Engine available for tools supporting Agent Skills"
-    print_info "Supported tools: OpenCode, Cursor, Claude Code, VS Code, GitHub Copilot"
+    print_info "Augment Context Engine available as MCP in OpenCode"
     print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
+    
+    return 0
 }
 
 # Setup osgrep - Local Semantic Search
@@ -2983,7 +2981,7 @@ setup_osgrep() {
         print_info "osgrep provides 100% local semantic search (no cloud, no auth)"
         echo "  • Search code by meaning, not just keywords"
         echo "  • Works offline with ~150MB local embedding models"
-        echo "  • Supports: OpenCode, Cursor, Claude Code, Zed, Gemini CLI"
+        echo "  • Configured as MCP in OpenCode"
         echo ""
         
         read -r -p "Install osgrep CLI? [Y/n]: " install_osgrep
@@ -3991,8 +3989,7 @@ echo "  aidevops uninstall    - Remove aidevops"
     echo "• Accounts, AI-DevOps, Content, Health, Legal, Marketing,"
     echo "  Research, Sales, SEO, WordPress"
     echo ""
-    echo "Agent Skills (SKILL.md) - Cross-tool compatibility:"
-    echo "• Cursor, Claude Code, VS Code, GitHub Copilot auto-discover skills"
+    echo "Agent Skills (SKILL.md):"
     echo "• 21 SKILL.md files generated in ~/.aidevops/agents/"
     echo "• Skills include: wordpress, seo, aidevops, build-mcp, and more"
     echo ""

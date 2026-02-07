@@ -71,7 +71,7 @@ Context7 MCP is a Model Context Protocol server that gives AI assistants access 
 
 - **Node.js 18+** installed
 - **npm or npx** available
-- **AI assistant** that supports MCP (Claude Desktop, Cursor, etc.)
+- **AI assistant** that supports MCP (OpenCode recommended)
 
 ### **1. Test Context7 MCP Server:**
 
@@ -83,6 +83,8 @@ npx -y @context7/mcp-server@latest --help
 ```
 
 ### **2. Add to Your AI Assistant Configuration:**
+
+> **Note**: aidevops configures Context7 for OpenCode automatically via `setup.sh`. The sections below document config formats for other tools as MCP reference.
 
 #### **For Claude Desktop:**
 

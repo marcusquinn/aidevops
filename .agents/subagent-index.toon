@@ -31,7 +31,7 @@ tools/content/,Content tools - summarization and extraction,summarize
 tools/social-media/,Social media tools - X/Twitter CLI,bird
 tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review|agent-testing
 tools/build-mcp/,MCP development - creating MCP servers,build-mcp|server-patterns|api-wrapper|transports|deployment
-tools/ai-assistants/,AI tool integration - configuring assistants and headless dispatch,agno|capsolver|windsurf|claude-code|configuration|opencode-server|headless-dispatch
+tools/ai-assistants/,AI tool integration - OpenCode and headless dispatch,agno|capsolver|claude-code|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy
 tools/mobile/,Mobile development - iOS/Android emulators,minisim

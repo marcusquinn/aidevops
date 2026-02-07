@@ -22,8 +22,8 @@ tools:
 - **Approach**: Thin wrapper that loads existing aidevops agents/MCPs
 - **Compatibility**: Works alongside oh-my-opencode
 
-**Key Decision**: aidevops remains a multi-tool framework (Claude, Cursor, etc.)
-The plugin is an optional enhancement for OpenCode users.
+**Key Decision**: aidevops is built for OpenCode (TUI, Desktop, Extension).
+The plugin provides additional OpenCode-specific enhancements.
 
 <!-- AI-CONTEXT-END -->
 
@@ -454,7 +454,7 @@ async setup(input: PluginInput) {
 
 | Aspect | Current | Plugin |
 |--------|---------|--------|
-| **Multi-tool support** | Yes (Claude, Cursor, etc.) | OpenCode only |
+| **Scope** | Full framework (agents, scripts) | OpenCode plugin API |
 | **Flexibility** | High (markdown agents) | Medium (TypeScript) |
 | **Maintenance** | Shell scripts | TypeScript + npm |
 | **Installation** | setup.sh | npm install |

@@ -31,7 +31,7 @@ tools:
 | Custom | Zed, Aider |
 | Limited/None | Warp AI (terminal), Qwen (experimental), LiteLLM (proxy) |
 
-**Verified Native MCP**: OpenCode, Claude Code/Desktop, Cursor, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Aider
+**Note**: aidevops configures MCPs for OpenCode only. The table above documents config formats for MCP developers targeting other tools.
 
 <!-- AI-CONTEXT-END -->
 
