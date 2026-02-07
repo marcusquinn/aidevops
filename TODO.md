@@ -100,8 +100,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.11.2 Add formula version/SHA update to version-manager.sh ~1.5h blocked-by:t135.11.1
   - [ ] t135.12 P3-A: Archive fix scripts safely (12 scripts, 0 refs, completed purpose) ~1h blocked-by:none
     - [ ] t135.12.1 Read each script, document purpose and what it fixed (preserve knowledge) ~30m
-    - [ ] t135.12.2 Create .agents/scripts/archive/ with README explaining completed one-time scripts ~10m blocked-by:t135.12.1
-    - [ ] t135.12.3 Move to archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2
+    - [ ] t135.12.2 Create .agents/scripts/_archive/ with README explaining completed one-time scripts ~10m blocked-by:t135.12.1
+    - [ ] t135.12.3 Move to _archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2
     - [ ] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3
   - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
     - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m

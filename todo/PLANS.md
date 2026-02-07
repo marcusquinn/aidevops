@@ -118,7 +118,7 @@ Address findings from Claude Opus 4.6 full codebase review. Harden shell script 
   - 12 scripts with 0 references outside scripts/: add-missing-returns, comprehensive-quality-fix, efficient-return-fix, find-missing-returns, fix-common-strings, fix-misplaced-returns, fix-remaining-literals, fix-return-statements, fix-sc2155-simple, fix-shellcheck-critical, fix-string-literals, mass-fix-returns
   - All only touched by `.agent->.agents` rename commit (c91e0be)
   - Read each to document purpose and patterns (preserve knowledge)
-  - Create `.agents/scripts/archive/` with README
+  - Create `.agents/scripts/_archive/` with README (underscore prefix sorts to top of file lists)
   - Move (not delete) so git history and fix patterns are preserved
 - [ ] (2026-02-07) Phase 13 (P3-B): Build test suite ~4h (t135.13)
   - Fix `tests/docker/run-tests.sh:5` path case (`git` vs `Git`)
