@@ -43,7 +43,7 @@ tools/context/,Context optimization - semantic search and indexing,osgrep|augmen
 tools/conversion/,Format conversion - document transformation,pandoc
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
-tools/voice/,Voice AI - speech-to-speech pipeline with local and cloud GPU deployment,speech-to-speech
+tools/voice/,Voice AI - voice bridge for talking to AI agents and speech-to-speech pipeline,speech-to-speech|voice-bridge
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
@@ -118,4 +118,6 @@ matrix-dispatch-helper.sh,Matrix bot for dispatching messages to AI runners (set
 supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init add batch dispatch reprompt evaluate pulse worker-status cleanup transition status list next running-count reset cancel db)
 schema-validator-helper.sh,Schema.org structured data validation (validate validate-json status install)
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
+voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
+voice-bridge.py,Voice bridge Python script (VAD STT LLM TTS with session handback)
 -->
