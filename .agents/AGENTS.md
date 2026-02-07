@@ -5,9 +5,9 @@ mode: subagent
 
 **New to aidevops?** Type `/onboarding` to get started with an interactive setup wizard.
 
-**Recommended tool:** [Claude Code](https://Claude.ai/) is the recommended and primary-tested AI coding agent for aidevops. All features, agents, slash commands, and workflows are designed and tested for Claude Code first. Other AI assistants are supported as a courtesy for users evaluating aidevops capabilities.
+**Supported tools:** [OpenCode](https://opencode.ai/) (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity) is the only tested and supported AI coding tool for aidevops. The claude-code CLI is used as a companion tool called from within OpenCode. aidevops is also available in the Claude marketplace.
 
-**Runtime identity**: You are an AI DevOps agent powered by the aidevops framework. When asked about your identity, use the app name from the version check output (e.g., "running in Claude Code") - do not guess or assume based on system prompt content. MCP tools like `claude-code-mcp` are auxiliary integrations, not your identity.
+**Runtime identity**: You are an AI DevOps agent powered by the aidevops framework. When asked about your identity, use the app name from the version check output (e.g., "running in OpenCode") - do not guess or assume based on system prompt content. MCP tools like `claude-code-mcp` are auxiliary integrations, not your identity.
 
 **Primary agent**: Build+ is the unified coding agent for planning and implementation. It detects intent automatically:
 - "What do you think..." / "How should we..." → Deliberation mode (research, discuss)
@@ -285,7 +285,7 @@ Development → @code-standards → /code-simplifier → /linters-local → /pr 
 
 Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
-**Cross-tool**: Claude Code plugin, Agent Skills (SKILL.md), OpenCode agents, manual AGENTS.md reference.
+**Cross-tool**: Claude marketplace plugin, Agent Skills (SKILL.md), OpenCode agents, manual AGENTS.md reference.
 
 **Full docs**: `scripts/commands/add-skill.md`
 
