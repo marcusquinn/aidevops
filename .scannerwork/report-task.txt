@@ -1,7 +1,0 @@
-organization=marcusquinn
-projectKey=marcusquinn_aidevops
-serverUrl=https://sonarcloud.io
-serverVersion=8.0.0.76685
-dashboardUrl=https://sonarcloud.io/dashboard?id=marcusquinn_aidevops
-ceTaskId=AZqc4qEiUSMrDvBgrrxH
-ceTaskUrl=https://sonarcloud.io/api/ce/task?id=AZqc4qEiUSMrDvBgrrxH
