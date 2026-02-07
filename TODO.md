@@ -131,7 +131,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
     - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
     - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
-    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
+    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2 ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.6.3
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Replaced 9 eval calls with bash arrays. wp-helper refactored build_ssh_command to execute_wp_via_ssh (direct execution). All pass ShellCheck -S error.
     - [x] t135.7.1 Read each eval context to understand construction and purpose ~30m completed:2026-02-07
@@ -144,7 +144,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none started:2026-02-07 completed:2026-02-07
     - [x] t135.9.1 Identify all mktemp usages without trap cleanup ~15m completed:2026-02-07
     - Notes: 33 scripts use mktemp, 31 without trap. Critical scripts (secret-helper, version-manager) fixed in PR #436.
-    - [ ] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1
+    - [ ] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.9.2
   - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
   - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-07
     - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
@@ -156,8 +156,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.12.3 Move to _archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2 completed:2026-02-07
     - [x] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3 completed:2026-02-07
   - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
-    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
-      - Notes: BLOCKED by supervisor: FAILED: no_log_file    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
+    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.13.1
+      - Notes: BLOCKED by supervisor: FAILED: no_log_file    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1 BLOCKED: FAILED: no_log_file
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
   - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
@@ -244,7 +244,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
-- [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24
+- [ ] t070 Backlink - [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t070 logged:2026-01-24
   - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
 - [ ] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~30m (ai:20m test:5m read:5m) logged:2026-01-24 related:t027
   - Notes: Add support for voice AI models covering both TTS (speech generation) and STT (transcription). API providers: Hugging Face Inference API (TTS/STT endpoints), ElevenLabs, OpenAI TTS/Whisper. Local models: Qwen3-TTS (0.6B/1.7B, Apache-2.0, 10 languages, voice clone/design/custom, streaming, vLLM support - https://github.com/QwenLM/Qwen3-TTS), Whisper (transcription), Bark, Coqui TTS. Create subagent at tools/voice/ or tools/ai/voice.md covering: model selection (local vs API, quality vs speed), installation (pip install qwen-tts, HF download), usage patterns (TTS generation, voice cloning, voice design, transcription), streaming support, GPU requirements. Related to t027 (hyprwhspr speech-to-text).
@@ -261,7 +261,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) logged:2025-12-20
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
-- [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21
+- [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t014 logged:2025-12-21
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
@@ -285,7 +285,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Company-level agent orchestration - AI agents managing company functions (HR, Finance, Operations, Marketing) coordinating via runner-helper.sh. Extends t109 (Parallel Agents). Scope: 1) Document company-level agent patterns, 2) Create example runners for common company functions (hiring-coordinator, finance-reviewer, ops-monitor), 3) Integrate with coordinator-helper.sh for cross-function task dispatch.
 - [x] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~30m actual:25m (ai:20m test:5m read:5m) logged:2025-01-03 started:2026-01-25T15:00Z completed:2026-01-25 ref:https://x.com/elithrar/status/2007455910218871067
   - Notes: Created tools/performance/performance.md subagent and /performance command. Uses Chrome DevTools MCP for Core Web Vitals (FCP, LCP, CLS, FID, TTFB), network dependency analysis, and accessibility auditing. Actionable output format with file:line references. PR #209 merged.
-- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
+- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t033 logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
 - [x] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
   - Notes: Created tools/content/summarize.md subagent. steipete/summarize (726+ stars) - CLI for URL/YouTube/podcast summarization with AI. Supports multiple providers (OpenAI, Anthropic, Google, xAI, OpenRouter). Install: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`.
 - [x] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
