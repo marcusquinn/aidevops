@@ -302,8 +302,10 @@ check_system_load() {
 # Strategy:
 #   - If load < cores: full concurrency (no throttle)
 #   - If load > cores but < cores*2: reduce by 50%
-#   - If load > cores*2: reduce to 1 (minimum)
-#   - If memory pressure is high: reduce to 1
+#   - If load > cores*2: reduce to minimum floor
+#   - If memory pressure is high: reduce to minimum floor
+#   - Minimum floor is 6 (macOS load averages are inflated by I/O-waiting
+#     threads, so low minimums starve dispatch even at moderate CPU usage)
 #
 # $1: base concurrency (from batch or global default)
 # $2: max load factor (default: 2)
@@ -311,6 +313,7 @@ check_system_load() {
 calculate_adaptive_concurrency() {
     local base_concurrency="${1:-4}"
     local max_load_factor="${2:-2}"
+    local min_concurrency=6
 
     local load_output
     load_output=$(check_system_load "$max_load_factor")
@@ -323,22 +326,24 @@ calculate_adaptive_concurrency() {
 
     local effective_concurrency="$base_concurrency"
 
-    # High memory pressure: drop to 1
+    # High memory pressure: drop to minimum floor
     if [[ "$memory_pressure" == "high" ]]; then
-        effective_concurrency=1
+        effective_concurrency="$min_concurrency"
         echo "$effective_concurrency"
         return 0
     fi
 
     if [[ "$overloaded" == "true" ]]; then
-        # Severely overloaded: minimum concurrency
-        effective_concurrency=1
+        # Severely overloaded: minimum floor
+        effective_concurrency="$min_concurrency"
     elif [[ "$load_ratio" -gt $((cpu_cores * 100)) ]]; then
         # Moderately loaded (load > cores but < cores*factor): halve concurrency
         effective_concurrency=$(( (base_concurrency + 1) / 2 ))
-        if [[ "$effective_concurrency" -lt 1 ]]; then
-            effective_concurrency=1
-        fi
+    fi
+
+    # Enforce minimum floor
+    if [[ "$effective_concurrency" -lt "$min_concurrency" ]]; then
+        effective_concurrency="$min_concurrency"
     fi
 
     echo "$effective_concurrency"
@@ -1582,7 +1587,7 @@ cmd_next() {
             limit="$available"
         fi
 
-        db -separator '|' "$SUPERVISOR_DB" "
+        db -separator $'\t' "$SUPERVISOR_DB" "
             SELECT t.id, t.repo, t.description, t.model
             FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
@@ -1593,7 +1598,7 @@ cmd_next() {
             LIMIT $limit;
         "
     else
-        db -separator '|' "$SUPERVISOR_DB" "
+        db -separator $'\t' "$SUPERVISOR_DB" "
             SELECT id, repo, description, model
             FROM tasks
             WHERE status = 'queued'
@@ -2129,7 +2134,7 @@ cmd_dispatch() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator $'\t' "$SUPERVISOR_DB" "
         SELECT id, repo, description, status, model, retries, max_retries
         FROM tasks WHERE id = '$escaped_id';
     ")
@@ -2140,7 +2145,7 @@ cmd_dispatch() {
     fi
 
     local tid trepo tdesc tstatus tmodel tretries tmax_retries
-    IFS='|' read -r tid trepo tdesc tstatus tmodel tretries tmax_retries <<< "$task_row"
+    IFS=$'\t' read -r tid trepo tdesc tstatus tmodel tretries tmax_retries <<< "$task_row"
 
     # Validate task is in dispatchable state
     if [[ "$tstatus" != "queued" ]]; then
@@ -3784,7 +3789,7 @@ cmd_pulse() {
         next_tasks=$(cmd_next "$batch_id" 10)
 
         if [[ -n "$next_tasks" ]]; then
-            while IFS='|' read -r tid trepo tdesc tmodel; do
+            while IFS=$'\t' read -r tid trepo tdesc tmodel; do
                 local dispatch_exit=0
                 cmd_dispatch "$tid" --batch "$batch_id" || dispatch_exit=$?
                 if [[ "$dispatch_exit" -eq 0 ]]; then
@@ -3806,7 +3811,7 @@ cmd_pulse() {
         next_tasks=$(cmd_next "" 10)
 
         if [[ -n "$next_tasks" ]]; then
-            while IFS='|' read -r tid trepo tdesc tmodel; do
+            while IFS=$'\t' read -r tid trepo tdesc tmodel; do
                 local dispatch_exit=0
                 cmd_dispatch "$tid" || dispatch_exit=$?
                 if [[ "$dispatch_exit" -eq 0 ]]; then
