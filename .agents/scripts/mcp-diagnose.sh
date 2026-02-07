@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # MCP Connection Failure Diagnostics
 # Usage: mcp-diagnose.sh <mcp-name>
 #

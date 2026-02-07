@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # AI DevOps Framework - Template Deployment Script
 # Securely deploys minimal AGENTS.md templates to user's home directory

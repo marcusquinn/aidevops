@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # TOON Integration Test for AI DevOps Framework
 # Demonstrates TOON format capabilities and integration
