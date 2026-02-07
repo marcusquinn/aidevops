@@ -492,12 +492,8 @@ cmd_status() {
     
     local ai_configs=(
         "$HOME/.config/opencode/opencode.json:OpenCode"
-        "$HOME/.cursor/rules:Cursor"
-        "$HOME/.claude/commands:Claude Code"
-        "$HOME/.continue:Continue.dev"
+        "$HOME/.claude/commands:Claude Code CLI"
         "$HOME/CLAUDE.md:Claude Code memory"
-        "$HOME/GEMINI.md:Gemini CLI memory"
-        "$HOME/.cursorrules:Cursor rules"
     )
     
     for config in "${ai_configs[@]}"; do
@@ -724,10 +720,7 @@ cmd_uninstall() {
     
     local ai_agent_files=(
         "$HOME/.config/opencode/agent/AGENTS.md"
-        "$HOME/.cursor/rules/AGENTS.md"
         "$HOME/.claude/commands/AGENTS.md"
-        "$HOME/.continue/AGENTS.md"
-        "$HOME/.cody/AGENTS.md"
         "$HOME/.opencode/AGENTS.md"
     )
     
@@ -760,10 +753,6 @@ cmd_uninstall() {
     print_info "Removing AI memory files..."
     local memory_files=(
         "$HOME/CLAUDE.md"
-        "$HOME/GEMINI.md"
-        "$HOME/WINDSURF.md"
-        "$HOME/.qwen/QWEN.md"
-        "$HOME/.factory/DROID.md"
     )
     
     for file in "${memory_files[@]}"; do
