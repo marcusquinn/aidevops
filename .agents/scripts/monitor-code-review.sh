@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+# shellcheck disable=SC1091,SC2155,SC2317
 set -euo pipefail
 
 # Code Review Monitoring and Auto-Fix Script (Enhanced Version)
@@ -116,9 +116,9 @@ run_codacy_analysis() {
     done
     echo "" # New line
     
-    # Check exit status
-    wait $pid
-    local status=$?
+    # Check exit status (|| true prevents set -e from killing script on non-zero)
+    local status=0
+    wait $pid || status=$?
     
     if [[ $status -eq 0 ]]; then
         print_success "Codacy analysis completed with auto-fixes"
