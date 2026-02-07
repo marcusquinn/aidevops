@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # SSH Key Audit Script
 # Audits and standardizes SSH keys across all servers

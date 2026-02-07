@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 2.105.1
+# Version: 2.105.2
 
 set -euo pipefail
 
@@ -554,10 +554,29 @@ cmd_update() {
             fi
         else
             print_info "Pulling latest changes..."
-            if git pull --ff-only origin main; then
-                local new_version
+            local old_hash
+            old_hash=$(git rev-parse HEAD)
+            
+            if git pull --ff-only origin main --quiet; then
+                local new_version new_hash
                 new_version=$(get_version)
+                new_hash=$(git rev-parse HEAD)
                 print_success "Updated to version $new_version"
+                
+                # Print bounded summary of meaningful changes
+                if [[ "$old_hash" != "$new_hash" ]]; then
+                    local total_commits
+                    total_commits=$(git rev-list --count "$old_hash..$new_hash")
+                    echo ""
+                    print_info "Changes since $current_version ($total_commits commits):"
+                    git log --oneline "$old_hash..$new_hash" \
+                        | grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' \
+                        | head -20
+                    if [[ "$total_commits" -gt 20 ]]; then
+                        echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
+                    fi
+                fi
+                
                 echo ""
                 print_info "Running setup to apply changes..."
                 bash "$INSTALL_DIR/setup.sh"

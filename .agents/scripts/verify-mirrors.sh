@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Verify AI Assistant Mirror Symlinks
 # Ensures all mirror directories are properly symlinked to .agents/

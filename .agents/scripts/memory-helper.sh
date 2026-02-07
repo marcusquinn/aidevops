@@ -557,9 +557,12 @@ cmd_recall() {
         return $?
     fi
     
-    # Escape query for FTS5 - escape both single and double quotes
+    # Escape query for FTS5 - wrap in double quotes to handle special chars
+    # FTS5 treats hyphens as NOT operator, asterisks as prefix, etc.
+    # Quoting the query makes it a literal phrase search.
     local escaped_query="${query//"'"/"''"}"
-    escaped_query="${escaped_query//\"/\"\"}"
+    # Escape embedded double quotes for FTS5 (double them), then wrap in quotes
+    escaped_query="\"${escaped_query//\"/\"\"}\""
     
     # Build filters with validation
     local extra_filters=""

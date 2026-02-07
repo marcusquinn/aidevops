@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2329
 # =============================================================================
 # Generate Agent Skills SKILL.md Files

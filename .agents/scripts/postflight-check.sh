@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
 # Postflight Verification Script
 # Verifies release health after tag creation and GitHub release publication

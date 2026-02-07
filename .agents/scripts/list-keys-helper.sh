@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
 
 # List Keys Helper - Show all API keys available in session with their sources
