@@ -341,9 +341,12 @@ cmd_run() {
         return 1
     fi
 
-    # Build environment
+    # Build environment in temp file with trap cleanup for security
     local env_file
     env_file=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f '$env_file'" EXIT
+
     build_secret_env > "$env_file"
 
     # Execute command with secrets in environment, redact output
@@ -359,8 +362,9 @@ cmd_run() {
         "${cmd_args[@]}"
     ) 2>&1 | redact_stream || exit_code=$?
 
-    # Clean up
+    # Clean up (also handled by trap on abnormal exit)
     rm -f "$env_file"
+    trap - EXIT
 
     return "$exit_code"
 }
@@ -388,9 +392,12 @@ cmd_run_specific() {
         return 1
     fi
 
-    # Build environment with specific secrets only
+    # Build environment with specific secrets only, trap cleanup for security
     local env_file
     env_file=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f '$env_file'" EXIT
+
     build_secret_env "${secret_names[@]}" > "$env_file"
 
     # Execute command with secrets in environment, redact output
@@ -405,6 +412,7 @@ cmd_run_specific() {
     ) 2>&1 | redact_stream || exit_code=$?
 
     rm -f "$env_file"
+    trap - EXIT
 
     return "$exit_code"
 }
