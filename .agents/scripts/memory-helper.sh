@@ -76,6 +76,14 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 #######################################
+# SQLite wrapper: sets busy_timeout on every connection (t135.3)
+# busy_timeout is per-connection and must be set each time
+#######################################
+db() {
+    sqlite3 -cmd ".timeout 5000" "$@"
+}
+
+#######################################
 # Resolve namespace to memory directory and DB path
 # Sets MEMORY_DIR and MEMORY_DB globals
 #######################################
@@ -166,7 +174,10 @@ init_db() {
     if [[ ! -f "$MEMORY_DB" ]]; then
         log_info "Creating memory database at $MEMORY_DB"
         
-        sqlite3 "$MEMORY_DB" <<'EOF'
+        db "$MEMORY_DB" <<'EOF'
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
+
 -- FTS5 virtual table for searchable content
 -- Note: FTS5 doesn't support foreign keys, so relationships are tracked separately
 CREATE VIRTUAL TABLE IF NOT EXISTS learnings USING fts5(
@@ -205,6 +216,15 @@ EOF
         # Migrate existing database if needed
         migrate_db
     fi
+
+    # Ensure WAL mode for existing databases created before t135.3
+    # WAL is persistent but may not be set on pre-existing DBs
+    local current_mode
+    current_mode=$(db "$MEMORY_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
+    if [[ "$current_mode" != "wal" ]]; then
+        db "$MEMORY_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
+    fi
+
     return 0
 }
 
@@ -215,13 +235,13 @@ migrate_db() {
     # Check if event_date column exists in FTS5 table
     # FTS5 tables don't support ALTER TABLE, so we check via pragma
     local has_event_date
-    has_event_date=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learnings') WHERE name='event_date';" 2>/dev/null || echo "0")
+    has_event_date=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learnings') WHERE name='event_date';" 2>/dev/null || echo "0")
     
     if [[ "$has_event_date" == "0" ]]; then
         log_info "Migrating database to add event_date and relations..."
         
         # For FTS5, we need to recreate the table
-        sqlite3 "$MEMORY_DB" <<'EOF'
+        db "$MEMORY_DB" <<'EOF'
 -- Create new FTS5 table with event_date
 CREATE VIRTUAL TABLE IF NOT EXISTS learnings_new USING fts5(
     id UNINDEXED,
@@ -257,7 +277,7 @@ EOF
     fi
     
     # Ensure relations table exists (for databases created before this feature)
-    sqlite3 "$MEMORY_DB" <<'EOF'
+    db "$MEMORY_DB" <<'EOF'
 CREATE TABLE IF NOT EXISTS learning_relations (
     id TEXT PRIMARY KEY,
     supersedes_id TEXT,
@@ -268,9 +288,9 @@ EOF
     
     # Add auto_captured column to learning_access if missing (t058 migration)
     local has_auto_captured
-    has_auto_captured=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='auto_captured';" 2>/dev/null || echo "0")
+    has_auto_captured=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='auto_captured';" 2>/dev/null || echo "0")
     if [[ "$has_auto_captured" == "0" ]]; then
-        sqlite3 "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" 2>/dev/null || true
+        db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" 2>/dev/null || true
     fi
     
     return 0
@@ -413,21 +433,21 @@ cmd_store() {
     # Validate supersedes_id exists if provided
     if [[ -n "$supersedes_id" ]]; then
         local exists
-        exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_supersedes';")
+        exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_supersedes';")
         if [[ "$exists" == "0" ]]; then
             log_error "Supersedes ID not found: $supersedes_id"
             return 1
         fi
     fi
     
-    sqlite3 "$MEMORY_DB" <<EOF
+    db "$MEMORY_DB" <<EOF
 INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
 VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$event_date', '$escaped_project', '$source');
 EOF
     
     # Store auto-captured flag in access table
     if [[ "$auto_captured" -eq 1 ]]; then
-        sqlite3 "$MEMORY_DB" <<EOF
+        db "$MEMORY_DB" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count, auto_captured)
 VALUES ('$id', '$created_at', 0, 1)
 ON CONFLICT(id) DO UPDATE SET auto_captured = 1;
@@ -436,7 +456,7 @@ EOF
     
     # Store relation if provided
     if [[ -n "$supersedes_id" ]]; then
-        sqlite3 "$MEMORY_DB" <<EOF
+        db "$MEMORY_DB" <<EOF
 INSERT INTO learning_relations (id, supersedes_id, relation_type, created_at)
 VALUES ('$id', '$escaped_supersedes', '$relation_type', '$created_at');
 EOF
@@ -500,7 +520,7 @@ cmd_recall() {
     # Handle --recent mode (no query required)
     if [[ "$recent_mode" == true ]]; then
         local results
-        results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE 1=1 $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
+        results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE 1=1 $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
         if [[ "$format" == "json" ]]; then
             echo "$results"
         else
@@ -580,7 +600,7 @@ cmd_recall() {
     # Search using FTS5 with BM25 ranking
     # Note: FTS5 tables require special handling - can't use table alias in bm25()
     local results
-    results=$(sqlite3 -json "$MEMORY_DB" <<EOF
+    results=$(db -json "$MEMORY_DB" <<EOF
 SELECT 
     learnings.id,
     learnings.content,
@@ -607,7 +627,7 @@ EOF
         if [[ -n "$ids" ]]; then
             while IFS= read -r id; do
                 [[ -z "$id" ]] && continue
-                sqlite3 "$MEMORY_DB" <<EOF
+                db "$MEMORY_DB" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count)
 VALUES ('$id', datetime('now'), 1)
 ON CONFLICT(id) DO UPDATE SET 
@@ -624,7 +644,7 @@ EOF
         local global_db
         global_db=$(global_db_path)
         if [[ -f "$global_db" ]]; then
-            shared_results=$(sqlite3 -json "$global_db" <<EOF
+            shared_results=$(db -json "$global_db" <<EOF
 SELECT 
     learnings.id,
     learnings.content,
@@ -649,7 +669,7 @@ EOF
                 if [[ -n "$shared_ids" ]]; then
                     while IFS= read -r sid; do
                         [[ -z "$sid" ]] && continue
-                        sqlite3 "$global_db" <<EOF
+                        db "$global_db" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count)
 VALUES ('$sid', datetime('now'), 1)
 ON CONFLICT(id) DO UPDATE SET 
@@ -726,7 +746,7 @@ cmd_history() {
     
     # Check if memory exists
     local exists
-    exists=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_id';")
+    exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_id';")
     if [[ "$exists" == "0" ]]; then
         log_error "Memory not found: $memory_id"
         return 1
@@ -738,7 +758,7 @@ cmd_history() {
     
     # Show the current memory
     echo "Current:"
-    sqlite3 "$MEMORY_DB" <<EOF
+    db "$MEMORY_DB" <<EOF
 SELECT '  [' || type || '] ' || substr(content, 1, 80) || '...'
 FROM learnings WHERE id = '$escaped_id';
 SELECT '  Created: ' || created_at || ' | Event: ' || COALESCE(event_date, 'N/A')
@@ -749,7 +769,7 @@ EOF
     echo ""
     echo "Supersedes (ancestors):"
     local ancestors
-    ancestors=$(sqlite3 "$MEMORY_DB" <<EOF
+    ancestors=$(db "$MEMORY_DB" <<EOF
 WITH RECURSIVE ancestors AS (
     SELECT lr.supersedes_id, lr.relation_type, 1 as depth
     FROM learning_relations lr
@@ -784,7 +804,7 @@ EOF
     echo ""
     echo "Superseded by (descendants):"
     local descendants
-    descendants=$(sqlite3 "$MEMORY_DB" <<EOF
+    descendants=$(db "$MEMORY_DB" <<EOF
 WITH RECURSIVE descendants AS (
     SELECT lr.id as child_id, lr.relation_type, 1 as depth
     FROM learning_relations lr
@@ -837,7 +857,7 @@ cmd_latest() {
     
     # Find the latest in the chain (no descendants with 'updates' relation)
     local latest_id
-    latest_id=$(sqlite3 "$MEMORY_DB" <<EOF
+    latest_id=$(db "$MEMORY_DB" <<EOF
 WITH RECURSIVE chain AS (
     SELECT '$escaped_id' as id
     UNION ALL
@@ -862,7 +882,7 @@ EOF
     echo "$latest_id"
     
     # Show the content
-    sqlite3 "$MEMORY_DB" <<EOF
+    db "$MEMORY_DB" <<EOF
 SELECT '[' || type || '] ' || content
 FROM learnings WHERE id = '$escaped_latest';
 EOF
@@ -885,7 +905,7 @@ cmd_stats() {
     echo "=== Memory Statistics${header_suffix} ==="
     echo ""
     
-    sqlite3 "$MEMORY_DB" <<'EOF'
+    db "$MEMORY_DB" <<'EOF'
 SELECT 'Total learnings' as metric, COUNT(*) as value FROM learnings
 UNION ALL
 SELECT 'By type: ' || type, COUNT(*) FROM learnings GROUP BY type
@@ -905,7 +925,7 @@ EOF
     
     # Show relation statistics
     echo "Relational versioning:"
-    sqlite3 "$MEMORY_DB" <<'EOF'
+    db "$MEMORY_DB" <<'EOF'
 SELECT '  Total relations', COUNT(*) FROM learning_relations
 UNION ALL
 SELECT '  Updates (supersedes)', COUNT(*) FROM learning_relations WHERE relation_type = 'updates'
@@ -919,7 +939,7 @@ EOF
     
     # Show age distribution
     echo "Age distribution:"
-    sqlite3 "$MEMORY_DB" <<'EOF'
+    db "$MEMORY_DB" <<'EOF'
 SELECT 
     CASE 
         WHEN created_at >= datetime('now', '-7 days') THEN '  Last 7 days'
@@ -947,13 +967,13 @@ cmd_validate() {
     
     # Check for stale entries (old + never accessed)
     local stale_count
-    stale_count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') AND a.id IS NULL;")
+    stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') AND a.id IS NULL;")
     
     if [[ "$stale_count" -gt 0 ]]; then
         log_warn "Found $stale_count potentially stale entries (>$STALE_WARNING_DAYS days old, never accessed)"
         echo ""
         echo "Stale entries:"
-        sqlite3 "$MEMORY_DB" <<EOF
+        db "$MEMORY_DB" <<EOF
 SELECT l.id, l.type, substr(l.content, 1, 60) || '...' as content_preview, l.created_at
 FROM learnings l
 LEFT JOIN learning_access a ON l.id = a.id
@@ -969,7 +989,7 @@ EOF
     
     # Check for duplicate content
     local dup_count
-    dup_count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM (SELECT content, COUNT(*) as cnt FROM learnings GROUP BY content HAVING cnt > 1);" 2>/dev/null || echo "0")
+    dup_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM (SELECT content, COUNT(*) as cnt FROM learnings GROUP BY content HAVING cnt > 1);" 2>/dev/null || echo "0")
     
     if [[ "$dup_count" -gt 0 ]]; then
         log_warn "Found $dup_count duplicate entries"
@@ -1004,9 +1024,9 @@ cmd_prune() {
     # Build query to find stale entries
     local count
     if [[ "$keep_accessed" == true ]]; then
-        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL;")
+        count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL;")
     else
-        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
+        count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
     fi
     
     if [[ "$count" -eq 0 ]]; then
@@ -1018,7 +1038,7 @@ cmd_prune() {
         log_info "[DRY RUN] Would delete $count entries"
         echo ""
         if [[ "$keep_accessed" == true ]]; then
-            sqlite3 "$MEMORY_DB" <<EOF
+            db "$MEMORY_DB" <<EOF
 SELECT l.id, l.type, substr(l.content, 1, 50) || '...' as preview, l.created_at
 FROM learnings l
 LEFT JOIN learning_access a ON l.id = a.id
@@ -1026,7 +1046,7 @@ WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL
 LIMIT 20;
 EOF
         else
-            sqlite3 "$MEMORY_DB" <<EOF
+            db "$MEMORY_DB" <<EOF
 SELECT id, type, substr(content, 1, 50) || '...' as preview, created_at
 FROM learnings 
 WHERE created_at < datetime('now', '-$older_than_days days')
@@ -1050,15 +1070,15 @@ EOF
         
         # Delete from all tables using the subquery (much faster than loop)
         # Clean up relations first to avoid orphaned references
-        sqlite3 "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"
-        sqlite3 "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);"
-        sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
-        sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
+        db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"
+        db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);"
+        db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
+        db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
         
         log_success "Pruned $count stale entries"
         
         # Rebuild FTS index
-        sqlite3 "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
         log_info "Rebuilt search index"
     fi
 }
@@ -1092,7 +1112,7 @@ cmd_consolidate() {
     # Find potential duplicates using FTS5 similarity
     # Group by type and look for similar content
     local duplicates
-    duplicates=$(sqlite3 "$MEMORY_DB" <<EOF
+    duplicates=$(db "$MEMORY_DB" <<EOF
 SELECT 
     l1.id as id1, 
     l2.id as id2,
@@ -1162,33 +1182,33 @@ EOF
             
             # Merge tags from newer into older
             local older_tags newer_tags
-            older_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id_esc';")
-            newer_tags=$(sqlite3 "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id_esc';")
+            older_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id_esc';")
+            newer_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id_esc';")
             
             if [[ -n "$newer_tags" ]]; then
                 local merged_tags
                 merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
                 # Escape merged_tags for SQL injection prevention
                 local merged_tags_esc="${merged_tags//"'"/"''"}"
-                sqlite3 "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
+                db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
             fi
             
             # Transfer access history
-            sqlite3 "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" 2>/dev/null || true
+            db "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" 2>/dev/null || true
             
             # Re-point relations that referenced the deleted memory to the surviving one
-            sqlite3 "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
-            sqlite3 "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
+            db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
+            db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
             
             # Delete the newer duplicate
-            sqlite3 "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
-            sqlite3 "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id_esc';"
+            db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
+            db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id_esc';"
             
             consolidated=$((consolidated + 1))
         done <<< "$duplicates"
         
         # Rebuild FTS index
-        sqlite3 "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
         
         log_success "Consolidated $consolidated memory pairs"
     fi
@@ -1211,14 +1231,14 @@ cmd_export() {
     
     case "$format" in
         json)
-            sqlite3 -json "$MEMORY_DB" "SELECT l.*, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id ORDER BY l.created_at DESC;"
+            db -json "$MEMORY_DB" "SELECT l.*, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count FROM learnings l LEFT JOIN learning_access a ON l.id = a.id ORDER BY l.created_at DESC;"
             ;;
         toon)
             # TOON format for token efficiency
             local count
-            count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;")
+            count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;")
             echo "learnings[$count]{id,type,confidence,content,tags,created_at}:"
-            sqlite3 -separator ',' "$MEMORY_DB" "SELECT id, type, confidence, content, tags, created_at FROM learnings ORDER BY created_at DESC;" | while read -r line; do
+            db -separator ',' "$MEMORY_DB" "SELECT id, type, confidence, content, tags, created_at FROM learnings ORDER BY created_at DESC;" | while read -r line; do
                 echo "  $line"
             done
             ;;
@@ -1270,7 +1290,7 @@ cmd_namespaces() {
             local ns_db="$ns_path/memory.db"
             local count=0
             if [[ -f "$ns_db" ]]; then
-                count=$(sqlite3 "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+                count=$(db "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
             fi
             if [[ "$first" == true ]]; then
                 first=false
@@ -1293,7 +1313,7 @@ cmd_namespaces() {
     global_db=$(global_db_path)
     local global_count=0
     if [[ -f "$global_db" ]]; then
-        global_count=$(sqlite3 "$global_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+        global_count=$(db "$global_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
     fi
     printf "  %-25s %s entries\n" "(global)" "$global_count"
 
@@ -1303,7 +1323,7 @@ cmd_namespaces() {
         local ns_db="$ns_path/memory.db"
         local count=0
         if [[ -f "$ns_db" ]]; then
-            count=$(sqlite3 "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+            count=$(db "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
         fi
         printf "  %-25s %s entries\n" "$ns_name" "$count"
     done
@@ -1358,7 +1378,7 @@ cmd_namespaces_prune() {
         local ns_db="$ns_path/memory.db"
         local count=0
         if [[ -f "$ns_db" ]]; then
-            count=$(sqlite3 "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+            count=$(db "$ns_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
         fi
 
         if [[ "$dry_run" == true ]]; then
@@ -1433,7 +1453,7 @@ cmd_namespaces_migrate() {
 
     # Count entries to migrate
     local count
-    count=$(sqlite3 "$from_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+    count=$(db "$from_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
 
     if [[ "$count" -eq 0 ]]; then
         log_info "No entries to migrate from $from_ns"
@@ -1459,7 +1479,7 @@ cmd_namespaces_migrate() {
     MEMORY_DB="$saved_db"
 
     # Migrate using ATTACH DATABASE
-    sqlite3 "$to_db" <<EOF
+    db "$to_db" <<EOF
 ATTACH DATABASE '$from_db' AS source;
 
 -- Insert entries that don't already exist (by id)
@@ -1484,10 +1504,10 @@ EOF
 
     # If --move, delete from source
     if [[ "$move" == true ]]; then
-        sqlite3 "$from_db" "DELETE FROM learning_relations;"
-        sqlite3 "$from_db" "DELETE FROM learning_access;"
-        sqlite3 "$from_db" "DELETE FROM learnings;"
-        sqlite3 "$from_db" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        db "$from_db" "DELETE FROM learning_relations;"
+        db "$from_db" "DELETE FROM learning_access;"
+        db "$from_db" "DELETE FROM learnings;"
+        db "$from_db" "INSERT INTO learnings(learnings) VALUES('rebuild');"
         log_info "Cleared source: $from_ns"
     fi
 
@@ -1514,7 +1534,7 @@ cmd_log() {
     init_db
     
     local results
-    results=$(sqlite3 -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, l.source, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE COALESCE(a.auto_captured, 0) = 1 ORDER BY l.created_at DESC LIMIT $limit;")
+    results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, l.source, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE COALESCE(a.auto_captured, 0) = 1 ORDER BY l.created_at DESC LIMIT $limit;")
     
     if [[ "$format" == "json" ]]; then
         echo "$results"
@@ -1543,7 +1563,7 @@ cmd_log() {
             
             # Show summary
             local total_auto
-            total_auto=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM learning_access WHERE auto_captured = 1;")
+            total_auto=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_access WHERE auto_captured = 1;")
             echo "---"
             echo "Total auto-captured: $total_auto"
         fi
