@@ -71,7 +71,7 @@ The result: AI agents that work *with* your development process, not around it.
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
-[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-17-orange.svg)](#mcp-integrations)
+[![MCP Servers](https://img.shields.io/badge/MCP%20Servers-19-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
 
 <!-- AI-CONTEXT-START -->
@@ -887,7 +887,7 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 
 **Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity).
 
-### **All Supported MCPs (17 active)**
+### **All Supported MCPs (19 available)**
 
 MCP packages are installed globally via `bun install -g` for instant startup (no `npx` registry lookups). Run `setup.sh` or `aidevops update-tools` to update to latest versions.
 
@@ -909,6 +909,7 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 | [QuickFile](https://github.com/marcusquinn/quickfile-mcp) | Accounting API | Per-agent | Yes |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | Per-agent | No |
 | [Sentry](https://sentry.io/) | Error tracking | Per-agent | Yes |
+| [shadcn](https://ui.shadcn.com/) | UI component library | Per-agent | No |
 | [Socket](https://socket.dev/) | Dependency security | Per-agent | No |
 | [Unstract](https://github.com/Zipstack/unstract) | Document data extraction | Per-agent | Yes |
 
