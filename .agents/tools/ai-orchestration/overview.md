@@ -52,6 +52,8 @@ git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-p
 
 **Port Conflict Resolution**: All helper scripts integrate with `localhost-helper.sh` for automatic port management. If a port is in use, an alternative is automatically selected.
 
+**Draft agents**: Orchestration tasks that discover reusable patterns should create draft agents in `~/.aidevops/agents/draft/`. These can be promoted to private (`custom/`) or shared (`.agents/`) after review. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
+
 <!-- AI-CONTEXT-END -->
 
 ## Decision Matrix

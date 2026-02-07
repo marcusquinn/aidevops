@@ -823,6 +823,140 @@ Main agents provide overview and point to subagents for details (progressive dis
 | `server-patterns.md` | Registering tools, resources |
 ```text
 
+### Agent Lifecycle Tiers
+
+When creating an agent, determine which tier it belongs to. This affects where it lives, whether it survives updates, and whether it gets shared.
+
+| Tier | Location | Survives `setup.sh` | Git Tracked | Purpose |
+|------|----------|---------------------|-------------|---------|
+| **Draft** | `~/.aidevops/agents/draft/` | Yes | No | R&D, experimental, auto-created by orchestration |
+| **Custom** | `~/.aidevops/agents/custom/` | Yes | No | User's permanent private agents |
+| **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
+
+**When creating an agent, ask the user:**
+
+```text
+Where should this agent live?
+1. Draft  - Experimental, for review later (draft/)
+2. Custom - Private, stays on your machine (custom/)
+3. Shared - Add to aidevops for everyone (PR to .agents/)
+```
+
+#### Draft Agents
+
+Draft agents are created during R&D, orchestration tasks, or exploratory work. They are intentionally rough and expected to evolve.
+
+**When to create a draft:**
+- An orchestration task needs a reusable subagent for parallel processing
+- Exploring a new domain and capturing patterns as you go
+- A Task tool subagent would benefit from persistent instructions across sessions
+
+**Draft conventions:**
+- Place in `~/.aidevops/agents/draft/`
+- Include `status: draft` and `created` date in frontmatter
+- Use descriptive filenames: `draft/{domain}-{purpose}.md`
+
+```yaml
+---
+description: Experimental agent for X
+mode: subagent
+status: draft
+created: 2026-02-07
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: false
+  glob: true
+  grep: true
+---
+```
+
+**Promotion workflow:**
+
+After a draft proves useful, log a TODO item for review:
+
+```text
+- [ ] tXXX Review draft agent: {name} - promote to custom/ or .agents/ #agent-review
+```
+
+Then decide:
+
+1. **Promote to Custom** -- Move to `~/.aidevops/agents/custom/`, remove `status: draft`
+2. **Promote to Shared** -- Move to `.agents/` in the repo, refine to framework standards, submit PR
+3. **Discard** -- Delete from `draft/` if no longer useful
+
+#### Custom (Private) Agents
+
+Custom agents are the user's permanent private agents. They are never shared and never overwritten by `setup.sh`.
+
+**When to use custom:**
+- Business-specific workflows (your company's deploy process)
+- Personal preferences (your coding style agent)
+- Client-specific agents (per-project orchestration)
+- Agents containing proprietary knowledge
+
+**Custom conventions:**
+- Place in `~/.aidevops/agents/custom/`
+- Follow the same structure as shared agents (frontmatter, AI-CONTEXT blocks)
+- Organize with subdirectories if needed: `custom/mycompany/`, `custom/clients/`
+
+#### Shared Agents
+
+Shared agents live in `.agents/` in the aidevops repository and are distributed to all users via `setup.sh`.
+
+**When to share:**
+- The agent solves a general problem others would face
+- It follows framework conventions (frontmatter, quality standards)
+- It doesn't contain proprietary or personal information
+
+**Submission process:**
+1. Create a feature branch: `wt switch -c feature/agent-{name}`
+2. Place the agent in the appropriate `.agents/` location
+3. Follow the Agent Design Checklist (see above)
+4. Submit a PR to the aidevops repository
+
+#### Orchestration and Task Agents Creating Drafts
+
+Agents running orchestration tasks (via the Task tool, Ralph loop, or parallel dispatch) **can and should** create draft agents when they identify reusable patterns. This is a key mechanism for the framework to evolve.
+
+**When an orchestration agent should create a draft:**
+- A subtask requires domain-specific instructions that would be reused
+- Parallel workers need shared context that doesn't fit in a single prompt
+- A complex workflow has emerged that should be captured as a repeatable agent
+- The same Task tool prompt is being duplicated across multiple invocations
+
+**How orchestration agents create drafts:**
+
+```bash
+# Write the draft agent
+cat > ~/.aidevops/agents/draft/data-migration-validator.md << 'AGENT'
+---
+description: Validates data migration between PostgreSQL schemas
+mode: subagent
+status: draft
+created: 2026-02-07
+source: auto-created by orchestration task
+tools:
+  read: true
+  bash: true
+  glob: true
+  grep: true
+---
+
+# Data Migration Validator
+
+[Agent instructions captured from the orchestration context...]
+AGENT
+```
+
+**After creating a draft, the orchestration agent should:**
+1. Log a TODO item: `- [ ] tXXX Review draft agent: data-migration-validator #agent-review`
+2. Reference the draft in subsequent Task tool calls instead of repeating instructions
+3. Note the draft's existence in its completion summary
+
+This creates a natural feedback loop: orchestration discovers patterns, drafts capture them, humans review and promote the useful ones.
+
 ### Deployment Sync
 
 Agent changes in `.agents/` require `setup.sh` to deploy to `~/.aidevops/agents/`:

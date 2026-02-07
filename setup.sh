@@ -2093,21 +2093,49 @@ deploy_aidevops_agents() {
     # Create target directory and copy agents
     mkdir -p "$target_dir"
     
-    # If clean mode, remove stale files first
+    # If clean mode, remove stale files first (preserving user directories)
     if [[ "$CLEAN_MODE" == "true" ]]; then
-        print_info "Clean mode: removing stale files from $target_dir"
+        print_info "Clean mode: removing stale files from $target_dir (preserving custom/, draft/)"
+        # Preserve user-managed directories before clean
+        local -a preserved_dirs=("custom" "draft")
+        local tmp_preserve="$(mktemp -d)"
+        if [[ -z "$tmp_preserve" || ! -d "$tmp_preserve" ]]; then
+            print_error "Failed to create temp dir for preserving custom/draft agents"
+            return 1
+        fi
+        local preserve_failed=false
+        for pdir in "${preserved_dirs[@]}"; do
+            if [[ -d "$target_dir/$pdir" ]]; then
+                if ! cp -R "$target_dir/$pdir" "$tmp_preserve/$pdir"; then
+                    preserve_failed=true
+                fi
+            fi
+        done
+        if [[ "$preserve_failed" == "true" ]]; then
+            print_error "Failed to preserve custom/draft agents; aborting clean"
+            rm -rf "$tmp_preserve"
+            return 1
+        fi
         rm -rf "${target_dir:?}"/*
+        # Restore preserved directories
+        for pdir in "${preserved_dirs[@]}"; do
+            if [[ -d "$tmp_preserve/$pdir" ]]; then
+                cp -R "$tmp_preserve/$pdir" "$target_dir/$pdir"
+            fi
+        done
+        rm -rf "$tmp_preserve"
     fi
     
     # Copy all agent files and folders, excluding:
     # - loop-state/ (local runtime state, not agents)
+    # - custom/ (user's private agents, never overwritten)
+    # - draft/ (user's experimental agents, never overwritten)
     # Use rsync for selective exclusion
     if command -v rsync &>/dev/null; then
-        rsync -a --exclude='loop-state/' "$source_dir/" "$target_dir/"
+        rsync -a --exclude='loop-state/' --exclude='custom/' --exclude='draft/' "$source_dir/" "$target_dir/"
     else
-        # Fallback: copy then remove loop-state
-        cp -R "$source_dir"/* "$target_dir/"
-        rm -rf "$target_dir/loop-state" 2>/dev/null || true
+        # Fallback: use tar with exclusions to match rsync behavior
+        (cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) | (cd "$target_dir" && tar xf -)
     fi
     
     if [[ $? -eq 0 ]]; then

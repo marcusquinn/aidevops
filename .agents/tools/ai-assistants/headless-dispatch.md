@@ -39,6 +39,8 @@ tools:
 - Tasks requiring human-in-the-loop decisions mid-execution
 - Single quick questions (just use `opencode run` without server overhead)
 
+**Draft agents for reusable context**: When parallel workers share domain-specific instructions, create a draft agent in `~/.aidevops/agents/draft/` instead of duplicating prompts. Subsequent dispatches can reference the draft. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers" for details.
+
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
