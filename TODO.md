@@ -200,7 +200,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Replaced all 4 eval usages with bash arrays. Added ALLOWED_OUTPUT_FORMATS whitelist. Fixed broken JSON heredoc. Removed 5 unreachable returns. Reduced shellcheck disables from 23 to 2. PR #375 merged.
 - [x] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
 - [x] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h actual:20m (ai:20m) logged:2026-02-03 completed:2026-02-06
-- [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h (ai:30m test:20m read:10m) logged:2026-02-03
+- [x] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h actual:20m (ai:20m) logged:2026-02-03 started:2026-02-07 completed:2026-02-07
+  - Notes: Replaced all 3 localStorage calls with sessionStorage (auto-clears on tab close). Added Clear Token button with red styling. Input cleared after token set. Status shows "session only" indicator. Enter key support on input.
 - [x] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m actual:0m (ai:0m) logged:2026-02-03 completed:2026-02-06
   - Notes: Already fixed in PR #346. deploy-templates.sh replaced GNU-only `head -z` with macOS-compatible `while read -r` loop. No remaining `head -z` usage in codebase.
 - [x] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
@@ -501,7 +502,7 @@ t104,Install script integrity hardening (replace curl|sh with verified downloads
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,15m,10m,5m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
-t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,1h,30m,20m,2026-02-03T00:00Z,pending,,,
+t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,1h,20m,0m,2026-02-03T00:00Z,completed,2026-02-07T00:00Z,,
 t121,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,0m,0m,2026-02-03T00:00Z,completed,2026-02-06T00:00Z,,
 t122,Resolve awk newline warnings during setup deploy (system-reminder),,setup|deploy|bugfix,45m,30m,15m,2026-02-03T00:00Z,pending,,,
 t123,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m,0m,0m,2026-02-03T00:00Z,completed,,,

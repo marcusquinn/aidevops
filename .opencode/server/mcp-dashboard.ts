@@ -326,8 +326,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <h1>🎛️ MCP Server Dashboard</h1>
   
   <div class="auth-bar">
-    <input type="password" id="authToken" placeholder="Enter DASHBOARD_TOKEN for control access">
+    <input type="password" id="authToken" placeholder="Enter DASHBOARD_TOKEN for control access" onkeydown="if(event.key==='Enter')setToken()">
     <button onclick="setToken()">Set Token</button>
+    <button id="clearTokenBtn" onclick="clearToken()" style="display:none;background:#da3633;border-color:#da3633;">Clear Token</button>
     <span class="auth-status" id="authStatus">Not authenticated</span>
   </div>
   
@@ -338,23 +339,37 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <script>
     let ws;
-    let authToken = localStorage.getItem('dashboardToken') || '';
+    let authToken = sessionStorage.getItem('dashboardToken') || '';
     let authRequired = false;
     
     function setToken() {
-      authToken = document.getElementById('authToken').value;
-      localStorage.setItem('dashboardToken', authToken);
+      const input = document.getElementById('authToken');
+      authToken = input.value;
+      sessionStorage.setItem('dashboardToken', authToken);
+      input.value = '';
       updateAuthStatus();
+      refreshAll();
+    }
+    
+    function clearToken() {
+      authToken = '';
+      sessionStorage.removeItem('dashboardToken');
+      document.getElementById('authToken').value = '';
+      updateAuthStatus();
+      refreshAll();
     }
     
     function updateAuthStatus() {
       const status = document.getElementById('authStatus');
+      const clearBtn = document.getElementById('clearTokenBtn');
       if (authToken) {
-        status.textContent = 'Token set';
+        status.textContent = 'Token set (session only)';
         status.className = 'auth-status authenticated';
+        if (clearBtn) clearBtn.style.display = 'inline-block';
       } else {
         status.textContent = authRequired ? 'Token required' : 'No token set';
         status.className = 'auth-status';
+        if (clearBtn) clearBtn.style.display = 'none';
       }
     }
     
@@ -472,9 +487,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     connectWebSocket();
     setInterval(fetchServers, 30000);
     
-    // Restore token from localStorage
+    // Restore token display from sessionStorage
     if (authToken) {
-      document.getElementById('authToken').value = '••••••••';
       updateAuthStatus();
     }
   </script>
