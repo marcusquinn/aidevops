@@ -5,43 +5,14 @@
 # Comprehensive Twilio management for AI assistants
 # Supports SMS, Voice, WhatsApp, Verify, Lookup, Recordings, Transcriptions
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [account] [options]"
 
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
-
 # Script directory for relative paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # Config can be in repo configs/ or ~/.aidevops/configs/
 if [[ -f "${SCRIPT_DIR}/../../configs/twilio-config.json" ]]; then
     CONFIG_FILE="${SCRIPT_DIR}/../../configs/twilio-config.json"

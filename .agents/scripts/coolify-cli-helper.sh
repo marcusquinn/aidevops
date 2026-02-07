@@ -13,21 +13,15 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR="$script_dir"
 
 repo_root="$(dirname "$SCRIPT_DIR")"
 readonly REPO_ROOT="$repo_root"
 readonly CONFIG_FILE="$REPO_ROOT/configs/coolify-cli-config.json"
 
-# Colors
-readonly BLUE='\033[0;34m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Error Messages
 readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_COOLIFY_NOT_INSTALLED="Coolify CLI is required but not installed"
@@ -45,30 +39,6 @@ readonly SUCCESS_CONTEXT_ADDED="Context added successfully"
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
 # ------------------------------------------------------------------------------
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
 
 # ------------------------------------------------------------------------------
 # DEPENDENCY CHECKS

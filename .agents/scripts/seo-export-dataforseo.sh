@@ -31,21 +31,9 @@ readonly DFS_API_BASE="https://api.dataforseo.com/v3"
 # DataForSEO provides search volume but not impressions; estimate impressions as volume * multiplier
 readonly IMPRESSION_VOLUME_MULTIPLIER=10
 
-# Colors
-readonly RED="${COLOR_RED:-\033[0;31m}"
-readonly GREEN="${COLOR_GREEN:-\033[0;32m}"
-readonly BLUE="${COLOR_BLUE:-\033[0;34m}"
-readonly YELLOW="${COLOR_YELLOW:-\033[1;33m}"
-readonly NC="${COLOR_RESET:-\033[0m}"
-
 # =============================================================================
 # Utility Functions
 # =============================================================================
-
-print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; return 0; }
-print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 0; }
-print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
-print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
 # =============================================================================
 # DataForSEO API Functions

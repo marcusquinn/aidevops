@@ -4,6 +4,9 @@
 # Script to fix misplaced return statements in mainwp-helper.sh
 # These were introduced by the earlier mass fix script
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 cd providers || exit
 
 echo "🔧 Fixing misplaced return statements in mainwp-helper.sh..."

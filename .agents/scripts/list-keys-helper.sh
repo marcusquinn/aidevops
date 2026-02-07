@@ -7,15 +7,12 @@
 # Author: AI DevOps Framework
 # Version: 1.0.0
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
 readonly DIM='\033[2m'
-readonly NC='\033[0m'
 
 # Key storage locations
 readonly CREDENTIALS_FILE="$HOME/.config/aidevops/credentials.sh"

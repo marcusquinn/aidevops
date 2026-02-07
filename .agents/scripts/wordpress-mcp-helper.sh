@@ -5,46 +5,16 @@
 # Manages WordPress MCP connections for AI assistants
 # Supports both STDIO (local/SSH) and HTTP transports
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
 readonly ERROR_JQ_REQUIRED="jq is required but not installed"
 readonly INFO_JQ_INSTALL_MACOS="Install with: brew install jq"
 readonly INFO_JQ_INSTALL_UBUNTU="Install with: apt-get install jq"
 readonly ERROR_CURL_REQUIRED="curl is required but not installed"
 readonly ERROR_SITE_REQUIRED="Site name is required"
 readonly ERROR_SITE_NOT_FOUND="Site not found in configuration"
-
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 # Configuration paths (XDG-compliant user config)
 CONFIG_FILE="${HOME}/.config/aidevops/wordpress-sites-config.json"

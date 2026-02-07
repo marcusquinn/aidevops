@@ -7,22 +7,8 @@
 # Author: AI DevOps Framework
 # Version: 1.1.1
 
-# Colors for output
-readonly BLUE='\033[0;34m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
-print_info() {
-    local _arg1="$1"
-    echo -e "${BLUE}ℹ️  $_arg1${NC}"
-    return 0
-}
-
-print_error() {
-    local _arg1="$1"
-    echo -e "${RED}❌ $_arg1${NC}"
-    return 0
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Find functions missing return statements in a file
 find_missing_returns_in_file() {

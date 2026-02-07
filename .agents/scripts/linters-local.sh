@@ -16,14 +16,12 @@
 #   /code-audit-remote or code-audit-helper.sh
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Color codes for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
 
 # Quality thresholds
 # Note: These thresholds are set to allow existing code patterns while catching regressions
@@ -40,30 +38,6 @@ readonly MAX_STRING_LITERAL_ISSUES=2300
 print_header() {
     echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
     echo -e "${BLUE}================================================================${NC}"
-    return 0
-}
-
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[PASS] $message${NC}"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[WARN] $message${NC}"
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}[FAIL] $message${NC}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[INFO] $message${NC}"
     return 0
 }
 

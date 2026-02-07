@@ -38,6 +38,9 @@
 #   - Prune removes entries older than threshold AND never accessed
 #   - Validate warns about potentially stale entries
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -59,13 +62,6 @@ readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PRE
 # - extends: Adds detail without contradiction (refinement)
 # - derives: Second-order inference from combining memories
 readonly VALID_RELATIONS="updates extends derives"
-
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[0;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
 
 #######################################
 # Print colored message

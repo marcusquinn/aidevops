@@ -39,6 +39,8 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agents/loop-state"
 readonly STATE_FILE="${STATE_DIR}/full-loop.local.state"
@@ -63,42 +65,11 @@ readonly PHASE_POSTFLIGHT="postflight"
 readonly PHASE_DEPLOY="deploy"
 readonly PHASE_COMPLETE="complete"
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}[full-loop] Error:${NC} ${message}" >&2
-    return 0
-}
-
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[full-loop]${NC} ${message}"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[full-loop]${NC} ${message}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[full-loop]${NC} ${message}"
-    return 0
-}
 
 print_phase() {
     local phase="$1"

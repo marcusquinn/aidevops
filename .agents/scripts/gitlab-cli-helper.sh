@@ -13,21 +13,15 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR="$script_dir"
 
 repo_root="$(dirname "$SCRIPT_DIR")"
 readonly REPO_ROOT="$repo_root"
 readonly CONFIG_FILE="$REPO_ROOT/configs/gitlab-cli-config.json"
 
-# Colors
-readonly BLUE='\033[0;34m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Error Messages
 readonly ERROR_CONFIG_MISSING="Configuration file not found at $CONFIG_FILE"
 readonly ERROR_GLAB_NOT_INSTALLED="GitLab CLI (glab) is required but not installed"
@@ -36,7 +30,6 @@ readonly ERROR_ACCOUNT_MISSING="Account configuration not found"
 readonly ERROR_ARGS_MISSING="Missing required arguments"
 readonly ERROR_API_FAILED="GitLab API request failed"
 
-readonly ERROR_PROJECT_NOT_FOUND="Project not found"
 readonly ERROR_INSTANCE_URL_NOT_CONFIGURED="Instance URL not configured for account"
 readonly ERROR_FAILED_TO_READ_CONFIG="Failed to read configuration"
 readonly ERROR_PROJECT_NAME_REQUIRED="Project name is required"
@@ -55,36 +48,11 @@ readonly SUCCESS_ISSUE_CLOSED="Issue closed successfully"
 readonly SUCCESS_MR_MERGED="Merge request merged successfully"
 
 # Common constants
-readonly CONTENT_TYPE_JSON="$CONTENT_TYPE_JSON"
 readonly AUTH_HEADER_TOKEN="Authorization: token"
 
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
 # ------------------------------------------------------------------------------
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 # ------------------------------------------------------------------------------
 # DEPENDENCY CHECKING

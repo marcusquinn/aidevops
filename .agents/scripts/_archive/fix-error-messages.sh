@@ -7,22 +7,8 @@
 # Author: AI DevOps Framework
 # Version: 1.1.1
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
-
-print_success() {
-    local _arg1="$1"
-    echo -e "${GREEN}✅ $_arg1${NC}"
-    return 0
-}
-
-print_info() {
-    local _arg1="$1"
-    echo -e "${BLUE}ℹ️  $_arg1${NC}"
-    return 0
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Fix error messages in a file
 fix_error_messages_in_file() {
@@ -62,7 +48,6 @@ fix_error_messages_in_file() {
         if [[ $unknown_cmd_count -ge 1 ]]; then
             if ! grep -q "ERROR_UNKNOWN_COMMAND" "$file"; then
                 sed -i '' '/# Error message constants/a\
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 ' "$file"
                 changes_made=1
             fi

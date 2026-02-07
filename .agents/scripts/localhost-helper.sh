@@ -8,13 +8,6 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
 # Error message constants (use shared-constants.sh if available, otherwise define locally)
 if [[ -z "${ERROR_UNKNOWN_COMMAND:-}" ]]; then
     readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
@@ -22,30 +15,6 @@ fi
 if [[ -z "${HELP_USAGE_INFO:-}" ]]; then
     readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 fi
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 # Configuration file
 CONFIG_FILE="../configs/localhost-config.json"

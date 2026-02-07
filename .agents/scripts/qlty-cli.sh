@@ -7,39 +7,10 @@
 # Author: AI DevOps Framework
 # Version: 1.1.1
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
-print_success() {
-    local _arg1="$1"
-    echo -e "${GREEN}✅ $_arg1${NC}"
-    return 0
-}
-
-print_error() {
-    local _arg1="$1"
-    echo -e "${RED}❌ $_arg1${NC}" >&2
-    return 0
-}
-
-print_warning() {
-    local _arg1="$1"
-    echo -e "${YELLOW}⚠️  $_arg1${NC}"
-    return 0
-}
-
-print_info() {
-    local _arg1="$1"
-    echo -e "${BLUE}ℹ️  $_arg1${NC}"
-    return 0
-}
-
 print_header() {
     local _arg1="$1"
     echo -e "${BLUE}🚀 $_arg1${NC}"

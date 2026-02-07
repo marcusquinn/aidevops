@@ -78,12 +78,7 @@ is_docs_only() {
     return 1
 }
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BOLD='\033[1m'
-NC='\033[0m'
 
 # Check if we're in a git repository
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
@@ -164,6 +159,8 @@ else
     
     # Sync terminal tab title with repo/branch (silent, non-blocking)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
     if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
         "$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
     fi

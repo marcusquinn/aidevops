@@ -13,15 +13,12 @@
 # Author: AI DevOps Framework
 # Version: 1.1.0
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
 readonly DIM='\033[2m'
-readonly NC='\033[0m'
 
 # Paths
 readonly CONFIG_DIR="$HOME/.config/aidevops"
@@ -32,31 +29,6 @@ readonly LEGACY_MCP_ENV_FILE="$CONFIG_DIR/mcp-env.sh"
 readonly PROJECT_TENANT_FILE=".aidevops-tenant"
 
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[OK] $msg${NC}"
-    return 0
-}
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO] $msg${NC}"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARN] $msg${NC}"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR] $msg${NC}" >&2
-    return 0
-}
 
 # Validate tenant name (alphanumeric, hyphens, underscores)
 validate_tenant_name() {

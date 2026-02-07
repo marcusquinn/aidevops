@@ -32,6 +32,9 @@
 #   - Supports basic auth via OPENCODE_SERVER_PASSWORD
 #   - Runner AGENTS.md files are local-only (not committed to repos)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -41,15 +44,8 @@ readonly MAIL_HELPER="$HOME/.aidevops/agents/scripts/mail-helper.sh"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 readonly DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
-readonly DEFAULT_TIMEOUT=600
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[0;33m'
-readonly BLUE='\033[0;34m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 #######################################
 # Logging

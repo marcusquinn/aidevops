@@ -8,40 +8,10 @@
 # Version: 1.1.1
 # Reference: https://docs.codefactor.io/bootcamp/analysis-tools/
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}✅ $message${NC}"
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}❌ $message${NC}" >&2
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}⚠️  $message${NC}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}ℹ️  $message${NC}"
-    return 0
-}
-
 print_header() {
     local message="$1"
     echo -e "${PURPLE}🔧 $message${NC}"

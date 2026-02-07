@@ -33,6 +33,8 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly SCRIPT_NAME="ralph-loop-helper.sh"
 
@@ -61,13 +63,7 @@ readonly DEFAULT_MAX_ITERATIONS=50
 readonly DEFAULT_MAX_ATTEMPTS=5
 
 # Colors (fallback if loop-common.sh not loaded)
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 # Output file for tool capture (shared with EXIT trap)
 output_file=""
@@ -75,30 +71,6 @@ output_file=""
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}[ralph] Error:${NC} ${message}" >&2
-    return 0
-}
-
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[ralph]${NC} ${message}"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[ralph]${NC} ${message}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[ralph]${NC} ${message}"
-    return 0
-}
 
 print_step() {
     local message="$1"

@@ -156,6 +156,19 @@ readonly COLOR_WHITE='\033[1;37m'
 readonly COLOR_RESET='\033[0m'
 
 # =============================================================================
+# Color Aliases (short names used by most scripts)
+# =============================================================================
+
+readonly RED="$COLOR_RED"
+readonly GREEN="$COLOR_GREEN"
+readonly YELLOW="$COLOR_YELLOW"
+readonly BLUE="$COLOR_BLUE"
+readonly PURPLE="$COLOR_PURPLE"
+readonly CYAN="$COLOR_CYAN"
+readonly WHITE="$COLOR_WHITE"
+readonly NC="$COLOR_RESET"
+
+# =============================================================================
 # Common Functions for Error Handling
 # =============================================================================
 
@@ -186,6 +199,12 @@ print_shared_info() {
     echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $msg"
     return 0
 }
+
+# Short aliases (used by most scripts - avoids needing inline redefinitions)
+print_error() { print_shared_error "$1"; return $?; }
+print_success() { print_shared_success "$1"; return $?; }
+print_warning() { print_shared_warning "$1"; return $?; }
+print_info() { print_shared_info "$1"; return $?; }
 
 # Validate required parameter
 validate_required_param() {
@@ -330,3 +349,4 @@ export CI_WAIT_FAST CI_POLL_FAST CI_WAIT_MEDIUM CI_POLL_MEDIUM CI_WAIT_SLOW CI_P
 export CI_BACKOFF_BASE CI_BACKOFF_MAX CI_BACKOFF_MULTIPLIER
 export CI_TIMEOUT_FAST CI_TIMEOUT_MEDIUM CI_TIMEOUT_SLOW
 export COLOR_RED COLOR_GREEN COLOR_YELLOW COLOR_BLUE COLOR_PURPLE COLOR_CYAN COLOR_WHITE COLOR_RESET
+export RED GREEN YELLOW BLUE PURPLE CYAN WHITE NC

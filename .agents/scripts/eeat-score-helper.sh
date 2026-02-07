@@ -19,16 +19,10 @@
 
 set -euo pipefail
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m'
-
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly CONFIG_DIR="${HOME}/.config/aidevops"
 readonly CONFIG_FILE="${CONFIG_DIR}/eeat-score.json"
@@ -53,30 +47,6 @@ WEIGHT_SUBJECTIVE=0.15
 WEIGHT_WRITING=0.10
 
 # Print functions
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[OK] $message${NC}"
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[INFO] $message${NC}"
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[WARN] $message${NC}"
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}[ERROR] $message${NC}"
-    return 0
-}
-
 print_header() {
     local message="$1"
     echo -e "${PURPLE}=== $message ===${NC}"

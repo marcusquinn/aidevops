@@ -4,22 +4,12 @@
 # 🔍 MCP Integrations Validation Script
 # Validates and tests all MCP integrations for proper functionality
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m'
-
 print_header() { local msg="$1"; echo -e "${PURPLE}$msg${NC}"; return 0; }
-print_info() { local msg="$1"; echo -e "${BLUE}$msg${NC}"; return 0; }
-print_success() { local msg="$1"; echo -e "${GREEN}✅ $msg${NC}"; return 0; }
-print_warning() { local msg="$1"; echo -e "${YELLOW}⚠️  $msg${NC}"; return 0; }
-print_error() { local msg="$1"; echo -e "${RED}❌ $msg${NC}"; return 0; }
-
 # Test results tracking
 declare -i total_tests=0
 declare -i passed_tests=0

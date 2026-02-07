@@ -13,16 +13,12 @@
 # Options:
 #   --focus <area>  Focus on: objectives, workflow, knowledge, all (default: all)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 # Find project root (look for .git or TODO.md)
 find_project_root() {

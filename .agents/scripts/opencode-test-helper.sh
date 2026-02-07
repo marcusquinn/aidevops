@@ -15,19 +15,10 @@
 #   opencode-test-helper.sh run <message> [--agent <agent>]
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
-
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; return 0; }
-print_success() { echo -e "${GREEN}[OK]${NC} $1"; return 0; }
-print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; return 0; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; return 0; }
 
 show_help() {
     cat << 'EOF'
