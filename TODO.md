@@ -67,7 +67,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none completed:2026-02-07
   - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
   - [ ] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none
-  - [ ] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none
+    - Notes: BLOCKED by supervisor: Max retries exceeded: backend_infrastructure_error  - [ ] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none
   - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
   - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
