@@ -91,9 +91,10 @@ install_sonar_scanner() {
     print_info "Platform: $platform-$arch"
     print_info "Downloading from: $download_url"
     
-    # Create temporary directory
+    # Create temporary directory with trap cleanup for early returns
     local temp_dir
     temp_dir=$(mktemp -d)
+    trap 'rm -rf "$temp_dir"' RETURN
     local zip_file="$temp_dir/sonar-scanner.zip"
     
     # Download

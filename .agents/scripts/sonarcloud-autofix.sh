@@ -39,6 +39,7 @@ fix_missing_returns() {
     # This is a basic implementation - would need more sophisticated logic for production
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     
     awk '
     /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_function = 1 }
@@ -50,9 +51,7 @@ fix_missing_returns() {
     return 0
     }
     { print }
-    ' "$file" > "$temp_file"
-    
-    mv "$temp_file" "$file"
+    ' "$file" > "$temp_file" && mv "$temp_file" "$file"
     print_success "Added return statements to $file"
     return 0
 }

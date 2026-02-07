@@ -113,12 +113,12 @@ update_job_status() {
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq --arg id "$job_id" \
        --arg status "$status" \
        --arg timestamp "$timestamp" \
        '(.jobs[] | select(.id == $id)) |= . + {lastRun: $timestamp, lastStatus: $status}' \
-       "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
+       "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
 }
 
 #######################################

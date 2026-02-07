@@ -167,6 +167,7 @@ run_prompt_claude() {
     # Run with timeout
     local stderr_file
     stderr_file=$(mktemp)
+    trap 'rm -f "$stderr_file"' RETURN
     timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
         local exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
@@ -174,10 +175,8 @@ run_prompt_claude() {
         elif [[ -s "$stderr_file" ]]; then
             echo "[ERROR: $(cat "$stderr_file")]"
         fi
-        rm -f "$stderr_file"
         return $exit_code
     }
-    rm -f "$stderr_file"
 }
 
 #######################################
@@ -271,6 +270,7 @@ run_prompt_opencode_cli() {
 
     local stderr_file
     stderr_file=$(mktemp)
+    trap 'rm -f "$stderr_file"' RETURN
     timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
         local exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
@@ -278,10 +278,8 @@ run_prompt_opencode_cli() {
         elif [[ -s "$stderr_file" ]]; then
             echo "[ERROR: $(cat "$stderr_file")]"
         fi
-        rm -f "$stderr_file"
         return $exit_code
     }
-    rm -f "$stderr_file"
 }
 
 #######################################
