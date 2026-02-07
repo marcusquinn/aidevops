@@ -243,6 +243,56 @@ Suggestions:
 ---
 ```
 
+## Compaction Resilience (Long Autonomous Sessions)
+
+During long autonomous sessions (1h+), context compaction can cause loss of task state. Use the checkpoint system to persist state to disk.
+
+### Checkpoint Workflow
+
+```bash
+# After completing each task, save checkpoint:
+session-checkpoint-helper.sh save \
+  --task "t135.9" \
+  --next "t135.11,t014,t025" \
+  --worktree "/path/to/worktree" \
+  --batch "batch2-quality" \
+  --note "Completed trap cleanup for 29 scripts" \
+  --elapsed "90" \
+  --target "240"
+
+# Before starting any new task (especially after compaction), reload:
+session-checkpoint-helper.sh load
+
+# Check if checkpoint is stale:
+session-checkpoint-helper.sh status
+```
+
+### When to Checkpoint
+
+| Event | Action |
+|-------|--------|
+| Task completed | `save` with updated --task and --next |
+| PR created/merged | `save` with --note describing PR state |
+| Batch of files committed | `save` with --note listing what changed |
+| Before large operation | `save` as recovery point |
+| After context compaction | `load` to re-orient |
+
+### Self-Prompting Loop Pattern
+
+For autonomous multi-hour sessions, follow this loop after each task:
+
+1. Mark task complete in TODO.md
+2. Save checkpoint to disk
+3. Re-read checkpoint file (forces re-orientation after compaction)
+4. Read TODO.md for next task
+5. Start next task
+
+This ensures the agent always has current state even if context was compacted between steps 2 and 3.
+
+### Continuation Prompt Generation
+
+If a session must be resumed manually (new conversation), the checkpoint file at `~/.aidevops/.agent-workspace/tmp/session-checkpoint.md` contains enough state to generate a continuation prompt. The user can paste it or the agent can read it on startup.
+
 ## Related
 
 **AGENTS.md is the single source of truth for agent behavior.** This document is supplementary and defers to AGENTS.md where they differ.
