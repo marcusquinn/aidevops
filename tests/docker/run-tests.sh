@@ -2,7 +2,8 @@
 # Setup script test runner
 set -uo pipefail
 
-SCRIPTS_DIR="${HOME}/git/aidevops/.agents/scripts"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 PASS=0
 FAIL=0
 SKIP=0
