@@ -208,3 +208,6 @@ repomix-output.*
 *-repomix-*.md
 *-repomix-*.json
 .osgrep
+
+# ML model caches (downloaded at runtime)
+mlx_models/

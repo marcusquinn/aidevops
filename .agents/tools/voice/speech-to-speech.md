@@ -286,6 +286,32 @@ Typical setup: SSH into instance, clone repo, install deps, run server mode. Con
 | Audio crackling | Increase `--min_silence_ms` or check sample rate |
 | OOM on GPU | Use smaller models or `--llm open_api` to offload LLM |
 
+## Voice Bridge (Recommended)
+
+For talking directly to your AI coding agent, use the **voice bridge** instead of the full S2S pipeline. It's simpler, faster to start, and integrates with OpenCode:
+
+```bash
+voice-helper.sh talk              # Start voice conversation (defaults)
+voice-helper.sh talk whisper-mlx edge-tts  # Explicit engines
+voice-helper.sh talk whisper-mlx macos-say # Offline mode
+voice-helper.sh devices           # List audio devices
+voice-helper.sh voices            # List available TTS voices
+voice-helper.sh benchmark         # Test component speeds
+```
+
+**Architecture:** `Mic -> Silero VAD -> Whisper MLX (1.4s) -> OpenCode run --attach (~4-6s) -> Edge TTS (0.4s) -> Speaker`
+
+**Round-trip:** ~6-8s conversational, longer for tool execution.
+
+**Features:**
+- Swappable STT (whisper-mlx, faster-whisper) and TTS (edge-tts, macos-say, facebookMMS)
+- Voice exit phrases ("that's all", "goodbye", "all for now")
+- STT sanity checking (corrects transcription errors before acting)
+- Session handback (transcript output on exit for calling agent)
+- Esc key interrupt in terminal, graceful degradation in TUI subprocess
+
+The full S2S pipeline above is for advanced use cases (custom LLMs, server/client deployment, multi-language, phone integration).
+
 ## See Also
 
 - `services/communications/twilio.md` - Phone integration
