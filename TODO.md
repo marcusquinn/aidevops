@@ -146,6 +146,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.9.1 Identify all mktemp usages without trap cleanup ~15m completed:2026-02-07
     - Notes: 33 scripts use mktemp, 31 without trap. Critical scripts (secret-helper, version-manager) fixed in PR #436.
     - [ ] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.9.2
+      - Notes: BLOCKED by supervisor: FAILED: no_log_file
   - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
   - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-07
     - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
