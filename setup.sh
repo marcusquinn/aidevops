@@ -2093,19 +2093,37 @@ deploy_aidevops_agents() {
     # Create target directory and copy agents
     mkdir -p "$target_dir"
     
-    # If clean mode, remove stale files first
+    # If clean mode, remove stale files first (preserving user directories)
     if [[ "$CLEAN_MODE" == "true" ]]; then
-        print_info "Clean mode: removing stale files from $target_dir"
+        print_info "Clean mode: removing stale files from $target_dir (preserving custom/, draft/)"
+        # Preserve user-managed directories before clean
+        local preserved_dirs=("custom" "draft")
+        local tmp_preserve
+        tmp_preserve=$(mktemp -d)
+        for pdir in "${preserved_dirs[@]}"; do
+            if [[ -d "$target_dir/$pdir" ]]; then
+                cp -R "$target_dir/$pdir" "$tmp_preserve/$pdir"
+            fi
+        done
         rm -rf "${target_dir:?}"/*
+        # Restore preserved directories
+        for pdir in "${preserved_dirs[@]}"; do
+            if [[ -d "$tmp_preserve/$pdir" ]]; then
+                cp -R "$tmp_preserve/$pdir" "$target_dir/$pdir"
+            fi
+        done
+        rm -rf "$tmp_preserve"
     fi
     
     # Copy all agent files and folders, excluding:
     # - loop-state/ (local runtime state, not agents)
+    # - custom/ (user's private agents, never overwritten)
+    # - draft/ (user's experimental agents, never overwritten)
     # Use rsync for selective exclusion
     if command -v rsync &>/dev/null; then
-        rsync -a --exclude='loop-state/' "$source_dir/" "$target_dir/"
+        rsync -a --exclude='loop-state/' --exclude='custom/' --exclude='draft/' "$source_dir/" "$target_dir/"
     else
-        # Fallback: copy then remove loop-state
+        # Fallback: copy then remove excluded dirs
         cp -R "$source_dir"/* "$target_dir/"
         rm -rf "$target_dir/loop-state" 2>/dev/null || true
     fi

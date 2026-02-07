@@ -213,6 +213,16 @@ See `subagent-index.toon` for complete listing of agents, subagents, workflows, 
 
 **Strategy**: Read subagents on-demand when tasks require domain expertise. This keeps context focused.
 
+**Agent tiers** (user-created agents survive `aidevops update`):
+
+| Tier | Location | Purpose |
+|------|----------|---------|
+| **Draft** | `~/.aidevops/agents/draft/` | R&D, experimental, auto-created by orchestration tasks |
+| **Custom** | `~/.aidevops/agents/custom/` | User's permanent private agents |
+| **Shared** | `.agents/` in repo | Open-source, distributed to all users |
+
+Orchestration agents can create drafts in `draft/` for reusable parallel processing context. See `tools/build-agent/build-agent.md` for the full lifecycle and promotion workflow.
+
 **Progressive disclosure by domain**:
 
 | Domain | Read |
@@ -293,11 +303,16 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 ## Working Directories
 
 ```text
-~/.aidevops/.agent-workspace/
-├── work/[project]/    # Persistent project files
-├── tmp/session-*/     # Temporary session files
-├── mail/              # Inter-agent mailbox (SQLite: mailbox.db)
-└── memory/            # Cross-session patterns (SQLite FTS5)
+~/.aidevops/
+├── agents/                    # Deployed agent files
+│   ├── custom/                # User's private agents (survives updates)
+│   ├── draft/                 # Experimental/R&D agents (survives updates)
+│   └── ...                    # Shared agents (deployed from repo)
+└── .agent-workspace/
+    ├── work/[project]/        # Persistent project files
+    ├── tmp/session-*/         # Temporary session files
+    ├── mail/                  # Inter-agent mailbox (SQLite: mailbox.db)
+    └── memory/                # Cross-session patterns (SQLite FTS5)
 ```
 
 ## Browser Automation
