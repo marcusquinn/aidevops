@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.105.0] - 2026-02-07
+
+### Added
+
+- add runtime context hint to session greeting (#419)
+- add Oh My Zsh setup option and fix bash/zsh shell compatibility (#418)
+- add voice bridge -- talk to AI agents via speech (#416)
+- add VirusTotal API integration for skill security scanning (#410)
+- add three-tier agent lifecycle (draft, private, shared) (#409)
+- add skill scan results audit trail (#406)
+- gopass integration & credentials rename (t131) (#405)
+- auto-install Cisco Skill Scanner during setup (#404)
+- add voice AI integration with HuggingFace speech-to-speech pipeline (#403)
+- separate --force from security scan bypass in skill imports (#402)
+- integrate Cisco Skill Scanner for security scanning of imported skills (#400)
+- add --non-interactive flag to setup.sh for CI/CD and AI agent shells (#399)
+
+### Changed
+
+- Documentation: add plugin system plan for private extension repos (t136)
+- Documentation: update README with recent feature changes (#420)
+- Refactor: remove oh-my-opencode integration and fix SKILL-SCAN-RESULTS agent (#413)
+- Refactor: remove non-OpenCode AI tool support from aidevops (#412)
+- Documentation: add draft agent awareness to orchestration agents (#411)
+- Documentation: update t135.12 to use _archive/ folder name (user preference)
+- Documentation: add t135 codebase quality hardening plan from Opus 4.6 review
+- Documentation: mention scan results audit trail in README (#408)
+- Documentation: add gitignore *credential* pattern note to t131.1
+- Documentation: add PRD and tasks for gopass integration & credentials rename (t131)
+- Documentation: add gopass integration plan (t131) to TODO and PLANS
+
+### Fixed
+
+- speech-to-speech helper syntax errors and venv support (#407)
+- surface AI reviewer feedback posted as COMMENTED in pr-loop WAITING state (#401)
+
 ## [2.104.0] - 2026-02-06
 
 ### Added
