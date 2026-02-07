@@ -2123,9 +2123,8 @@ deploy_aidevops_agents() {
     if command -v rsync &>/dev/null; then
         rsync -a --exclude='loop-state/' --exclude='custom/' --exclude='draft/' "$source_dir/" "$target_dir/"
     else
-        # Fallback: copy then remove excluded dirs
-        cp -R "$source_dir"/* "$target_dir/"
-        rm -rf "$target_dir/loop-state" 2>/dev/null || true
+        # Fallback: use tar with exclusions to match rsync behavior
+        (cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) | (cd "$target_dir" && tar xf -)
     fi
     
     if [[ $? -eq 0 ]]; then
