@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "aidevops",
-      "source": "./.agent",
+      "source": "./.agents",
       "description": "Complete AI DevOps framework - 14 domain agents, 80+ subagents, 100+ helper scripts for WordPress, SEO, hosting, code quality, browser automation, and more",
       "strict": false
     }

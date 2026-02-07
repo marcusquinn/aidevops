@@ -235,31 +235,29 @@ run_codacy_analysis() {
         return 1
     fi
 
-    # Build analysis command
-    local cmd="codacy-cli analyze"
+    # Build analysis command as array to avoid eval
+    local cmd=("codacy-cli" "analyze")
 
     # Handle auto-fix flag
     if [[ "$tool" == "--fix" ]]; then
-        cmd="$cmd --fix"
+        cmd+=("--fix")
         print_info "Auto-fix enabled: Will apply fixes when available"
         print_info "Running analysis with all configured tools"
     elif [[ -n "$tool" ]]; then
-        cmd="$cmd --tool $tool"
+        cmd+=("--tool" "$tool")
         print_info "Running analysis with tool: $tool"
     else
         print_info "Running analysis with all configured tools"
     fi
 
     if [[ "$output_format" == "sarif" ]]; then
-        cmd="$cmd --format sarif --output $output_file"
+        cmd+=("--format" "sarif" "--output" "$output_file")
         print_info "Output format: SARIF → $output_file"
     fi
 
     # Execute analysis
-    print_info "Executing: $cmd"
-    eval "$cmd"
-    
-    if [[ $? -eq 0 ]]; then
+    print_info "Executing: ${cmd[*]}"
+    if "${cmd[@]}"; then
         print_success "Code analysis completed successfully"
         if [[ -f "$output_file" ]]; then
             print_info "Results saved to: $output_file"
@@ -296,13 +294,13 @@ upload_codacy_results() {
     local organization="${CODACY_ORGANIZATION:-}"
     local repository="${CODACY_REPOSITORY:-}"
 
-    local cmd="codacy-cli upload -s $sarif_file -c $commit_uuid"
+    local cmd=("codacy-cli" "upload" "-s" "$sarif_file" "-c" "$commit_uuid")
 
     if [[ -n "$project_token" ]]; then
-        cmd="$cmd -t $project_token"
+        cmd+=("-t" "$project_token")
         print_info "Using project token for upload"
     elif [[ -n "$api_token" && -n "$provider" && -n "$organization" && -n "$repository" ]]; then
-        cmd="$cmd -a $api_token -p $provider -o $organization -r $repository"
+        cmd+=("-a" "$api_token" "-p" "$provider" "-o" "$organization" "-r" "$repository")
         print_info "Using API token for upload"
     else
         print_error "Upload credentials required:"
@@ -312,16 +310,13 @@ upload_codacy_results() {
     fi
 
     print_info "Uploading: $sarif_file (commit: ${commit_uuid:0:8})"
-    eval "$cmd"
-
-    if [[ $? -eq 0 ]]; then
+    if "${cmd[@]}"; then
         print_success "Results uploaded to Codacy successfully"
         return 0
     else
         print_error "Upload failed"
         return 1
     fi
-    return 0
 }
 
 # Show CLI status
