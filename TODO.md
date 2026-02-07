@@ -55,7 +55,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-07 ref:GH#437
+- [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-07 ref:GH#437 completed:2026-02-07
   - [ ] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none
   - [ ] t148.2 Add triage_review_feedback() to classify threads by severity ~1.5h blocked-by:t148.1
   - [ ] t148.3 Add review_triage state to supervisor state machine ~30m blocked-by:t148.1
