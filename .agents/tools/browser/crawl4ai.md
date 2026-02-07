@@ -624,8 +624,8 @@ curl -X POST http://localhost:11235/crawl \
 - **Helper Script**: `.agents/scripts/crawl4ai-helper.sh`
 - **Configuration Template**: `configs/crawl4ai-config.json.txt`
 - **MCP Configuration**: `configs/mcp-templates/crawl4ai-mcp-config.json`
-- **Integration Guide**: `.agents/wiki/crawl4ai-integration.md`
-- **Usage Guide**: `.agents/spec/crawl4ai-usage.md`
+- **Integration Guide**: `.agents/tools/browser/crawl4ai-integration.md`
+- **Usage Guide**: `.agents/tools/browser/crawl4ai-usage.md`
 
 ### Official Resources
 

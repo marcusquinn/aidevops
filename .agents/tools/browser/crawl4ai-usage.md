@@ -400,7 +400,7 @@ echo "$CONTENT" | # Process with your AI pipeline
 - **Helper Script**: `.agents/scripts/crawl4ai-helper.sh`
 - **Configuration**: `configs/crawl4ai-config.json.txt`
 - **MCP Setup**: `configs/mcp-templates/crawl4ai-mcp-config.json`
-- **Integration Guide**: `.agents/wiki/crawl4ai-integration.md`
+- **Integration Guide**: `.agents/tools/browser/crawl4ai-integration.md`
 - **Official Docs**: https://docs.crawl4ai.com/
 
 ## Success Checklist

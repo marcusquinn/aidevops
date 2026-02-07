@@ -281,7 +281,7 @@ This guide outlines proven best practices for infrastructure management and help
 
 - **Helper scripts**: Root level for easy access
 - **Configuration samples**: In `configs/` directory
-- **Documentation**: In `docs/` directory
+- **Documentation**: In `.agents/` directory
 - **Provider scripts**: In `.agents/scripts/` directory
 
 ## 🔍 **Monitoring & Maintenance**
