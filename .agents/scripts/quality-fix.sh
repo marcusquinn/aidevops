@@ -45,8 +45,6 @@ print_info() {
     echo -e "${BLUE}ℹ️  $message${NC}"
     return 0
 }
-
-
 backup_files() {
     print_info "Creating backup of provider files..."
 

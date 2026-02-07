@@ -64,7 +64,6 @@ readonly NPM_PACKAGE="@watercrawl/nodejs"
 readonly WATERCRAWL_REPO="https://github.com/watercrawl/WaterCrawl.git"
 readonly WATERCRAWL_DIR="$HOME/.aidevops/watercrawl"
 
-# Print functions
 print_success() {
     local message="$1"
     echo -e "${GREEN}[OK] $message${NC}"

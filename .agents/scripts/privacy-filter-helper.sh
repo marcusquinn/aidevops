@@ -92,7 +92,6 @@ readonly -a DEFAULT_PATTERNS=(
     'SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}'
 )
 
-# Print functions
 print_success() {
     local message="$1"
     echo -e "${GREEN}[PASS]${NC} $message"
@@ -116,8 +115,6 @@ print_error() {
     echo -e "${RED}[FAIL]${NC} $message" >&2
     return 0
 }
-
-
 print_header() {
     local message="$1"
     echo -e "${PURPLE}$message${NC}"

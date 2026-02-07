@@ -18,10 +18,6 @@ _CACHED_SUBAGENTS=""
 _CACHED_SCRIPTS=""
 
 # Color output functions
-print_success() { local msg="$1"; echo -e "\033[32m[SUCCESS]\033[0m $msg"; return 0; }
-print_error() { local msg="$1"; echo -e "\033[31m[ERROR]\033[0m $msg"; return 0; }
-print_warning() { local msg="$1"; echo -e "\033[33m[WARNING]\033[0m $msg"; return 0; }
-print_info() { local msg="$1"; echo -e "\033[34m[INFO]\033[0m $msg"; return 0; }
 
 # Count main agents (*.md files in .agents/ root, excluding AGENTS.md)
 count_main_agents() {
