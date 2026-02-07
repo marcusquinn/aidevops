@@ -123,7 +123,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
-  - [ ] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none
+  - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
   - [x] t135.15 P1-D: Add system resource monitoring to supervisor pulse (CPU load, process count, adaptive concurrency) ~2h blocked-by:none completed:2026-02-07
     - [ ] t135.15.1 Add check_system_load() to supervisor-helper.sh (load avg, process count, memory pressure) ~30m
     - [ ] t135.15.2 Add adaptive concurrency throttling to pulse cycle (reduce workers when load > cores*2) ~45m blocked-by:t135.15.1
