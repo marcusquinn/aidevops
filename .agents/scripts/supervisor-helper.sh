@@ -1523,9 +1523,12 @@ cmd_next() {
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
 
-        # Check concurrency limit
+        # Check concurrency limit with adaptive load awareness (t151)
+        local base_concurrency max_load_factor
+        base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
         local concurrency
-        concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
@@ -2103,26 +2106,31 @@ cmd_dispatch() {
         return 1
     fi
 
-    # Check concurrency limit if in a batch
+    # Check concurrency limit with adaptive load awareness (t151)
     if [[ -n "$batch_id" ]]; then
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
+        local base_concurrency max_load_factor
+        base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
         local concurrency
-        concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
         if [[ "$active_count" -ge "$concurrency" ]]; then
-            log_warn "Concurrency limit reached ($active_count/$concurrency) for batch $batch_id"
+            log_warn "Concurrency limit reached ($active_count/$concurrency, base:$base_concurrency) for batch $batch_id"
             return 2
         fi
     else
-        # Global concurrency check (default 4)
-        local global_concurrency="${SUPERVISOR_MAX_CONCURRENCY:-4}"
+        # Global concurrency check with adaptive load awareness (t151)
+        local base_global_concurrency="${SUPERVISOR_MAX_CONCURRENCY:-4}"
+        local global_concurrency
+        global_concurrency=$(calculate_adaptive_concurrency "$base_global_concurrency")
         local global_active
         global_active=$(cmd_running_count)
         if [[ "$global_active" -ge "$global_concurrency" ]]; then
-            log_warn "Global concurrency limit reached ($global_active/$global_concurrency)"
+            log_warn "Global concurrency limit reached ($global_active/$global_concurrency, base:$base_global_concurrency)"
             return 2
         fi
     fi
@@ -2290,10 +2298,10 @@ cmd_worker_status() {
             echo -e "  Signal:     ${YELLOW}TASK_COMPLETE${NC}"
         fi
 
-        # Check for PR URL
+        # Show PR URL from DB (t151: don't grep log - picks up wrong URLs)
         local pr_url
-        pr_url=$(grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' "$tlog" 2>/dev/null | tail -1 || true)
-        if [[ -n "$pr_url" ]]; then
+        pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || true)
+        if [[ -n "$pr_url" && "$pr_url" != "no_pr" && "$pr_url" != "task_only" ]]; then
             echo "  PR:         $pr_url"
         fi
 
@@ -2356,13 +2364,11 @@ extract_log_metadata() {
         echo "signal=none"
     fi
 
-    # PR URL (GitHub or GitLab)
-    local pr_url
-    pr_url=$(grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' "$log_file" 2>/dev/null | tail -1 || true)
-    if [[ -z "$pr_url" ]]; then
-        pr_url=$(grep -oE 'https://gitlab\.[^/]+/[^/]+/[^/]+/-/merge_requests/[0-9]+' "$log_file" 2>/dev/null | tail -1 || true)
-    fi
-    echo "pr_url=${pr_url:-}"
+    # PR URL: NOT extracted from log content (t151)
+    # Log grep picks up any PR URL mentioned in worker context (memory recalls,
+    # TODO reads, git log), causing wrong PR URLs on tasks. Authoritative lookup
+    # via gh pr list --head is done in evaluate_worker() and check_pr_status().
+    echo "pr_url="
 
     # Exit code
     local exit_line
