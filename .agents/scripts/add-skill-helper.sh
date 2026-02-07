@@ -585,7 +585,7 @@ scan_skill_security() {
 }
 
 # Run VirusTotal scan on skill files and referenced domains
-# Returns: 0 = safe or VT not configured, 1 = threats detected
+# Returns: 0 (always, as VT scans are advisory; Cisco scanner is the gate)
 scan_skill_virustotal() {
     local scan_path="$1"
     local skill_name="$2"
@@ -612,7 +612,7 @@ scan_skill_virustotal() {
     
     if ! "$vt_helper" scan-skill "$scan_path" --quiet; then
         log_warning "VirusTotal flagged potential threats in '$skill_name'"
-        log_info "Run: virustotal-helper.sh scan-skill '$scan_path' for details"
+        log_info "Run: $vt_helper scan-skill '$scan_path' for details"
         # VT findings are advisory, not blocking (Cisco scanner is the gate)
         return 0
     fi

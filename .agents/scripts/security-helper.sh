@@ -594,10 +594,12 @@ cmd_skill_scan() {
                     continue
                 fi
 
-                local scan_dir
-                scan_dir="$(dirname "$full_path")"
                 echo -e "${CYAN}VT Scanning${NC}: $name"
-                "$vt_helper" scan-skill "$scan_dir" --quiet 2>/dev/null || {
+                local scan_target="$full_path"
+                if [[ -d "${full_path%.*}" ]]; then
+                    scan_target="${full_path%.*}"
+                fi
+                "$vt_helper" scan-skill "$scan_target" --quiet 2>/dev/null || {
                     vt_issues=$((vt_issues + 1))
                     echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
                 }
