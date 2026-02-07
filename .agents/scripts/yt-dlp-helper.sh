@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
+set -euo pipefail
 
 # yt-dlp Helper Script
 # Download YouTube video, audio, playlists, channels, and transcripts

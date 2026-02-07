@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+set -euo pipefail
 
 # Version Manager for AI DevOps Framework
 # Manages semantic versioning and automated version bumping
@@ -101,7 +102,7 @@ check_changelog_unreleased() {
     
     # Check if there's content under [Unreleased]
     local unreleased_content
-    unreleased_content=$(sed -n '/^## \[Unreleased\]/,/^## \[/p' "$changelog_file" | grep -v "^##" | grep -v "^$" | head -5)
+    unreleased_content=$(sed -n '/^## \[Unreleased\]/,/^## \[/p' "$changelog_file" | grep -v "^##" | grep -v "^$" | head -5 || true)
     
     if [[ -z "$unreleased_content" ]]; then
         print_warning "CHANGELOG.md [Unreleased] section is empty"
@@ -609,7 +610,7 @@ extract_task_ids_from_commits() {
         # e.g., feat(t001):, fix(t002):, docs(t003.1):, refactor(t004):
         if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\(t[0-9]{3}(\.[0-9]+)*\): ]]; then
             local id
-            id=$(echo "$commit" | grep -oE '\(t[0-9]{3}(\.[0-9]+)*\)' | tr -d '()')
+            id=$(echo "$commit" | grep -oE '\(t[0-9]{3}(\.[0-9]+)*\)' | tr -d '()' || true)
             task_ids="$task_ids $id"
         fi
         
@@ -618,21 +619,21 @@ extract_task_ids_from_commits() {
         if [[ "$commit" =~ mark[[:space:]]+(.*)[[:space:]]+(done|complete) ]]; then
             local segment="${BASH_REMATCH[1]}"
             local ids
-            ids=$(echo "$segment" | grep -oE '\bt[0-9]{3}(\.[0-9]+)*\b')
+            ids=$(echo "$segment" | grep -oE '\bt[0-9]{3}(\.[0-9]+)*\b' || true)
             task_ids="$task_ids $ids"
         fi
         
         # Pattern 3: "complete/completes/closes tXXX" - task ID immediately after keyword
         # e.g., "complete t037", "closes t001"
         local ids
-        ids=$(echo "$commit" | grep -oE '(completes?|closes?)[[:space:]]+t[0-9]{3}(\.[0-9]+)*' | grep -oE 't[0-9]{3}(\.[0-9]+)*')
+        ids=$(echo "$commit" | grep -oE '(completes?|closes?)[[:space:]]+t[0-9]{3}(\.[0-9]+)*' 2>/dev/null | grep -oE 't[0-9]{3}(\.[0-9]+)*' || true)
         if [[ -n "$ids" ]]; then
             task_ids="$task_ids $ids"
         fi
         
         # Pattern 4: "tXXX complete/done/finished" - task ID before completion word
         # e.g., "t001 complete", "t002 done"
-        ids=$(echo "$commit" | grep -oE 't[0-9]{3}(\.[0-9]+)*[[:space:]]+(complete|done|finished)' | grep -oE 't[0-9]{3}(\.[0-9]+)*')
+        ids=$(echo "$commit" | grep -oE 't[0-9]{3}(\.[0-9]+)*[[:space:]]+(complete|done|finished)' 2>/dev/null | grep -oE 't[0-9]{3}(\.[0-9]+)*' || true)
         if [[ -n "$ids" ]]; then
             task_ids="$task_ids $ids"
         fi

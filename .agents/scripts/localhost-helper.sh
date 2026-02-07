@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+set -euo pipefail
 
 # Localhost Development Helper Script
 # Sets up local Docker apps with .local domains and SSL certificates
@@ -400,7 +401,7 @@ list_localwp_sites() {
                 local conf_file="$site_dir/conf/nginx/site.conf"
                 if [[ -f "$conf_file" ]]; then
                     local port
-                    port=$(grep -o 'listen [0-9]*' "$conf_file" | head -1 | awk '{print $param2}')
+                    port=$(grep -o 'listen [0-9]*' "$conf_file" 2>/dev/null | head -1 | awk '{print $param2}' || true)
                     echo "  - $site_name (http://localhost:$port)"
                 else
                     echo "  - $site_name (configuration not found)"
@@ -437,7 +438,7 @@ setup_localwp_domain() {
 
     if [[ -f "$conf_file" ]]; then
         local port
-        port=$(grep -o 'listen [0-9]*' "$conf_file" | head -1 | awk '{print $param2}')
+        port=$(grep -o 'listen [0-9]*' "$conf_file" 2>/dev/null | head -1 | awk '{print $param2}' || true)
         print_info "Setting up $domain for LocalWP site $site_name (port $port)"
 
         # Generate SSL certificate
