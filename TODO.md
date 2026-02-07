@@ -85,7 +85,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.4.2 Fix configs/mcp-templates/chrome-devtools.json (shell code after JSON) ~15m
     - [ ] t135.4.3 Add JSON validation step to CI workflow ~30m blocked-by:t135.4.1,t135.4.2
   - [ ] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none
-    - [ ] t135.5.1 git rm --cached .scannerwork/ and .playwright-cli/ ~10m
+    - Notes: BLOCKED by supervisor: Max retries exceeded: backend_infrastructure_error    - [ ] t135.5.1 git rm --cached .scannerwork/ and .playwright-cli/ ~10m
     - [ ] t135.5.2 Add .playwright-cli/ to .gitignore ~5m
     - [ ] t135.5.3 Verify .scannerwork/ already in .gitignore ~5m
   - [ ] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none
