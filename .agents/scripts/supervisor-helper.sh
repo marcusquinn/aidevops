@@ -3850,24 +3850,75 @@ cmd_pulse() {
     # Process tasks that workers completed (PR created) but still need merge/deploy
     process_post_pr_lifecycle "${batch_id:-}" 2>/dev/null || true
 
-    # Phase 4: Process hygiene - clean up orphaned processes
+    # Phase 4: Worker health checks - detect dead, hung, and orphaned workers
+    local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-1800}"  # 30 min default
+
     if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
         for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
             [[ -f "$pid_file" ]] || continue
-            local stale_pid
-            stale_pid=$(cat "$pid_file")
-            if ! kill -0 "$stale_pid" 2>/dev/null; then
-                local stale_task
-                stale_task=$(basename "$pid_file" .pid)
-                local stale_status
-                stale_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$stale_task")';" 2>/dev/null || echo "")
-                # Only clean up PIDs for tasks still marked as running/dispatched
-                if [[ "$stale_status" == "running" || "$stale_status" == "dispatched" ]]; then
-                    log_warn "  Orphaned process for $stale_task (PID $stale_pid dead, status $stale_status)"
-                fi
+            local health_pid
+            health_pid=$(cat "$pid_file")
+            local health_task
+            health_task=$(basename "$pid_file" .pid)
+            local health_status
+            health_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
+
+            if ! kill -0 "$health_pid" 2>/dev/null; then
+                # Dead worker: PID no longer exists
                 rm -f "$pid_file"
+                if [[ "$health_status" == "running" || "$health_status" == "dispatched" ]]; then
+                    log_warn "  Dead worker for $health_task (PID $health_pid gone, was $health_status) — evaluating"
+                    cmd_evaluate "$health_task" --no-ai 2>>"$SUPERVISOR_LOG" || {
+                        # Evaluation failed — force transition so task doesn't stay stuck
+                        cmd_transition "$health_task" "failed" --error "Worker process died (PID $health_pid)" 2>>"$SUPERVISOR_LOG" || true
+                        failed_count=$((failed_count + 1))
+                        attempt_self_heal "$health_task" "failed" "Worker process died" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                    }
+                fi
+            else
+                # Alive worker: check for hung state (no log output for timeout period)
+                if [[ "$health_status" == "running" ]]; then
+                    local log_file
+                    log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
+                    if [[ -n "$log_file" && -f "$log_file" ]]; then
+                        local log_age_seconds=0
+                        local log_mtime
+                        log_mtime=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo "0")
+                        local now_epoch
+                        now_epoch=$(date +%s)
+                        log_age_seconds=$(( now_epoch - log_mtime ))
+                        if [[ "$log_age_seconds" -gt "$worker_timeout_seconds" ]]; then
+                            log_warn "  Hung worker for $health_task (no log output for ${log_age_seconds}s, timeout ${worker_timeout_seconds}s) — killing"
+                            kill "$health_pid" 2>/dev/null || true
+                            sleep 2
+                            kill -9 "$health_pid" 2>/dev/null || true
+                            rm -f "$pid_file"
+                            cmd_transition "$health_task" "failed" --error "Worker hung (no output for ${log_age_seconds}s)" 2>>"$SUPERVISOR_LOG" || true
+                            failed_count=$((failed_count + 1))
+                            attempt_self_heal "$health_task" "failed" "Worker hung (no output for ${log_age_seconds}s)" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                        fi
+                    fi
+                fi
             fi
         done
+    fi
+
+    # Phase 4b: DB orphans — tasks marked running/dispatched with no PID file
+    local db_orphans
+    db_orphans=$(db "$SUPERVISOR_DB" "SELECT id FROM tasks WHERE status IN ('running', 'dispatched');" 2>/dev/null || echo "")
+    if [[ -n "$db_orphans" ]]; then
+        while IFS= read -r orphan_id; do
+            [[ -n "$orphan_id" ]] || continue
+            local orphan_pid_file="$SUPERVISOR_DIR/pids/${orphan_id}.pid"
+            if [[ ! -f "$orphan_pid_file" ]]; then
+                log_warn "  DB orphan: $orphan_id marked running but no PID file — evaluating"
+                cmd_evaluate "$orphan_id" --no-ai 2>>"$SUPERVISOR_LOG" || {
+                    cmd_transition "$orphan_id" "failed" --error "No worker process found (DB orphan)" 2>>"$SUPERVISOR_LOG" || true
+                    failed_count=$((failed_count + 1))
+                    attempt_self_heal "$orphan_id" "failed" "No worker process found" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                }
+            fi
+        done <<< "$db_orphans"
     fi
 
     # Phase 5: Summary
@@ -5758,6 +5809,7 @@ Environment:
   SUPERVISOR_DISPATCH_MODE    Force dispatch mode: headless|tabby
   SUPERVISOR_SELF_HEAL        Enable/disable self-healing (default: true)
   SUPERVISOR_AUTO_ISSUE       Enable/disable GitHub issue creation (default: true)
+  SUPERVISOR_WORKER_TIMEOUT   Seconds before a hung worker is killed (default: 1800)
   AIDEVOPS_SUPERVISOR_DIR     Override supervisor data directory
 
 Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
