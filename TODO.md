@@ -95,9 +95,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.5.2 Add .playwright-cli/ to .gitignore ~5m
     - [ ] t135.5.3 Verify .scannerwork/ already in .gitignore ~5m
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
-    - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
-    - [ ] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m
-    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
+    - [x] t135.6.1 Fix .agent typo to .agents on line 31 ~5m completed:2026-02-07 (PR #423)
+    - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07 (PR #423)
+    - [x] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2 completed:2026-02-07
   - [ ] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none
     - [ ] t135.7.1 Read each eval context to understand construction and purpose ~30m
     - [ ] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1
