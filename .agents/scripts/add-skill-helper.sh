@@ -436,8 +436,8 @@ register_skill() {
         log_info "Updating existing skill registration: $name"
         local tmp_file
         tmp_file=$(mktemp)
-        jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file"
-        mv "$tmp_file" "$SKILL_SOURCES"
+        jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+        rm -f "$tmp_file"
     fi
     
     local timestamp
@@ -469,8 +469,8 @@ register_skill() {
     
     local tmp_file
     tmp_file=$(mktemp)
-    jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" > "$tmp_file"
-    mv "$tmp_file" "$SKILL_SOURCES"
+    jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+    rm -f "$tmp_file"
     
     return 0
 }
@@ -1273,8 +1273,8 @@ cmd_remove() {
     # Remove from registry
     local tmp_file
     tmp_file=$(mktemp)
-    jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file"
-    mv "$tmp_file" "$SKILL_SOURCES"
+    trap 'rm -f "$tmp_file"' RETURN
+    jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
     
     log_success "Skill '$name' removed"
     

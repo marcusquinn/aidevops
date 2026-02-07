@@ -579,6 +579,7 @@ scrape_url() {
     # Create Node.js script for scraping
     local temp_script
     temp_script=$(mktemp /tmp/watercrawl_scrape_XXXXXX.mjs)
+    trap 'rm -f "$temp_script"' RETURN
     
     cat > "$temp_script" << 'SCRIPT'
 import { WaterCrawlAPIClient } from '@watercrawl/nodejs';
@@ -659,6 +660,7 @@ crawl_website() {
     # Create Node.js script for crawling
     local temp_script
     temp_script=$(mktemp /tmp/watercrawl_crawl_XXXXXX.mjs)
+    trap 'rm -f "$temp_script"' RETURN
     
     cat > "$temp_script" << 'SCRIPT'
 import { WaterCrawlAPIClient } from '@watercrawl/nodejs';
@@ -771,6 +773,7 @@ search_web() {
     # Create Node.js script for searching
     local temp_script
     temp_script=$(mktemp /tmp/watercrawl_search_XXXXXX.mjs)
+    trap 'rm -f "$temp_script"' RETURN
     
     cat > "$temp_script" << 'SCRIPT'
 import { WaterCrawlAPIClient } from '@watercrawl/nodejs';
@@ -859,6 +862,7 @@ generate_sitemap() {
     # Create Node.js script for sitemap
     local temp_script
     temp_script=$(mktemp /tmp/watercrawl_sitemap_XXXXXX.mjs)
+    trap 'rm -f "$temp_script"' RETURN
     
     cat > "$temp_script" << 'SCRIPT'
 import { WaterCrawlAPIClient } from '@watercrawl/nodejs';

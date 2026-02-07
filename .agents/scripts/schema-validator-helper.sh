@@ -62,14 +62,15 @@ install_deps() {
             local tmp
             tmp=$(mktemp)
             jq '. + {"type": "module"}' "$TOOL_DIR/package.json" > "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
+            rm -f "$tmp"
         else
             # Fallback: write "type": "module" into package.json without jq
             local tmp
             tmp=$(mktemp)
             printf '{\n  "type": "module",\n' > "$tmp"
             # Append everything after the opening brace
-            tail -n +2 "$TOOL_DIR/package.json" >> "$tmp"
-            mv "$tmp" "$TOOL_DIR/package.json"
+            tail -n +2 "$TOOL_DIR/package.json" >> "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
+            rm -f "$tmp"
             print_info "Added \"type\": \"module\" to package.json (jq not available)"
         fi
     fi

@@ -69,9 +69,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07
   - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07
   - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
-    - Notes: BLOCKED by supervisor: FAILED: no_log_file  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
+  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
-  - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first. BLOCKED: FAILED: no_log_file
+  - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
 - [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
   - [x] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h completed:2026-02-07
   - [x] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m completed:2026-02-07
@@ -82,7 +82,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h actual:30m (ai:30m) logged:2026-02-07 ref:GH#455 completed:2026-02-07
   - Notes: PR #469 merged. create_github_issue() + update_todo_with_issue_ref() + --no-issue flag + SUPERVISOR_AUTO_ISSUE env.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
-  - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435. BLOCKED: FAILED: no_log_file
+  - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435.
 - [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
   - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
 - [x] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h actual:1h (ai:1h) logged:2026-02-07 ref:GH#441 completed:2026-02-07
@@ -91,8 +91,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
 - [x] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443 completed:2026-02-07
   - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
-- [ ] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m (ai:20m test:10m) logged:2026-02-07 ref:GH#445
-  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal). BLOCKED: FAILED: no_log_file BLOCKED: FAILED: no_log_file
+- [x] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m actual:15m (ai:15m) logged:2026-02-07 ref:GH#445 started:2026-02-07 completed:2026-02-07
+  - Notes: All 12 PR #403 review threads verified fixed and resolved. transcribe command removed (PR #447), nltk.download stderr visible, cmd_stop uses polling loop, CPU fallback to --server, PyTorch version corrected, IP placeholders, API key guidance added, docker guard added.
 - [x] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#415. Already fixed: fallback chain (uv -> pipx -> venv+symlink -> pip3 --user) implemented at setup.sh lines 2608-2661. Verified working.
 - [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
@@ -100,7 +100,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t138 aidevops update output overwhelms tool buffer on large updates #bugfix #setup ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#398. Raw git pull diff stat exceeds 51KB tool output limit on large updates (e.g. 500 file rename). Fix: quiet pull + filtered commit log (feat/fix/refactor only, head -20) in cmd_update(). Low severity, only affects large updates.
 - [x] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
-  - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint). BLOCKED: Max retries exceeded: backend_infrastructure_error
+  - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint).
 - [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) logged:2026-02-07
   - [ ] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none
   - [ ] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1
@@ -131,22 +131,21 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
     - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
     - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
-    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2 ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.6.3
-      - Notes: BLOCKED by supervisor: FAILED: no_log_file
+    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Replaced 9 eval calls with bash arrays. wp-helper refactored build_ssh_command to execute_wp_via_ssh (direct execution). All pass ShellCheck -S error.
     - [x] t135.7.1 Read each eval context to understand construction and purpose ~30m completed:2026-02-07
     - [x] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1 completed:2026-02-07
     - [x] t135.7.3 Test affected command paths ~30m blocked-by:t135.7.2 completed:2026-02-07
   - [ ] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 80%+ ~4h blocked-by:none
-    - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: backend_infrastructure_error    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m BLOCKED: Max retries exceeded: backend_infrastructure_error
+    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m
     - [ ] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1
     - [ ] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2
   - [x] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none started:2026-02-07 completed:2026-02-07
     - [x] t135.9.1 Identify all mktemp usages without trap cleanup ~15m completed:2026-02-07
     - Notes: 33 scripts use mktemp, 31 without trap. Critical scripts (secret-helper, version-manager) fixed in PR #436.
-    - [ ] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.9.2
-      - Notes: BLOCKED by supervisor: FAILED: no_log_file
+    - [x] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 completed:2026-02-07
+      - Notes: PR #485 merged. Added trap RETURN guards after mktemp calls across 14 scripts (20 files, 29 sites).
   - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
   - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-07
     - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
@@ -158,8 +157,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.12.3 Move to _archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2 completed:2026-02-07
     - [x] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3 completed:2026-02-07
   - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
-    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t135.13.1
-      - Notes: BLOCKED by supervisor: FAILED: no_log_file    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1 BLOCKED: FAILED: no_log_file
+    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
+    - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
   - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
@@ -202,8 +201,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Replaced all 4 eval usages with bash arrays. Added ALLOWED_OUTPUT_FORMATS whitelist. Fixed broken JSON heredoc. Removed 5 unreachable returns. Reduced shellcheck disables from 23 to 2. PR #375 merged.
 - [x] t106 Replace eval in system-cleanup.sh find command construction with safe args #security #shell ~1h actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
 - [x] t107 Avoid eval-based export in credential-helper.sh; use safe output/quoting #security #shell ~1h actual:20m (ai:20m) logged:2026-02-03 completed:2026-02-06
-- [x] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h actual:20m (ai:20m) logged:2026-02-03 started:2026-02-07 completed:2026-02-07
-  - Notes: Replaced all 3 localStorage calls with sessionStorage (auto-clears on tab close). Added Clear Token button with red styling. Input cleared after token set. Status shows "session only" indicator. Enter key support on input.
+- [ ] t108 Dashboard token storage hardening (avoid localStorage; add reset/clear flow) #security #dashboard #plan → [todo/PLANS.md#2026-02-03-dashboard-token-storage-hardening] ~1h (ai:30m test:20m read:10m) logged:2026-02-03
 - [x] t121 Fix template deploy head usage error (invalid option -z) #setup #deploy #bugfix ~30m actual:0m (ai:0m) logged:2026-02-03 completed:2026-02-06
   - Notes: Already fixed in PR #346. deploy-templates.sh replaced GNU-only `head -z` with macOS-compatible `while read -r` loop. No remaining `head -z` usage in codebase.
 - [x] t122 Resolve awk newline warnings during setup deploy (system-reminder) #setup #deploy #bugfix ~45m actual:15m (ai:15m) logged:2026-02-03 completed:2026-02-06
@@ -241,13 +239,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4 completed:2026-01-24
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
-  - [ ] t068.8 TUI Dashboard (supervisor-helper.sh dashboard) ~1h blocked-by:t068.4,t068.5 started:2026-02-07
+  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
-- [ ] t070 Backlink - [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t070 logged:2026-01-24
-  - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/. BLOCKED: FAILED: no_log_file BLOCKED: FAILED: no_log_file BLOCKED: FAILED: no_log_file BLOCKED: FAILED: no_log_file
+- [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24
+  - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
 - [ ] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~30m (ai:20m test:5m read:5m) logged:2026-01-24 related:t027
   - Notes: Add support for voice AI models covering both TTS (speech generation) and STT (transcription). API providers: Hugging Face Inference API (TTS/STT endpoints), ElevenLabs, OpenAI TTS/Whisper. Local models: Qwen3-TTS (0.6B/1.7B, Apache-2.0, 10 languages, voice clone/design/custom, streaming, vLLM support - https://github.com/QwenLM/Qwen3-TTS), Whisper (transcription), Bark, Coqui TTS. Create subagent at tools/voice/ or tools/ai/voice.md covering: model selection (local vs API, quality vs speed), installation (pip install qwen-tts, HF download), usage patterns (TTS generation, voice cloning, voice design, transcription), streaming support, GPU requirements. Related to t027 (hyprwhspr speech-to-text).
 - [ ] t072 Audio/Video Transcription subagent #tools #voice #transcription #ai ~1.5h (ai:45m test:30m read:15m) logged:2026-01-24 related:t071,t027
@@ -263,8 +261,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) logged:2025-12-20
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
-- [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t014 logged:2025-12-21
-  - Notes: BLOCKED by supervisor: FAILED: no_log_file
+- [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21
+  - Notes:
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
@@ -288,8 +286,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Company-level agent orchestration - AI agents managing company functions (HR, Finance, Operations, Marketing) coordinating via runner-helper.sh. Extends t109 (Parallel Agents). Scope: 1) Document company-level agent patterns, 2) Create example runners for common company functions (hiring-coordinator, finance-reviewer, ops-monitor), 3) Integrate with coordinator-helper.sh for cross-function task dispatch.
 - [x] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~30m actual:25m (ai:20m test:5m read:5m) logged:2025-01-03 started:2026-01-25T15:00Z completed:2026-01-25 ref:https://x.com/elithrar/status/2007455910218871067
   - Notes: Created tools/performance/performance.md subagent and /performance command. Uses Chrome DevTools MCP for Core Web Vitals (FCP, LCP, CLS, FID, TTFB), network dependency analysis, and accessibility auditing. Actionable output format with file:line references. PR #209 merged.
-- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) ref:GH#[1;33m[SUPERVISOR][0m Failed to create GitHub issue for t033 logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
-  - Notes: BLOCKED by supervisor: FAILED: no_log_file
+- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
+  - Notes:
 - [x] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
   - Notes: Created tools/content/summarize.md subagent. steipete/summarize (726+ stars) - CLI for URL/YouTube/podcast summarization with AI. Supports multiple providers (OpenAI, Anthropic, Google, xAI, OpenRouter). Install: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`.
 - [x] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
@@ -358,7 +356,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t087 Create Semrush subagent #seo #tools ~20m (ai:15m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/
 - [x] t088 Create Sitebulb subagent #seo #tools #crawler ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-07
-  - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
+  - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/
 - [x] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: ContentKing real-time SEO monitoring API. Track changes, alerts for SEO issues, content tracking. Add to seo/. Ref: https://www.contentkingapp.com/
 - [x] t090 Create WebPageTest subagent #tools #performance ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
@@ -506,7 +504,7 @@ t104,Install script integrity hardening (replace curl|sh with verified downloads
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,15m,10m,5m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
 t107,Avoid eval-based export in credential-helper.sh; use safe output/quoting,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
-t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,1h,20m,0m,2026-02-03T00:00Z,completed,2026-02-07T00:00Z,,
+t108,Dashboard token storage hardening (avoid localStorage; add reset/clear flow),,security|dashboard|plan,1h,30m,20m,2026-02-03T00:00Z,pending,,,
 t121,Fix template deploy head usage error (invalid option -z),,setup|deploy|bugfix,30m,0m,0m,2026-02-03T00:00Z,completed,2026-02-06T00:00Z,,
 t122,Resolve awk newline warnings during setup deploy (system-reminder),,setup|deploy|bugfix,45m,30m,15m,2026-02-03T00:00Z,pending,,,
 t123,Resolve DSPy dependency conflict (gepa) in setup flow,,python|dspy|deps,45m,0m,0m,2026-02-03T00:00Z,completed,,,
