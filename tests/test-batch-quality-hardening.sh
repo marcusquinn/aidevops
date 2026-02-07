@@ -49,6 +49,11 @@ section() {
     printf "\033[1m=== %s ===\033[0m\n" "$1"
 }
 
+# Helper: list all git-tracked .sh files with absolute paths
+list_shell_scripts() {
+    git -C "$REPO_DIR" ls-files '*.sh' | while read -r f; do echo "$REPO_DIR/$f"; done
+}
+
 # ============================================================
 # SUPERVISOR DISPATCH FIXES (PR #429, #431)
 # ============================================================
@@ -125,7 +130,7 @@ fi
 section "Supervisor: macOS Timeout Compatibility"
 
 # Test: Health check has macOS fallback (no coreutils timeout dependency)
-if grep -q 'gtimeout\|background process with manual kill' "$SCRIPTS_DIR/supervisor-helper.sh"; then
+if grep -qE 'gtimeout|background process with manual kill' "$SCRIPTS_DIR/supervisor-helper.sh"; then
     pass "Health check has macOS timeout fallback"
 else
     fail "Health check may depend on coreutils timeout (not available on macOS)"
@@ -169,7 +174,13 @@ else
 fi
 
 # Test: No embedded newlines in JSON keys (the original corruption)
-if ! grep -P '\x0a.*:' "$REPO_DIR/configs/pandoc-config.json.txt" 2>/dev/null | grep -q '".*\n.*"'; then
+# Use python3 to reliably detect newline chars inside key strings
+if python3 -c "
+import json, sys
+d = json.load(open('$REPO_DIR/configs/pandoc-config.json.txt'))
+bad = [k for k in d if '\n' in k]
+sys.exit(1 if bad else 0)
+" 2>/dev/null; then
     pass "No embedded newline characters in pandoc-config.json.txt keys"
 else
     fail "pandoc-config.json.txt still has embedded newline in keys"
@@ -266,7 +277,7 @@ while IFS= read -r f; do
         bin_bash_count=$((bin_bash_count + 1))
         [[ "$VERBOSE" == "--verbose" ]] && echo "       #!/bin/bash: $f"
     fi
-done < <(git -C "$REPO_DIR" ls-files '*.sh' | while read -r f; do echo "$REPO_DIR/$f"; done)
+done < <(list_shell_scripts)
 
 if [[ "$bin_bash_count" -eq 0 ]]; then
     pass "All .sh files use #!/usr/bin/env bash (0 using #!/bin/bash)"
@@ -282,7 +293,7 @@ while IFS= read -r f; do
         no_shebang_count=$((no_shebang_count + 1))
         [[ "$VERBOSE" == "--verbose" ]] && echo "       No shebang: $f"
     fi
-done < <(git -C "$REPO_DIR" ls-files '*.sh' | while read -r f; do echo "$REPO_DIR/$f"; done)
+done < <(list_shell_scripts)
 
 if [[ "$no_shebang_count" -eq 0 ]]; then
     pass "All .sh files have a shebang line"
@@ -310,14 +321,14 @@ else
 fi
 
 # Test: Load monitoring uses sysctl on macOS
-if grep -q 'sysctl\|vm_stat\|/proc/loadavg' "$SCRIPTS_DIR/supervisor-helper.sh"; then
+if grep -qE 'sysctl|vm_stat|/proc/loadavg' "$SCRIPTS_DIR/supervisor-helper.sh"; then
     pass "Resource monitoring supports macOS (sysctl/vm_stat)"
 else
     fail "Resource monitoring may not work on macOS"
 fi
 
 # Test: Adaptive concurrency reduces under load
-if grep -q 'effective_concurrency=1\|halve concurrency' "$SCRIPTS_DIR/supervisor-helper.sh"; then
+if grep -qE 'effective_concurrency=1|halve concurrency' "$SCRIPTS_DIR/supervisor-helper.sh"; then
     pass "Adaptive concurrency throttles under high load"
 else
     fail "Adaptive concurrency missing throttle logic"
@@ -355,7 +366,7 @@ fi
 section "t138: Update Output Bounding"
 
 # Test: git pull uses --quiet flag
-if grep -q 'git pull.*--quiet\|git pull.*-q' "$REPO_DIR/aidevops.sh"; then
+if grep -qE 'git pull.*--quiet|git pull.*-q' "$REPO_DIR/aidevops.sh"; then
     pass "aidevops update uses --quiet git pull"
 else
     fail "aidevops update may produce unbounded git pull output"
@@ -376,7 +387,7 @@ else
 fi
 
 # Test: Overflow message for large updates
-if grep -q 'and more\|full list' "$REPO_DIR/aidevops.sh"; then
+if grep -qE 'and more|full list' "$REPO_DIR/aidevops.sh"; then
     pass "Shows overflow message when > 20 commits"
 else
     fail "Missing overflow message for large updates"
@@ -395,7 +406,7 @@ else
 fi
 
 # Test: Comment explains the hyphen issue
-if grep -q 'hyphens.*NOT operator\|FTS5 treats hyphens' "$SCRIPTS_DIR/memory-helper.sh"; then
+if grep -qE 'hyphens.*NOT operator|FTS5 treats hyphens' "$SCRIPTS_DIR/memory-helper.sh"; then
     pass "Code documents the FTS5 hyphen issue"
 else
     fail "Missing documentation about FTS5 hyphen behavior"
@@ -404,7 +415,7 @@ fi
 # Test: Functional test - recall with hyphenated query doesn't error
 if command -v "$DEPLOYED_DIR/memory-helper.sh" &>/dev/null || [[ -f "$DEPLOYED_DIR/memory-helper.sh" ]]; then
     recall_output=$(bash "$DEPLOYED_DIR/memory-helper.sh" recall "test-hyphen-query" 2>&1 || true)
-    if echo "$recall_output" | grep -qi "error.*column\|fts5.*syntax\|no such column"; then
+    if echo "$recall_output" | grep -qiE "error.*column|fts5.*syntax|no such column"; then
         fail "memory-helper.sh recall fails on hyphenated query" \
             "$recall_output"
     else
@@ -465,14 +476,14 @@ else
 fi
 
 # Test: Venv cleanup on failure
-if grep -q 'rm -rf.*cisco-scanner-env\|rm -rf.*venv_dir' "$REPO_DIR/setup.sh"; then
+if grep -qE 'rm -rf.*cisco-scanner-env|rm -rf.*venv_dir' "$REPO_DIR/setup.sh"; then
     pass "Venv is cleaned up on installation failure"
 else
     fail "Venv may not be cleaned up on failure"
 fi
 
 # Test: Helpful error message when all fallbacks fail
-if grep -q 'Install manually with.*uv tool install\|Or:.*pipx install' "$REPO_DIR/setup.sh"; then
+if grep -qE 'Install manually with.*uv tool install|Or:.*pipx install' "$REPO_DIR/setup.sh"; then
     pass "Shows helpful manual install instructions on total failure"
 else
     fail "Missing helpful error message when all fallbacks fail"
