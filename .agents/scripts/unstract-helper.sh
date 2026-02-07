@@ -6,14 +6,11 @@
 #
 # Usage: unstract-helper.sh [install|start|stop|status|logs|uninstall|configure-llm]
 
+# Source shared constants (provides sed_inplace, print_*, color constants)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
-
-# Source shared constants (provides sed_inplace and other utilities)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
 # Constants
 readonly UNSTRACT_DIR="${HOME}/.aidevops/unstract"

@@ -10,6 +10,10 @@
 # Author: AI DevOps Framework
 # Version: 1.6.0
 
+# Include guard: prevent readonly errors when sourced multiple times
+[[ -n "${_SHARED_CONSTANTS_LOADED:-}" ]] && return 0
+_SHARED_CONSTANTS_LOADED=1
+
 # =============================================================================
 # HTTP and API Constants
 # =============================================================================

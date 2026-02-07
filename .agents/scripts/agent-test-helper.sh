@@ -47,12 +47,12 @@
 set -euo pipefail
 
 # Configuration
+# Source shared constants (provides sed_inplace, print_*, color constants)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # shellcheck disable=SC2034
 readonly SCRIPT_DIR
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly WORKSPACE_DIR="${AIDEVOPS_DIR}/.agent-workspace"
 readonly TEST_DIR="${WORKSPACE_DIR}/agent-tests"
