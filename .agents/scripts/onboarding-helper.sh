@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
 
 # Onboarding Helper - Interactive setup and service status for aidevops

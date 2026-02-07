@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2310
 # =============================================================================
 # Planning File Auto-Commit Helper

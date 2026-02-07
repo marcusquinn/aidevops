@@ -56,8 +56,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 ## Backlog
 
 - [ ] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07
-  - Notes: GH#415. pip3 install --user blocked by PEP 668 on modern Ubuntu/Debian. Fix fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy). Affects setup.sh lines ~2408-2432. Workaround: manual venv at ~/.aidevops/.agent-workspace/work/cisco-scanner-env/.
-- [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
+  - Notes: GH#415. pip3 install --user blocked by PEP 668 on modern Ubuntu/Debian. Fix fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy). Affects setup.sh lines ~2408-2432. Workaround: manual venv at ~/.aidevops/.agent-workspace/work/cisco-scanner-env/. BLOCKED: Re-prompt dispatch failed: backend_infrastructure_error BLOCKED: Re-prompt dispatch failed: ambiguous_ai_unavailable
+- [ ] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07
   - Notes: GH#414. Hyphens in FTS5 queries interpreted as NOT operator. "qs-agency" becomes "qs NOT agency" causing column resolution error. Fix: quote hyphenated terms before passing to FTS5 MATCH clause.
 - [x] t138 aidevops update output overwhelms tool buffer on large updates #bugfix #setup ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#398. Raw git pull diff stat exceeds 51KB tool output limit on large updates (e.g. 500 file rename). Fix: quiet pull + filtered commit log (feat/fix/refactor only, head -20) in cmd_update(). Low severity, only affects large updates.
@@ -95,15 +95,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.5.2 Add .playwright-cli/ to .gitignore ~5m
     - [ ] t135.5.3 Verify .scannerwork/ already in .gitignore ~5m
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
-    - [x] t135.6.1 Fix .agent typo to .agents on line 31 ~5m completed:2026-02-07 (PR #423)
-    - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07 (PR #423)
-    - [x] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2 completed:2026-02-07
+    - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
+    - [ ] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m
+    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
   - [ ] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none
     - [ ] t135.7.1 Read each eval context to understand construction and purpose ~30m
     - [ ] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1
     - [ ] t135.7.3 Test affected command paths ~30m blocked-by:t135.7.2
   - [ ] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 80%+ ~4h blocked-by:none
-    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m
+    - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: backend_infrastructure_error    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m
     - [ ] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1
     - [ ] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2
   - [ ] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none

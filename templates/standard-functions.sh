@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Standard Functions Template for AI DevOps Framework
 # This template provides SonarCloud-compliant function definitions

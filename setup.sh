@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.105.1
+# Version: 2.105.3
 #
 # Quick Install (one-liner):
 #   bash <(curl -fsSL https://aidevops.dev/install)
@@ -2604,28 +2604,59 @@ scan_imported_skills() {
         return 0
     fi
     
-    # Install skill-scanner if not present and uv is available
+    # Install skill-scanner if not present
+    # Fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy)
+    # PEP 668 (Ubuntu 24.04+) blocks pip3 --user, so we try isolated methods first
     if ! command -v skill-scanner &>/dev/null; then
-        if command -v uv &>/dev/null; then
-            print_info "Installing Cisco Skill Scanner..."
+        local installed=false
+        
+        # 1. uv tool install (preferred - fast, isolated)
+        if [[ "$installed" == "false" ]] && command -v uv &>/dev/null; then
+            print_info "Installing Cisco Skill Scanner via uv..."
             if run_with_spinner "Installing cisco-ai-skill-scanner" uv tool install cisco-ai-skill-scanner; then
-                print_success "Cisco Skill Scanner installed"
-            else
-                print_warning "Failed to install Cisco Skill Scanner - skipping security scan"
-                print_info "Install manually with: uv tool install cisco-ai-skill-scanner"
-                return 0
+                print_success "Cisco Skill Scanner installed via uv"
+                installed=true
             fi
-        elif command -v pip3 &>/dev/null; then
-            print_info "Installing Cisco Skill Scanner via pip..."
-            if run_with_spinner "Installing cisco-ai-skill-scanner" pip3 install --user cisco-ai-skill-scanner; then
-                print_success "Cisco Skill Scanner installed"
-            else
-                print_warning "Failed to install Cisco Skill Scanner - skipping security scan"
-                return 0
+        fi
+        
+        # 2. pipx install (designed for isolated app installs)
+        if [[ "$installed" == "false" ]] && command -v pipx &>/dev/null; then
+            print_info "Installing Cisco Skill Scanner via pipx..."
+            if run_with_spinner "Installing cisco-ai-skill-scanner" pipx install cisco-ai-skill-scanner; then
+                print_success "Cisco Skill Scanner installed via pipx"
+                installed=true
             fi
-        else
-            print_info "Cisco Skill Scanner not installed (uv or pip3 required)"
-            print_info "Install with: uv tool install cisco-ai-skill-scanner"
+        fi
+        
+        # 3. venv + symlink (works on PEP 668 systems without uv/pipx)
+        if [[ "$installed" == "false" ]] && command -v python3 &>/dev/null; then
+            local venv_dir="$HOME/.aidevops/.agent-workspace/work/cisco-scanner-env"
+            local bin_dir="$HOME/.local/bin"
+            print_info "Installing Cisco Skill Scanner in isolated venv..."
+            if python3 -m venv "$venv_dir" 2>/dev/null && \
+               "$venv_dir/bin/pip" install cisco-ai-skill-scanner 2>/dev/null; then
+                mkdir -p "$bin_dir"
+                ln -sf "$venv_dir/bin/skill-scanner" "$bin_dir/skill-scanner"
+                print_success "Cisco Skill Scanner installed via venv ($venv_dir)"
+                installed=true
+            else
+                rm -rf "$venv_dir" 2>/dev/null || true
+            fi
+        fi
+        
+        # 4. pip3 --user (legacy fallback, fails on PEP 668 systems)
+        if [[ "$installed" == "false" ]] && command -v pip3 &>/dev/null; then
+            print_info "Installing Cisco Skill Scanner via pip3 --user..."
+            if run_with_spinner "Installing cisco-ai-skill-scanner" pip3 install --user cisco-ai-skill-scanner 2>/dev/null; then
+                print_success "Cisco Skill Scanner installed via pip3"
+                installed=true
+            fi
+        fi
+        
+        if [[ "$installed" == "false" ]]; then
+            print_warning "Failed to install Cisco Skill Scanner - skipping security scan"
+            print_info "Install manually with: uv tool install cisco-ai-skill-scanner"
+            print_info "Or: pipx install cisco-ai-skill-scanner"
             return 0
         fi
     fi

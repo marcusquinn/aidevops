@@ -124,11 +124,201 @@ log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
 
 #######################################
+# Get the number of CPU cores on this system
+# Returns integer count on stdout
+#######################################
+get_cpu_cores() {
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sysctl -n hw.logicalcpu 2>/dev/null || echo 4
+    elif [[ -f /proc/cpuinfo ]]; then
+        grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 4
+    else
+        nproc 2>/dev/null || echo 4
+    fi
+    return 0
+}
+
+#######################################
+# Check system load and resource pressure (t135.15)
+#
+# Outputs key=value pairs:
+#   load_1m, load_5m, load_15m  - Load averages
+#   cpu_cores                    - Logical CPU count
+#   load_ratio                   - load_1m / cpu_cores (x100 for integer math)
+#   process_count                - Total system processes
+#   supervisor_process_count     - Processes spawned by supervisor workers
+#   memory_pressure              - low|medium|high (macOS) or free MB (Linux)
+#   overloaded                   - true|false (load_1m > cores * max_load_factor)
+#
+# $1 (optional): max load factor (default: 2, meaning load > cores*2 = overloaded)
+#######################################
+check_system_load() {
+    local max_load_factor="${1:-2}"
+
+    local cpu_cores
+    cpu_cores=$(get_cpu_cores)
+    echo "cpu_cores=$cpu_cores"
+
+    # Load averages (cross-platform)
+    local load_1m="0" load_5m="0" load_15m="0"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local load_str
+        load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0.00 0.00 0.00 }")
+        load_1m=$(echo "$load_str" | awk '{print $2}')
+        load_5m=$(echo "$load_str" | awk '{print $3}')
+        load_15m=$(echo "$load_str" | awk '{print $4}')
+    elif [[ -f /proc/loadavg ]]; then
+        read -r load_1m load_5m load_15m _ < /proc/loadavg
+    else
+        local uptime_str
+        uptime_str=$(uptime 2>/dev/null || echo "")
+        if [[ -n "$uptime_str" ]]; then
+            load_1m=$(echo "$uptime_str" | grep -oE 'load average[s]?: [0-9.]+' | grep -oE '[0-9.]+$' || echo "0")
+            load_5m=$(echo "$uptime_str" | awk -F'[, ]+' '{print $(NF-1)}' || echo "0")
+            load_15m=$(echo "$uptime_str" | awk -F'[, ]+' '{print $NF}' || echo "0")
+        fi
+    fi
+    echo "load_1m=$load_1m"
+    echo "load_5m=$load_5m"
+    echo "load_15m=$load_15m"
+
+    # Load ratio (x100 for integer comparison: 200 = load is 2x cores)
+    local load_ratio=0
+    if [[ "$cpu_cores" -gt 0 ]]; then
+        load_ratio=$(awk "BEGIN {printf \"%d\", ($load_1m / $cpu_cores) * 100}")
+    fi
+    echo "load_ratio=$load_ratio"
+
+    # Total process count
+    local process_count=0
+    process_count=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
+    echo "process_count=$process_count"
+
+    # Supervisor worker process count (opencode/claude spawned by supervisor)
+    local supervisor_process_count=0
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local wpid
+            wpid=$(cat "$pid_file")
+            if kill -0 "$wpid" 2>/dev/null; then
+                # Count this worker + all its descendants
+                local desc_count
+                desc_count=$(_list_descendants "$wpid" 2>/dev/null | wc -l | tr -d ' ')
+                supervisor_process_count=$((supervisor_process_count + 1 + desc_count))
+            fi
+        done
+    fi
+    echo "supervisor_process_count=$supervisor_process_count"
+
+    # Memory pressure
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS: use memory_pressure command or vm_stat
+        local pressure="low"
+        local vm_output
+        vm_output=$(vm_stat 2>/dev/null || echo "")
+        if [[ -n "$vm_output" ]]; then
+            local pages_free pages_active pages_inactive page_size
+            page_size=$(vm_stat 2>/dev/null | head -1 | grep -oE '[0-9]+' || echo "16384")
+            pages_free=$(echo "$vm_output" | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+            pages_active=$(echo "$vm_output" | awk '/Pages active/ {gsub(/\./,"",$3); print $3}')
+            pages_inactive=$(echo "$vm_output" | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+            local free_mb=0
+            if [[ -n "$pages_free" && -n "$page_size" ]]; then
+                free_mb=$(( (pages_free * page_size) / 1048576 ))
+            fi
+            if [[ "$free_mb" -lt 512 ]]; then
+                pressure="high"
+            elif [[ "$free_mb" -lt 2048 ]]; then
+                pressure="medium"
+            fi
+        fi
+        echo "memory_pressure=$pressure"
+    else
+        # Linux: parse /proc/meminfo
+        local mem_available_kb=0
+        if [[ -f /proc/meminfo ]]; then
+            mem_available_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo "0")
+        fi
+        local mem_available_mb=$((mem_available_kb / 1024))
+        echo "memory_pressure=${mem_available_mb}MB"
+    fi
+
+    # Overloaded check: load_1m > cores * max_load_factor
+    local threshold=$((cpu_cores * max_load_factor * 100))
+    if [[ "$load_ratio" -gt "$threshold" ]]; then
+        echo "overloaded=true"
+    else
+        echo "overloaded=false"
+    fi
+
+    return 0
+}
+
+#######################################
+# Calculate adaptive concurrency based on system load (t135.15.2)
+# Returns the recommended concurrency limit on stdout
+#
+# Strategy:
+#   - If load < cores: full concurrency (no throttle)
+#   - If load > cores but < cores*2: reduce by 50%
+#   - If load > cores*2: reduce to 1 (minimum)
+#   - If memory pressure is high: reduce to 1
+#
+# $1: base concurrency (from batch or global default)
+# $2: max load factor (default: 2)
+#######################################
+calculate_adaptive_concurrency() {
+    local base_concurrency="${1:-4}"
+    local max_load_factor="${2:-2}"
+
+    local load_output
+    load_output=$(check_system_load "$max_load_factor")
+
+    local cpu_cores load_ratio memory_pressure overloaded
+    cpu_cores=$(echo "$load_output" | grep '^cpu_cores=' | cut -d= -f2)
+    load_ratio=$(echo "$load_output" | grep '^load_ratio=' | cut -d= -f2)
+    memory_pressure=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
+    overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
+
+    local effective_concurrency="$base_concurrency"
+
+    # High memory pressure: drop to 1
+    if [[ "$memory_pressure" == "high" ]]; then
+        effective_concurrency=1
+        echo "$effective_concurrency"
+        return 0
+    fi
+
+    if [[ "$overloaded" == "true" ]]; then
+        # Severely overloaded: minimum concurrency
+        effective_concurrency=1
+    elif [[ "$load_ratio" -gt $((cpu_cores * 100)) ]]; then
+        # Moderately loaded (load > cores but < cores*factor): halve concurrency
+        effective_concurrency=$(( (base_concurrency + 1) / 2 ))
+        if [[ "$effective_concurrency" -lt 1 ]]; then
+            effective_concurrency=1
+        fi
+    fi
+
+    echo "$effective_concurrency"
+    return 0
+}
+
+#######################################
 # Escape single quotes for SQL
 #######################################
 sql_escape() {
     local input="$1"
     echo "${input//\'/\'\'}"
+}
+
+#######################################
+# SQLite wrapper: sets busy_timeout on every connection (t135.3)
+# busy_timeout is per-connection and must be set each time
+#######################################
+db() {
+    sqlite3 -cmd ".timeout 5000" "$@"
 }
 
 #######################################
@@ -146,7 +336,7 @@ ensure_db() {
 
     # Check if schema needs upgrade
     local has_tasks
-    has_tasks=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tasks';")
+    has_tasks=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tasks';")
     if [[ "$has_tasks" -eq 0 ]]; then
         init_db
     fi
@@ -154,10 +344,10 @@ ensure_db() {
     # Migrate: add post-PR lifecycle states if CHECK constraint is outdated (t128.8)
     # SQLite doesn't support ALTER CHECK, so we recreate the constraint via a temp table
     local check_sql
-    check_sql=$(sqlite3 "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
+    check_sql=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
     if [[ -n "$check_sql" ]] && ! echo "$check_sql" | grep -q 'pr_review'; then
         log_info "Migrating database schema for post-PR lifecycle states (t128.8)..."
-        sqlite3 "$SUPERVISOR_DB" << 'MIGRATE'
+        db "$SUPERVISOR_DB" << 'MIGRATE'
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
 ALTER TABLE tasks RENAME TO tasks_old;
@@ -192,6 +382,22 @@ MIGRATE
         log_success "Database schema migrated for post-PR lifecycle states"
     fi
 
+    # Migrate: add max_load_factor column to batches if missing (t135.15.4)
+    local has_max_load
+    has_max_load=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
+    if [[ "$has_max_load" -eq 0 ]]; then
+        log_info "Migrating batches table: adding max_load_factor column (t135.15.4)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_load_factor INTEGER NOT NULL DEFAULT 2;" 2>/dev/null || true
+        log_success "Added max_load_factor column to batches"
+    fi
+
+    # Ensure WAL mode for existing databases created before t135.3
+    local current_mode
+    current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
+    if [[ "$current_mode" != "wal" ]]; then
+        db "$SUPERVISOR_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
+    fi
+
     return 0
 }
 
@@ -201,7 +407,7 @@ MIGRATE
 init_db() {
     mkdir -p "$SUPERVISOR_DIR"
 
-    sqlite3 "$SUPERVISOR_DB" << 'SQL'
+    db "$SUPERVISOR_DB" << 'SQL'
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
 PRAGMA foreign_keys=ON;
@@ -235,6 +441,7 @@ CREATE TABLE IF NOT EXISTS batches (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     concurrency     INTEGER NOT NULL DEFAULT 4,
+    max_load_factor INTEGER NOT NULL DEFAULT 2,
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK(status IN ('active','paused','complete','cancelled')),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -299,9 +506,9 @@ cmd_init() {
     log_success "Supervisor database ready at: $SUPERVISOR_DB"
 
     local task_count
-    task_count=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+    task_count=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
     local batch_count
-    batch_count=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM batches;")
+    batch_count=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM batches;")
 
     log_info "Tasks: $task_count | Batches: $batch_count"
     return 0
@@ -351,7 +558,7 @@ cmd_add() {
 
     # Check if task already exists
     local existing
-    existing=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';")
+    existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';")
     if [[ -n "$existing" ]]; then
         log_warn "Task $task_id already exists (status: $existing)"
         return 1
@@ -366,13 +573,13 @@ cmd_add() {
     local escaped_model
     escaped_model=$(sql_escape "$model")
 
-    sqlite3 "$SUPERVISOR_DB" "
+    db "$SUPERVISOR_DB" "
         INSERT INTO tasks (id, repo, description, model, max_retries)
         VALUES ('$escaped_id', '$escaped_repo', '$escaped_desc', '$escaped_model', $max_retries);
     "
 
     # Log the initial state
-    sqlite3 "$SUPERVISOR_DB" "
+    db "$SUPERVISOR_DB" "
         INSERT INTO state_log (task_id, from_state, to_state, reason)
         VALUES ('$escaped_id', '', 'queued', 'Task added to supervisor');
     "
@@ -388,7 +595,7 @@ cmd_add() {
 # Create or manage a batch
 #######################################
 cmd_batch() {
-    local name="" concurrency=4 tasks=""
+    local name="" concurrency=4 tasks="" max_load_factor=2
 
     # First positional arg is batch name
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -400,6 +607,7 @@ cmd_batch() {
         case "$1" in
             --concurrency) [[ $# -lt 2 ]] && { log_error "--concurrency requires a value"; return 1; }; concurrency="$2"; shift 2 ;;
             --tasks) [[ $# -lt 2 ]] && { log_error "--tasks requires a value"; return 1; }; tasks="$2"; shift 2 ;;
+            --max-load) [[ $# -lt 2 ]] && { log_error "--max-load requires a value"; return 1; }; max_load_factor="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -418,12 +626,12 @@ cmd_batch() {
     local escaped_name
     escaped_name=$(sql_escape "$name")
 
-    sqlite3 "$SUPERVISOR_DB" "
-        INSERT INTO batches (id, name, concurrency)
-        VALUES ('$escaped_id', '$escaped_name', $concurrency);
+    db "$SUPERVISOR_DB" "
+        INSERT INTO batches (id, name, concurrency, max_load_factor)
+        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_load_factor);
     "
 
-    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency)"
+    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency, max-load: $max_load_factor)"
 
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
@@ -434,14 +642,14 @@ cmd_batch() {
 
             # Ensure task exists in tasks table (auto-add if not)
             local task_exists
-            task_exists=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE id = '$(sql_escape "$task_id")';")
+            task_exists=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE id = '$(sql_escape "$task_id")';")
             if [[ "$task_exists" -eq 0 ]]; then
                 cmd_add "$task_id"
             fi
 
             local escaped_task
             escaped_task=$(sql_escape "$task_id")
-            sqlite3 "$SUPERVISOR_DB" "
+            db "$SUPERVISOR_DB" "
                 INSERT OR IGNORE INTO batch_tasks (batch_id, task_id, position)
                 VALUES ('$escaped_id', '$escaped_task', $position);
             "
@@ -500,7 +708,7 @@ cmd_transition() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local current_state
-    current_state=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
+    current_state=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
 
     if [[ -z "$current_state" ]]; then
         log_error "Task not found: $task_id"
@@ -562,14 +770,14 @@ cmd_transition() {
     local update_sql
     update_sql=$(IFS=','; echo "${update_parts[*]}")
 
-    sqlite3 "$SUPERVISOR_DB" "
+    db "$SUPERVISOR_DB" "
         UPDATE tasks SET $update_sql WHERE id = '$escaped_id';
     "
 
     # Log the transition
     local escaped_reason
     escaped_reason=$(sql_escape "${error_msg:-State transition}")
-    sqlite3 "$SUPERVISOR_DB" "
+    db "$SUPERVISOR_DB" "
         INSERT INTO state_log (task_id, from_state, to_state, reason)
         VALUES ('$escaped_id', '$current_state', '$new_state', '$escaped_reason');
     "
@@ -595,7 +803,7 @@ check_batch_completion() {
 
     # Find batches containing this task
     local batch_ids
-    batch_ids=$(sqlite3 "$SUPERVISOR_DB" "
+    batch_ids=$(db "$SUPERVISOR_DB" "
         SELECT batch_id FROM batch_tasks WHERE task_id = '$escaped_id';
     ")
 
@@ -609,7 +817,7 @@ check_batch_completion() {
 
         # Count incomplete tasks in this batch
         local incomplete
-        incomplete=$(sqlite3 "$SUPERVISOR_DB" "
+        incomplete=$(db "$SUPERVISOR_DB" "
             SELECT count(*) FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$escaped_batch'
@@ -617,7 +825,7 @@ check_batch_completion() {
         ")
 
         if [[ "$incomplete" -eq 0 ]]; then
-            sqlite3 "$SUPERVISOR_DB" "
+            db "$SUPERVISOR_DB" "
                 UPDATE batches SET status = 'complete', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                 WHERE id = '$escaped_batch' AND status = 'active';
             "
@@ -645,7 +853,7 @@ cmd_status() {
 
         # Task counts by state
         echo "Tasks:"
-        sqlite3 -separator ': ' "$SUPERVISOR_DB" "
+        db -separator ': ' "$SUPERVISOR_DB" "
             SELECT status, count(*) FROM tasks GROUP BY status ORDER BY
             CASE status
                 WHEN 'running' THEN 1
@@ -671,14 +879,14 @@ cmd_status() {
         done
 
         local total
-        total=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+        total=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
         echo "  total: $total"
         echo ""
 
         # Active batches
         echo "Batches:"
         local batches
-        batches=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        batches=$(db -separator '|' "$SUPERVISOR_DB" "
             SELECT b.id, b.name, b.concurrency, b.status,
                    (SELECT count(*) FROM batch_tasks bt WHERE bt.batch_id = b.id) as task_count,
                    (SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
@@ -708,7 +916,7 @@ cmd_status() {
 
     # Check if target is a task or batch
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, repo, description, status, session_id, worktree, branch,
                log_file, retries, max_retries, model, error, pr_url,
                created_at, started_at, completed_at
@@ -738,7 +946,7 @@ cmd_status() {
         # Show state history
         echo ""
         echo "  State History:"
-        sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        db -separator '|' "$SUPERVISOR_DB" "
             SELECT from_state, to_state, reason, timestamp
             FROM state_log WHERE task_id = '$(sql_escape "$target")'
             ORDER BY timestamp ASC;
@@ -752,7 +960,7 @@ cmd_status() {
 
         # Show batch membership
         local batch_membership
-        batch_membership=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        batch_membership=$(db -separator '|' "$SUPERVISOR_DB" "
             SELECT b.name, b.id FROM batch_tasks bt
             JOIN batches b ON bt.batch_id = b.id
             WHERE bt.task_id = '$(sql_escape "$target")';
@@ -770,7 +978,7 @@ cmd_status() {
 
     # Check if target is a batch
     local batch_row
-    batch_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    batch_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, name, concurrency, status, created_at
         FROM batches WHERE id = '$(sql_escape "$target")' OR name = '$(sql_escape "$target")';
     ")
@@ -785,7 +993,7 @@ cmd_status() {
         echo ""
         echo "  Tasks:"
 
-        sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        db -separator '|' "$SUPERVISOR_DB" "
             SELECT t.id, t.status, t.description, t.retries, t.max_retries
             FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
@@ -843,7 +1051,7 @@ cmd_list() {
     fi
 
     if [[ "$format" == "json" ]]; then
-        sqlite3 -json "$SUPERVISOR_DB" "
+        db -json "$SUPERVISOR_DB" "
             SELECT t.id, t.repo, t.description, t.status, t.retries, t.max_retries,
                    t.model, t.error, t.pr_url, t.session_id, t.worktree, t.branch,
                    t.created_at, t.started_at, t.completed_at
@@ -852,7 +1060,7 @@ cmd_list() {
         "
     else
         local results
-        results=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        results=$(db -separator '|' "$SUPERVISOR_DB" "
             SELECT t.id, t.status, t.description, t.retries, t.max_retries, t.repo
             FROM tasks t $where_sql
             ORDER BY
@@ -908,7 +1116,7 @@ cmd_reset() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local current_state
-    current_state=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
+    current_state=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
 
     if [[ -z "$current_state" ]]; then
         log_error "Task not found: $task_id"
@@ -926,7 +1134,7 @@ cmd_reset() {
         return 1
     fi
 
-    sqlite3 "$SUPERVISOR_DB" "
+    db "$SUPERVISOR_DB" "
         UPDATE tasks SET
             status = 'queued',
             retries = 0,
@@ -942,7 +1150,7 @@ cmd_reset() {
         WHERE id = '$escaped_id';
     "
 
-    sqlite3 "$SUPERVISOR_DB" "
+    db "$SUPERVISOR_DB" "
         INSERT INTO state_log (task_id, from_state, to_state, reason)
         VALUES ('$escaped_id', '$current_state', 'queued', 'Manual reset');
     "
@@ -969,7 +1177,7 @@ cmd_cancel() {
 
     # Try as task first
     local task_status
-    task_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_target';")
+    task_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_target';")
 
     if [[ -n "$task_status" ]]; then
         if [[ "$task_status" == "deployed" || "$task_status" == "cancelled" || "$task_status" == "failed" ]]; then
@@ -983,7 +1191,7 @@ cmd_cancel() {
             return 1
         fi
 
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             UPDATE tasks SET
                 status = 'cancelled',
                 completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
@@ -991,7 +1199,7 @@ cmd_cancel() {
             WHERE id = '$escaped_target';
         "
 
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             INSERT INTO state_log (task_id, from_state, to_state, reason)
             VALUES ('$escaped_target', '$task_status', 'cancelled', 'Manual cancellation');
         "
@@ -1002,29 +1210,29 @@ cmd_cancel() {
 
     # Try as batch
     local batch_status
-    batch_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM batches WHERE id = '$escaped_target' OR name = '$escaped_target';")
+    batch_status=$(db "$SUPERVISOR_DB" "SELECT status FROM batches WHERE id = '$escaped_target' OR name = '$escaped_target';")
 
     if [[ -n "$batch_status" ]]; then
         local batch_id
-        batch_id=$(sqlite3 "$SUPERVISOR_DB" "SELECT id FROM batches WHERE id = '$escaped_target' OR name = '$escaped_target';")
+        batch_id=$(db "$SUPERVISOR_DB" "SELECT id FROM batches WHERE id = '$escaped_target' OR name = '$escaped_target';")
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
 
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             UPDATE batches SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
             WHERE id = '$escaped_batch';
         "
 
         # Cancel all non-terminal tasks in the batch
         local cancelled_count
-        cancelled_count=$(sqlite3 "$SUPERVISOR_DB" "
+        cancelled_count=$(db "$SUPERVISOR_DB" "
             SELECT count(*) FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$escaped_batch'
             AND t.status NOT IN ('deployed', 'merged', 'failed', 'cancelled');
         ")
 
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             UPDATE tasks SET
                 status = 'cancelled',
                 completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
@@ -1050,9 +1258,9 @@ cmd_db() {
 
     if [[ $# -eq 0 ]]; then
         log_info "Opening interactive SQLite shell: $SUPERVISOR_DB"
-        sqlite3 -column -header "$SUPERVISOR_DB"
+        db -column -header "$SUPERVISOR_DB"
     else
-        sqlite3 -column -header "$SUPERVISOR_DB" "$*"
+        db -column -header "$SUPERVISOR_DB" "$*"
     fi
 
     return 0
@@ -1067,14 +1275,14 @@ cmd_running_count() {
     local batch_id="${1:-}"
 
     if [[ -n "$batch_id" ]]; then
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             SELECT count(*) FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$(sql_escape "$batch_id")'
             AND t.status IN ('dispatched', 'running', 'evaluating');
         "
     else
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             SELECT count(*) FROM tasks
             WHERE status IN ('dispatched', 'running', 'evaluating');
         "
@@ -1097,7 +1305,7 @@ cmd_next() {
 
         # Check concurrency limit
         local concurrency
-        concurrency=$(sqlite3 "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
@@ -1109,7 +1317,7 @@ cmd_next() {
             limit="$available"
         fi
 
-        sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        db -separator '|' "$SUPERVISOR_DB" "
             SELECT t.id, t.repo, t.description, t.model
             FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
@@ -1120,7 +1328,7 @@ cmd_next() {
             LIMIT $limit;
         "
     else
-        sqlite3 -separator '|' "$SUPERVISOR_DB" "
+        db -separator '|' "$SUPERVISOR_DB" "
             SELECT id, repo, description, model
             FROM tasks
             WHERE status = 'queued'
@@ -1185,18 +1393,21 @@ resolve_model() {
     local tier="${1:-coding}"
     local ai_cli="${2:-opencode}"
 
+    # Allow env var override for all tiers
+    if [[ -n "${SUPERVISOR_MODEL:-}" ]]; then
+        echo "$SUPERVISOR_MODEL"
+        return 0
+    fi
+
     case "$tier" in
         coding)
             # Best Anthropic model - primary for all code tasks
             echo "anthropic/claude-opus-4-6"
             ;;
-        eval)
-            # Fast + cheap for evaluation decisions
-            echo "anthropic/claude-sonnet-4"
-            ;;
-        health)
-            # Cheapest possible for health probes
-            echo "anthropic/claude-sonnet-4"
+        eval|health)
+            # Fast + cheap for evaluation and health probes
+            # Note: OpenCode requires full model IDs (e.g., claude-sonnet-4-5, not claude-sonnet-4)
+            echo "anthropic/claude-sonnet-4-5"
             ;;
     esac
 
@@ -1213,6 +1424,13 @@ check_model_health() {
     local ai_cli="$1"
     local model="${2:-}"
 
+    # Pulse-level fast path: if health was already verified in this pulse
+    # invocation, skip the probe entirely (avoids 8s per task)
+    if [[ -n "${_PULSE_HEALTH_VERIFIED:-}" ]]; then
+        log_info "Model health: pulse-verified OK (skipping probe)"
+        return 0
+    fi
+
     # Cache key: cli + model, stored as a file with timestamp
     local cache_dir="$SUPERVISOR_DIR/health"
     mkdir -p "$cache_dir"
@@ -1228,8 +1446,17 @@ check_model_health() {
         local age=$(( now - cached_at ))
         if [[ "$age" -lt 300 ]]; then
             log_info "Model health: cached OK ($age seconds ago)"
+            _PULSE_HEALTH_VERIFIED="true"
             return 0
         fi
+    fi
+
+    # Resolve timeout command (macOS lacks coreutils timeout)
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout"
     fi
 
     # Send a trivial prompt
@@ -1242,15 +1469,60 @@ check_model_health() {
             probe_cmd+=(-m "$model")
         fi
         probe_cmd+=(--title "health-check" "Reply with exactly: OK")
-        probe_result=$(timeout 15 "${probe_cmd[@]}" 2>&1) || true
-        probe_exit=$?
+        if [[ -n "$timeout_cmd" ]]; then
+            probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
+            probe_exit=$?
+        else
+            # Fallback: background process with manual kill after 15s
+            local probe_pid probe_tmpfile
+            probe_tmpfile=$(mktemp)
+            ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
+            probe_pid=$!
+            local waited=0
+            while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
+                sleep 1
+                waited=$((waited + 1))
+            done
+            if kill -0 "$probe_pid" 2>/dev/null; then
+                kill "$probe_pid" 2>/dev/null || true
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=124  # Simulate timeout exit code
+            else
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=$?
+            fi
+            probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
+            rm -f "$probe_tmpfile"
+        fi
     else
         local -a probe_cmd=(claude -p "Reply with exactly: OK" --output-format text)
         if [[ -n "$model" ]]; then
             probe_cmd+=(--model "$model")
         fi
-        probe_result=$(timeout 15 "${probe_cmd[@]}" 2>&1) || true
-        probe_exit=$?
+        if [[ -n "$timeout_cmd" ]]; then
+            probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
+            probe_exit=$?
+        else
+            local probe_pid probe_tmpfile
+            probe_tmpfile=$(mktemp)
+            ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
+            probe_pid=$!
+            local waited=0
+            while kill -0 "$probe_pid" 2>/dev/null && [[ "$waited" -lt 15 ]]; do
+                sleep 1
+                waited=$((waited + 1))
+            done
+            if kill -0 "$probe_pid" 2>/dev/null; then
+                kill "$probe_pid" 2>/dev/null || true
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=124
+            else
+                wait "$probe_pid" 2>/dev/null || true
+                probe_exit=$?
+            fi
+            probe_result=$(cat "$probe_tmpfile" 2>/dev/null || true)
+            rm -f "$probe_tmpfile"
+        fi
     fi
 
     # Check for known failure patterns
@@ -1273,6 +1545,7 @@ check_model_health() {
 
     # Healthy - cache the result
     date +%s > "$cache_file"
+    _PULSE_HEALTH_VERIFIED="true"
     log_info "Model health: OK (cached for 5m)"
     return 0
 }
@@ -1496,7 +1769,7 @@ cmd_kill_workers() {
 
             # Check if task is still active
             local task_status
-            task_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+            task_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
 
             if [[ "$task_status" == "running" || "$task_status" == "dispatched" ]] && kill -0 "$pid" 2>/dev/null; then
                 protected_pattern="${protected_pattern}|${pid}"
@@ -1591,7 +1864,7 @@ cmd_dispatch() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, repo, description, status, model, retries, max_retries
         FROM tasks WHERE id = '$escaped_id';
     ")
@@ -1615,7 +1888,7 @@ cmd_dispatch() {
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
         local concurrency
-        concurrency=$(sqlite3 "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
+        concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
@@ -1709,13 +1982,17 @@ cmd_dispatch() {
         tab_cmd="cd '${worktree_path}' && ${cmd_parts[*]} > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'"
         printf '\e]1337;NewTab=%s\a' "$tab_cmd" 2>/dev/null || true
         # Also start background process as fallback (Tabby may not support OSC 1337)
-        (cd "$worktree_path" && "${cmd_parts[@]}" > "$log_file" 2>&1; echo "EXIT:$?" >> "$log_file") &
+        # Use nohup + disown to survive parent (cron) exit
+        nohup bash -c "cd '${worktree_path}' && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
     else
         # Headless: background process
-        (cd "$worktree_path" && "${cmd_parts[@]}" > "$log_file" 2>&1; echo "EXIT:$?" >> "$log_file") &
+        # Use nohup + disown to survive parent (cron) exit — without this,
+        # workers die after ~2 minutes when the cron pulse script exits
+        nohup bash -c "cd '${worktree_path}' && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
     fi
 
     local worker_pid=$!
+    disown "$worker_pid" 2>/dev/null || true
 
     # Store PID for monitoring
     echo "$worker_pid" > "$SUPERVISOR_DIR/pids/${task_id}.pid"
@@ -1745,7 +2022,7 @@ cmd_worker_status() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT status, session_id, log_file, worktree
         FROM tasks WHERE id = '$escaped_id';
     ")
@@ -1929,7 +2206,7 @@ evaluate_worker() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT status, log_file, retries, max_retries, session_id
         FROM tasks WHERE id = '$escaped_id';
     ")
@@ -1965,6 +2242,20 @@ evaluate_worker() {
     meta_signal=$(_meta_get "signal" "none")
     meta_pr_url=$(_meta_get "pr_url" "")
     meta_exit_code=$(_meta_get "exit_code" "")
+
+    # Fallback PR URL detection: if log didn't contain a PR URL, check GitHub
+    # for a PR matching the task's branch (feature/tXXX)
+    if [[ -z "$meta_pr_url" ]]; then
+        local task_repo
+        task_repo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        if [[ -n "$task_repo" ]]; then
+            local repo_slug_detect
+            repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+            if [[ -n "$repo_slug_detect" ]]; then
+                meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+            fi
+        fi
+    fi
 
     local meta_rate_limit_count meta_auth_error_count meta_conflict_count
     local meta_timeout_count meta_oom_count meta_backend_error_count
@@ -2105,7 +2396,7 @@ evaluate_with_ai() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_desc
-    task_desc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 
     local eval_prompt
     eval_prompt="You are evaluating the outcome of an automated task worker. Respond with EXACTLY one line in the format: VERDICT:<type>:<detail>
@@ -2160,7 +2451,7 @@ Respond with ONLY the verdict line, nothing else."
         log_info "AI eval for $task_id: $verdict"
 
         # Store AI evaluation in state log for audit trail
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             INSERT INTO state_log (task_id, from_state, to_state, reason)
             VALUES ('$(sql_escape "$task_id")', 'evaluating', 'evaluating',
                     'AI eval verdict: $verdict');
@@ -2207,7 +2498,7 @@ cmd_reprompt() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, repo, description, status, session_id, worktree, log_file, retries, max_retries, error
         FROM tasks WHERE id = '$escaped_id';
     ")
@@ -2280,8 +2571,10 @@ Task description: ${tdesc:-$task_id}"
     # Ensure PID directory exists
     mkdir -p "$SUPERVISOR_DIR/pids"
 
-    (cd "$work_dir" && "${cmd_parts[@]}" > "$new_log_file" 2>&1; echo "EXIT:$?" >> "$new_log_file") &
+    # Use nohup + disown to survive parent (cron) exit
+    nohup bash -c "cd '${work_dir}' && $(printf '%q ' "${cmd_parts[@]}") > '${new_log_file}' 2>&1; echo \"EXIT:\$?\" >> '${new_log_file}'" &>/dev/null &
     local worker_pid=$!
+    disown "$worker_pid" 2>/dev/null || true
 
     echo "$worker_pid" > "$SUPERVISOR_DIR/pids/${task_id}.pid"
 
@@ -2323,7 +2616,7 @@ cmd_evaluate() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local tlog
-    tlog=$(sqlite3 "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';")
+    tlog=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';")
 
     if [[ -n "$tlog" && -f "$tlog" ]]; then
         echo -e "${BOLD}=== Log Metadata: $task_id ===${NC}"
@@ -2362,11 +2655,33 @@ check_pr_status() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local pr_url
-    pr_url=$(sqlite3 "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
+    pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
 
+    # If no PR URL stored, try to find one via branch name lookup
     if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
-        echo "no_pr"
-        return 0
+        local task_repo_check
+        task_repo_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        if [[ -n "$task_repo_check" ]]; then
+            local repo_slug_check
+            repo_slug_check=$(git -C "$task_repo_check" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+            if [[ -n "$repo_slug_check" ]]; then
+                local found_pr_url
+                found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                if [[ -n "$found_pr_url" ]]; then
+                    pr_url="$found_pr_url"
+                    sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr_url")' WHERE id = '$escaped_id';" 2>/dev/null || true
+                else
+                    echo "no_pr"
+                    return 0
+                fi
+            else
+                echo "no_pr"
+                return 0
+            fi
+        else
+            echo "no_pr"
+            return 0
+        fi
     fi
 
     # Extract owner/repo and PR number from URL
@@ -2376,16 +2691,8 @@ check_pr_status() {
     repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
 
     if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
-        # Try to get PR from branch in the worktree
-        local tworktree
-        tworktree=$(sqlite3 "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';")
-        if [[ -n "$tworktree" && -d "$tworktree" ]]; then
-            pr_number=$(gh pr view --json number --jq '.number' 2>/dev/null --repo "$repo_slug" || echo "")
-        fi
-        if [[ -z "$pr_number" ]]; then
-            echo "no_pr"
-            return 0
-        fi
+        echo "no_pr"
+        return 0
     fi
 
     # Check PR state
@@ -2483,7 +2790,7 @@ cmd_pr_check() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local pr_url
-    pr_url=$(sqlite3 "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
+    pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
 
     echo -e "${BOLD}=== PR Check: $task_id ===${NC}"
     echo "  PR URL: ${pr_url:-none}"
@@ -2515,7 +2822,7 @@ merge_task_pr() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT pr_url, worktree, repo, branch FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -2673,7 +2980,7 @@ cleanup_after_merge() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT worktree, repo, branch FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -2690,7 +2997,7 @@ cleanup_after_merge() {
         cleanup_task_worktree "$tworktree" "$trepo"
 
         # Clear worktree field in DB
-        sqlite3 "$SUPERVISOR_DB" "
+        db "$SUPERVISOR_DB" "
             UPDATE tasks SET worktree = NULL WHERE id = '$escaped_id';
         "
     fi
@@ -2741,7 +3048,7 @@ cmd_pr_lifecycle() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT status, pr_url, repo, worktree FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -2762,12 +3069,28 @@ cmd_pr_lifecycle() {
     # Step 1: Transition to pr_review if still in complete
     if [[ "$tstatus" == "complete" ]]; then
         if [[ -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ]]; then
-            log_warn "No PR for $task_id - skipping post-PR lifecycle"
-            # Mark as deployed directly (no PR to merge)
-            if [[ "$dry_run" == "false" ]]; then
-                cmd_transition "$task_id" "deployed" 2>/dev/null || true
+            # Before marking deployed, try to find a PR via gh pr list
+            local found_pr=""
+            if [[ -n "$trepo" ]]; then
+                local repo_slug_lifecycle
+                repo_slug_lifecycle=$(git -C "$trepo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+                if [[ -n "$repo_slug_lifecycle" ]]; then
+                    found_pr=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                fi
             fi
-            return 0
+            if [[ -n "$found_pr" ]]; then
+                log_info "Found PR for $task_id via branch lookup: $found_pr"
+                if [[ "$dry_run" == "false" ]]; then
+                    sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr")' WHERE id = '$escaped_id';"
+                    tpr="$found_pr"
+                fi
+            else
+                log_warn "No PR for $task_id - skipping post-PR lifecycle"
+                if [[ "$dry_run" == "false" ]]; then
+                    cmd_transition "$task_id" "deployed" 2>/dev/null || true
+                fi
+                return 0
+            fi
         fi
         if [[ "$dry_run" == "false" ]]; then
             cmd_transition "$task_id" "pr_review" 2>/dev/null || true
@@ -2828,9 +3151,12 @@ cmd_pr_lifecycle() {
                 ;;
             no_pr)
                 log_warn "No PR found for $task_id"
-                if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "deployed" 2>/dev/null || true
-                fi
+                # PR URL in DB is stale or wrong - the PR may not exist yet
+                # or the stored URL was incorrect. Log for investigation.
+                log_warn "  -> merging"
+                log_warn "  -> blocked"
+                log_warn "  -> cancelled"
+                # Don't auto-deploy - leave in pr_review for next pulse to retry
                 return 0
                 ;;
         esac
@@ -2880,7 +3206,7 @@ cmd_pr_lifecycle() {
         fi
     fi
 
-    log_success "Post-PR lifecycle complete for $task_id (status: $(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo 'unknown'))"
+    log_success "Post-PR lifecycle complete for $task_id (status: $(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo 'unknown'))"
     return 0
 }
 
@@ -2901,7 +3227,7 @@ process_post_pr_lifecycle() {
     fi
 
     local eligible_tasks
-    eligible_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    eligible_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT t.id, t.status, t.pr_url FROM tasks t
         WHERE $where_clause
         ORDER BY t.updated_at ASC;
@@ -2928,7 +3254,7 @@ process_post_pr_lifecycle() {
         log_info "  $tid: processing post-PR lifecycle (status: $tstatus)"
         if cmd_pr_lifecycle "$tid" 2>/dev/null; then
             local new_status
-            new_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+            new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
             case "$new_status" in
                 merged) merged_count=$((merged_count + 1)) ;;
                 deployed) deployed_count=$((deployed_count + 1)) ;;
@@ -2962,10 +3288,14 @@ cmd_pulse() {
 
     log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
+    # Pulse-level health check flag: once health is confirmed in this pulse,
+    # skip subsequent checks to avoid 8-second probes per task
+    _PULSE_HEALTH_VERIFIED=""
+
     # Phase 0: Auto-pickup new tasks from TODO.md (t128.5)
     # Scans for #auto-dispatch tags and Dispatch Queue section
     local all_repos
-    all_repos=$(sqlite3 "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks;" 2>/dev/null || true)
+    all_repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks;" 2>/dev/null || true)
     if [[ -n "$all_repos" ]]; then
         while IFS= read -r repo_path; do
             if [[ -f "$repo_path/TODO.md" ]]; then
@@ -2982,7 +3312,7 @@ cmd_pulse() {
     # Phase 1: Check running workers for completion
     # Also check 'evaluating' tasks - AI eval may have timed out, leaving them stuck
     local running_tasks
-    running_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    running_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, log_file FROM tasks
         WHERE status IN ('running', 'dispatched', 'evaluating')
         ORDER BY started_at ASC;
@@ -3014,7 +3344,7 @@ cmd_pulse() {
             # Worker is done - evaluate outcome
             # Check current state to handle already-evaluating tasks (AI eval timeout)
             local current_task_state
-            current_task_state=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+            current_task_state=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
             if [[ "$current_task_state" == "evaluating" ]]; then
                 log_info "  $tid: stuck in evaluating (AI eval likely timed out), re-evaluating without AI..."
@@ -3026,7 +3356,7 @@ cmd_pulse() {
 
             # Get task description for memory context (t128.6)
             local tid_desc
-            tid_desc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+            tid_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
 
             # Skip AI eval for stuck tasks (it already timed out once)
             local skip_ai="false"
@@ -3066,9 +3396,9 @@ cmd_pulse() {
                     else
                         # Re-prompt failed - check if max retries exceeded
                         local current_retries
-                        current_retries=$(sqlite3 "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
+                        current_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
                         local max_retries_val
-                        max_retries_val=$(sqlite3 "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
+                        max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
                         if [[ "$current_retries" -ge "$max_retries_val" ]]; then
                             log_error "  $tid: max retries exceeded ($current_retries/$max_retries_val), marking blocked"
                             cmd_transition "$tid" "blocked" --error "Max retries exceeded: $outcome_detail" 2>/dev/null || true
@@ -3124,17 +3454,18 @@ cmd_pulse() {
 
         if [[ -n "$next_tasks" ]]; then
             while IFS='|' read -r tid trepo tdesc tmodel; do
-                if cmd_dispatch "$tid" --batch "$batch_id" 2>/dev/null; then
+                local dispatch_exit=0
+                cmd_dispatch "$tid" --batch "$batch_id" || dispatch_exit=$?
+                if [[ "$dispatch_exit" -eq 0 ]]; then
                     dispatched_count=$((dispatched_count + 1))
+                elif [[ "$dispatch_exit" -eq 2 ]]; then
+                    log_info "Concurrency limit reached, stopping dispatch"
+                    break
+                elif [[ "$dispatch_exit" -eq 3 ]]; then
+                    log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
+                    break
                 else
-                    local dispatch_exit=$?
-                    if [[ "$dispatch_exit" -eq 2 ]]; then
-                        log_info "Concurrency limit reached, stopping dispatch"
-                        break
-                    elif [[ "$dispatch_exit" -eq 3 ]]; then
-                        log_warn "Provider unavailable, stopping dispatch until next pulse"
-                        break
-                    fi
+                    log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
                 fi
             done <<< "$next_tasks"
         fi
@@ -3145,17 +3476,18 @@ cmd_pulse() {
 
         if [[ -n "$next_tasks" ]]; then
             while IFS='|' read -r tid trepo tdesc tmodel; do
-                if cmd_dispatch "$tid" 2>/dev/null; then
+                local dispatch_exit=0
+                cmd_dispatch "$tid" || dispatch_exit=$?
+                if [[ "$dispatch_exit" -eq 0 ]]; then
                     dispatched_count=$((dispatched_count + 1))
+                elif [[ "$dispatch_exit" -eq 2 ]]; then
+                    log_info "Concurrency limit reached, stopping dispatch"
+                    break
+                elif [[ "$dispatch_exit" -eq 3 ]]; then
+                    log_warn "Provider unavailable for $tid, stopping dispatch until next pulse"
+                    break
                 else
-                    local dispatch_exit=$?
-                    if [[ "$dispatch_exit" -eq 2 ]]; then
-                        log_info "Concurrency limit reached, stopping dispatch"
-                        break
-                    elif [[ "$dispatch_exit" -eq 3 ]]; then
-                        log_warn "Provider unavailable, stopping dispatch until next pulse"
-                        break
-                    fi
+                    log_warn "Dispatch failed for $tid (exit $dispatch_exit), trying next task"
                 fi
             done <<< "$next_tasks"
         fi
@@ -3175,7 +3507,7 @@ cmd_pulse() {
                 local stale_task
                 stale_task=$(basename "$pid_file" .pid)
                 local stale_status
-                stale_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$stale_task")';" 2>/dev/null || echo "")
+                stale_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$stale_task")';" 2>/dev/null || echo "")
                 # Only clean up PIDs for tasks still marked as running/dispatched
                 if [[ "$stale_status" == "running" || "$stale_status" == "dispatched" ]]; then
                     log_warn "  Orphaned process for $stale_task (PID $stale_pid dead, status $stale_status)"
@@ -3189,16 +3521,29 @@ cmd_pulse() {
     local total_running
     total_running=$(cmd_running_count "${batch_id:-}")
     local total_queued
-    total_queued=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';")
+    total_queued=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';")
     local total_complete
-    total_complete=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed');")
+    total_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed');")
     local total_pr_review
-    total_pr_review=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying');")
+    total_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying');")
 
     local total_failed
-    total_failed=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('failed', 'blocked');")
+    total_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('failed', 'blocked');")
     local total_tasks
-    total_tasks=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+    total_tasks=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+
+    # System resource snapshot (t135.15.3)
+    local resource_output
+    resource_output=$(check_system_load 2>/dev/null || echo "")
+    local sys_load_1m sys_load_5m sys_cpu_cores sys_load_ratio sys_memory sys_proc_count sys_supervisor_procs sys_overloaded
+    sys_load_1m=$(echo "$resource_output" | grep '^load_1m=' | cut -d= -f2)
+    sys_load_5m=$(echo "$resource_output" | grep '^load_5m=' | cut -d= -f2)
+    sys_cpu_cores=$(echo "$resource_output" | grep '^cpu_cores=' | cut -d= -f2)
+    sys_load_ratio=$(echo "$resource_output" | grep '^load_ratio=' | cut -d= -f2)
+    sys_memory=$(echo "$resource_output" | grep '^memory_pressure=' | cut -d= -f2)
+    sys_proc_count=$(echo "$resource_output" | grep '^process_count=' | cut -d= -f2)
+    sys_supervisor_procs=$(echo "$resource_output" | grep '^supervisor_process_count=' | cut -d= -f2)
+    sys_overloaded=$(echo "$resource_output" | grep '^overloaded=' | cut -d= -f2)
 
     echo ""
     log_info "Pulse summary:"
@@ -3210,6 +3555,30 @@ cmd_pulse() {
     log_info "  Queued:     $total_queued"
     log_info "  Post-PR:    $total_pr_review"
     log_info "  Total done: $total_complete / $total_tasks"
+
+    # Resource stats (t135.15.3)
+    if [[ -n "$sys_load_1m" ]]; then
+        local load_color="$GREEN"
+        if [[ "$sys_overloaded" == "true" ]]; then
+            load_color="$RED"
+        elif [[ -n "$sys_load_ratio" && "$sys_load_ratio" -gt 100 ]]; then
+            load_color="$YELLOW"
+        fi
+        local mem_color="$GREEN"
+        if [[ "$sys_memory" == "high" ]]; then
+            mem_color="$RED"
+        elif [[ "$sys_memory" == "medium" ]]; then
+            mem_color="$YELLOW"
+        fi
+        echo ""
+        log_info "System resources:"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Load:     ${load_color}${sys_load_1m}${NC} / ${sys_load_5m} (${sys_cpu_cores} cores, ratio: ${sys_load_ratio}%)"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Memory:   ${mem_color}${sys_memory}${NC}"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Procs:    ${sys_proc_count} total, ${sys_supervisor_procs} supervisor"
+        if [[ "$sys_overloaded" == "true" ]]; then
+            echo -e "  ${BLUE}[SUPERVISOR]${NC}   ${RED}OVERLOADED${NC} - adaptive throttling active"
+        fi
+    fi
 
     # macOS notification on progress (when something changed this pulse)
     if [[ $((completed_count + failed_count + dispatched_count)) -gt 0 ]]; then
@@ -3226,9 +3595,9 @@ cmd_pulse() {
             local cleanup_tid
             cleanup_tid=$(basename "$pid_file" .pid)
             local cleanup_status
-            cleanup_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$cleanup_tid")';" 2>/dev/null || echo "")
+            cleanup_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$cleanup_tid")';" 2>/dev/null || echo "")
             case "$cleanup_status" in
-                complete|failed|cancelled|blocked)
+                complete|failed|cancelled|blocked|deployed|pr_review|merging|merged|deploying)
                     cleanup_worker_processes "$cleanup_tid" 2>/dev/null || true
                     orphan_killed=$((orphan_killed + 1))
                     ;;
@@ -3259,7 +3628,7 @@ cmd_cleanup() {
 
     # Find tasks with worktrees that are in terminal states
     local terminal_tasks
-    terminal_tasks=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    terminal_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, worktree, repo, status FROM tasks
         WHERE worktree IS NOT NULL AND worktree != ''
         AND status IN ('deployed', 'merged', 'failed', 'cancelled');
@@ -3275,7 +3644,7 @@ cmd_cleanup() {
         if [[ ! -d "$tworktree" ]]; then
             log_info "  $tid: worktree already removed ($tworktree)"
             # Clear worktree field in DB
-            sqlite3 "$SUPERVISOR_DB" "
+            db "$SUPERVISOR_DB" "
                 UPDATE tasks SET worktree = NULL WHERE id = '$(sql_escape "$tid")';
             "
             continue
@@ -3286,7 +3655,7 @@ cmd_cleanup() {
         else
             log_info "  Removing worktree: $tworktree ($tid)"
             cleanup_task_worktree "$tworktree" "$trepo"
-            sqlite3 "$SUPERVISOR_DB" "
+            db "$SUPERVISOR_DB" "
                 UPDATE tasks SET worktree = NULL WHERE id = '$(sql_escape "$tid")';
             "
             cleaned=$((cleaned + 1))
@@ -3305,7 +3674,7 @@ cmd_cleanup() {
 
             # Check task state - only clean up terminal-state tasks
             local task_state
-            task_state=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id_from_pid")';" 2>/dev/null || echo "unknown")
+            task_state=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id_from_pid")';" 2>/dev/null || echo "unknown")
 
             case "$task_state" in
                 complete|failed|cancelled|blocked)
@@ -3363,7 +3732,7 @@ update_todo_on_complete() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT repo, description, pr_url FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -3448,7 +3817,7 @@ update_todo_on_blocked() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local trepo
-    trepo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';")
+    trepo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';")
 
     if [[ -z "$trepo" ]]; then
         log_error "Task not found: $task_id"
@@ -3541,7 +3910,7 @@ send_task_notification() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local task_row
-    task_row=$(sqlite3 -separator '|' "$SUPERVISOR_DB" "
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT description, repo, pr_url, error FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -3765,7 +4134,7 @@ store_success_pattern() {
 
     # Get retry count for context
     local retries=0
-    retries=$(sqlite3 "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo 0)
+    retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo 0)
     if [[ "$retries" -gt 0 ]]; then
         content="$content | Succeeded after $retries retries"
     fi
@@ -3800,33 +4169,33 @@ run_batch_retrospective() {
 
     # Get batch info
     local batch_name
-    batch_name=$(sqlite3 "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "$batch_id")
+    batch_name=$(db "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "$batch_id")
 
     # Gather statistics
     local total_tasks complete_count failed_count blocked_count cancelled_count
-    total_tasks=$(sqlite3 "$SUPERVISOR_DB" "
+    total_tasks=$(db "$SUPERVISOR_DB" "
         SELECT count(*) FROM batch_tasks WHERE batch_id = '$escaped_batch';
     ")
-    complete_count=$(sqlite3 "$SUPERVISOR_DB" "
+    complete_count=$(db "$SUPERVISOR_DB" "
         SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
         WHERE bt.batch_id = '$escaped_batch' AND t.status = 'complete';
     ")
-    failed_count=$(sqlite3 "$SUPERVISOR_DB" "
+    failed_count=$(db "$SUPERVISOR_DB" "
         SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
         WHERE bt.batch_id = '$escaped_batch' AND t.status = 'failed';
     ")
-    blocked_count=$(sqlite3 "$SUPERVISOR_DB" "
+    blocked_count=$(db "$SUPERVISOR_DB" "
         SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
         WHERE bt.batch_id = '$escaped_batch' AND t.status = 'blocked';
     ")
-    cancelled_count=$(sqlite3 "$SUPERVISOR_DB" "
+    cancelled_count=$(db "$SUPERVISOR_DB" "
         SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
         WHERE bt.batch_id = '$escaped_batch' AND t.status = 'cancelled';
     ")
 
     # Gather common error patterns
     local error_patterns
-    error_patterns=$(sqlite3 "$SUPERVISOR_DB" "
+    error_patterns=$(db "$SUPERVISOR_DB" "
         SELECT error, count(*) as cnt FROM tasks t
         JOIN batch_tasks bt ON t.id = bt.task_id
         WHERE bt.batch_id = '$escaped_batch'
@@ -3836,7 +4205,7 @@ run_batch_retrospective() {
 
     # Calculate total retries
     local total_retries
-    total_retries=$(sqlite3 "$SUPERVISOR_DB" "
+    total_retries=$(db "$SUPERVISOR_DB" "
         SELECT COALESCE(SUM(t.retries), 0) FROM tasks t
         JOIN batch_tasks bt ON t.id = bt.task_id
         WHERE bt.batch_id = '$escaped_batch';
@@ -3913,7 +4282,7 @@ cmd_retrospective() {
     if [[ -z "$batch_id" ]]; then
         # Find the most recently completed batch
         ensure_db
-        batch_id=$(sqlite3 "$SUPERVISOR_DB" "
+        batch_id=$(db "$SUPERVISOR_DB" "
             SELECT id FROM batches WHERE status = 'complete'
             ORDER BY updated_at DESC LIMIT 1;
         " 2>/dev/null || echo "")
@@ -3950,7 +4319,7 @@ cmd_recall() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local tdesc
-    tdesc=$(sqlite3 "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    tdesc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 
     if [[ -z "$tdesc" ]]; then
         # Try looking up from TODO.md in current repo
@@ -3990,7 +4359,7 @@ cmd_update_todo() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local tstatus
-    tstatus=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
+    tstatus=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
 
     if [[ -z "$tstatus" ]]; then
         log_error "Task not found: $task_id"
@@ -4003,12 +4372,12 @@ cmd_update_todo() {
             ;;
         blocked)
             local terror
-            terror=$(sqlite3 "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+            terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
             update_todo_on_blocked "$task_id" "${terror:-blocked by supervisor}"
             ;;
         failed)
             local terror
-            terror=$(sqlite3 "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+            terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
             update_todo_on_blocked "$task_id" "FAILED: ${terror:-unknown}"
             ;;
         *)
@@ -4041,7 +4410,7 @@ cmd_notify() {
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local tstatus
-    tstatus=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
+    tstatus=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';")
 
     if [[ -z "$tstatus" ]]; then
         log_error "Task not found: $task_id"
@@ -4049,7 +4418,7 @@ cmd_notify() {
     fi
 
     local terror
-    terror=$(sqlite3 "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
+    terror=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id = '$escaped_id';")
 
     send_task_notification "$task_id" "$tstatus" "${terror:-}"
     return 0
@@ -4099,7 +4468,7 @@ cmd_auto_pickup() {
 
             # Check if already in supervisor
             local existing
-            existing=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+            existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
             if [[ -n "$existing" ]]; then
                 if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
                     continue
@@ -4152,7 +4521,7 @@ cmd_auto_pickup() {
             fi
 
             local existing
-            existing=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+            existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
             if [[ -n "$existing" ]]; then
                 if [[ "$existing" == "complete" || "$existing" == "cancelled" ]]; then
                     continue
