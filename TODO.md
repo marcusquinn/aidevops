@@ -83,8 +83,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: PR #469 merged. create_github_issue() + update_todo_with_issue_ref() + --no-issue flag + SUPERVISOR_AUTO_ISSUE env.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
   - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435. BLOCKED: FAILED: no_log_file
-- [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
-  - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
+- [x] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440 completed:2026-02-08
+  - Notes: PR #479 merged. Replaced all non-portable sed -i usage across 17 scripts with sed_inplace() wrapper from shared-constants.sh. Added sed_append_after() for portable line insertion. Removed 6 duplicate local definitions.
 - [x] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h actual:1h (ai:1h) logged:2026-02-07 ref:GH#441 completed:2026-02-07
   - Notes: PR #463 merged. Replaced excessive 2>/dev/null with log file redirects across supervisor and helper scripts.
 - [x] t143 quality: test script BRE alternation -> ERE style improvement #quality #tests ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#442 completed:2026-02-07
@@ -129,7 +129,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none completed:2026-02-07
     - Notes: Already resolved. Neither .scannerwork/ nor .playwright-cli/ are tracked in git (git ls-files --error-unmatch confirms).
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
-    - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
+    - [x] t135.6.1 Fix Docker test environment path case (git->Git) and workspace paths ~5m completed:2026-02-08
+      - Notes: PR #481 merged. Fixed Dockerfile and docker-compose.yml paths.
     - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
     - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
@@ -137,10 +138,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.7.1 Read each eval context to understand construction and purpose ~30m completed:2026-02-07
     - [x] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1 completed:2026-02-07
     - [x] t135.7.3 Test affected command paths ~30m blocked-by:t135.7.2 completed:2026-02-07
-  - [ ] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 80%+ ~4h blocked-by:none
-    - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: backend_infrastructure_error    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m BLOCKED: Max retries exceeded: backend_infrastructure_error
-    - [ ] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1
-    - [ ] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2
+  - [x] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 93% ~4h blocked-by:none completed:2026-02-08
+    - Notes: PR #480 merged. 155 files changed, -2704 lines net. Removed duplicate color constants, print functions, and sed_inplace definitions from 150+ scripts by sourcing shared-constants.sh.
+    - [x] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m completed:2026-02-08
+    - [x] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1 completed:2026-02-08
+    - [x] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2 completed:2026-02-08
   - [x] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none started:2026-02-07 completed:2026-02-07
     - [x] t135.9.1 Identify all mktemp usages without trap cleanup ~15m completed:2026-02-07
     - Notes: 33 scripts use mktemp, 31 without trap. Critical scripts (secret-helper, version-manager) fixed in PR #436.
@@ -239,7 +241,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4 completed:2026-01-24
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
-  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5
+  - [x] t068.8 TUI Dashboard (bash TUI in supervisor-helper.sh) ~1h blocked-by:t068.4,t068.5 started:2026-02-07 ref:GH#442
+    - Notes: PR #482 pending. Live-updating terminal dashboard with task table, progress bar, system resources, keyboard controls (q/p/r/j/k/?). Zero deps beyond bash+sqlite3+tput.
 - [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) logged:2025-12-21
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
