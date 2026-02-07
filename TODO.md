@@ -55,6 +55,35 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h (ai:4h test:1.5h read:30m) logged:2026-02-07 ref:GH#437
+  - [ ] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none
+  - [ ] t148.2 Add triage_review_feedback() to classify threads by severity ~1.5h blocked-by:t148.1
+  - [ ] t148.3 Add review_triage state to supervisor state machine ~30m blocked-by:t148.1
+  - [ ] t148.4 Modify cmd_pr_lifecycle to include triage before merge ~1h blocked-by:t148.2,t148.3
+  - [ ] t148.5 Add worker dispatch for fixing valid review feedback ~1.5h blocked-by:t148.4
+  - [ ] t148.6 Add --skip-review-triage emergency bypass flag ~15m blocked-by:t148.4
+  - Notes: 11 of last 50 merged PRs had CHANGES_REQUESTED. 50 unresolved review threads, 12 high/critical. Bot reviews post as COMMENTED not CHANGES_REQUESTED so reviewDecision stays NONE. Need to check unresolved threads directly, not just reviewDecision.
+- [ ] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h (ai:3h test:30m read:30m) logged:2026-02-07 ref:GH#438
+  - [ ] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none
+  - [ ] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none
+  - [ ] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none
+  - [ ] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none
+  - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
+  - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
+  - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
+  - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
+- [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
+  - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435.
+- [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
+  - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
+- [ ] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h (ai:2h test:30m read:30m) logged:2026-02-07 ref:GH#441
+  - Notes: Supervisor, voice helper, and other scripts suppress stderr extensively. Replace with log file redirect or remove where errors matter. From reviews on PRs #392, #403, #410.
+- [ ] t143 quality: test script BRE alternation -> ERE style improvement #quality #tests ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#442
+  - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
+- [ ] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443
+  - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
+- [ ] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m (ai:20m test:10m) logged:2026-02-07 ref:GH#445
+  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal).
 - [x] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#415. Already fixed: fallback chain (uv -> pipx -> venv+symlink -> pip3 --user) implemented at setup.sh lines 2608-2661. Verified working.
 - [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
