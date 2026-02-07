@@ -120,8 +120,8 @@ config_set() {
 
     local temp_file
     temp_file=$(mktemp)
-    jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
+    trap 'rm -f "$temp_file"' RETURN
+    jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 }
 

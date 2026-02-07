@@ -152,6 +152,7 @@ get_job() {
 sync_crontab() {
     local temp_cron
     temp_cron=$(mktemp)
+    trap 'rm -f "$temp_cron"' RETURN
     
     # Get existing crontab (excluding our managed entries)
     crontab -l 2>/dev/null | grep -v "cron-dispatch.sh" > "$temp_cron" || true
