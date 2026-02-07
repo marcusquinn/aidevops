@@ -59,7 +59,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: GH#415. pip3 install --user blocked by PEP 668 on modern Ubuntu/Debian. Fix fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy). Affects setup.sh lines ~2408-2432. Workaround: manual venv at ~/.aidevops/.agent-workspace/work/cisco-scanner-env/.
 - [ ] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07
   - Notes: GH#414. Hyphens in FTS5 queries interpreted as NOT operator. "qs-agency" becomes "qs NOT agency" causing column resolution error. Fix: quote hyphenated terms before passing to FTS5 MATCH clause.
-- [ ] t138 aidevops update output overwhelms tool buffer on large updates #bugfix #setup ~30m (ai:20m test:10m) logged:2026-02-07
+- [x] t138 aidevops update output overwhelms tool buffer on large updates #bugfix #setup ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#398. Raw git pull diff stat exceeds 51KB tool output limit on large updates (e.g. 500 file rename). Fix: quiet pull + filtered commit log (feat/fix/refactor only, head -20) in cmd_update(). Low severity, only affects large updates.
 - [x] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint). BLOCKED: Max retries exceeded: backend_infrastructure_error
