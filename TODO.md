@@ -66,27 +66,27 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h (ai:3h test:30m read:30m) logged:2026-02-07 ref:GH#438
   - [x] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none completed:2026-02-07
   - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
-  - [ ] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07
+  - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07
   - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07
   - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
   - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
   - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
-- [ ] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h (ai:2h test:45m read:15m) logged:2026-02-07 started:2026-02-07
-  - [ ] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h blocked-by:none
-  - [ ] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m blocked-by:t150.1
-  - [ ] t150.3 Add --no-self-heal flag and SUPERVISOR_SELF_HEAL env toggle ~15m blocked-by:t150.2
-  - [ ] t150.4 Add self-heal command for manual diagnostic subtask creation ~30m blocked-by:t150.1
-  - [ ] t150.5 Add schema migration for diagnostic_of column ~15m blocked-by:t150.1
-  - Notes: When a task fails or gets blocked, supervisor currently stops and requires manual intervention. Self-healing auto-creates a diagnostic subtask (e.g., t135.8-diag-1) that analyzes the failure log, investigates root cause, and attempts a fix. On diagnostic completion, the original task is re-queued. Guards: max 1 diagnostic per task, skip for auth/OOM/merge-conflict (human-only), configurable via env/flag.
-- [ ] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h (ai:1.5h test:30m) logged:2026-02-07 ref:GH#455
-  - Notes: Supervisor creates tasks in SQLite but never creates GitHub issues. Add gh issue create to cmd_add/cmd_batch, update TODO.md with ref:GH#N. Prerequisite for t020/t047 (full bi-directional sync). Immediate need: all dispatched tasks should have GH issue visibility.
+- [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
+  - [x] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h completed:2026-02-07
+  - [x] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m completed:2026-02-07
+  - [x] t150.3 Add --no-self-heal flag and SUPERVISOR_SELF_HEAL env toggle ~15m completed:2026-02-07
+  - [x] t150.4 Add self-heal command for manual diagnostic subtask creation ~30m completed:2026-02-07
+  - [x] t150.5 Add schema migration for diagnostic_of column ~15m completed:2026-02-07
+  - Notes: PR #462 merged. Self-healing auto-creates diagnostic subtasks on failure/block.
+- [x] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h actual:30m (ai:30m) logged:2026-02-07 ref:GH#455 completed:2026-02-07
+  - Notes: PR #469 merged. create_github_issue() + update_todo_with_issue_ref() + --no-issue flag + SUPERVISOR_AUTO_ISSUE env.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
   - Notes: Lines 3165 and 3183 of supervisor-helper.sh missing $SUPERVISOR_DB as first arg to db(). Every other db call (20+) passes it. Retry counter never persists. Also remove unused no_pr_key variable on line 3163. From CodeRabbit review on PR #435.
 - [ ] t145 bug: sed -i '' is macOS-only, breaks on Linux/CI #bugfix #portability ~1h (ai:30m test:30m) logged:2026-02-07 ref:GH#440
   - Notes: Multiple scripts use BSD sed -i '' syntax. Need portable wrapper in shared-constants.sh. Audit all scripts for sed -i usage. From reviews on PR #406.
-- [ ] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h (ai:2h test:30m read:30m) logged:2026-02-07 ref:GH#441
-  - Notes: Supervisor, voice helper, and other scripts suppress stderr extensively. Replace with log file redirect or remove where errors matter. From reviews on PRs #392, #403, #410.
+- [x] t144 quality: excessive 2>/dev/null suppresses real errors #quality #debugging ~3h actual:1h (ai:1h) logged:2026-02-07 ref:GH#441 completed:2026-02-07
+  - Notes: PR #463 merged. Replaced excessive 2>/dev/null with log file redirects across supervisor and helper scripts.
 - [x] t143 quality: test script BRE alternation -> ERE style improvement #quality #tests ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#442 completed:2026-02-07
   - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
 - [x] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443 completed:2026-02-07
