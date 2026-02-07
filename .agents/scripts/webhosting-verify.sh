@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155,SC2317,SC2329,SC2016,SC2181,SC1091,SC2154,SC2015,SC2086,SC2129,SC2030,SC2031,SC2119,SC2120,SC2001,SC2162,SC2088,SC2089,SC2090,SC2029,SC2006,SC2153
+set -euo pipefail
 
 # Web Hosting Verification Script
 # Verifies local domain setup and provides detailed troubleshooting
@@ -64,7 +65,7 @@ verify_domain() {
         
         # Check port configuration
         local port
-        port=$(grep "proxy_pass" "$nginx_conf" | head -1 | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/')
+        port=$(grep "proxy_pass" "$nginx_conf" 2>/dev/null | head -1 | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || true)
         if [[ -n "$port" ]]; then
             print_info "Configured port: $port"
         else

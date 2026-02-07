@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
+set -euo pipefail
 
 # Domain Research Helper Script
 # DNS intelligence using THC IP database (https://ip.thc.org/) and Reconeer (https://reconeer.com/)

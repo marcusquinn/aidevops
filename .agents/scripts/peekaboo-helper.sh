@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1091,SC2034
+set -euo pipefail
+
 # SC1091: Can't follow non-constant source (shared-constants.sh)
 # SC2034: Unused variables (sourced constants may not all be used)
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
+set -euo pipefail
 
 # AmpCode CLI Integration Script
 # Professional AI coding assistant integration
