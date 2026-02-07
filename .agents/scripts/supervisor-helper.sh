@@ -124,6 +124,188 @@ log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
 
 #######################################
+# Get the number of CPU cores on this system
+# Returns integer count on stdout
+#######################################
+get_cpu_cores() {
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sysctl -n hw.logicalcpu 2>/dev/null || echo 4
+    elif [[ -f /proc/cpuinfo ]]; then
+        grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 4
+    else
+        nproc 2>/dev/null || echo 4
+    fi
+    return 0
+}
+
+#######################################
+# Check system load and resource pressure (t135.15)
+#
+# Outputs key=value pairs:
+#   load_1m, load_5m, load_15m  - Load averages
+#   cpu_cores                    - Logical CPU count
+#   load_ratio                   - load_1m / cpu_cores (x100 for integer math)
+#   process_count                - Total system processes
+#   supervisor_process_count     - Processes spawned by supervisor workers
+#   memory_pressure              - low|medium|high (macOS) or free MB (Linux)
+#   overloaded                   - true|false (load_1m > cores * max_load_factor)
+#
+# $1 (optional): max load factor (default: 2, meaning load > cores*2 = overloaded)
+#######################################
+check_system_load() {
+    local max_load_factor="${1:-2}"
+
+    local cpu_cores
+    cpu_cores=$(get_cpu_cores)
+    echo "cpu_cores=$cpu_cores"
+
+    # Load averages (cross-platform)
+    local load_1m="0" load_5m="0" load_15m="0"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local load_str
+        load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0.00 0.00 0.00 }")
+        load_1m=$(echo "$load_str" | awk '{print $2}')
+        load_5m=$(echo "$load_str" | awk '{print $3}')
+        load_15m=$(echo "$load_str" | awk '{print $4}')
+    elif [[ -f /proc/loadavg ]]; then
+        read -r load_1m load_5m load_15m _ < /proc/loadavg
+    else
+        local uptime_str
+        uptime_str=$(uptime 2>/dev/null || echo "")
+        if [[ -n "$uptime_str" ]]; then
+            load_1m=$(echo "$uptime_str" | grep -oE 'load average[s]?: [0-9.]+' | grep -oE '[0-9.]+$' || echo "0")
+            load_5m=$(echo "$uptime_str" | awk -F'[, ]+' '{print $(NF-1)}' || echo "0")
+            load_15m=$(echo "$uptime_str" | awk -F'[, ]+' '{print $NF}' || echo "0")
+        fi
+    fi
+    echo "load_1m=$load_1m"
+    echo "load_5m=$load_5m"
+    echo "load_15m=$load_15m"
+
+    # Load ratio (x100 for integer comparison: 200 = load is 2x cores)
+    local load_ratio=0
+    if [[ "$cpu_cores" -gt 0 ]]; then
+        load_ratio=$(awk "BEGIN {printf \"%d\", ($load_1m / $cpu_cores) * 100}")
+    fi
+    echo "load_ratio=$load_ratio"
+
+    # Total process count
+    local process_count=0
+    process_count=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
+    echo "process_count=$process_count"
+
+    # Supervisor worker process count (opencode/claude spawned by supervisor)
+    local supervisor_process_count=0
+    if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
+        for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
+            [[ -f "$pid_file" ]] || continue
+            local wpid
+            wpid=$(cat "$pid_file")
+            if kill -0 "$wpid" 2>/dev/null; then
+                # Count this worker + all its descendants
+                local desc_count
+                desc_count=$(_list_descendants "$wpid" 2>/dev/null | wc -l | tr -d ' ')
+                supervisor_process_count=$((supervisor_process_count + 1 + desc_count))
+            fi
+        done
+    fi
+    echo "supervisor_process_count=$supervisor_process_count"
+
+    # Memory pressure
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS: use memory_pressure command or vm_stat
+        local pressure="low"
+        local vm_output
+        vm_output=$(vm_stat 2>/dev/null || echo "")
+        if [[ -n "$vm_output" ]]; then
+            local pages_free pages_active pages_inactive page_size
+            page_size=$(vm_stat 2>/dev/null | head -1 | grep -oE '[0-9]+' || echo "16384")
+            pages_free=$(echo "$vm_output" | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+            pages_active=$(echo "$vm_output" | awk '/Pages active/ {gsub(/\./,"",$3); print $3}')
+            pages_inactive=$(echo "$vm_output" | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+            local free_mb=0
+            if [[ -n "$pages_free" && -n "$page_size" ]]; then
+                free_mb=$(( (pages_free * page_size) / 1048576 ))
+            fi
+            if [[ "$free_mb" -lt 512 ]]; then
+                pressure="high"
+            elif [[ "$free_mb" -lt 2048 ]]; then
+                pressure="medium"
+            fi
+        fi
+        echo "memory_pressure=$pressure"
+    else
+        # Linux: parse /proc/meminfo
+        local mem_available_kb=0
+        if [[ -f /proc/meminfo ]]; then
+            mem_available_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo "0")
+        fi
+        local mem_available_mb=$((mem_available_kb / 1024))
+        echo "memory_pressure=${mem_available_mb}MB"
+    fi
+
+    # Overloaded check: load_1m > cores * max_load_factor
+    local threshold=$((cpu_cores * max_load_factor * 100))
+    if [[ "$load_ratio" -gt "$threshold" ]]; then
+        echo "overloaded=true"
+    else
+        echo "overloaded=false"
+    fi
+
+    return 0
+}
+
+#######################################
+# Calculate adaptive concurrency based on system load (t135.15.2)
+# Returns the recommended concurrency limit on stdout
+#
+# Strategy:
+#   - If load < cores: full concurrency (no throttle)
+#   - If load > cores but < cores*2: reduce by 50%
+#   - If load > cores*2: reduce to 1 (minimum)
+#   - If memory pressure is high: reduce to 1
+#
+# $1: base concurrency (from batch or global default)
+# $2: max load factor (default: 2)
+#######################################
+calculate_adaptive_concurrency() {
+    local base_concurrency="${1:-4}"
+    local max_load_factor="${2:-2}"
+
+    local load_output
+    load_output=$(check_system_load "$max_load_factor")
+
+    local cpu_cores load_ratio memory_pressure overloaded
+    cpu_cores=$(echo "$load_output" | grep '^cpu_cores=' | cut -d= -f2)
+    load_ratio=$(echo "$load_output" | grep '^load_ratio=' | cut -d= -f2)
+    memory_pressure=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
+    overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
+
+    local effective_concurrency="$base_concurrency"
+
+    # High memory pressure: drop to 1
+    if [[ "$memory_pressure" == "high" ]]; then
+        effective_concurrency=1
+        echo "$effective_concurrency"
+        return 0
+    fi
+
+    if [[ "$overloaded" == "true" ]]; then
+        # Severely overloaded: minimum concurrency
+        effective_concurrency=1
+    elif [[ "$load_ratio" -gt $((cpu_cores * 100)) ]]; then
+        # Moderately loaded (load > cores but < cores*factor): halve concurrency
+        effective_concurrency=$(( (base_concurrency + 1) / 2 ))
+        if [[ "$effective_concurrency" -lt 1 ]]; then
+            effective_concurrency=1
+        fi
+    fi
+
+    echo "$effective_concurrency"
+    return 0
+}
+
+#######################################
 # Escape single quotes for SQL
 #######################################
 sql_escape() {
@@ -192,6 +374,15 @@ MIGRATE
         log_success "Database schema migrated for post-PR lifecycle states"
     fi
 
+    # Migrate: add max_load_factor column to batches if missing (t135.15.4)
+    local has_max_load
+    has_max_load=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
+    if [[ "$has_max_load" -eq 0 ]]; then
+        log_info "Migrating batches table: adding max_load_factor column (t135.15.4)..."
+        sqlite3 "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_load_factor INTEGER NOT NULL DEFAULT 2;" 2>/dev/null || true
+        log_success "Added max_load_factor column to batches"
+    fi
+
     return 0
 }
 
@@ -235,6 +426,7 @@ CREATE TABLE IF NOT EXISTS batches (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     concurrency     INTEGER NOT NULL DEFAULT 4,
+    max_load_factor INTEGER NOT NULL DEFAULT 2,
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK(status IN ('active','paused','complete','cancelled')),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -388,7 +580,7 @@ cmd_add() {
 # Create or manage a batch
 #######################################
 cmd_batch() {
-    local name="" concurrency=4 tasks=""
+    local name="" concurrency=4 tasks="" max_load_factor=2
 
     # First positional arg is batch name
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -400,6 +592,7 @@ cmd_batch() {
         case "$1" in
             --concurrency) [[ $# -lt 2 ]] && { log_error "--concurrency requires a value"; return 1; }; concurrency="$2"; shift 2 ;;
             --tasks) [[ $# -lt 2 ]] && { log_error "--tasks requires a value"; return 1; }; tasks="$2"; shift 2 ;;
+            --max-load) [[ $# -lt 2 ]] && { log_error "--max-load requires a value"; return 1; }; max_load_factor="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -419,11 +612,11 @@ cmd_batch() {
     escaped_name=$(sql_escape "$name")
 
     sqlite3 "$SUPERVISOR_DB" "
-        INSERT INTO batches (id, name, concurrency)
-        VALUES ('$escaped_id', '$escaped_name', $concurrency);
+        INSERT INTO batches (id, name, concurrency, max_load_factor)
+        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_load_factor);
     "
 
-    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency)"
+    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency, max-load: $max_load_factor)"
 
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
@@ -3200,6 +3393,19 @@ cmd_pulse() {
     local total_tasks
     total_tasks=$(sqlite3 "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
 
+    # System resource snapshot (t135.15.3)
+    local resource_output
+    resource_output=$(check_system_load 2>/dev/null || echo "")
+    local sys_load_1m sys_load_5m sys_cpu_cores sys_load_ratio sys_memory sys_proc_count sys_supervisor_procs sys_overloaded
+    sys_load_1m=$(echo "$resource_output" | grep '^load_1m=' | cut -d= -f2)
+    sys_load_5m=$(echo "$resource_output" | grep '^load_5m=' | cut -d= -f2)
+    sys_cpu_cores=$(echo "$resource_output" | grep '^cpu_cores=' | cut -d= -f2)
+    sys_load_ratio=$(echo "$resource_output" | grep '^load_ratio=' | cut -d= -f2)
+    sys_memory=$(echo "$resource_output" | grep '^memory_pressure=' | cut -d= -f2)
+    sys_proc_count=$(echo "$resource_output" | grep '^process_count=' | cut -d= -f2)
+    sys_supervisor_procs=$(echo "$resource_output" | grep '^supervisor_process_count=' | cut -d= -f2)
+    sys_overloaded=$(echo "$resource_output" | grep '^overloaded=' | cut -d= -f2)
+
     echo ""
     log_info "Pulse summary:"
     log_info "  Evaluated:  $((completed_count + failed_count)) workers"
@@ -3210,6 +3416,30 @@ cmd_pulse() {
     log_info "  Queued:     $total_queued"
     log_info "  Post-PR:    $total_pr_review"
     log_info "  Total done: $total_complete / $total_tasks"
+
+    # Resource stats (t135.15.3)
+    if [[ -n "$sys_load_1m" ]]; then
+        local load_color="$GREEN"
+        if [[ "$sys_overloaded" == "true" ]]; then
+            load_color="$RED"
+        elif [[ -n "$sys_load_ratio" && "$sys_load_ratio" -gt 100 ]]; then
+            load_color="$YELLOW"
+        fi
+        local mem_color="$GREEN"
+        if [[ "$sys_memory" == "high" ]]; then
+            mem_color="$RED"
+        elif [[ "$sys_memory" == "medium" ]]; then
+            mem_color="$YELLOW"
+        fi
+        echo ""
+        log_info "System resources:"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Load:     ${load_color}${sys_load_1m}${NC} / ${sys_load_5m} (${sys_cpu_cores} cores, ratio: ${sys_load_ratio}%)"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Memory:   ${mem_color}${sys_memory}${NC}"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Procs:    ${sys_proc_count} total, ${sys_supervisor_procs} supervisor"
+        if [[ "$sys_overloaded" == "true" ]]; then
+            echo -e "  ${BLUE}[SUPERVISOR]${NC}   ${RED}OVERLOADED${NC} - adaptive throttling active"
+        fi
+    fi
 
     # macOS notification on progress (when something changed this pulse)
     if [[ $((completed_count + failed_count + dispatched_count)) -gt 0 ]]; then
