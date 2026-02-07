@@ -67,7 +67,6 @@ aidevops generates lightweight pointer files (`.cursorrules`, `.windsurfrules`, 
 
 - `tools/opencode/opencode.md` - Full OpenCode reference
 - `tools/opencode/opencode-anthropic-auth.md` - Anthropic auth setup
-- `tools/opencode/oh-my-opencode.md` - OpenCode plugin system
 - `claude-code.md` - Claude Code CLI reference
 - `openclaw.md` - OpenClaw multi-channel assistant
 - `headless-dispatch.md` - Parallel agent dispatch
