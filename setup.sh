@@ -2700,6 +2700,17 @@ inject_agents_reference() {
         print_success "Updated $updated_count AI assistant configuration(s)"
     fi
     
+    # Deploy OpenCode config-level AGENTS.md from managed template
+    # This controls the session greeting (auto-loaded by OpenCode from config root)
+    local opencode_config_dir="$HOME/.config/opencode"
+    local opencode_config_agents="$opencode_config_dir/AGENTS.md"
+    local template_source="$SCRIPT_DIR/templates/opencode-config-agents.md"
+    
+    if [[ -d "$opencode_config_dir" && -f "$template_source" ]]; then
+        cp "$template_source" "$opencode_config_agents"
+        print_success "Deployed greeting template to $opencode_config_agents"
+    fi
+    
     return 0
 }
 
