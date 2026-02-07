@@ -15,7 +15,7 @@ readonly RED='\033[0;31m'
 readonly NC='\033[0m'
 
 # Paths
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly BRIDGE_SCRIPT="${SCRIPT_DIR}/voice-bridge.py"
 readonly S2S_DIR="${HOME}/.aidevops/.agent-workspace/work/speech-to-speech"
 readonly VENV_DIR="${S2S_DIR}/.venv"
