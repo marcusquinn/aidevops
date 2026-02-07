@@ -290,7 +290,10 @@ cmd_validate() {
     fi
 
     # Create/update the JS script
-    create_js_script
+    create_js_script || {
+        print_error "Failed to create validation script"
+        return 1
+    }
 
     local node_cmd="validate"
     if [[ "$is_json" == "true" ]]; then
@@ -298,6 +301,9 @@ cmd_validate() {
     fi
 
     print_info "Validating: $target"
+    # Capture exit code explicitly — node returns non-zero for validation
+    # errors, which is expected. Without || guard, set -e would kill the
+    # script before we can report results to the user.
     local exit_code=0
     (cd "$TOOL_DIR" && node "$JS_SCRIPT" "$node_cmd" "$target") || exit_code=$?
 
@@ -370,7 +376,7 @@ main() {
             else
                 print_error "Unknown command: $command"
                 echo "$HELP_USAGE_INFO"
-                exit 1
+                return 1
             fi
             ;;
     esac
