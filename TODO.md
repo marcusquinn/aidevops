@@ -308,7 +308,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Screaming Frog SEO Spider CLI integration. Technical SEO audits, crawl analysis, broken links, redirects, meta data extraction. Requires license for full features. Add to seo/. Ref: https://www.screamingfrog.co.uk/seo-spider/
 - [x] t087 Create Semrush subagent #seo #tools ~20m (ai:15m test:3m read:2m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: Semrush API integration. Keyword research, backlink analysis, site audit, position tracking, competitor analysis. Complement to existing Ahrefs integration. Add to seo/. Ref: https://www.semrush.com/api-documentation/
-- [ ] t088 Create Sitebulb subagent #seo #tools #crawler ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill
+- [x] t088 Create Sitebulb subagent #seo #tools #crawler ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-07
   - Notes: Sitebulb SEO crawler integration. Desktop app with CLI/API for technical audits, internal linking analysis, Core Web Vitals. Add to seo/. Ref: https://sitebulb.com/ BLOCKED: Max retries exceeded: clean_exit_no_signal
 - [x] t089 Create ContentKing subagent #seo #tools #monitoring ~10m (ai:8m test:1m read:1m) logged:2026-01-29 related:seo-audit-skill completed:2026-02-06
   - Notes: ContentKing real-time SEO monitoring API. Track changes, alerts for SEO issues, content tracking. Add to seo/. Ref: https://www.contentkingapp.com/
