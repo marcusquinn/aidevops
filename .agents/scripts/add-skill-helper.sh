@@ -584,6 +584,43 @@ scan_skill_security() {
     return 0
 }
 
+# Run VirusTotal scan on skill files and referenced domains
+# Returns: 0 = safe or VT not configured, 1 = threats detected
+scan_skill_virustotal() {
+    local scan_path="$1"
+    local skill_name="$2"
+    local skip_security="${3:-false}"
+    
+    if [[ "$skip_security" == true ]]; then
+        return 0
+    fi
+    
+    # Check if virustotal-helper.sh is available
+    local vt_helper=""
+    vt_helper="$(dirname "$0")/virustotal-helper.sh"
+    if [[ ! -x "$vt_helper" ]]; then
+        return 0
+    fi
+    
+    # Check if VT API key is configured (don't fail if not)
+    if ! "$vt_helper" status 2>/dev/null | grep -q "API key configured"; then
+        log_info "VirusTotal: API key not configured (skipping VT scan)"
+        return 0
+    fi
+    
+    log_info "Running VirusTotal scan on '$skill_name'..."
+    
+    if ! "$vt_helper" scan-skill "$scan_path" --quiet; then
+        log_warning "VirusTotal flagged potential threats in '$skill_name'"
+        log_info "Run: virustotal-helper.sh scan-skill '$scan_path' for details"
+        # VT findings are advisory, not blocking (Cisco scanner is the gate)
+        return 0
+    fi
+    
+    log_success "VirusTotal: No threats detected"
+    return 0
+}
+
 # Log a single skill scan result to SKILL-SCAN-RESULTS.md
 # Args: skill_name action critical_count high_count medium_count max_severity
 log_skill_scan_result() {
@@ -910,6 +947,9 @@ cmd_add() {
         return 1
     fi
     
+    # VirusTotal scan (advisory, non-blocking -- runs after Cisco scanner gate)
+    scan_skill_virustotal "$skill_source_dir" "$skill_name" "$skip_security"
+    
     # Get commit hash for tracking
     local commit_hash=""
     if [[ -d "$TEMP_DIR/repo/.git" ]]; then
@@ -1080,6 +1120,9 @@ EOF
         rm -rf "$fetch_dir"
         return 1
     fi
+    
+    # VirusTotal scan (advisory, non-blocking)
+    scan_skill_virustotal "$fetch_dir" "$skill_name" "$skip_security"
     
     # Register in skill-sources.json
     local upstream_url="https://clawdhub.com/${owner_handle}/${slug}"

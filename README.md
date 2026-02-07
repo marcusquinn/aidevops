@@ -479,6 +479,8 @@ Skills are registered in `~/.aidevops/agents/configs/skill-sources.json` with up
 
 Imported skills are automatically security-scanned using [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) when installed. Scanning runs on both initial import and updates -- pulling a new version of a skill triggers the same security checks as the first import. CRITICAL/HIGH findings block the operation; MEDIUM/LOW findings warn but allow. Telemetry is disabled - no data is sent to third parties.
 
+When a [VirusTotal](https://www.virustotal.com/) API key is configured (`aidevops secret set VIRUSTOTAL_MARCUSQUINN`), an advisory second layer scans file hashes against 70+ AV engines and checks domains/URLs referenced in skill content. VT scans are non-blocking -- the Cisco scanner remains the security gate.
+
 | Scenario | Security scan runs? | CRITICAL/HIGH blocks? |
 |----------|--------------------|-----------------------|
 | `aidevops skill add <source>` | Yes | Yes |
@@ -859,6 +861,7 @@ The setup script offers to install these tools automatically.
 - **[Socket](https://socket.dev/)**: Dependency security and supply chain protection
 - **[Sentry](https://sentry.io/)**: Error monitoring and performance tracking
 - **[Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner)**: Security scanner for AI agent skills (prompt injection, exfiltration, malicious code)
+- **[VirusTotal](https://www.virustotal.com/)**: Advisory threat intelligence via VT API v3 -- file hash scanning (70+ AV engines), domain/URL reputation checks for imported skills
 - **[Secretlint](https://github.com/secretlint/secretlint)**: Detect exposed secrets in code
 - **[OSV Scanner](https://google.github.io/osv-scanner/)**: Google's vulnerability database scanner
 - **[Qlty](https://qlty.sh/)**: Universal code quality platform (70+ linters, auto-fixes)

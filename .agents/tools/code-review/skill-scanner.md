@@ -49,7 +49,7 @@ tools:
 | Behavioral (AST dataflow) | Free | ~150ms | None |
 | LLM-as-judge | API cost | ~2s | `SKILL_SCANNER_LLM_API_KEY` |
 | Meta-analyzer (FP filter) | API cost | ~1s | `SKILL_SCANNER_LLM_API_KEY` |
-| VirusTotal | Free tier | ~1s | `VIRUSTOTAL_API_KEY` |
+| VirusTotal | Free tier | ~16s/req | `VIRUSTOTAL_MARCUSQUINN` or `VIRUSTOTAL_API_KEY` (gopass) |
 | Cisco AI Defense | Enterprise | ~1s | `AI_DEFENSE_API_KEY` |
 
 ## aidevops Integration Points
@@ -120,6 +120,53 @@ skill-scanner scan /path/to/skill --disable-rule YARA_script_injection
 skill-scanner scan /path/to/skill --yara-mode permissive
 ```
 
+## VirusTotal Integration
+
+VirusTotal provides an advisory second layer of security scanning alongside the
+Cisco Skill Scanner. It checks file hashes against 70+ AV engines and scans
+domains/URLs referenced in skill content.
+
+**Key design**: VT scans are **advisory only** -- the Cisco Skill Scanner remains
+the security gate for imports. VT adds value by detecting known malware hashes
+and flagging malicious domains that static analysis cannot catch.
+
+### How it works
+
+1. **File hash lookup**: SHA256 of each skill file is checked against VT's database
+2. **Domain reputation**: URLs extracted from skill content are checked for threats
+3. **Rate limiting**: 16s between requests (free tier: 4 req/min, 500 req/day)
+4. **Max 8 requests per skill scan** to avoid exhausting daily quota
+
+### Usage
+
+```bash
+# Standalone VT scan
+virustotal-helper.sh scan-skill /path/to/skill/
+virustotal-helper.sh scan-file /path/to/file.md
+virustotal-helper.sh scan-domain example.com
+virustotal-helper.sh scan-url https://example.com/payload
+virustotal-helper.sh status
+
+# Via security-helper
+security-helper.sh vt-scan skill /path/to/skill/
+security-helper.sh vt-scan file /path/to/file.md
+security-helper.sh vt-scan status
+
+# Automatic: VT runs as advisory after Cisco scanner in:
+# - security-helper.sh skill-scan all
+# - add-skill-helper.sh (GitHub and ClawdHub imports)
+```
+
+### API key setup
+
+```bash
+# Recommended: gopass encrypted storage
+aidevops secret set VIRUSTOTAL_MARCUSQUINN
+
+# Alternative: credentials.sh
+echo 'export VIRUSTOTAL_API_KEY="your_key"' >> ~/.config/aidevops/credentials.sh
+```
+
 ## Environment Variables
 
 ```bash
@@ -127,7 +174,7 @@ skill-scanner scan /path/to/skill --yara-mode permissive
 export SKILL_SCANNER_LLM_API_KEY="your_api_key"
 export SKILL_SCANNER_LLM_MODEL="claude-3-5-sonnet-20241022"
 
-# VirusTotal (optional)
+# VirusTotal (optional - prefer gopass: aidevops secret set VIRUSTOTAL_MARCUSQUINN)
 export VIRUSTOTAL_API_KEY="your_key"
 
 # Cisco AI Defense (optional)

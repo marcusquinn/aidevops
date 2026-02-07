@@ -42,6 +42,7 @@ Commands:
   history [commits|range]   Scan git history for vulnerabilities
   scan-deps [path]          Scan dependencies for known vulnerabilities (OSV)
   skill-scan [name|all]     Scan imported skills for threats (Cisco Skill Scanner)
+  vt-scan <target>          Scan file/URL/domain/skill via VirusTotal API
   ferret [path]             Scan AI CLI configurations (Ferret)
   report [format]           Generate comprehensive security report
                             Formats: text (default), json, sarif
@@ -55,6 +56,7 @@ Examples:
   $(basename "$0") scan-deps                  # Scan dependencies
   $(basename "$0") skill-scan                 # Scan all imported skills
   $(basename "$0") skill-scan cloudflare      # Scan specific skill
+  $(basename "$0") vt-scan skill .agents/     # VirusTotal scan on skills
   $(basename "$0") ferret                     # Scan AI CLI configs
   $(basename "$0") report --format=sarif      # Generate SARIF report
 EOF
@@ -122,6 +124,20 @@ cmd_status() {
         print_status "Secretlint (via npx)" "true"
     else
         print_status "Secretlint" "false"
+    fi
+    
+    # VirusTotal
+    local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+    if [[ -x "$vt_helper" ]]; then
+        local vt_output=""
+        vt_output=$("$vt_helper" status 2>/dev/null || true)
+        if echo "$vt_output" | grep -q "API key configured"; then
+            print_status "VirusTotal" "true" "API key configured"
+        else
+            print_status "VirusTotal" "false" "(helper installed, API key missing)"
+        fi
+    else
+        print_status "VirusTotal" "false"
     fi
     
     # Snyk (optional)
@@ -556,6 +572,43 @@ cmd_skill_scan() {
             return 1
         fi
         
+        # Advisory: Run VirusTotal scan if available
+        local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+        if [[ -x "$vt_helper" ]] && "$vt_helper" status 2>/dev/null | grep -q "API key configured"; then
+            echo ""
+            echo -e "${CYAN}Running advisory VirusTotal scan...${NC}"
+            echo -e "${YELLOW}(VT scans are advisory only - Cisco scanner is the security gate)${NC}"
+            echo ""
+
+            local vt_issues=0
+            while IFS= read -r skill_json; do
+                local name local_path
+                name=$(echo "$skill_json" | jq -r '.name')
+                local_path=$(echo "$skill_json" | jq -r '.local_path')
+                local full_path="${agents_dir}/${local_path#.agents/}"
+
+                if [[ ! -f "$full_path" ]]; then
+                    continue
+                fi
+
+                local scan_dir
+                scan_dir="$(dirname "$full_path")"
+                echo -e "${CYAN}VT Scanning${NC}: $name"
+                "$vt_helper" scan-skill "$scan_dir" --quiet 2>/dev/null || {
+                    vt_issues=$((vt_issues + 1))
+                    echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
+                }
+            done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+
+            if [[ $vt_issues -gt 0 ]]; then
+                echo ""
+                echo -e "${YELLOW}VirusTotal flagged ${vt_issues} skill(s) - review recommended${NC}"
+            else
+                echo ""
+                echo -e "${GREEN}VirusTotal: No threats detected${NC}"
+            fi
+        fi
+
         echo ""
         echo -e "${GREEN}All imported skills passed security scan.${NC}"
         return 0
@@ -580,6 +633,68 @@ cmd_skill_scan() {
         $scanner_cmd scan "$scan_path" --use-behavioral "$@"
         return $?
     fi
+}
+
+cmd_vt_scan() {
+    local target="${1:-}"
+    shift || true
+
+    print_header
+
+    local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+    if [[ ! -x "$vt_helper" ]]; then
+        echo -e "${RED}VirusTotal helper not found: ${vt_helper}${NC}"
+        echo "Expected at: .agents/scripts/virustotal-helper.sh"
+        return 1
+    fi
+
+    if [[ -z "$target" ]]; then
+        echo -e "${RED}Target required.${NC}"
+        echo ""
+        echo "Usage: $(basename "$0") vt-scan <type> [target]"
+        echo ""
+        echo "Types:"
+        echo "  file <path>       Scan a file by SHA256 hash lookup"
+        echo "  url <url>         Scan a URL for threats"
+        echo "  domain <domain>   Check domain reputation"
+        echo "  skill <path>      Scan all files in a skill directory"
+        echo "  status            Check VT API key and quota"
+        return 1
+    fi
+
+    # Delegate to virustotal-helper.sh
+    case "$target" in
+        file|scan-file)
+            "$vt_helper" scan-file "$@"
+            ;;
+        url|scan-url)
+            "$vt_helper" scan-url "$@"
+            ;;
+        domain|scan-domain)
+            "$vt_helper" scan-domain "$@"
+            ;;
+        skill|scan-skill)
+            "$vt_helper" scan-skill "$@"
+            ;;
+        status)
+            "$vt_helper" status
+            ;;
+        *)
+            # Treat as a path -- auto-detect file vs directory
+            if [[ -d "$target" ]]; then
+                "$vt_helper" scan-skill "$target" "$@"
+            elif [[ -f "$target" ]]; then
+                "$vt_helper" scan-file "$target" "$@"
+            elif [[ "$target" =~ ^https?:// ]]; then
+                "$vt_helper" scan-url "$target" "$@"
+            else
+                # Assume domain
+                "$vt_helper" scan-domain "$target" "$@"
+            fi
+            ;;
+    esac
+
+    return $?
 }
 
 cmd_ferret() {
@@ -825,6 +940,9 @@ main() {
             ;;
         skill-scan|skills)
             cmd_skill_scan "$@"
+            ;;
+        vt-scan|virustotal)
+            cmd_vt_scan "$@"
             ;;
         ferret|ai-config)
             cmd_ferret "$@"
