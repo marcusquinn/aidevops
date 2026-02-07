@@ -3884,11 +3884,12 @@ update_todo_on_blocked() {
     else
         # Insert a new Notes line after the task
         local notes_line="${indent}  - Notes: BLOCKED by supervisor: ${safe_reason}"
+        # sed append syntax differs between BSD and GNU - sed_inplace can't abstract this
         if [[ "$(uname)" == "Darwin" ]]; then
-            sed_inplace "${line_num}a\\
+            sed -i '' "${line_num}a\\
 ${notes_line}" "$todo_file"
         else
-            sed_inplace "${line_num}a\\${notes_line}" "$todo_file"
+            sed -i "${line_num}a\\${notes_line}" "$todo_file"
         fi
     fi
 

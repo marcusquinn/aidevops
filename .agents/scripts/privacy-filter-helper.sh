@@ -373,11 +373,7 @@ apply_redactions() {
                 cp "$file" "${file}.privacy-backup"
                 
                 # Apply redaction
-                if [[ "$(uname)" == "Darwin" ]]; then
-                    sed_inplace -E "s/$pattern/[REDACTED]/g" "$file"
-                else
-                    sed -i -E "s/$pattern/[REDACTED]/g" "$file"
-                fi
+                sed_inplace -E "s/$pattern/[REDACTED]/g" "$file"
                 
                 print_success "Redacted: $file"
                 changes=$((changes + 1))
