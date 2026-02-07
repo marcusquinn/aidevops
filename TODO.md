@@ -139,7 +139,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.7.2 Replace with array-based command construction ~2h blocked-by:t135.7.1 completed:2026-02-07
     - [x] t135.7.3 Test affected command paths ~30m blocked-by:t135.7.2 completed:2026-02-07
   - [ ] t135.8 P2-B: Increase shared-constants.sh adoption from 17% (29/170) to 80%+ ~4h blocked-by:none
-    - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: backend_infrastructure_error    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m
+    - Notes: BLOCKED by supervisor: Re-prompt dispatch failed: backend_infrastructure_error    - [ ] t135.8.1 Audit shared-constants.sh vs what scripts duplicate ~30m BLOCKED: Max retries exceeded: backend_infrastructure_error
     - [ ] t135.8.2 Create migration script to replace inline print_* with source shared-constants.sh ~1.5h blocked-by:t135.8.1
     - [ ] t135.8.3 Run migration in batches, testing each for regressions ~2h blocked-by:t135.8.2
   - [x] t135.9 P2-C: Add trap cleanup for temp files in setup.sh and mktemp scripts ~1h blocked-by:none started:2026-02-07 completed:2026-02-07
