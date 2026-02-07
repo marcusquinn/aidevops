@@ -155,6 +155,8 @@ opencode run "Test query" --agent Build+
 
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
+**Draft Agents**: When you discover reusable patterns during orchestration (parallel Task tool calls, repeated prompts, domain-specific instructions), create a draft agent in `~/.aidevops/agents/draft/` instead of duplicating context. Include `status: draft` in frontmatter. Log a TODO for review. Useful drafts can be promoted to `custom/` (private) or `.agents/` (shared via PR). See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
+
 <!-- AI-CONTEXT-END -->
 
 ## Build Workflow

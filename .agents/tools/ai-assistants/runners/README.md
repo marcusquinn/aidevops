@@ -40,6 +40,18 @@ A good runner AGENTS.md has four sections:
 
 Keep it under 500 words. Runners get the full prompt on every dispatch, so brevity matters.
 
+## Evolving Runners into Shared Agents
+
+When a runner proves valuable across multiple projects, consider promoting it:
+
+1. **Draft** -- Save to `~/.aidevops/agents/draft/` with `status: draft` in frontmatter
+2. **Custom** -- Move to `~/.aidevops/agents/custom/` for permanent private use
+3. **Shared** -- Refine to framework standards and submit a PR to `.agents/` in the aidevops repo
+
+Log a TODO item when a runner has reuse potential: `- [ ] tXXX Review runner {name} for promotion #agent-review`
+
+See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers" for the full promotion workflow.
+
 ## Parallel vs Sequential
 
 See the [decision guide](../headless-dispatch.md#parallel-vs-sequential) in headless-dispatch.md.

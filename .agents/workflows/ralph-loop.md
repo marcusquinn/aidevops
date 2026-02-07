@@ -56,6 +56,8 @@ The loop creates a **self-referential feedback loop** where:
 - Each iteration sees modified files and git history
 - Claude autonomously improves by reading its own past work
 
+**Evolving draft agents**: When a loop iteration discovers reusable domain patterns (validation rules, API conventions, testing strategies), capture them as a draft agent in `~/.aidevops/agents/draft/`. Subsequent iterations and future loops can reference the draft instead of rediscovering the pattern. After the loop completes, log a TODO to review the draft for promotion to `custom/` (private) or `.agents/` (shared via PR). See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
+
 ## Quick Start
 
 ### v2: Fresh Sessions (Recommended)
