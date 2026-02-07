@@ -159,9 +159,6 @@ while IFS= read -r script; do
     abs_path="$REPO_DIR/$script"
     name=$(basename "$script")
 
-    # Skip archived scripts
-    [[ "$script" == *"_archive/"* ]] && continue
-
     # Skip scripts that don't support help
     if is_skip_help "$name"; then
         skip "help: $name (not a help-command script)"
@@ -192,7 +189,7 @@ while IFS= read -r script; do
         fail "help: $name" "No output produced (exit=$help_exit)"
         help_fail=$((help_fail + 1))
     fi
-done < <(git -C "$REPO_DIR" ls-files '.agents/scripts/*.sh')
+done < <(git -C "$REPO_DIR" ls-files '.agents/scripts/*.sh' | grep -v '_archive/')
 
 printf "  Help: %d passed, %d failed, %d skipped\n" \
     "$help_pass" "$help_fail" "$help_skip"
@@ -224,12 +221,11 @@ if command -v shellcheck &>/dev/null; then
             continue
         fi
 
-        sc_output=$(shellcheck -S error "$script_path" 2>&1 || true)
-        sc_errors=$(echo "$sc_output" | grep -c "error" || true)
-        if [[ "$sc_errors" -eq 0 ]]; then
+        if shellcheck -S error "$script_path" >/dev/null 2>&1; then
             pass "shellcheck: $name (0 errors)"
         else
-            fail "shellcheck: $name ($sc_errors errors)" \
+            sc_output=$(shellcheck -S error "$script_path" 2>&1 || true)
+            fail "shellcheck: $name" \
                 "$(echo "$sc_output" | head -5)"
         fi
     done
