@@ -148,7 +148,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.12.2 Create .agents/scripts/_archive/ with README explaining completed one-time scripts ~10m blocked-by:t135.12.1 completed:2026-02-07
     - [x] t135.12.3 Move to _archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2 completed:2026-02-07
     - [x] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3 completed:2026-02-07
-  - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
+  - [x] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none completed:2026-02-07
     - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
     - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
