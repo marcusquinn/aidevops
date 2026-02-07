@@ -56,7 +56,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 ## Backlog
 
 - [ ] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07
-  - Notes: GH#415. pip3 install --user blocked by PEP 668 on modern Ubuntu/Debian. Fix fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy). Affects setup.sh lines ~2408-2432. Workaround: manual venv at ~/.aidevops/.agent-workspace/work/cisco-scanner-env/.
+  - Notes: GH#415. pip3 install --user blocked by PEP 668 on modern Ubuntu/Debian. Fix fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy). Affects setup.sh lines ~2408-2432. Workaround: manual venv at ~/.aidevops/.agent-workspace/work/cisco-scanner-env/. BLOCKED: Re-prompt dispatch failed: backend_infrastructure_error
 - [ ] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07
   - Notes: GH#414. Hyphens in FTS5 queries interpreted as NOT operator. "qs-agency" becomes "qs NOT agency" causing column resolution error. Fix: quote hyphenated terms before passing to FTS5 MATCH clause.
 - [x] t138 aidevops update output overwhelms tool buffer on large updates #bugfix #setup ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
