@@ -116,7 +116,7 @@ cron-helper.sh,Cron job management for scheduled AI agent dispatch
 cron-dispatch.sh,Execute cron jobs via OpenCode server API
 runner-helper.sh,Named headless AI agent instances (create run status list edit logs stop destroy)
 matrix-dispatch-helper.sh,Matrix bot for dispatching messages to AI runners (setup start stop map test)
-supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init add batch dispatch reprompt evaluate pulse worker-status cleanup transition status list next running-count reset cancel db)
+supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init add batch dispatch reprompt evaluate pulse dashboard worker-status cleanup transition status list next running-count reset cancel db)
 schema-validator-helper.sh,Schema.org structured data validation (validate validate-json status install)
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
 voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
