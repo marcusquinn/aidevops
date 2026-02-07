@@ -65,14 +65,14 @@ cmd_save() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --task) current_task="$2"; shift 2 ;;
-            --next) next_tasks="$2"; shift 2 ;;
-            --worktree) worktree_path="$2"; shift 2 ;;
-            --branch) branch_name="$2"; shift 2 ;;
-            --batch) batch_name="$2"; shift 2 ;;
-            --note) note="$2"; shift 2 ;;
-            --elapsed) elapsed_mins="$2"; shift 2 ;;
-            --target) target_mins="$2"; shift 2 ;;
+            --task) [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; }; current_task="$2"; shift 2 ;;
+            --next) [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; }; next_tasks="$2"; shift 2 ;;
+            --worktree) [[ $# -lt 2 ]] && { print_error "--worktree requires a value"; return 1; }; worktree_path="$2"; shift 2 ;;
+            --branch) [[ $# -lt 2 ]] && { print_error "--branch requires a value"; return 1; }; branch_name="$2"; shift 2 ;;
+            --batch) [[ $# -lt 2 ]] && { print_error "--batch requires a value"; return 1; }; batch_name="$2"; shift 2 ;;
+            --note) [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; }; note="$2"; shift 2 ;;
+            --elapsed) [[ $# -lt 2 ]] && { print_error "--elapsed requires a value"; return 1; }; elapsed_mins="$2"; shift 2 ;;
+            --target) [[ $# -lt 2 ]] && { print_error "--target requires a value"; return 1; }; target_mins="$2"; shift 2 ;;
             *) print_error "Unknown option: $1"; return 1 ;;
         esac
     done
@@ -180,9 +180,9 @@ cmd_status() {
 
     # Extract key fields
     local current_task
-    current_task="$(grep -m1 'Current Task' "$CHECKPOINT_FILE" | sed 's/.*| //' | sed 's/ *$//' || echo "unknown")"
+    current_task="$(awk -F'|' '/Current Task/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
     local branch
-    branch="$(grep -m1 'Branch' "$CHECKPOINT_FILE" | sed 's/.*| //' | sed 's/ *$//' || echo "unknown")"
+    branch="$(awk -F'|' '/Branch/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
 
     printf '%b\n' "${BOLD}Checkpoint Status${NC}"
     printf "  Age:    %s\n" "$age_display"

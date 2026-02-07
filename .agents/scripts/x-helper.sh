@@ -60,25 +60,26 @@ cmd_fetch() {
     path=$(extract_tweet_path "$url")
 
     local response
-    response=$(curl -sS "${FXTWITTER_API}/${path}" 2>/dev/null) || {
+    response=$(curl -fsS --max-time 20 --retry 2 --retry-connrefused \
+        "${FXTWITTER_API}/${path}" 2>/dev/null) || {
         print_error "Failed to fetch tweet"
         return 1
     }
 
     if [[ "$raw_json" == "true" ]]; then
-        echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
+        echo "$response" | jq . 2>/dev/null || echo "$response"
         return 0
     fi
 
     # Parse JSON and format output
     local author author_handle text created_at likes retweets replies
-    author=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('author',{}).get('name','Unknown'))" 2>/dev/null || echo "Unknown")
-    author_handle=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('author',{}).get('screen_name','unknown'))" 2>/dev/null || echo "unknown")
-    text=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('text',''))" 2>/dev/null || echo "")
-    created_at=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('created_at',''))" 2>/dev/null || echo "")
-    likes=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('likes',0))" 2>/dev/null || echo "0")
-    retweets=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('retweets',0))" 2>/dev/null || echo "0")
-    replies=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tweet',{}).get('replies',0))" 2>/dev/null || echo "0")
+    author=$(echo "$response" | jq -r '.tweet.author.name // "Unknown"' 2>/dev/null || echo "Unknown")
+    author_handle=$(echo "$response" | jq -r '.tweet.author.screen_name // "unknown"' 2>/dev/null || echo "unknown")
+    text=$(echo "$response" | jq -r '.tweet.text // ""' 2>/dev/null || echo "")
+    created_at=$(echo "$response" | jq -r '.tweet.created_at // ""' 2>/dev/null || echo "")
+    likes=$(echo "$response" | jq -r '.tweet.likes // 0' 2>/dev/null || echo "0")
+    retweets=$(echo "$response" | jq -r '.tweet.retweets // 0' 2>/dev/null || echo "0")
+    replies=$(echo "$response" | jq -r '.tweet.replies // 0' 2>/dev/null || echo "0")
 
     if [[ "$output_format" == "text" ]]; then
         echo "@${author_handle} (${author})"
@@ -129,17 +130,18 @@ cmd_user() {
     handle="${handle#@}"
 
     local response
-    response=$(curl -sS "${FXTWITTER_API}/${handle}" 2>/dev/null) || {
+    response=$(curl -fsS --max-time 20 --retry 2 --retry-connrefused \
+        "${FXTWITTER_API}/${handle}" 2>/dev/null) || {
         print_error "Failed to fetch user profile"
         return 1
     }
 
     # Parse user info
     local name followers following description
-    name=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('user',{}).get('name','Unknown'))" 2>/dev/null || echo "Unknown")
-    followers=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('user',{}).get('followers',0))" 2>/dev/null || echo "0")
-    following=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('user',{}).get('following',0))" 2>/dev/null || echo "0")
-    description=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('user',{}).get('description',''))" 2>/dev/null || echo "")
+    name=$(echo "$response" | jq -r '.user.name // "Unknown"' 2>/dev/null || echo "Unknown")
+    followers=$(echo "$response" | jq -r '.user.followers // 0' 2>/dev/null || echo "0")
+    following=$(echo "$response" | jq -r '.user.following // 0' 2>/dev/null || echo "0")
+    description=$(echo "$response" | jq -r '.user.description // ""' 2>/dev/null || echo "")
 
     printf "**%s** (@%s)\n" "$name" "$handle"
     printf "Followers: %s | Following: %s\n\n" "$followers" "$following"
@@ -166,7 +168,7 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) raw_json="true"; shift ;;
-            --format) output_format="$2"; shift 2 ;;
+            --format) [[ $# -lt 2 ]] && { print_error "--format requires a value"; return 1; }; output_format="$2"; shift 2 ;;
             *) args+=("$1"); shift ;;
         esac
     done

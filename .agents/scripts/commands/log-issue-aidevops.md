@@ -129,13 +129,15 @@ Labels: bug (or enhancement, question, documentation)
 4. Cancel
 ```
 
-### Step 5b: Assign Task ID and Sync
+### Step 5b: Assign Task ID and Sync (Maintainers Only)
+
+> **Note**: This step is for aidevops maintainers with repository write access. External users reporting issues can skip to Step 6.
 
 Before creating the issue, assign a TODO.md task ID:
 
 1. Read TODO.md to find the highest existing t-number
 2. Assign the next sequential t-number (e.g., if highest is t148, use t149)
-3. Prefix the issue title with `t{NNN}: `
+3. Prefix the issue title with `t{NNN}:` (followed by a space)
 4. After issue creation, add the task to TODO.md with `ref:GH#{issue_number}`
 5. Commit and push TODO.md
 

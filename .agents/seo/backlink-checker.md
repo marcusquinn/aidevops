@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: Monitor backlinks, detect lost/broken links, find expired referring domains for purchase
 - **Data Sources**: Ahrefs API, DataForSEO Backlinks API, WHOIS lookups
-- **Helper**: `~/.aidevops/agents/scripts/seo-helper.sh backlinks [domain]`
+- **Helpers**: `scripts/seo-export-ahrefs.sh`, `scripts/seo-export-dataforseo.sh` (backlink data export)
 
 **Workflow**: Fetch backlink profile -> Identify lost/broken links -> Check domain expiry status -> Rank by DA/DR/traffic value -> Output purchase candidates
 
@@ -30,16 +30,7 @@ tools:
 
 ### Ahrefs API (Primary)
 
-```bash
-# Get backlinks for a domain
-seo-helper.sh backlinks example.com --source ahrefs
-
-# Lost backlinks (last 30 days)
-seo-helper.sh backlinks example.com --lost --days 30
-
-# Broken backlinks (404 targets)
-seo-helper.sh backlinks example.com --broken
-```
+> See `scripts/seo-export-ahrefs.sh` for the export implementation.
 
 Ahrefs endpoints used:
 - `/v3/site-explorer/all-backlinks` - Full backlink list
@@ -48,13 +39,7 @@ Ahrefs endpoints used:
 
 ### DataForSEO Backlinks API (Alternative)
 
-```bash
-# Via DataForSEO
-seo-helper.sh backlinks example.com --source dataforseo
-
-# Bulk domain check
-seo-helper.sh backlinks-bulk domains.txt --source dataforseo
-```
+> See `scripts/seo-export-dataforseo.sh` for the export implementation.
 
 DataForSEO endpoints:
 - `/v3/backlinks/backlinks/live` - Live backlink data
@@ -103,13 +88,7 @@ done
    - Registration cost vs. link value
 5. **Output ranked list** of purchase candidates
 
-```bash
-# Full reclamation pipeline
-seo-helper.sh backlinks example.com --lost --days 90 \
-  | seo-helper.sh check-expiry --stdin \
-  | sort -t',' -k2 -rn \
-  > expired-candidates.csv
-```
+The full reclamation pipeline combines backlink export with WHOIS checks. Use the Ahrefs or DataForSEO export scripts to get lost backlinks, then pipe through WHOIS lookups above.
 
 ## Integration with aidevops
 
@@ -123,4 +102,4 @@ seo-helper.sh backlinks example.com --lost --days 90 \
 - `seo/ahrefs.md` - Ahrefs API integration
 - `seo/dataforseo.md` - DataForSEO API integration
 - `seo/domain-research.md` - DNS reconnaissance
-- `seo/link-building.md` - Link building strategies
+- `seo/link-building.md` - Link-building strategies

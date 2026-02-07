@@ -2896,7 +2896,7 @@ check_review_threads() {
         query($owner: String!, $repo: String!, $pr: Int!) {
             repository(owner: $owner, name: $repo) {
                 pullRequest(number: $pr) {
-                    reviewThreads(first: 100) {
+                    reviewThreads(first: 100) {  # NOTE: max 100 per page; pagination not yet implemented (rare to exceed 100 threads)
                         totalCount
                         nodes {
                             isResolved
@@ -2992,11 +2992,11 @@ triage_review_feedback() {
 
     # Bot-only threads: classify by severity keywords
     local high_severity_count
-    high_severity_count=$(echo "$threads_json" | jq '[.threads[] | select(.is_bot == true) | select(.body | test("bug|security|vulnerability|critical|error|crash|data.loss|injection|XSS|CSRF"; "i"))] | length' 2>/dev/null || echo "0")
+    high_severity_count=$(echo "$threads_json" | jq '[.threads[] | select(.is_bot == true) | select(.body | test("\\b(bug|security|vulnerability|critical|error|crash|data.loss|injection|XSS|CSRF)\\b"; "i"))] | length' 2>/dev/null || echo "0")
 
     if [[ "$high_severity_count" -gt 0 ]]; then
         log_warn "  $high_severity_count high-severity bot finding(s) - blocking merge"
-        echo "$threads_json" | jq -r '.threads[] | select(.is_bot == true) | select(.body | test("bug|security|vulnerability|critical|error|crash|data.loss|injection|XSS|CSRF"; "i")) | "  - \(.author) on \(.path):\(.line): \(.body[0:120])"' 2>/dev/null || true
+        echo "$threads_json" | jq -r '.threads[] | select(.is_bot == true) | select(.body | test("\\b(bug|security|vulnerability|critical|error|crash|data.loss|injection|XSS|CSRF)\\b"; "i")) | "  - \(.author) on \(.path):\(.line): \(.body[0:120])"' 2>/dev/null || true
         echo "triage_block"
         return 0
     fi
@@ -3369,6 +3369,9 @@ cmd_pr_lifecycle() {
                             ;;
                     esac
                 else
+                    if [[ "$skip_review_triage" == "true" ]]; then
+                        log_warn "Review triage bypassed via --skip-review-triage for $task_id"
+                    fi
                     if [[ "$dry_run" == "false" ]]; then
                         cmd_transition "$task_id" "merging" 2>/dev/null || true
                     fi
@@ -3417,7 +3420,9 @@ cmd_pr_lifecycle() {
                 # Track consecutive no_pr failures to avoid infinite retry loop
                 local no_pr_count
                 no_pr_count=$(db "$SUPERVISOR_DB" "SELECT COALESCE(
-                    (SELECT CAST(json_extract(error, '$.no_pr_retries') AS INTEGER)
+                    (SELECT CAST(json_extract(
+                        CASE WHEN json_valid(error) THEN error ELSE '{}' END,
+                        '$.no_pr_retries') AS INTEGER)
                      FROM tasks WHERE id='$task_id'), 0);" 2>/dev/null || echo "0")
                 no_pr_count=$((no_pr_count + 1))
 
@@ -3434,7 +3439,11 @@ cmd_pr_lifecycle() {
 
                 log_warn "No PR found for $task_id (attempt $no_pr_count/5)"
                 # Store retry count in error field as JSON
-                db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
+                db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(
+                    CASE WHEN json_valid(error) THEN error ELSE '{}' END,
+                    '$.no_pr_retries', $no_pr_count),
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                    WHERE id='$task_id';" 2>/dev/null || true
                 return 0
                 ;;
         esac
@@ -3832,7 +3841,7 @@ cmd_pulse() {
     local total_complete
     total_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed');")
     local total_pr_review
-    total_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying');")
+    total_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'review_triage', 'merging', 'merged', 'deploying');")
 
     local total_failed
     total_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('failed', 'blocked');")
@@ -4414,7 +4423,7 @@ save_pulse_checkpoint() {
     local pr_details
     pr_details=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, description, status, pr_url
-        FROM tasks WHERE status IN ('pr_review', 'merging', 'merged', 'deploying')
+        FROM tasks WHERE status IN ('pr_review', 'review_triage', 'merging', 'merged', 'deploying')
         ORDER BY updated_at DESC;
     " 2>/dev/null || echo "")
 

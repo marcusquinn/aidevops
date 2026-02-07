@@ -180,4 +180,3 @@ Recommendations:
 ## Related
 
 - `tools/terminal/terminal-title.md` - Terminal title management
-- `tools/ai-assistants/opencode.md` - AI coding tool config

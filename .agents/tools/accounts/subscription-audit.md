@@ -22,21 +22,7 @@ tools:
 - **Command**: `/subscription-audit` or `@subscription-audit`
 - **Data Sources**: Email receipts, bank statements (CSV), manual inventory
 
-**Quick start**:
-
-```bash
-# Start interactive audit
-subscription-audit-helper.sh audit
-
-# Import bank statement
-subscription-audit-helper.sh import bank-statement.csv
-
-# Show current subscriptions
-subscription-audit-helper.sh list
-
-# Show monthly/annual totals
-subscription-audit-helper.sh summary
-```
+**Quick start**: Use the `/subscription-audit` command to start an interactive audit. The agent guides you through discovery, analysis, and optimization phases.
 
 <!-- AI-CONTEXT-END -->
 
@@ -64,13 +50,7 @@ from:(noreply@github.com OR billing@stripe.com OR receipts@paddle.com)
 
 #### Bank Statement Import
 
-```bash
-# Import CSV (auto-detects format for major banks)
-subscription-audit-helper.sh import statement.csv
-
-# Supported formats: Chase, Amex, Barclays, Monzo, Revolut, generic CSV
-# Auto-detects recurring patterns (same merchant, similar amount, regular interval)
-```
+Import CSV bank statements (auto-detects format for Chase, Amex, Barclays, Monzo, Revolut, generic CSV). The agent identifies recurring patterns (same merchant, similar amount, regular interval).
 
 #### Manual Inventory
 
@@ -91,12 +71,7 @@ Common categories to check:
 
 ### Phase 2: Analysis
 
-```bash
-# Generate analysis report
-subscription-audit-helper.sh analyze
-```
-
-Output includes:
+The analysis phase generates a report that includes:
 - **Monthly total**: Sum of all recurring charges
 - **Annual projection**: Monthly * 12 + annual-only subscriptions
 - **Category breakdown**: Spend per category

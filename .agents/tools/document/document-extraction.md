@@ -23,21 +23,7 @@ tools:
 - **Privacy**: Fully local processing via Ollama or Cloudflare Workers AI
 - **PRD**: `todo/tasks/prd-document-extraction.md`
 
-**Quick Commands**:
-
-```bash
-# Extract text from PDF
-document-extraction-helper.sh extract invoice.pdf
-
-# Extract with PII redaction
-document-extraction-helper.sh extract invoice.pdf --redact-pii
-
-# Extract structured data (JSON output)
-document-extraction-helper.sh extract invoice.pdf --schema invoice --format json
-
-# Batch extraction
-document-extraction-helper.sh batch ./documents/ --schema receipt --format csv
-```
+**Status**: Planned (see `todo/tasks/prd-document-extraction.md` for PRD). The Python components below are available for direct use; a CLI helper script is not yet implemented.
 
 <!-- AI-CONTEXT-END -->
 
@@ -79,7 +65,7 @@ print(result.document.export_to_markdown())
 
 - **Formats**: PDF, DOCX, PPTX, XLSX, HTML, images, AsciiDoc
 - **Features**: Table extraction, OCR (EasyOCR/Tesseract), layout analysis
-- **Repo**: https://github.com/DS4SD/docling (16k+ stars)
+- **Repo**: https://github.com/DS4SD/docling
 
 ### ExtractThinker (LLM Extraction)
 
@@ -103,7 +89,7 @@ result = extractor.extract("invoice.pdf", Invoice)
 print(result.model_dump_json(indent=2))
 ```
 
-- **Repo**: https://github.com/enoch3712/ExtractThinker (1.5k+ stars)
+- **Repo**: https://github.com/enoch3712/ExtractThinker
 - **LLM backends**: Ollama (local), OpenAI, Anthropic, Google, Cloudflare Workers AI
 
 ### Presidio (PII Redaction)
@@ -124,9 +110,11 @@ print(anonymized.text)  # "<PERSON>'s SSN is <US_SSN>"
 ```
 
 - **Entities**: PERSON, EMAIL, PHONE, SSN, CREDIT_CARD, IBAN, IP_ADDRESS, etc.
-- **Repo**: https://github.com/microsoft/presidio (3.5k+ stars)
+- **Repo**: https://github.com/microsoft/presidio
 
-## Extraction Schemas
+## Extraction Schemas (Templates)
+
+> These are example/template schemas for common document types. Customize for your project.
 
 ### Invoice
 
@@ -192,9 +180,21 @@ brew install ollama && ollama pull llama3.2
 pip install easyocr  # or: brew install tesseract
 ```
 
+## When to Use (vs Unstract)
+
+| Feature | This Stack (Docling+ExtractThinker) | Unstract MCP |
+|---------|-------------------------------------|-------------|
+| **Privacy** | Full local processing via Ollama | Cloud or self-hosted |
+| **Schema control** | Pydantic models, custom schemas | Pre-built extractors |
+| **PII redaction** | Built-in via Presidio | Manual |
+| **Setup** | pip install, no server | Docker/server required |
+| **Best for** | Custom extraction pipelines | Quick document processing |
+
+Use this stack when you need custom schemas, PII redaction, or fully local processing. Use Unstract when you need quick setup with pre-built extractors.
+
 ## Related
 
 - `tools/document/pandoc-helper.sh` - Document format conversion
 - `tools/document/mineru.md` - Alternative PDF extraction (MinerU)
-- `tools/document/unstract.md` - Self-hosted document processing
+- `services/document-processing/unstract.md` - Self-hosted document processing (alternative)
 - `todo/tasks/prd-document-extraction.md` - Full PRD
