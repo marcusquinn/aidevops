@@ -81,6 +81,8 @@ Model selection: `--stt_model_name <model>` (any Whisper checkpoint on HF Hub)
 
 Model selection: `--lm_model_name <model>` or `--mlx_lm_model_name <model>`
 
+API keys: Store `OPENAI_API_KEY` via `aidevops secret set OPENAI_API_KEY` (gopass encrypted) or in `~/.config/aidevops/credentials.sh` (600 permissions). See `tools/credentials/api-key-setup.md`.
+
 ### TTS (Text to Speech)
 
 | Implementation | Flag | Best For |
@@ -177,7 +179,7 @@ python -m unidic download
 ### Requirements
 
 - Python 3.10+
-- PyTorch 2.4+ (CUDA) or 2.10+ (macOS)
+- PyTorch 2.4+ (CUDA and macOS)
 - `uv` package manager (recommended)
 - CUDA 12.1+ (for GPU) or Apple Silicon (for MPS)
 - `sounddevice` for local audio I/O
