@@ -212,7 +212,11 @@ cmd_start() {
         case "$gpu" in
             mps)  mode="local-mac" ;;
             cuda) mode="cuda" ;;
-            *)    mode="cuda" ;;
+            cpu)
+                mode="server"
+                print_warning "CPU-only host detected; defaulting to --server mode"
+                ;;
+            *)    mode="server" ;;
         esac
         print_info "Auto-detected mode: $mode"
     fi
@@ -314,7 +318,7 @@ cmd_docker_start() {
     fi
 
     print_info "Starting with Docker..."
-    (cd "$S2S_DIR" && docker compose up -d) || exit
+    (cd "$S2S_DIR" && docker compose up -d) || return 1
     print_success "Docker containers started"
     print_info "Ports: ${DEFAULT_RECV_PORT} (recv), ${DEFAULT_SEND_PORT} (send)"
     return 0
@@ -388,10 +392,10 @@ cmd_stop() {
     fi
 
     # Stop Docker if running
-    if [[ -f "${S2S_DIR}/docker-compose.yml" ]]; then
+    if command -v docker &>/dev/null && [[ -f "${S2S_DIR}/docker-compose.yml" ]]; then
         if docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>/dev/null | grep -q .; then
             print_info "Stopping Docker containers..."
-            (cd "$S2S_DIR" && docker compose down) || exit
+            (cd "$S2S_DIR" && docker compose down) || return 1
             print_success "Docker containers stopped"
         fi
     fi
@@ -543,7 +547,7 @@ cmd_help() {
     echo "  $0 start --local-mac"
     echo "  $0 start --cuda --language auto --background"
     echo "  $0 start --server"
-    echo "  $0 client --host 192.168.1.100"
+    echo "  $0 client --host <server-ip>"
     echo "  $0 start \$($0 config low-latency)"
     echo "  $0 stop"
     echo ""
