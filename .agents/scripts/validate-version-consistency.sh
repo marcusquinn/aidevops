@@ -4,6 +4,9 @@
 # AI DevOps Framework - Version Consistency Validator
 # Validates that all version references are synchronized across the framework
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -11,11 +14,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
 VERSION_FILE="$REPO_ROOT/VERSION"
 
 # Color output functions
-print_success() { local msg="$1"; echo -e "\033[32m✅ $msg\033[0m"; return 0; }
-print_error() { local msg="$1"; echo -e "\033[31m❌ $msg\033[0m"; return 0; }
-print_warning() { local msg="$1"; echo -e "\033[33m⚠️  $msg\033[0m"; return 0; }
-print_info() { local msg="$1"; echo -e "\033[34mℹ️  $msg\033[0m"; return 0; }
-
 # Function to get current version
 get_current_version() {
     if [[ -f "$VERSION_FILE" ]]; then

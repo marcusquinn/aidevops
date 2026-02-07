@@ -48,6 +48,8 @@ set -euo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # shellcheck disable=SC2034
 readonly SCRIPT_DIR
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
@@ -76,22 +78,14 @@ detect_cli() {
 
 AI_CLI="$(detect_cli)"
 readonly AI_CLI
-readonly DEFAULT_TIMEOUT="${AGENT_TEST_TIMEOUT:-120}"
 
 # OpenCode server defaults (localhost-only, HTTP is intentional for local dev server)
 readonly OPENCODE_HOST="${OPENCODE_HOST:-localhost}"
 readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_URL="http://${OPENCODE_HOST}:${OPENCODE_PORT}" # NOSONAR - localhost dev server, no TLS needed
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly PURPLE='\033[0;35m'
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
-readonly NC='\033[0m'
 
 # Logging
 log_info() { echo -e "${BLUE}[TEST]${NC} $*"; }

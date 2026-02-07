@@ -9,14 +9,6 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
 # THC API Configuration
 readonly THC_API_BASE="https://ip.thc.org"
 readonly THC_API_V1="${THC_API_BASE}/api/v1"
@@ -58,30 +50,6 @@ load_reconeer_api_key() {
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [options]"
 readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 print_header() {
     local msg="$1"

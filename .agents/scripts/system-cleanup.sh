@@ -11,6 +11,9 @@
 # Author: AI DevOps Framework
 # Version: 1.0.0
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # Strict mode
 set -euo pipefail
 
@@ -26,13 +29,6 @@ readonly AGENT_DIR="$HOME/.agent"
 readonly PROJECT_DIR="$HOME/git/aidevops"
 readonly RETENTION_DAYS_LOGS=90
 readonly RETENTION_DAYS_TMP=7
-
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
 
 # Global state
 DRY_RUN=true

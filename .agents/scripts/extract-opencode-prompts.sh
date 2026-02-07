@@ -9,15 +9,12 @@
 # Output: ~/.aidevops/cache/opencode-prompts/
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
 # shellcheck disable=SC2034  # RED reserved for future error messages
-RED='\033[0;31m'
-NC='\033[0m'
 
 CACHE_DIR="$HOME/.aidevops/cache/opencode-prompts"
 OPENCODE_BIN=""

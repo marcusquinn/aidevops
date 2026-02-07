@@ -15,6 +15,9 @@
 # Author: AI DevOps Framework
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # =============================================================================
@@ -27,12 +30,6 @@ readonly UPSTREAM_API="https://api.github.com/repos/${UPSTREAM_REPO}/contents/${
 readonly CACHE_DIR="$HOME/.cache/aidevops"
 readonly CACHE_FILE="${CACHE_DIR}/ralph-upstream-check.json"
 readonly CACHE_TTL=86400  # 24 hours in seconds
-
-# Colors
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
 
 # =============================================================================
 # Helper Functions

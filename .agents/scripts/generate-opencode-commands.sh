@@ -13,14 +13,12 @@
 #   - Other agents as needed
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 OPENCODE_COMMAND_DIR="$HOME/.config/opencode/command"
-
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
 
 echo -e "${BLUE}Generating OpenCode commands...${NC}"
 

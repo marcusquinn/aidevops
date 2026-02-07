@@ -77,6 +77,8 @@ unset _p
 
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
@@ -125,14 +127,7 @@ readonly -a VALID_TRANSITIONS=(
     "deployed:cancelled"
 )
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[0;33m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[SUPERVISOR]${NC} $*"; }
 log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }

@@ -29,13 +29,14 @@
 #   --json             Output as JSON
 #   --no-color         Disable colors
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Colors (reserved for future terminal output enhancement)
 # shellcheck disable=SC2034
-RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
 # shellcheck disable=SC2034
-BLUE='\033[0;34m' CYAN='\033[0;36m' BOLD='\033[1m' DIM='\033[2m' NC='\033[0m'
 
 # Defaults
 SORT_BY="status"

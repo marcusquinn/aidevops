@@ -27,6 +27,9 @@
 # Previous TOON file-based system: ~25ms per message (2.5s for 100 messages).
 # SQLite: <1ms per query regardless of message count.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -34,14 +37,6 @@ readonly MAIL_DIR="${AIDEVOPS_MAIL_DIR:-$HOME/.aidevops/.agent-workspace/mail}"
 readonly MAIL_DB="$MAIL_DIR/mailbox.db"
 readonly DEFAULT_PRUNE_DAYS=7
 readonly MEMORY_HELPER="$HOME/.aidevops/agents/scripts/memory-helper.sh"
-
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[0;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
 
 #######################################
 # Logging

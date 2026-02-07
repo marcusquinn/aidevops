@@ -4,47 +4,19 @@
 # Vaultwarden (Self-hosted Bitwarden) Helper Script
 # Secure password and secrets management for AI assistants
 
-# Colors for output
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
 readonly ERROR_JQ_REQUIRED="jq is required but not installed"
 readonly INFO_JQ_INSTALL_MACOS="Install with: brew install jq"
 readonly INFO_JQ_INSTALL_UBUNTU="Install with: apt-get install jq"
 readonly ERROR_CURL_REQUIRED="curl is required but not installed"
 
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
 
 # Common message constants
 readonly HELP_SHOW_MESSAGE="Show this help"
 readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 CONFIG_FILE="../configs/vaultwarden-config.json"
 

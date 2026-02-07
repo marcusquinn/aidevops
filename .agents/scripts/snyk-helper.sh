@@ -31,22 +31,15 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR="$script_dir"
 
 repo_root="$(dirname "$SCRIPT_DIR")"
 readonly REPO_ROOT="$repo_root"
 readonly CONFIG_FILE="$REPO_ROOT/configs/snyk-config.json"
 
-# Colors
-readonly BLUE='\033[0;34m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m'
-
 # Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 # Error Messages
 readonly ERROR_SNYK_NOT_INSTALLED="Snyk CLI is required but not installed"
 readonly ERROR_NOT_AUTHENTICATED="Snyk CLI is not authenticated. Run 'snyk auth' or set SNYK_TOKEN"
@@ -69,30 +62,6 @@ export SNYK_API_BASE="https://api.snyk.io"
 # ------------------------------------------------------------------------------
 # UTILITY FUNCTIONS
 # ------------------------------------------------------------------------------
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 print_header() {
     local msg="$1"

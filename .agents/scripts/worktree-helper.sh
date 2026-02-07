@@ -28,15 +28,12 @@
 #   worktree-helper.sh clean
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 # Get repo info
 get_repo_root() {

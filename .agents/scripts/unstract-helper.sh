@@ -6,6 +6,9 @@
 #
 # Usage: unstract-helper.sh [install|start|stop|status|logs|uninstall|configure-llm]
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Source shared constants (provides sed_inplace and other utilities)
@@ -18,18 +21,6 @@ readonly UNSTRACT_REPO="https://github.com/Zipstack/unstract.git"
 readonly CREDENTIALS_FILE="${HOME}/.config/aidevops/credentials.sh"
 readonly FRONTEND_URL="http://frontend.unstract.localhost"
 readonly BACKEND_URL="http://backend.unstract.localhost"
-
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
-print_success() { local msg="$1"; echo -e "${GREEN}[OK] ${msg}${NC}"; return 0; }
-print_info() { local msg="$1"; echo -e "${BLUE}[INFO] ${msg}${NC}"; return 0; }
-print_warning() { local msg="$1"; echo -e "${YELLOW}[WARN] ${msg}${NC}"; return 0; }
-print_error() { local msg="$1"; echo -e "${RED}[ERROR] ${msg}${NC}" >&2; return 0; }
 
 # Check prerequisites
 check_prerequisites() {

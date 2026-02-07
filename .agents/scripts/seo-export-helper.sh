@@ -27,23 +27,12 @@ readonly CONFIG_DIR="$HOME/.config/aidevops"
 readonly DEFAULT_DAYS=90
 
 # Colors (fallback if shared-constants not loaded)
-readonly RED="${COLOR_RED:-\033[0;31m}"
-readonly GREEN="${COLOR_GREEN:-\033[0;32m}"
-readonly BLUE="${COLOR_BLUE:-\033[0;34m}"
-readonly YELLOW="${COLOR_YELLOW:-\033[1;33m}"
-readonly PURPLE="${COLOR_PURPLE:-\033[0;35m}"
-readonly NC="${COLOR_RESET:-\033[0m}"
 
 # =============================================================================
 # Utility Functions
 # =============================================================================
 
 print_header() { local msg="$1"; echo -e "${PURPLE}=== $msg ===${NC}"; return 0; }
-print_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} $msg"; return 0; }
-print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 0; }
-print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
-print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
-
 # Ensure data directory exists
 ensure_directories() {
     local domain="$1"

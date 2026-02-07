@@ -22,6 +22,8 @@ set -euo pipefail
 # Configuration
 declare SCRIPT_DIR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 export SCRIPT_DIR  # Available for sourced scripts
 declare SCRIPT_NAME
@@ -32,41 +34,9 @@ readonly VERSION="1.0.0"
 # Default output directory
 readonly DEFAULT_OUTPUT_DIR="$HOME/.aidevops/.agent-workspace/work/context"
 
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} $msg"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $msg"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $msg"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} $msg" >&2
-    return 0
-}
 
 print_header() {
     echo -e "${CYAN}========================================${NC}"

@@ -15,6 +15,9 @@
 #   memory-embeddings-helper.sh rebuild             # Rebuild entire index
 #   memory-embeddings-helper.sh help                # Show this help
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -28,13 +31,6 @@ MEMORY_DIR="$MEMORY_BASE_DIR"
 MEMORY_DB="$MEMORY_DIR/memory.db"
 EMBEDDINGS_DB="$MEMORY_DIR/embeddings.db"
 PYTHON_SCRIPT="$MEMORY_DIR/.embeddings-engine.py"
-
-# Colors
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[0;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }

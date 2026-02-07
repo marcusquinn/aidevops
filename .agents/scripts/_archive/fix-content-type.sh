@@ -7,22 +7,8 @@
 # Author: AI DevOps Framework
 # Version: 1.1.1
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
-
-print_success() {
-    local _arg1="$1"
-    echo -e "${GREEN}✅ $_arg1${NC}"
-    return 0
-}
-
-print_info() {
-    local _arg1="$1"
-    echo -e "${BLUE}ℹ️  $_arg1${NC}"
-    return 0
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Fix Content-Type in a file
 fix_content_type_in_file() {
@@ -41,13 +27,11 @@ fix_content_type_in_file() {
                 sed -i '' '/NC=.*No Color/a\
 \
 # Common constants\
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 ' "$file"
             elif grep -q "readonly.*NC=" "$file"; then
                 sed -i '' '/readonly.*NC=/a\
 \
 # Common constants\
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 ' "$file"
             fi
         fi

@@ -7,22 +7,8 @@
 # Author: AI DevOps Framework
 # Version: 1.1.1
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
-
-print_success() {
-    local _arg1="$1"
-    echo -e "${GREEN}✅ $_arg1${NC}"
-    return 0
-}
-
-print_info() {
-    local _arg1="$1"
-    echo -e "${BLUE}ℹ️  $_arg1${NC}"
-    return 0
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Fix remaining string literals in a file
 fix_remaining_literals_in_file() {
@@ -103,7 +89,6 @@ readonly HELP_SHOW_MESSAGE="Show this help"
         fi
         
         sed -i '' '/# Common.*constants/a\
-readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 ' "$file"
         sed -i '' 's|"Content-Type: application/json"|"$CONTENT_TYPE_JSON"|g' "$file"
         changes_made=1

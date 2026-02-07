@@ -16,14 +16,10 @@
 #   scaffold [type]       Generate boilerplate (php|node|python|go|static)
 #   status                Show current package status
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+set -euo pipefail
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }

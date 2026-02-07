@@ -4,42 +4,16 @@
 # Cloudron Helper Script
 # Manages Cloudron servers and applications
 
-# Colors for output
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # String literal constants
-readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
 readonly ERROR_SERVER_NAME_REQUIRED="Server name is required"
 readonly ERROR_SERVER_NOT_FOUND="Server not found in configuration"
 
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
 
 # Error message constants
 # readonly USAGE_PREFIX="Usage:"  # Currently unused
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}[INFO]${NC} $message"
-    return 0
-}
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}[SUCCESS]${NC} $message"
-    return 0
-}
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}[WARNING]${NC} $message"
-    return 0
-}
-print_error() {
-    local message="$1"
-    echo -e "${RED}[ERROR]${NC} $message" >&2
-    return 0
-}
 
 # Configuration file
 CONFIG_FILE="../configs/cloudron-config.json"

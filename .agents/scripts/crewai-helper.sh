@@ -18,14 +18,10 @@
 #   help      Show this help message
 # =============================================================================
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+set -euo pipefail
 
 # Configuration
 CREWAI_DIR="$HOME/.aidevops/crewai"
@@ -34,22 +30,6 @@ SCRIPTS_DIR="$HOME/.aidevops/scripts"
 LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
 
 # Helper functions
-print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
 # Port management integration with localhost-helper.sh
 # Returns available port (original if free, or next available)
 get_available_port() {

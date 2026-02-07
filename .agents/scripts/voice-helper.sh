@@ -7,43 +7,14 @@
 
 set -euo pipefail
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
-
 # Paths
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly BRIDGE_SCRIPT="${SCRIPT_DIR}/voice-bridge.py"
 readonly S2S_DIR="${HOME}/.aidevops/.agent-workspace/work/speech-to-speech"
 readonly VENV_DIR="${S2S_DIR}/.venv"
 readonly VOICE_PID_FILE="${HOME}/.aidevops/.agent-workspace/tmp/.voice-bridge.pid"
-
-print_info() {
-    local msg="$1"
-    echo -e "${BLUE}[INFO]${NC} ${msg}"
-    return 0
-}
-
-print_success() {
-    local msg="$1"
-    echo -e "${GREEN}[OK]${NC} ${msg}"
-    return 0
-}
-
-print_warning() {
-    local msg="$1"
-    echo -e "${YELLOW}[WARN]${NC} ${msg}"
-    return 0
-}
-
-print_error() {
-    local msg="$1"
-    echo -e "${RED}[ERROR]${NC} ${msg}" >&2
-    return 0
-}
 
 # ─── Dependency checks ───────────────────────────────────────────────
 

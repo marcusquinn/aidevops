@@ -17,6 +17,8 @@ readonly UPSTREAM_REPO="blader/humanizer"
 readonly UPSTREAM_RAW="https://raw.githubusercontent.com/${UPSTREAM_REPO}/main/SKILL.md"
 readonly LOCAL_SUBAGENT="${HOME}/.aidevops/agents/content/humanise.md"
 SCRIPT_DIR="$(dirname "$0")"
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly SOURCE_SUBAGENT="${SCRIPT_DIR}/../content/humanise.md"
 readonly CACHE_DIR="${HOME}/.aidevops/.agent-workspace/cache"
@@ -24,14 +26,7 @@ readonly CACHE_FILE="${CACHE_DIR}/humanizer-upstream.md"
 readonly CACHE_VERSION_FILE="${CACHE_DIR}/humanizer-version.txt"
 readonly CACHE_TTL=86400  # 24 hours in seconds
 
-# Colors
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
 readonly BOLD='\033[1m'
-readonly NC='\033[0m'
 
 # Get local version from subagent frontmatter
 get_local_version() {

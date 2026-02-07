@@ -22,16 +22,10 @@
 
 set -euo pipefail
 
-# Colors for output
-readonly GREEN='\033[0;32m'
-readonly BLUE='\033[0;34m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly PURPLE='\033[0;35m'
-readonly NC='\033[0m'
-
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 readonly SCRIPT_DIR
 readonly CONFIG_DIR="${HOME}/.config/aidevops"
 readonly CONFIG_FILE="${CONFIG_DIR}/site-crawler.json"
@@ -51,26 +45,6 @@ USE_CRAWL4AI=false
 PYTHON_CMD=""
 
 # Print functions
-print_success() {
-    echo -e "${GREEN}[OK] $1${NC}"
-    return 0
-}
-
-print_info() {
-    echo -e "${BLUE}[INFO] $1${NC}"
-    return 0
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARN] $1${NC}"
-    return 0
-}
-
-print_error() {
-    echo -e "${RED}[ERROR] $1${NC}"
-    return 0
-}
-
 print_header() {
     echo -e "${PURPLE}=== $1 ===${NC}"
     return 0

@@ -8,6 +8,9 @@
 # Author: AI DevOps Framework
 # Version: 1.0.0
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -15,13 +18,6 @@ readonly TIMEOUT_CI=600        # 10 minutes for CI/CD
 readonly TIMEOUT_TOOLS=300     # 5 minutes for code review tools
 readonly POLL_INTERVAL=30      # Check every 30 seconds
 readonly MAX_ATTEMPTS=20       # Maximum polling attempts
-
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'
 
 # Repository info
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
@@ -44,37 +40,10 @@ print_header() {
     return 0
 }
 
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}PASSED${NC} $message"
-    ((PASSED++))
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}WARNING${NC} $message"
-    ((WARNINGS++))
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}FAILED${NC} $message"
-    ((FAILED++))
-    return 0
-}
-
 print_skip() {
     local message="$1"
     echo -e "${BLUE}SKIPPED${NC} $message"
     ((SKIPPED++))
-    return 0
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${BLUE}INFO${NC} $message"
     return 0
 }
 
