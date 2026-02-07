@@ -2097,14 +2097,25 @@ deploy_aidevops_agents() {
     if [[ "$CLEAN_MODE" == "true" ]]; then
         print_info "Clean mode: removing stale files from $target_dir (preserving custom/, draft/)"
         # Preserve user-managed directories before clean
-        local preserved_dirs=("custom" "draft")
-        local tmp_preserve
-        tmp_preserve=$(mktemp -d)
+        local -a preserved_dirs=("custom" "draft")
+        local tmp_preserve="$(mktemp -d)"
+        if [[ -z "$tmp_preserve" || ! -d "$tmp_preserve" ]]; then
+            print_error "Failed to create temp dir for preserving custom/draft agents"
+            return 1
+        fi
+        local preserve_failed=false
         for pdir in "${preserved_dirs[@]}"; do
             if [[ -d "$target_dir/$pdir" ]]; then
-                cp -R "$target_dir/$pdir" "$tmp_preserve/$pdir"
+                if ! cp -R "$target_dir/$pdir" "$tmp_preserve/$pdir"; then
+                    preserve_failed=true
+                fi
             fi
         done
+        if [[ "$preserve_failed" == "true" ]]; then
+            print_error "Failed to preserve custom/draft agents; aborting clean"
+            rm -rf "$tmp_preserve"
+            return 1
+        fi
         rm -rf "${target_dir:?}"/*
         # Restore preserved directories
         for pdir in "${preserved_dirs[@]}"; do
