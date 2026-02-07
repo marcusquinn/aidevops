@@ -28,14 +28,13 @@ jobs:
         echo "✅ AGENTS.md: $(test -f AGENTS.md && echo 'Present' || echo 'Missing')"
         echo "✅ README.md: $(test -f README.md && echo 'Present' || echo 'Missing')"
         echo "✅ LICENSE: $(test -f LICENSE && echo 'Present' || echo 'Missing')"
-        echo "✅ .agents/ directory: $(test -d .agent && echo 'Present' || echo 'Missing')"
+        echo "✅ .agents/ directory: $(test -d .agents && echo 'Present' || echo 'Missing')"
 
         echo ""
         echo "📊 Framework Statistics:"
         echo "📚 Documentation files: $(find . -name '*.md' | wc -l)"
         echo "🔧 Agent scripts: $(find .agents/scripts -name '*.sh' 2>/dev/null | wc -l || echo '0')"
-        echo "⚙️  Quality specs: $(find .agents/spec -name '*.md' 2>/dev/null | wc -l || echo '0')"
-        echo "📖 Service docs: $(find docs -name '*.md' 2>/dev/null | wc -l || echo '0')"
+        echo "📖 Agent subagents: $(find .agents -mindepth 2 -name '*.md' 2>/dev/null | wc -l || echo '0')"
 
         echo ""
         echo "🔍 Quality Checks:"
@@ -46,27 +45,19 @@ jobs:
           echo "✅ Agent scripts found: $script_count"
         else
           echo "❌ .agents/scripts directory missing"
+          exit 1
         fi
 
-        # Check quality specs exist
-        if [ -d ".agents/spec" ]; then
-          spec_count=$(find .agents/spec -name "*.md" | wc -l)
-          echo "✅ Quality specs found: $spec_count"
+        # Check AGENTS.md exists in .agents/
+        if [ -f ".agents/AGENTS.md" ]; then
+          echo "✅ .agents/AGENTS.md present"
         else
-          echo "❌ .agents/spec directory missing"
-        fi
-
-        # Check documentation exists
-        if [ -d "docs" ]; then
-          doc_count=$(find docs -name "*.md" | wc -l)
-          echo "✅ Service documentation files: $doc_count"
-        else
-          echo "❌ Docs directory missing"
+          echo "❌ .agents/AGENTS.md missing"
+          exit 1
         fi
 
         echo ""
         echo "🎯 Framework Validation: COMPLETE"
-        echo "This is a comprehensive AI-Assisted DevOps framework with automated code quality management!"
 
         # Security check - ensure no obvious API keys in repository
         echo ""
@@ -75,6 +66,41 @@ jobs:
         echo "✅ GitHub Actions use repository secrets (SONAR_TOKEN, CODACY_API_TOKEN)"
         echo "✅ Private scripts directory (.agents/scripts-private/) gitignored"
         echo "✅ Security documentation and best practices implemented"
+
+    - name: JSON Config Validation
+      run: |
+        echo "🔍 Validating JSON config files..."
+        errors=0
+
+        # Validate all .json files tracked by git
+        while IFS= read -r file; do
+          if python3 -m json.tool "$file" > /dev/null 2>&1; then
+            echo "✅ $file"
+          else
+            echo "❌ $file - invalid JSON"
+            python3 -m json.tool "$file" 2>&1 | head -5
+            errors=$((errors + 1))
+          fi
+        done < <(git ls-files '*.json')
+
+        # Also validate .json.txt template files
+        while IFS= read -r file; do
+          if python3 -m json.tool "$file" > /dev/null 2>&1; then
+            echo "✅ $file"
+          else
+            echo "❌ $file - invalid JSON"
+            python3 -m json.tool "$file" 2>&1 | head -5
+            errors=$((errors + 1))
+          fi
+        done < <(git ls-files '*.json.txt')
+
+        if [ "$errors" -gt 0 ]; then
+          echo ""
+          echo "❌ $errors JSON file(s) failed validation"
+          exit 1
+        fi
+        echo ""
+        echo "✅ All JSON files valid"
 
   sonarcloud:
     name: SonarCloud Analysis

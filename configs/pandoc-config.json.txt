@@ -2,8 +2,7 @@
   "pandoc_config": {
     "description": "Pandoc document conversion configuration for AI DevOps Framework",
     "version": "1.1.2",
-    "
-": {
+    "paths": {
       "input_directory": "./documents",
       "output_directory": "./markdown",
       "temp_directory": "./tmp/pandoc",
