@@ -94,7 +94,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: BLOCKED by supervisor: Max retries exceeded: backend_infrastructure_error    - [ ] t135.5.1 git rm --cached .scannerwork/ and .playwright-cli/ ~10m
     - [ ] t135.5.2 Add .playwright-cli/ to .gitignore ~5m
     - [ ] t135.5.3 Verify .scannerwork/ already in .gitignore ~5m
-  - [ ] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none
+  - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
     - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
     - [ ] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m
     - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
