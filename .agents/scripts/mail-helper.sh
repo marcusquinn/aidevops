@@ -52,6 +52,14 @@ log_warn() { echo -e "${YELLOW}[MAIL]${NC} $*"; }
 log_error() { echo -e "${RED}[MAIL]${NC} $*" >&2; }
 
 #######################################
+# SQLite wrapper: sets busy_timeout on every connection (t135.3)
+# busy_timeout is per-connection and must be set each time
+#######################################
+db() {
+    sqlite3 -cmd ".timeout 5000" "$@"
+}
+
+#######################################
 # Ensure database exists and is initialized
 #######################################
 ensure_db() {
@@ -64,9 +72,16 @@ ensure_db() {
 
     # Check if schema needs upgrade (agents table might be missing)
     local has_agents
-    has_agents=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='agents';")
+    has_agents=$(db "$MAIL_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='agents';")
     if [[ "$has_agents" -eq 0 ]]; then
         init_db
+    fi
+
+    # Ensure WAL mode for existing databases created before t135.3
+    local current_mode
+    current_mode=$(db "$MAIL_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
+    if [[ "$current_mode" != "wal" ]]; then
+        db "$MAIL_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
     fi
 
     return 0
@@ -76,7 +91,7 @@ ensure_db() {
 # Initialize SQLite database with schema
 #######################################
 init_db() {
-    sqlite3 "$MAIL_DB" << 'SQL'
+    db "$MAIL_DB" << 'SQL'
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
 
@@ -212,12 +227,12 @@ cmd_send() {
     if [[ "$to" == "all" || "$msg_type" == "broadcast" ]]; then
         # Broadcast: insert one message per active agent (excluding sender)
         local count
-        count=$(sqlite3 "$MAIL_DB" "
+        count=$(db "$MAIL_DB" "
             SELECT count(*) FROM agents WHERE status='active' AND id != '$(sql_escape "$from")';
         ")
 
         local agents_list
-        agents_list=$(sqlite3 "$MAIL_DB" "
+        agents_list=$(db "$MAIL_DB" "
             SELECT id FROM agents WHERE status='active' AND id != '$(sql_escape "$from")';
         ")
 
@@ -225,7 +240,7 @@ cmd_send() {
             while IFS= read -r agent_id; do
                 local broadcast_id
                 broadcast_id=$(generate_id)
-                sqlite3 "$MAIL_DB" "
+                db "$MAIL_DB" "
                     INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
                     VALUES ('$broadcast_id', '$(sql_escape "$from")', '$(sql_escape "$agent_id")', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
                 "
@@ -233,14 +248,14 @@ cmd_send() {
             log_success "Broadcast sent: $msg_id (to $count agents)"
         else
             # No agents registered, insert as general broadcast
-            sqlite3 "$MAIL_DB" "
+            db "$MAIL_DB" "
                 INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
                 VALUES ('$msg_id', '$(sql_escape "$from")', 'all', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
             "
             log_success "Sent: $msg_id → all (no agents registered)"
         fi
     else
-        sqlite3 "$MAIL_DB" "
+        db "$MAIL_DB" "
             INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
             VALUES ('$msg_id', '$(sql_escape "$from")', '$(sql_escape "$to")', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
         "
@@ -278,7 +293,7 @@ cmd_check() {
     fi
 
     local results
-    results=$(sqlite3 -separator ',' "$MAIL_DB" "
+    results=$(db -separator ',' "$MAIL_DB" "
         SELECT id, from_agent, type, priority, convoy, created_at, status
         FROM messages
         WHERE $where_clause
@@ -288,8 +303,8 @@ cmd_check() {
     ")
 
     local total unread
-    total=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent = '$(sql_escape "$agent_id")' AND status != 'archived';")
-    unread=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent = '$(sql_escape "$agent_id")' AND status = 'unread';")
+    total=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent = '$(sql_escape "$agent_id")' AND status != 'archived';")
+    unread=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent = '$(sql_escape "$agent_id")' AND status = 'unread';")
 
     echo "<!--TOON:inbox{id,from,type,priority,convoy,timestamp,status}:"
     if [[ -n "$results" ]]; then
@@ -322,7 +337,7 @@ cmd_read_msg() {
     ensure_db
 
     local row
-    row=$(sqlite3 -separator '|' "$MAIL_DB" "
+    row=$(db -separator '|' "$MAIL_DB" "
         SELECT id, from_agent, to_agent, type, priority, convoy, created_at, status, payload
         FROM messages WHERE id = '$(sql_escape "$msg_id")';
     ")
@@ -333,7 +348,7 @@ cmd_read_msg() {
     fi
 
     # Mark as read
-    sqlite3 "$MAIL_DB" "
+    db "$MAIL_DB" "
         UPDATE messages SET status = 'read', read_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE id = '$(sql_escape "$msg_id")' AND status = 'unread';
     "
@@ -370,7 +385,7 @@ cmd_archive() {
     ensure_db
 
     local updated
-    updated=$(sqlite3 "$MAIL_DB" "
+    updated=$(db "$MAIL_DB" "
         UPDATE messages SET status = 'archived', archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE id = '$(sql_escape "$msg_id")' AND status != 'archived';
         SELECT changes();
@@ -416,7 +431,7 @@ cmd_prune() {
 
     # Single query for all counts (reduces sqlite3 invocations)
     local total_messages unread_messages read_messages archived_messages
-    IFS='|' read -r total_messages unread_messages read_messages archived_messages < <(sqlite3 -separator '|' "$MAIL_DB" "
+    IFS='|' read -r total_messages unread_messages read_messages archived_messages < <(db -separator '|' "$MAIL_DB" "
         SELECT count(*),
             coalesce(sum(CASE WHEN status = 'unread' THEN 1 ELSE 0 END), 0),
             coalesce(sum(CASE WHEN status = 'read' THEN 1 ELSE 0 END), 0),
@@ -426,7 +441,7 @@ cmd_prune() {
 
     # Single query for prunable + archivable counts
     local prunable archivable
-    IFS='|' read -r prunable archivable < <(sqlite3 -separator '|' "$MAIL_DB" "
+    IFS='|' read -r prunable archivable < <(db -separator '|' "$MAIL_DB" "
         SELECT
             coalesce(sum(CASE WHEN status = 'archived' AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days') THEN 1 ELSE 0 END), 0),
             coalesce(sum(CASE WHEN status = 'read' AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days') THEN 1 ELSE 0 END), 0)
@@ -435,13 +450,13 @@ cmd_prune() {
 
     # Single query for date range
     local oldest_msg newest_msg
-    IFS='|' read -r oldest_msg newest_msg < <(sqlite3 -separator '|' "$MAIL_DB" "
+    IFS='|' read -r oldest_msg newest_msg < <(db -separator '|' "$MAIL_DB" "
         SELECT coalesce(min(created_at), 'none'), coalesce(max(created_at), 'none') FROM messages;
     ")
 
     # Per-type breakdown
     local type_breakdown
-    type_breakdown=$(sqlite3 -separator ': ' "$MAIL_DB" "
+    type_breakdown=$(db -separator ': ' "$MAIL_DB" "
         SELECT type, count(*) FROM messages GROUP BY type ORDER BY count(*) DESC;
     ")
 
@@ -486,7 +501,7 @@ cmd_prune() {
     local remembered=0
     if [[ -x "$MEMORY_HELPER" ]]; then
         local notable_messages
-        notable_messages=$(sqlite3 -separator '|' "$MAIL_DB" "
+        notable_messages=$(db -separator '|' "$MAIL_DB" "
             SELECT type, payload FROM messages
             WHERE status = 'archived'
             AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days')
@@ -507,7 +522,7 @@ cmd_prune() {
 
     # Archive old read messages first
     local auto_archived
-    auto_archived=$(sqlite3 "$MAIL_DB" "
+    auto_archived=$(db "$MAIL_DB" "
         UPDATE messages SET status = 'archived', archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE status = 'read'
         AND read_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
@@ -516,7 +531,7 @@ cmd_prune() {
 
     # Delete old archived messages
     local pruned
-    pruned=$(sqlite3 "$MAIL_DB" "
+    pruned=$(db "$MAIL_DB" "
         DELETE FROM messages
         WHERE status = 'archived'
         AND archived_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-$older_than_days days');
@@ -524,7 +539,7 @@ cmd_prune() {
     ")
 
     # Vacuum to reclaim space
-    sqlite3 "$MAIL_DB" "VACUUM;"
+    db "$MAIL_DB" "VACUUM;"
 
     local new_size_bytes
     new_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
@@ -554,16 +569,16 @@ cmd_status() {
         local escaped_id
         escaped_id=$(sql_escape "$agent_id")
         local inbox_count unread_count
-        inbox_count=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent='$escaped_id' AND status != 'archived';")
-        unread_count=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent='$escaped_id' AND status = 'unread';")
+        inbox_count=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent='$escaped_id' AND status != 'archived';")
+        unread_count=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent='$escaped_id' AND status = 'unread';")
         echo "Agent: $agent_id"
         echo "  Inbox: $inbox_count messages ($unread_count unread)"
     else
         local total_unread total_read total_archived total_agents
-        total_unread=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'unread';")
-        total_read=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'read';")
-        total_archived=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'archived';")
-        total_agents=$(sqlite3 "$MAIL_DB" "SELECT count(*) FROM agents WHERE status = 'active';")
+        total_unread=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'unread';")
+        total_read=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'read';")
+        total_archived=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'archived';")
+        total_agents=$(db "$MAIL_DB" "SELECT count(*) FROM agents WHERE status = 'active';")
 
         local total_inbox=$((total_unread + total_read))
 
@@ -577,7 +592,7 @@ cmd_status() {
         echo "  Agents:   $total_agents active"
 
         local agent_list
-        agent_list=$(sqlite3 -separator ',' "$MAIL_DB" "
+        agent_list=$(db -separator ',' "$MAIL_DB" "
             SELECT id, role, branch, status, registered, last_seen FROM agents ORDER BY last_seen DESC;
         ")
         if [[ -n "$agent_list" ]]; then
@@ -621,7 +636,7 @@ cmd_register() {
 
     ensure_db
 
-    sqlite3 "$MAIL_DB" "
+    db "$MAIL_DB" "
         INSERT INTO agents (id, role, branch, worktree, status)
         VALUES ('$(sql_escape "$agent_id")', '$(sql_escape "$role")', '$(sql_escape "$branch")', '$(sql_escape "$worktree")', 'active')
         ON CONFLICT(id) DO UPDATE SET
@@ -654,7 +669,7 @@ cmd_deregister() {
 
     ensure_db
 
-    sqlite3 "$MAIL_DB" "
+    db "$MAIL_DB" "
         UPDATE agents SET status = 'inactive', last_seen = strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE id = '$(sql_escape "$agent_id")';
     "
@@ -679,14 +694,14 @@ cmd_agents() {
 
     if [[ "$active_only" == true ]]; then
         echo "Active Agents:"
-        sqlite3 -separator ',' "$MAIL_DB" "
+        db -separator ',' "$MAIL_DB" "
             SELECT id, role, branch, last_seen FROM agents WHERE status = 'active' ORDER BY last_seen DESC;
         " | while IFS=',' read -r id role branch last_seen; do
             echo -e "  ${CYAN}$id${NC} ($role) on $branch - last seen: $last_seen"
         done
     else
         echo "<!--TOON:agents{id,role,branch,worktree,status,registered,last_seen}:"
-        sqlite3 -separator ',' "$MAIL_DB" "
+        db -separator ',' "$MAIL_DB" "
             SELECT id, role, branch, worktree, status, registered, last_seen FROM agents ORDER BY last_seen DESC;
         "
         echo "-->"
@@ -720,7 +735,7 @@ cmd_migrate() {
             local escaped_payload
             escaped_payload=$(sql_escape "$payload")
 
-            sqlite3 "$MAIL_DB" "
+            db "$MAIL_DB" "
                 INSERT OR IGNORE INTO messages (id, from_agent, to_agent, type, priority, convoy, payload, status, created_at)
                 VALUES ('$(sql_escape "$id")', '$(sql_escape "$from_agent")', '$(sql_escape "$to_agent")', '$(sql_escape "$msg_type")', '$(sql_escape "$priority")', '$(sql_escape "$convoy")', '$escaped_payload', '$(sql_escape "$status")', '$(sql_escape "$timestamp")');
             " 2>/dev/null && migrated=$((migrated + 1))
@@ -743,7 +758,7 @@ cmd_migrate() {
             local escaped_payload
             escaped_payload=$(sql_escape "$payload")
 
-            sqlite3 "$MAIL_DB" "
+            db "$MAIL_DB" "
                 INSERT OR IGNORE INTO messages (id, from_agent, to_agent, type, priority, convoy, payload, status, created_at, archived_at)
                 VALUES ('$(sql_escape "$id")', '$(sql_escape "$from_agent")', '$(sql_escape "$to_agent")', '$(sql_escape "$msg_type")', '$(sql_escape "$priority")', '$(sql_escape "$convoy")', '$escaped_payload', 'archived', '$(sql_escape "$timestamp")', strftime('%Y-%m-%dT%H:%M:%SZ','now'));
             " 2>/dev/null && migrated=$((migrated + 1))
@@ -756,7 +771,7 @@ cmd_migrate() {
     if [[ -f "$registry_file" ]]; then
         while IFS=',' read -r id role branch worktree status registered last_seen; do
             [[ "$id" == "<!--"* || "$id" == "-->"* || -z "$id" ]] && continue
-            sqlite3 "$MAIL_DB" "
+            db "$MAIL_DB" "
                 INSERT OR IGNORE INTO agents (id, role, branch, worktree, status, registered, last_seen)
                 VALUES ('$(sql_escape "$id")', '$(sql_escape "$role")', '$(sql_escape "$branch")', '$(sql_escape "$worktree")', '$(sql_escape "$status")', '$(sql_escape "$registered")', '$(sql_escape "$last_seen")');
             " 2>/dev/null && agents_migrated=$((agents_migrated + 1))
