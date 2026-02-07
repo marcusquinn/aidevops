@@ -2949,10 +2949,11 @@ setup_augment_context_engine() {
     print_success "Auggie CLI found and authenticated"
 
     # MCP configuration is handled by generate-opencode-agents.sh for OpenCode
-    # Other tools (Cursor, Claude Code, etc.) discover skills via SKILL.md files
 
     print_info "Augment Context Engine available as MCP in OpenCode"
     print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
+    
+    return 0
 }
 
 # Setup osgrep - Local Semantic Search

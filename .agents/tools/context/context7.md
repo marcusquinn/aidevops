@@ -84,6 +84,8 @@ npx -y @context7/mcp-server@latest --help
 
 ### **2. Add to Your AI Assistant Configuration:**
 
+> **Note**: aidevops configures Context7 for OpenCode automatically via `setup.sh`. The sections below document config formats for other tools as MCP reference.
+
 #### **For Claude Desktop:**
 
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:

@@ -1098,14 +1098,20 @@ EOF
     # Generate collaborator pointer files (lightweight AGENTS.md references)
     local pointer_content="Read AGENTS.md for all project context and instructions."
     local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules" ".github/copilot-instructions.md")
+    local pointer_created=0
     for pf in "${pointer_files[@]}"; do
         local pf_path="$project_root/$pf"
         if [[ ! -f "$pf_path" ]]; then
             mkdir -p "$(dirname "$pf_path")"
             echo "$pointer_content" > "$pf_path"
+            ((pointer_created++))
         fi
     done
-    print_success "Created collaborator pointer files (.cursorrules, etc.)"
+    if [[ $pointer_created -gt 0 ]]; then
+        print_success "Created $pointer_created collaborator pointer file(s) (.cursorrules, etc.)"
+    else
+        print_info "Collaborator pointer files already exist"
+    fi
     
     # Build features string for registration
     local features_list=""
