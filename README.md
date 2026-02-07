@@ -15,7 +15,7 @@
 
 The result: AI agents that work *with* your development process, not around it.
 
-**Built on proven patterns**: aidevops implements [industry-standard agent design patterns](#agent-design-patterns) validated across Claude Code, Manus, and Cursor - including multi-layer action spaces, context isolation, and iterative execution loops.
+**Built on proven patterns**: aidevops implements [industry-standard agent design patterns](#agent-design-patterns) - including multi-layer action spaces, context isolation, and iterative execution loops.
 
 **[aidevops](https://aidevops.sh)** knows what you need to know.
 
@@ -382,38 +382,11 @@ Your terminal tab/window title automatically shows `repo/branch` context when wo
 
 See `.agents/tools/terminal/terminal-title.md` for customization options.
 
-**Also Supported (community-tested):**
+**Companion tool:**
 
-**IDE-Based:**
+- **[claude-code CLI](https://claude.ai/)** - Called from within OpenCode for sub-tasks and headless dispatch
 
-- **[Cursor](https://cursor.sh/)** - AI-first IDE with MCP support
-- **[Windsurf](https://codeium.com/windsurf)** - Codeium's AI IDE
-- **[Continue.dev](https://continue.dev/)** - VS Code/JetBrains extension
-- **[Cody](https://sourcegraph.com/cody)** - Sourcegraph's AI assistant
-
-**Claude Family:**
-
-- **[Claude Code](https://claude.ai/)** - CLI version with `claude mcp add`
-- **[Claude Desktop](https://claude.ai/)** - GUI with MCP config
-
-**Enterprise & Professional:**
-
-- **[Factory AI Droid](https://www.factory.ai/)** - Enterprise-grade agentic AI
-- **[Augment Code](https://www.augmentcode.com/)** - Deep codebase indexing
-- **[GitHub Copilot](https://github.com/features/copilot)** - Agent mode for MCP
-
-**Specialized:**
-
-- **[Kilo Code](https://kilocode.ai/)** - VS Code extension
-- **[Kiro](https://kiro.dev/)** - AWS's AI assistant
-- **[AntiGravity](https://antigravity.dev/)** - AI coding tool
-- **[Gemini CLI](https://ai.google.dev/)** - Google's CLI
-
-**Terminal & CLI:**
-
-- **[Aider](https://aider.chat/)** - CLI pair programmer with native MCP
-- **[Warp AI](https://www.warp.dev/)** - Terminal with AI (no native MCP, use OpenCode/Claude in Warp)
-- **[Qwen](https://qwen.ai/)** - Alibaba's CLI (MCP support experimental)
+**Collaborator compatibility:** Projects initialized with `aidevops init` include pointer files (`.cursorrules`, `.windsurfrules`, etc.) that reference `AGENTS.md`, helping collaborators using other editors find project context. aidevops does not install into or configure those tools.
 
 ## **Core Capabilities**
 
@@ -505,7 +478,7 @@ Scan results are logged to [`.agents/SKILL-SCAN-RESULTS.md`](.agents/SKILL-SCAN-
 
 ## **Agent Design Patterns**
 
-aidevops implements proven agent design patterns identified by [Lance Martin (LangChain)](https://x.com/RLanceMartin/status/2009683038272401719) and validated across successful agents like Claude Code, Manus, and Cursor.
+aidevops implements proven agent design patterns identified by [Lance Martin (LangChain)](https://x.com/RLanceMartin/status/2009683038272401719).
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
@@ -932,7 +905,7 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 
 ## **MCP Integrations**
 
-**Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs primarily for **[OpenCode](https://opencode.ai/)** (recommended). Configuration support is also available for 17 other AI assistants including Cursor, Claude Code/Desktop, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid, Warp AI, Aider, and Qwen.
+**Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity).
 
 ### **All Supported MCPs (19 active)**
 
@@ -1354,23 +1327,10 @@ Add to your AI assistant's MCP configuration:
 }
 ```
 
-**Claude Code**:
+**claude-code CLI**:
 
 ```bash
 claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"]}'
-```
-
-**Cursor**: Settings → Tools & MCP → New MCP Server:
-
-```json
-{
-  "mcpServers": {
-    "augment-context-engine": {
-      "command": "bash",
-      "args": ["-c", "auggie --mcp -m default -w \"${WORKSPACE_FOLDER_PATHS%%,*}\""]
-    }
-  }
-}
 ```
 
 ### Verification
@@ -1392,7 +1352,7 @@ The AI should provide a semantic understanding of your project architecture.
 | **Architecture review** | Repomix (compress) | 80% token reduction, structure only |
 | **CI/CD integration** | Repomix GitHub Action | Automated context in releases |
 
-See `.agents/tools/context/augment-context-engine.md` for complete documentation including configurations for Zed, GitHub Copilot, Kilo Code, Kiro, AntiGravity, Gemini CLI, and Factory.AI Droid.
+See `.agents/tools/context/augment-context-engine.md` for complete documentation.
 
 ### osgrep - Local Alternative (Experimental)
 
@@ -1453,11 +1413,7 @@ See `.agents/tools/context/llm-tldr.md` for complete documentation.
 
 aidevops implements the [Agent Skills](https://agentskills.io/) standard for cross-tool compatibility. Skills are auto-discovered by compatible AI assistants.
 
-**Generated SKILL.md files** in `~/.aidevops/agents/` provide skill metadata for:
-- Cursor
-- Claude Code
-- VS Code (GitHub Copilot)
-- Other Agent Skills-compatible tools
+**Generated SKILL.md files** in `~/.aidevops/agents/` provide skill metadata following the [Agent Skills standard](https://agentskills.io/specification). These are discoverable by any compatible tool.
 
 ### Claude Code Plugin Marketplace
 
@@ -1496,7 +1452,7 @@ aidevops skill add owner/repo --dry-run             # Preview without changes
 **Supported formats:**
 - `SKILL.md` - [Agent Skills standard](https://agentskills.io/specification) (preferred)
 - `AGENTS.md` - Claude Code agents format
-- `.cursorrules` - Cursor rules (auto-converted)
+- `.cursorrules` - Cursor rules format (auto-converted)
 
 **Features:**
 - Auto-detection of skill format and category placement
@@ -1590,28 +1546,16 @@ These are examples of subagents that have supporting MCPs enabled. See `.agents/
 .agents/scripts/generate-opencode-agents.sh  # Shows status after generation
 ```
 
-### **Setup for Other AI Assistants**
+### **Claude Marketplace**
 
-**Claude Code** (recommended):
+aidevops is available in the Claude marketplace:
 
 ```bash
 /plugin marketplace add marcusquinn/aidevops
 /plugin install aidevops-all@aidevops
 ```
 
-**Agent Skills-compatible tools** (Cursor, VS Code, etc.):
-Skills are auto-discovered from `~/.aidevops/agents/` via SKILL.md files after running `setup.sh`.
-
-**Manual configuration** (other tools):
-Add to your AI assistant's system prompt:
-
-```text
-Before any DevOps operations, read ~/git/aidevops/AGENTS.md for authoritative guidance.
-
-When working with specific services, read the corresponding .agents/[service].md file
-for focused guidance. Available services: hostinger, hetzner, wordpress, seo,
-code-quality, browser-automation, git-platforms.
-```
+**Agent Skills (SKILL.md):** Auto-discovered from `~/.aidevops/agents/` after running `setup.sh`. Compatible with any tool that supports the [Agent Skills standard](https://agentskills.io/specification).
 
 ### **Continuous Improvement with @agent-review**
 
