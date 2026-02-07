@@ -92,7 +92,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443 completed:2026-02-07
   - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
 - [ ] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m (ai:20m test:10m) logged:2026-02-07 ref:GH#445
-  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal).
+  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal). BLOCKED: FAILED: no_log_file
 - [x] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#415. Already fixed: fallback chain (uv -> pipx -> venv+symlink -> pip3 --user) implemented at setup.sh lines 2608-2661. Verified working.
 - [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
