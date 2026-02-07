@@ -99,6 +99,9 @@ log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_header() { echo -e "${PURPLE}${BOLD}$*${NC}"; }
 
+# Cross-platform sed in-place edit (macOS vs GNU/Linux)
+sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
 #######################################
 # Ensure workspace directories exist
 #######################################
@@ -864,8 +867,7 @@ TEMPLATE
     # Replace placeholder with actual name
     local safe_name
     safe_name="${name//[^a-zA-Z0-9_-]/-}"
-    sed -i '' "s/SUITE_NAME/${safe_name}/" "$suite_file" 2>/dev/null || \
-        sed -i "s/SUITE_NAME/${safe_name}/" "$suite_file"
+    sed_inplace "s/SUITE_NAME/${safe_name}/" "$suite_file"
 
     log_pass "Created test suite: $suite_file"
     log_info "Edit the file to add your test cases, then run:"

@@ -22,6 +22,9 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
+# Cross-platform sed in-place edit (macOS vs GNU/Linux)
+sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
 print_header() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════╗"
@@ -418,9 +421,9 @@ update_scan_results_log() {
     scan_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
     # Update the "Latest Full Scan" date
-    sed -i '' "s/^\*\*Date\*\*: .*/**Date**: ${scan_timestamp}/" "$results_file" 2>/dev/null || true
-    sed -i '' "s/^\*\*Skills scanned\*\*: .*/**Skills scanned**: ${skills_scanned}/" "$results_file" 2>/dev/null || true
-    sed -i '' "s/^\*\*Safe\*\*: .*/**Safe**: ${safe_count}/" "$results_file" 2>/dev/null || true
+    sed_inplace "s/^\*\*Date\*\*: .*/**Date**: ${scan_timestamp}/" "$results_file" 2>/dev/null || true
+    sed_inplace "s/^\*\*Skills scanned\*\*: .*/**Skills scanned**: ${skills_scanned}/" "$results_file" 2>/dev/null || true
+    sed_inplace "s/^\*\*Safe\*\*: .*/**Safe**: ${safe_count}/" "$results_file" 2>/dev/null || true
     
     # Append to scan history table
     local history_row="| ${scan_date} | ${skills_scanned} | ${safe_count} | ${critical_count} | ${high_count} | ${medium_count} | ${notes} |"

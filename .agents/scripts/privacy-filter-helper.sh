@@ -116,6 +116,9 @@ print_error() {
     return 0
 }
 
+# Cross-platform sed in-place edit (macOS vs GNU/Linux)
+sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
 print_header() {
     local message="$1"
     echo -e "${PURPLE}$message${NC}"
@@ -371,7 +374,7 @@ apply_redactions() {
                 
                 # Apply redaction
                 if [[ "$(uname)" == "Darwin" ]]; then
-                    sed -i '' -E "s/$pattern/[REDACTED]/g" "$file"
+                    sed_inplace -E "s/$pattern/[REDACTED]/g" "$file"
                 else
                     sed -i -E "s/$pattern/[REDACTED]/g" "$file"
                 fi

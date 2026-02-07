@@ -132,6 +132,9 @@ log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
 
+# Cross-platform sed in-place edit (macOS vs GNU/Linux)
+sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
 #######################################
 # Get the number of CPU cores on this system
 # Returns integer count on stdout
@@ -3788,11 +3791,7 @@ update_todo_on_complete() {
     # Use sed to match the line and transform it
     local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2 completed:${today}/"
 
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' -E "$sed_pattern" "$todo_file"
-    else
-        sed -i -E "$sed_pattern" "$todo_file"
-    fi
+    sed_inplace -E "$sed_pattern" "$todo_file"
 
     # Verify the change was made
     if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
@@ -3881,19 +3880,15 @@ update_todo_on_blocked() {
     if echo "$next_line" | grep -qE "^[[:space:]]*- Notes:"; then
         # Append to existing Notes line
         local append_text=" BLOCKED: ${safe_reason}"
-        if [[ "$(uname)" == "Darwin" ]]; then
-            sed -i '' "${next_line_num}s/$/${append_text}/" "$todo_file"
-        else
-            sed -i "${next_line_num}s/$/${append_text}/" "$todo_file"
-        fi
+        sed_inplace "${next_line_num}s/$/${append_text}/" "$todo_file"
     else
         # Insert a new Notes line after the task
         local notes_line="${indent}  - Notes: BLOCKED by supervisor: ${safe_reason}"
         if [[ "$(uname)" == "Darwin" ]]; then
-            sed -i '' "${line_num}a\\
+            sed_inplace "${line_num}a\\
 ${notes_line}" "$todo_file"
         else
-            sed -i "${line_num}a\\${notes_line}" "$todo_file"
+            sed_inplace "${line_num}a\\${notes_line}" "$todo_file"
         fi
     fi
 
