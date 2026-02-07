@@ -69,7 +69,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07
   - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07
   - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
-  - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
+  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
   - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
 - [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
@@ -91,8 +91,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: tests/test-batch-quality-hardening.sh uses grep '\|' instead of grep -E '|'. Works but ERE is more portable/readable. Also fix imprecise newline check at line 172. Low priority.
 - [x] t142 bug: schema-validator-helper.sh set -e causes premature exit #bugfix #tools ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#443 completed:2026-02-07
   - Notes: set -e exits on validation command non-zero return (expected for invalid input). Need || true guards or explicit exit code capture. From CodeRabbit review on PR #391.
-- [ ] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m (ai:20m test:10m) logged:2026-02-07 ref:GH#445
-  - Notes: transcribe command documented but not implemented. Also: nltk.download stderr suppressed, cmd_stop uses fixed sleep 2. 12 unresolved threads from PR #403. Related: GH#444 (VirusTotal).
+- [x] t141 bug: speech-to-speech-helper.sh documents commands that don't exist #bugfix #voice ~30m actual:15m (ai:15m) logged:2026-02-07 ref:GH#445 started:2026-02-07 completed:2026-02-07
+  - Notes: All 12 PR #403 review threads verified fixed and resolved. transcribe command removed (PR #447), nltk.download stderr visible, cmd_stop uses polling loop, CPU fallback to --server, PyTorch version corrected, IP placeholders, API key guidance added, docker guard added.
 - [x] t140 setup.sh: Cisco Skill Scanner install fails on PEP 668 systems (Ubuntu 24.04+) #bugfix #setup #linux ~1h (ai:45m test:15m) logged:2026-02-07 completed:2026-02-07
   - Notes: GH#415. Already fixed: fallback chain (uv -> pipx -> venv+symlink -> pip3 --user) implemented at setup.sh lines 2608-2661. Verified working.
 - [x] t139 bug: memory-helper.sh recall fails on hyphenated queries #bugfix #memory ~30m (ai:20m test:10m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
