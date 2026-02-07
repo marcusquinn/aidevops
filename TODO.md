@@ -431,6 +431,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: MiniCPM-o 4.5 does voice+vision+text. Decision needed: 1) Put in tools/vision/ with cross-refs from tools/voice/ (simpler), 2) Create tools/multimodal/ category (cleaner taxonomy but more dirs), 3) Put in whichever is the primary use case and cross-ref. Recommend option 1 initially, revisit when we have 3+ multimodal models.
 - [ ] t133 Cloud GPU deployment guide for AI model hosting #tools #infrastructure #gpu ~45m (ai:30m test:10m read:5m) logged:2026-02-06 related:t080,t071
   - Notes: Shared guide for deploying GPU-intensive models to cloud providers. Covers: NVIDIA Cloud (A100/H100, official), Vast.ai (auction pricing, cheapest), RunPod (balanced), Lambda (research). Common patterns: SSH setup, Docker deployment, model caching, cost optimization. Referenced by tools/voice/speech-to-speech.md and future tools/vision/ subagents. Could live at tools/infrastructure/cloud-gpu.md or services/hosting/cloud-gpu.md.
+- [ ] t137 Test Matrix bot end-to-end with matrix.marcusquinn.com #testing #matrix #agents ~30m (ai:20m test:10m) logged:2026-02-07 related:t109.4
+  - Notes: Homeserver: matrix.marcusquinn.com, client: SchildiChat (local). Node 23 + OpenCode 1.1.53 confirmed. Steps: create bot user on Synapse, get access token, run matrix-dispatch-helper.sh setup, create a test runner, start OpenCode server, map a room, test from SchildiChat with !ai prefix.
 - [ ] t134 SOPS + gocryptfs encryption stack #tools #security #encryption ~4h (ai:3h test:45m read:15m) logged:2026-02-06 related:t131
   - [ ] t134.1 Add SOPS subagent with age backend (encrypt project config files in repos) ~1.5h blocked-by:none
     - Notes: SOPS (20.7k stars, CNCF sandbox, Mozilla-origin) encrypts values in YAML/JSON/ENV files while keeping structure visible in diffs/PRs. Use age as default backend (simpler than GPG for new users, gopass GPG keys also supported). Create subagent at tools/credentials/sops.md covering: install (brew install sops age), init per-project (.sops.yaml), encrypt/decrypt workflow, key rotation, integration with aidevops secret run for subprocess injection. Reference: https://github.com/getsops/sops
@@ -441,7 +443,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t134.4 Document full encryption stack in credentials docs ~30m blocked-by:t134.1,t134.2
     - Notes: Update gopass.md and api-key-setup.md with encryption stack overview: gopass (secret values), SOPS (config files in repos), gocryptfs (local folders). Decision record: chose SOPS over git-crypt (value-level encryption, CNCF backing, key rotation) and gocryptfs over VeraCrypt (no disk images to manage, CLI-native, overlay filesystem).
 
-<!--TOON:backlog[89]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+<!--TOON:backlog[90]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
+t137,Test Matrix bot end-to-end with matrix.marcusquinn.com,,testing|matrix|agents,30m,20m,10m,2026-02-07T00:00Z,pending,,,
 t104,Install script integrity hardening (replace curl|sh with verified downloads),,security|supply-chain|plan,1.5h,45m,30m,2026-02-03T00:00Z,pending,,,
 t105,Remove eval in ampcode-cli.sh (use arrays + whitelist formats),,security|shell,15m,10m,5m,2026-02-03T00:00Z,pending,,,
 t106,Replace eval in system-cleanup.sh find command construction with safe args,,security|shell,1h,45m,15m,2026-02-03T00:00Z,pending,,,
