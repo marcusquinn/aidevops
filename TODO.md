@@ -129,9 +129,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none completed:2026-02-07
     - Notes: Already resolved. Neither .scannerwork/ nor .playwright-cli/ are tracked in git (git ls-files --error-unmatch confirms).
   - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
-    - [ ] t135.6.1 Fix .agent typo to .agents on line 31 ~5m
+    - [x] t135.6.1 Fix .agent typo to .agents on line 31 ~5m completed:2026-02-07
     - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
-    - [ ] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m blocked-by:t135.6.1,t135.6.2
+    - [x] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m completed:2026-02-07
+      - Notes: Already implemented in code-quality.yml. JSON validation (lines 75-108) and ShellCheck -S error (lines 110-131) both exit 1 on failure.
   - [x] t135.7 P2-A: Eliminate eval in 4 remaining scripts (wp-helper, coderabbit-cli, codacy-cli, pandoc-helper) ~3h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Replaced 9 eval calls with bash arrays. wp-helper refactored build_ssh_command to execute_wp_via_ssh (direct execution). All pass ShellCheck -S error.
     - [x] t135.7.1 Read each eval context to understand construction and purpose ~30m completed:2026-02-07
@@ -157,7 +158,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.12.3 Move to _archive/ (not delete) preserving git history and patterns ~10m blocked-by:t135.12.2 completed:2026-02-07
     - [x] t135.12.4 Verify no scripts or docs reference moved files ~10m blocked-by:t135.12.3 completed:2026-02-07
   - [ ] t135.13 P3-B: Build test suite for critical scripts ~4h blocked-by:none
-    - [ ] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m
+    - [x] t135.13.1 Fix tests/docker/run-tests.sh path case (git vs Git) ~5m completed:2026-02-07
+      - Notes: PR #481 merged. Fixed git->Git path case in Dockerfile and docker-compose.yml.
     - [ ] t135.13.2 Add help command smoke tests for all 170 scripts ~1h blocked-by:t135.13.1
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
@@ -244,8 +246,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
-- [ ] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24
-  - Notes: Create subagent that: 1) Checks for lost/broken backlinks using Ahrefs API or DataForSEO backlinks endpoint. 2) Cross-references referring domains against expired domain checkers (evaluate: expired-domains.co API, expireddomains.net, or GitHub tools like @peterprototypes/expired-domains, @Jeongseup/expired-domain-finder). 3) Reports which referring domains have expired and may be available to purchase for link reclamation. Workflow: fetch backlink profile → identify lost/broken links → check domain expiry status → rank by DA/DR/traffic value → output purchase candidates. Add to seo/ or tools/seo/.
+- [x] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 completed:2026-02-07
+  - Notes: seo/backlink-checker.md created (106 lines). Covers Ahrefs/DataForSEO backlink APIs, WHOIS expired domain detection, reclamation workflow, and integration with existing SEO subagents.
 - [ ] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~30m (ai:20m test:5m read:5m) logged:2026-01-24 related:t027
   - Notes: Add support for voice AI models covering both TTS (speech generation) and STT (transcription). API providers: Hugging Face Inference API (TTS/STT endpoints), ElevenLabs, OpenAI TTS/Whisper. Local models: Qwen3-TTS (0.6B/1.7B, Apache-2.0, 10 languages, voice clone/design/custom, streaming, vLLM support - https://github.com/QwenLM/Qwen3-TTS), Whisper (transcription), Bark, Coqui TTS. Create subagent at tools/voice/ or tools/ai/voice.md covering: model selection (local vs API, quality vs speed), installation (pip install qwen-tts, HF download), usage patterns (TTS generation, voice cloning, voice design, transcription), streaming support, GPU requirements. Related to t027 (hyprwhspr speech-to-text).
 - [ ] t072 Audio/Video Transcription subagent #tools #voice #transcription #ai ~1.5h (ai:45m test:30m read:15m) logged:2026-01-24 related:t071,t027
@@ -261,8 +263,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) logged:2025-12-20
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
-- [ ] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21
-  - Notes:
+- [x] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21 completed:2026-02-07
+  - Notes: tools/context/rapidfuzz.md created (122 lines). Covers core functions, process module, distance functions, performance tips, and aidevops integration patterns.
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) logged:2025-12-21
@@ -286,8 +288,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Company-level agent orchestration - AI agents managing company functions (HR, Finance, Operations, Marketing) coordinating via runner-helper.sh. Extends t109 (Parallel Agents). Scope: 1) Document company-level agent patterns, 2) Create example runners for common company functions (hiring-coordinator, finance-reviewer, ops-monitor), 3) Integrate with coordinator-helper.sh for cross-function task dispatch.
 - [x] t032 Create performance skill/subagent/command inspired by @elithrar #tools #performance ~30m actual:25m (ai:20m test:5m read:5m) logged:2025-01-03 started:2026-01-25T15:00Z completed:2026-01-25 ref:https://x.com/elithrar/status/2007455910218871067
   - Notes: Created tools/performance/performance.md subagent and /performance command. Uses Chrome DevTools MCP for Core Web Vitals (FCP, LCP, CLS, FID, TTFB), network dependency analysis, and accessibility auditing. Actionable output format with file:line references. PR #209 merged.
-- [ ] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f
-  - Notes:
+- [x] t033 Add X/Twitter fetching via fxtwitter API (x.sh script) #tools #browser ~10m (ai:8m test:2m) logged:2025-01-03 ref:https://gist.github.com/marckohlbrugge/93bcf631c3317e793f0295e6155e6e7f completed:2026-02-07
+  - Notes: scripts/x-helper.sh created (188 lines). Commands: fetch (single post), thread, user. Supports --json and --format md/text. Uses fxtwitter.com API (no auth required).
 - [x] t034 Add steipete/summarize for URL/YouTube/podcast summarization #tools #content ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
   - Notes: Created tools/content/summarize.md subagent. steipete/summarize (726+ stars) - CLI for URL/YouTube/podcast summarization with AI. Supports multiple providers (OpenAI, Anthropic, Google, xAI, OpenRouter). Install: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`.
 - [x] t035 Add steipete/bird CLI for X/Twitter reading and posting #tools #social-media ~2h (ai:1h test:30m read:30m) logged:2025-01-03 started:2026-01-11T04:32Z completed:2026-01-11 actual:30m
@@ -549,7 +551,7 @@ t006,Add Playwright MCP auto-setup to setup.sh,,browser,1d,0.5d,0.5d,,2025-12-20
 t007,Create MCP server for QuickFile accounting API,,accounting,2h,1h,40m,20m,2025-12-20T00:00Z,pending,,,
 t012,OCR Invoice/Receipt Extraction Pipeline,,plan|accounting|ocr|automation,3h,1.5h,1h,30m,2025-12-21T22:00Z,pending,,,
 t013,Image SEO Enhancement with AI Vision,,plan|seo|images|ai|accessibility,45m,25m,10m,10m,2025-12-21T23:30Z,pending,,,
-t014,Document RapidFuzz library for fuzzy string matching,,tools|context,5m,4m,,1m,2025-12-21T12:00Z,pending,,,
+t014,Document RapidFuzz library for fuzzy string matching,,tools|context,5m,4m,,1m,2025-12-21T12:00Z,done,,,
 t015,Add MinerU subagent as alternative to Pandoc for PDF conversion,,tools|conversion,1h,30m,,30m,2025-12-21T15:00Z,pending,,,
 t016,Uncloud Integration for aidevops,,plan|deployment|docker|orchestration,45m,25m,10m,10m,2025-12-21T04:00Z,pending,,,
 t017,SEO Machine Integration for aidevops,,plan|seo|content|agents,1.5h,45m,30m,15m,2025-12-21T15:00Z,pending,,,
@@ -566,7 +568,7 @@ t029,Review @penberg post for aidevops inclusion or similar approach,,research|t
 t030,Evaluate @irl_danB post for useful advantages,,research|tools,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
 t031,Company orchestration agent/workflow inspired by @DanielleMorrill,,plan|agents|business,20m,15m,3m,2m,2025-01-03T00:00Z,pending,,,
 t032,Create performance skill/subagent/command inspired by @elithrar,,tools|performance,30m,20m,5m,5m,2025-01-03T00:00Z,done,,,
-t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,10m,8m,2m,,2025-01-03T00:00Z,pending,,,
+t033,Add X/Twitter fetching via fxtwitter API (x.sh script),,tools|browser,10m,8m,2m,,2025-01-03T00:00Z,done,,,
 t034,Add steipete/summarize for URL/YouTube/podcast summarization,,tools|content,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t035,Add steipete/bird CLI for X/Twitter reading and posting,,tools|social-media,2h,1h,30m,30m,2025-01-03T00:00Z,done,,,
 t036,Verify CodeRabbit CLI usage in code-review agents (coderabbit review --plain),,tools|code-review,1h,30m,15m,15m,2025-01-03T00:00Z,done,,,
