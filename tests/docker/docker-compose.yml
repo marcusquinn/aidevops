@@ -3,12 +3,12 @@ services:
   test:
     build: .
     volumes:
-      - ../../:/home/testuser/git/aidevops:ro
-    command: ["/home/testuser/git/aidevops/tests/docker/run-tests.sh"]
+      - ../../:/home/testuser/Git/aidevops:ro
+    command: ["/home/testuser/Git/aidevops/tests/docker/run-tests.sh"]
 
   shell:
     build: .
     volumes:
-      - ../../:/home/testuser/git/aidevops
+      - ../../:/home/testuser/Git/aidevops
     stdin_open: true
     tty: true
