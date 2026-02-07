@@ -55,7 +55,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07
+- [x] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint). BLOCKED: Max retries exceeded: backend_infrastructure_error
 - [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) logged:2026-02-07
   - [ ] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none
@@ -439,7 +439,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: MiniCPM-o 4.5 does voice+vision+text. Decision needed: 1) Put in tools/vision/ with cross-refs from tools/voice/ (simpler), 2) Create tools/multimodal/ category (cleaner taxonomy but more dirs), 3) Put in whichever is the primary use case and cross-ref. Recommend option 1 initially, revisit when we have 3+ multimodal models.
 - [ ] t133 Cloud GPU deployment guide for AI model hosting #tools #infrastructure #gpu ~45m (ai:30m test:10m read:5m) logged:2026-02-06 related:t080,t071
   - Notes: Shared guide for deploying GPU-intensive models to cloud providers. Covers: NVIDIA Cloud (A100/H100, official), Vast.ai (auction pricing, cheapest), RunPod (balanced), Lambda (research). Common patterns: SSH setup, Docker deployment, model caching, cost optimization. Referenced by tools/voice/speech-to-speech.md and future tools/vision/ subagents. Could live at tools/infrastructure/cloud-gpu.md or services/hosting/cloud-gpu.md.
-- [ ] t137 Test Matrix bot end-to-end with matrix.marcusquinn.com #testing #matrix #agents ~30m (ai:20m test:10m) logged:2026-02-07 related:t109.4
+- [x] t137 Test Matrix bot end-to-end with matrix.marcusquinn.com #testing #matrix #agents ~30m (ai:20m test:10m) logged:2026-02-07 related:t109.4 completed:2026-02-07
   - Notes: Homeserver: matrix.marcusquinn.com, client: SchildiChat (local). Node 23 + OpenCode 1.1.53 confirmed. Steps: create bot user on Synapse, get access token, run matrix-dispatch-helper.sh setup, create a test runner, start OpenCode server, map a room, test from SchildiChat with !ai prefix.
 - [ ] t134 SOPS + gocryptfs encryption stack #tools #security #encryption ~4h (ai:3h test:45m read:15m) logged:2026-02-06 related:t131
   - [ ] t134.1 Add SOPS subagent with age backend (encrypt project config files in repos) ~1.5h blocked-by:none
