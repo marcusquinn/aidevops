@@ -36,6 +36,10 @@
 # Version: 1.0.0
 # License: MIT
 
+# Source shared constants (provides sed_inplace and other utilities)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 # Colors for output
 readonly GREEN='\033[0;32m'
 readonly BLUE='\033[0;34m'
@@ -200,9 +204,8 @@ docker_setup() {
         api_encryption_key=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || openssl rand -base64 32)
         
         # Update .env with secure values
-        sed -i.bak "s|SECRET_KEY=.*|SECRET_KEY=$secret_key|" "$WATERCRAWL_DIR/docker/.env"
-        sed -i.bak "s|API_ENCRYPTION_KEY=.*|API_ENCRYPTION_KEY=$api_encryption_key|" "$WATERCRAWL_DIR/docker/.env"
-        rm -f "$WATERCRAWL_DIR/docker/.env.bak"
+        sed_inplace "s|SECRET_KEY=.*|SECRET_KEY=$secret_key|" "$WATERCRAWL_DIR/docker/.env"
+        sed_inplace "s|API_ENCRYPTION_KEY=.*|API_ENCRYPTION_KEY=$api_encryption_key|" "$WATERCRAWL_DIR/docker/.env"
         
         print_success "Environment file created with secure keys"
     else
@@ -416,8 +419,7 @@ configure_api_key() {
     if [[ -f "$CREDENTIALS_FILE" ]]; then
         if grep -q "^export WATERCRAWL_API_KEY=" "$CREDENTIALS_FILE"; then
             # Update existing key
-            sed -i.bak "s|^export WATERCRAWL_API_KEY=.*|export WATERCRAWL_API_KEY=\"$api_key\"|" "$CREDENTIALS_FILE"
-            rm -f "${CREDENTIALS_FILE}.bak"
+            sed_inplace "s|^export WATERCRAWL_API_KEY=.*|export WATERCRAWL_API_KEY=\"$api_key\"|" "$CREDENTIALS_FILE"
             print_success "API key updated in $CREDENTIALS_FILE"
         else
             # Append new key
@@ -463,8 +465,7 @@ configure_api_url() {
     if [[ -f "$CREDENTIALS_FILE" ]]; then
         if grep -q "^export WATERCRAWL_API_URL=" "$CREDENTIALS_FILE"; then
             # Update existing URL
-            sed -i.bak "s|^export WATERCRAWL_API_URL=.*|export WATERCRAWL_API_URL=\"$api_url\"|" "$CREDENTIALS_FILE"
-            rm -f "${CREDENTIALS_FILE}.bak"
+            sed_inplace "s|^export WATERCRAWL_API_URL=.*|export WATERCRAWL_API_URL=\"$api_url\"|" "$CREDENTIALS_FILE"
             print_success "API URL updated to: $api_url"
         else
             # Append new URL

@@ -78,6 +78,7 @@ unset _p
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
 readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"       # Used by pulse command (t128.2)
@@ -160,8 +161,6 @@ log_cmd() {
     return $rc
 }
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 #######################################
 # Get the number of CPU cores on this system
@@ -4394,13 +4393,7 @@ update_todo_on_blocked() {
     else
         # Insert a new Notes line after the task
         local notes_line="${indent}  - Notes: BLOCKED by supervisor: ${safe_reason}"
-        # sed append syntax differs between BSD and GNU - sed_inplace can't abstract this
-        if [[ "$(uname)" == "Darwin" ]]; then
-            sed -i '' "${line_num}a\\
-${notes_line}" "$todo_file"
-        else
-            sed -i "${line_num}a\\${notes_line}" "$todo_file"
-        fi
+        sed_append_after "$line_num" "$notes_line" "$todo_file"
     fi
 
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"

@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# Source shared constants if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 # Color codes for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -42,8 +46,6 @@ print_info() {
     return 0
 }
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 backup_files() {
     print_info "Creating backup of provider files..."

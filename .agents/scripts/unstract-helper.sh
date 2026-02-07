@@ -8,6 +8,10 @@
 
 set -euo pipefail
 
+# Source shared constants (provides sed_inplace and other utilities)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 # Constants
 readonly UNSTRACT_DIR="${HOME}/.aidevops/unstract"
 readonly UNSTRACT_REPO="https://github.com/Zipstack/unstract.git"
@@ -88,7 +92,7 @@ do_install() {
     local frontend_env="${UNSTRACT_DIR}/frontend/.env"
     if [[ -f "$frontend_env" ]]; then
         if grep -q "REACT_APP_ENABLE_POSTHOG" "$frontend_env"; then
-            sed -i.bak 's/REACT_APP_ENABLE_POSTHOG=.*/REACT_APP_ENABLE_POSTHOG=false/' "$frontend_env"
+            sed_inplace 's/REACT_APP_ENABLE_POSTHOG=.*/REACT_APP_ENABLE_POSTHOG=false/' "$frontend_env"
         else
             echo "REACT_APP_ENABLE_POSTHOG=false" >> "$frontend_env"
         fi
@@ -237,9 +241,8 @@ do_uninstall() {
 
     # Remove MCP env entries
     if [[ -f "$CREDENTIALS_FILE" ]]; then
-        sed -i.bak '/UNSTRACT_API_KEY/d' "$CREDENTIALS_FILE"
-        sed -i.bak '/^export API_BASE_URL.*unstract/d' "$CREDENTIALS_FILE"
-        rm -f "${CREDENTIALS_FILE}.bak"
+        sed_inplace '/UNSTRACT_API_KEY/d' "$CREDENTIALS_FILE"
+        sed_inplace '/^export API_BASE_URL.*unstract/d' "$CREDENTIALS_FILE"
     fi
 
     print_success "Unstract uninstalled"

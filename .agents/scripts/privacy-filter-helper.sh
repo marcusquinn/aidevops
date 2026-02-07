@@ -30,6 +30,7 @@ readonly NC='\033[0m' # No Color
 
 # Configuration
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly CONFIG_DIR="${AIDEVOPS_DIR}/config"
 readonly PATTERNS_FILE="${CONFIG_DIR}/privacy-patterns.txt"
@@ -116,8 +117,6 @@ print_error() {
     return 0
 }
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 print_header() {
     local message="$1"

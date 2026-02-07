@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 export SCRIPT_DIR
 readonly SCRIPT_DIR
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly OUTPUT_DIR=".security-analysis"
 readonly VERSION="1.0.0"
 readonly SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
@@ -22,8 +23,6 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 print_header() {
     echo -e "${CYAN}"
