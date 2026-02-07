@@ -93,8 +93,8 @@ The result: AI agents that work *with* your development process, not around it.
 ### Agent Structure
 
 - Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
-- 614+ subagent markdown files organized by domain
-- 167 helper scripts in `.agents/scripts/`
+- 765+ subagent markdown files organized by domain
+- 172 helper scripts in `.agents/scripts/`
 - 28 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
@@ -332,7 +332,7 @@ The secure workflow is included at `.github/workflows/opencode-agent.yml`.
 
 See `.agents/tools/git/opencode-github-security.md` for the full security documentation.
 
-**Supported AI Assistants:** OpenCode is the recommended and primary-tested tool. All 18 assistants below have MCP configuration support, but only OpenCode receives continual testing and first-class integration. Other tools are supported as a courtesy for users evaluating aidevops capabilities.
+**Supported AI Assistant:** [OpenCode](https://opencode.ai/) is the only tested and supported AI coding tool for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. The claude-code CLI is used as a companion tool called from within OpenCode.
 
 **Recommended:**
 
@@ -452,7 +452,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 167 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 172 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -887,7 +887,7 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 
 **Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity).
 
-### **All Supported MCPs (19 active)**
+### **All Supported MCPs (19 available)**
 
 MCP packages are installed globally via `bun install -g` for instant startup (no `npx` registry lookups). Run `setup.sh` or `aidevops update-tools` to update to latest versions.
 
@@ -905,11 +905,11 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 | [Grep by Vercel](https://grep.app/) | GitHub code search | Per-agent | No |
 | [LocalWP](https://localwp.com/) | WordPress database access | Per-agent | No (local) |
 | [macOS Automator](https://github.com/steipete/macos-automator-mcp) | macOS automation | Per-agent | No |
-| [Outscraper](https://outscraper.com/) | Google Maps & business data | Per-agent | Yes |
 | [Playwriter](https://github.com/nicholasgriffintn/playwriter) | Browser with extensions | Per-agent | No |
 | [QuickFile](https://github.com/marcusquinn/quickfile-mcp) | Accounting API | Per-agent | Yes |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | Per-agent | No |
 | [Sentry](https://sentry.io/) | Error tracking | Per-agent | Yes |
+| [shadcn](https://ui.shadcn.com/) | UI component library | Per-agent | No |
 | [Socket](https://socket.dev/) | Dependency security | Per-agent | No |
 | [Unstract](https://github.com/Zipstack/unstract) | Document data extraction | Per-agent | Yes |
 
@@ -917,7 +917,7 @@ MCP packages are installed globally via `bun install -g` for instant startup (no
 - **Global** - Tools always available (loaded into every session)
 - **Per-agent** - Tools disabled globally, enabled per-agent via config (zero context overhead when unused)
 
-**Performance optimization:** MCP packages are installed globally via `bun install -g` for instant startup (~0.1s vs 2-3s with `npx`). The framework uses a three-tier loading strategy: 7 MCPs load eagerly at startup, 13 MCPs load on-demand when their subagent is invoked. This reduces OpenCode startup time by 12-24 seconds.
+**Performance optimization:** MCP packages are installed globally via `bun install -g` for instant startup (~0.1s vs 2-3s with `npx`). The framework uses a three-tier loading strategy: MCPs load eagerly at startup or on-demand when their subagent is invoked. This reduces OpenCode startup time significantly.
 
 ### **SEO Integrations (curl subagents - no MCP overhead)**
 
@@ -933,6 +933,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 | [WebPageTest](https://www.webpagetest.org/) | Real-world performance testing from 40+ global locations | Yes |
 | [Hostinger](https://developers.hostinger.com/) | Hosting management | Yes |
 | [NeuronWriter](https://neuronwriter.com/) | Content optimization & NLP analysis | Yes |
+| [Outscraper](https://outscraper.com/) | Google Maps & business data extraction | Yes |
 
 ### **By Category**
 
@@ -979,7 +980,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 
 **Data Extraction:**
 
-- [Outscraper](https://outscraper.com/) - Google Maps, business data, reviews extraction
+- [Outscraper](https://outscraper.com/) - Google Maps, business data, reviews extraction (curl subagent)
 - [curl-copy](.agents/tools/browser/curl-copy.md) - Authenticated scraping via DevTools "Copy as cURL" (no browser automation needed)
 
 **Performance & Security:**
@@ -1404,7 +1405,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 14 primary agents, 614+ subagents, and 163 helper scripts.
+This installs the complete framework: 15 primary agents, 765+ subagents, and 172 helper scripts.
 
 ### Importing External Skills
 
@@ -1486,21 +1487,21 @@ Ordered as they appear in OpenCode Tab selector and other AI assistants (15 tota
 | Marketing | `marketing.md` | Marketing strategy and automation | augment |
 | Research | `research.md` | Research and analysis tasks | context7, augment |
 | Sales | `sales.md` | Sales operations and CRM | augment |
-| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, dataforseo, serper, context7, augment |
+| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, serper, context7, augment |
 | Video | `video.md` | AI video generation, prompt engineering, programmatic video | augment |
 | WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 614+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 765+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
 | `@hostinger` | Hosting, WordPress, DNS, domains | hostinger-api |
 | `@hetzner` | Cloud servers, firewalls, volumes | hetzner-* (multi-account) |
 | `@wordpress` | Local dev, MainWP management | localwp, context7 |
-| `@seo` | Search Console, keyword research, domain intelligence | gsc, ahrefs, dataforseo, serper, context7 |
-| `@dataforseo` | SERP, keywords, backlinks, on-page analysis | dataforseo |
+| `@seo` | Search Console, keyword research, domain intelligence | gsc, ahrefs, serper, context7 |
+| `@dataforseo` | SERP, keywords, backlinks, on-page analysis | (curl subagent) |
 | `@domain-research` | DNS intelligence: rDNS, subdomains, CNAMEs (THC + Reconeer) | (API-based) |
 | `@serper` | Google Search API (web, images, news, places) | serper |
 | `@list-keys` | List all configured API keys and storage locations | (read-only) |
@@ -1971,6 +1972,18 @@ Commands invoke the corresponding workflow subagent with appropriate context.
 
 ---
 
+### **Agent Lifecycle (Three Tiers)**
+
+User-created agents survive `aidevops update`. Agents progress through tiers as they mature:
+
+| Tier | Location | Purpose | Survives Update |
+|------|----------|---------|-----------------|
+| **Draft** | `~/.aidevops/agents/draft/` | R&D, experimental, auto-created by orchestration tasks | Yes |
+| **Custom** | `~/.aidevops/agents/custom/` | User's permanent private agents | Yes |
+| **Shared** | `.agents/` in repo | Open-source, distributed to all users | Managed by repo |
+
+**Promotion workflow:** Draft agents that prove useful can be promoted to custom (private) or shared (open-source via PR). Orchestration agents can create drafts in `draft/` for reusable parallel processing context.
+
 ### **Creating Custom Agents**
 
 Create a markdown file in `~/.config/opencode/agent/` (OpenCode) or reference in your AI's system prompt:
@@ -2115,7 +2128,7 @@ aidevops/
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
 │   ├── *.md                       # 15 primary agents
-│   ├── scripts/                   # 146 helper scripts
+│   ├── scripts/                   # 172 helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
