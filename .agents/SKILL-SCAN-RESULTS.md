@@ -5,11 +5,11 @@ Updated on each `aidevops skill scan`, `aidevops update`, or skill import.
 
 ## Latest Full Scan
 
-**Date**: 2026-02-06T23:16:02Z
+**Date**: 2026-02-07T04:04:15Z
 **Scanner**: cisco-ai-skill-scanner 1.0.2
 **Analyzers**: static, behavioral (dataflow)
-**Skills scanned**: 116
-**Safe**: 115
+**Skills scanned**: 8
+**Safe**: 8
 
 | Severity | Count |
 |----------|-------|
@@ -37,3 +37,10 @@ Source of truth for audit trail. The "Latest Full Scan" header is updated automa
 | Date | Skills | Safe | Critical | High | Medium | Notes |
 |------|--------|------|----------|------|--------|-------|
 | 2026-02-06 | 116 | 115 | 1 (FP) | 0 | 0 | Initial scan. 1 false positive in credentials SKILL.md |
+| 2026-02-06 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-07 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-07 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-07 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-07 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-07 | 8 | 8 | 0 | 0 | 0 | Routine scan |
+| 2026-02-07 | 8 | 8 | 0 | 0 | 0 | Routine scan |
