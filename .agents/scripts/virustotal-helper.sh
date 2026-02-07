@@ -38,25 +38,25 @@ readonly NC='\033[0m'
 
 log_info() {
     local msg="$1"
-    echo -e "${BLUE}[virustotal]${NC} ${msg}"
+    echo -e "${BLUE}[virustotal]${NC} ${msg}" >&2
     return 0
 }
 
 log_success() {
     local msg="$1"
-    echo -e "${GREEN}[OK]${NC} ${msg}"
+    echo -e "${GREEN}[OK]${NC} ${msg}" >&2
     return 0
 }
 
 log_warning() {
     local msg="$1"
-    echo -e "${YELLOW}[WARN]${NC} ${msg}"
+    echo -e "${YELLOW}[WARN]${NC} ${msg}" >&2
     return 0
 }
 
 log_error() {
     local msg="$1"
-    echo -e "${RED}[ERROR]${NC} ${msg}"
+    echo -e "${RED}[ERROR]${NC} ${msg}" >&2
     return 0
 }
 
@@ -173,12 +173,16 @@ vt_request() {
     }
 
     # Check for API errors
+    # Exit codes: 0=success, 1=general error, 2=not found (allows callers to distinguish)
     local error_code=""
     error_code=$(echo "$response" | jq -r '.error.code // empty' 2>/dev/null || echo "")
     if [[ -n "$error_code" ]]; then
         local error_msg=""
         error_msg=$(echo "$response" | jq -r '.error.message // "Unknown error"' 2>/dev/null || echo "Unknown error")
         log_error "VT API error: ${error_code} - ${error_msg}"
+        if [[ "$error_code" == "NotFoundError" ]]; then
+            return 2
+        fi
         return 1
     fi
 
@@ -253,8 +257,11 @@ cmd_scan_file() {
     fi
 
     local response=""
-    response=$(vt_request "GET" "/files/${sha256}") || {
-        # File not in VT database -- this is normal for text/markdown files
+    local vt_exit=0
+    response=$(vt_request "GET" "/files/${sha256}") || vt_exit=$?
+
+    if [[ $vt_exit -eq 2 ]]; then
+        # NotFoundError: file not in VT database -- normal for text/markdown files
         if [[ "$quiet" == "true" ]]; then
             echo "UNKNOWN"
         else
@@ -263,7 +270,15 @@ cmd_scan_file() {
         fi
         echo "UNKNOWN|File not in VT database"
         return 0
-    }
+    elif [[ $vt_exit -ne 0 ]]; then
+        # Real API error (quota exceeded, network failure, etc.)
+        if [[ "$quiet" == "true" ]]; then
+            echo "UNKNOWN"
+        else
+            log_error "API request failed for file: ${file}"
+        fi
+        return 1
+    fi
 
     if [[ "$output_json" == "true" ]]; then
         echo "$response"
@@ -502,15 +517,21 @@ cmd_scan_skill() {
         sha256=$(file_sha256 "$file") || continue
 
         local response=""
-        response=$(vt_request "GET" "/files/${sha256}" 2>/dev/null) || {
-            # Not in VT database -- normal for text files
+        local vt_exit=0
+        response=$(vt_request "GET" "/files/${sha256}" 2>/dev/null) || vt_exit=$?
+        request_count=$((request_count + 1))
+
+        if [[ $vt_exit -ne 0 ]]; then
             if [[ "$quiet" != "true" ]]; then
-                echo -e "  ${BLUE}SKIP${NC} ${basename_file} (not in VT database)"
+                if [[ $vt_exit -eq 2 ]]; then
+                    echo -e "  ${BLUE}SKIP${NC} ${basename_file} (not in VT database)"
+                else
+                    echo -e "  ${YELLOW}SKIP${NC} ${basename_file} (API error)"
+                fi
             fi
             unknown_count=$((unknown_count + 1))
             continue
-        }
-        request_count=$((request_count + 1))
+        fi
 
         local verdict=""
         verdict=$(parse_verdict "$response")
@@ -551,10 +572,9 @@ cmd_scan_skill() {
     done
 
     # Phase 2: Extract and scan URLs from skill content
+    local -A domains_seen=()
     for file in "${files[@]}"; do
-        # Extract URLs (http/https) from file content
         while IFS= read -r url; do
-            # Skip common safe domains
             case "$url" in
                 *github.com*|*githubusercontent.com*|*npmjs.com*|*pypi.org*|*docs.virustotal.com*)
                     continue
@@ -562,17 +582,10 @@ cmd_scan_skill() {
             esac
             urls_found+=("$url")
 
-            # Extract domain
             local domain=""
             domain=$(echo "$url" | sed -E 's|https?://([^/]+).*|\1|')
-            local already_found=false
-            for d in "${domains_found[@]+"${domains_found[@]}"}"; do
-                if [[ "$d" == "$domain" ]]; then
-                    already_found=true
-                    break
-                fi
-            done
-            if [[ "$already_found" == "false" ]]; then
+            if [[ -z "${domains_seen[$domain]+x}" ]]; then
+                domains_seen[$domain]=1
                 domains_found+=("$domain")
             fi
         done < <(grep -oE 'https?://[^ "'"'"'<>]+' "$file" 2>/dev/null | sort -u || true)
@@ -594,13 +607,16 @@ cmd_scan_skill() {
             rate_limit_wait
 
             local response=""
-            response=$(vt_request "GET" "/domains/${domain}" 2>/dev/null) || {
+            local vt_exit=0
+            response=$(vt_request "GET" "/domains/${domain}" 2>/dev/null) || vt_exit=$?
+            request_count=$((request_count + 1))
+
+            if [[ $vt_exit -ne 0 ]]; then
                 if [[ "$quiet" != "true" ]]; then
                     echo -e "  ${BLUE}SKIP${NC} ${domain} (lookup failed)"
                 fi
                 continue
-            }
-            request_count=$((request_count + 1))
+            fi
 
             local verdict=""
             verdict=$(parse_verdict "$response")
@@ -747,6 +763,14 @@ cmd_status() {
 main() {
     local command="${1:-help}"
     shift || true
+
+    # Verify required dependencies (jq is needed for all scan commands)
+    if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]]; then
+        if ! command -v jq &>/dev/null; then
+            log_error "jq is required but not installed (brew install jq)"
+            return 1
+        fi
+    fi
 
     # Parse global flags
     local output_json=false
