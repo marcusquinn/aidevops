@@ -146,6 +146,7 @@ tmp.*.json
 *.sarif
 reports/
 .scannerwork/
+.playwright-cli/
 
 # Backups (should not be in public repos)
 backups/
