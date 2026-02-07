@@ -2041,8 +2041,9 @@ add_local_bin_to_path() {
     while IFS= read -r rc_file; do
         [[ -z "$rc_file" ]] && continue
         
-        # Create the rc file if it doesn't exist
+        # Create the rc file if it doesn't exist (ensure parent dir exists for fish etc.)
         if [[ ! -f "$rc_file" ]]; then
+            mkdir -p "$(dirname "$rc_file")"
             touch "$rc_file"
         fi
         
@@ -2160,7 +2161,7 @@ alias aws-helper './.agents/scripts/aws-helper.sh'
 ALIASES
 )
     
-    # Check if aliases already exist in any rc file
+    # Check if aliases already exist in any rc file (including fish config)
     local any_configured=false
     local rc_file
     while IFS= read -r rc_file; do
@@ -2170,6 +2171,13 @@ ALIASES
             break
         fi
     done < <(get_all_shell_rcs)
+    # Also check fish config (not included in get_all_shell_rcs on macOS)
+    if [[ "$any_configured" == "false" ]]; then
+        local fish_config="$HOME/.config/fish/config.fish"
+        if grep -q "# AI Assistant Server Access" "$fish_config" 2>/dev/null; then
+            any_configured=true
+        fi
+    fi
     
     if [[ "$any_configured" == "true" ]]; then
         print_info "Server Access aliases already configured - Skipping"
@@ -3787,14 +3795,6 @@ setup_opencode_plugins() {
     
     return 0
 }
-
-# Setup Oh-My-OpenCode Plugin (removed - no longer supported)
-# Kept as stub for backward compatibility with any callers
-setup_oh_my_opencode() {
-    # Removed - oh-my-opencode no longer supported
-    return 0
-}
-
 setup_seo_mcps() {
     print_info "Setting up SEO integrations..."
     

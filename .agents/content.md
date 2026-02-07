@@ -90,5 +90,3 @@ Integrate with WordPress workflow:
 - Product descriptions
 - Technical documentation
 - Marketing copy
-
-

@@ -415,7 +415,6 @@ Build the plugin when:
 1. OpenCode becomes dominant AI CLI tool
 2. Users request native plugin experience
 3. Hooks become essential (quality gates, etc.)
-4. Plugin hooks become essential (quality gates, etc.)
 
 ## References
 
