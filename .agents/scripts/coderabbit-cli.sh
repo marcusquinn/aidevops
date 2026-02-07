@@ -45,7 +45,6 @@ readonly CODERABBIT_CLI_INSTALL_URL="https://cli.coderabbit.ai/install.sh"
 readonly CONFIG_DIR="$HOME/.config/coderabbit"
 readonly API_KEY_FILE="$CONFIG_DIR/api_key"
 
-# Print functions
 print_success() {
     local message="$1"
     echo -e "${GREEN}✅ $message${NC}"
@@ -171,18 +170,6 @@ apply_coderabbit_fixes() {
     print_success "CodeRabbit auto-fixes applied to $file"
     print_info "Original backed up as: $file.coderabbit-backup"
 
-    return 0
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}⚠️  $message${NC}"
-    return 0
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}❌ $message${NC}"
     return 0
 }
 
