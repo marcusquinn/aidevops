@@ -16,20 +16,14 @@ Usage:
 
 import argparse
 import asyncio
-import io
-import json
 import logging
 import os
-import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-import wave
 from collections import deque
-from pathlib import Path
-from queue import Empty, Queue
 
 import numpy as np
 import sounddevice as sd
@@ -53,7 +47,6 @@ VAD_THRESHOLD = 0.5
 SILENCE_DURATION = 1.5  # seconds of silence before processing
 MIN_SPEECH_DURATION = 0.5  # minimum speech duration to process
 MAX_RECORD_DURATION = 30  # max seconds per utterance
-BARGE_IN_FRAMES = 8  # consecutive speech frames needed to trigger barge-in (~256ms)
 
 # ─── VAD (Silero) ─────────────────────────────────────────────────────
 
@@ -280,31 +273,6 @@ class OpenCodeBridge:
             self.use_attach = False
             log.info("No OpenCode server found, will use standalone mode")
 
-    def _start_server(self):
-        """Start opencode serve in background."""
-        log.info(f"Starting opencode serve on port {self.server_port}...")
-        proc = subprocess.Popen(
-            ["opencode", "serve", "--port", str(self.server_port)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=self.cwd,
-        )
-        # Wait for server to be ready
-        for _ in range(20):
-            time.sleep(0.5)
-            try:
-                import urllib.request
-
-                req = urllib.request.Request(self.server_url, method="HEAD")
-                urllib.request.urlopen(req, timeout=1)
-                self.use_attach = True
-                log.info("OpenCode server started")
-                return proc
-            except Exception:
-                continue
-        log.warning("OpenCode server failed to start, using standalone mode")
-        return proc
-
     def query(self, text):
         """Send text to OpenCode and return response."""
         cmd = ["opencode", "run", "-m", self.model]
@@ -335,7 +303,9 @@ class OpenCodeBridge:
             raw = result.stdout
             response = re.sub(r"\x1b\[[0-9;]*m", "", raw).strip()
 
-            # Remove the "Build+ · model" header line and shell prompts
+            # Remove opencode TUI artifacts from stdout. This is fragile
+            # and may need updating if opencode changes its output format.
+            # No structured output mode (e.g. --json) is available yet.
             lines = response.split("\n")
             clean_lines = []
             for line in lines:
@@ -388,16 +358,12 @@ class VoiceBridge:
         self.input_device = input_device
         self.output_device = output_device
         self.running = False
-        self.is_speaking = False  # TTS playback active
-        self.barge_in = False  # User spoke during TTS - interrupt
+        self.is_speaking = False  # TTS playback active (mic muted)
         self.transcript = []  # [(role, text), ...] for session handback
         self.audio_buffer = deque()
         self.speech_frames = []
         self.silence_counter = 0
         self.speech_detected = False
-        self._barge_in_frames = []  # capture speech during barge-in
-        self._barge_in_count = 0  # consecutive speech frames during TTS
-        self._barge_in_pending = []  # frames before barge-in confirmed
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Called by sounddevice for each audio block."""
@@ -520,29 +486,16 @@ class VoiceBridge:
             self.transcript.append(("assistant", response))
 
             # TTS (with barge-in support)
+            # Mute mic during TTS to prevent speaker-to-mic feedback
             self.is_speaking = True
-            self.barge_in = False
-            self._barge_in_frames = []
-            self._barge_in_count = 0
-            self._barge_in_pending = []
             start = time.time()
             try:
                 self.tts.speak(response)
             except Exception as e:
-                if not self.barge_in:
-                    log.error(f"TTS error: {e}")
+                log.error(f"TTS error: {e}")
             finally:
                 tts_time = time.time() - start
                 self.is_speaking = False
-
-            # If user barged in, carry over their speech frames
-            if self.barge_in and self._barge_in_frames:
-                log.info("Barge-in detected, processing interrupted speech...")
-                self.speech_frames = list(self._barge_in_frames)
-                self.speech_detected = True
-                self.silence_counter = 0
-                self._barge_in_frames = []
-                self.barge_in = False
 
             total = stt_time + llm_time + tts_time
             log.info(
@@ -810,9 +763,6 @@ def main():
     if args.list_voices:
         list_voices()
         return
-
-    # Handle Ctrl+C gracefully
-    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
 
     log.info("Initializing voice bridge...")
 

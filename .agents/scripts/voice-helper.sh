@@ -304,12 +304,11 @@ text = 'Hello, I am your AI DevOps assistant.'
 
 # edge-tts
 try:
-    import asyncio, edge_tts, tempfile, os
+    import asyncio, edge_tts, tempfile
     async def t():
         c = edge_tts.Communicate(text, 'en-US-GuyNeural')
-        f = tempfile.mktemp(suffix='.mp3')
-        await c.save(f)
-        os.unlink(f)
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=True) as f:
+            await c.save(f.name)
     start = time.time()
     asyncio.run(t())
     print(f'  edge-tts:        {time.time()-start:.3f}s')
@@ -318,12 +317,11 @@ except Exception as e:
 
 # macos say
 try:
-    import subprocess, tempfile, os
-    f = tempfile.mktemp(suffix='.aiff')
-    start = time.time()
-    subprocess.run(['say', '-v', 'Samantha', '-o', f, text], check=True, capture_output=True)
-    print(f'  macos-say:       {time.time()-start:.3f}s')
-    os.unlink(f)
+    import subprocess, tempfile
+    with tempfile.NamedTemporaryFile(suffix='.aiff', delete=True) as f:
+        start = time.time()
+        subprocess.run(['say', '-v', 'Samantha', '-o', f.name, text], check=True, capture_output=True)
+        print(f'  macos-say:       {time.time()-start:.3f}s')
 except Exception as e:
     print(f'  macos-say:       FAILED ({e})')
 
