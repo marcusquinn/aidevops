@@ -65,7 +65,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: 11 of last 50 merged PRs had CHANGES_REQUESTED. 50 unresolved review threads, 12 high/critical. Bot reviews post as COMMENTED not CHANGES_REQUESTED so reviewDecision stays NONE. Need to check unresolved threads directly, not just reviewDecision.
 - [ ] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h (ai:3h test:30m read:30m) logged:2026-02-07 ref:GH#438
   - [x] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none completed:2026-02-07
-  - [ ] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none
+  - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
   - [ ] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none
   - [ ] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none
   - [ ] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none
