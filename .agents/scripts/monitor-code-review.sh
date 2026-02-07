@@ -116,9 +116,9 @@ run_codacy_analysis() {
     done
     echo "" # New line
     
-    # Check exit status
-    wait $pid
-    local status=$?
+    # Check exit status (|| true prevents set -e from killing script on non-zero)
+    local status=0
+    wait $pid || status=$?
     
     if [[ $status -eq 0 ]]; then
         print_success "Codacy analysis completed with auto-fixes"
