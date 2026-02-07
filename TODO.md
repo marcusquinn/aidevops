@@ -73,6 +73,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
   - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
+- [ ] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h (ai:2h test:45m read:15m) logged:2026-02-07 started:2026-02-07
+  - [ ] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h blocked-by:none
+  - [ ] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m blocked-by:t150.1
+  - [ ] t150.3 Add --no-self-heal flag and SUPERVISOR_SELF_HEAL env toggle ~15m blocked-by:t150.2
+  - [ ] t150.4 Add self-heal command for manual diagnostic subtask creation ~30m blocked-by:t150.1
+  - [ ] t150.5 Add schema migration for diagnostic_of column ~15m blocked-by:t150.1
+  - Notes: When a task fails or gets blocked, supervisor currently stops and requires manual intervention. Self-healing auto-creates a diagnostic subtask (e.g., t135.8-diag-1) that analyzes the failure log, investigates root cause, and attempts a fix. On diagnostic completion, the original task is re-queued. Guards: max 1 diagnostic per task, skip for auth/OOM/merge-conflict (human-only), configurable via env/flag.
 - [ ] t149 feat: auto-create GitHub issues when supervisor adds tasks #enhancement #supervisor #sync ~2h (ai:1.5h test:30m) logged:2026-02-07 ref:GH#455
   - Notes: Supervisor creates tasks in SQLite but never creates GitHub issues. Add gh issue create to cmd_add/cmd_batch, update TODO.md with ref:GH#N. Prerequisite for t020/t047 (full bi-directional sync). Immediate need: all dispatched tasks should have GH issue visibility.
 - [ ] t146 bug: supervisor no_pr retry counter non-functional (missing $SUPERVISOR_DB) #bugfix #supervisor ~15m (ai:10m test:5m) logged:2026-02-07 ref:GH#439
