@@ -81,7 +81,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.3.2 Add PRAGMA journal_mode=WAL and busy_timeout=5000 to DB init ~30m blocked-by:t135.3.1
     - [ ] t135.3.3 Test concurrent access scenarios ~1h blocked-by:t135.3.2
   - [ ] t135.4 P1-A: Fix 2 corrupted JSON config files ~1h blocked-by:none
-    - [ ] t135.4.1 Fix configs/pandoc-config.json (invalid control char line 5) ~15m
+    - Notes: BLOCKED by supervisor: Max retries exceeded: backend_infrastructure_error    - [ ] t135.4.1 Fix configs/pandoc-config.json (invalid control char line 5) ~15m
     - [ ] t135.4.2 Fix configs/mcp-templates/chrome-devtools.json (shell code after JSON) ~15m
     - [ ] t135.4.3 Add JSON validation step to CI workflow ~30m blocked-by:t135.4.1,t135.4.2
   - [ ] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none
