@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # ClawdHub Helper - Fetch skills from clawdhub.com using browser automation
 # =============================================================================

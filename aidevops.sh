@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]

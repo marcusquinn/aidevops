@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Tool Version Check
 # Checks versions of key tools and flags outdated ones
 #

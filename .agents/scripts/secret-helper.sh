@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2034
 
 # Secret Helper - AI-native secret management with gopass backend

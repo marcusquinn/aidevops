@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Humanise Update Helper
 # Checks for updates to the upstream humanizer skill and reports differences
 #
