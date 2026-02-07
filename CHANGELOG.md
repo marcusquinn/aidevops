@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.105.4] - 2026-02-07
+
+### Fixed
+
+- add ShellCheck enforcement to CI code-quality workflow (t135.6) (#432)
+- add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers (t135.3) (#433)
+
 ## [2.105.1] - 2026-02-07
 
 ### Fixed
