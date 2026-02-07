@@ -21,12 +21,10 @@
 
 set -euo pipefail
 
-readonly FXTWITTER_API="https://api.fxtwitter.com"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
 
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly RED='\033[0;31m'
-readonly NC='\033[0m'
+readonly FXTWITTER_API="https://api.fxtwitter.com"
 
 print_success() { printf "${GREEN}%s${NC}\n" "$1"; }
 print_warning() { printf "${YELLOW}%s${NC}\n" "$1"; }
