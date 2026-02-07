@@ -22,12 +22,12 @@ mcp:
 ## Quick Reference
 
 - **Helper**: `.agents/scripts/security-helper.sh`
-- **Commands**: `analyze [scope]` | `scan-deps` | `history [commits]` | `ferret` | `report`
+- **Commands**: `analyze [scope]` | `scan-deps` | `history [commits]` | `skill-scan` | `vt-scan` | `ferret` | `report`
 - **Scopes**: `diff` (default), `staged`, `branch`, `full`
 - **Output**: `.security-analysis/` directory with reports
 - **Severity**: critical > high > medium > low > info
 - **Benchmarks**: 90% precision, 93% recall (OpenSSF CVE Benchmark)
-- **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), Snyk (optional)
+- **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), VirusTotal (file/URL/domain), Snyk (optional)
 - **MCP**: `gemini-cli-security` tools: find_line_numbers, get_audit_scope, run_poc
 
 **Vulnerability Categories**:
@@ -57,6 +57,8 @@ This tool provides comprehensive security scanning capabilities:
 | **Full Codebase** | Scan entire codebase | `security-helper.sh analyze full` |
 | **Git History** | Scan historical commits for vulnerabilities | `security-helper.sh history 100` |
 | **Dependency Scan** | Find vulnerable dependencies via OSV | `security-helper.sh scan-deps` |
+| **Skill Scan** | Scan imported skills (Cisco + VT advisory) | `security-helper.sh skill-scan` |
+| **VirusTotal Scan** | Scan file/URL/domain/skill via VT API | `security-helper.sh vt-scan` |
 | **AI Config Scan** | Scan AI CLI configs for threats (Ferret) | `security-helper.sh ferret` |
 
 ## Quick Start
@@ -187,6 +189,59 @@ Detects hardcoded credentials:
 - **Prompt Injection**: Untrusted data in LLM prompts
 - **Improper Output Handling**: Unvalidated LLM output used unsafely
 - **Insecure Tool Use**: Overly permissive LLM tool access
+
+## VirusTotal Scanning
+
+VirusTotal integration provides advisory threat intelligence by checking file hashes against 70+ AV engines and scanning domains/URLs referenced in skill content.
+
+**Helper**: `.agents/scripts/virustotal-helper.sh`
+
+**Role**: Advisory layer -- does not block imports. The Cisco Skill Scanner remains the security gate.
+
+### Usage
+
+```bash
+# Check VT API status and quota
+./.agents/scripts/security-helper.sh vt-scan status
+
+# Scan a skill directory
+./.agents/scripts/security-helper.sh vt-scan skill .agents/tools/browser/
+
+# Scan a specific file
+./.agents/scripts/security-helper.sh vt-scan file .agents/tools/browser/playwright-skill.md
+
+# Scan a URL
+./.agents/scripts/security-helper.sh vt-scan url https://example.com/payload
+
+# Scan a domain
+./.agents/scripts/security-helper.sh vt-scan domain example.com
+
+# Auto-detect target type
+./.agents/scripts/security-helper.sh vt-scan /path/to/anything
+```
+
+### How it works
+
+1. **File hash lookup**: Computes SHA256 of each file and queries VT's database (most text/markdown files won't be in VT -- this is normal)
+2. **Domain/URL extraction**: Parses URLs from skill content and checks domain reputation
+3. **Rate limiting**: 16s between requests (free tier: 4 req/min), max 8 requests per skill scan
+4. **Verdicts**: SAFE, MALICIOUS, SUSPICIOUS, or UNKNOWN (not in database)
+
+### API key setup
+
+```bash
+# Recommended: gopass encrypted storage
+aidevops secret set VIRUSTOTAL_MARCUSQUINN
+
+# Alternative: credentials.sh (600 permissions)
+echo 'export VIRUSTOTAL_API_KEY="your_key"' >> ~/.config/aidevops/credentials.sh
+```
+
+### Integration points
+
+- **`security-helper.sh skill-scan all`**: Runs VT as advisory after Cisco scanner
+- **`add-skill-helper.sh`**: Runs VT advisory scan after import (GitHub + ClawdHub)
+- **`security-helper.sh vt-scan`**: Standalone VT scanning for any target
 
 ## AI CLI Configuration Scanning (Ferret)
 
@@ -470,18 +525,20 @@ const query = buildQuery(validatedInput);
 
 ## Comparison with Other Tools
 
-| Feature | Security Analysis | Ferret | Snyk Code | SonarCloud | CodeQL |
-|---------|------------------|--------|-----------|------------|--------|
-| AI-Powered | Yes | No | Partial | No | No |
-| Taint Analysis | Yes | No | Yes | Yes | Yes |
-| Git History Scan | Yes | No | No | No | No |
-| Full Codebase | Yes | Yes | Yes | Yes | Yes |
-| Dependency Scan | Via OSV | No | Yes | Yes | No |
-| LLM Safety | Yes | Yes | No | No | No |
-| AI CLI Configs | Via Ferret | Yes | No | No | No |
-| Prompt Injection | Yes | Yes | No | No | No |
-| Local/Offline | Yes | Yes | No | No | Yes |
-| MCP Integration | Yes | No | Yes | No | No |
+| Feature | Security Analysis | Ferret | VirusTotal | Snyk Code | SonarCloud | CodeQL |
+|---------|------------------|--------|------------|-----------|------------|--------|
+| AI-Powered | Yes | No | No | Partial | No | No |
+| Taint Analysis | Yes | No | No | Yes | Yes | Yes |
+| Git History Scan | Yes | No | No | No | No | No |
+| Full Codebase | Yes | Yes | No | Yes | Yes | Yes |
+| Dependency Scan | Via OSV | No | No | Yes | Yes | No |
+| File Hash Scan | No | No | Yes (70+ AV) | No | No | No |
+| Domain/URL Scan | No | No | Yes | No | No | No |
+| LLM Safety | Yes | Yes | No | No | No | No |
+| AI CLI Configs | Via Ferret | Yes | No | No | No | No |
+| Prompt Injection | Yes | Yes | No | No | No | No |
+| Local/Offline | Yes | Yes | No | No | No | Yes |
+| MCP Integration | Yes | No | No | Yes | No | No |
 
 ## Troubleshooting
 
@@ -549,6 +606,8 @@ Run the helper script directly:
 ./.agents/scripts/security-helper.sh analyze full   # Full codebase scan
 ./.agents/scripts/security-helper.sh history 50     # Scan last 50 commits
 ./.agents/scripts/security-helper.sh scan-deps      # Dependency scan
+./.agents/scripts/security-helper.sh skill-scan     # Cisco + VT skill scan
+./.agents/scripts/security-helper.sh vt-scan status # VirusTotal API status
 ./.agents/scripts/security-helper.sh ferret         # AI CLI config scan
 ./.agents/scripts/security-helper.sh report         # Generate report
 ```
@@ -558,10 +617,12 @@ Run the helper script directly:
 - **OSV-Scanner**: [https://github.com/google/osv-scanner](https://github.com/google/osv-scanner)
 - **OSV Database**: [https://osv.dev/](https://osv.dev/)
 - **Ferret Scan**: [https://github.com/fubak/ferret-scan](https://github.com/fubak/ferret-scan)
+- **VirusTotal**: [https://www.virustotal.com/](https://www.virustotal.com/)
+- **VirusTotal API v3**: [https://docs.virustotal.com/reference/overview](https://docs.virustotal.com/reference/overview)
 - **CWE Database**: [https://cwe.mitre.org/](https://cwe.mitre.org/)
 - **OWASP Top 10**: [https://owasp.org/Top10/](https://owasp.org/Top10/)
 - **Gemini CLI Security**: [https://github.com/gemini-cli-extensions/security](https://github.com/gemini-cli-extensions/security)
 
 ---
 
-**Security Analysis provides comprehensive AI-powered vulnerability detection with support for code changes, full codebase scans, git history analysis, and AI CLI configuration security via Ferret.**
+**Security Analysis provides comprehensive AI-powered vulnerability detection with support for code changes, full codebase scans, git history analysis, VirusTotal threat intelligence, and AI CLI configuration security via Ferret.**
