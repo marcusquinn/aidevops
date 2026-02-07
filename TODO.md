@@ -72,6 +72,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
   - [ ] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none
   - Notes: For each thread: verify claim against code, fix real bugs, dismiss false positives with evidence reply. Priority: high/critical first.
+- [x] t151 fix: supervisor PR URL detection and adaptive concurrency #bugfix #supervisor ~1h actual:30m (ai:30m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07 ref:GH#461,GH#454
+  - Notes: PR #465 merged. Replaced broad log grep PR URL detection with authoritative gh pr list --head lookup. Wired calculate_adaptive_concurrency() into pulse dispatch loop. Min concurrency enforced at 6.
 - [x] t150 feat: supervisor self-healing - auto-create diagnostic subtask on failure/block #enhancement #supervisor #orchestration ~3h actual:2h (ai:2h) logged:2026-02-07 started:2026-02-07 completed:2026-02-07
   - [x] t150.1 Add create_diagnostic_subtask() function to supervisor-helper.sh ~1h completed:2026-02-07
   - [x] t150.2 Wire self-healing into pulse cycle blocked/failed handlers ~45m completed:2026-02-07
