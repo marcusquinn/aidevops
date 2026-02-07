@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# Source shared constants (provides sed_inplace and other utilities)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 # Colors for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -62,14 +66,12 @@ fix_positional_parameters() {
     cp "$file" "$file.backup"
     
     # Replace direct $1, $_arg2, etc. usage with local variable assignments
-    sed -i.tmp '
+    sed_inplace '
         s/echo "\$1"/local param1="$1"; echo "$param1"/g
         s/echo "\$_arg2"/local param2="$_arg2"; echo "$param2"/g
         s/case "\$1"/local command="$1"; case "$command"/g
         s/\[\[ "\$1"/local arg1="$1"; [[ "$arg1"/g
     ' "$file"
-    
-    rm -f "$file.tmp"
     print_success "Fixed positional parameters in $file"
     return 0
 }
@@ -83,7 +85,7 @@ fix_missing_default_case() {
     cp "$file" "$file.backup"
     
     # Add default case before esac if missing
-    sed -i.tmp '
+    sed_inplace '
         /esac/ {
             i\
         *)\
@@ -92,8 +94,6 @@ fix_missing_default_case() {
             ;;
         }
     ' "$file"
-    
-    rm -f "$file.tmp"
     print_success "Added default cases to $file"
     return 0
 }

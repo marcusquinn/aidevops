@@ -25,6 +25,9 @@ REPOS_FILE="$CONFIG_DIR/repos.json"
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 VERSION_FILE="$INSTALL_DIR/VERSION"
 
+# Portable sed in-place edit (macOS BSD sed vs GNU sed)
+sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -777,8 +780,7 @@ cmd_uninstall() {
                 # Create backup
                 cp "$rc_file" "$rc_file.bak"
                 # Remove our alias block (from comment to empty line)
-                sed -i.tmp '/# AI Assistant Server Access Framework/,/^$/d' "$rc_file"
-                rm -f "$rc_file.tmp"
+                sed_inplace '/# AI Assistant Server Access Framework/,/^$/d' "$rc_file"
                 print_success "Removed aliases from $rc_file"
             fi
         fi
@@ -1377,8 +1379,7 @@ cmd_upgrade_planning() {
         fi
         
         # Update date placeholder
-        sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
-        rm -f "${todo_file}.tmp"
+        sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
         
         # Merge existing tasks into Backlog section (after the TOON block closing tag)
         if [[ -n "$existing_tasks" ]]; then
@@ -1443,8 +1444,7 @@ cmd_upgrade_planning() {
         fi
         
         # Update date placeholder
-        sed -i.tmp "s/{{DATE}}/$(date +%Y-%m-%d)/" "$plans_file" 2>/dev/null || true
-        rm -f "${plans_file}.tmp"
+        sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/" "$plans_file" 2>/dev/null || true
         
         # Merge existing plans into Active Plans section (after the TOON block closing tag)
         if [[ -n "$existing_plans" ]]; then
@@ -1500,8 +1500,7 @@ cmd_upgrade_planning() {
             ' "$config_file" > "$temp_json" && mv "$temp_json" "$config_file"
         else
             # Update existing templates_version
-            sed -i.tmp "s/\"templates_version\": \"[^\"]*\"/\"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
-            rm -f "${config_file}.tmp"
+            sed_inplace "s/\"templates_version\": \"[^\"]*\"/\"templates_version\": \"$aidevops_version\"/" "$config_file" 2>/dev/null || true
         fi
     fi
     

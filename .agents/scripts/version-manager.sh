@@ -19,18 +19,9 @@ print_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} $msg"; return 
 print_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} $msg"; return 0; }
 print_error() { local msg="$1"; echo -e "${RED}[ERROR]${NC} $msg" >&2; return 0; }
 
-# Cross-platform sed in-place edit (works on macOS and Linux)
-# Usage: sed_inplace 'pattern' 'file'
-sed_inplace() {
-    local pattern="$1"
-    local file="$2"
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "$pattern" "$file"
-    else
-        sed -i "$pattern" "$file"
-    fi
-    return $?
-}
+# Source shared constants (provides sed_inplace and other utilities)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 
 # Repository root directory
 # First try git (works when called from any location within a repo)

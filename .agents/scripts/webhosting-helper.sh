@@ -404,7 +404,11 @@ remove_domain() {
     # Remove from hosts file (requires manual intervention due to sudo)
     if grep -q "$domain" /etc/hosts; then
         print_warning "Please manually remove '$domain' from /etc/hosts"
-        print_info "Run: sudo sed -i '' '/$domain/d' /etc/hosts"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            print_info "Run: sudo sed -i '' '/$domain/d' /etc/hosts"
+        else
+            print_info "Run: sudo sed -i '/$domain/d' /etc/hosts"
+        fi
     fi
 
     print_success "Domain removal complete!"

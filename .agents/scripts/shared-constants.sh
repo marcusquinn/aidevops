@@ -244,6 +244,23 @@ sed_inplace() {
     return $?
 }
 
+# Portable sed append-after-line (macOS vs GNU/Linux)
+# BSD sed 'a' requires a backslash-newline; GNU sed accepts inline text.
+# Usage: sed_append_after <line_number> <text_to_insert> <file>
+sed_append_after() {
+    local line_num="$1"
+    local text="$2"
+    local file="$3"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "${line_num} a\\
+${text}
+" "$file"
+    else
+        sed -i "${line_num}a\\${text}" "$file"
+    fi
+    return $?
+}
+
 # =============================================================================
 # Stderr Logging Utilities
 # =============================================================================

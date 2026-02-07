@@ -50,6 +50,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck disable=SC2034
 readonly SCRIPT_DIR
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly WORKSPACE_DIR="${AIDEVOPS_DIR}/.agent-workspace"
 readonly TEST_DIR="${WORKSPACE_DIR}/agent-tests"
@@ -99,8 +100,6 @@ log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_header() { echo -e "${PURPLE}${BOLD}$*${NC}"; }
 
-# Cross-platform sed in-place edit (macOS vs GNU/Linux)
-sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
 #######################################
 # Ensure workspace directories exist

@@ -4,6 +4,10 @@
 # Mass fix script to add return statements to all functions that need them
 # Based on SonarCloud S7682 analysis
 
+# Source shared constants (provides sed_inplace, sed_append_after)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 cd providers || exit
 
 # Files and their function ending line numbers that need return statements
@@ -33,7 +37,7 @@ add_return_statement() {
     if ! sed -n "${prev_line}p" "$file" | grep -q "return"; then
         echo "Adding return statement to $file at line $line_num"
         # Insert return statement before the closing brace
-        sed -i "${prev_line}a\\    return 0" "$file"
+        sed_append_after "$prev_line" '    return 0' "$file"
     else
         echo "Return statement already exists in $file at line $line_num"
     fi
