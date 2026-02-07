@@ -81,7 +81,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly SCRIPT_DIR
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-workspace/supervisor}"
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
 readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"       # Used by pulse command (t128.2)
