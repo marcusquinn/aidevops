@@ -18,6 +18,7 @@
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
 #   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
+#   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release (t128.10)
 #   supervisor-helper.sh retrospective [batch_id]      Run batch retrospective and store insights
 #   supervisor-helper.sh status [task_id|batch_id]     Show task/batch/overall status
 #   supervisor-helper.sh transition <task_id> <new_state> [--error "reason"]
@@ -403,6 +404,16 @@ MIGRATE
         log_success "Added max_load_factor column to batches"
     fi
 
+    # Migrate: add release_on_complete and release_type columns to batches if missing (t128.10)
+    local has_release_on_complete
+    has_release_on_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='release_on_complete';" 2>/dev/null || echo "0")
+    if [[ "$has_release_on_complete" -eq 0 ]]; then
+        log_info "Migrating batches table: adding release columns (t128.10)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN release_on_complete INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN release_type TEXT NOT NULL DEFAULT 'patch';" 2>/dev/null || true
+        log_success "Added release_on_complete and release_type columns to batches"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -454,6 +465,9 @@ CREATE TABLE IF NOT EXISTS batches (
     name            TEXT NOT NULL,
     concurrency     INTEGER NOT NULL DEFAULT 4,
     max_load_factor INTEGER NOT NULL DEFAULT 2,
+    release_on_complete INTEGER NOT NULL DEFAULT 0,
+    release_type    TEXT NOT NULL DEFAULT 'patch'
+                    CHECK(release_type IN ('major','minor','patch')),
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK(status IN ('active','paused','complete','cancelled')),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -608,6 +622,7 @@ cmd_add() {
 #######################################
 cmd_batch() {
     local name="" concurrency=4 tasks="" max_load_factor=2
+    local release_on_complete=0 release_type="patch"
 
     # First positional arg is batch name
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -620,14 +635,22 @@ cmd_batch() {
             --concurrency) [[ $# -lt 2 ]] && { log_error "--concurrency requires a value"; return 1; }; concurrency="$2"; shift 2 ;;
             --tasks) [[ $# -lt 2 ]] && { log_error "--tasks requires a value"; return 1; }; tasks="$2"; shift 2 ;;
             --max-load) [[ $# -lt 2 ]] && { log_error "--max-load requires a value"; return 1; }; max_load_factor="$2"; shift 2 ;;
+            --release-on-complete) release_on_complete=1; shift ;;
+            --release-type) [[ $# -lt 2 ]] && { log_error "--release-type requires a value"; return 1; }; release_type="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
 
     if [[ -z "$name" ]]; then
-        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--tasks \"t001,t002\"]"
+        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major]"
         return 1
     fi
+
+    # Validate release_type
+    case "$release_type" in
+        major|minor|patch) ;;
+        *) log_error "Invalid release type: $release_type (must be major, minor, or patch)"; return 1 ;;
+    esac
 
     ensure_db
 
@@ -637,13 +660,19 @@ cmd_batch() {
     escaped_id=$(sql_escape "$batch_id")
     local escaped_name
     escaped_name=$(sql_escape "$name")
+    local escaped_release_type
+    escaped_release_type=$(sql_escape "$release_type")
 
     db "$SUPERVISOR_DB" "
-        INSERT INTO batches (id, name, concurrency, max_load_factor)
-        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_load_factor);
+        INSERT INTO batches (id, name, concurrency, max_load_factor, release_on_complete, release_type)
+        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type');
     "
 
-    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency, max-load: $max_load_factor)"
+    local release_info=""
+    if [[ "$release_on_complete" -eq 1 ]]; then
+        release_info=", release: $release_type on complete"
+    fi
+    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency, max-load: $max_load_factor${release_info})"
 
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
@@ -806,6 +835,140 @@ cmd_transition() {
 }
 
 #######################################
+# Trigger a release via version-manager.sh when a batch completes (t128.10)
+#
+# Called from check_batch_completion() when a batch with release_on_complete=1
+# reaches completion. Runs version-manager.sh release from the batch's repo
+# on the main branch.
+#
+# $1: batch_id
+# $2: release_type (major|minor|patch)
+# $3: repo path (from first task in batch)
+#######################################
+trigger_batch_release() {
+    local batch_id="$1"
+    local release_type="$2"
+    local repo="$3"
+
+    local version_manager="${SCRIPT_DIR}/version-manager.sh"
+    if [[ ! -x "$version_manager" ]]; then
+        log_error "version-manager.sh not found or not executable: $version_manager"
+        return 1
+    fi
+
+    if [[ -z "$repo" || ! -d "$repo" ]]; then
+        log_error "Invalid repo path for batch release: $repo"
+        return 1
+    fi
+
+    # Validate release_type
+    case "$release_type" in
+        major|minor|patch) ;;
+        *)
+            log_error "Invalid release type for batch $batch_id: $release_type"
+            return 1
+            ;;
+    esac
+
+    local escaped_batch
+    escaped_batch=$(sql_escape "$batch_id")
+    local batch_name
+    batch_name=$(db "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "$batch_id")
+
+    # Gather batch stats for the release log
+    local total_tasks complete_count failed_count
+    total_tasks=$(db "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks WHERE batch_id = '$escaped_batch';
+    ")
+    complete_count=$(db "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch' AND t.status IN ('complete', 'deployed', 'merged');
+    ")
+    failed_count=$(db "$SUPERVISOR_DB" "
+        SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch' AND t.status IN ('failed', 'blocked');
+    ")
+
+    log_info "Triggering $release_type release for batch $batch_name ($complete_count/$total_tasks tasks complete, $failed_count failed)"
+
+    # Release must run from the main repo on the main branch
+    # version-manager.sh handles: bump, update files, changelog, tag, push, GitHub release
+    local release_log
+    release_log="$SUPERVISOR_DIR/logs/release-${batch_id}-$(date +%Y%m%d%H%M%S).log"
+    mkdir -p "$SUPERVISOR_DIR/logs"
+
+    # Ensure we're on main and in sync before releasing
+    local current_branch
+    current_branch=$(git -C "$repo" branch --show-current 2>/dev/null || echo "")
+    if [[ "$current_branch" != "main" ]]; then
+        log_warn "Repo not on main branch (on: $current_branch), switching..."
+        git -C "$repo" checkout main 2>/dev/null || {
+            log_error "Failed to switch to main branch for release"
+            return 1
+        }
+    fi
+
+    # Pull latest (all batch PRs should be merged by now)
+    git -C "$repo" pull --ff-only origin main 2>/dev/null || {
+        log_warn "Fast-forward pull failed, trying rebase..."
+        git -C "$repo" pull --rebase origin main 2>/dev/null || {
+            log_error "Failed to pull latest main for release"
+            return 1
+        }
+    }
+
+    # Run the release (--skip-preflight: batch tasks already passed CI individually)
+    local release_output=""
+    local release_exit=0
+    release_output=$(cd "$repo" && bash "$version_manager" release "$release_type" --skip-preflight 2>&1) || release_exit=$?
+
+    echo "$release_output" > "$release_log" 2>/dev/null || true
+
+    if [[ "$release_exit" -ne 0 ]]; then
+        log_error "Release failed for batch $batch_name (exit: $release_exit)"
+        log_error "See log: $release_log"
+        # Store failure in memory for future reference
+        if [[ -x "$MEMORY_HELPER" ]]; then
+            "$MEMORY_HELPER" store \
+                --auto \
+                --type "FAILED_APPROACH" \
+                --content "Batch release failed: $batch_name ($release_type). Exit: $release_exit. Check $release_log" \
+                --tags "supervisor,release,batch,$batch_name,failed" \
+                2>/dev/null || true
+        fi
+        # Send notification about release failure
+        send_task_notification "batch-$batch_id" "failed" "Batch release ($release_type) failed for $batch_name" 2>/dev/null || true
+        return 1
+    fi
+
+    # Extract the new version from the release output
+    local new_version
+    new_version=$(echo "$release_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1 || echo "unknown")
+
+    log_success "Release $new_version created for batch $batch_name ($release_type)"
+
+    # Store success in memory
+    if [[ -x "$MEMORY_HELPER" ]]; then
+        "$MEMORY_HELPER" store \
+            --auto \
+            --type "WORKING_SOLUTION" \
+            --content "Batch release succeeded: $batch_name -> v$new_version ($release_type). $complete_count/$total_tasks tasks, $failed_count failed." \
+            --tags "supervisor,release,batch,$batch_name,success,v$new_version" \
+            2>/dev/null || true
+    fi
+
+    # Send notification about successful release
+    send_task_notification "batch-$batch_id" "deployed" "Released v$new_version ($release_type) for batch $batch_name" 2>/dev/null || true
+
+    # macOS celebration notification
+    if [[ "$(uname)" == "Darwin" ]]; then
+        nohup afplay /System/Library/Sounds/Hero.aiff &>/dev/null &
+    fi
+
+    return 0
+}
+
+#######################################
 # Check if a batch is complete after task state change
 #######################################
 check_batch_completion() {
@@ -844,6 +1007,30 @@ check_batch_completion() {
             log_success "Batch $batch_id is now complete"
             # Run batch retrospective and store insights (t128.6)
             run_batch_retrospective "$batch_id" 2>/dev/null || true
+
+            # Trigger automatic release if configured (t128.10)
+            local batch_release_flag
+            batch_release_flag=$(db "$SUPERVISOR_DB" "SELECT release_on_complete FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
+            if [[ "$batch_release_flag" -eq 1 ]]; then
+                local batch_release_type
+                batch_release_type=$(db "$SUPERVISOR_DB" "SELECT release_type FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "patch")
+                # Get repo from the first task in the batch
+                local batch_repo
+                batch_repo=$(db "$SUPERVISOR_DB" "
+                    SELECT t.repo FROM batch_tasks bt
+                    JOIN tasks t ON bt.task_id = t.id
+                    WHERE bt.batch_id = '$escaped_batch'
+                    ORDER BY bt.position LIMIT 1;
+                " 2>/dev/null || echo "")
+                if [[ -n "$batch_repo" ]]; then
+                    log_info "Batch $batch_id has release_on_complete enabled ($batch_release_type)"
+                    trigger_batch_release "$batch_id" "$batch_release_type" "$batch_repo" 2>/dev/null || {
+                        log_error "Automatic release failed for batch $batch_id (non-blocking)"
+                    }
+                else
+                    log_warn "Cannot trigger release for batch $batch_id: no repo found"
+                fi
+            fi
         fi
     done <<< "$batch_ids"
 
@@ -907,13 +1094,18 @@ cmd_status() {
             SELECT b.id, b.name, b.concurrency, b.status,
                    (SELECT count(*) FROM batch_tasks bt WHERE bt.batch_id = b.id) as task_count,
                    (SELECT count(*) FROM batch_tasks bt JOIN tasks t ON bt.task_id = t.id
-                    WHERE bt.batch_id = b.id AND t.status = 'complete') as done_count
+                    WHERE bt.batch_id = b.id AND t.status = 'complete') as done_count,
+                   b.release_on_complete, b.release_type
             FROM batches b ORDER BY b.created_at DESC LIMIT 10;
         ")
 
         if [[ -n "$batches" ]]; then
-            while IFS='|' read -r bid bname bconc bstatus btotal bdone; do
-                echo -e "  ${CYAN}$bname${NC} ($bid) [$bstatus] $bdone/$btotal tasks, concurrency:$bconc"
+            while IFS='|' read -r bid bname bconc bstatus btotal bdone brelease_flag brelease_type; do
+                local release_label=""
+                if [[ "${brelease_flag:-0}" -eq 1 ]]; then
+                    release_label=", release:${brelease_type:-patch}"
+                fi
+                echo -e "  ${CYAN}$bname${NC} ($bid) [$bstatus] $bdone/$btotal tasks, concurrency:$bconc${release_label}"
             done <<< "$batches"
         else
             echo "  No batches"
@@ -996,16 +1188,22 @@ cmd_status() {
     # Check if target is a batch
     local batch_row
     batch_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT id, name, concurrency, status, created_at
+        SELECT id, name, concurrency, status, created_at, release_on_complete, release_type
         FROM batches WHERE id = '$(sql_escape "$target")' OR name = '$(sql_escape "$target")';
     ")
 
     if [[ -n "$batch_row" ]]; then
-        IFS='|' read -r bid bname bconc bstatus bcreated <<< "$batch_row"
+        local brelease_flag brelease_type
+        IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type <<< "$batch_row"
         echo -e "${BOLD}=== Batch: $bname ===${NC}"
         echo "  ID:          $bid"
         echo "  Status:      $bstatus"
         echo "  Concurrency: $bconc"
+        if [[ "${brelease_flag:-0}" -eq 1 ]]; then
+            echo -e "  Release:     ${GREEN}enabled${NC} (${brelease_type:-patch} on complete)"
+        else
+            echo "  Release:     disabled"
+        fi
         echo "  Created:     $bcreated"
         echo ""
         echo "  Tasks:"
@@ -4336,6 +4534,127 @@ run_batch_retrospective() {
 }
 
 #######################################
+# Command: release - manually trigger a release for a batch (t128.10)
+# Can also enable/disable release_on_complete for an existing batch
+#######################################
+cmd_release() {
+    local batch_id="" release_type="" enable_flag="" dry_run="false"
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        batch_id="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type) [[ $# -lt 2 ]] && { log_error "--type requires a value"; return 1; }; release_type="$2"; shift 2 ;;
+            --enable) enable_flag="enable"; shift ;;
+            --disable) enable_flag="disable"; shift ;;
+            --dry-run) dry_run="true"; shift ;;
+            *) log_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$batch_id" ]]; then
+        # Find the most recently completed batch
+        ensure_db
+        batch_id=$(db "$SUPERVISOR_DB" "
+            SELECT id FROM batches WHERE status = 'complete'
+            ORDER BY updated_at DESC LIMIT 1;
+        " 2>/dev/null || echo "")
+
+        if [[ -z "$batch_id" ]]; then
+            log_error "No batch specified and no completed batches found."
+            log_error "Usage: supervisor-helper.sh release <batch_id> [--type patch|minor|major] [--enable|--disable] [--dry-run]"
+            return 1
+        fi
+        log_info "Using most recently completed batch: $batch_id"
+    fi
+
+    ensure_db
+
+    local escaped_batch
+    escaped_batch=$(sql_escape "$batch_id")
+
+    # Look up batch (by ID or name)
+    local batch_row
+    batch_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id, name, status, release_on_complete, release_type
+        FROM batches WHERE id = '$escaped_batch' OR name = '$escaped_batch'
+        LIMIT 1;
+    ")
+
+    if [[ -z "$batch_row" ]]; then
+        log_error "Batch not found: $batch_id"
+        return 1
+    fi
+
+    local bid bname bstatus brelease_flag brelease_type
+    IFS='|' read -r bid bname bstatus brelease_flag brelease_type <<< "$batch_row"
+    escaped_batch=$(sql_escape "$bid")
+
+    # Handle enable/disable mode
+    if [[ -n "$enable_flag" ]]; then
+        if [[ "$enable_flag" == "enable" ]]; then
+            local new_type="${release_type:-${brelease_type:-patch}}"
+            db "$SUPERVISOR_DB" "
+                UPDATE batches SET release_on_complete = 1, release_type = '$(sql_escape "$new_type")',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                WHERE id = '$escaped_batch';
+            "
+            log_success "Enabled release_on_complete for batch $bname (type: $new_type)"
+        else
+            db "$SUPERVISOR_DB" "
+                UPDATE batches SET release_on_complete = 0,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                WHERE id = '$escaped_batch';
+            "
+            log_success "Disabled release_on_complete for batch $bname"
+        fi
+        return 0
+    fi
+
+    # Manual release trigger mode
+    if [[ -z "$release_type" ]]; then
+        release_type="${brelease_type:-patch}"
+    fi
+
+    # Validate release_type
+    case "$release_type" in
+        major|minor|patch) ;;
+        *) log_error "Invalid release type: $release_type"; return 1 ;;
+    esac
+
+    # Get repo from first task in batch
+    local batch_repo
+    batch_repo=$(db "$SUPERVISOR_DB" "
+        SELECT t.repo FROM batch_tasks bt
+        JOIN tasks t ON bt.task_id = t.id
+        WHERE bt.batch_id = '$escaped_batch'
+        ORDER BY bt.position LIMIT 1;
+    " 2>/dev/null || echo "")
+
+    if [[ -z "$batch_repo" ]]; then
+        log_error "No tasks found in batch $bname - cannot determine repo"
+        return 1
+    fi
+
+    echo -e "${BOLD}=== Batch Release: $bname ===${NC}"
+    echo "  Batch:   $bid"
+    echo "  Status:  $bstatus"
+    echo "  Type:    $release_type"
+    echo "  Repo:    $batch_repo"
+
+    if [[ "$dry_run" == "true" ]]; then
+        log_info "[dry-run] Would trigger $release_type release for batch $bname from $batch_repo"
+        return 0
+    fi
+
+    trigger_batch_release "$bid" "$release_type" "$batch_repo"
+    return $?
+}
+
+#######################################
 # Command: retrospective - run batch retrospective
 #######################################
 cmd_retrospective() {
@@ -4791,6 +5110,7 @@ Usage:
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
   supervisor-helper.sh notify <task_id>              Send notification about task state
   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
+  supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release
   supervisor-helper.sh retrospective [batch_id]      Run batch retrospective and store insights
   supervisor-helper.sh transition <id> <state>       Transition task state
   supervisor-helper.sh status [task_id|batch_id]     Show status
@@ -4846,6 +5166,8 @@ Options for 'add':
 Options for 'batch':
   --concurrency <N>      Max parallel workers (default: 4)
   --tasks "t001,t002"    Comma-separated task IDs to add
+  --release-on-complete  Trigger a release when all tasks complete (t128.10)
+  --release-type <type>  Release type: major|minor|patch (default: patch)
 
 Options for 'dispatch':
   --batch <batch_id>     Dispatch within batch concurrency limits
@@ -4959,6 +5281,34 @@ Options for 'cron':
 
 Options for 'watch':
   --repo <path>          Repository with TODO.md (default: current directory)
+
+Automatic Release on Batch Completion (t128.10):
+  When a batch is created with --release-on-complete, the supervisor
+  automatically triggers version-manager.sh release when all tasks in the
+  batch reach terminal states (complete, deployed, merged, failed, cancelled).
+
+  The release runs from the batch's repo on the main branch with
+  --skip-preflight (batch tasks already passed CI individually).
+
+  Create a batch with auto-release:
+    supervisor-helper.sh batch "my-batch" --tasks "t001,t002" --release-on-complete
+    supervisor-helper.sh batch "my-batch" --tasks "t001,t002" --release-on-complete --release-type minor
+
+  Enable/disable auto-release on an existing batch:
+    supervisor-helper.sh release <batch_id> --enable
+    supervisor-helper.sh release <batch_id> --enable --type minor
+    supervisor-helper.sh release <batch_id> --disable
+
+  Manually trigger a release for a batch:
+    supervisor-helper.sh release <batch_id>                    # Uses batch's configured type
+    supervisor-helper.sh release <batch_id> --type minor       # Override type
+    supervisor-helper.sh release <batch_id> --dry-run          # Preview only
+
+Options for 'release':
+  --type <type>          Release type: major|minor|patch (default: batch config or patch)
+  --enable               Enable release_on_complete for the batch
+  --disable              Disable release_on_complete for the batch
+  --dry-run              Show what would happen without executing
 EOF
 }
 
@@ -4989,6 +5339,7 @@ main() {
         cron) cmd_cron "$@" ;;
         watch) cmd_watch "$@" ;;
         recall) cmd_recall "$@" ;;
+        release) cmd_release "$@" ;;
         retrospective) cmd_retrospective "$@" ;;
         transition) cmd_transition "$@" ;;
         status) cmd_status "$@" ;;
