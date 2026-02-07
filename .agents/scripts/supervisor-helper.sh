@@ -873,10 +873,15 @@ cmd_status() {
                 WHEN 'evaluating' THEN 3
                 WHEN 'retrying' THEN 4
                 WHEN 'queued' THEN 5
-                WHEN 'blocked' THEN 6
-                WHEN 'failed' THEN 7
-                WHEN 'complete' THEN 8
-                WHEN 'cancelled' THEN 9
+                WHEN 'pr_review' THEN 6
+                WHEN 'merging' THEN 7
+                WHEN 'deploying' THEN 8
+                WHEN 'blocked' THEN 9
+                WHEN 'failed' THEN 10
+                WHEN 'complete' THEN 11
+                WHEN 'merged' THEN 12
+                WHEN 'deployed' THEN 13
+                WHEN 'cancelled' THEN 14
             END;
         " 2>/dev/null | while IFS=': ' read -r state count; do
             local color="$NC"
@@ -1082,10 +1087,15 @@ cmd_list() {
                     WHEN 'evaluating' THEN 3
                     WHEN 'retrying' THEN 4
                     WHEN 'queued' THEN 5
-                    WHEN 'blocked' THEN 6
-                    WHEN 'failed' THEN 7
-                    WHEN 'complete' THEN 8
-                    WHEN 'cancelled' THEN 9
+                    WHEN 'pr_review' THEN 6
+                    WHEN 'merging' THEN 7
+                    WHEN 'deploying' THEN 8
+                    WHEN 'blocked' THEN 9
+                    WHEN 'failed' THEN 10
+                    WHEN 'complete' THEN 11
+                    WHEN 'merged' THEN 12
+                    WHEN 'deployed' THEN 13
+                    WHEN 'cancelled' THEN 14
                 END, t.created_at DESC;
         ")
 
@@ -2969,12 +2979,45 @@ run_deploy_for_task() {
         return 0
     fi
 
-    log_info "Running setup.sh for $task_id..."
-    local deploy_output
-    if ! deploy_output=$(cd "$repo" && ./setup.sh 2>&1); then
-        log_warn "Deploy (setup.sh) returned non-zero for $task_id. Output:"
-        log_warn "$deploy_output"
-        return 1
+    log_info "Running setup.sh for $task_id (timeout: 300s)..."
+    local deploy_output deploy_log
+    deploy_log="$SUPERVISOR_DIR/logs/${task_id}-deploy-$(date +%Y%m%d%H%M%S).log"
+    mkdir -p "$SUPERVISOR_DIR/logs"
+
+    # Portable timeout: prefer timeout/gtimeout, fall back to background+kill
+    local timeout_cmd=""
+    if command -v timeout &>/dev/null; then
+        timeout_cmd="timeout 300"
+    elif command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout 300"
+    fi
+
+    if [[ -n "$timeout_cmd" ]]; then
+        if ! deploy_output=$(cd "$repo" && $timeout_cmd ./setup.sh 2>&1); then
+            log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
+            echo "$deploy_output" > "$deploy_log" 2>/dev/null || true
+            return 1
+        fi
+    else
+        # Fallback: background process with manual timeout
+        (cd "$repo" && ./setup.sh > "$deploy_log" 2>&1) &
+        local deploy_pid=$!
+        local waited=0
+        while kill -0 "$deploy_pid" 2>/dev/null && [[ "$waited" -lt 300 ]]; do
+            sleep 5
+            waited=$((waited + 5))
+        done
+        if kill -0 "$deploy_pid" 2>/dev/null; then
+            kill "$deploy_pid" 2>/dev/null || true
+            log_warn "Deploy (setup.sh) timed out after 300s for $task_id (see $deploy_log)"
+            return 1
+        fi
+        if ! wait "$deploy_pid"; then
+            deploy_output=$(cat "$deploy_log" 2>/dev/null || echo "")
+            log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
+            return 1
+        fi
+        deploy_output=$(cat "$deploy_log" 2>/dev/null || echo "")
     fi
     log_success "Deploy complete for $task_id"
     return 0
@@ -3163,9 +3206,8 @@ cmd_pr_lifecycle() {
                 ;;
             no_pr)
                 # Track consecutive no_pr failures to avoid infinite retry loop
-                local no_pr_key="no_pr_retries_${task_id}"
                 local no_pr_count
-                no_pr_count=$(db "SELECT COALESCE(
+                no_pr_count=$(db "$SUPERVISOR_DB" "SELECT COALESCE(
                     (SELECT CAST(json_extract(error, '$.no_pr_retries') AS INTEGER)
                      FROM tasks WHERE id='$task_id'), 0);" 2>/dev/null || echo "0")
                 no_pr_count=$((no_pr_count + 1))
@@ -3183,7 +3225,7 @@ cmd_pr_lifecycle() {
 
                 log_warn "No PR found for $task_id (attempt $no_pr_count/5)"
                 # Store retry count in error field as JSON
-                db "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
+                db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
                 return 0
                 ;;
         esac
@@ -3210,16 +3252,21 @@ cmd_pr_lifecycle() {
         if [[ "$dry_run" == "false" ]]; then
             cmd_transition "$task_id" "deploying" || log_warn "Failed to transition $task_id to deploying"
 
-            # Pull main and run postflight
+            # Pull main and run postflight (non-blocking: verification only)
             run_postflight_for_task "$task_id" "$trepo" || log_warn "Postflight issue for $task_id (non-blocking)"
 
-            # Deploy (aidevops repos only)
-            run_deploy_for_task "$task_id" "$trepo" || log_warn "Deploy issue for $task_id (non-blocking)"
+            # Deploy (aidevops repos only) - failure blocks deployed transition
+            if ! run_deploy_for_task "$task_id" "$trepo"; then
+                log_error "Deploy failed for $task_id - transitioning to failed"
+                cmd_transition "$task_id" "failed" --error "Deploy (setup.sh) failed" 2>/dev/null || true
+                send_task_notification "$task_id" "failed" "Deploy failed after merge" 2>/dev/null || true
+                return 1
+            fi
 
-            # Clean up worktree and branch
+            # Clean up worktree and branch (non-blocking: housekeeping)
             cleanup_after_merge "$task_id" || log_warn "Worktree cleanup issue for $task_id (non-blocking)"
 
-            # Update TODO.md
+            # Update TODO.md (non-blocking: housekeeping)
             update_todo_on_complete "$task_id" || log_warn "TODO.md update issue for $task_id (non-blocking)"
 
             # Final transition
@@ -3279,7 +3326,7 @@ process_post_pr_lifecycle() {
         fi
 
         log_info "  $tid: processing post-PR lifecycle (status: $tstatus)"
-        if cmd_pr_lifecycle "$tid" 2>/dev/null; then
+        if cmd_pr_lifecycle "$tid" >> "$SUPERVISOR_DIR/post-pr.log" 2>&1; then
             local new_status
             new_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
             case "$new_status" in
