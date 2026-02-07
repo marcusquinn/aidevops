@@ -190,10 +190,28 @@ main() {
     
     echo "$output"
     
+    # Output runtime context hint for the AI model
+    local runtime_hint=""
+    case "$app_name" in
+        OpenCode)
+            runtime_hint="You are running in OpenCode. Global config: ~/.config/opencode/opencode.json"
+            ;;
+        "Claude Code")
+            runtime_hint="You are running in Claude Code. Global config: ~/.config/Claude/Claude.json"
+            ;;
+    esac
+    if [[ -n "$runtime_hint" ]]; then
+        echo "$runtime_hint"
+    fi
+    
     # Cache output for agents without Bash (e.g., Plan+)
     local cache_dir="$HOME/.aidevops/cache"
     mkdir -p "$cache_dir"
-    echo "$output" > "$cache_dir/session-greeting.txt"
+    if [[ -n "$runtime_hint" ]]; then
+        printf '%s\n%s\n' "$output" "$runtime_hint" > "$cache_dir/session-greeting.txt"
+    else
+        echo "$output" > "$cache_dir/session-greeting.txt"
+    fi
     
     # Check ralph upstream when in aidevops repo
     check_ralph_upstream
