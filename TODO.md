@@ -118,6 +118,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [ ] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1
     - [ ] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1
   - [ ] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none
+  - [ ] t135.15 P1-D: Add system resource monitoring to supervisor pulse (CPU load, process count, adaptive concurrency) ~2h blocked-by:none
+    - [ ] t135.15.1 Add check_system_load() to supervisor-helper.sh (load avg, process count, memory pressure) ~30m
+    - [ ] t135.15.2 Add adaptive concurrency throttling to pulse cycle (reduce workers when load > cores*2) ~45m blocked-by:t135.15.1
+    - [ ] t135.15.3 Add resource stats to pulse summary output ~15m blocked-by:t135.15.1
+    - [ ] t135.15.4 Add --max-load flag to batch command for configurable threshold ~15m blocked-by:t135.15.2
+    - Notes: Discovered during batch-20260207 run: 3 concurrent workers spawned 51 opencode + 149 node processes, load avg hit 116 on 10-core machine. Supervisor has model health checks and orphan cleanup but no system resource awareness. Each opencode worker spawns ~15-20 sub-processes (MCP servers, LSPs). Need: load average monitoring, process count per worker, adaptive concurrency (pause dispatch when overloaded, resume when load drops).
   - Notes: From Claude Opus 4.6 codebase review (2026-02-07). Review corrected: 100/170 scripts already have set -e (not 2 as initially reported). 29/170 use shared-constants.sh. 95 scripts have blanket 20+ rule ShellCheck disable. 12 fix scripts have 0 references and only exist from the .agent->.agents rename commit. All subtasks designed for /runners dispatch. IMPORTANT: Review recommendation #10 (organize scripts by domain subdirectories) was REJECTED - scripts are cross-domain and flat namespace with naming convention is the intentional design. Recommendation #13 (remove dead fix scripts) changed to ARCHIVE non-destructively. Every subtask requires reading existing code to understand intent before changes.
 - [ ] t132 Cross-Provider Model Routing with Fallbacks #plan #orchestration #multi-model → [todo/PLANS.md#2026-02-06-cross-provider-model-routing-with-fallbacks] ~1.5d (ai:8h test:4h read:2h) logged:2026-02-06
   - [ ] t132.1 Define model-specific subagents in opencode.json ~2h blocked-by:none
