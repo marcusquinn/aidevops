@@ -138,6 +138,28 @@ log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
 
+# Supervisor stderr log file - captures stderr from commands that previously
+# used 2>/dev/null, making errors debuggable without cluttering terminal output.
+# See GH#441 (t144) for rationale.
+SUPERVISOR_LOG_DIR="${HOME}/.aidevops/logs"
+mkdir -p "$SUPERVISOR_LOG_DIR" 2>/dev/null || true
+SUPERVISOR_LOG="${SUPERVISOR_LOG_DIR}/supervisor.log"
+
+# Log stderr from a command to the supervisor log file instead of /dev/null.
+# Usage: log_cmd "context" command args...
+# Preserves exit code. Use for DB writes, API calls, state transitions.
+log_cmd() {
+    local context="$1"
+    shift
+    local ts
+    ts="$(date '+%H:%M:%S' 2>/dev/null || echo "?")"
+    echo "[$ts] [$context] $*" >> "$SUPERVISOR_LOG" 2>/dev/null || true
+    "$@" 2>> "$SUPERVISOR_LOG"
+    local rc=$?
+    [[ $rc -ne 0 ]] && echo "[$ts] [$context] exit=$rc" >> "$SUPERVISOR_LOG" 2>/dev/null || true
+    return $rc
+}
+
 # Cross-platform sed in-place edit (macOS vs GNU/Linux)
 sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
@@ -405,8 +427,11 @@ MIGRATE
     has_max_load=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
     if [[ "$has_max_load" -eq 0 ]]; then
         log_info "Migrating batches table: adding max_load_factor column (t135.15.4)..."
-        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_load_factor INTEGER NOT NULL DEFAULT 2;" 2>/dev/null || true
-        log_success "Added max_load_factor column to batches"
+        if ! log_cmd "db-migrate" db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_load_factor INTEGER NOT NULL DEFAULT 2;"; then
+            log_warn "Failed to add max_load_factor column (may already exist)"
+        else
+            log_success "Added max_load_factor column to batches"
+        fi
     fi
 
     # Migrate: add release_on_complete and release_type columns to batches if missing (t128.10)
@@ -433,7 +458,7 @@ MIGRATE
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
     if [[ "$current_mode" != "wal" ]]; then
-        db "$SUPERVISOR_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
+        log_cmd "db-wal" db "$SUPERVISOR_DB" "PRAGMA journal_mode=WAL;" || log_warn "Failed to enable WAL mode"
     fi
 
     return 0
@@ -1023,7 +1048,7 @@ check_batch_completion() {
             "
             log_success "Batch $batch_id is now complete"
             # Run batch retrospective and store insights (t128.6)
-            run_batch_retrospective "$batch_id" 2>/dev/null || true
+            run_batch_retrospective "$batch_id" 2>>"$SUPERVISOR_LOG" || true
 
             # Trigger automatic release if configured (t128.10)
             local batch_release_flag
@@ -1041,7 +1066,7 @@ check_batch_completion() {
                 " 2>/dev/null || echo "")
                 if [[ -n "$batch_repo" ]]; then
                     log_info "Batch $batch_id has release_on_complete enabled ($batch_release_type)"
-                    trigger_batch_release "$batch_id" "$batch_release_type" "$batch_repo" 2>/dev/null || {
+                    trigger_batch_release "$batch_id" "$batch_release_type" "$batch_repo" 2>>"$SUPERVISOR_LOG" || {
                         log_error "Automatic release failed for batch $batch_id (non-blocking)"
                     }
                 else
@@ -1895,11 +1920,11 @@ cleanup_task_worktree() {
 
     # Try wt prune first
     if command -v wt &>/dev/null; then
-        wt remove -C "$repo" "$worktree_path" 2>/dev/null && return 0
+        wt remove -C "$repo" "$worktree_path" 2>>"$SUPERVISOR_LOG" && return 0
     fi
 
     # Fallback: git worktree remove
-    git -C "$repo" worktree remove "$worktree_path" --force 2>/dev/null || true
+    git -C "$repo" worktree remove "$worktree_path" --force 2>>"$SUPERVISOR_LOG" || true
     return 0
 }
 
@@ -2489,7 +2514,7 @@ evaluate_worker() {
             local repo_slug_detect
             repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
             if [[ -n "$repo_slug_detect" ]]; then
-                meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
             fi
         fi
     fi
@@ -2903,10 +2928,10 @@ check_pr_status() {
             repo_slug_check=$(git -C "$task_repo_check" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
             if [[ -n "$repo_slug_check" ]]; then
                 local found_pr_url
-                found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
                 if [[ -n "$found_pr_url" ]]; then
                     pr_url="$found_pr_url"
-                    sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr_url")' WHERE id = '$escaped_id';" 2>/dev/null || true
+                    log_cmd "db-update-pr-url" sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr_url")' WHERE id = '$escaped_id';" || log_warn "Failed to persist PR URL for $task_id"
                 else
                     echo "no_pr"
                     return 0
@@ -2934,7 +2959,7 @@ check_pr_status() {
 
     # Check PR state
     local pr_json
-    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,statusCheckRollup 2>/dev/null || echo "")
+    pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
 
     if [[ -z "$pr_json" ]]; then
         echo "no_pr"
@@ -3151,8 +3176,8 @@ run_postflight_for_task() {
     log_info "Running postflight for $task_id..."
 
     # Pull latest main to verify merge landed
-    if ! git -C "$repo" pull origin main --ff-only 2>/dev/null; then
-        git -C "$repo" pull origin main 2>/dev/null || true
+    if ! git -C "$repo" pull origin main --ff-only 2>>"$SUPERVISOR_LOG"; then
+        git -C "$repo" pull origin main 2>>"$SUPERVISOR_LOG" || true
     fi
 
     # Verify the branch was merged (PR should show as merged)
@@ -3274,16 +3299,16 @@ cleanup_after_merge() {
 
     # Delete the remote branch (already merged)
     if [[ -n "$tbranch" ]]; then
-        git -C "$trepo" push origin --delete "$tbranch" 2>/dev/null || true
-        git -C "$trepo" branch -d "$tbranch" 2>/dev/null || true
+        git -C "$trepo" push origin --delete "$tbranch" 2>>"$SUPERVISOR_LOG" || true
+        git -C "$trepo" branch -d "$tbranch" 2>>"$SUPERVISOR_LOG" || true
         log_info "Cleaned up branch: $tbranch"
     fi
 
     # Prune worktrees
     if command -v wt &>/dev/null; then
-        wt prune -C "$trepo" 2>/dev/null || true
+        wt prune -C "$trepo" 2>>"$SUPERVISOR_LOG" || true
     else
-        git -C "$trepo" worktree prune 2>/dev/null || true
+        git -C "$trepo" worktree prune 2>>"$SUPERVISOR_LOG" || true
     fi
 
     return 0
@@ -3345,7 +3370,7 @@ cmd_pr_lifecycle() {
                 local repo_slug_lifecycle
                 repo_slug_lifecycle=$(git -C "$trepo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
                 if [[ -n "$repo_slug_lifecycle" ]]; then
-                    found_pr=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>/dev/null || echo "")
+                    found_pr=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
                 fi
             fi
             if [[ -n "$found_pr" ]]; then
@@ -3357,13 +3382,13 @@ cmd_pr_lifecycle() {
             else
                 log_warn "No PR for $task_id - skipping post-PR lifecycle"
                 if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "deployed" 2>/dev/null || true
+                    cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 return 0
             fi
         fi
         if [[ "$dry_run" == "false" ]]; then
-            cmd_transition "$task_id" "pr_review" 2>/dev/null || true
+            cmd_transition "$task_id" "pr_review" 2>>"$SUPERVISOR_LOG" || true
         fi
         tstatus="pr_review"
     fi
@@ -3377,14 +3402,14 @@ cmd_pr_lifecycle() {
         case "$pr_status" in
             ready_to_merge)
                 if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "merging" 2>/dev/null || true
+                    cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 tstatus="merging"
                 ;;
             already_merged)
                 if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "merging" 2>/dev/null || true
-                    cmd_transition "$task_id" "merged" 2>/dev/null || true
+                    cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
+                    cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 tstatus="merged"
                 ;;
@@ -3395,16 +3420,16 @@ cmd_pr_lifecycle() {
             ci_failed)
                 log_warn "CI failed for $task_id"
                 if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "blocked" --error "CI checks failed" 2>/dev/null || true
-                    send_task_notification "$task_id" "blocked" "CI checks failed on PR" 2>/dev/null || true
+                    cmd_transition "$task_id" "blocked" --error "CI checks failed" 2>>"$SUPERVISOR_LOG" || true
+                    send_task_notification "$task_id" "blocked" "CI checks failed on PR" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 return 1
                 ;;
             changes_requested)
                 log_warn "Changes requested on PR for $task_id"
                 if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "blocked" --error "PR changes requested" 2>/dev/null || true
-                    send_task_notification "$task_id" "blocked" "PR changes requested" 2>/dev/null || true
+                    cmd_transition "$task_id" "blocked" --error "PR changes requested" 2>>"$SUPERVISOR_LOG" || true
+                    send_task_notification "$task_id" "blocked" "PR changes requested" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 return 1
                 ;;
@@ -3415,7 +3440,7 @@ cmd_pr_lifecycle() {
             closed)
                 log_warn "PR was closed without merge for $task_id"
                 if [[ "$dry_run" == "false" ]]; then
-                    cmd_transition "$task_id" "blocked" --error "PR closed without merge" 2>/dev/null || true
+                    cmd_transition "$task_id" "blocked" --error "PR closed without merge" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 return 1
                 ;;
@@ -3433,14 +3458,14 @@ cmd_pr_lifecycle() {
                         log_warn "  ROOT CAUSE: 'gh' CLI not in PATH ($(echo "$PATH" | tr ':' '\n' | head -5 | tr '\n' ':'))"
                     fi
                     if [[ "$dry_run" == "false" ]]; then
-                        cmd_transition "$task_id" "blocked" --error "PR unreachable after $no_pr_count attempts (gh in PATH: $(command -v gh 2>/dev/null || echo 'NOT FOUND'))" 2>/dev/null || true
+                        cmd_transition "$task_id" "blocked" --error "PR unreachable after $no_pr_count attempts (gh in PATH: $(command -v gh 2>/dev/null || echo 'NOT FOUND'))" 2>>"$SUPERVISOR_LOG" || true
                     fi
                     return 1
                 fi
 
                 log_warn "No PR found for $task_id (attempt $no_pr_count/5)"
                 # Store retry count in error field as JSON
-                db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" 2>/dev/null || true
+                log_cmd "db-no-pr-retry" db "$SUPERVISOR_DB" "UPDATE tasks SET error = json_set(COALESCE(error, '{}'), '$.no_pr_retries', $no_pr_count), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$task_id';" || log_warn "Failed to persist no_pr retry count for $task_id"
                 return 0
                 ;;
         esac
@@ -3452,11 +3477,11 @@ cmd_pr_lifecycle() {
             log_info "[dry-run] Would merge PR for $task_id"
         else
             if merge_task_pr "$task_id" "$dry_run"; then
-                cmd_transition "$task_id" "merged" 2>/dev/null || true
+                cmd_transition "$task_id" "merged" 2>>"$SUPERVISOR_LOG" || true
                 tstatus="merged"
             else
-                cmd_transition "$task_id" "blocked" --error "Merge failed" 2>/dev/null || true
-                send_task_notification "$task_id" "blocked" "PR merge failed" 2>/dev/null || true
+                cmd_transition "$task_id" "blocked" --error "Merge failed" 2>>"$SUPERVISOR_LOG" || true
+                send_task_notification "$task_id" "blocked" "PR merge failed" 2>>"$SUPERVISOR_LOG" || true
                 return 1
             fi
         fi
@@ -3473,8 +3498,8 @@ cmd_pr_lifecycle() {
             # Deploy (aidevops repos only) - failure blocks deployed transition
             if ! run_deploy_for_task "$task_id" "$trepo"; then
                 log_error "Deploy failed for $task_id - transitioning to failed"
-                cmd_transition "$task_id" "failed" --error "Deploy (setup.sh) failed" 2>/dev/null || true
-                send_task_notification "$task_id" "failed" "Deploy failed after merge" 2>/dev/null || true
+                cmd_transition "$task_id" "failed" --error "Deploy (setup.sh) failed" 2>>"$SUPERVISOR_LOG" || true
+                send_task_notification "$task_id" "failed" "Deploy failed after merge" 2>>"$SUPERVISOR_LOG" || true
                 return 1
             fi
 
@@ -3488,8 +3513,8 @@ cmd_pr_lifecycle() {
             cmd_transition "$task_id" "deployed" || log_warn "Failed to transition $task_id to deployed"
 
             # Notify (best-effort, suppress errors)
-            send_task_notification "$task_id" "deployed" "PR merged, deployed, worktree cleaned" 2>/dev/null || true
-            store_success_pattern "$task_id" "deployed" "" 2>/dev/null || true
+            send_task_notification "$task_id" "deployed" "PR merged, deployed, worktree cleaned" 2>>"$SUPERVISOR_LOG" || true
+            store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
         else
             log_info "[dry-run] Would deploy and clean up for $task_id"
         fi
@@ -3534,7 +3559,7 @@ process_post_pr_lifecycle() {
         # Skip tasks without PRs that are already complete
         if [[ "$tstatus" == "complete" && ( -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ) ]]; then
             # No PR - transition directly to deployed
-            cmd_transition "$tid" "deployed" 2>/dev/null || true
+            cmd_transition "$tid" "deployed" 2>>"$SUPERVISOR_LOG" || true
             deployed_count=$((deployed_count + 1))
             log_info "  $tid: no PR, marked deployed"
             continue
@@ -3589,13 +3614,13 @@ cmd_pulse() {
     if [[ -n "$all_repos" ]]; then
         while IFS= read -r repo_path; do
             if [[ -f "$repo_path/TODO.md" ]]; then
-                cmd_auto_pickup --repo "$repo_path" 2>/dev/null || true
+                cmd_auto_pickup --repo "$repo_path" 2>>"$SUPERVISOR_LOG" || true
             fi
         done <<< "$all_repos"
     else
         # No tasks yet - try current directory
         if [[ -f "$(pwd)/TODO.md" ]]; then
-            cmd_auto_pickup --repo "$(pwd)" 2>/dev/null || true
+            cmd_auto_pickup --repo "$(pwd)" 2>>"$SUPERVISOR_LOG" || true
         fi
     fi
 
@@ -3641,7 +3666,7 @@ cmd_pulse() {
             else
                 log_info "  $tid: worker finished, evaluating..."
                 # Transition to evaluating
-                cmd_transition "$tid" "evaluating" 2>/dev/null || true
+                cmd_transition "$tid" "evaluating" 2>>"$SUPERVISOR_LOG" || true
             fi
 
             # Get task description for memory context (t128.6)
@@ -3662,27 +3687,27 @@ cmd_pulse() {
             case "$outcome_type" in
                 complete)
                     log_success "  $tid: COMPLETE ($outcome_detail)"
-                    cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>/dev/null || true
+                    cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     completed_count=$((completed_count + 1))
                     # Clean up worker process tree and PID file (t128.7)
                     cleanup_worker_processes "$tid"
                     # Auto-update TODO.md and send notification (t128.4)
-                    update_todo_on_complete "$tid" 2>/dev/null || true
-                    send_task_notification "$tid" "complete" "$outcome_detail" 2>/dev/null || true
+                    update_todo_on_complete "$tid" 2>>"$SUPERVISOR_LOG" || true
+                    send_task_notification "$tid" "complete" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Store success pattern in memory (t128.6)
-                    store_success_pattern "$tid" "$outcome_detail" "$tid_desc" 2>/dev/null || true
+                    store_success_pattern "$tid" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                     # Self-heal: if this was a diagnostic task, re-queue the parent (t150)
-                    handle_diagnostic_completion "$tid" 2>/dev/null || true
+                    handle_diagnostic_completion "$tid" 2>>"$SUPERVISOR_LOG" || true
                     ;;
                 retry)
                     log_warn "  $tid: RETRY ($outcome_detail)"
-                    cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>/dev/null || true
+                    cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Clean up worker process tree before re-prompt (t128.7)
                     cleanup_worker_processes "$tid"
                     # Store failure pattern in memory (t128.6)
-                    store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>/dev/null || true
+                    store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                     # Re-prompt in existing worktree (continues context)
-                    if cmd_reprompt "$tid" 2>/dev/null; then
+                    if cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG"; then
                         dispatched_count=$((dispatched_count + 1))
                         log_info "  $tid: re-prompted successfully"
                     else
@@ -3693,54 +3718,54 @@ cmd_pulse() {
                         max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
                         if [[ "$current_retries" -ge "$max_retries_val" ]]; then
                             log_error "  $tid: max retries exceeded ($current_retries/$max_retries_val), marking blocked"
-                            cmd_transition "$tid" "blocked" --error "Max retries exceeded: $outcome_detail" 2>/dev/null || true
+                            cmd_transition "$tid" "blocked" --error "Max retries exceeded: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                             # Auto-update TODO.md and send notification (t128.4)
-                            update_todo_on_blocked "$tid" "Max retries exceeded: $outcome_detail" 2>/dev/null || true
-                            send_task_notification "$tid" "blocked" "Max retries exceeded: $outcome_detail" 2>/dev/null || true
+                            update_todo_on_blocked "$tid" "Max retries exceeded: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+                            send_task_notification "$tid" "blocked" "Max retries exceeded: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                             # Store failure pattern in memory (t128.6)
-                            store_failure_pattern "$tid" "blocked" "Max retries exceeded: $outcome_detail" "$tid_desc" 2>/dev/null || true
+                            store_failure_pattern "$tid" "blocked" "Max retries exceeded: $outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                             # Self-heal: attempt diagnostic subtask (t150)
-                            attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>/dev/null || true
+                            attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
                         else
                             log_error "  $tid: re-prompt failed, marking failed"
-                            cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
+                            cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                             failed_count=$((failed_count + 1))
                             # Auto-update TODO.md and send notification (t128.4)
-                            update_todo_on_blocked "$tid" "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
-                            send_task_notification "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" 2>/dev/null || true
+                            update_todo_on_blocked "$tid" "Re-prompt dispatch failed: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+                            send_task_notification "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                             # Store failure pattern in memory (t128.6)
-                            store_failure_pattern "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" "$tid_desc" 2>/dev/null || true
+                            store_failure_pattern "$tid" "failed" "Re-prompt dispatch failed: $outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                             # Self-heal: attempt diagnostic subtask (t150)
-                            attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>/dev/null || true
+                            attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
                         fi
                     fi
                     ;;
                 blocked)
                     log_warn "  $tid: BLOCKED ($outcome_detail)"
-                    cmd_transition "$tid" "blocked" --error "$outcome_detail" 2>/dev/null || true
+                    cmd_transition "$tid" "blocked" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Clean up worker process tree and PID file (t128.7)
                     cleanup_worker_processes "$tid"
                     # Auto-update TODO.md and send notification (t128.4)
-                    update_todo_on_blocked "$tid" "$outcome_detail" 2>/dev/null || true
-                    send_task_notification "$tid" "blocked" "$outcome_detail" 2>/dev/null || true
+                    update_todo_on_blocked "$tid" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+                    send_task_notification "$tid" "blocked" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Store failure pattern in memory (t128.6)
-                    store_failure_pattern "$tid" "blocked" "$outcome_detail" "$tid_desc" 2>/dev/null || true
+                    store_failure_pattern "$tid" "blocked" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                     # Self-heal: attempt diagnostic subtask (t150)
-                    attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>/dev/null || true
+                    attempt_self_heal "$tid" "blocked" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
                     ;;
                 failed)
                     log_error "  $tid: FAILED ($outcome_detail)"
-                    cmd_transition "$tid" "failed" --error "$outcome_detail" 2>/dev/null || true
+                    cmd_transition "$tid" "failed" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     failed_count=$((failed_count + 1))
                     # Clean up worker process tree and PID file (t128.7)
                     cleanup_worker_processes "$tid"
                     # Auto-update TODO.md and send notification (t128.4)
-                    update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>/dev/null || true
-                    send_task_notification "$tid" "failed" "$outcome_detail" 2>/dev/null || true
+                    update_todo_on_blocked "$tid" "FAILED: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
+                    send_task_notification "$tid" "failed" "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Store failure pattern in memory (t128.6)
-                    store_failure_pattern "$tid" "failed" "$outcome_detail" "$tid_desc" 2>/dev/null || true
+                    store_failure_pattern "$tid" "failed" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                     # Self-heal: attempt diagnostic subtask (t150)
-                    attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>/dev/null || true
+                    attempt_self_heal "$tid" "failed" "$outcome_detail" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
                     ;;
             esac
         done <<< "$running_tasks"
@@ -4075,7 +4100,7 @@ update_todo_on_complete() {
     log_success "Updated TODO.md: $task_id marked complete ($today)"
 
     # Commit and push from the main repo (TODO.md lives on main)
-    if git -C "$trepo" diff --quiet -- TODO.md 2>/dev/null; then
+    if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
@@ -4085,12 +4110,12 @@ update_todo_on_complete() {
     if [[ -n "$tpr_url" ]]; then
         commit_msg="chore: mark $task_id complete in TODO.md (${tpr_url})"
     fi
-    git -C "$trepo" commit -m "$commit_msg" -- TODO.md 2>/dev/null || {
+    git -C "$trepo" commit -m "$commit_msg" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
         log_warn "Failed to commit TODO.md update (may need manual commit)"
         return 1
     }
 
-    git -C "$trepo" push 2>/dev/null || {
+    git -C "$trepo" push 2>>"$SUPERVISOR_LOG" || {
         log_warn "Failed to push TODO.md update (may need manual push)"
         return 1
     }
@@ -4169,18 +4194,18 @@ ${notes_line}" "$todo_file"
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"
 
     # Commit and push
-    if git -C "$trepo" diff --quiet -- TODO.md 2>/dev/null; then
+    if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
     git -C "$trepo" add TODO.md
-    git -C "$trepo" commit -m "chore: mark $task_id blocked in TODO.md" -- TODO.md 2>/dev/null || {
+    git -C "$trepo" commit -m "chore: mark $task_id blocked in TODO.md" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
         log_warn "Failed to commit TODO.md update"
         return 1
     }
 
-    git -C "$trepo" push 2>/dev/null || {
+    git -C "$trepo" push 2>>"$SUPERVISOR_LOG" || {
         log_warn "Failed to push TODO.md update"
         return 1
     }

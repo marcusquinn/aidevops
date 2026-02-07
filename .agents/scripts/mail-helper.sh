@@ -81,7 +81,7 @@ ensure_db() {
     local current_mode
     current_mode=$(db "$MAIL_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
     if [[ "$current_mode" != "wal" ]]; then
-        db "$MAIL_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
+        db "$MAIL_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || echo "[WARN] Failed to enable WAL mode for mail DB" >&2
     fi
 
     return 0

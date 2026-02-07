@@ -213,7 +213,7 @@ get_pending_checks() {
     local pr_number="$1"
     
     local pr_info
-    pr_info=$(gh pr view "$pr_number" --json statusCheckRollup 2>/dev/null || echo '{"statusCheckRollup":[]}')
+    pr_info=$(gh pr view "$pr_number" --json statusCheckRollup || echo '{"statusCheckRollup":[]}')
     
     local pending
     pending=$(echo "$pr_info" | jq -r '[.statusCheckRollup[] | select(.status == "PENDING" or .status == "IN_PROGRESS") | .name] | join(",")' 2>/dev/null | tr '[:upper:]' '[:lower:]')
@@ -586,8 +586,8 @@ check_pr_status() {
     
     # Get PR info
     local pr_info
-    if ! pr_info=$(gh pr view "$pr_number" --json state,mergeable,reviewDecision,statusCheckRollup 2>/dev/null); then
-        print_error "Failed to get PR info"
+    if ! pr_info=$(gh pr view "$pr_number" --json state,mergeable,reviewDecision,statusCheckRollup); then
+        print_error "Failed to get PR info for #$pr_number"
         return 1
     fi
     
@@ -647,7 +647,7 @@ get_pr_feedback() {
     
     # Get AI reviewer comments (CodeRabbit, Gemini Code Assist, Augment Code, Copilot)
     local ai_review_comments api_response
-    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments" 2>/dev/null)
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/comments")
     
     if [[ -z "$api_response" ]]; then
         print_warning "Failed to fetch PR comments from GitHub API"
@@ -664,11 +664,11 @@ get_pr_feedback() {
     
     # Get check run annotations
     local head_sha
-    head_sha=$(gh pr view "$pr_number" --json headRefOid -q .headRefOid 2>/dev/null || echo "")
+    head_sha=$(gh pr view "$pr_number" --json headRefOid -q .headRefOid || echo "")
     
     if [[ -n "$head_sha" ]]; then
         local annotations
-        annotations=$(gh api "repos/{owner}/{repo}/commits/${head_sha}/check-runs" --jq '.check_runs[].output.annotations[]? | "\(.path):\(.start_line) - \(.message)"' 2>/dev/null | head -20 || echo "")
+        annotations=$(gh api "repos/{owner}/{repo}/commits/${head_sha}/check-runs" --jq '.check_runs[].output.annotations[]? | "\(.path):\(.start_line) - \(.message)"' | head -20 || echo "")
         
         if [[ -n "$annotations" ]]; then
             print_info "CI annotations found:"
@@ -691,7 +691,7 @@ check_and_trigger_review() {
     
     # Get last push time
     local last_push_time
-    last_push_time=$(gh pr view "$pr_number" --json commits --jq '.commits[-1].committedDate' 2>/dev/null || echo "")
+    last_push_time=$(gh pr view "$pr_number" --json commits --jq '.commits[-1].committedDate' || echo "")
     
     if [[ -z "$last_push_time" ]]; then
         print_warning "Could not determine last push time"
@@ -700,7 +700,7 @@ check_and_trigger_review() {
     
     # Get last AI reviewer review time (any supported reviewer)
     local last_review_time api_response
-    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews" 2>/dev/null)
+    api_response=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}/reviews")
     
     if [[ -n "$api_response" ]]; then
         last_review_time=$(printf '%s' "$api_response" | jq -r --arg bots "$AI_REVIEWERS" \

@@ -245,6 +245,59 @@ sed_inplace() {
 }
 
 # =============================================================================
+# Stderr Logging Utilities
+# =============================================================================
+# Replace blanket 2>/dev/null with targeted stderr handling.
+# Usage:
+#   log_stderr "context" command args...    # Log stderr to script log file
+#   suppress_stderr command args...         # Suppress stderr (documented intent)
+#   init_log_file                           # Set up AIDEVOPS_LOG_FILE for script
+#
+# Guidelines:
+#   - command -v, kill -0, pgrep: use suppress_stderr (expected noise)
+#   - sqlite3, gh, curl, git push/merge: use log_stderr (errors matter)
+#   - rm, mkdir with || true: keep 2>/dev/null (race conditions)
+
+# Initialize log file for the calling script.
+# Sets AIDEVOPS_LOG_FILE to ~/.aidevops/logs/<script-name>.log
+# Call once at script start after sourcing shared-constants.sh.
+init_log_file() {
+    local script_name
+    script_name="$(basename "${BASH_SOURCE[1]:-${0:-unknown}}" .sh)"
+    local log_dir="${HOME}/.aidevops/logs"
+    mkdir -p "$log_dir" 2>/dev/null || true
+    AIDEVOPS_LOG_FILE="${log_dir}/${script_name}.log"
+    export AIDEVOPS_LOG_FILE
+    return 0
+}
+
+# Run a command, redirecting stderr to the script's log file.
+# Preserves exit code. Falls back to /dev/null if no log file set.
+# Usage: log_stderr "db migration" sqlite3 "$db" "ALTER TABLE..."
+log_stderr() {
+    local context="$1"
+    shift
+    local log_target="${AIDEVOPS_LOG_FILE:-/dev/null}"
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")"
+    echo "[$timestamp] [$context] Running: $*" >> "$log_target" 2>/dev/null || true
+    "$@" 2>> "$log_target"
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "[$timestamp] [$context] Exit code: $rc" >> "$log_target" 2>/dev/null || true
+    fi
+    return $rc
+}
+
+# Suppress stderr with documented intent. Use for commands where stderr
+# is expected noise (e.g., command -v, kill -0, pgrep, sysctl on wrong OS).
+# Usage: suppress_stderr command -v jq
+suppress_stderr() {
+    "$@" 2>/dev/null
+    return $?
+}
+
+# =============================================================================
 # Export all constants for use in other scripts
 # =============================================================================
 
