@@ -27,7 +27,7 @@ mcp:
 - **Output**: `.security-analysis/` directory with reports
 - **Severity**: critical > high > medium > low > info
 - **Benchmarks**: 90% precision, 93% recall (OpenSSF CVE Benchmark)
-- **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), VirusTotal (file/URL/domain), Snyk (optional)
+- **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), VirusTotal (file/URL/domain), Shannon (pentesting), Snyk (optional)
 - **MCP**: `gemini-cli-security` tools: find_line_numbers, get_audit_scope, run_poc
 
 **Vulnerability Categories**:

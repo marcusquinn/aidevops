@@ -2498,6 +2498,31 @@ deploy_aidevops_agents() {
     return 0
 }
 
+# Install Claude Code safety hooks (PreToolUse guard for destructive commands)
+install_claude_code_hooks() {
+    # Only install if Claude Code is present (CLI or config dir)
+    if ! command -v claude &>/dev/null && [[ ! -d "$HOME/.claude" ]]; then
+        print_info "Claude Code not detected, skipping safety hooks"
+        return 0
+    fi
+
+    print_info "Installing Claude Code safety hooks..."
+
+    local hook_script="$HOME/.aidevops/agents/scripts/install-hooks.sh"
+    if [[ ! -x "$hook_script" ]]; then
+        print_warning "Hook installer not found at $hook_script"
+        return 0
+    fi
+
+    if "$hook_script"; then
+        print_success "Claude Code safety hooks installed"
+    else
+        print_warning "Hook installation had issues (non-critical)"
+    fi
+
+    return 0
+}
+
 # Generate Agent Skills SKILL.md files for cross-tool compatibility
 generate_agent_skills() {
     print_info "Generating Agent Skills SKILL.md files..."
@@ -4149,6 +4174,7 @@ main() {
         cleanup_deprecated_mcps
         validate_opencode_config
         deploy_aidevops_agents
+        install_claude_code_hooks
         generate_agent_skills
         create_skill_symlinks
         scan_imported_skills
@@ -4187,6 +4213,7 @@ main() {
         confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
         confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
         confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+        confirm_step "Install Claude Code safety hooks (block destructive commands)" && install_claude_code_hooks
         confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
         confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
         confirm_step "Create symlinks for imported skills" && create_skill_symlinks
@@ -4208,6 +4235,13 @@ main() {
         confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
         # Run AFTER all MCP setup functions to ensure disabled state persists
         confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
+    fi
+
+    # Refresh version cache so session greeting shows correct version
+    # This ensures `setup.sh` alone (without `aidevops update`) updates the cached version
+    local update_check_script="$HOME/.aidevops/agents/scripts/aidevops-update-check.sh"
+    if [[ -x "$update_check_script" ]]; then
+        "$update_check_script" > /dev/null 2>&1 || true
     fi
 
     echo ""

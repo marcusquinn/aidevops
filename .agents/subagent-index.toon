@@ -48,7 +48,7 @@ tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
 tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys
-tools/security/,Security tools - privacy filtering pentesting and scanning,privacy-filter|shannon
+tools/security/,Security tools - pentesting and privacy filtering,shannon|privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,Automation - cron scheduling and macOS AppleScript/JXA,cron-agent|mac|macos-automator
@@ -78,7 +78,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[42]{name,purpose}:
+<!--TOON:scripts[43]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -94,7 +94,6 @@ toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
 secretlint-helper.sh,Secret detection
 security-helper.sh,Security analysis (OSV Ferret history full-scan)
-shannon-helper.sh,Shannon AI pentester (install start logs query stop status report)
 beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
 todo-ready.sh,Show tasks with no open blockers
 ralph-loop-helper.sh,Iterative AI development loops
@@ -122,4 +121,6 @@ schema-validator-helper.sh,Schema.org structured data validation (validate valid
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
 voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
 voice-bridge.py,Voice bridge Python script (VAD STT LLM TTS with session handback)
+install-hooks.sh,Install Claude Code safety hooks (block destructive git/filesystem commands)
+shannon-helper.sh,Shannon AI pentester (install start stop status query logs reports)
 -->
