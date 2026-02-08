@@ -772,6 +772,88 @@ else
     rm -rf "$PULSE_LOCK_DIR"
 fi
 
+# Test: atomic rename for stale lock breaking (t172)
+# When a stale/dead lock is detected, mv (rename) is used instead of rm+mkdir
+# to prevent two processes from both breaking the lock simultaneously
+mkdir "$PULSE_LOCK_DIR" 2>/dev/null
+echo "99999999" > "$PULSE_LOCK_DIR/pid"  # Dead PID
+stale_dir="${PULSE_LOCK_DIR}.stale.$$"
+if mv "$PULSE_LOCK_DIR" "$stale_dir" 2>/dev/null; then
+    pass "Atomic rename (mv) succeeds for stale lock breaking (t172)"
+    # After rename, original dir is gone — mkdir should succeed
+    if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
+        pass "Lock re-acquisition after atomic rename succeeds (t172)"
+        rmdir "$PULSE_LOCK_DIR"
+    else
+        fail "Lock re-acquisition after atomic rename failed"
+    fi
+    rm -rf "$stale_dir"
+else
+    fail "Atomic rename (mv) failed for stale lock"
+fi
+
+# Test: second process loses the rename race (t172)
+# Simulate: lock exists, process A renames it, process B tries to rename — fails
+mkdir "$PULSE_LOCK_DIR" 2>/dev/null
+echo "99999999" > "$PULSE_LOCK_DIR/pid"
+# Process A wins the rename
+stale_dir_a="${PULSE_LOCK_DIR}.stale.a"
+mv "$PULSE_LOCK_DIR" "$stale_dir_a" 2>/dev/null
+# Process B tries to rename — lock dir is gone, mv should fail
+stale_dir_b="${PULSE_LOCK_DIR}.stale.b"
+if ! mv "$PULSE_LOCK_DIR" "$stale_dir_b" 2>/dev/null; then
+    pass "Second rename fails (race loser cannot break lock) (t172)"
+else
+    fail "Second rename should have failed (lock already renamed)"
+    rm -rf "$stale_dir_b"
+fi
+rm -rf "$stale_dir_a"
+
+# ============================================================
+# SECTION 14b: cmd_next concurrency delegation (t172)
+# ============================================================
+section "cmd_next concurrency delegation (t172)"
+
+# cmd_next should return queued tasks without checking concurrency.
+# Concurrency enforcement is solely in cmd_dispatch (authoritative check).
+# This prevents a TOCTOU race where cmd_next limits tasks based on a stale
+# running count that changes as cmd_dispatch processes each task.
+
+# Create tasks for this test
+sup add test-t172a --repo /tmp/test --description "Concurrency test A" >/dev/null
+sup add test-t172b --repo /tmp/test --description "Concurrency test B" >/dev/null
+sup add test-t172c --repo /tmp/test --description "Concurrency test C" >/dev/null
+
+# Create a batch with concurrency=1 and add all three tasks
+batch_output=$(sup batch test-t172-batch --concurrency 1 --tasks "test-t172a,test-t172b,test-t172c" 2>&1)
+batch_t172_id=$(echo "$batch_output" | grep -oE 'batch-[0-9]+-[0-9]+' | head -1)
+
+if [[ -n "$batch_t172_id" ]]; then
+    # Simulate one task already running
+    sup transition test-t172a dispatched >/dev/null
+    sup transition test-t172a running >/dev/null
+
+    # cmd_next should still return queued tasks (it no longer checks concurrency)
+    next_output=$(sup next "$batch_t172_id" 5 2>&1)
+    next_count=$(echo "$next_output" | grep -c "test-t172" || echo "0")
+
+    if [[ "$next_count" -ge 1 ]]; then
+        pass "cmd_next returns queued tasks regardless of concurrency (t172)"
+    else
+        fail "cmd_next returned no tasks, expected queued tasks to be returned" "Output: $next_output"
+    fi
+
+    # Verify running_count still works correctly
+    running=$(sup running-count "$batch_t172_id" 2>&1 | tail -1)
+    if [[ "$running" == "1" ]]; then
+        pass "running-count correctly reports 1 active task"
+    else
+        fail "running-count is '$running', expected '1'"
+    fi
+else
+    skip "Could not create batch for concurrency delegation test"
+fi
+
 # ============================================================
 # SECTION: Evaluate Worker (t161 - clean_exit_no_signal fix)
 # ============================================================
