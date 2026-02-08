@@ -129,7 +129,7 @@ Plan+ can write directly to planning files (interactive sessions only):
 
 **Use this for:** Capturing tasks, writing plans, documenting decisions.
 
-**Worker restriction**: When running as a headless dispatch worker (runner), do NOT edit or commit TODO.md. Workers report status via exit code, log output, and mailbox. The supervisor handles all TODO.md updates.
+**Worker restriction**: Workers must NEVER edit TODO.md. See `workflows/plans.md` "Worker TODO.md Restriction".
 
 ## Auto-Commit Planning Files
 
