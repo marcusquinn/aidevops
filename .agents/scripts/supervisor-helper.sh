@@ -2987,6 +2987,26 @@ cmd_dispatch() {
         return 3  # Return 3 = provider unavailable (distinct from concurrency limit 2)
     fi
 
+    # Pre-dispatch GitHub auth check — verify the worker can push before
+    # creating worktrees and burning compute. Workers spawned via nohup/cron
+    # may lack SSH keys; gh auth git-credential only works with HTTPS remotes.
+    if ! gh auth status >/dev/null 2>&1; then
+        log_error "GitHub auth unavailable for $task_id — gh auth status failed"
+        log_error "Workers need 'gh auth login' with HTTPS protocol. Skipping dispatch."
+        return 3
+    fi
+
+    # Verify repo remote uses HTTPS (not SSH) — workers in cron can't use SSH keys
+    local remote_url
+    remote_url=$(git -C "${trepo:-.}" remote get-url origin 2>/dev/null || echo "")
+    if [[ "$remote_url" == git@* || "$remote_url" == ssh://* ]]; then
+        log_warn "Remote URL is SSH ($remote_url) — switching to HTTPS for worker compatibility"
+        local https_url
+        https_url=$(echo "$remote_url" | sed -E 's|^git@github\.com:|https://github.com/|; s|^ssh://git@github\.com/|https://github.com/|; s|\.git$||').git
+        git -C "${trepo:-.}" remote set-url origin "$https_url" 2>/dev/null || true
+        log_info "Remote URL updated to $https_url"
+    fi
+
     # Create worktree
     log_info "Creating worktree for $task_id..."
     local worktree_path

@@ -597,6 +597,25 @@ cmd_start() {
         print_info "Create a branch first: git checkout -b feature/your-feature"
         return 1
     fi
+
+    # Pre-flight GitHub auth check — workers spawned via nohup/cron may lack
+    # SSH keys or valid gh tokens. Fail fast before burning compute.
+    if ! gh auth status >/dev/null 2>&1; then
+        print_error "GitHub auth unavailable — gh auth status failed"
+        print_error "Workers need 'gh auth login' with HTTPS protocol."
+        return 1
+    fi
+
+    # Verify remote uses HTTPS (not SSH) — cron workers can't use SSH keys
+    local remote_url
+    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+    if [[ "$remote_url" == git@* || "$remote_url" == ssh://* ]]; then
+        print_warning "Remote URL is SSH ($remote_url) — switching to HTTPS for worker compatibility"
+        local https_url
+        https_url=$(echo "$remote_url" | sed -E 's|^git@github\.com:|https://github.com/|; s|^ssh://git@github\.com/|https://github.com/|; s|\.git$||').git
+        git remote set-url origin "$https_url" 2>/dev/null || true
+        print_info "Remote URL updated to $https_url"
+    fi
     
     echo ""
     echo -e "${BOLD}${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
