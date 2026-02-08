@@ -12,16 +12,29 @@ Task/Prompt: $ARGUMENTS
 
 **IMPORTANT**: Before proceeding, extract the first positional argument from `$ARGUMENTS` (ignoring flags like `--max-task-iterations`). Check if it matches the task ID pattern `t\d+` (e.g., `t061`).
 
+**Supervisor dispatch format (t158)**: When dispatched by the supervisor, the prompt may include the task description inline: `/full-loop t061 -- Fix the login bug`. If `$ARGUMENTS` contains ` -- `, everything after ` -- ` is the task description provided by the supervisor. Use it directly instead of looking up TODO.md.
+
 If the first argument is a task ID (e.g., `t061`):
 
-1. Extract the task ID and look up its description from TODO.md:
+1. Extract the task ID and resolve its description using this priority chain:
 
    ```bash
    # Extract first argument (the task ID)
    TASK_ID=$(echo "$ARGUMENTS" | awk '{print $1}')
-   
-   # Look up description (matches open, completed, or declined tasks)
-   TASK_DESC=$(grep -E "^- \[( |x|-)\] $TASK_ID " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //')
+
+   # Priority 1: Inline description from supervisor dispatch (after " -- ")
+   TASK_DESC=$(echo "$ARGUMENTS" | sed -n 's/.*-- //p')
+
+   # Priority 2: Look up from TODO.md
+   if [[ -z "$TASK_DESC" ]]; then
+       TASK_DESC=$(grep -E "^- \[( |x|-)\] $TASK_ID " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //')
+   fi
+
+   # Priority 3: Query supervisor DB (for dynamically-created tasks not yet in TODO.md)
+   if [[ -z "$TASK_DESC" ]]; then
+       TASK_DESC=$(~/.aidevops/agents/scripts/supervisor-helper.sh db \
+           "SELECT description FROM tasks WHERE id = '$TASK_ID';" 2>/dev/null || echo "")
+   fi
    ```
 
 2. Set the session title using the `session-rename` MCP tool:
@@ -34,7 +47,7 @@ If the first argument is a task ID (e.g., `t061`):
    - Good: `"t061: Improve session title to include task description"`
    - Bad: `"Full loop development for t061"`
 
-3. **Fallback**: If `$TASK_DESC` is empty (task not found in TODO.md), use: `"t061: (task not found in TODO.md)"`
+3. **Fallback**: If `$TASK_DESC` is still empty after all lookups, use: `"t061: (task not found)"`
 
 4. Store the full task description for use in subsequent steps.
 
@@ -44,7 +57,8 @@ If the first argument is NOT a task ID (it's a description):
 
 **Example session titles:**
 - Task ID `t061` with description "Improve session title format" → `"t061: Improve session title format"`
-- Task ID `t999` not found → `"t999: (task not found in TODO.md)"`
+- Task ID `t061` with supervisor inline `-- Fix login bug` → `"t061: Fix login bug"`
+- Task ID `t999` not found anywhere → `"t999: (task not found)"`
 - Description "Add JWT authentication" → `"Add JWT authentication"`
 
 ## Full Loop Phases
@@ -148,6 +162,21 @@ The AI will iterate on the task until outputting:
 3. Code quality acceptable
 4. **README gate passed** (see below)
 5. Conventional commits used (for auto-changelog)
+6. **Headless rules observed** (see below)
+
+**Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158):**
+
+When running as a headless worker (dispatched by the supervisor via `Claude -p` or `opencode run`):
+
+1. **NEVER prompt for user input** - There is no human at the terminal. If you encounter ambiguity, make a reasonable decision and document it in a commit message. If truly blocked, exit cleanly so the supervisor can evaluate and retry.
+
+2. **Do NOT edit TODO.md** - The supervisor owns TODO.md updates (marking tasks complete, adding refs). Workers that edit TODO.md cause merge conflicts when multiple workers run in parallel. Put notes in commit messages or PR body instead.
+
+3. **Do NOT edit shared planning files** - Files like `todo/PLANS.md`, `todo/tasks/*` are managed by the supervisor. Workers should only modify files relevant to their assigned task.
+
+4. **Handle auth failures gracefully** - If `gh auth status` fails, report the error clearly and exit rather than retrying indefinitely. The supervisor handles retry logic.
+
+5. **Exit cleanly on unrecoverable errors** - If you cannot complete the task (missing dependencies, permissions, etc.), emit a clear error message and exit. Do not loop forever.
 
 **README gate (MANDATORY - do NOT skip):**
 
@@ -175,7 +204,7 @@ If README update is needed:
 After task completion, the loop automatically:
 
 1. **Preflight**: Runs quality checks, auto-fixes issues
-2. **PR Create**: Creates pull request with `gh pr create --fill`
+2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
 3. **PR Review**: Monitors CI checks and review status
 4. **Merge**: Squash merge (without `--delete-branch` when in worktree)
 5. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees

@@ -55,6 +55,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t158 Fix supervisor dispatch so dynamically-created tasks work with /full-loop #bugfix #supervisor #orchestration ~1h (ai:45m test:15m) logged:2026-02-08 started:2026-02-08
+  - Notes: Problem: supervisor adds tasks to its DB but not to TODO.md, so workers running /full-loop cannot find the task description. Fix: 1) build_dispatch_cmd now passes task description inline in the prompt (` -- description`), 2) full-loop.md Step 0 has 3-tier resolution: inline desc > TODO.md > supervisor DB, 3) full-loop-helper.sh PR creation queries supervisor DB as fallback. Also adds headless worker rules (no user prompts, no TODO.md edits, graceful auth failure handling) and PR creation hardening (gh auth check, rebase before push, proper title/body).
+
 - [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m actual:15m (ai:15m) ref:GH#548 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
 
 - [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h actual:25m (ai:25m) ref:GH#552 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
@@ -459,7 +462,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Update AGENTS.md with parallel agent guidance. Create example runners (code-reviewer, seo-analyst). Document when to use parallel vs sequential.
 - [x] t110 Cron agent for scheduled task management #tools #automation #agents ~3h actual:1h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T03:47Z completed:2026-02-04
   - Notes: Implemented cron-agent.md subagent, cron-helper.sh (list/add/remove/pause/resume/logs/debug/status/run), cron-dispatch.sh (OpenCode server API). Security hardened for remote use (HTTPS by default, proper array expansion). PRs #304, #305 merged.
-- [ ] t111 Objective runner with safety guardrails #tools #automation #agents ~1.5h (ai:1h test:20m read:10m) ref:GH#524 logged:2026-02-04
+- [x] t111 Objective runner with safety guardrails #tools #automation #agents ~1.5h (ai:1h test:20m read:10m) ref:GH#524 logged:2026-02-04 completed:2026-02-08
   - Notes: Long-running objective execution via stateless coordinator loop. Safety guardrails: budget limits (max tokens/cost), step limits (max iterations before human review), scope constraints (whitelist of allowed tools/paths), checkpoint reviews (pause after N steps for approval), rollback capability (git worktrees), audit log (all actions to memory). Creates objective-runner-helper.sh. Add to tools/automation/.
 - [ ] t112 VoiceInk to OpenCode via macOS Shortcut #tools #voice #automation ~15m (ai:10m test:5m) ref:GH#525 logged:2026-02-04 related:t080,t081
   - Notes: macOS Shortcut that takes VoiceInk transcription and sends to OpenCode server API. Flow: VoiceInk transcription → Shortcut → HTTP POST to OpenCode /session/:id/prompt → response. Document in tools/voice/voiceink-shortcut.md. Include AppleScript/Shortcuts app instructions.
@@ -529,7 +532,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: New tool category for visual AI / computer vision models. Initial candidates: MiniCPM-o 4.5 (vision+voice+text, 9B params, Apache-2.0), LLaVA, CogVLM. Create tools/vision/ directory with overview.md covering model selection, local GPU deployment, cloud GPU options. Cross-reference from tools/voice/ for multimodal models.
 - [ ] t132 Evaluate tools/multimodal/ vs cross-references for models spanning voice+vision #architecture #tools #ai ~15m (ai:10m read:5m) ref:GH#539 logged:2026-02-06 related:t131,t080
   - Notes: MiniCPM-o 4.5 does voice+vision+text. Decision needed: 1) Put in tools/vision/ with cross-refs from tools/voice/ (simpler), 2) Create tools/multimodal/ category (cleaner taxonomy but more dirs), 3) Put in whichever is the primary use case and cross-ref. Recommend option 1 initially, revisit when we have 3+ multimodal models.
-- [ ] t133 Cloud GPU deployment guide for AI model hosting #tools #infrastructure #gpu ~45m (ai:30m test:10m read:5m) ref:GH#540 logged:2026-02-06 related:t080,t071
+- [x] t133 Cloud GPU deployment guide for AI model hosting #tools #infrastructure #gpu ~45m (ai:30m test:10m read:5m) ref:GH#540 logged:2026-02-06 related:t080,t071 completed:2026-02-08
   - Notes: Shared guide for deploying GPU-intensive models to cloud providers. Covers: NVIDIA Cloud (A100/H100, official), Vast.ai (auction pricing, cheapest), RunPod (balanced), Lambda (research). Common patterns: SSH setup, Docker deployment, model caching, cost optimization. Referenced by tools/voice/speech-to-speech.md and future tools/vision/ subagents. Could live at tools/infrastructure/cloud-gpu.md or services/hosting/cloud-gpu.md.
 - [x] t137 Test Matrix bot end-to-end with matrix.marcusquinn.com #testing #matrix #agents ~30m (ai:20m test:10m) logged:2026-02-07 related:t109.4 completed:2026-02-07
   - Notes: Homeserver: matrix.marcusquinn.com, client: SchildiChat (local). Node 23 + OpenCode 1.1.53 confirmed. Steps: create bot user on Synapse, get access token, run matrix-dispatch-helper.sh setup, create a test runner, start OpenCode server, map a room, test from SchildiChat with !ai prefix.
