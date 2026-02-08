@@ -85,7 +85,9 @@ readonly SUPERVISOR_DIR="${AIDEVOPS_SUPERVISOR_DIR:-$HOME/.aidevops/.agent-works
 readonly SUPERVISOR_DB="$SUPERVISOR_DIR/supervisor.db"
 readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"       # Used by pulse command (t128.2)
 readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"   # Used by pulse command (t128.6)
-export MAIL_HELPER MEMORY_HELPER
+readonly SESSION_REVIEW_HELPER="${SCRIPT_DIR}/session-review-helper.sh"   # Used by batch completion (t128.9)
+readonly SESSION_DISTILL_HELPER="${SCRIPT_DIR}/session-distill-helper.sh" # Used by batch completion (t128.9)
+export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER
 
 # Valid states for the state machine
 readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed blocked failed cancelled"
@@ -1131,6 +1133,9 @@ check_batch_completion() {
             log_success "Batch $batch_id is now complete"
             # Run batch retrospective and store insights (t128.6)
             run_batch_retrospective "$batch_id" 2>>"$SUPERVISOR_LOG" || true
+
+            # Run session review and distillation (t128.9)
+            run_session_review "$batch_id" 2>>"$SUPERVISOR_LOG" || true
 
             # Trigger automatic release if configured (t128.10)
             local batch_release_flag
@@ -5597,6 +5602,102 @@ run_batch_retrospective() {
             echo "    [$ecnt] $emsg"
         done
     fi
+
+    return 0
+}
+
+#######################################
+# Run session review and distillation after batch completion (t128.9)
+# Gathers session context via session-review-helper.sh and extracts
+# learnings via session-distill-helper.sh for cross-session memory.
+# Also suggests agent-review for post-batch improvement opportunities.
+#######################################
+run_session_review() {
+    local batch_id="$1"
+
+    ensure_db
+
+    local escaped_batch
+    escaped_batch=$(sql_escape "$batch_id")
+    local batch_name
+    batch_name=$(db "$SUPERVISOR_DB" "SELECT name FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "$batch_id")
+
+    # Phase 1: Session review - gather context snapshot
+    if [[ -x "$SESSION_REVIEW_HELPER" ]]; then
+        log_info "Running session review for batch $batch_name..."
+        local review_output=""
+
+        # Get repo from first task in batch (session-review runs in repo context)
+        local batch_repo
+        batch_repo=$(db "$SUPERVISOR_DB" "
+            SELECT t.repo FROM batch_tasks bt
+            JOIN tasks t ON bt.task_id = t.id
+            WHERE bt.batch_id = '$escaped_batch'
+            ORDER BY bt.position LIMIT 1;
+        " 2>/dev/null || echo "")
+
+        if [[ -n "$batch_repo" && -d "$batch_repo" ]]; then
+            review_output=$(cd "$batch_repo" && "$SESSION_REVIEW_HELPER" json 2>>"$SUPERVISOR_LOG") || true
+        else
+            review_output=$("$SESSION_REVIEW_HELPER" json 2>>"$SUPERVISOR_LOG") || true
+        fi
+
+        if [[ -n "$review_output" ]]; then
+            # Store session review snapshot in memory
+            if [[ -x "$MEMORY_HELPER" ]]; then
+                local review_summary
+                review_summary=$(echo "$review_output" | jq -r '
+                    "Session review for batch '"$batch_name"': branch=" + .branch +
+                    " todo=" + (.todo | tostring) +
+                    " changes=" + (.changes | tostring)
+                ' 2>/dev/null || echo "Session review completed for batch $batch_name")
+
+                "$MEMORY_HELPER" store \
+                    --auto \
+                    --type "CONTEXT" \
+                    --content "$review_summary" \
+                    --tags "supervisor,session-review,$batch_name,batch" \
+                    2>/dev/null || true
+            fi
+            log_success "Session review captured for batch $batch_name"
+        else
+            log_warn "Session review produced no output for batch $batch_name"
+        fi
+    else
+        log_warn "session-review-helper.sh not found, skipping session review"
+    fi
+
+    # Phase 2: Session distillation - extract and store learnings
+    if [[ -x "$SESSION_DISTILL_HELPER" ]]; then
+        log_info "Running session distillation for batch $batch_name..."
+
+        local batch_repo
+        # Re-resolve in case it wasn't set above (defensive)
+        batch_repo=$(db "$SUPERVISOR_DB" "
+            SELECT t.repo FROM batch_tasks bt
+            JOIN tasks t ON bt.task_id = t.id
+            WHERE bt.batch_id = '$escaped_batch'
+            ORDER BY bt.position LIMIT 1;
+        " 2>/dev/null || echo "")
+
+        if [[ -n "$batch_repo" && -d "$batch_repo" ]]; then
+            (cd "$batch_repo" && "$SESSION_DISTILL_HELPER" auto 2>>"$SUPERVISOR_LOG") || true
+        else
+            "$SESSION_DISTILL_HELPER" auto 2>>"$SUPERVISOR_LOG" || true
+        fi
+
+        log_success "Session distillation complete for batch $batch_name"
+    else
+        log_warn "session-distill-helper.sh not found, skipping distillation"
+    fi
+
+    # Phase 3: Suggest agent-review (non-blocking recommendation)
+    echo ""
+    echo -e "${BOLD}=== Post-Batch Recommendations ===${NC}"
+    echo "  Batch '$batch_name' is complete. Consider running:"
+    echo "    @agent-review  - Review and improve agents used in this batch"
+    echo "    /session-review - Full interactive session review"
+    echo ""
 
     return 0
 }
