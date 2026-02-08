@@ -3706,6 +3706,37 @@ setup_ai_orchestration() {
     return 0
 }
 
+# Install Claude Code PreToolUse hooks to block destructive git/filesystem commands
+setup_safety_hooks() {
+    print_info "Setting up Claude Code safety hooks..."
+
+    # Check Python is available
+    if ! command -v python3 &>/dev/null; then
+        print_warning "Python 3 not found - safety hooks require Python 3"
+        return 0
+    fi
+
+    local helper_script="$HOME/.aidevops/agents/scripts/install-hooks-helper.sh"
+    if [[ ! -f "$helper_script" ]]; then
+        # Fall back to repo copy
+        local script_dir
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        helper_script="$script_dir/.agents/scripts/install-hooks-helper.sh"
+    fi
+
+    if [[ ! -f "$helper_script" ]]; then
+        print_warning "install-hooks-helper.sh not found - skipping safety hooks"
+        return 0
+    fi
+
+    if bash "$helper_script" install; then
+        print_success "Claude Code safety hooks installed"
+    else
+        print_warning "Safety hook installation encountered issues (non-critical)"
+    fi
+    return 0
+}
+
 # Setup OpenCode Plugins (Antigravity OAuth)
 # Helper function to add/update a single plugin in OpenCode config
 add_opencode_plugin() {
@@ -4149,6 +4180,7 @@ main() {
         cleanup_deprecated_mcps
         validate_opencode_config
         deploy_aidevops_agents
+        setup_safety_hooks
         generate_agent_skills
         create_skill_symlinks
         scan_imported_skills
@@ -4187,6 +4219,7 @@ main() {
         confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
         confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
         confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+        confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
         confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
         confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
         confirm_step "Create symlinks for imported skills" && create_skill_symlinks

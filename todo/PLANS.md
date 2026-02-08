@@ -822,12 +822,12 @@ d001,p001,Keep as optional plugin,aidevops must remain multi-tool compatible,202
 
 ### [2025-12-21] Claude Code Destructive Command Hooks
 
-**Status:** Planning
+**Status:** Complete
 **Estimate:** ~4h (ai:2h test:1h read:1h)
 **Source:** [Dicklesworthstone's guide](https://github.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/blob/main/DESTRUCTIVE_GIT_COMMAND_CLAUDE_HOOKS_SETUP.md)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,
+p002,Claude Code Destructive Command Hooks,complete,4,4,,claude|git|security,4h,2h,1h,1h,2025-12-21T12:00Z,2026-02-08T00:00Z
 -->
 
 #### Purpose
@@ -864,16 +864,16 @@ Implement Claude Code PreToolUse hooks to mechanically block destructive git and
 
 #### Progress
 
-- [ ] (2025-12-21) Phase 1: Create git_safety_guard.py adapted for aidevops ~1h
-- [ ] (2025-12-21) Phase 2: Create installer script with global/project options ~1h
-- [ ] (2025-12-21) Phase 3: Integrate into setup.sh ~30m
-- [ ] (2025-12-21) Phase 4: Document in workflows and test ~1.5h
+- [x] (2026-02-08) Phase 1: Create git_safety_guard.py adapted for aidevops ~1h
+- [x] (2026-02-08) Phase 2: Create installer script with global/project options ~1h
+- [x] (2026-02-08) Phase 3: Integrate into setup.sh ~30m
+- [x] (2026-02-08) Phase 4: Document in workflows and test ~1.5h
 
 <!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m005,p002,Phase 1: Create git_safety_guard.py adapted for aidevops,1h,,2025-12-21T12:00Z,,pending
-m006,p002,Phase 2: Create installer script with global/project options,1h,,2025-12-21T12:00Z,,pending
-m007,p002,Phase 3: Integrate into setup.sh,30m,,2025-12-21T12:00Z,,pending
-m008,p002,Phase 4: Document in workflows and test,1.5h,,2025-12-21T12:00Z,,pending
+m005,p002,Phase 1: Create git_safety_guard.py adapted for aidevops,1h,15m,2025-12-21T12:00Z,2026-02-08,complete
+m006,p002,Phase 2: Create installer script with global/project options,1h,15m,2025-12-21T12:00Z,2026-02-08,complete
+m007,p002,Phase 3: Integrate into setup.sh,30m,5m,2025-12-21T12:00Z,2026-02-08,complete
+m008,p002,Phase 4: Document in workflows and test,1.5h,10m,2025-12-21T12:00Z,2026-02-08,complete
 -->
 
 #### Decision Log

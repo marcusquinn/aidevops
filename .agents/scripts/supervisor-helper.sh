@@ -64,6 +64,17 @@
 #   - Mail: mail-helper.sh for escalation
 #   - Memory: memory-helper.sh for cross-batch learning
 #   - Git: wt/worktree-helper.sh for isolation
+#
+# IMPORTANT - Orchestration Requirements:
+#   - CLI: opencode is the ONLY supported CLI for worker dispatch.
+#     claude CLI fallback is DEPRECATED and will be removed.
+#     Install: npm i -g opencode (https://opencode.ai/)
+#   - Cron pulse: For autonomous operation, install the cron pulse:
+#       supervisor-helper.sh cron install
+#     This runs `pulse` every 2 minutes to check/dispatch/evaluate workers.
+#     Without cron, the supervisor is passive and requires manual `pulse` calls.
+#   - Batch lifecycle: add tasks -> create batch -> cron pulse handles the rest
+#     The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup
 
 set -euo pipefail
 
@@ -236,7 +247,7 @@ check_system_load() {
     process_count=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
     echo "process_count=$process_count"
 
-    # Supervisor worker process count (opencode/claude spawned by supervisor)
+    # Supervisor worker process count (opencode workers spawned by supervisor)
     local supervisor_process_count=0
     if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
         for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
@@ -1718,25 +1729,30 @@ detect_dispatch_mode() {
 
 #######################################
 # Resolve the AI CLI tool to use for dispatch
-# Prefers opencode, falls back to claude
+# Resolve AI CLI for worker dispatch
+# opencode is the ONLY supported CLI for aidevops supervisor workers.
+# claude CLI fallback is DEPRECATED and will be removed in a future release.
 #######################################
 resolve_ai_cli() {
-    # Prefer opencode (supports Anthropic auth + zen free models as fallback)
+    # opencode is the primary and only supported CLI
     if command -v opencode &>/dev/null; then
         echo "opencode"
         return 0
     fi
+    # DEPRECATED: claude CLI fallback - will be removed
     if command -v claude &>/dev/null; then
+        log_warning "Using deprecated claude CLI fallback. Install opencode: npm i -g opencode"
         echo "claude"
         return 0
     fi
-    log_error "Neither opencode nor claude CLI found. Install one to dispatch workers."
+    log_error "opencode CLI not found. Install it: npm i -g opencode"
+    log_error "See: https://opencode.ai/docs/installation/"
     return 1
 }
 
 #######################################
 # Resolve the best available model for a given task tier
-# Priority: Anthropic SOTA via opencode > claude CLI > opencode zen free
+# Priority: Anthropic SOTA via opencode (only supported CLI)
 #
 # Tiers:
 #   coding  - Best SOTA model for code tasks (default)
@@ -2100,7 +2116,7 @@ _list_descendants() {
 
 #######################################
 # Kill all orphaned worker processes (emergency cleanup)
-# Finds opencode/claude processes with PPID=1 that match supervisor patterns
+# Finds opencode worker processes with PPID=1 that match supervisor patterns
 #######################################
 cmd_kill_workers() {
     local dry_run=false
@@ -2151,7 +2167,7 @@ cmd_kill_workers() {
 
     log_info "Protected PIDs (active workers + self): $(echo "$protected_pattern" | tr '|' ' ' | wc -w | tr -d ' ') processes"
 
-    # Find orphaned opencode/claude processes (PPID=1, not in any terminal session)
+    # Find orphaned opencode worker processes (PPID=1, not in any terminal session)
     local orphan_count=0
     local killed_count=0
 
@@ -2888,6 +2904,21 @@ cmd_reprompt() {
 
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
+
+    # Pre-reprompt health check: avoid wasting retry attempts on dead backends
+    # (t153-pre-diag-1: retries 1+2 failed instantly with "All Antigravity
+    # endpoints failed" because reprompt skipped the health check that
+    # cmd_dispatch performs)
+    local health_model
+    health_model=$(resolve_model "health" "$ai_cli")
+    if ! check_model_health "$ai_cli" "$health_model"; then
+        log_error "Provider health check failed for $task_id re-prompt ($health_model via $ai_cli) — deferring retry"
+        # Task is already in 'retrying' state with counter incremented.
+        # Do NOT transition again (would double-increment). Return 75 (EX_TEMPFAIL)
+        # so the pulse cycle can distinguish transient backend failures from real
+        # reprompt failures and leave the task in retrying state for the next pulse.
+        return 75
+    fi
 
     # Build re-prompt message with context about the failure
     local reprompt_msg
@@ -4205,9 +4236,15 @@ cmd_pulse() {
                     # Store failure pattern in memory (t128.6)
                     store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                     # Re-prompt in existing worktree (continues context)
-                    if cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG"; then
+                    local reprompt_rc=0
+                    cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG" || reprompt_rc=$?
+                    if [[ "$reprompt_rc" -eq 0 ]]; then
                         dispatched_count=$((dispatched_count + 1))
                         log_info "  $tid: re-prompted successfully"
+                    elif [[ "$reprompt_rc" -eq 75 ]]; then
+                        # EX_TEMPFAIL: backend unhealthy, task stays in retrying
+                        # state for the next pulse to pick up (t153-pre-diag-1)
+                        log_warn "  $tid: backend unhealthy, deferring re-prompt to next pulse"
                     else
                         # Re-prompt failed - check if max retries exceeded
                         local current_retries
@@ -4267,6 +4304,45 @@ cmd_pulse() {
                     ;;
             esac
         done <<< "$running_tasks"
+    fi
+
+    # Phase 1b: Re-prompt stale retrying tasks (t153-pre-diag-1)
+    # Tasks left in 'retrying' state from a previous pulse where the backend was
+    # unhealthy (health check returned EX_TEMPFAIL=75). Try re-prompting them now.
+    local retrying_tasks
+    retrying_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id FROM tasks
+        WHERE status = 'retrying'
+        AND retries < max_retries
+        ORDER BY updated_at ASC;
+    ")
+
+    if [[ -n "$retrying_tasks" ]]; then
+        while IFS='|' read -r tid; do
+            [[ -z "$tid" ]] && continue
+            log_info "  $tid: retrying (deferred from previous pulse)"
+            local reprompt_rc=0
+            cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG" || reprompt_rc=$?
+            if [[ "$reprompt_rc" -eq 0 ]]; then
+                dispatched_count=$((dispatched_count + 1))
+                log_info "  $tid: re-prompted successfully"
+            elif [[ "$reprompt_rc" -eq 75 ]]; then
+                log_warn "  $tid: backend still unhealthy, deferring again"
+            else
+                log_error "  $tid: re-prompt failed (exit $reprompt_rc)"
+                local current_retries
+                current_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
+                local max_retries_val
+                max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
+                if [[ "$current_retries" -ge "$max_retries_val" ]]; then
+                    cmd_transition "$tid" "blocked" --error "Max retries exceeded during deferred re-prompt" 2>>"$SUPERVISOR_LOG" || true
+                    attempt_self_heal "$tid" "blocked" "Max retries exceeded during deferred re-prompt" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                else
+                    cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed" 2>>"$SUPERVISOR_LOG" || true
+                    attempt_self_heal "$tid" "failed" "Re-prompt dispatch failed" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                fi
+            fi
+        done <<< "$retrying_tasks"
     fi
 
     # Phase 2: Dispatch queued tasks up to concurrency limit
