@@ -681,7 +681,7 @@ cmd_push() {
         # Find all open tasks without GH refs (top-level only, not subtasks)
         while IFS= read -r line; do
             local tid
-            tid=$(echo "$line" | grep -oE 't[0-9]+' | head -1 || echo "")
+            tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
             if [[ -n "$tid" ]] && ! echo "$line" | grep -qE 'ref:GH#[0-9]+'; then
                 # Skip subtasks (indented with more than 0 spaces before the dash)
                 if echo "$line" | grep -qE '^- \['; then
@@ -796,7 +796,7 @@ cmd_enrich() {
         # Find all open tasks WITH GH refs
         while IFS= read -r line; do
             local tid
-            tid=$(echo "$line" | grep -oE 't[0-9]+' | head -1 || echo "")
+            tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
             if [[ -n "$tid" ]]; then
                 tasks+=("$tid")
             fi
@@ -1071,7 +1071,7 @@ cmd_close() {
     else
         while IFS= read -r line; do
             local tid
-            tid=$(echo "$line" | grep -oE 't[0-9]+' | head -1 || echo "")
+            tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
             if [[ -n "$tid" ]]; then
                 tasks+=("$tid")
             fi
