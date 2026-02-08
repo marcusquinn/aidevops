@@ -1935,10 +1935,16 @@ build_dispatch_cmd() {
     local ai_cli="$4"
     local memory_context="${5:-}"
     local model="${6:-}"
+    local description="${7:-}"
 
+    # Include task description in the prompt so the worker knows what to do
+    # even if TODO.md doesn't have an entry for this task (t158)
     local prompt="/full-loop $task_id"
+    if [[ -n "$description" ]]; then
+        prompt="/full-loop $task_id -- $description"
+    fi
     if [[ -n "$memory_context" ]]; then
-        prompt="/full-loop $task_id
+        prompt="$prompt
 
 $memory_context"
     fi
@@ -2348,7 +2354,7 @@ cmd_dispatch() {
     local -a cmd_parts=()
     while IFS= read -r part; do
         cmd_parts+=("$part")
-    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$tmodel")
+    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$tmodel" "$tdesc")
 
     # Ensure PID directory exists before dispatch
     mkdir -p "$SUPERVISOR_DIR/pids"

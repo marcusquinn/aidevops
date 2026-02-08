@@ -293,25 +293,113 @@ run_pr_create_phase() {
         return 0
     fi
     
+    # Verify gh CLI is authenticated before attempting PR operations (t156/t158)
+    if ! command -v gh &>/dev/null; then
+        print_error "gh CLI not found. Install with: brew install gh"
+        return 1
+    fi
+    
+    local gh_auth_retries=3
+    local gh_auth_ok=false
+    local i
+    for ((i = 1; i <= gh_auth_retries; i++)); do
+        if gh auth status &>/dev/null 2>&1; then
+            gh_auth_ok=true
+            break
+        fi
+        if [[ "$i" -lt "$gh_auth_retries" ]]; then
+            print_warning "gh auth check failed (attempt $i/$gh_auth_retries), retrying in 5s..."
+            sleep 5
+        fi
+    done
+    
+    if [[ "$gh_auth_ok" != "true" ]]; then
+        print_error "gh CLI not authenticated after $gh_auth_retries attempts."
+        print_error "Run 'gh auth login' to authenticate, then resume with: full-loop-helper.sh resume"
+        return 1
+    fi
+    
     # Ensure we're on a feature branch
     if ! is_on_feature_branch; then
         print_error "Not on a feature branch. Cannot create PR from main/master."
         return 1
     fi
     
-    # Push branch if needed
     local branch
     branch=$(get_current_branch)
     
-    if ! git ls-remote --exit-code --heads origin "$branch" &>/dev/null; then
-        print_info "Pushing branch to origin..."
-        git push -u origin "$branch"
+    # Rebase onto latest main before pushing to avoid merge conflicts (t156)
+    print_info "Rebasing onto latest main to avoid merge conflicts..."
+    if ! git fetch origin main &>/dev/null; then
+        print_warning "Failed to fetch origin/main, proceeding without rebase"
+    elif ! git rebase origin/main &>/dev/null; then
+        print_warning "Rebase failed (conflicts detected). Aborting rebase and pushing as-is."
+        git rebase --abort &>/dev/null || true
+    else
+        print_info "Rebase onto origin/main successful"
     fi
     
-    # Create PR
+    # Push branch (force-with-lease after rebase to handle rebased history safely)
+    print_info "Pushing branch to origin..."
+    if git ls-remote --exit-code --heads origin "$branch" &>/dev/null; then
+        # Branch exists remotely - use force-with-lease after rebase
+        git push --force-with-lease origin "$branch" || {
+            print_error "Failed to push branch $branch"
+            return 1
+        }
+    else
+        # New branch - initial push
+        git push -u origin "$branch" || {
+            print_error "Failed to push branch $branch"
+            return 1
+        }
+    fi
+    
+    # Build PR title and body from task context (t156/t158)
+    local pr_title pr_body task_id_match
+    task_id_match=$(echo "$branch" | grep -oE 't[0-9]+' | head -1 || echo "")
+    
+    if [[ -n "$task_id_match" ]]; then
+        # Look up task description: TODO.md first, then supervisor DB fallback (t158)
+        local task_desc=""
+        if [[ -f "TODO.md" ]]; then
+            task_desc=$(grep -E "^- \[( |x|-)\] $task_id_match " TODO.md 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //' || echo "")
+        fi
+        if [[ -z "$task_desc" ]]; then
+            task_desc=$("$SCRIPT_DIR/supervisor-helper.sh" db \
+                "SELECT description FROM tasks WHERE id = '$task_id_match';" 2>/dev/null || echo "")
+        fi
+        if [[ -n "$task_desc" ]]; then
+            # Extract first meaningful phrase for PR title (before #tags, ~estimates, etc.)
+            local short_desc
+            short_desc=$(echo "$task_desc" | sed -E 's/ [#~@].*//' | head -c 60)
+            pr_title="feat: ${short_desc} (${task_id_match})"
+        else
+            pr_title="feat: ${task_id_match}"
+        fi
+    else
+        pr_title="feat: ${branch#feature/}"
+    fi
+    
+    # Truncate title to 72 chars (GitHub convention)
+    if [[ ${#pr_title} -gt 72 ]]; then
+        pr_title="${pr_title:0:69}..."
+    fi
+    
+    # Build body from commit log
+    local commit_log
+    commit_log=$(git log origin/main..HEAD --pretty=format:"- %s" 2>/dev/null || echo "")
+    pr_body="## Summary
+
+${commit_log:-No commits yet.}
+
+---
+*Created by full-loop worker*"
+    
+    # Create PR with proper title and body
     print_info "Creating pull request..."
     local pr_url
-    pr_url=$(gh pr create --fill 2>&1) || {
+    pr_url=$(gh pr create --title "$pr_title" --body "$pr_body" 2>&1) || {
         # PR might already exist
         pr_url=$(gh pr view --json url --jq '.url' 2>/dev/null || echo "")
         if [[ -z "$pr_url" ]]; then
