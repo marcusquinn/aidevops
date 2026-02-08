@@ -103,7 +103,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #548 merged. Guard arithmetic with `|| true` to prevent silent exit under `set -e`.
 
-- [ ] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 logged:2026-02-08
+- [ ] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T17:33:28Z logged:2026-02-08
   - Notes: `cmd_update()` in aidevops.sh calls `bash setup.sh` without `--non-interactive`, so interactive prompts silently skip in non-TTY contexts and agents never deploy.
 
 - [ ] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#553 logged:2026-02-08
