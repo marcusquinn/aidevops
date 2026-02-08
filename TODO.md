@@ -60,6 +60,22 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t187 Compaction-resilient session state — ensure critical context survives LLM context compaction #feature #framework #self-improvement ~2h (ai:1.5h test:30m) logged:2026-02-09
+  - [ ] t187.1 Add compaction survival instruction to AGENTS.md/build.txt ~30m blocked-by:none
+    - Notes: Add an instruction that is always preserved through compaction summaries. Something like "When summarizing this conversation for compaction, ALWAYS include: current batch ID, active task IDs and their states, worktree paths, and the next 3 action items." This ensures the model retains operational state even after aggressive compaction. Test by verifying the instruction appears in compaction output.
+  - [ ] t187.2 Add session-state checkpoint command ~1h blocked-by:none
+    - Notes: Create a `/checkpoint` command that outputs a structured continuation prompt (like the one used to resume this session). Format: batch state, task statuses, worktree list, open PRs, next steps, user preferences. Can be auto-generated at session end or on demand. Store in memory for cross-session recall. This is the single highest-impact factor for session continuity through compaction.
+  - [ ] t187.3 Enhance session-distill to capture operational state ~30m blocked-by:t187.2
+    - Notes: Current session-distill captures learnings but not operational state (which tasks are running, what PRs need review). Extend to also emit a checkpoint block that can be fed back as a continuation prompt.
+  - Notes: Lesson from 2026-02-09 session: continuation prompt was the single biggest factor in surviving compaction. AGENTS.md provides the "how" (conventions, tools), but the continuation prompt provides the "where we are" (task states, batch IDs, next steps). Without it, the agent can operate the framework but doesn't know what to work on. Tool outputs (supervisor status, git log, gh pr list) can partially reconstruct state but are slower and lossy.
+- [ ] t188 Pre-migration safety backups for non-git state — backup DBs and local state before destructive operations #bugfix #supervisor #self-improvement ~1h (ai:45m test:15m) logged:2026-02-09
+  - [ ] t188.1 Add automatic backup before schema migrations ~30m blocked-by:none
+    - Notes: The t180 migration already calls backup_db() but the INSERT INTO tasks SELECT * FROM tasks_old_t180 silently failed, leaving the tasks table empty. Need: (a) verify row count after migration matches before, (b) rollback if mismatch, (c) keep backup until next successful pulse confirms data integrity. The backup existed and saved us — but the migration should have caught its own failure.
+  - [ ] t188.2 Add backup-before-modify pattern for non-git state ~30m blocked-by:none
+    - Notes: Git workflow protects code files, but SQLite DBs, memory stores, and config files aren't version-controlled. Pattern: before any destructive operation on non-git state (schema migration, bulk prune, consolidate), create a timestamped backup, verify the operation succeeded, and only clean up the backup after the next successful operation confirms integrity. This is what saved the supervisor DB today — the backup_db() call in the migration created a restore point.
+  - [ ] t188.3 Add backup cleanup on successful verification ~15m blocked-by:t188.1
+    - Notes: Backups accumulate. After a successful pulse confirms task data is intact (row count matches batch_tasks), clean up backups older than 24h. Keep the most recent backup always.
+  - Notes: Lesson from 2026-02-09: t180 schema migration emptied the tasks table (INSERT from renamed table silently failed). The backup_db() call saved us — we restored 60 tasks from the pre-migration backup. Git workflow wouldn't have caught this because SQLite DBs are gitignored. Non-git state needs its own safety net.
 - [ ] t186 Add development lifecycle enforcement to AGENTS.md — all work must create TODO entry and either full-loop or queue for runners #docs #workflow #quality ~30m (ai:20m) ref:GH#682 logged:2026-02-08
   - Notes: Development work was being done without TODO entries and without full-loop testing. Rule added to AGENTS.md: every change must (1) have a TODO entry, (2) ask user whether to implement now or queue, (3) if implementing, follow full-loop (plan->implement->test->verify->deliver). Prevents shipping untested code.
 - [ ] t185 Memory audit pulse — periodic scan of memories for self-improvement opportunities #feature #memory #supervisor ~2h (ai:1.5h test:30m) ref:GH#675 logged:2026-02-08
@@ -157,13 +173,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t164 Distributed task claiming via GitHub Issue assignees #feature #supervisor ref:GH#619 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #621 merged. Implements issue assignment-based task claiming to prevent clashes. cmd_claim/cmd_unclaim, check_task_claimed guard in dispatch, pre-edit-check.sh warns if claimed, ensure_status_labels() for bootstrapping.
 
-- [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08 verified:2026-02-08
+- [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#547 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #548 merged. Guard arithmetic with `|| true` to prevent silent exit under `set -e`.
 
-- [x] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T18:46:26Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #646 merged
+- [x] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#630 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T18:46:26Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #646 merged
   - Notes: `cmd_update()` in aidevops.sh calls `bash setup.sh` without `--non-interactive`, so interactive prompts silently skip in non-TTY contexts and agents never deploy. Re-dispatched after stdout leak fix (PR #643).
 
-- [x] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#553 logged:2026-02-08 completed:2026-02-08
+- [x] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#631 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #636 merged. Fixed `cmd_import_credentials()` to detect multi-tenant loader and read from `tenants/{tenant}/credentials.sh`.
 
 - [x] t171 Fix clean_exit_no_signal: treat EXIT:0 with PR URL as success #bug #supervisor ~30m (ai:20m) ref:GH#632 logged:2026-02-08 completed:2026-02-08
@@ -190,7 +206,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t178 Fix `cmd_reprompt` to handle missing worktrees #bug #supervisor ~30m (ai:20m) ref:GH#648 assignee:marcusquinn started:2026-02-08T20:09:25Z logged:2026-02-08 completed:2026-02-08
   - Notes: When a worktree is cleaned up between retries, cmd_reprompt fails. Should recreate worktree if missing.
 
-- [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08 verified:2026-02-08
+- [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#549 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #552 merged. Added git conflict resolution skill.
 
 - [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
