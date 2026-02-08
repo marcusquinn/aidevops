@@ -66,6 +66,13 @@ sqlite3 --version
 
 # View statistics (includes auto-capture counts)
 ~/.aidevops/agents/scripts/memory-helper.sh stats
+
+# Remove duplicate memories
+~/.aidevops/agents/scripts/memory-helper.sh dedup --dry-run
+~/.aidevops/agents/scripts/memory-helper.sh dedup
+
+# Validate memory health (staleness, duplicates, size)
+~/.aidevops/agents/scripts/memory-helper.sh validate
 ```
 
 ## Slash Commands
@@ -148,6 +155,50 @@ Inspired by Supermemory's relational versioning:
 
 This enables temporal reasoning like "what happened last week?" by distinguishing
 between when you learned something vs when it happened.
+
+## Deduplication
+
+The memory system prevents duplicate entries at two levels:
+
+**On store (automatic):** Before inserting a new memory, the system checks for:
+
+- **Exact duplicates**: identical content string with the same type
+- **Near-duplicates**: same content after normalizing case, punctuation, and whitespace
+
+When a duplicate is detected, the existing entry's access count is incremented and its ID is returned. No new entry is created.
+
+**Bulk deduplication:** For cleaning up existing duplicates:
+
+```bash
+# Preview what would be removed
+memory-helper.sh dedup --dry-run
+
+# Remove all duplicates (keeps oldest, merges tags)
+memory-helper.sh dedup
+
+# Only remove exact duplicates (skip near-duplicates)
+memory-helper.sh dedup --exact-only
+```
+
+## Auto-Pruning
+
+Stale entries are automatically pruned to keep the memory database lean:
+
+- **Trigger**: Runs opportunistically on every `store` call (at most once per 24 hours)
+- **Criteria**: Removes entries older than 90 days that have never been accessed
+- **Safe**: Frequently accessed memories are preserved regardless of age
+- **Manual override**: Use `prune` command for custom thresholds
+
+```bash
+# Manual prune with custom threshold
+memory-helper.sh prune --older-than-days 60
+
+# Preview before pruning
+memory-helper.sh prune --older-than-days 60 --dry-run
+
+# Also prune accessed entries (use with caution)
+memory-helper.sh prune --older-than-days 180 --include-accessed
+```
 
 ## Semantic Search (Opt-in)
 
@@ -256,8 +307,10 @@ memory-helper.sh history mem_xxx   # Show ancestors and descendants
 memory-helper.sh latest mem_xxx    # Find latest version in chain
 
 # Maintenance
-memory-helper.sh validate          # Check for stale entries
-memory-helper.sh prune --dry-run   # Preview cleanup
+memory-helper.sh validate          # Check for stale entries and duplicates
+memory-helper.sh dedup --dry-run   # Preview duplicate removal
+memory-helper.sh dedup             # Remove duplicate entries
+memory-helper.sh prune --dry-run   # Preview stale entry cleanup
 memory-helper.sh prune             # Remove stale entries
 
 # Export

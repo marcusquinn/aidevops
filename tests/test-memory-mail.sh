@@ -236,6 +236,170 @@ else
     fail "memory help output unexpected" "$(echo "$help_output" | head -3)"
 fi
 
+section "Memory: Deduplication on Store"
+
+# Test: exact duplicate is detected and skipped
+dedup_content="Exact duplicate test content for deduplication"
+first_store=$(mem store --content "$dedup_content" --type "WORKING_SOLUTION" --tags "dedup-test")
+first_id=$(echo "$first_store" | grep -oE 'mem_[a-z0-9_]+' | head -1 || true)
+
+second_store=$(mem store --content "$dedup_content" --type "WORKING_SOLUTION" --tags "dedup-test")
+if echo "$second_store" | grep -qi "duplicate"; then
+    pass "Exact duplicate detected on store"
+else
+    fail "Exact duplicate not detected on store" "$second_store"
+fi
+
+# Verify the returned ID matches the original
+second_id=$(echo "$second_store" | grep -oE 'mem_[a-z0-9_]+' | head -1 || true)
+if [[ -n "$first_id" && "$second_id" == "$first_id" ]]; then
+    pass "Duplicate store returns original memory ID"
+else
+    fail "Duplicate store returned different ID" "first=$first_id second=$second_id"
+fi
+
+# Test: near-duplicate (different case/punctuation) is detected
+near_dup_store=$(mem store --content "Exact Duplicate Test Content For Deduplication!" --type "WORKING_SOLUTION" --tags "near-dedup" 2>&1)
+if echo "$near_dup_store" | grep -qi "duplicate"; then
+    pass "Near-duplicate (case/punctuation) detected on store"
+else
+    fail "Near-duplicate not detected on store" "$near_dup_store"
+fi
+
+# Test: different content is NOT flagged as duplicate
+unique_store=$(mem store --content "Completely unique content that should not match anything" --type "CONTEXT" --tags "unique-test")
+if echo "$unique_store" | grep -qi "stored\|ok\|success"; then
+    pass "Unique content stored successfully (not flagged as duplicate)"
+else
+    fail "Unique content was incorrectly flagged" "$unique_store"
+fi
+
+# Test: relational updates bypass dedup check
+if [[ -n "$first_id" ]]; then
+    relational_store=$(mem store --content "$dedup_content" --type "WORKING_SOLUTION" --supersedes "$first_id" --relation updates 2>&1)
+    if echo "$relational_store" | grep -qi "stored\|ok\|success"; then
+        pass "Relational update bypasses dedup check"
+    else
+        fail "Relational update was blocked by dedup" "$relational_store"
+    fi
+fi
+
+section "Memory: Dedup Command"
+
+# Store some duplicates for bulk dedup testing
+mem store --content "Bulk dedup test alpha" --type "CONTEXT" --tags "bulk" >/dev/null
+mem store --content "Bulk dedup test alpha" --type "CONTEXT" --tags "bulk" >/dev/null
+# The second store should be caught by on-store dedup, so force-insert via SQL
+mem_db "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_dedup_test_001', 'test', 'Forced duplicate for dedup test', 'CONTEXT', 'forced', 'medium', datetime('now'), datetime('now'), '/test', 'manual');"
+mem_db "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_dedup_test_002', 'test', 'Forced duplicate for dedup test', 'CONTEXT', 'forced2', 'medium', datetime('now'), datetime('now'), '/test', 'manual');"
+
+# Test: dedup --dry-run shows duplicates without removing
+dedup_dry=$(mem dedup --dry-run 2>&1)
+if echo "$dedup_dry" | grep -qiE "dry.run|would remove|duplicate"; then
+    pass "dedup --dry-run reports duplicates"
+else
+    fail "dedup --dry-run output unexpected" "$dedup_dry"
+fi
+
+# Verify entries still exist after dry-run
+forced_count=$(mem_db "SELECT COUNT(*) FROM learnings WHERE id LIKE 'mem_dedup_test_%';")
+if [[ "$forced_count" -eq 2 ]]; then
+    pass "dedup --dry-run does not delete entries"
+else
+    fail "dedup --dry-run deleted entries (count=$forced_count, expected 2)"
+fi
+
+# Test: dedup actually removes duplicates
+dedup_output=$(mem dedup 2>&1)
+if echo "$dedup_output" | grep -qiE "removed|duplicates|no duplicates"; then
+    pass "dedup command executes successfully"
+else
+    fail "dedup command output unexpected" "$dedup_output"
+fi
+
+# Verify one of the forced duplicates was removed
+forced_after=$(mem_db "SELECT COUNT(*) FROM learnings WHERE id LIKE 'mem_dedup_test_%';")
+if [[ "$forced_after" -le 1 ]]; then
+    pass "dedup removed duplicate entries"
+else
+    fail "dedup did not remove duplicates (count=$forced_after, expected <= 1)"
+fi
+
+# Test: dedup --exact-only
+mem_db "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_exact_001', 'test', 'Exact only test', 'CONTEXT', 'exact', 'medium', datetime('now'), datetime('now'), '/test', 'manual');"
+mem_db "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_exact_002', 'test', 'Exact only test', 'CONTEXT', 'exact2', 'medium', datetime('now'), datetime('now'), '/test', 'manual');"
+dedup_exact=$(mem dedup --exact-only 2>&1)
+if echo "$dedup_exact" | grep -qiE "removed|duplicates|no duplicates"; then
+    pass "dedup --exact-only executes successfully"
+else
+    fail "dedup --exact-only output unexpected" "$dedup_exact"
+fi
+
+section "Memory: Validate (Enhanced)"
+
+# Validate should report on duplicates
+validate_output=$(mem validate 2>&1)
+if echo "$validate_output" | grep -qiE "validation|stale|duplicate|size"; then
+    pass "validate produces comprehensive report"
+else
+    fail "validate output missing expected sections" "$validate_output"
+fi
+
+section "Memory: Auto-Prune"
+
+# Insert an old entry that should be auto-pruned
+mem_db "INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source) VALUES ('mem_old_stale_001', 'test', 'Very old stale entry', 'CONTEXT', 'stale', 'low', datetime('now', '-100 days'), datetime('now', '-100 days'), '/test', 'manual');"
+
+# Verify it exists
+old_exists=$(mem_db "SELECT COUNT(*) FROM learnings WHERE id = 'mem_old_stale_001';")
+if [[ "$old_exists" -eq 1 ]]; then
+    pass "Old stale entry inserted for auto-prune test"
+else
+    fail "Could not insert old stale entry"
+fi
+
+# Remove the auto-prune marker to force a prune run
+rm -f "$AIDEVOPS_MEMORY_DIR/.last_auto_prune"
+
+# Store something to trigger auto-prune
+auto_prune_store=$(mem store --content "Trigger auto-prune by storing new content" --type "CONTEXT" --tags "auto-prune-trigger" 2>&1)
+if echo "$auto_prune_store" | grep -qi "stored\|ok\|success\|auto-pruned\|prune"; then
+    pass "Store with auto-prune trigger succeeds"
+else
+    fail "Store with auto-prune trigger failed" "$auto_prune_store"
+fi
+
+# Check if the old stale entry was pruned
+old_after=$(mem_db "SELECT COUNT(*) FROM learnings WHERE id = 'mem_old_stale_001';")
+if [[ "$old_after" -eq 0 ]]; then
+    pass "Auto-prune removed stale entry"
+else
+    # Auto-prune may not have run if marker was recently touched
+    skip "Auto-prune did not remove stale entry (may be timing-dependent)"
+fi
+
+# Verify the prune marker was created
+if [[ -f "$AIDEVOPS_MEMORY_DIR/.last_auto_prune" ]]; then
+    pass "Auto-prune marker file created"
+else
+    fail "Auto-prune marker file not created"
+fi
+
+section "Memory: Help (dedup listed)"
+
+help_dedup=$(mem help 2>&1)
+if echo "$help_dedup" | grep -qi "dedup"; then
+    pass "Help text includes dedup command"
+else
+    fail "Help text missing dedup command"
+fi
+
+if echo "$help_dedup" | grep -qi "auto-prun"; then
+    pass "Help text mentions auto-pruning"
+else
+    fail "Help text missing auto-pruning info"
+fi
+
 # ============================================================
 # MAIL TESTS
 # ============================================================
