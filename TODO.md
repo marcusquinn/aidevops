@@ -654,7 +654,7 @@ t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,5m,4m,,1m,2026-01-15T00:00Z,pending,,,
 t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,
 t069,Fix toon-helper.sh validate command,,bugfix,15m,10m,2026-01-24T00:00Z,,2026-01-25,done
-t078,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|git|code-review,10m,8m,,2m,2026-01-23T00:00Z,pending,,,
+t078,Add Lumen subagent for AI-powered git diffs and commit generation,,tools|git|code-review,10m,8m,,2m,2026-01-23T00:00Z,done,,,
 t071,Voice AI models for speech generation and transcription,,tools|voice|ai,30m,20m,5m,5m,2026-01-24T00:00Z,pending,,,
 t072,Audio/Video Transcription subagent,,tools|voice|transcription|ai,1.5h,45m,30m,15m,2026-01-24T00:00Z,pending,,,
 t080,Set up Pipecat + NVIDIA Nemotron voice agents for Moltbot realtime calls,,tools|voice|ai|agents,2h,1h,40m,20m,2026-01-26T00:00Z,pending,,,

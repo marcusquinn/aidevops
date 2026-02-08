@@ -221,3 +221,9 @@ export GH_TOKEN=$(gh auth token)
 3. **Use `--generate-notes`** - Auto-generate release notes from commits/PRs
 4. **Use `gh api`** - For advanced GitHub API access
 5. **Use `gh pr create --fill`** - Auto-fill PR details from commits
+
+## See Also
+
+- `lumen.md` - AI-powered visual diffs, commit message generation, and PR review
+- `conflict-resolution.md` - Git conflict resolution strategies
+- `worktrunk.md` - Worktree management for parallel work
