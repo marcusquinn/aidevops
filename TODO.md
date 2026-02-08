@@ -78,7 +78,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t166.3 Auto-create tasks from valid CodeRabbit findings and dispatch workers ~1h blocked-by:t166.2
     - Notes: For verified findings above threshold severity, auto-create TODO.md tasks with ref to CodeRabbit comment. Dispatch via supervisor batch for autonomous fixing. Human review gate for critical/architectural changes. Track which findings were acted on vs dismissed (feedback loop for future filtering).
   - Notes: Self-improving loop: CodeRabbit reviews entire codebase daily, findings become tasks, workers fix them, next review validates fixes. Builds on t163 (completion guards) and t128 (supervisor). Consider rate limits and API costs. Could also integrate other review bots (Codacy, SonarCloud) as additional signal sources. **t167 research confirms Gemini CLI as viable additional signal source** -- add subtask for gemini-cli integration alongside CodeRabbit. Gemini CLI is free (1000 req/day), local, and avoids PR-only limitation of GitHub bot.
-- [ ] t167 Investigate Gemini Code Assist for full codebase review in daily pulse #quality #automation #research ~30m (ai:20m read:10m) ref:GH#625 assignee:marcusquinn logged:2026-02-08 started:2026-02-08
+- [x] t167 Investigate Gemini Code Assist for full codebase review in daily pulse #quality #automation #research ~30m (ai:20m read:10m) ref:GH#625 assignee:marcusquinn logged:2026-02-08 started:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #650 merged
   - Notes: **Research complete (2026-02-08).** Gemini Code Assist GitHub bot (`gemini-code-assist[bot]`) only reviews PR diffs -- confirmed via official docs (developers.google.com/gemini-code-assist/docs/review-github-code, updated 2026-02-02). No full codebase review API or trigger exists. Commands limited to `/gemini review`, `/gemini summary`, `@gemini-code-assist` -- all PR-scoped. Consumer quota: 33 PR reviews/day; Enterprise: 100+/day. **Three approaches evaluated:**
   - **Option 1: Synthetic full-diff PR** -- Create branch from empty tree (`git commit-tree $(git hash-object -t tree /dev/null)`), PR against main. Forces Gemini to review entire codebase as a "diff". VIABLE but hacky: creates noise in PR history, may hit review size limits, 33/day consumer quota means 1 daily review is feasible. Recommended as interim approach for t166 integration.
   - **Option 2: Gemini CLI (gemini-cli)** -- Open-source CLI agent with ReAct loop, file read/write, MCP support. Free tier: 1000 requests/day, 60/min. Can be prompted to review codebase locally without GitHub bot. MOST VIABLE for daily pulse: run `gemini review the codebase for quality issues` in repo dir, parse structured output. No PR needed. Integrates via supervisor dispatch like any other CLI tool.
@@ -108,7 +108,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #548 merged. Guard arithmetic with `|| true` to prevent silent exit under `set -e`.
 
-- [ ] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T18:46:26Z logged:2026-02-08
+- [x] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T18:46:26Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #646 merged
   - Notes: `cmd_update()` in aidevops.sh calls `bash setup.sh` without `--non-interactive`, so interactive prompts silently skip in non-TTY contexts and agents never deploy. Re-dispatched after stdout leak fix (PR #643).
 
 - [x] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#553 logged:2026-02-08 completed:2026-02-08
@@ -120,7 +120,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t172 Fix supervisor concurrency limiter race condition #bug #supervisor ~30m (ai:20m) ref:GH#578 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #639 merged. TOCTOU race fix: atomic mv for pulse lock + concurrency check moved to cmd_dispatch.
 
-- [ ] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#564 assignee:marcusquinn started:2026-02-08T18:46:34Z logged:2026-02-08
+- [x] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#564 assignee:marcusquinn started:2026-02-08T18:46:34Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #649 merged
   - Notes: Multiple workers + supervisor all push to TODO.md on main simultaneously causing merge conflicts. Update /full-loop prompt and runner templates to enforce worker TODO.md restriction. Re-dispatched after stdout leak fix (PR #643).
 
 - [x] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08 completed:2026-02-08
