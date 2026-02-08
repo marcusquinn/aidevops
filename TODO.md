@@ -132,7 +132,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t176 Add uncertainty guidance to worker dispatch prompt #feature #supervisor ~30m (ai:20m) ref:GH#645 assignee:marcusquinn started:2026-02-08T19:38:55Z logged:2026-02-08
   - Notes: Workers don't know when to make autonomous decisions vs flag uncertainty. Add decision framework to dispatch prompt for headless workers.
 
-- [ ] t177 Add integration test for dispatch-worktree-evaluate cycle #test #supervisor ~2h (ai:1h) ref:GH#647 logged:2026-02-08
+- [ ] t177 Add integration test for dispatch-worktree-evaluate cycle #test #supervisor ~2h (ai:1h) ref:GH#647 assignee:marcusquinn started:2026-02-08T19:39:00Z logged:2026-02-08
   - Notes: Tests exist for state machine transitions and lock atomicity, but not for the actual worktree creation + dispatch + evaluation pipeline. Need end-to-end integration tests.
 
 - [ ] t178 Fix `cmd_reprompt` to handle missing worktrees #bug #supervisor ~30m (ai:20m) ref:GH#648 logged:2026-02-08
