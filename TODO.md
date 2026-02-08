@@ -92,8 +92,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
     - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
 
-- [~] t164 ~~Distributed task claiming via GitHub Issue assignees~~ #cancelled ref:GH#619 logged:2026-02-08 cancelled:2026-02-08
-  - Notes: Cancelled — replaced by t165 (provider-agnostic claiming via TODO.md). GitHub Issue sync becomes optional overlay, not primary mechanism. PR #621 closed without merge.
+- [x] t164 Distributed task claiming via GitHub Issue assignees #feature #supervisor ref:GH#619 logged:2026-02-08 verified:2026-02-08
+  - Notes: PR #621 merged. Implements issue assignment-based task claiming to prevent clashes. cmd_claim/cmd_unclaim, check_task_claimed guard in dispatch, pre-edit-check.sh warns if claimed, ensure_status_labels() for bootstrapping.
 
 - [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08
 
