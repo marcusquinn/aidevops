@@ -1025,11 +1025,12 @@ m016,p004,Phase 5: Testing with various invoice/receipt formats,4h,,2025-12-21T2
 
 ### [2025-12-21] Image SEO Enhancement with AI Vision
 
-**Status:** Planning
+**Status:** Complete
 **Estimate:** ~6h (ai:3h test:2h read:1h)
+**Actual:** ~25m
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,
+p005,Image SEO Enhancement with AI Vision,complete,4,4,,seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,2026-02-08T00:00Z
 -->
 
 ### [2025-12-21] Uncloud Integration for aidevops
@@ -1139,16 +1140,20 @@ Add AI-powered image SEO capabilities to the SEO agent. Use Moondream.ai vision 
 
 #### Progress
 
-- [ ] (2025-12-21) Phase 1: Research Moondream.ai API and create moondream.md subagent ~1.5h
-- [ ] (2025-12-21) Phase 2: Create image-seo.md orchestrator subagent ~1.5h
-- [ ] (2025-12-21) Phase 3: Research upscaling APIs and create upscale.md subagent ~1.5h
-- [ ] (2025-12-21) Phase 4: Update seo.md and test integration ~1.5h
+- [x] (2026-02-08) Phase 1: Research Moondream.ai API and create moondream.md subagent ~1.5h actual:10m
+  - Moondream 3 Preview: 9B params, 2B active (MoE), 32k context. API at api.moondream.ai/v1/ with 5 skills: query, caption, detect, point, segment. Python/Node SDKs. $0.30/M input, $2.50/M output tokens, $5/mo free credits. Local via Moondream Station.
+- [x] (2026-02-08) Phase 2: Create image-seo.md orchestrator subagent ~1.5h actual:10m
+  - Orchestrates Moondream for alt text (WCAG 2.1 guidelines, <125 chars), SEO filenames (lowercase-hyphenated, 3-6 words), keyword tags (5-10 per image). Includes batch processing, WordPress integration (WP-CLI + REST API), Schema.org ImageObject output.
+- [x] (2026-02-08) Phase 3: Research upscaling APIs and create upscale.md subagent ~1.5h actual:5m
+  - Real-ESRGAN (local, free, batch), Replicate API (~$0.002/image), Cloudflare Images (CDN-integrated), Sharp (Node.js format conversion). Decision tree: local for bulk/privacy, Replicate for quality, Cloudflare for CDN.
+- [x] (2026-02-08) Phase 4: Update seo.md and test integration ~1.5h actual:5m
+  - Added 3 subagents to YAML frontmatter, 3 rows to subagent table, Image SEO workflow section, image-seo key operation.
 
 <!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m017,p005,Phase 1: Research Moondream.ai API and create moondream.md subagent,1.5h,,2025-12-21T23:30Z,,pending
-m018,p005,Phase 2: Create image-seo.md orchestrator subagent,1.5h,,2025-12-21T23:30Z,,pending
-m019,p005,Phase 3: Research upscaling APIs and create upscale.md subagent,1.5h,,2025-12-21T23:30Z,,pending
-m020,p005,Phase 4: Update seo.md and test integration,1.5h,,2025-12-21T23:30Z,,pending
+m017,p005,Phase 1: Research Moondream.ai API and create moondream.md subagent,1.5h,10m,2025-12-21T23:30Z,2026-02-08,complete
+m018,p005,Phase 2: Create image-seo.md orchestrator subagent,1.5h,10m,2025-12-21T23:30Z,2026-02-08,complete
+m019,p005,Phase 3: Research upscaling APIs and create upscale.md subagent,1.5h,5m,2025-12-21T23:30Z,2026-02-08,complete
+m020,p005,Phase 4: Update seo.md and test integration,1.5h,5m,2025-12-21T23:30Z,2026-02-08,complete
 -->
 
 #### Decision Log
@@ -1168,10 +1173,38 @@ d005,p005,image-seo.md orchestrates moondream and upscale,Single entry point for
 
 #### Surprises & Discoveries
 
-(To be populated during implementation)
+- **Discovery:** Moondream 3 Preview outperforms GPT 5, Gemini 2.5 Flash, and Claude 4 Sonnet on object detection and counting benchmarks
+  **Evidence:** RefCOCO 91.1 vs GPT 5 57.2, CountbenchQA 93.2 vs GPT 5 89.3
+  **Impact:** Moondream is the right choice for image analysis -- specialized VLM beats general-purpose LLMs for vision tasks
+  **Date:** 2026-02-08
 
-<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+- **Discovery:** Moondream has a Segment skill (SVG path masks) not in original plan
+  **Evidence:** /v1/segment endpoint generates precise object masks for background removal
+  **Impact:** Enables product image cleanup workflow (segment product -> remove background -> optimize)
+  **Date:** 2026-02-08
+
+- **Discovery:** Original estimate of 6h was 14x overestimated (actual: ~25m)
+  **Evidence:** All 4 phases completed in single session. Moondream API is well-documented with clear curl examples.
+  **Impact:** Plan estimates should account for documentation-only tasks being faster than code implementation tasks
+  **Date:** 2026-02-08
+
+<!--TOON:discoveries[3]{id,plan_id,observation,evidence,impact,date}:
+s021,p005,Moondream 3 outperforms GPT5/Gemini/Claude on vision benchmarks,RefCOCO 91.1 vs GPT5 57.2,Right tool choice for image analysis,2026-02-08
+s022,p005,Moondream Segment skill not in original plan,/v1/segment endpoint for SVG masks,Enables product image cleanup workflow,2026-02-08
+s023,p005,6h estimate was 14x over (actual 25m),All 4 phases in single session,Adjust estimates for docs-only tasks,2026-02-08
 -->
+
+#### Outcomes & Retrospective
+
+**Delivered:**
+- `seo/moondream.md` (230 lines) - Full Moondream 3 API reference with SEO-specific prompts for alt text, filename, and tag generation
+- `seo/image-seo.md` (200 lines) - Orchestrator with single/batch workflows, WordPress integration, WCAG guidelines, Schema.org output
+- `seo/upscale.md` (175 lines) - 4 upscaling providers with decision tree and complete optimization pipeline
+- `seo.md` updated with 3 new subagents in frontmatter, table, and workflow section
+
+**What went well:** Moondream docs are excellent -- clear API, curl examples, SDK for Python/Node. The 3-subagent architecture from the original plan was the right call.
+
+**What to improve:** Original 6h estimate was based on assuming code implementation. Documentation-only tasks (subagent creation) are much faster.
 
 ### [2025-12-21] SEO Machine Integration for aidevops
 
