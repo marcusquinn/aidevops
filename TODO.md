@@ -55,7 +55,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:20m test:10m) ref:GH#547 logged:2026-02-08 started:2026-02-08
+- [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m actual:15m (ai:15m) ref:GH#548 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
 
 - [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
   - [x] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none completed:2026-02-07
