@@ -197,6 +197,8 @@ worktree-helper.sh add feature/x  # Fallback
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
+**Safety hooks** (Claude Code only): Destructive commands (`git reset --hard`, `rm -rf`, etc.) are blocked by a PreToolUse hook. Run `install-hooks.sh --test` to verify. See `workflows/git-workflow.md` "Destructive Command Safety Hooks" section.
+
 **Full docs**: `workflows/git-workflow.md`, `tools/git/worktrunk.md`
 
 ## Autonomous Orchestration
@@ -255,7 +257,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 |--------|------|
 | Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
 | Code quality | `tools/code-review/code-standards.md` |
-| Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
+| Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |

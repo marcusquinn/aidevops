@@ -1,5 +1,5 @@
 ---
-description: Git merge, cherry-pick, and rebase conflict resolution
+description: Git merge, rebase, and cherry-pick conflict resolution strategies and workflows
 mode: subagent
 tools:
   read: true
@@ -18,192 +18,354 @@ tools:
 
 ## Quick Reference
 
-- **Detect**: `git status` shows "both modified", `git diff --check` finds markers
-- **Markers**: `<<<<<<<` (ours), `=======` (divider), `>>>>>>>` (theirs)
-- **Resolve**: Edit file, remove markers, `git add`, continue operation
-- **Abort**: `git merge --abort`, `git cherry-pick --abort`, `git rebase --abort`
+- **Recommended config**: `git config --global merge.conflictstyle diff3` + `git config --global rerere.enabled true`
+- **Conflict markers**: `<<<<<<<` (ours), `|||||||` (base, with diff3), `=======`, `>>>>>>>` (theirs)
+- **Key commands**: `git merge --abort`, `git checkout --ours/--theirs <file>`, `git log --merge -p`
+
+**Decision Tree** -- when you hit a conflict:
+
+```text
+Conflict detected
+  |
+  +-- Can you abort safely?
+  |     YES --> git merge/rebase/cherry-pick --abort
+  |     NO  --> continue below
+  |
+  +-- Is it a single file, clear which side wins?
+  |     YES --> git checkout --ours/--theirs <file> && git add <file>
+  |     NO  --> continue below
+  |
+  +-- Is it a code conflict needing both changes?
+  |     YES --> Edit file manually, combine both intents, git add <file>
+  |     NO  --> continue below
+  |
+  +-- Is it a binary or lock file?
+        YES --> git checkout --ours/--theirs <file> && git add <file>
+               (then regenerate lock file if needed)
+```
+
+**Quick resolution commands**:
+
+```bash
+git status                          # see conflicted files
+git diff                            # see conflict details
+git log --merge -p                  # commits touching conflicted files
+git checkout --conflict=diff3 <f>   # re-show markers with base version
+git checkout --ours <file>          # take our version
+git checkout --theirs <file>        # take their version
+git add <file>                      # mark as resolved
+git merge --continue                # finish merge (or rebase/cherry-pick --continue)
+```
 
 <!-- AI-CONTEXT-END -->
 
-## Detecting Conflicts
-
-```bash
-# Check for conflicted files
-git status                          # Shows "both modified" entries
-git diff --name-only --diff-filter=U # List only conflicted files
-git diff --check                     # Find remaining conflict markers
-```
-
-Search for unresolved markers in the working tree:
-
-```bash
-rg '<<<<<<<' --files-with-matches
-```
-
 ## Understanding Conflict Markers
 
+When git cannot auto-merge, it inserts markers into the file:
+
 ```text
-<<<<<<< HEAD
-// Your current branch's version (ours)
-const timeout = 5000;
+<<<<<<< HEAD (or ours)
+Your changes
+||||||| base (only with diff3 conflictstyle)
+Original version before either change
 =======
-// Incoming branch's version (theirs)
-const timeout = 10000;
->>>>>>> feature/new-timeouts
+Their changes
+>>>>>>> branch-name (or theirs)
 ```
 
-| Marker | Meaning |
-|--------|---------|
-| `<<<<<<< HEAD` | Start of current branch content |
-| `=======` | Divider between the two versions |
-| `>>>>>>> branch` | End of incoming branch content |
+The `diff3` style (showing the base) is critical for understanding intent. Without it, you only see two versions and must guess what the original looked like.
 
-In a **rebase**, the meaning is inverted: HEAD is the branch being rebased onto (upstream), and the named ref is your commit being replayed.
+**Enable diff3 globally** (strongly recommended):
+
+```bash
+git config --global merge.conflictstyle diff3
+```
+
+To re-generate markers with diff3 on an already-conflicted file:
+
+```bash
+git checkout --conflict=diff3 <file>
+```
 
 ## Resolution Strategies
 
-### Accept one side entirely
+### Strategy options for merge (`-X`)
+
+| Option | Effect | When to use |
+|--------|--------|-------------|
+| `-Xours` | Our side wins on conflicts (non-conflicting theirs still merges) | Your branch is authoritative |
+| `-Xtheirs` | Their side wins on conflicts | Accepting incoming as authoritative |
+| `-Xignore-space-change` | Treat whitespace-only changes as identical | Mixed line endings, reformatting |
+| `-Xpatience` | Use patience diff algorithm | Better alignment when matching lines cause misalignment |
+
+**Important**: `-Xours` (strategy option) is different from `-s ours` (strategy). The strategy discards the other branch entirely. The option only resolves conflicts in your favor while still merging non-conflicting changes.
+
+### Per-file resolution
 
 ```bash
-# Accept current branch version for specific file
-git checkout --ours path/to/file
-git add path/to/file
+# Take one side entirely for a specific file
+git checkout --ours <file>          # keep your version
+git checkout --theirs <file>        # keep their version
+git add <file>
 
-# Accept incoming branch version for specific file
-git checkout --theirs path/to/file
-git add path/to/file
+# Manual 3-way merge (extract all versions)
+git show :1:<file> > file.base      # common ancestor
+git show :2:<file> > file.ours      # our version
+git show :3:<file> > file.theirs    # their version
+git merge-file -p file.ours file.base file.theirs > <file>
 ```
 
-### Accept one side for entire merge
+### Investigating conflicts
 
 ```bash
-git merge feature-branch -X ours    # Prefer current on conflicts
-git merge feature-branch -X theirs  # Prefer incoming on conflicts
+# Show only commits that touch conflicted files
+git log --merge -p
+
+# See which commits are on which side
+git log --left-right HEAD...MERGE_HEAD
+
+# Compare merge result against each side
+git diff --ours                     # vs our version
+git diff --theirs                   # vs their version
+git diff --base                     # vs common ancestor
+
+# List all unmerged files with stage numbers
+git ls-files -u
 ```
 
-### Manual merge (most common for AI agents)
+## Scenario-Specific Workflows
 
-1. Read the conflicted file
-2. Understand **intent** of both sides (check commit messages with `git log`)
-3. Edit: combine changes or choose the correct version
-4. Remove all conflict markers
-5. `git add` the resolved file
-
-### 3-way merge with merge base
+### Merge conflicts (`git merge main`)
 
 ```bash
-# See the common ancestor version
-git show :1:path/to/file    # Base (common ancestor)
-git show :2:path/to/file    # Ours (current branch)
-git show :3:path/to/file    # Theirs (incoming branch)
+git merge main
+# If conflicts:
+git status                          # identify conflicted files
+git diff                            # review conflicts
+# Edit files to resolve, then:
+git add <resolved-files>
+git merge --continue
+# Or abort:
+git merge --abort
 ```
 
-## Cherry-Pick Conflicts
+### Rebase conflicts (`git rebase main`)
 
-Cherry-pick applies a single commit onto a different base, so conflicts are common when surrounding code differs.
+Rebase replays commits one at a time, so you may resolve multiple conflicts:
 
 ```bash
-git cherry-pick abc1234
-# ... conflicts arise ...
+git rebase main
+# For each conflicted commit:
+git status                          # see conflicts
+# Resolve, then:
+git add <resolved-files>
+git rebase --continue               # move to next commit
+# Or skip this commit:
+git rebase --skip
+# Or abort entirely:
+git rebase --abort
+```
 
-# Resolve each file, then:
-git add path/to/resolved-file
+### Cherry-pick conflicts
+
+```bash
+git cherry-pick <commit>
+# If conflicts:
+git status
+# Resolve, then:
+git add <resolved-files>
 git cherry-pick --continue
-
 # Or abort:
 git cherry-pick --abort
 ```
 
-**Tip**: Use `git log --oneline abc1234 -1` to review the original commit's intent before resolving.
+Useful cherry-pick flags:
 
-## Rebase Conflicts
+| Flag | Purpose |
+|------|---------|
+| `--no-commit` (`-n`) | Apply without committing (inspect first) |
+| `-x` | Append "(cherry picked from ...)" to message |
+| `-m 1` | Cherry-pick a merge commit (specify mainline parent) |
+| `--strategy-option=theirs` | Their side wins on conflicts |
 
-Rebase replays commits one at a time. You may need to resolve conflicts at each step.
+### Stash pop conflicts
 
 ```bash
-git rebase main
-# ... conflict at commit N ...
-
+git stash pop
+# If conflicts:
+git status
 # Resolve, then:
-git add path/to/resolved-file
-git rebase --continue
-
-# Skip this commit entirely:
-git rebase --skip
-
-# Abort the whole rebase:
-git rebase --abort
+git add <resolved-files>
+# Note: stash is NOT dropped on conflict. After resolving:
+git stash drop
 ```
-
-**Important**: During rebase, "ours" is the upstream branch (main) and "theirs" is your commit being replayed. This is the opposite of merge.
 
 ## Common Conflict Patterns
 
-### Same function modified on both sides
+### Both sides modified the same function
 
-Both branches edited the same function. Read both versions, merge the logic manually. Often both changes are needed.
+Use `git log --merge -p` to understand what each side changed. Read the base version (with diff3), understand both intents, combine manually.
 
-### Import / require conflicts
+### File renamed on one side, modified on the other
 
-Both branches added imports. Usually combine both sets and deduplicate. Sort order may need adjustment to match project conventions.
-
-### Lockfile conflicts (package-lock.json, yarn.lock, Cargo.lock)
-
-Never manually resolve lockfiles. Regenerate instead:
+Git's `ort` strategy detects renames automatically. If it fails:
 
 ```bash
-# Accept one side, then regenerate
-git checkout --theirs package-lock.json
-npm install
-git add package-lock.json
-
-# Or delete and regenerate
-rm package-lock.json
-npm install
-git add package-lock.json
+git merge -Xfind-renames=30 <branch>   # lower threshold = more aggressive detection
 ```
-
-### Adjacent line changes
-
-Git cannot auto-merge when both sides modify nearby (not identical) lines. Review the diff carefully; these are usually safe to combine.
 
 ### File deleted on one side, modified on the other
 
-```bash
-# Keep the file (accept the modification)
-git add path/to/file
-
-# Remove it (accept the deletion)
-git rm path/to/file
-```
-
-## Post-Resolution Verification
-
-After resolving all conflicts:
+Git reports `CONFLICT (modify/delete)`:
 
 ```bash
-# Ensure no conflict markers remain
-git diff --check
-rg '<<<<<<<|=======|>>>>>>>' --files-with-matches
-
-# Review what you resolved
-git diff --staged
-
-# Run tests before completing
-npm test        # or project-appropriate test command
-
-# Complete the operation
-git merge --continue     # or
-git cherry-pick --continue  # or
-git rebase --continue
+git add <file>      # keep the modified version
+git rm <file>       # accept the deletion
 ```
 
-## AI-Assisted Resolution Tips
+### Both sides added a file with the same name (add/add)
 
-1. **Read both sides fully** before editing. Understand the intent, not just the text.
-2. **Check commit messages**: `git log --oneline main..HEAD` and `git log --oneline HEAD..feature` to understand what each side was trying to achieve.
-3. **Prefer combining** over choosing. If both sides add valid code, merge both contributions.
-4. **Watch for semantic conflicts**: Code may merge cleanly but break at runtime (e.g., a renamed function called with the old name). Run tests.
-5. **Resolve one file at a time**: `git add` each file after resolving, then verify with `git diff --check`.
-6. **When unsure, abort**: It is always safe to `--abort` and start over. Never push a broken merge.
-7. **Lockfiles are never hand-merged**: Always regenerate from the package manager.
+```bash
+git checkout --ours <file>      # or --theirs
+git add <file>
+```
+
+### Lock files (package-lock.json, yarn.lock, pnpm-lock.yaml)
+
+Never manually merge lock files. Choose one side and regenerate:
+
+```bash
+git checkout --theirs package-lock.json   # or --ours
+npm install                                # regenerate
+git add package-lock.json
+```
+
+For npm, you can also use `.gitattributes`:
+
+```text
+package-lock.json merge=ours
+```
+
+### Binary files
+
+Git cannot merge binary files:
+
+```bash
+git checkout --ours <file>      # or --theirs
+git add <file>
+```
+
+## git rerere (Reuse Recorded Resolution)
+
+Rerere records how you resolve conflicts and auto-applies the same resolution next time.
+
+### Setup
+
+```bash
+git config --global rerere.enabled true
+```
+
+### How it works
+
+1. On conflict, rerere saves the **preimage** (conflict markers)
+2. After you resolve and commit, it saves the **postimage** (your resolution)
+3. Next time the same conflict occurs, it auto-applies your resolution to the working tree
+4. You still need to `git add` and verify -- rerere does not auto-stage
+
+### Commands
+
+```bash
+git rerere status               # files with recorded preimages
+git rerere diff                 # current state vs recorded resolution
+git rerere remaining            # files still unresolved
+git rerere forget <path>        # delete a bad recorded resolution
+git rerere gc                   # prune old records
+```
+
+### GC configuration
+
+```bash
+git config gc.rerereUnresolved 15   # days to keep unresolved (default 15)
+git config gc.rerereResolved 60     # days to keep resolved (default 60)
+```
+
+### Best use cases
+
+- Long-lived topic branches repeatedly rebased against main
+- Test merges: merge to test, `reset --hard HEAD^`, later rebase -- rerere remembers
+- Integration branches merging many topic branches for CI
+
+### Safety
+
+```bash
+# Review rerere's auto-resolution before staging
+git cherry-pick --no-rerere-autoupdate <commit>
+git rerere diff                 # inspect what rerere did
+git add .                       # stage only if satisfied
+```
+
+## AI-Assisted Conflict Resolution
+
+When using AI coding tools to resolve conflicts:
+
+1. **Enable diff3** -- gives the AI the base version for reasoning about intent
+2. **Provide context** -- run `git log --merge -p` and share the output
+3. **Review carefully** -- AI may not understand project conventions, build implications, or runtime behavior
+
+AI works well for:
+- Code conflicts where both sides add different features
+- Import/export statement conflicts
+- Configuration file conflicts
+
+AI needs human review for:
+- Generated files (schemas, lock files) -- regenerate instead
+- Database migrations -- ordering matters
+- Security-sensitive code
+
+## Prevention
+
+### Recommended git configuration
+
+```bash
+git config --global merge.conflictstyle diff3
+git config --global rerere.enabled true
+git config --global pull.rebase true
+git config --global diff.algorithm histogram
+```
+
+### Workflow practices
+
+| Practice | Effect |
+|----------|--------|
+| Frequent integration | Merge/rebase from main often -- small conflicts early |
+| Small PRs | Fewer files changed = fewer conflicts |
+| Rebase before PR | `git rebase main` surfaces conflicts in your branch |
+| Worktrees | Parallel work without stash conflicts (see `tools/git/worktrunk.md`) |
+| Feature flags | Ship disabled features to main early -- avoid long-lived branches |
+
+## Error Recovery
+
+```bash
+# Abort any in-progress operation
+git merge --abort
+git rebase --abort
+git cherry-pick --abort
+
+# Undo a completed merge (before push)
+git reset --hard HEAD^
+
+# Undo a completed merge (after push) -- creates a revert commit
+git revert -m 1 <merge-commit>
+
+# Find lost commits after a bad reset
+git reflog
+git checkout <lost-commit-sha>
+```
+
+## Related
+
+- `tools/git/worktrunk.md` -- Worktree management (conflict prevention)
+- `workflows/git-workflow.md` -- Branch-first development
+- `workflows/pr.md` -- PR creation and merge
+- `workflows/branch.md` -- Branch management
+- `workflows/branch/release.md` -- Cherry-pick for releases
