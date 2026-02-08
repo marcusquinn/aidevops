@@ -116,7 +116,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Concurrent pulse invocations (cron + manual) each dispatch independently, exceeding batch concurrency. Need dispatch lock or post-dispatch running count check.
 
 - [ ] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#564 assignee:marcusquinn started:2026-02-08T18:22:55Z logged:2026-02-08
-  - Notes: Multiple workers + supervisor all push to TODO.md on main simultaneously causing merge conflicts. Update /full-loop prompt and runner templates to enforce worker TODO.md restriction.
+  - Notes: Multiple workers + supervisor all push to TODO.md on main simultaneously causing merge conflicts. Update /full-loop prompt and runner templates to enforce worker TODO.md restriction. BLOCKED: Re-prompt dispatch failed: ambiguous_skipped_ai
 
 - [ ] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08
   - Notes: Workers must: pull --rebase before push, handle gh auth failures, NOT edit TODO.md, create PR with proper title/body, never stop to ask for confirmation.
