@@ -212,3 +212,4 @@ repomix-output.*
 
 # ML model caches (downloaded at runtime)
 mlx_models/
+__pycache__/
