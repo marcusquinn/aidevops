@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 logged:2026-02-08
+- [ ] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 assignee:marcusquinn started:2026-02-08T20:42:38Z logged:2026-02-08
   - [ ] t168.1 Build model discovery - enumerate available models from OpenCode config and provider APIs ~1h blocked-by:none
     - Notes: Parse opencode.json and provider configs to list available models. Categorise as free vs paid. For /compare-models, prompt user to select 2+ models from any provider. For /compare-models-free, auto-select all free-tier models. Use model-routing.md tiers as reference. Need to handle provider auth (some models need API keys, free models may not).
   - [ ] t168.2 Implement task dispatch to each selected model via Task tool subagents ~1.5h blocked-by:t168.1
