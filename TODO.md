@@ -62,6 +62,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t162 fix: supervisor DB safety - add backup-before-migrate and explicit column migrations #bugfix #supervisor ~30m (ai:25m test:5m) ref:GH#590 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
   - Notes: Root cause: t128.8 migration uses INSERT INTO tasks SELECT * FROM tasks_old which fails on column count mismatch if migrations run out of order. No backup before destructive table rename/recreate migrations. Fix: 1) Add backup_db() helper with SQLite .backup, timestamped copies, auto-prune to 5. 2) Add backup before t128.8 and t148 destructive migrations. 3) Fix t128.8 SELECT * to use explicit column list. 4) Add backup/restore commands for manual recovery.
 
+- [ ] t163 Prevent false task completion cascade (AGENTS.md rule + issue-sync guard + supervisor verify) #plan #quality #workflow → [todo/PLANS.md] ~4h (ai:2h test:1h read:1h) logged:2026-02-08
+  - [ ] t163.1 Add task completion rules to AGENTS.md Planning & Tasks section ~15m blocked-by:none
+    - Notes: Rule: NEVER mark [x] unless YOU wrote code/content in THIS session. Workers leave tasks for reviewer. Verify deliverable exists and is substantive before marking.
+  - [ ] t163.2 Add guard to issue-sync-helper.sh cmd_close() - require merged PR or verified: field ~1h blocked-by:none
+    - Notes: cmd_close currently blindly closes issues when TODO.md has [x]. Add check: task must have either a merged PR ref or verified:YYYY-MM-DD field. Dry-run by default, --force for real close.
+  - [ ] t163.3 Add pre-commit validation for TODO.md [x] transitions ~1h blocked-by:none
+    - Notes: Git hook or CI check: when task goes [ ] -> [x], verify current branch has commits touching related files. Warn if no deliverable found.
+  - [ ] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
+    - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
+
 - [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08
 
 - [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08
