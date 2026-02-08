@@ -221,8 +221,8 @@ done
 # Create batch
 BATCH_ID=$($SH batch "$BATCH_NAME" --concurrency "$CONCURRENCY" --tasks "$TASK_IDS_CSV")
 
-# Install cron pulse for unattended operation
-$SH cron install --batch "$BATCH_ID"
+# Install cron pulse every 1 minute for unattended operation
+$SH cron install --interval 1 --batch "$BATCH_ID"
 
 # Run first pulse to start dispatching
 $SH pulse --batch "$BATCH_ID"
@@ -230,16 +230,38 @@ $SH pulse --batch "$BATCH_ID"
 
 ## Step 5: Supervise (Monitor + React Loop)
 
-**This is the core supervisor loop.** The session stays here until the batch completes.
-Each iteration should be lightweight — check status, react to changes, report progress.
+**This is the core supervisor loop. The session NEVER exits this loop voluntarily.**
+It runs until the batch completes — which may take hours or days. Between pulses,
+use `sleep 60` to wait. Never stop to ask the user, never pause to summarize, never
+exit to "check back later". The supervisor is a daemon.
 
 ### Pulse cycle
 
 ```bash
-# Poll every 2-5 minutes (cron handles the mechanical pulse;
-# the supervisor adds judgment and reaction)
-$SH pulse --batch "$BATCH_ID"
+# Continuous supervisor loop — runs until batch completes
+while true; do
+  $SH pulse --batch "$BATCH_ID"
+
+  # Check if batch is done
+  STATUS=$($SH status "$BATCH_ID" 2>/dev/null | grep -oP 'Status:\s+\K\S+')
+  RUNNING=$($SH running-count "$BATCH_ID" 2>/dev/null)
+  QUEUED=$($SH list --state queued --batch "$BATCH_ID" 2>/dev/null | wc -l)
+
+  if [[ "$RUNNING" -eq 0 && "$QUEUED" -eq 0 ]]; then
+    break  # All tasks terminal — proceed to Step 6
+  fi
+
+  # React to outcomes (merge PRs, handle failures, dispatch fixes)
+  # ... (see evaluation steps below)
+
+  sleep 60  # Wait 1 minute, then pulse again
+done
 ```
+
+**The cron pulse runs independently every 1 minute** as a safety net. The supervisor
+session's own loop adds judgment on top: merging PRs, creating fix tasks, adjusting
+parameters. Both run in parallel — the cron handles mechanical dispatch/evaluation,
+the session handles decisions that need context.
 
 After each pulse, evaluate:
 
