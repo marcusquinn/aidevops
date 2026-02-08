@@ -132,6 +132,18 @@ validate_version_consistency() {
         warnings=$((warnings + 1))
     fi
     
+    # Check homebrew/aidevops.rb (version URL only - SHA256 is updated by CI)
+    if [[ -f "$REPO_ROOT/homebrew/aidevops.rb" ]]; then
+        if grep -q "v${expected_version}.tar.gz" "$REPO_ROOT/homebrew/aidevops.rb"; then
+            print_success "homebrew/aidevops.rb: v$expected_version"
+        else
+            local current_formula_version
+            current_formula_version=$(grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+\.tar\.gz' "$REPO_ROOT/homebrew/aidevops.rb" | head -1 || echo "not found")
+            print_error "homebrew/aidevops.rb shows '$current_formula_version', expected 'v${expected_version}.tar.gz'"
+            errors=$((errors + 1))
+        fi
+    fi
+    
     # Check .claude-plugin/marketplace.json (optional - only for repos with Claude plugin)
     if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
         local marketplace_version
