@@ -36,6 +36,8 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 **Subagent write restrictions**: Subagents invoked via the Task tool cannot run `pre-edit-check.sh` (many lack `bash: true`). When on `main`/`master`, subagents with `write: true` may ONLY write to: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes must be returned as proposed edits for the calling agent to apply in a worktree.
 
+**Worker TODO.md restriction**: Headless dispatch workers (runners) must NEVER edit or commit TODO.md. Workers report status via exit code, log output, and mailbox. The supervisor handles all TODO.md updates. See `workflows/plans.md` "Worker TODO.md Restriction" section.
+
 ---
 
 ## MANDATORY: File Discovery
@@ -102,7 +104,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
-**After ANY TODO/planning edit**: Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main — no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. See `workflows/plans.md` "Commit and Push After TODO Changes" section.
+**After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. Workers must NOT edit TODO.md -- see `workflows/plans.md` "Worker TODO.md Restriction".
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
@@ -264,6 +266,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
+| Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
 | Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing) |
 | MCP dev | `tools/build-mcp/build-mcp.md` |

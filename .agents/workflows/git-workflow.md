@@ -146,11 +146,13 @@ git stash pop
 
 ## Time Tracking Integration
 
-When creating branches, record the `started:` timestamp in TODO.md or PLANS.md:
+When creating branches, record the `started:` timestamp in TODO.md or PLANS.md.
+
+**Worker restriction**: Headless dispatch workers must NOT edit TODO.md directly. The supervisor handles all TODO.md updates. See `workflows/plans.md` "Worker TODO.md Restriction".
 
 ### Recording Start Time
 
-After creating a branch, update the corresponding task in TODO.md:
+After creating a branch (interactive sessions only), update the corresponding task in TODO.md:
 
 ```bash
 # Find the task and add started: timestamp

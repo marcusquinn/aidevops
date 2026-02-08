@@ -2905,6 +2905,21 @@ cmd_reprompt() {
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
 
+    # Pre-reprompt health check: avoid wasting retry attempts on dead backends
+    # (t153-pre-diag-1: retries 1+2 failed instantly with "All Antigravity
+    # endpoints failed" because reprompt skipped the health check that
+    # cmd_dispatch performs)
+    local health_model
+    health_model=$(resolve_model "health" "$ai_cli")
+    if ! check_model_health "$ai_cli" "$health_model"; then
+        log_error "Provider health check failed for $task_id re-prompt ($health_model via $ai_cli) — deferring retry"
+        # Task is already in 'retrying' state with counter incremented.
+        # Do NOT transition again (would double-increment). Return 75 (EX_TEMPFAIL)
+        # so the pulse cycle can distinguish transient backend failures from real
+        # reprompt failures and leave the task in retrying state for the next pulse.
+        return 75
+    fi
+
     # Build re-prompt message with context about the failure
     local reprompt_msg
     if [[ -n "$prompt_override" ]]; then
@@ -4221,9 +4236,15 @@ cmd_pulse() {
                     # Store failure pattern in memory (t128.6)
                     store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
                     # Re-prompt in existing worktree (continues context)
-                    if cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG"; then
+                    local reprompt_rc=0
+                    cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG" || reprompt_rc=$?
+                    if [[ "$reprompt_rc" -eq 0 ]]; then
                         dispatched_count=$((dispatched_count + 1))
                         log_info "  $tid: re-prompted successfully"
+                    elif [[ "$reprompt_rc" -eq 75 ]]; then
+                        # EX_TEMPFAIL: backend unhealthy, task stays in retrying
+                        # state for the next pulse to pick up (t153-pre-diag-1)
+                        log_warn "  $tid: backend unhealthy, deferring re-prompt to next pulse"
                     else
                         # Re-prompt failed - check if max retries exceeded
                         local current_retries
@@ -4283,6 +4304,45 @@ cmd_pulse() {
                     ;;
             esac
         done <<< "$running_tasks"
+    fi
+
+    # Phase 1b: Re-prompt stale retrying tasks (t153-pre-diag-1)
+    # Tasks left in 'retrying' state from a previous pulse where the backend was
+    # unhealthy (health check returned EX_TEMPFAIL=75). Try re-prompting them now.
+    local retrying_tasks
+    retrying_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT id FROM tasks
+        WHERE status = 'retrying'
+        AND retries < max_retries
+        ORDER BY updated_at ASC;
+    ")
+
+    if [[ -n "$retrying_tasks" ]]; then
+        while IFS='|' read -r tid; do
+            [[ -z "$tid" ]] && continue
+            log_info "  $tid: retrying (deferred from previous pulse)"
+            local reprompt_rc=0
+            cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG" || reprompt_rc=$?
+            if [[ "$reprompt_rc" -eq 0 ]]; then
+                dispatched_count=$((dispatched_count + 1))
+                log_info "  $tid: re-prompted successfully"
+            elif [[ "$reprompt_rc" -eq 75 ]]; then
+                log_warn "  $tid: backend still unhealthy, deferring again"
+            else
+                log_error "  $tid: re-prompt failed (exit $reprompt_rc)"
+                local current_retries
+                current_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
+                local max_retries_val
+                max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
+                if [[ "$current_retries" -ge "$max_retries_val" ]]; then
+                    cmd_transition "$tid" "blocked" --error "Max retries exceeded during deferred re-prompt" 2>>"$SUPERVISOR_LOG" || true
+                    attempt_self_heal "$tid" "blocked" "Max retries exceeded during deferred re-prompt" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                else
+                    cmd_transition "$tid" "failed" --error "Re-prompt dispatch failed" 2>>"$SUPERVISOR_LOG" || true
+                    attempt_self_heal "$tid" "failed" "Re-prompt dispatch failed" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
+                fi
+            fi
+        done <<< "$retrying_tasks"
     fi
 
     # Phase 2: Dispatch queued tasks up to concurrency limit
@@ -4797,20 +4857,14 @@ update_todo_with_issue_ref() {
 
     log_success "Added ref:GH#${issue_number} to $task_id in TODO.md"
 
-    # Commit and push (TODO.md lives on main)
+    # Commit and push with serialized locking (prevents race conditions)
     if git -C "$repo_path" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    git -C "$repo_path" add TODO.md
-    git -C "$repo_path" commit -m "chore: add GH#${issue_number} ref to $task_id in TODO.md" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to commit TODO.md issue ref update"
-        return 0
-    }
-
-    git -C "$repo_path" push 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to push TODO.md issue ref update"
+    todo_commit_push "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md" "TODO.md" || {
+        log_warn "Failed to commit/push TODO.md issue ref update for $task_id"
         return 0
     }
 
@@ -4873,24 +4927,19 @@ update_todo_on_complete() {
 
     log_success "Updated TODO.md: $task_id marked complete ($today)"
 
-    # Commit and push from the main repo (TODO.md lives on main)
+    # Commit and push with serialized locking (prevents race conditions)
     if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    git -C "$trepo" add TODO.md
     local commit_msg="chore: mark $task_id complete in TODO.md"
     if [[ -n "$tpr_url" ]]; then
         commit_msg="chore: mark $task_id complete in TODO.md (${tpr_url})"
     fi
-    git -C "$trepo" commit -m "$commit_msg" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to commit TODO.md update (may need manual commit)"
-        return 1
-    }
 
-    git -C "$trepo" push 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to push TODO.md update (may need manual push)"
+    todo_commit_push "$trepo" "$commit_msg" "TODO.md" || {
+        log_warn "Failed to commit/push TODO.md update for $task_id (may need manual intervention)"
         return 1
     }
 
@@ -4961,20 +5010,14 @@ update_todo_on_blocked() {
 
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"
 
-    # Commit and push
+    # Commit and push with serialized locking (prevents race conditions)
     if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    git -C "$trepo" add TODO.md
-    git -C "$trepo" commit -m "chore: mark $task_id blocked in TODO.md" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to commit TODO.md update"
-        return 1
-    }
-
-    git -C "$trepo" push 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to push TODO.md update"
+    todo_commit_push "$trepo" "chore: mark $task_id blocked in TODO.md" "TODO.md" || {
+        log_warn "Failed to commit/push TODO.md blocked update for $task_id"
         return 1
     }
 
