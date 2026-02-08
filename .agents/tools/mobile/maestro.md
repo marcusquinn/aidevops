@@ -123,10 +123,16 @@ appId: com.example.app
 | MiniSim | Boot simulators/emulators before `maestro test` |
 | XcodeBuildMCP | Build iOS `.app`, install on simulator, then test |
 | iOS Simulator MCP | Manage simulator state alongside Maestro flows |
+| Playwright Emulation | Web-based mobile testing (complements native Maestro flows) |
+| AXe CLI | Accessibility audits on iOS simulator alongside E2E tests |
 
 Typical workflow: boot simulator (`xcrun simctl boot`), build app (`xcodebuild`), run `maestro test flows/`.
 
 ## Related Tools
 
 - `tools/mobile/minisim.md` - Simulator/emulator launcher
+- `tools/mobile/xcodebuild-mcp.md` - iOS build and simulator management
+- `tools/mobile/ios-simulator-mcp.md` - AI-driven simulator interaction
+- `tools/mobile/axe-cli.md` - iOS accessibility testing
 - `tools/browser/playwright.md` - Web E2E testing
+- `tools/browser/playwright-emulation.md` - Mobile device emulation for web
