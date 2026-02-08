@@ -231,6 +231,50 @@ Every code change should happen on a branch, enabling:
 - **Code review** - PRs enable review before merge
 - **Blame history** - Track who did what, when, and why
 
+## Destructive Command Protection
+
+Claude Code PreToolUse hooks mechanically block destructive git and filesystem commands before they execute. AGENTS.md instructions alone cannot prevent accidents - this provides enforcement at the tool level.
+
+**Blocked commands:**
+
+| Command | Risk |
+|---------|------|
+| `git checkout -- <files>` | Discards uncommitted changes permanently |
+| `git restore <files>` | Same effect (newer syntax) |
+| `git reset --hard` | Destroys all uncommitted work |
+| `git clean -f` | Deletes untracked files permanently |
+| `git push --force` / `-f` | Overwrites remote history |
+| `git branch -D` | Force-deletes without merge check |
+| `rm -rf` (non-temp paths) | Recursive deletion |
+| `git stash drop/clear` | Permanently deletes stashes |
+
+**Safe patterns (allowlisted):** `git checkout -b`, `git restore --staged`, `git clean -n`/`--dry-run`, `rm -rf /tmp/...`, `git push --force-with-lease`.
+
+**Management:**
+
+```bash
+# Check status
+install-hooks-helper.sh status
+
+# Reinstall
+install-hooks-helper.sh install
+
+# Run self-test (20 test cases)
+install-hooks-helper.sh test
+
+# Remove if needed
+install-hooks-helper.sh uninstall
+```
+
+**Files:**
+
+- Hook script: `~/.aidevops/hooks/git_safety_guard.py`
+- Configuration: `~/.claude/settings.json` (hooks.PreToolUse)
+- Source: `.agents/hooks/git_safety_guard.py`
+- Installer: `.agents/scripts/install-hooks-helper.sh`
+
+**Installed automatically** by `setup.sh`. Requires Python 3 and a Claude Code restart after installation.
+
 ## Conversation Start: Git Context Check
 
 When a conversation indicates file work will happen (code, docs, config, assets, etc.):
