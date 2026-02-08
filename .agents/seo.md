@@ -24,6 +24,9 @@ subagents:
   - debug-opengraph
   - debug-favicon
   - programmatic-seo
+  - image-seo
+  - moondream
+  - upscale
   - general
   - explore
 ---
@@ -61,6 +64,9 @@ subagents:
 | `debug-opengraph.md` | Validate Open Graph meta tags for social sharing |
 | `debug-favicon.md` | Validate favicon setup across platforms |
 | `programmatic-seo.md` | Build SEO pages at scale with templates and keyword clustering |
+| `image-seo.md` | AI-powered image SEO: filename, alt text, tag generation |
+| `moondream.md` | Moondream AI vision model for image analysis and captioning |
+| `upscale.md` | Image upscaling services (Real-ESRGAN, Replicate, Cloudflare) |
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
@@ -71,6 +77,7 @@ subagents:
 - SERP analysis (DataForSEO, Serper)
 - Backlink analysis (Ahrefs, DataForSEO)
 - Page speed optimization (PageSpeed)
+- **Image SEO**: AI-powered alt text, filename, and tag generation (`image-seo.md`)
 - **Data export and analysis** (`/seo-opportunities`)
 
 **Commands**:
@@ -253,6 +260,17 @@ Export ranking data from multiple platforms and analyze for opportunities:
 Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`
 
 See `seo/data-export.md` and `seo/ranking-opportunities.md` for details.
+
+### Image SEO
+
+Use `seo/image-seo.md` for AI-powered image optimization:
+
+- **Alt text generation**: WCAG-compliant descriptions via Moondream vision AI
+- **SEO filenames**: Descriptive, hyphenated filenames from image content
+- **Tag extraction**: Keyword tags for metadata and categorization
+- **Quality upscaling**: Ensure minimum dimensions for social sharing
+
+See `seo/image-seo.md` for the full workflow, `seo/moondream.md` for the vision API, and `seo/upscale.md` for upscaling options.
 
 ### Content Optimization
 

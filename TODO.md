@@ -284,7 +284,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20 completed:2026-02-08
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 logged:2025-12-21
-- [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21
+- [x] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m actual:25m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21 started:2026-02-08 completed:2026-02-08
+  - Notes: Created 3 subagents: seo/moondream.md (Moondream 3 vision API - caption, query, detect, point, segment with SEO-specific prompts), seo/image-seo.md (orchestrator for alt text, filename, tag generation with WCAG guidelines and WordPress integration), seo/upscale.md (Real-ESRGAN local, Replicate cloud, Cloudflare CDN, Sharp format conversion). Updated seo.md with subagent references and Image SEO workflow section.
 - [x] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21 completed:2026-02-07
   - Notes: tools/context/rapidfuzz.md created (122 lines). Covers core functions, process module, distance functions, performance tips, and aidevops integration patterns.
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
