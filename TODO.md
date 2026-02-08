@@ -135,7 +135,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t177 Add integration test for dispatch-worktree-evaluate cycle #test #supervisor ~2h (ai:1h) ref:GH#647 assignee:marcusquinn started:2026-02-08T19:39:00Z logged:2026-02-08
   - Notes: Tests exist for state machine transitions and lock atomicity, but not for the actual worktree creation + dispatch + evaluation pipeline. Need end-to-end integration tests.
 
-- [ ] t178 Fix `cmd_reprompt` to handle missing worktrees #bug #supervisor ~30m (ai:20m) ref:GH#648 assignee:marcusquinn started:2026-02-08T20:09:25Z logged:2026-02-08
+- [x] t178 Fix `cmd_reprompt` to handle missing worktrees #bug #supervisor ~30m (ai:20m) ref:GH#648 assignee:marcusquinn started:2026-02-08T20:09:25Z logged:2026-02-08 completed:2026-02-08
   - Notes: When a worktree is cleaned up between retries, cmd_reprompt fails. Should recreate worktree if missing.
 
 - [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08 verified:2026-02-08
