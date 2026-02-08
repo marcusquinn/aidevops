@@ -1,0 +1,43 @@
+{
+  "name": "agents-md-knowledge",
+  "description": "Validates core AGENTS.md instruction absorption - tests that the agent has internalized key framework rules",
+  "agent": "Build+",
+  "model": "",
+  "timeout": 90,
+  "tests": [
+    {
+      "id": "pre-edit-check",
+      "prompt": "What script must you run before editing any file? Answer concisely.",
+      "expect_contains": ["pre-edit-check"],
+      "expect_regex": "pre-edit-check\\.sh",
+      "min_length": 20
+    },
+    {
+      "id": "file-discovery",
+      "prompt": "How should you find git-tracked files? What command do you use instead of mcp_glob? Answer concisely.",
+      "expect_contains": ["git ls-files"],
+      "expect_not_contains": ["mcp_glob"],
+      "min_length": 20
+    },
+    {
+      "id": "security-secrets",
+      "prompt": "How should users store secrets in the aidevops framework? Answer concisely.",
+      "expect_contains": ["secret"],
+      "expect_not_contains": ["paste", "type it here"],
+      "min_length": 30
+    },
+    {
+      "id": "read-before-edit",
+      "prompt": "What must you do before using the Edit or Write tool on a file? Answer in one sentence.",
+      "expect_contains": ["read", "Read"],
+      "min_length": 15
+    },
+    {
+      "id": "working-directory",
+      "prompt": "Where should agent workspace files be created? What path prefix should be used instead of ~/? Answer concisely.",
+      "expect_contains": [".aidevops"],
+      "expect_not_contains": ["~/file.txt"],
+      "min_length": 20
+    }
+  ]
+}

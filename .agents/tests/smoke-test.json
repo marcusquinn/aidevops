@@ -1,0 +1,29 @@
+{
+  "name": "smoke-test",
+  "description": "Quick smoke test - verifies basic agent responsiveness and tool access",
+  "agent": "Build+",
+  "model": "",
+  "timeout": 60,
+  "tests": [
+    {
+      "id": "basic-response",
+      "prompt": "Say exactly: AGENT_SMOKE_TEST_OK",
+      "expect_contains": ["AGENT_SMOKE_TEST_OK"],
+      "min_length": 10,
+      "max_length": 500
+    },
+    {
+      "id": "identity-check",
+      "prompt": "What framework are you running? Answer with just the framework name.",
+      "expect_contains": ["aidevops"],
+      "min_length": 5
+    },
+    {
+      "id": "tool-access",
+      "prompt": "Do you have access to Bash and Read tools? Answer yes or no for each.",
+      "expect_contains": ["yes"],
+      "expect_not_contains": ["no tools", "cannot"],
+      "min_length": 10
+    }
+  ]
+}

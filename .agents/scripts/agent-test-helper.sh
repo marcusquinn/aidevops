@@ -25,8 +25,8 @@
 #     "tests": [
 #       {
 #         "id": "t1",
-#         "prompt": "What is the instruction budget for agents?",
-#         "expect_contains": ["50-100", "instructions"],
+#         "prompt": "What is your primary purpose?",
+#         "expect_contains": ["help", "assist"],
 #         "expect_not_contains": ["unlimited"],
 #         "expect_regex": "\\d+-\\d+ instructions"
 #       }
@@ -34,14 +34,14 @@
 #   }
 #
 # Environment:
-#   AGENT_TEST_CLI      - CLI to use: "claude" or "opencode" (default: auto-detect)
+#   AGENT_TEST_CLI      - CLI to use: "opencode" (default: auto-detect)
 #   AGENT_TEST_MODEL    - Override model for all tests
 #   AGENT_TEST_TIMEOUT  - Override timeout in seconds (default: 120)
 #   OPENCODE_HOST       - OpenCode server host (default: localhost)
 #   OPENCODE_PORT       - OpenCode server port (default: 4096)
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 2.0.0
 # License: MIT
 
 set -euo pipefail
@@ -49,10 +49,10 @@ set -euo pipefail
 # Configuration
 # Source shared constants (provides sed_inplace, print_*, color constants)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+readonly SCRIPT_DIR
+# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-# shellcheck disable=SC2034
-readonly SCRIPT_DIR
 readonly AIDEVOPS_DIR="${HOME}/.aidevops"
 readonly WORKSPACE_DIR="${AIDEVOPS_DIR}/.agent-workspace"
 readonly TEST_DIR="${WORKSPACE_DIR}/agent-tests"
@@ -60,7 +60,10 @@ readonly SUITES_DIR="${TEST_DIR}/suites"
 readonly RESULTS_DIR="${TEST_DIR}/results"
 readonly BASELINES_DIR="${TEST_DIR}/baselines"
 
-# CLI detection - opencode is the primary and only supported CLI
+# Repo-shipped test suites (fallback for discovery)
+readonly REPO_SUITES_DIR="${SCRIPT_DIR}/../tests"
+
+# CLI detection - opencode is the only supported CLI
 detect_cli() {
     local cli="${AGENT_TEST_CLI:-}"
     if [[ -n "$cli" ]]; then
@@ -69,9 +72,6 @@ detect_cli() {
     fi
     if command -v opencode >/dev/null 2>&1; then
         echo "opencode"
-    elif command -v claude >/dev/null 2>&1; then
-        # DEPRECATED: claude CLI fallback - install opencode instead
-        echo "claude"
     else
         echo ""
     fi
@@ -105,6 +105,46 @@ ensure_dirs() {
 }
 
 #######################################
+# Resolve a test file path
+# Searches: exact path, suites dir, suites dir with .json, repo-shipped suites
+# Arguments:
+#   $1 - test file name or path
+# Outputs:
+#   Resolved absolute path on stdout
+# Returns:
+#   0 if found, 1 if not found
+#######################################
+resolve_test_file() {
+    local test_file="$1"
+
+    if [[ -f "$test_file" ]]; then
+        echo "$test_file"
+        return 0
+    fi
+    if [[ -f "${SUITES_DIR}/${test_file}" ]]; then
+        echo "${SUITES_DIR}/${test_file}"
+        return 0
+    fi
+    if [[ -f "${SUITES_DIR}/${test_file}.json" ]]; then
+        echo "${SUITES_DIR}/${test_file}.json"
+        return 0
+    fi
+    # Check repo-shipped test suites
+    if [[ -f "${REPO_SUITES_DIR}/${test_file}" ]]; then
+        echo "${REPO_SUITES_DIR}/${test_file}"
+        return 0
+    fi
+    if [[ -f "${REPO_SUITES_DIR}/${test_file}.json" ]]; then
+        echo "${REPO_SUITES_DIR}/${test_file}.json"
+        return 0
+    fi
+
+    log_fail "Test file not found: $test_file"
+    log_info "Searched: ${SUITES_DIR}/, ${REPO_SUITES_DIR}/"
+    return 1
+}
+
+#######################################
 # Check if OpenCode server is running
 #######################################
 check_opencode_server() {
@@ -113,6 +153,54 @@ check_opencode_server() {
         return 0
     fi
     return 1
+}
+
+#######################################
+# Portable timeout wrapper
+# Uses GNU timeout if available, falls back to background process + kill
+# Arguments:
+#   $1 - timeout in seconds
+#   $@ - command and arguments
+# Returns:
+#   Command exit code, or 124 on timeout
+#######################################
+portable_timeout() {
+    local secs="$1"
+    shift
+
+    # Try GNU timeout first (Linux or Homebrew coreutils)
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+        return $?
+    fi
+    if command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+        return $?
+    fi
+
+    # Fallback: background process with kill
+    "$@" &
+    local cmd_pid=$!
+
+    # Watchdog in background
+    (
+        sleep "$secs"
+        kill "$cmd_pid" 2>/dev/null
+    ) &
+    local watchdog_pid=$!
+
+    wait "$cmd_pid" 2>/dev/null
+    local exit_code=$?
+
+    # Clean up watchdog
+    kill "$watchdog_pid" 2>/dev/null
+    wait "$watchdog_pid" 2>/dev/null
+
+    # Check if killed by signal (128+9=137 for SIGKILL, 128+15=143 for SIGTERM)
+    if [[ $exit_code -ge 128 ]]; then
+        return 124
+    fi
+    return $exit_code
 }
 
 #######################################
@@ -132,56 +220,19 @@ run_prompt() {
     local timeout="${4:-$DEFAULT_TIMEOUT}"
 
     case "$AI_CLI" in
-        claude)
-            run_prompt_claude "$prompt" "$agent" "$model" "$timeout"
-            ;;
         opencode)
             run_prompt_opencode "$prompt" "$agent" "$model" "$timeout"
             ;;
         *)
-            log_fail "No AI CLI available. Install claude or opencode."
+            log_fail "No AI CLI available. Install opencode: https://opencode.ai"
             return 1
             ;;
     esac
 }
 
 #######################################
-# Run prompt via Claude Code CLI
-#######################################
-run_prompt_claude() {
-    local prompt="$1"
-    local agent="$2"
-    local model="$3"
-    local timeout="$4"
-
-    local cmd=(claude -p)
-
-    if [[ -n "$model" ]]; then
-        cmd+=(--model "$model")
-    fi
-
-    # Claude Code doesn't have --agent flag, but we can prepend agent context
-    if [[ -n "$agent" ]]; then
-        prompt="You are acting as the ${agent} agent. ${prompt}"
-    fi
-
-    # Run with timeout
-    local stderr_file
-    stderr_file=$(mktemp)
-    trap 'rm -f "$stderr_file"' RETURN
-    timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
-        local exit_code=$?
-        if [[ $exit_code -eq 124 ]]; then
-            echo "[TIMEOUT after ${timeout}s]"
-        elif [[ -s "$stderr_file" ]]; then
-            echo "[ERROR: $(cat "$stderr_file")]"
-        fi
-        return $exit_code
-    }
-}
-
-#######################################
 # Run prompt via OpenCode CLI
+# Tries server mode first, falls back to CLI
 #######################################
 run_prompt_opencode() {
     local prompt="$1"
@@ -189,7 +240,7 @@ run_prompt_opencode() {
     local model="$3"
     local timeout="$4"
 
-    # Try server mode first, fall back to CLI
+    # Try server mode first (attach to running server), fall back to standalone CLI
     if check_opencode_server; then
         run_prompt_opencode_server "$prompt" "$agent" "$model" "$timeout"
     else
@@ -199,6 +250,7 @@ run_prompt_opencode() {
 
 #######################################
 # Run prompt via OpenCode server API
+# Uses the HTTP API when a server is running
 #######################################
 run_prompt_opencode_server() {
     local prompt="$1"
@@ -224,10 +276,27 @@ run_prompt_opencode_server() {
         return $?
     fi
 
-    # Send prompt
+    # Build prompt payload with optional model override
     local prompt_json
-    prompt_json=$(jq -n --arg text "$prompt" '{"parts": [{"type": "text", "text": $text}]}')
+    if [[ -n "$model" ]]; then
+        # Parse provider/model format (e.g., "anthropic/claude-sonnet-4-20250514")
+        local provider_id model_id
+        provider_id="${model%%/*}"
+        model_id="${model#*/}"
+        prompt_json=$(jq -n \
+            --arg text "$prompt" \
+            --arg provider "$provider_id" \
+            --arg model "$model_id" \
+            '{
+                "model": {"providerID": $provider, "modelID": $model},
+                "parts": [{"type": "text", "text": $text}]
+            }')
+    else
+        prompt_json=$(jq -n --arg text "$prompt" \
+            '{"parts": [{"type": "text", "text": $text}]}')
+    fi
 
+    # Send prompt (sync - waits for response)
     local response
     # NOSONAR - localhost dev server API call, HTTP is intentional
     response=$(curl -s --max-time "$timeout" -X POST \
@@ -235,9 +304,10 @@ run_prompt_opencode_server() {
         -H "Content-Type: application/json" \
         -d "$prompt_json")
 
-    # Extract text from response
+    # Extract text from response parts
     local result
-    result=$(echo "$response" | jq -r '.parts[]? | select(.type == "text") | .text' 2>/dev/null)
+    result=$(echo "$response" | jq -r \
+        '[.parts[]? | select(.type == "text") | .text] | join("\n")' 2>/dev/null)
 
     if [[ -z "$result" ]]; then
         result=$(echo "$response" | jq -r '.content // .text // .message // empty' 2>/dev/null)
@@ -252,6 +322,7 @@ run_prompt_opencode_server() {
 
 #######################################
 # Run prompt via OpenCode CLI directly
+# Uses --format json for reliable response extraction
 #######################################
 run_prompt_opencode_cli() {
     local prompt="$1"
@@ -259,7 +330,7 @@ run_prompt_opencode_cli() {
     local model="$3"
     local timeout="$4"
 
-    local cmd=(opencode run)
+    local cmd=(opencode run --format json)
 
     if [[ -n "$agent" ]]; then
         cmd+=(--agent "$agent")
@@ -269,18 +340,47 @@ run_prompt_opencode_cli() {
         cmd+=(-m "$model")
     fi
 
-    local stderr_file
+    local stderr_file raw_output
     stderr_file=$(mktemp)
-    trap 'rm -f "$stderr_file"' RETURN
-    timeout "${timeout}" "${cmd[@]}" "$prompt" 2>"$stderr_file" || {
-        local exit_code=$?
+    raw_output=$(mktemp)
+
+    local exit_code=0
+    portable_timeout "${timeout}" "${cmd[@]}" "$prompt" >"$raw_output" 2>"$stderr_file" || {
+        exit_code=$?
         if [[ $exit_code -eq 124 ]]; then
             echo "[TIMEOUT after ${timeout}s]"
         elif [[ -s "$stderr_file" ]]; then
             echo "[ERROR: $(cat "$stderr_file")]"
         fi
+        rm -f "$stderr_file" "$raw_output"
         return $exit_code
     }
+
+    # Check for error events in the JSON stream
+    local error_msg
+    error_msg=$(jq -r 'select(.type == "error") | .error.data.message // .error.message // empty' \
+        "$raw_output" 2>/dev/null | head -1)
+
+    if [[ -n "$error_msg" ]]; then
+        echo "[ERROR: ${error_msg}]"
+        rm -f "$stderr_file" "$raw_output"
+        return 1
+    fi
+
+    # Extract text from JSON event stream
+    # Each line is a JSON event; text content has type="text" with .part.text
+    local result
+    result=$(jq -r 'select(.type == "text") | .part.text // empty' "$raw_output" 2>/dev/null \
+        | tr -d '\0')
+
+    if [[ -z "$result" ]]; then
+        # Fallback: try to extract any text-like content
+        result=$(cat "$raw_output")
+    fi
+
+    rm -f "$stderr_file" "$raw_output"
+    echo "$result"
+    return 0
 }
 
 #######################################
@@ -376,16 +476,7 @@ cmd_run() {
     ensure_dirs
 
     # Resolve test file path
-    if [[ ! -f "$test_file" ]]; then
-        if [[ -f "${SUITES_DIR}/${test_file}" ]]; then
-            test_file="${SUITES_DIR}/${test_file}"
-        elif [[ -f "${SUITES_DIR}/${test_file}.json" ]]; then
-            test_file="${SUITES_DIR}/${test_file}.json"
-        else
-            log_fail "Test file not found: $test_file"
-            return 1
-        fi
-    fi
+    test_file=$(resolve_test_file "$test_file") || return 1
 
     # Parse test suite
     local suite
@@ -638,16 +729,7 @@ cmd_compare() {
     ensure_dirs
 
     # Resolve test file
-    if [[ ! -f "$test_file" ]]; then
-        if [[ -f "${SUITES_DIR}/${test_file}" ]]; then
-            test_file="${SUITES_DIR}/${test_file}"
-        elif [[ -f "${SUITES_DIR}/${test_file}.json" ]]; then
-            test_file="${SUITES_DIR}/${test_file}.json"
-        else
-            log_fail "Test file not found: $test_file"
-            return 1
-        fi
-    fi
+    test_file=$(resolve_test_file "$test_file") || return 1
 
     local suite_name
     suite_name=$(jq -r '.name // "unnamed"' "$test_file")
@@ -742,16 +824,7 @@ cmd_baseline() {
     ensure_dirs
 
     # Resolve test file
-    if [[ ! -f "$test_file" ]]; then
-        if [[ -f "${SUITES_DIR}/${test_file}" ]]; then
-            test_file="${SUITES_DIR}/${test_file}"
-        elif [[ -f "${SUITES_DIR}/${test_file}.json" ]]; then
-            test_file="${SUITES_DIR}/${test_file}.json"
-        else
-            log_fail "Test file not found: $test_file"
-            return 1
-        fi
-    fi
+    test_file=$(resolve_test_file "$test_file") || return 1
 
     local suite_name
     suite_name=$(jq -r '.name // "unnamed"' "$test_file")
@@ -787,6 +860,8 @@ cmd_list() {
     echo ""
 
     local count=0
+
+    # List user suites (workspace)
     for suite_file in "${SUITES_DIR}"/*.json; do
         [[ -f "$suite_file" ]] || continue
 
@@ -809,8 +884,28 @@ cmd_list() {
         count=$((count + 1))
     done
 
+    # List repo-shipped suites
+    if [[ -d "$REPO_SUITES_DIR" ]]; then
+        for suite_file in "${REPO_SUITES_DIR}"/*.json; do
+            [[ -f "$suite_file" ]] || continue
+
+            local name desc test_count
+            name=$(jq -r '.name // "unnamed"' "$suite_file")
+            desc=$(jq -r '.description // ""' "$suite_file")
+            test_count=$(jq '.tests | length' "$suite_file")
+
+            echo -e "  ${BOLD}${name}${NC} (${test_count} tests) ${DIM}[shipped]${NC}"
+            if [[ -n "$desc" ]]; then
+                echo -e "    ${DIM}${desc}${NC}"
+            fi
+
+            echo ""
+            count=$((count + 1))
+        done
+    fi
+
     if [[ $count -eq 0 ]]; then
-        log_info "No test suites found in ${SUITES_DIR}"
+        log_info "No test suites found"
         log_info "Create one with: agent-test-helper.sh create <name>"
     fi
 
@@ -960,7 +1055,7 @@ TEST SUITE FORMAT (JSON):
   }
 
 ENVIRONMENT:
-  AGENT_TEST_CLI      CLI to use: "claude" or "opencode" (auto-detected)
+  AGENT_TEST_CLI      CLI override: "opencode" (auto-detected)
   AGENT_TEST_MODEL    Override model for all tests
   AGENT_TEST_TIMEOUT  Override timeout in seconds (default: 120)
   OPENCODE_HOST       OpenCode server host (default: localhost)
