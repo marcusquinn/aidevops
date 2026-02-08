@@ -72,6 +72,18 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
     - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
 
+- [ ] t164 Distributed task claiming via GitHub Issue assignees #plan #workflow #orchestration ~3h (ai:1.5h test:1h read:30m) logged:2026-02-08
+  - [ ] t164.1 Add claim/release commands to supervisor-helper.sh using gh issue assignee ~45m blocked-by:none
+    - Notes: `supervisor-helper.sh claim tNNN` → finds GH issue by task ID, checks assignee, assigns @me if free, errors if taken. `release tNNN` → unassigns. Atomic via GitHub API — works across machines. Local DB updated as cache.
+  - [ ] t164.2 Supervisor dispatch checks GitHub assignee before dispatching ~30m blocked-by:t164.1
+    - Notes: In build_dispatch_cmd / pulse cycle: before dispatching a task, check if GH issue is assigned to someone else. If yes — skip, log "task claimed by X". If unassigned — claim before dispatch.
+  - [ ] t164.3 Pre-edit check warns if task is claimed by another user ~30m blocked-by:t164.1
+    - Notes: pre-edit-check.sh extracts task ID from branch name (feature/tNNN), queries GH issue assignee. If assigned to someone else — warn "task claimed by {user}, proceed? [y/N]". Non-blocking for manual override.
+  - [ ] t164.4 Add status labels to GitHub Issues (available/claimed/in-review/done) ~30m blocked-by:t164.1
+    - Notes: Labels: status:available, status:claimed, status:in-review, status:done. Supervisor sets labels on state transitions. issue-sync-helper.sh push creates issues with status:available. claim sets status:claimed. PR creation sets status:in-review.
+  - [ ] t164.5 Document distributed workflow in plans.md ~15m blocked-by:t164.1,t164.2,t164.3
+    - Notes: Multi-machine scenario: GitHub Issues as single source of truth for claims. Supervisor DB is local cache. Humans and AI agents use same claim mechanism.
+
 - [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08
 
 - [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08
