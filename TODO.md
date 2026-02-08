@@ -62,7 +62,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t162 fix: supervisor DB safety - add backup-before-migrate and explicit column migrations #bugfix #supervisor ~30m (ai:25m test:5m) ref:GH#590 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
   - Notes: Root cause: t128.8 migration uses INSERT INTO tasks SELECT * FROM tasks_old which fails on column count mismatch if migrations run out of order. No backup before destructive table rename/recreate migrations. Fix: 1) Add backup_db() helper with SQLite .backup, timestamped copies, auto-prune to 5. 2) Add backup before t128.8 and t148 destructive migrations. 3) Fix t128.8 SELECT * to use explicit column list. 4) Add backup/restore commands for manual recovery.
 
-- [ ] t163 Prevent false task completion cascade (AGENTS.md rule + issue-sync guard + supervisor verify) #plan #quality #workflow → [todo/PLANS.md] ~4h (ai:2h test:1h read:1h) logged:2026-02-08
+- [ ] t163 Prevent false task completion cascade (AGENTS.md rule + issue-sync guard + supervisor verify) #plan #quality #workflow → [todo/PLANS.md] ~4h (ai:2h test:1h read:1h) ref:GH#618 logged:2026-02-08
   - [ ] t163.1 Add task completion rules to AGENTS.md Planning & Tasks section ~15m blocked-by:none
     - Notes: Rule: NEVER mark [x] unless YOU wrote code/content in THIS session. Workers leave tasks for reviewer. Verify deliverable exists and is substantive before marking.
   - [ ] t163.2 Add guard to issue-sync-helper.sh cmd_close() - require merged PR or verified: field ~1h blocked-by:none
@@ -245,7 +245,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Already resolved. dspy 3.1.3 pulls gepa 0.0.26 as transitive dep with no conflicts. Fresh venv install of requirements.txt succeeds, pip check passes, both dspy and gepa import cleanly. Original conflict was likely version-specific and no longer reproduces.
 - [x] t082 Fix version sync inconsistency (VERSION vs package.json/setup.sh/aidevops.sh) #bugfix ~15m actual:0m (ai:10m test:5m) logged:2026-01-29 completed:2026-02-06
   - Notes: Already fixed. All version files (VERSION, package.json, sonar-project.properties, .claude-plugin/marketplace.json) are in sync at 2.101.0. setup.sh and aidevops.sh read VERSION dynamically (no hardcoded version). version-manager.sh validate confirms consistency. Original issue from bd0695c was resolved by subsequent releases using version-manager.sh.
-- [ ] t128 Autonomous Supervisor Loop #plan #orchestration #runners → [todo/PLANS.md#2026-02-06-autonomous-supervisor-loop] ~8h (ai:5h test:2h read:1h) logged:2026-02-06 ref:todo/tasks/prd-autonomous-supervisor.md
+- [ ] t128 Autonomous Supervisor Loop #plan #orchestration #runners → [todo/PLANS.md#2026-02-06-autonomous-supervisor-loop] ~8h (ai:5h test:2h read:1h) ref:GH#617 logged:2026-02-06 ref:todo/tasks/prd-autonomous-supervisor.md
   - [x] t128.1 Supervisor SQLite schema and state machine ~1h actual:30m (ai:30m) blocked-by:none started:2026-02-06T04:00Z completed:2026-02-06
     - Notes: Created supervisor-helper.sh (~700 lines) with SQLite schema (tasks, batches, batch_tasks, state_log tables), 9-state machine with 18 validated transitions, 12 commands (init, add, batch, transition, status, list, next, running-count, reset, cancel, db, help). Zero ShellCheck violations. PR #376 merged.
   - [x] t128.2 Worker dispatch with worktree isolation ~1.5h actual:30m (ai:30m) blocked-by:t128.1 started:2026-02-06T04:30Z completed:2026-02-06
