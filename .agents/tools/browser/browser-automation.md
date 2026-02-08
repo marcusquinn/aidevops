@@ -99,6 +99,9 @@ What do you need?
             +-> Mobile E2E (Android/iOS/React Native/Flutter)?
             |       --> Maestro (YAML flows, no compilation, built-in flakiness tolerance)
             |       --> See tools/mobile/maestro.md
+            +-> Need device emulation (mobile, tablet, responsive)?
+            |       --> Playwright device presets (see playwright-emulation.md)
+            |       --> Includes: viewport, touch, geolocation, locale, dark mode, offline
             +-> Need to stay logged in across restarts? --> dev-browser (profile)
             +-> Need parallel test contexts? --> Playwright (isolated contexts)
             +-> Need visual debugging? --> dev-browser (headed) + DevTools MCP
@@ -160,6 +163,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Sitemap generation** | No | No | No | No | No | Yes | No | No |
 | **Anti-detect** | rebrowser-patches | No | Via launch args | No | No | No | Your browser | Via Playwright |
 | **Fingerprint rotation** | No (add Camoufox) | No | No | No | No | No | No | No |
+| **Device emulation** | [Full](playwright-emulation.md) | resize command | Via Playwright | No | No | No | Your browser | Via Playwright |
 | **Multi-profile** | storageState dirs | --session | Profile dir | --session | user_data_dir | N/A | No | No |
 | **Setup required** | npm install | npm install -g | Server running | npm install | pip/Docker | API key | Extension click | npm + API key |
 | **Interface** | JS/TS API | CLI | TS scripts | CLI | Python API | REST/SDK | JS API | JS/Python SDK |

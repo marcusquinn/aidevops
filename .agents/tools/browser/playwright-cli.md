@@ -385,6 +385,12 @@ For maximum stealth with fingerprint rotation, use Camoufox directly with Playwr
 | Medium | rebrowser-patches + playwright-cli | Hide automation signals |
 | High | Camoufox + Playwright API | Bot detection evasion, multi-account |
 
+## Related
+
+- `playwright.md` - Core Playwright automation (cross-browser, forms, security, API testing)
+- `playwright-emulation.md` - Device emulation (mobile, tablet, viewport, geolocation, locale, dark mode)
+- `browser-automation.md` - Tool selection decision tree
+
 ## Resources
 
 - **GitHub**: https://github.com/microsoft/playwright-cli
