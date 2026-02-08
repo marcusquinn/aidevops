@@ -293,6 +293,118 @@ EOF
 }
 
 #######################################
+# Normalize content for deduplication comparison
+# Lowercases, strips extra whitespace, removes punctuation
+#######################################
+normalize_content() {
+    local text="$1"
+    # Lowercase, collapse whitespace, strip leading/trailing, remove punctuation
+    echo "$text" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '[:punct:]'
+    return 0
+}
+
+#######################################
+# Check for duplicate memory before storing
+# Returns 0 if duplicate found (with ID on stdout), 1 if no duplicate
+#######################################
+check_duplicate() {
+    local content="$1"
+    local type="$2"
+
+    # 1. Exact content match (same type)
+    local escaped_content="${content//"'"/"''"}"
+    local exact_id
+    exact_id=$(db "$MEMORY_DB" "SELECT id FROM learnings WHERE content = '$escaped_content' AND type = '$type' LIMIT 1;" 2>/dev/null || echo "")
+    if [[ -n "$exact_id" ]]; then
+        echo "$exact_id"
+        return 0
+    fi
+
+    # 2. Normalized content match (catches whitespace/punctuation/case differences)
+    local normalized
+    normalized=$(normalize_content "$content")
+    local escaped_normalized="${normalized//"'"/"''"}"
+
+    # Compare normalized versions of existing entries of the same type
+    local norm_id
+    norm_id=$(db "$MEMORY_DB" <<EOF
+SELECT l.id FROM learnings l
+WHERE l.type = '$type'
+AND replace(replace(replace(replace(replace(lower(l.content),
+    '.',''),"'",''),',',''),'!',''),'?','') 
+    LIKE '%${escaped_normalized}%'
+LIMIT 1;
+EOF
+    )
+
+    # The LIKE approach above is coarse; refine with a stricter normalized comparison
+    # by checking if the normalized stored content equals the normalized new content
+    if [[ -z "$norm_id" ]]; then
+        # Use FTS5 to find candidates, then compare normalized forms
+        local fts_query="${content//"'"/"''"}"
+        # Escape embedded double quotes for FTS5
+        fts_query="\"${fts_query//\"/\"\"}\""
+        local candidates
+        candidates=$(db "$MEMORY_DB" "SELECT id, content FROM learnings WHERE learnings MATCH '$fts_query' AND type = '$type' LIMIT 10;" 2>/dev/null || echo "")
+        if [[ -n "$candidates" ]]; then
+            while IFS='|' read -r cand_id cand_content; do
+                [[ -z "$cand_id" ]] && continue
+                local cand_normalized
+                cand_normalized=$(normalize_content "$cand_content")
+                if [[ "$cand_normalized" == "$normalized" ]]; then
+                    echo "$cand_id"
+                    return 0
+                fi
+            done <<< "$candidates"
+        fi
+    else
+        echo "$norm_id"
+        return 0
+    fi
+
+    return 1
+}
+
+#######################################
+# Auto-prune stale entries (called opportunistically on store)
+# Only runs if last prune was >24h ago, to avoid overhead on every store
+#######################################
+auto_prune() {
+    local prune_marker="$MEMORY_DIR/.last_auto_prune"
+    local prune_interval_seconds=86400  # 24 hours
+
+    # Check if we should run
+    if [[ -f "$prune_marker" ]]; then
+        local last_prune
+        last_prune=$(stat -f %m "$prune_marker" 2>/dev/null || stat -c %Y "$prune_marker" 2>/dev/null || echo "0")
+        local now
+        now=$(date +%s)
+        local elapsed=$((now - last_prune))
+        if [[ "$elapsed" -lt "$prune_interval_seconds" ]]; then
+            return 0
+        fi
+    fi
+
+    # Run lightweight prune: remove entries >90 days old that were never accessed
+    local stale_count
+    stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL;" 2>/dev/null || echo "0")
+
+    if [[ "$stale_count" -gt 0 ]]; then
+        local subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL"
+        db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);" 2>/dev/null || true
+        db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);" 2>/dev/null || true
+        db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);" 2>/dev/null || true
+        db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);" 2>/dev/null || true
+        db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+        log_info "Auto-pruned $stale_count stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
+    fi
+
+    # Update marker
+    touch "$prune_marker"
+    return 0
+}
+
+#######################################
 # Generate unique ID
 #######################################
 generate_id() {
@@ -407,6 +519,27 @@ cmd_store() {
     fi
     
     init_db
+    
+    # Deduplication: skip if content already exists (unless it's a relational update)
+    if [[ -z "$supersedes_id" ]]; then
+        local existing_id
+        if existing_id=$(check_duplicate "$content" "$type"); then
+            log_warn "Duplicate detected (matches $existing_id). Skipping store."
+            # Update access tracking on the existing entry to keep it fresh
+            db "$MEMORY_DB" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+VALUES ('$existing_id', datetime('now'), 1)
+ON CONFLICT(id) DO UPDATE SET 
+    last_accessed_at = datetime('now'),
+    access_count = access_count + 1;
+EOF
+            echo "$existing_id"
+            return 0
+        fi
+    fi
+    
+    # Opportunistic auto-prune (runs at most once per 24h)
+    auto_prune
     
     local id
     id=$(generate_id)
@@ -983,18 +1116,260 @@ EOF
         log_success "No stale entries found"
     fi
     
-    # Check for duplicate content
+    # Check for exact duplicate content
     local dup_count
     dup_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM (SELECT content, COUNT(*) as cnt FROM learnings GROUP BY content HAVING cnt > 1);" 2>/dev/null || echo "0")
     
     if [[ "$dup_count" -gt 0 ]]; then
-        log_warn "Found $dup_count duplicate entries"
+        log_warn "Found $dup_count groups of exact duplicate entries"
+        echo ""
+        echo "Exact duplicates:"
+        db "$MEMORY_DB" <<'EOF'
+SELECT substr(l.content, 1, 60) || '...' as content_preview,
+       l.type,
+       COUNT(*) as copies,
+       GROUP_CONCAT(l.id, ', ') as ids
+FROM learnings l
+GROUP BY l.content
+HAVING COUNT(*) > 1
+ORDER BY copies DESC
+LIMIT 10;
+EOF
+        echo ""
+        echo "Run 'memory-helper.sh dedup --dry-run' to preview cleanup"
+        echo "Run 'memory-helper.sh dedup' to remove duplicates"
+    else
+        log_success "No exact duplicate entries found"
+    fi
+    
+    # Check for near-duplicate content (normalized comparison)
+    local near_dup_count
+    near_dup_count=$(db "$MEMORY_DB" <<'EOF'
+SELECT COUNT(*) FROM (
+    SELECT replace(replace(replace(replace(replace(lower(content),
+        '.',''),"'",''),',',''),'!',''),'?','') as norm,
+        COUNT(*) as cnt
+    FROM learnings
+    GROUP BY norm
+    HAVING cnt > 1
+);
+EOF
+    )
+    near_dup_count="${near_dup_count:-0}"
+    
+    if [[ "$near_dup_count" -gt "$dup_count" ]]; then
+        local near_only=$((near_dup_count - dup_count))
+        log_warn "Found $near_only additional near-duplicate groups (differ only in case/punctuation)"
+        echo "  Run 'memory-helper.sh dedup' to consolidate"
+    fi
+    
+    # Check for superseded entries that may be obsolete
+    local superseded_count
+    superseded_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_relations WHERE relation_type = 'updates';" 2>/dev/null || echo "0")
+    if [[ "$superseded_count" -gt 0 ]]; then
+        log_info "$superseded_count memories have been superseded by newer versions"
     fi
     
     # Check database size
     local db_size
     db_size=$(du -h "$MEMORY_DB" | cut -f1)
     log_info "Database size: $db_size"
+    return 0
+}
+
+#######################################
+# Deduplicate memories
+# Removes exact and near-duplicate entries, keeping the oldest (most established)
+# Merges tags from removed entries into the surviving one
+#######################################
+cmd_dedup() {
+    local dry_run=false
+    local include_near=true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            --exact-only) include_near=false; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    init_db
+
+    log_info "Scanning for duplicate memories..."
+
+    # Phase 1: Exact duplicates (same content string)
+    local exact_groups
+    exact_groups=$(db "$MEMORY_DB" <<'EOF'
+SELECT GROUP_CONCAT(id, '|') as ids, content, type, COUNT(*) as cnt
+FROM learnings
+GROUP BY content
+HAVING cnt > 1
+ORDER BY cnt DESC;
+EOF
+    )
+
+    local exact_removed=0
+    if [[ -n "$exact_groups" ]]; then
+        # Query each duplicate group individually for reliable parsing
+        local dup_contents
+        dup_contents=$(db "$MEMORY_DB" "SELECT content FROM learnings GROUP BY content HAVING COUNT(*) > 1;")
+
+        while IFS= read -r dup_content; do
+            [[ -z "$dup_content" ]] && continue
+            local escaped_dup="${dup_content//"'"/"''"}"
+
+            # Get all IDs for this content, ordered by created_at (oldest first)
+            local all_ids
+            all_ids=$(db "$MEMORY_DB" "SELECT id FROM learnings WHERE content = '$escaped_dup' ORDER BY created_at ASC;")
+
+            local keep_id=""
+            while IFS= read -r mem_id; do
+                [[ -z "$mem_id" ]] && continue
+                if [[ -z "$keep_id" ]]; then
+                    keep_id="$mem_id"
+                    continue
+                fi
+
+                # This is a duplicate to remove
+                local escaped_keep="${keep_id//"'"/"''"}"
+                local escaped_remove="${mem_id//"'"/"''"}"
+
+                if [[ "$dry_run" == true ]]; then
+                    log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)"
+                else
+                    # Merge tags
+                    local keep_tags remove_tags
+                    keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$escaped_keep';")
+                    remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$escaped_remove';")
+                    if [[ -n "$remove_tags" ]]; then
+                        local merged_tags
+                        merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
+                        local merged_tags_esc="${merged_tags//"'"/"''"}"
+                        db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$escaped_keep';"
+                    fi
+
+                    # Transfer access history (keep higher count)
+                    db "$MEMORY_DB" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+SELECT '$escaped_keep', last_accessed_at, access_count
+FROM learning_access WHERE id = '$escaped_remove'
+AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$escaped_keep')
+ON CONFLICT(id) DO UPDATE SET
+    access_count = MAX(learning_access.access_count, excluded.access_count),
+    last_accessed_at = MAX(learning_access.last_accessed_at, excluded.last_accessed_at);
+EOF
+
+                    # Re-point relations
+                    db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$escaped_keep' WHERE supersedes_id = '$escaped_remove';" 2>/dev/null || true
+                    db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_remove';" 2>/dev/null || true
+
+                    # Delete duplicate
+                    db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_remove';"
+                    db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$escaped_remove';"
+                fi
+                exact_removed=$((exact_removed + 1))
+            done <<< "$all_ids"
+        done <<< "$dup_contents"
+    fi
+
+    # Phase 2: Near-duplicates (normalized content match)
+    local near_removed=0
+    if [[ "$include_near" == true ]]; then
+        local near_groups
+        near_groups=$(db "$MEMORY_DB" <<'EOF'
+SELECT GROUP_CONCAT(id, ',') as ids,
+       replace(replace(replace(replace(replace(lower(content),
+           '.',''),"'",''),',',''),'!',''),'?','') as norm,
+       COUNT(*) as cnt
+FROM learnings
+GROUP BY norm
+HAVING cnt > 1
+ORDER BY cnt DESC;
+EOF
+        )
+
+        if [[ -n "$near_groups" ]]; then
+            while IFS='|' read -r id_list _norm _cnt; do
+                [[ -z "$id_list" ]] && continue
+                # Skip if this was already handled as an exact duplicate
+                local id_count
+                id_count=$(echo "$id_list" | tr ',' '\n' | wc -l | tr -d ' ')
+                [[ "$id_count" -le 1 ]] && continue
+
+                local ids_arr
+                IFS=',' read -ra ids_arr <<< "$id_list"
+
+                # Find the oldest entry to keep
+                local oldest_id=""
+                local oldest_date="9999"
+                for nid in "${ids_arr[@]}"; do
+                    [[ -z "$nid" ]] && continue
+                    local nid_esc="${nid//"'"/"''"}"
+                    local nid_exists
+                    nid_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "0")
+                    [[ "$nid_exists" == "0" ]] && continue
+
+                    local nid_date
+                    nid_date=$(db "$MEMORY_DB" "SELECT created_at FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "9999")
+                    # shellcheck disable=SC2071 # Intentional lexicographic comparison for ISO date strings
+                    if [[ "$nid_date" < "$oldest_date" ]]; then
+                        oldest_date="$nid_date"
+                        oldest_id="$nid"
+                    fi
+                done
+
+                [[ -z "$oldest_id" ]] && continue
+
+                for nid in "${ids_arr[@]}"; do
+                    [[ -z "$nid" || "$nid" == "$oldest_id" ]] && continue
+                    local nid_esc="${nid//"'"/"''"}"
+                    local nid_exists
+                    nid_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "0")
+                    [[ "$nid_exists" == "0" ]] && continue
+
+                    local oldest_esc="${oldest_id//"'"/"''"}"
+
+                    if [[ "$dry_run" == true ]]; then
+                        local preview
+                        preview=$(db "$MEMORY_DB" "SELECT substr(content, 1, 50) FROM learnings WHERE id = '$nid_esc';")
+                        log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..."
+                    else
+                        # Merge tags
+                        local keep_tags remove_tags
+                        keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$oldest_esc';")
+                        remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$nid_esc';")
+                        if [[ -n "$remove_tags" ]]; then
+                            local merged_tags
+                            merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
+                            local merged_tags_esc="${merged_tags//"'"/"''"}"
+                            db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$oldest_esc';"
+                        fi
+
+                        # Re-point relations and delete
+                        db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';" 2>/dev/null || true
+                        db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';" 2>/dev/null || true
+                        db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$nid_esc';"
+                        db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$nid_esc';"
+                    fi
+                    near_removed=$((near_removed + 1))
+                done
+            done <<< "$near_groups"
+        fi
+    fi
+
+    local total_removed=$((exact_removed + near_removed))
+
+    if [[ "$total_removed" -eq 0 ]]; then
+        log_success "No duplicates found"
+    elif [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would remove $total_removed duplicates ($exact_removed exact, $near_removed near)"
+    else
+        # Rebuild FTS index
+        db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+        log_success "Removed $total_removed duplicates ($exact_removed exact, $near_removed near)"
+    fi
+
     return 0
 }
 
@@ -1581,14 +1956,15 @@ USAGE:
     memory-helper.sh [--namespace NAME] <command> [options]
 
 COMMANDS:
-    store       Store a new learning
+    store       Store a new learning (with automatic deduplication)
     recall      Search and retrieve learnings
     log         Show recent auto-captured memories (alias for recall --recent --auto-only)
     history     Show version history for a memory (ancestors/descendants)
     latest      Find the latest version of a memory chain
     stats       Show memory statistics
-    validate    Check for stale/duplicate entries
-    prune       Remove old entries
+    validate    Check for stale/duplicate entries (with detailed reports)
+    prune       Remove old entries (auto-runs every 24h on store)
+    dedup       Remove exact and near-duplicate entries
     consolidate Merge similar memories to reduce redundancy
     export      Export all memories
     namespaces  List all memory namespaces
@@ -1642,6 +2018,24 @@ PRUNE OPTIONS:
     --older-than-days <n> Age threshold (default: 90)
     --dry-run             Show what would be deleted
     --include-accessed    Also prune accessed entries
+
+DEDUP OPTIONS:
+    --dry-run             Show what would be removed without deleting
+    --exact-only          Only remove exact duplicates (skip near-duplicates)
+
+DEDUPLICATION:
+    - Store automatically detects and skips duplicate content
+    - Exact matches: identical content string + same type
+    - Near matches: same content after normalizing case/punctuation/whitespace
+    - When a duplicate is detected on store, the existing entry's access count
+      is incremented and its ID is returned
+    - Use 'dedup' command to clean up existing duplicates in bulk
+
+AUTO-PRUNING:
+    - Runs automatically on every store (at most once per 24 hours)
+    - Removes entries older than 90 days that have never been accessed
+    - Frequently accessed memories are preserved regardless of age
+    - Manual prune available via 'prune' command for custom thresholds
 
 DUAL TIMESTAMPS:
     - created_at:  When the memory was stored in the database
@@ -1703,6 +2097,11 @@ EXAMPLES:
 
     # Consolidate similar memories
     memory-helper.sh consolidate --dry-run
+
+    # Remove duplicate memories (preview first)
+    memory-helper.sh dedup --dry-run
+    memory-helper.sh dedup
+    memory-helper.sh dedup --exact-only
 
 NAMESPACE EXAMPLES:
     # Store in a runner-specific namespace
@@ -1771,6 +2170,7 @@ main() {
         stats) cmd_stats ;;
         validate) cmd_validate ;;
         prune) cmd_prune "$@" ;;
+        dedup) cmd_dedup "$@" ;;
         consolidate) cmd_consolidate "$@" ;;
         export) cmd_export "$@" ;;
         namespaces)
