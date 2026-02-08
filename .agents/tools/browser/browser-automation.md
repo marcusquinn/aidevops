@@ -96,6 +96,9 @@ What do you need?
     |
     +-> TEST your own app (dev server)?
             |
+            +-> Mobile E2E (Android/iOS/React Native/Flutter)?
+            |       --> Maestro (YAML flows, no compilation, built-in flakiness tolerance)
+            |       --> See tools/mobile/maestro.md
             +-> Need to stay logged in across restarts? --> dev-browser (profile)
             +-> Need parallel test contexts? --> Playwright (isolated contexts)
             +-> Need visual debugging? --> dev-browser (headed) + DevTools MCP
