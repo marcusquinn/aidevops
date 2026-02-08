@@ -174,7 +174,7 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
 
 1. **NEVER prompt for user input** - There is no human at the terminal. If you encounter ambiguity, make a reasonable decision and document it in a commit message. If truly blocked, exit cleanly so the supervisor can evaluate and retry.
 
-2. **Do NOT edit TODO.md** - The supervisor owns TODO.md updates (marking tasks complete, adding refs). Workers that edit TODO.md cause merge conflicts when multiple workers run in parallel. Put notes in commit messages or PR body instead.
+2. **Do NOT edit TODO.md** - Put notes in commit messages or PR body instead. See `workflows/plans.md` "Worker TODO.md Restriction".
 
 3. **Do NOT edit shared planning files** - Files like `todo/PLANS.md`, `todo/tasks/*` are managed by the supervisor. Workers should only modify files relevant to their assigned task.
 

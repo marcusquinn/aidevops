@@ -36,7 +36,7 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 **Subagent write restrictions**: Subagents invoked via the Task tool cannot run `pre-edit-check.sh` (many lack `bash: true`). When on `main`/`master`, subagents with `write: true` may ONLY write to: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes must be returned as proposed edits for the calling agent to apply in a worktree.
 
-**Worker TODO.md restriction**: Headless dispatch workers (runners) must NEVER edit or commit TODO.md. Workers report status via exit code, log output, and mailbox. The supervisor handles all TODO.md updates. See `workflows/plans.md` "Worker TODO.md Restriction" section.
+**Worker TODO.md restriction**: Workers must NEVER edit TODO.md. See `workflows/plans.md` "Worker TODO.md Restriction".
 
 ---
 
@@ -55,18 +55,7 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 ## Terminal Capabilities
 
-The Bash tool provides full PTY access. You can run any CLI autonomously:
-
-| Category | Examples |
-|----------|----------|
-| **Editors** | `vim`, `nano`, `emacs` |
-| **Database shells** | `psql`, `mysql`, `redis-cli`, `mongosh` |
-| **Remote sessions** | `ssh user@host`, `mosh` |
-| **Monitoring** | `htop`, `tail -f`, `watch`, `less` |
-| **Dev servers** | `npm run dev`, `cargo watch`, `flask run` |
-| **Nested AI** | `opencode -p "subtask"` (spawns subagent in same TUI) |
-
-For long-running processes: use `&`, `nohup`, or `screen`/`tmux`. For parallel AI dispatch: use OpenCode server API (`tools/ai-assistants/opencode-server.md`).
+Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `opencode -p "subtask"`). Long-running: use `&`/`nohup`/`tmux`. Parallel AI: `tools/ai-assistants/opencode-server.md`.
 
 ---
 
@@ -111,7 +100,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 - If a worker completes with `no_pr` or `task_only`, the task stays `[ ]` until a human or the supervisor verifies the deliverable
 - The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` - false completions cascade into closed issues
 
-**After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. Workers must NOT edit TODO.md -- see `workflows/plans.md` "Worker TODO.md Restriction".
+**After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
@@ -127,40 +116,7 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Full docs**: `memory/README.md`
 
-### MANDATORY: Proactive Memory Triggers
-
-**You MUST suggest `/remember` when you detect these patterns:**
-
-| Trigger | Memory Type | Example |
-|---------|-------------|---------|
-| Solution found after debugging | `WORKING_SOLUTION` | "That fixed it! Want me to remember this?" |
-| User states a preference | `USER_PREFERENCE` | "I'll remember you prefer tabs over spaces" |
-| Workaround discovered | `WORKING_SOLUTION` | "This workaround worked - should I save it?" |
-| Failed approach identified | `FAILED_APPROACH` | "That didn't work - remember to avoid this?" |
-| Architecture decision made | `DECISION` | "Good decision - want me to remember why?" |
-| Tool configuration worked | `TOOL_CONFIG` | "That config worked - save for next time?" |
-
-**Format**: After detecting a trigger, suggest:
-
-```text
-Want me to remember this? /remember {concise description}
-```
-
-**Do NOT wait for user to ask** - proactively offer to remember valuable learnings.
-
-### Auto-Capture with --auto Flag
-
-When storing memories triggered by the patterns above, use the `--auto` flag to distinguish from manual `/remember` entries:
-
-```bash
-memory-helper.sh store --auto --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
-```
-
-**Privacy**: Content is automatically filtered before storage:
-
-- `<private>...</private>` blocks are stripped
-- Content matching secret patterns (API keys, tokens) is rejected
-- Never auto-capture credentials, passwords, or sensitive config values
+**Proactive memory**: When you detect solutions, preferences, workarounds, failed approaches, or decisions — proactively suggest `/remember {description}`. Use `memory-helper.sh store --auto` for auto-captured memories. Privacy: `<private>` blocks stripped, secrets rejected.
 
 ## Inter-Agent Mailbox
 
@@ -286,29 +242,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 
 ## Getting Started
 
-**Installation:**
-
-```bash
-# npm (recommended)
-npm install -g aidevops && aidevops update
-
-# Homebrew
-brew install marcusquinn/tap/aidevops && aidevops update
-
-# curl (manual - download then execute, not piped)
-curl -fsSL https://aidevops.sh -o /tmp/aidevops-setup.sh && bash /tmp/aidevops-setup.sh
-```
-
-**Initialize in any project:**
-
-```bash
-aidevops init                    # Enable all features
-aidevops init planning           # Enable only planning
-aidevops init beads              # Enable beads (includes planning)
-aidevops features                # List available features
-```
-
-**CLI**: `aidevops [init|update|status|repos|skill|detect|features|uninstall]`
+**CLI**: `aidevops [init|update|status|repos|skill|detect|features|uninstall]`. See `/onboarding` for setup wizard.
 
 ## Bot Reviewer Feedback
 
@@ -358,29 +292,8 @@ Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
 ## Browser Automation
 
-**When to use a browser** (proactively, without being asked):
-- Verifying a dev server works after changes (navigate, check content, screenshot if errors)
-- Testing forms, auth flows, or UI after code changes
-- Logging into websites to submit content, manage accounts, or extract data
-- Verifying deployments are live and rendering correctly
-- Debugging frontend issues (check console errors, network requests)
-
-**How to choose a tool**: Read `tools/browser/browser-automation.md` for the full decision tree. Quick defaults:
-- **Dev testing** (your app): Playwright direct (fastest) or dev-browser (persistent login)
-- **Website interaction** (login, submit, manage): dev-browser (persistent) or Playwriter (your extensions/passwords)
-- **Data extraction**: Crawl4AI (bulk) or Playwright (interactive first)
-- **Debugging**: Chrome DevTools MCP paired with dev-browser
-
-**AI page understanding** (how to "see" the page without vision tokens):
-- Use ARIA snapshots (~0.01s, 50-200 tokens) for forms, navigation, interactive elements
-- Use text extraction (~0.002s) for reading content
-- Use screenshots only for visual debugging or when layout matters
-
-**Benchmarks**: Read `tools/browser/browser-benchmark.md` to re-run if tools are updated.
+Proactively use a browser for: dev server verification, form testing, deployment checks, frontend debugging. Read `tools/browser/browser-automation.md` for tool selection. Quick default: Playwright for dev testing, dev-browser for persistent login.
 
 ## Localhost Standards
 
-- Check port first: `localhost-helper.sh check-port <port>`
-- Use `.local` domains (enables password manager autofill)
-- Always SSL via Traefik + mkcert
-- See `services/hosting/localhost.md`
+`.local` domains + SSL via Traefik + mkcert. See `services/hosting/localhost.md`.

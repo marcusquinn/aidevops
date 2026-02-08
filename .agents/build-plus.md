@@ -291,7 +291,7 @@ Build+ can write to planning files for task tracking (interactive sessions only)
 - `todo/tasks/prd-*.md` - Product requirement documents
 - `todo/tasks/tasks-*.md` - Implementation task lists
 
-**Worker restriction**: When running as a headless dispatch worker (runner), do NOT edit or commit TODO.md. Workers report status via exit code, log output, and mailbox. The supervisor handles all TODO.md updates. See `workflows/plans.md` "Worker TODO.md Restriction".
+**Worker restriction**: Workers must NEVER edit TODO.md. See `workflows/plans.md` "Worker TODO.md Restriction".
 
 ### Auto-Commit Planning Files
 
