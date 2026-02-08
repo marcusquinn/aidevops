@@ -100,14 +100,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: "Monitor & Auto-Fix Code Quality" GHA workflow re-introduced a ShellCheck bug in clawdhub-helper.sh by adding invalid "|| exit" after "then" clauses. The bot's fix patterns need validation against ShellCheck/linters before committing. Options: (a) disable auto-fix for shell scripts, (b) add ShellCheck validation step after auto-fix, (c) require PR instead of direct commit for auto-fixes.
 - [ ] t183 Fix supervisor no_log_file dispatch failures — improve error capture when worker fails to start #bugfix #supervisor ~1h (ai:45m test:15m) ref:GH#673 logged:2026-02-08
   - Notes: Many tasks fail with no_log_file — dispatch runs but produces no log. Root cause likely: dispatch command fails silently before worker starts (e.g. opencode binary not found, worktree creation fails, prompt too long). Need: (a) capture stderr from dispatch command, (b) write a minimal log entry even on dispatch failure, (c) distinguish "worker never started" from "worker started but log missing".
-- [ ] t179 Issue-sync reconciliation: close stale issues, fix ref:GH# drift, wire into supervisor pulse #bugfix #sync #self-improvement ~2h (ai:1.5h test:30m) assignee:marcusquinn started:2026-02-08T22:05:19Z logged:2026-02-08
-  - [ ] t179.1 Add cmd_close fallback: search by task ID in issue title when ref:GH# doesn't match ~30m blocked-by:none
+- [x] t179 Issue-sync reconciliation: close stale issues, fix ref:GH# drift, wire into supervisor pulse #bugfix #sync #self-improvement ~2h (ai:1.5h test:30m) ref:GH#675 assignee:marcusquinn started:2026-02-08T22:05:19Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #677 merged
+  - [x] t179.1 Add cmd_close fallback: search by task ID in issue title when ref:GH# doesn't match ~30m blocked-by:none
     - Notes: cmd_close() currently only looks up issues by ref:GH#NNN from TODO.md. When ref:GH# is stale/wrong (e.g. issue recreated with new number), the close silently skips. Add fallback: gh issue list --search "tNNN in:title" --state open. Also fix ref:GH# in TODO.md when mismatch detected.
-  - [ ] t179.2 Add reconcile command to fix mismatched ref:GH# values in TODO.md ~30m blocked-by:t179.1
+  - [x] t179.2 Add reconcile command to fix mismatched ref:GH# values in TODO.md ~30m blocked-by:t179.1
     - Notes: Scan all tasks with ref:GH#, verify the issue number matches an issue with the task ID in its title. Fix mismatches. Run as part of status command output.
-  - [ ] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1
+  - [x] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1
     - Notes: Add Phase 8 to pulse cycle: run issue-sync-helper.sh close after TODO reconciliation (Phase 7). Only run when no workers active (same guard as reconcile-todo). Prevents stale issues accumulating between manual syncs.
-  - [ ] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1
+  - [x] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1
     - Notes: After PR merge and TODO update, remind to check issue sync. Or auto-run close as part of postflight.
   - Notes: Root cause discovered 2026-02-08: 12 GitHub issues were open for completed tasks because ref:GH# values in TODO.md didn't match actual issue numbers (issues recreated with new numbers by push command). The GHA workflow runs close on push but uses ref:GH# for lookup, missing the mismatched issues. Also fixed: task ID grep truncation bug (t131 matching t131.vision) in PR #668.
 - [x] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 assignee:marcusquinn started:2026-02-08T20:42:38Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #660 merged
