@@ -553,7 +553,7 @@ cmd_update() {
             if [[ "$repo_version" != "$deployed_version" ]]; then
                 print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
                 print_info "Re-running setup to sync agents..."
-                bash "$INSTALL_DIR/setup.sh"
+                bash "$INSTALL_DIR/setup.sh" --non-interactive
             fi
         else
             print_info "Pulling latest changes..."
@@ -582,7 +582,7 @@ cmd_update() {
                 
                 echo ""
                 print_info "Running setup to apply changes..."
-                bash "$INSTALL_DIR/setup.sh"
+                bash "$INSTALL_DIR/setup.sh" --non-interactive
             else
                 print_error "Failed to pull updates"
                 print_info "Try: cd $INSTALL_DIR && git pull"
