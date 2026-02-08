@@ -200,42 +200,60 @@ readonly PULSE_LOCK_TIMEOUT="${SUPERVISOR_PULSE_LOCK_TIMEOUT:-600}"
 
 # Acquire the pulse lock. Returns 0 on success, 1 if another pulse is running.
 acquire_pulse_lock() {
-    # Check for stale lock before attempting acquisition
-    if [[ -d "$PULSE_LOCK_DIR" ]]; then
-        local lock_age=0
-        local lock_mtime
-        if [[ "$(uname)" == "Darwin" ]]; then
-            lock_mtime=$(stat -f %m "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
-        else
-            lock_mtime=$(stat -c %Y "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
-        fi
-        local now_epoch
-        now_epoch=$(date +%s)
-        lock_age=$(( now_epoch - lock_mtime ))
-
-        if [[ "$lock_age" -gt "$PULSE_LOCK_TIMEOUT" ]]; then
-            log_warn "Stale pulse lock detected (age: ${lock_age}s > timeout: ${PULSE_LOCK_TIMEOUT}s) — breaking lock"
-            rm -rf "$PULSE_LOCK_DIR"
-        fi
-    fi
-
-    # Atomic lock acquisition — mkdir is atomic on POSIX filesystems
+    # Attempt 1: try atomic mkdir directly (fast path, no races)
     if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
-        # Write PID for debugging
         echo $$ > "$PULSE_LOCK_DIR/pid" 2>/dev/null || true
         return 0
     fi
 
-    # Lock held by another process — check if that process is still alive
-    local holder_pid
-    holder_pid=$(cat "$PULSE_LOCK_DIR/pid" 2>/dev/null || echo "")
-    if [[ -n "$holder_pid" ]] && ! kill -0 "$holder_pid" 2>/dev/null; then
-        log_warn "Pulse lock held by dead process (PID $holder_pid) — breaking lock"
-        rm -rf "$PULSE_LOCK_DIR"
-        if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
-            echo $$ > "$PULSE_LOCK_DIR/pid" 2>/dev/null || true
-            return 0
+    # Lock exists — check if it's stale (age > timeout) or held by a dead process.
+    # To avoid TOCTOU races where two processes both detect a dead/stale holder,
+    # both rm the lock, and both re-acquire: use atomic rename (mv) to claim the
+    # stale lock exclusively, then clean up and retry mkdir.
+    local should_break=false
+    local break_reason=""
+
+    # Check stale lock (age exceeds timeout)
+    local lock_age=0
+    local lock_mtime
+    if [[ "$(uname)" == "Darwin" ]]; then
+        lock_mtime=$(stat -f %m "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
+    else
+        lock_mtime=$(stat -c %Y "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
+    fi
+    local now_epoch
+    now_epoch=$(date +%s)
+    lock_age=$(( now_epoch - lock_mtime ))
+
+    if [[ "$lock_age" -gt "$PULSE_LOCK_TIMEOUT" ]]; then
+        should_break=true
+        break_reason="stale (age: ${lock_age}s > timeout: ${PULSE_LOCK_TIMEOUT}s)"
+    fi
+
+    # Check dead holder process
+    if [[ "$should_break" == "false" ]]; then
+        local holder_pid
+        holder_pid=$(cat "$PULSE_LOCK_DIR/pid" 2>/dev/null || echo "")
+        if [[ -n "$holder_pid" ]] && ! kill -0 "$holder_pid" 2>/dev/null; then
+            should_break=true
+            break_reason="dead holder (PID $holder_pid)"
         fi
+    fi
+
+    if [[ "$should_break" == "true" ]]; then
+        # Atomically rename the stale lock to a unique temp name.
+        # mv on the same filesystem is atomic — only one process wins.
+        local stale_dir="${PULSE_LOCK_DIR}.stale.$$"
+        if mv "$PULSE_LOCK_DIR" "$stale_dir" 2>/dev/null; then
+            # We won the rename race — clean up and retry
+            log_warn "Breaking pulse lock ($break_reason)"
+            rm -rf "$stale_dir"
+            if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
+                echo $$ > "$PULSE_LOCK_DIR/pid" 2>/dev/null || true
+                return 0
+            fi
+        fi
+        # Another process won the rename race or re-acquired first — fall through
     fi
 
     return 1
@@ -2080,6 +2098,12 @@ cmd_running_count() {
 
 #######################################
 # Get next queued tasks eligible for dispatch
+#
+# Returns queued tasks up to $limit. Does NOT check concurrency here —
+# cmd_dispatch() performs the authoritative concurrency check with a fresh
+# running count at dispatch time. This avoids a TOCTOU race where cmd_next()
+# computes available slots based on a stale count, then cmd_dispatch() sees
+# a different count after prior dispatches in the same pulse loop (t172).
 #######################################
 cmd_next() {
     local batch_id="${1:-}" limit="${2:-1}"
@@ -2089,23 +2113,6 @@ cmd_next() {
     if [[ -n "$batch_id" ]]; then
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
-
-        # Check concurrency limit with adaptive load awareness (t151)
-        local base_concurrency max_load_factor
-        base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
-        max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
-        local concurrency
-        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}")
-        local active_count
-        active_count=$(cmd_running_count "$batch_id")
-
-        local available=$((concurrency - active_count))
-        if [[ "$available" -le 0 ]]; then
-            return 0
-        fi
-        if [[ "$available" -lt "$limit" ]]; then
-            limit="$available"
-        fi
 
         db -separator $'\t' "$SUPERVISOR_DB" "
             SELECT t.id, t.repo, t.description, t.model
@@ -2753,7 +2760,11 @@ cmd_dispatch() {
     # Claim the task on GitHub before dispatching (t164)
     cmd_claim "$task_id" 2>/dev/null || log_info "Could not claim $task_id on GitHub (no issue ref or gh unavailable)"
 
-    # Check concurrency limit with adaptive load awareness (t151)
+    # Authoritative concurrency check with adaptive load awareness (t151, t172)
+    # This is the single source of truth for concurrency enforcement.
+    # cmd_next() intentionally does NOT check concurrency to avoid a TOCTOU race
+    # where the count becomes stale between cmd_next() and cmd_dispatch() calls
+    # within the same pulse loop.
     if [[ -n "$batch_id" ]]; then
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
