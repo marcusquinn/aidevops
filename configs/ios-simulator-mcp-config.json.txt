@@ -1,0 +1,101 @@
+{
+  "provider": "joshuayoes",
+  "description": "iOS Simulator MCP - AI-driven iOS simulator interaction (tap, swipe, type, screenshot)",
+  "documentation": "https://github.com/joshuayoes/ios-simulator-mcp",
+  "prerequisites": {
+    "platform": "macOS only",
+    "xcode": "Xcode with iOS simulators installed",
+    "node_version": "18+",
+    "idb_install": "brew tap facebook/fb && brew install idb-companion",
+    "verify_command": "npx -y ios-simulator-mcp --help"
+  },
+  "mcp_tools": [
+    "ui_tap",
+    "ui_swipe",
+    "ui_type",
+    "ui_view",
+    "screenshot",
+    "record_video",
+    "stop_recording",
+    "ui_describe_all",
+    "ui_describe_point",
+    "install_app",
+    "launch_app",
+    "get_booted_sim_id",
+    "open_simulator"
+  ],
+  "verification_prompt": "Get the booted simulator ID and describe all accessibility elements on screen",
+  "configurations": {
+    "opencode": {
+      "config_location": "~/.config/opencode/opencode.json",
+      "mcp_config": {
+        "ios-simulator": {
+          "type": "local",
+          "command": ["npx", "-y", "ios-simulator-mcp"],
+          "enabled": false
+        }
+      },
+      "tools_config": {
+        "ios-simulator_*": false
+      },
+      "agent_tools": {
+        "ios-simulator_*": true
+      },
+      "notes": "Disabled globally, enabled via @ios-simulator-mcp subagent"
+    },
+    "claude_code": {
+      "method": "cli",
+      "command": "claude mcp add ios-simulator npx ios-simulator-mcp"
+    },
+    "cursor": {
+      "config_location": "~/.cursor/mcp.json",
+      "mcp_config": {
+        "mcpServers": {
+          "ios-simulator": {
+            "command": "npx",
+            "args": ["-y", "ios-simulator-mcp"]
+          }
+        }
+      }
+    },
+    "claude_desktop": {
+      "config_location": "~/Library/Application Support/Claude/claude_desktop_config.json",
+      "mcp_config": {
+        "mcpServers": {
+          "ios-simulator": {
+            "command": "npx",
+            "args": ["-y", "ios-simulator-mcp"]
+          }
+        }
+      }
+    },
+    "windsurf": {
+      "config_location": "~/.codeium/windsurf/mcp_config.json",
+      "mcp_config": {
+        "mcpServers": {
+          "ios-simulator": {
+            "command": "npx",
+            "args": ["-y", "ios-simulator-mcp"]
+          }
+        }
+      }
+    },
+    "gemini_cli": {
+      "config_location": "~/.gemini/settings.json",
+      "mcp_config": {
+        "mcpServers": {
+          "ios-simulator": {
+            "command": "npx",
+            "args": ["-y", "ios-simulator-mcp"]
+          }
+        }
+      }
+    }
+  },
+  "environment_variables": {
+    "IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR": "Directory for screenshots/videos (default: ~/Downloads)",
+    "IOS_SIMULATOR_MCP_FILTERED_TOOLS": "Comma-separated tool names to disable",
+    "IOS_SIMULATOR_MCP_IDB_PATH": "Custom path to IDB executable"
+  },
+  "security_notes": "Use v1.3.3+ (command injection fix in earlier versions)"
+}
