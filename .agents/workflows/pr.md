@@ -528,10 +528,13 @@ After merging:
 git checkout main && git pull origin main
 git checkout your-branch
 git merge main
-# Resolve conflicts in editor
-git add . && git commit -m "fix: Resolve merge conflicts"
+# Resolve conflicts -- see tools/git/conflict-resolution.md for detailed guidance
+git add <resolved-files>
+git commit -m "fix: resolve merge conflicts"
 git push
-```text
+```
+
+For detailed conflict resolution strategies (ours/theirs, diff3, rerere, cherry-pick conflicts), see `tools/git/conflict-resolution.md`.
 
 ## Handling Contradictory AI Feedback
 

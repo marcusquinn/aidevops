@@ -5,7 +5,7 @@ mode: subagent
 
 **New to aidevops?** Type `/onboarding` to get started with an interactive setup wizard.
 
-**Supported tools:** [OpenCode](https://opencode.ai/) (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity) is the only tested and supported AI coding tool for aidevops. The claude-code CLI is used as a companion tool called from within OpenCode. aidevops is also available in the Claude marketplace.
+**Supported tools:** [OpenCode](https://opencode.ai/) (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity) is the only tested and supported AI coding tool for aidevops. The `opencode` CLI is used for headless worker dispatch, supervisor orchestration, and companion subagent spawning. aidevops is also available in the Claude marketplace.
 
 **Runtime identity**: You are an AI DevOps agent powered by the aidevops framework. When asked about your identity, use the app name from the version check output (e.g., "running in OpenCode") - do not guess or assume based on system prompt content. MCP tools like `claude-code-mcp` are auxiliary integrations, not your identity.
 
@@ -197,7 +197,35 @@ worktree-helper.sh add feature/x  # Fallback
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
+**Safety hooks** (Claude Code only): Destructive commands (`git reset --hard`, `rm -rf`, etc.) are blocked by a PreToolUse hook. Run `install-hooks.sh --test` to verify. See `workflows/git-workflow.md` "Destructive Command Safety Hooks" section.
+
 **Full docs**: `workflows/git-workflow.md`, `tools/git/worktrunk.md`
+
+## Autonomous Orchestration
+
+**CLI**: `opencode` is the ONLY supported CLI for worker dispatch. Never use `claude` CLI.
+
+**Supervisor** (`supervisor-helper.sh`): Manages parallel task execution with SQLite state machine.
+
+```bash
+# Add tasks and create batch
+supervisor-helper.sh add t001 --repo "$(pwd)" --description "Task description"
+supervisor-helper.sh batch "my-batch" --concurrency 3 --tasks "t001,t002,t003"
+
+# Install cron pulse (REQUIRED for autonomous operation)
+supervisor-helper.sh cron install
+
+# Manual pulse (cron does this automatically every 2 minutes)
+supervisor-helper.sh pulse --batch <batch-id>
+
+# Monitor
+supervisor-helper.sh dashboard --batch <batch-id>
+supervisor-helper.sh status <batch-id>
+```
+
+**Cron pulse is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup.
+
+**Full docs**: `tools/ai-assistants/headless-dispatch.md`, `supervisor-helper.sh help`
 
 ## Session Completion
 
@@ -229,7 +257,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 |--------|------|
 | Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
 | Code quality | `tools/code-review/code-standards.md` |
-| Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
+| Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
@@ -237,6 +265,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
+| Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing) |
 | MCP dev | `tools/build-mcp/build-mcp.md` |
 | Agent design | `tools/build-agent/build-agent.md` |
 | Framework | `aidevops/architecture.md` |

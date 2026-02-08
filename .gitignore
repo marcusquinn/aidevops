@@ -64,6 +64,10 @@ credentials/
 .agents/scripts-private/
 scripts-private/
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Backup files
 *.backup
 *.bak

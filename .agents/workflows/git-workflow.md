@@ -720,6 +720,66 @@ Before pushing migration files:
 
 See `workflows/sql-migrations.md` for full migration workflow.
 
+## Destructive Command Safety Hooks
+
+Claude Code users get automatic protection against destructive git and filesystem
+commands via a `PreToolUse` hook. The hook intercepts Bash commands before execution
+and blocks dangerous patterns.
+
+### What Gets Blocked
+
+| Command | Risk |
+|---------|------|
+| `git checkout -- <files>` | Discards uncommitted changes |
+| `git restore <files>` | Same as checkout (newer syntax) |
+| `git reset --hard` | Destroys all uncommitted work |
+| `git clean -f` | Removes untracked files permanently |
+| `git push --force` / `-f` | Overwrites remote history |
+| `git branch -D` | Force-deletes without merge check |
+| `rm -rf` (non-temp paths) | Recursive deletion |
+| `git stash drop` / `clear` | Permanently deletes stashes |
+
+### What Stays Allowed
+
+| Command | Why |
+|---------|-----|
+| `git checkout -b <branch>` | Creates new branch |
+| `git restore --staged` | Only unstages, safe |
+| `git clean -n` / `--dry-run` | Preview only |
+| `rm -rf /tmp/...` | Temp directories |
+| `git push --force-with-lease` | Safe force push |
+| `git branch -d` | Checks merge status first |
+
+### Installation
+
+```bash
+# Automatic (runs during setup.sh)
+aidevops update
+
+# Manual
+~/.aidevops/agents/scripts/install-hooks.sh          # Global (~/.claude/)
+~/.aidevops/agents/scripts/install-hooks.sh --project # Current project only
+~/.aidevops/agents/scripts/install-hooks.sh --test    # Run self-test
+~/.aidevops/agents/scripts/install-hooks.sh --uninstall
+```
+
+Requires Python 3 and Claude Code. Restart Claude Code after installation.
+
+### How It Works
+
+The hook runs as a `PreToolUse` handler on the `Bash` tool. Claude Code sends
+the command as JSON on stdin. The guard checks against destructive regex patterns,
+returns a `deny` decision if matched, and the command never executes.
+
+Files: `~/.aidevops/agents/hooks/git_safety_guard.py` (guard script),
+`~/.claude/settings.json` (hook configuration).
+
+### Limitations
+
+- Regex-based pattern matching; obfuscated commands may bypass it
+- This is a safety net for honest mistakes, not a security boundary
+- OpenCode does not currently support hooks (protection is instruction-based only)
+
 ## Related Workflows
 
 | Workflow | When to Read |
