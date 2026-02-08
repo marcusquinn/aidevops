@@ -9,7 +9,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 **Human-readable:**
 
 ```markdown
-- [ ] t001 Task description @owner #tag ~4h (ai:2h test:1h read:30m) logged:2025-01-15
+- [ ] t001 Task description @owner #tag ~4h (ai:2h test:1h read:30m) ref:GH#544 logged:2025-01-15
   - [ ] t001.1 Subtask ~2h blocked-by:t002
     - [ ] t001.1.1 Sub-subtask ~1h
   - [ ] t001.2 Another subtask ~1h blocks:t003
@@ -111,7 +111,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t136.4 Create plugin template ~1h blocked-by:t136.2
   - [ ] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4
   - Notes: Namespaced plugin architecture (pro.md + pro/) to avoid clashes. Plugin AGENTS.md points to main framework. Minimal CI (local linting only) for private repos. aidevops update deploys main + all plugins. Open questions: license (MIT vs proprietary), Gitea Actions availability, plugin deploy order, subagent index strategy.
-- [ ] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) logged:2026-02-07
+- [ ] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) ref:GH#545 logged:2026-02-07
   - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08
     - [x] t135.1.1 Audit scripts for intentional failures needing || true guards completed:2026-02-08
     - [x] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1 completed:2026-02-08
@@ -244,7 +244,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Added run_session_review() to supervisor-helper.sh. On batch completion: captures session context via session-review-helper.sh json, extracts learnings via session-distill-helper.sh auto, stores memory snapshot, suggests @agent-review as non-blocking recommendation. Hooked into check_batch_completion() after run_batch_retrospective(). All calls non-blocking. PR #494 merged.
   - [x] t128.10 Automatic release at batch milestones ~2h blocked-by:t128.8 completed:2026-02-08
     - Notes: Already implemented: trigger_batch_release() handles version-manager.sh release, check_batch_completion() calls it when release_on_complete flag is set, cmd_release() provides manual control. Schema has release_on_complete and release_type columns. cmd_batch accepts --release-on-complete and --release-type flags. Verified complete.
-- [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) logged:2026-01-23 started:2026-01-23T00:00Z
+- [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) ref:GH#499 logged:2026-01-23 started:2026-01-23T00:00Z
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
   - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
   - [x] t068.3 Lossless AGENTS.md Compression ~3h blocked-by:t068.1 completed:2026-01-24
@@ -289,7 +289,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t020.7 Test with existing 46 open issues, enrich plan-linked issues with PLANS.md context ~15m blocked-by:t020.2,t020.3 completed:2026-02-08
   - Notes: Consolidates scattered issue sync code from supervisor-helper.sh (create_github_issue, update_todo_with_issue_ref), github-cli-helper.sh (create_issue, close_issue), and log-issue-helper.sh (search). Absorbs t047 (cross-platform research). GitHub first, GitLab/Gitea support later via platform abstraction. PR #542 (core script), PR #543 (GHA workflow + PRD content rendering).
 - [x] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~30m (ai:20m test:10m) logged:2025-12-22 completed:2026-01-25
-- [ ] t023 Integrate Shannon AI pentester for security testing #security #tools ~2h (ai:1h test:30m read:30m) logged:2025-01-03 ref:https://github.com/KeygraphHQ/shannon
+- [ ] t023 Integrate Shannon AI pentester for security testing #security #tools ~2h (ai:1h test:30m read:30m) ref:GH#546 logged:2025-01-03 ref:https://github.com/KeygraphHQ/shannon
   - Notes: Previously closed 2026-02-07 as "no public repo found". Repo is now public (9.9k stars, AGPL-3.0, actively maintained). Shannon is a fully autonomous AI pentester: white-box source-aware, Docker-based, covers Injection/XSS/SSRF/Broken Auth, 96.15% XBOW benchmark success rate, uses Claude as reasoning engine, produces pentester-grade reports with reproducible PoCs. Runs ~1-1.5h per scan, ~$50/run on Claude 4.5 Sonnet. Integration plan: create .agents/tools/security/shannon.md subagent, add shannon-helper.sh wrapper script, document setup (Docker + Anthropic API key), wire into preflight/postflight or standalone /pentest command.
 - [x] t024 Evaluate Dexter autonomous financial research agent #research #finance #agents ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://github.com/virattt/dexter completed:2026-02-07
   - Notes: Dexter (11.4k stars, TypeScript, actively maintained Feb 2026). Autonomous agent for deep financial research with task planning, self-reflection, and real-time market data (Financial Datasets API + Exa). Uses Bun runtime + OpenAI. Evaluation: 1) Too domain-specific for core aidevops (financial data APIs only), 2) Task planning/self-validation patterns already implemented in supervisor and ralph-loop, 3) Could be imported as optional skill for finance-focused users. Recommendation: No integration needed. Users can install directly if needed.
@@ -668,7 +668,7 @@ t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,
   - Notes: All 4 phases complete. 1) Disabled built-in build/plan agents. 2) Set Plan+ as default_agent. 3) Added granular bash permissions for file discovery (git ls-files, fd, rg --files). 4) Updated generate-opencode-agents.sh. PR #123 merged.
 - [x] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h actual:30m logged:2026-01-17 started:2026-01-18T18:00Z completed:2026-01-18
   - Notes: SonarCloud quality gate was already OK. Fixed OpenCode Agent workflow failing on `pull_request_review_comment` events due to `context.payload.issue` being undefined. Now uses `context.payload.pull_request` as fallback and appropriate API methods for PR review comments. PR #121 merged.
-- [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h logged:2025-12-18 completed:2025-12-20
+- [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h ref:GH#544 logged:2025-12-18 completed:2025-12-20
 - [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m logged:2025-12-18 completed:2025-12-18
 - [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m logged:2025-12-18 completed:2025-12-18
 - [x] t011 Demote wordpress.md from main agent to subagent #architecture ~1h actual:45m logged:2025-12-21 started:2025-12-22T04:10Z completed:2025-12-22
