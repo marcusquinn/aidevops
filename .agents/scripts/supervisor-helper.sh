@@ -2595,29 +2595,30 @@ build_dispatch_cmd() {
 $memory_context"
     fi
 
+    # Use NUL-delimited output so multi-line prompts stay as single arguments
     if [[ "$ai_cli" == "opencode" ]]; then
-        echo "opencode"
-        echo "run"
-        echo "--format"
-        echo "json"
+        printf '%s\0' "opencode"
+        printf '%s\0' "run"
+        printf '%s\0' "--format"
+        printf '%s\0' "json"
         if [[ -n "$model" ]]; then
-            echo "-m"
-            echo "$model"
+            printf '%s\0' "-m"
+            printf '%s\0' "$model"
         fi
-        echo "--title"
-        echo "$task_id"
-        echo "$prompt"
+        printf '%s\0' "--title"
+        printf '%s\0' "$task_id"
+        printf '%s\0' "$prompt"
     else
         # claude CLI
-        echo "claude"
-        echo "-p"
-        echo "$prompt"
+        printf '%s\0' "claude"
+        printf '%s\0' "-p"
+        printf '%s\0' "$prompt"
         if [[ -n "$model" ]]; then
-            echo "--model"
-            echo "$model"
+            printf '%s\0' "--model"
+            printf '%s\0' "$model"
         fi
-        echo "--output-format"
-        echo "json"
+        printf '%s\0' "--output-format"
+        printf '%s\0' "json"
     fi
 
     return 0
@@ -3101,8 +3102,9 @@ cmd_dispatch() {
     log_info "Log: $log_file"
 
     # Build and execute dispatch command
+    # Use NUL-delimited read to preserve multi-line prompts as single arguments
     local -a cmd_parts=()
-    while IFS= read -r part; do
+    while IFS= read -r -d '' part; do
         cmd_parts+=("$part")
     done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$tmodel" "$tdesc")
 
