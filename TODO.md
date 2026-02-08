@@ -75,8 +75,6 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Self-improving loop: CodeRabbit reviews entire codebase daily, findings become tasks, workers fix them, next review validates fixes. Builds on t163 (completion guards) and t128 (supervisor). Consider rate limits and API costs. Could also integrate other review bots (Codacy, SonarCloud) as additional signal sources.
 - [ ] t167 Investigate Gemini Code Assist for full codebase review in daily pulse #quality #automation #research ~30m (ai:20m read:10m) logged:2026-02-08
   - Notes: Gemini Code Assist (`gemini-code-assist[bot]`) currently only reviews PR diffs - no full codebase review trigger exists as of 2026-02-08. Research options: 1) Create a synthetic "full diff" PR (branch from empty tree or first commit, PR against main) to force a full-repo review. 2) Monitor Gemini Code Assist roadmap for full repo review API. 3) Use Gemini API directly (not the GitHub bot) with repo context for codebase-level analysis. If a viable trigger is found, fold into t166 as an additional signal source alongside CodeRabbit. Gemini's review quality on PR #622 was decent (caught real regex issue) but also had false positives - same bot-review verification rules from t166.2 would apply.
-- [ ] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) ref:GH#623 logged:2026-02-08
-  - Notes: Replace t164's GitHub Issue assignee-based claiming with TODO.md-native approach. Claim = move to In Progress + @owner + started:ISO. Unclaim = move back to Backlog + remove @owner/started. Supervisor checks @owner in TODO.md instead of GH API. GitHub issue sync remains optional overlay. Makes framework work with GitLab, Gitea, self-hosted, or no git provider at all.
 - [x] t158 Fix supervisor dispatch so dynamically-created tasks work with /full-loop #bugfix #supervisor #orchestration ~1h (ai:45m test:15m) ref:GH#573 logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #574 merged
   - Notes: Problem: supervisor adds tasks to its DB but not to TODO.md, so workers running /full-loop cannot find the task description. Fix: 1) build_dispatch_cmd now passes task description inline in the prompt (` -- description`), 2) full-loop.md Step 0 has 3-tier resolution: inline desc > TODO.md > supervisor DB, 3) full-loop-helper.sh PR creation queries supervisor DB as fallback. Also adds headless worker rules (no user prompts, no TODO.md edits, graceful auth failure handling) and PR creation hardening (gh auth check, rebase before push, proper title/body).
 - [x] t160 fix: supervisor TODO.md push fails under concurrent workers, add reconcile-todo command #bugfix #supervisor ~1h (ai:45m test:15m) ref:GH#579 logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #589 merged
@@ -94,17 +92,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
     - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
 
-- [ ] t164 Distributed task claiming via GitHub Issue assignees #plan #workflow #orchestration ~3h (ai:1.5h test:1h read:30m) ref:GH#619 logged:2026-02-08
-  - [ ] t164.1 Add claim/release commands to supervisor-helper.sh using gh issue assignee ~45m blocked-by:none
-    - Notes: `supervisor-helper.sh claim tNNN` → finds GH issue by task ID, checks assignee, assigns @me if free, errors if taken. `release tNNN` → unassigns. Atomic via GitHub API — works across machines. Local DB updated as cache.
-  - [ ] t164.2 Supervisor dispatch checks GitHub assignee before dispatching ~30m blocked-by:t164.1
-    - Notes: In build_dispatch_cmd / pulse cycle: before dispatching a task, check if GH issue is assigned to someone else. If yes — skip, log "task claimed by X". If unassigned — claim before dispatch.
-  - [ ] t164.3 Pre-edit check warns if task is claimed by another user ~30m blocked-by:t164.1
-    - Notes: pre-edit-check.sh extracts task ID from branch name (feature/tNNN), queries GH issue assignee. If assigned to someone else — warn "task claimed by {user}, proceed? [y/N]". Non-blocking for manual override.
-  - [ ] t164.4 Add status labels to GitHub Issues (available/claimed/in-review/done) ~30m blocked-by:t164.1
-    - Notes: Labels: status:available, status:claimed, status:in-review, status:done. Supervisor sets labels on state transitions. issue-sync-helper.sh push creates issues with status:available. claim sets status:claimed. PR creation sets status:in-review.
-  - [ ] t164.5 Document distributed workflow in plans.md ~15m blocked-by:t164.1,t164.2,t164.3
-    - Notes: Multi-machine scenario: GitHub Issues as single source of truth for claims. Supervisor DB is local cache. Humans and AI agents use same claim mechanism.
+- [~] t164 ~~Distributed task claiming via GitHub Issue assignees~~ #cancelled ref:GH#619 logged:2026-02-08 cancelled:2026-02-08
+  - Notes: Cancelled — replaced by t165 (provider-agnostic claiming via TODO.md). GitHub Issue sync becomes optional overlay, not primary mechanism. PR #621 closed without merge.
 
 - [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08
 
@@ -720,9 +709,11 @@ t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,
 
 ## In Progress
 
-<!-- No tasks currently in progress -->
+- [ ] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) logged:2026-02-08 started:2026-02-08
+  - Notes: Claiming via TODO.md @owner field + In Progress section. Optimistic locking via git push. GitHub issue sync as optional overlay. Replaces t164.
 
-<!--TOON:in_progress[0]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
+<!--TOON:in_progress[1]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
+t165,Provider-agnostic task claiming via TODO.md,alexey,orchestration architecture,2h,1h30m,30m,,2026-02-08,2026-02-08,in_progress
 -->
 
 ## In Review
