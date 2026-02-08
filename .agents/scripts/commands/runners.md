@@ -40,10 +40,10 @@ was accomplished — not doing the work.
 - Diagnose failures from worker logs (`tail -20`, `grep EXIT`)
 - **Create new TODOs** for any problem that needs code changes
 - **Dispatch those fix tasks** as worker processes (same batch or new batch)
-- Merge PRs created by workers (`gh pr merge`)
-- Update TODO.md with completion timestamps
+- Merge PRs created by workers (`gh pr merge` — a one-line control-plane command)
 - Install and maintain the cron pulse for unattended operation
 - Adjust batch parameters (concurrency, timeouts) based on observed patterns
+- **Improve the process** so workers complete ALL their own work end-to-end
 - At session end, report a summary of everything that was accomplished
 
 ### What the supervisor NEVER does
@@ -54,12 +54,19 @@ was accomplished — not doing the work.
 - Research topics or fetch documentation for tasks
 - Use the Task tool to spawn subagents for task work
 - Attempt to solve problems inline instead of dispatching them
+- Push branches, create PRs, or resolve merge conflicts on behalf of workers
+- Do git operations in worker worktrees (fetch, merge, rebase, commit)
 
-**The supervisor MUST NOT do task work itself.** Every task — including fixes to the
-orchestration process itself — is executed by a separate `opencode run` worker in its
-own worktree with its own context window. The supervisor does not have enough token
-context to both orchestrate AND implement. Attempting both will exhaust context and
-fail at both jobs. This is the single most important rule.
+**The supervisor MUST NOT do work on behalf of workers.** If a worker fails to push,
+create a PR, or resolve a merge conflict, that is a **process failure** — the fix is
+to improve the worker's instructions, the `/full-loop` prompt, or the dispatch
+tooling so that workers handle it themselves next time. Doing it for them masks the
+problem and prevents convergence.
+
+Every task — including fixes to the orchestration process itself — is executed by a
+separate `opencode run` worker in its own worktree with its own context window. The
+supervisor does not have enough token context to both orchestrate AND implement.
+Attempting both will exhaust context and fail at both jobs.
 
 ### Unblock by dispatching, never by solving
 
@@ -87,6 +94,19 @@ This session must run for hours or days. Keep it lean:
 - **Summarize, don't accumulate** — after each pulse, output a compact status table
 - **Commit TODO.md updates promptly** — don't let state accumulate in memory
 - **Use `--compact` flags** where available on supervisor-helper commands
+
+### TODO.md single-writer constraint
+
+When multiple workers and the supervisor all push to TODO.md on `main` simultaneously,
+merge conflicts are inevitable. To prevent this:
+
+- **Only the supervisor writes to TODO.md.** Workers NEVER edit TODO.md directly.
+- Workers report completion/failure via: exit code, log file, and mailbox messages.
+- The supervisor reads worker outcomes and updates TODO.md in a single serialized flow.
+- This also applies to other shared files on `main` (e.g., `subagent-index.toon`).
+
+If a worker's `/full-loop` prompt includes TODO.md updates, that instruction must be
+removed. The supervisor owns the single source of truth for task state on `main`.
 
 ## Step 1: Parse Input
 
@@ -267,13 +287,26 @@ After each pulse, evaluate:
 
 1. **Completed workers** — Check if PRs were created. Merge if CI passes.
 2. **Failed workers** — Read last 20 lines of log. Diagnose: timeout? crash? bad prompt?
+   - Before retrying, verify the backend is healthy (check if `opencode` process
+     starts and responds). Retrying against a dead backend wastes the retry budget.
    - If retryable: `$SH dispatch $TASK_ID` (supervisor-helper handles retry count)
    - If systemic (same error pattern across workers): create a fix task and dispatch it
-3. **Stale workers** — Check `ps aux | grep opencode` for zombie processes. Kill if needed.
+3. **Stale workers** — The supervisor DB can show workers as `running` after their
+   process has exited (crash, OOM, disconnect). Cross-reference DB state against
+   live PIDs: `ps aux | grep opencode`. For any worker marked `running` whose PID is
+   gone, manually transition: `$SH transition $TASK_ID evaluating` then evaluate.
+   Don't trust the DB alone — always verify PIDs.
 4. **Queued tasks** — Verify slots are available for next dispatch.
 5. **Blockers and issues** — If a problem blocks other tasks or requires code changes,
    create a new TODO, add it to the batch, and dispatch it as a worker task. Do not
    attempt to fix it in the supervisor session.
+6. **Merge conflicts on open PRs** — After merging a worker's PR into `main`, other
+   open PRs often conflict on shared files (`TODO.md`, `subagent-index.toon`). If
+   workers are failing to push or create PRs due to conflicts, this is a **process
+   problem**: improve the `/full-loop` prompt or worker tooling so workers pull and
+   rebase before pushing. If a specific PR is stuck, dispatch a worker to fix it:
+   `$SH add tNNN-rebase --description "Rebase feature/tNNN onto main and resolve conflicts"`
+   The supervisor does NOT do git operations in worker worktrees.
 
 ### Progress display
 
@@ -304,18 +337,45 @@ any problem is always the same: **create a TODO, dispatch a worker to fix it.**
 | Missing script/config blocks tasks | Create fix task, dispatch with high priority | Worker creates the missing file, creates PR |
 | Unclear task description causing failures | Create task to refine TODO entries | Worker rewrites task descriptions |
 | Workers can't find a file/tool | Create task to add the missing piece | Worker adds it, unblocking retries |
+| Reprompt fails silently | Verify backend health before retry (direct) | — |
+| Workers fail to push/create PRs | Create task to fix worker tooling or `/full-loop` prompt | Worker improves the process |
+| Open PRs show CONFLICTING after merge | Dispatch rebase worker, or improve `/full-loop` to rebase before push | Worker resolves conflicts |
+| Workers can't complete end-to-end | Create task to improve worker instructions/tooling | Worker fixes the process gap |
 
 **Direct actions** (no worker needed): adjusting batch parameters, killing processes,
-reinstalling cron, merging PRs, updating TODO.md status. These are control-plane
-operations that don't require reading or writing implementation code.
+reinstalling cron, merging PRs (`gh pr merge`), verifying backend health. These are
+one-line control-plane commands that don't touch code or worktrees.
 
 **Dispatched actions** (worker needed): anything that requires reading source code,
-writing files, running tests, researching tools, or creating PRs. Always a worker.
+writing files, running tests, researching tools, creating PRs, resolving merge
+conflicts, pushing branches, or fixing process gaps. Always a worker.
 
-Over many iterations, the fix tasks accumulate into a more robust framework. The
-supervisor session that runs next week will encounter fewer errors than this one.
-The goal is convergence: eventually the supervisor just dispatches, monitors, merges,
-and reports — with near-zero failures to react to.
+**The supervisor's job is to improve the process, not compensate for it.** If workers
+can't complete their work end-to-end (push, create PR, pass CI), the answer is never
+"do it for them" — it's "dispatch a fix task so they can do it themselves next time."
+Each fix makes the next batch more autonomous. Over many iterations, the supervisor
+converges to: dispatch, monitor, merge, report — with workers handling everything else.
+
+### Diagnostic workers
+
+When a failure's root cause is unclear, the supervisor spawns a diagnostic subtask
+using the `-diag-N` suffix convention:
+
+```bash
+$SH self-heal t153   # Creates t153-diag-1 automatically
+# Or manually:
+$SH add t153-diag-1 --repo "$(pwd)" --description "Diagnose why t153 failed: read logs, identify root cause"
+```
+
+Diagnostic workers investigate failures and create targeted fixes. This pattern is
+especially valuable when the failure is in the orchestration infrastructure itself —
+the supervisor dispatches a worker to debug the supervisor's own tooling.
+
+**Real example from this session**: Worker t153 kept failing on reprompt. Diagnostic
+worker `t153-pre-diag-1` discovered that `cmd_reprompt()` was missing a health check,
+causing retries against a dead backend. The diagnostic worker created the fix (PR #568),
+the supervisor merged it, and subsequent retries succeeded. The system debugged and
+fixed itself.
 
 ## Step 6: Batch Complete
 
@@ -349,6 +409,10 @@ clear account of what was accomplished during the session:
 - Total time: 3h 47m
 - Retries used: 5
 - Fix tasks spawned: 2 (t154: pre-edit-check color vars, t155: Google Search 403 fallback)
+- Diagnostic workers: 1 (t153-diag-1: reprompt health check bug)
+- Merge conflicts resolved: 3 (TODO.md x2, subagent-index.toon x1)
+- Session duration: 3h 47m (continuous loop, never stopped)
+- Pulse count: ~227 (1/min)
 
 ### Process improvements made (by workers)
 - PR #392: Fixed pre-edit-check.sh unbound variable bug (unblocked 4 tasks)
