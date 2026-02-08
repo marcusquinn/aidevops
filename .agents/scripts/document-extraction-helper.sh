@@ -1,0 +1,779 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1091
+set -euo pipefail
+
+# Document Extraction Helper for AI DevOps Framework
+# Orchestrates document parsing, PII detection, and structured extraction
+#
+# Usage: document-extraction-helper.sh [command] [options]
+#
+# Commands:
+#   extract <file> [--schema <name>] [--privacy <mode>] [--output <format>]
+#   batch <dir> [--schema <name>] [--privacy <mode>] [--pattern <glob>]
+#   pii-scan <file>                  Scan for PII without extraction
+#   pii-redact <file> [--output <file>]  Redact PII from text
+#   convert <file> [--output <format>]   Convert document to markdown/JSON
+#   install [--all|--core|--pii|--llm]   Install dependencies
+#   status                               Check installed components
+#   schemas                              List available extraction schemas
+#   help                                 Show this help
+#
+# Privacy modes: local (Ollama), edge (Cloudflare), cloud (OpenAI/Anthropic), none
+# Output formats: json, markdown, csv, text
+# Schemas: invoice, receipt, contract, id-document, custom
+#
+# Author: AI DevOps Framework
+# Version: 1.0.0
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+
+# Constants
+readonly VENV_DIR="${HOME}/.aidevops/.agent-workspace/python-env/document-extraction"
+readonly WORKSPACE_DIR="${HOME}/.aidevops/.agent-workspace/work/document-extraction"
+
+# Ensure workspace exists
+ensure_workspace() {
+    mkdir -p "$WORKSPACE_DIR" 2>/dev/null || true
+    return 0
+}
+
+# Activate or create Python virtual environment
+activate_venv() {
+    if [[ -d "${VENV_DIR}/bin" ]]; then
+        # shellcheck disable=SC1091
+        source "${VENV_DIR}/bin/activate"
+        return 0
+    fi
+    print_error "Python venv not found at ${VENV_DIR}"
+    print_info "Run: document-extraction-helper.sh install --core"
+    return 1
+}
+
+# Check if a Python package is installed in the venv
+check_python_package() {
+    local package="$1"
+    if [[ -d "${VENV_DIR}/bin" ]]; then
+        "${VENV_DIR}/bin/python3" -c "import ${package}" 2>/dev/null
+        return $?
+    fi
+    return 1
+}
+
+# Install dependencies
+do_install() {
+    local component="${1:-all}"
+
+    case "$component" in
+        --all|all)
+            install_core
+            install_pii
+            install_llm
+            ;;
+        --core|core)
+            install_core
+            ;;
+        --pii|pii)
+            install_pii
+            ;;
+        --llm|llm)
+            install_llm
+            ;;
+        *)
+            print_error "Unknown install component: ${component}"
+            print_info "Options: --all, --core, --pii, --llm"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+install_core() {
+    print_info "Installing core document extraction dependencies..."
+
+    # Check Python version
+    local python_version
+    python_version="$(python3 --version 2>/dev/null | awk '{print $2}' | cut -d. -f1,2)"
+    if [[ -z "$python_version" ]]; then
+        print_error "Python 3 is required but not found"
+        return 1
+    fi
+
+    local major minor
+    major="$(echo "$python_version" | cut -d. -f1)"
+    minor="$(echo "$python_version" | cut -d. -f2)"
+    if [[ "$major" -lt 3 ]] || { [[ "$major" -eq 3 ]] && [[ "$minor" -lt 10 ]]; }; then
+        print_error "Python 3.10+ required (found ${python_version})"
+        return 1
+    fi
+
+    # Create venv
+    if [[ ! -d "${VENV_DIR}/bin" ]]; then
+        print_info "Creating Python virtual environment at ${VENV_DIR}..."
+        python3 -m venv "$VENV_DIR"
+    fi
+
+    # Install packages
+    "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
+    "${VENV_DIR}/bin/pip" install --quiet docling extract-thinker
+
+    print_success "Core dependencies installed (docling, extract-thinker)"
+    return 0
+}
+
+install_pii() {
+    print_info "Installing PII detection dependencies..."
+
+    if [[ ! -d "${VENV_DIR}/bin" ]]; then
+        print_warning "Core not installed yet. Installing core first..."
+        install_core
+    fi
+
+    "${VENV_DIR}/bin/pip" install --quiet presidio-analyzer presidio-anonymizer
+    "${VENV_DIR}/bin/python3" -m spacy download en_core_web_lg --quiet 2>/dev/null || {
+        print_warning "spaCy model download failed. PII detection may have reduced accuracy."
+        print_info "Try manually: ${VENV_DIR}/bin/python3 -m spacy download en_core_web_lg"
+    }
+
+    print_success "PII dependencies installed (presidio-analyzer, presidio-anonymizer, spaCy)"
+    return 0
+}
+
+install_llm() {
+    print_info "Checking local LLM setup..."
+
+    if command -v ollama &>/dev/null; then
+        print_success "Ollama is installed"
+        if ollama list 2>/dev/null | grep -q "llama3"; then
+            print_success "llama3 model available"
+        else
+            print_info "Pulling llama3.2 model for local extraction..."
+            ollama pull llama3.2 || print_warning "Failed to pull llama3.2. Pull manually: ollama pull llama3.2"
+        fi
+    else
+        print_warning "Ollama not installed. For local LLM processing:"
+        print_info "  brew install ollama && ollama pull llama3.2"
+    fi
+    return 0
+}
+
+# Check installation status
+do_status() {
+    echo "Document Extraction - Component Status"
+    echo "======================================="
+    echo ""
+
+    # Python
+    local python_version
+    python_version="$(python3 --version 2>/dev/null | awk '{print $2}')" || python_version="not found"
+    echo "Python:           ${python_version}"
+
+    # Venv
+    if [[ -d "${VENV_DIR}/bin" ]]; then
+        echo "Virtual env:      ${VENV_DIR}"
+    else
+        echo "Virtual env:      not created"
+    fi
+
+    # Core packages
+    echo ""
+    echo "Core Packages:"
+    if check_python_package "docling"; then
+        echo "  docling:        installed"
+    else
+        echo "  docling:        not installed"
+    fi
+
+    if check_python_package "extract_thinker"; then
+        echo "  extract-thinker: installed"
+    else
+        echo "  extract-thinker: not installed"
+    fi
+
+    # PII packages
+    echo ""
+    echo "PII Packages:"
+    if check_python_package "presidio_analyzer"; then
+        echo "  presidio:       installed"
+    else
+        echo "  presidio:       not installed"
+    fi
+
+    # LLM backends
+    echo ""
+    echo "LLM Backends:"
+    if command -v ollama &>/dev/null; then
+        local ollama_models
+        ollama_models="$(ollama list 2>/dev/null | grep -c "." || echo "0")"
+        echo "  ollama:         installed (${ollama_models} models)"
+    else
+        echo "  ollama:         not installed"
+    fi
+
+    # OCR
+    echo ""
+    echo "OCR Backends:"
+    if command -v tesseract &>/dev/null; then
+        echo "  tesseract:      installed"
+    else
+        echo "  tesseract:      not installed"
+    fi
+
+    if check_python_package "easyocr"; then
+        echo "  easyocr:        installed"
+    else
+        echo "  easyocr:        not installed"
+    fi
+
+    # Related tools
+    echo ""
+    echo "Related Tools:"
+    if command -v pandoc &>/dev/null; then
+        echo "  pandoc:         installed"
+    else
+        echo "  pandoc:         not installed"
+    fi
+
+    if command -v mineru &>/dev/null; then
+        echo "  mineru:         installed"
+    else
+        echo "  mineru:         not installed"
+    fi
+
+    return 0
+}
+
+# Convert document to markdown/JSON using Docling
+do_convert() {
+    local input_file="$1"
+    local output_format="${2:-markdown}"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+    activate_venv || return 1
+    ensure_workspace
+
+    local output_ext
+    case "$output_format" in
+        markdown|md) output_ext="md" ;;
+        json) output_ext="json" ;;
+        text|txt) output_ext="txt" ;;
+        *) print_error "Unsupported output format: ${output_format}"; return 1 ;;
+    esac
+
+    local basename
+    basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
+    local output_file="${WORKSPACE_DIR}/${basename}.${output_ext}"
+
+    print_info "Converting ${input_file} to ${output_format}..."
+
+    "${VENV_DIR}/bin/python3" -c "
+import sys
+from docling.document_converter import DocumentConverter
+
+converter = DocumentConverter()
+result = converter.convert('${input_file}')
+
+output_format = '${output_format}'
+if output_format in ('markdown', 'md'):
+    content = result.document.export_to_markdown()
+elif output_format == 'json':
+    import json
+    content = json.dumps(result.document.export_to_dict(), indent=2)
+else:
+    content = result.document.export_to_markdown()
+
+with open('${output_file}', 'w') as f:
+    f.write(content)
+
+print(f'Converted: ${output_file}')
+" || {
+        print_error "Conversion failed"
+        return 1
+    }
+
+    print_success "Output: ${output_file}"
+    return 0
+}
+
+# Scan file for PII
+do_pii_scan() {
+    local input_file="$1"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+    activate_venv || return 1
+
+    if ! check_python_package "presidio_analyzer"; then
+        print_error "Presidio not installed. Run: document-extraction-helper.sh install --pii"
+        return 1
+    fi
+
+    print_info "Scanning ${input_file} for PII..."
+
+    "${VENV_DIR}/bin/python3" -c "
+import sys
+from presidio_analyzer import AnalyzerEngine
+
+analyzer = AnalyzerEngine()
+
+with open('${input_file}', 'r') as f:
+    text = f.read()
+
+results = analyzer.analyze(text=text, language='en')
+
+if not results:
+    print('No PII detected.')
+    sys.exit(0)
+
+print(f'Found {len(results)} PII entities:')
+print()
+for r in sorted(results, key=lambda x: x.score, reverse=True):
+    snippet = text[r.start:r.end]
+    masked = snippet[0] + '*' * (len(snippet) - 2) + snippet[-1] if len(snippet) > 2 else '**'
+    print(f'  {r.entity_type:20s} score={r.score:.2f}  [{masked}]  pos={r.start}-{r.end}')
+" || {
+        print_error "PII scan failed"
+        return 1
+    }
+
+    return 0
+}
+
+# Redact PII from text file
+do_pii_redact() {
+    local input_file="$1"
+    local output_file="${2:-}"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+    activate_venv || return 1
+
+    if ! check_python_package "presidio_analyzer"; then
+        print_error "Presidio not installed. Run: document-extraction-helper.sh install --pii"
+        return 1
+    fi
+
+    if [[ -z "$output_file" ]]; then
+        local basename
+        basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
+        local ext="${input_file##*.}"
+        output_file="${WORKSPACE_DIR}/${basename}-redacted.${ext}"
+    fi
+
+    ensure_workspace
+    print_info "Redacting PII from ${input_file}..."
+
+    "${VENV_DIR}/bin/python3" -c "
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+analyzer = AnalyzerEngine()
+anonymizer = AnonymizerEngine()
+
+with open('${input_file}', 'r') as f:
+    text = f.read()
+
+results = analyzer.analyze(text=text, language='en')
+anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+
+with open('${output_file}', 'w') as f:
+    f.write(anonymized.text)
+
+print(f'Redacted {len(results)} PII entities')
+print(f'Output: ${output_file}')
+" || {
+        print_error "PII redaction failed"
+        return 1
+    }
+
+    print_success "Redacted output: ${output_file}"
+    return 0
+}
+
+# Extract structured data from document
+do_extract() {
+    local input_file="$1"
+    local schema="${2:-auto}"
+    local privacy="${3:-none}"
+    local output_format="${4:-json}"
+
+    validate_file_exists "$input_file" "Input file" || return 1
+    activate_venv || return 1
+    ensure_workspace
+
+    local basename
+    basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
+    local output_file="${WORKSPACE_DIR}/${basename}-extracted.json"
+
+    # Determine LLM backend based on privacy mode
+    local llm_backend
+    case "$privacy" in
+        local)
+            if ! command -v ollama &>/dev/null; then
+                print_error "Ollama required for local privacy mode but not installed"
+                return 1
+            fi
+            llm_backend="ollama/llama3.2"
+            ;;
+        edge)
+            llm_backend="cloudflare/workers-ai"
+            ;;
+        cloud)
+            llm_backend="openai/gpt-4o"
+            ;;
+        none)
+            llm_backend="ollama/llama3.2"
+            if ! command -v ollama &>/dev/null; then
+                llm_backend="openai/gpt-4o"
+            fi
+            ;;
+        *)
+            print_error "Unknown privacy mode: ${privacy}"
+            print_info "Options: local, edge, cloud, none"
+            return 1
+            ;;
+    esac
+
+    print_info "Extracting from ${input_file} (schema=${schema}, privacy=${privacy}, llm=${llm_backend})..."
+
+    # Build schema selection
+    local schema_code
+    case "$schema" in
+        invoice)
+            schema_code="
+class LineItem(BaseModel):
+    description: str = ''
+    quantity: float = 0
+    unit_price: float = 0
+    amount: float = 0
+
+class Invoice(BaseModel):
+    vendor_name: str = ''
+    invoice_number: str = ''
+    invoice_date: str = ''
+    due_date: str = ''
+    subtotal: float = 0
+    tax: float = 0
+    total: float = 0
+    currency: str = 'USD'
+    line_items: list[LineItem] = []
+
+schema_class = Invoice
+"
+            ;;
+        receipt)
+            schema_code="
+class ReceiptItem(BaseModel):
+    name: str = ''
+    price: float = 0
+
+class Receipt(BaseModel):
+    merchant: str = ''
+    date: str = ''
+    total: float = 0
+    payment_method: str = ''
+    items: list[ReceiptItem] = []
+
+schema_class = Receipt
+"
+            ;;
+        contract)
+            schema_code="
+class ContractSummary(BaseModel):
+    parties: list[str] = []
+    effective_date: str = ''
+    termination_date: str = ''
+    key_terms: list[str] = []
+    obligations: list[str] = []
+
+schema_class = ContractSummary
+"
+            ;;
+        id-document)
+            schema_code="
+class IDDocument(BaseModel):
+    document_type: str = ''
+    full_name: str = ''
+    date_of_birth: str = ''
+    document_number: str = ''
+    expiry_date: str = ''
+    issuing_authority: str = ''
+
+schema_class = IDDocument
+"
+            ;;
+        auto|*)
+            schema_code="
+schema_class = None
+"
+            ;;
+    esac
+
+    "${VENV_DIR}/bin/python3" -c "
+import json
+import sys
+from pydantic import BaseModel
+from extract_thinker import Extractor
+
+${schema_code}
+
+extractor = Extractor()
+extractor.load_document_loader('docling')
+extractor.load_llm('${llm_backend}')
+
+try:
+    if schema_class is not None:
+        result = extractor.extract('${input_file}', schema_class)
+        output = result.model_dump()
+    else:
+        # Auto mode: extract to markdown first
+        from docling.document_converter import DocumentConverter
+        converter = DocumentConverter()
+        doc_result = converter.convert('${input_file}')
+        output = {'content': doc_result.document.export_to_markdown(), 'format': 'markdown'}
+
+    with open('${output_file}', 'w') as f:
+        json.dump(output, f, indent=2, default=str)
+
+    print(json.dumps(output, indent=2, default=str))
+except Exception as e:
+    print(f'Extraction error: {e}', file=sys.stderr)
+    sys.exit(1)
+" || {
+        print_error "Extraction failed"
+        return 1
+    }
+
+    print_success "Output: ${output_file}"
+    return 0
+}
+
+# Batch extract from directory
+do_batch() {
+    local input_dir="$1"
+    local schema="${2:-auto}"
+    local privacy="${3:-none}"
+    local pattern="${4:-*}"
+
+    if [[ ! -d "$input_dir" ]]; then
+        print_error "Directory not found: ${input_dir}"
+        return 1
+    fi
+
+    ensure_workspace
+
+    local count=0
+    local failed=0
+    local supported_extensions="pdf docx pptx xlsx html htm png jpg jpeg tiff bmp"
+
+    print_info "Batch extracting from ${input_dir} (pattern=${pattern}, schema=${schema})..."
+
+    for file in "${input_dir}"/${pattern}; do
+        [[ -f "$file" ]] || continue
+
+        local ext="${file##*.}"
+        ext="$(echo "$ext" | tr '[:upper:]' '[:lower:]')"
+
+        # Check if extension is supported
+        local supported=0
+        for supported_ext in $supported_extensions; do
+            if [[ "$ext" == "$supported_ext" ]]; then
+                supported=1
+                break
+            fi
+        done
+
+        if [[ "$supported" -eq 0 ]]; then
+            continue
+        fi
+
+        echo ""
+        print_info "Processing: ${file}"
+        if do_extract "$file" "$schema" "$privacy" "json"; then
+            count=$((count + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    done
+
+    echo ""
+    print_success "Batch complete: ${count} succeeded, ${failed} failed"
+    print_info "Output directory: ${WORKSPACE_DIR}"
+    return 0
+}
+
+# List available schemas
+do_schemas() {
+    echo "Available Extraction Schemas"
+    echo "============================"
+    echo ""
+    echo "  invoice       - Vendor, line items, totals, dates"
+    echo "  receipt       - Merchant, items, total, payment method"
+    echo "  contract      - Parties, dates, key terms, obligations"
+    echo "  id-document   - Name, DOB, document number, expiry"
+    echo "  auto          - Auto-detect and convert to markdown (default)"
+    echo ""
+    echo "Custom schemas can be defined as Pydantic models in Python."
+    echo "See: .agents/tools/document/document-extraction.md"
+    return 0
+}
+
+# Show help
+do_help() {
+    echo "Document Extraction Helper - AI DevOps Framework"
+    echo ""
+    echo "${HELP_LABEL_USAGE}"
+    echo "  document-extraction-helper.sh <command> [options]"
+    echo ""
+    echo "${HELP_LABEL_COMMANDS}"
+    echo "  extract <file> [--schema <name>] [--privacy <mode>] [--output <format>]"
+    echo "      Extract structured data from a document"
+    echo ""
+    echo "  batch <dir> [--schema <name>] [--privacy <mode>] [--pattern <glob>]"
+    echo "      Batch extract from all documents in a directory"
+    echo ""
+    echo "  pii-scan <file>"
+    echo "      Scan a text file for PII entities"
+    echo ""
+    echo "  pii-redact <file> [--output <file>]"
+    echo "      Redact PII from a text file"
+    echo ""
+    echo "  convert <file> [--output <format>]"
+    echo "      Convert document to markdown/JSON/text (no LLM needed)"
+    echo ""
+    echo "  install [--all|--core|--pii|--llm]"
+    echo "      Install dependencies (default: --all)"
+    echo ""
+    echo "  status"
+    echo "      Check installed components"
+    echo ""
+    echo "  schemas"
+    echo "      List available extraction schemas"
+    echo ""
+    echo "Privacy Modes:"
+    echo "  local   - Fully local via Ollama (no data leaves machine)"
+    echo "  edge    - Cloudflare Workers AI (privacy-preserving cloud)"
+    echo "  cloud   - OpenAI/Anthropic APIs (best quality)"
+    echo "  none    - Auto-select best available backend (default)"
+    echo ""
+    echo "Output Formats: json, markdown, csv, text"
+    echo ""
+    echo "${HELP_LABEL_EXAMPLES}"
+    echo "  document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local"
+    echo "  document-extraction-helper.sh batch ./invoices --schema invoice"
+    echo "  document-extraction-helper.sh pii-scan document.txt"
+    echo "  document-extraction-helper.sh pii-redact document.txt --output redacted.txt"
+    echo "  document-extraction-helper.sh convert report.pdf --output markdown"
+    echo "  document-extraction-helper.sh install --core"
+    echo "  document-extraction-helper.sh status"
+    return 0
+}
+
+# Parse command-line arguments
+parse_args() {
+    local command="${1:-help}"
+    shift || true
+
+    # Parse named options
+    local file=""
+    local schema="auto"
+    local privacy="none"
+    local output_format="json"
+    local output_file=""
+    local pattern="*"
+    local install_component="all"
+
+    # First positional arg after command is the file/dir
+    if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; then
+        file="$1"
+        shift || true
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --schema)
+                schema="${2:-auto}"
+                shift 2 || { print_error "Missing value for --schema"; return 1; }
+                ;;
+            --privacy)
+                privacy="${2:-none}"
+                shift 2 || { print_error "Missing value for --privacy"; return 1; }
+                ;;
+            --output)
+                output_format="${2:-json}"
+                shift 2 || { print_error "Missing value for --output"; return 1; }
+                ;;
+            --pattern)
+                pattern="${2:-*}"
+                shift 2 || { print_error "Missing value for --pattern"; return 1; }
+                ;;
+            --all|--core|--pii|--llm)
+                install_component="${1#--}"
+                shift
+                ;;
+            *)
+                # Treat as output file for pii-redact
+                if [[ "$command" == "pii-redact" ]] && [[ -z "$output_file" ]]; then
+                    output_file="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    case "$command" in
+        extract)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_extract "$file" "$schema" "$privacy" "$output_format"
+            ;;
+        batch)
+            if [[ -z "$file" ]]; then
+                print_error "Input directory is required"
+                return 1
+            fi
+            do_batch "$file" "$schema" "$privacy" "$pattern"
+            ;;
+        pii-scan)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_pii_scan "$file"
+            ;;
+        pii-redact)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_pii_redact "$file" "$output_file"
+            ;;
+        convert)
+            if [[ -z "$file" ]]; then
+                print_error "${ERROR_INPUT_FILE_REQUIRED}"
+                return 1
+            fi
+            do_convert "$file" "$output_format"
+            ;;
+        install)
+            do_install "$install_component"
+            ;;
+        status)
+            do_status
+            ;;
+        schemas)
+            do_schemas
+            ;;
+        help|--help|-h)
+            do_help
+            ;;
+        *)
+            print_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
+            do_help
+            return 1
+            ;;
+    esac
+}
+
+# Main entry point
+parse_args "$@"

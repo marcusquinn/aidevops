@@ -21,9 +21,25 @@ tools:
 - **Purpose**: Extract structured data from documents (PDF, DOCX, images) with PII redaction
 - **Stack**: Docling (parsing) + ExtractThinker (LLM extraction) + Presidio (PII detection)
 - **Privacy**: Fully local processing via Ollama or Cloudflare Workers AI
+- **Helper**: `scripts/document-extraction-helper.sh`
+- **Workflow**: `tools/document/extraction-workflow.md` (tool selection, pipeline orchestration)
 - **PRD**: `todo/tasks/prd-document-extraction.md`
 
-**Status**: Planned (see `todo/tasks/prd-document-extraction.md` for PRD). The Python components below are available for direct use; a CLI helper script is not yet implemented.
+**Quick start**:
+
+```bash
+# Install dependencies
+document-extraction-helper.sh install --all
+
+# Extract structured data from an invoice
+document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local
+
+# Scan for PII
+document-extraction-helper.sh pii-scan document.txt
+
+# Check component status
+document-extraction-helper.sh status
+```
 
 <!-- AI-CONTEXT-END -->
 
@@ -165,6 +181,27 @@ class ContractSummary(BaseModel):
 
 ## Installation
 
+### Via Helper Script (Recommended)
+
+```bash
+# Install everything (core + PII + local LLM check)
+document-extraction-helper.sh install --all
+
+# Install only core (Docling + ExtractThinker)
+document-extraction-helper.sh install --core
+
+# Install PII detection (Presidio + spaCy)
+document-extraction-helper.sh install --pii
+
+# Check local LLM setup (Ollama)
+document-extraction-helper.sh install --llm
+
+# Verify installation
+document-extraction-helper.sh status
+```
+
+### Manual Installation
+
 ```bash
 # Core
 pip install docling extract-thinker
@@ -180,6 +217,8 @@ brew install ollama && ollama pull llama3.2
 pip install easyocr  # or: brew install tesseract
 ```
 
+The helper script creates an isolated Python venv at `~/.aidevops/.agent-workspace/python-env/document-extraction/` to avoid dependency conflicts.
+
 ## When to Use (vs Alternatives)
 
 | Feature | This Stack (Docling+ExtractThinker) | DocStrange | Unstract MCP |
@@ -194,8 +233,11 @@ Use this stack when you need custom Pydantic schemas, PII redaction, or fully lo
 
 ## Related
 
+- `tools/document/extraction-workflow.md` - Workflow orchestration and tool selection guide
+- `scripts/document-extraction-helper.sh` - CLI helper script
 - `tools/document/docstrange.md` - DocStrange: simpler single-install alternative (NanoNets, 7B model, schema extraction)
-- `tools/document/pandoc-helper.sh` - Document format conversion
-- `tools/document/mineru.md` - Alternative PDF extraction (MinerU)
+- `tools/conversion/pandoc.md` - Document format conversion
+- `tools/conversion/mineru.md` - PDF to markdown (layout-aware)
+- `tools/ocr/glm-ocr.md` - Local OCR via Ollama
 - `services/document-processing/unstract.md` - Self-hosted document processing (alternative)
 - `todo/tasks/prd-document-extraction.md` - Full PRD
