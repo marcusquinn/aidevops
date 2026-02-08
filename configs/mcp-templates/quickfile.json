@@ -1,0 +1,106 @@
+{
+  "_comment": "QuickFile MCP server configuration snippets for various AI tools",
+  "_documentation": "https://github.com/marcusquinn/quickfile-mcp",
+  "_install": "cd ~/Git && git clone https://github.com/marcusquinn/quickfile-mcp.git && cd quickfile-mcp && npm install && npm run build",
+  "_credentials": "~/.config/.quickfile-mcp/credentials.json",
+
+  "opencode": {
+    "_file": "~/.config/opencode/opencode.json",
+    "_section": "mcp",
+    "quickfile": {
+      "type": "local",
+      "command": ["node", "/Users/YOU/Git/quickfile-mcp/dist/index.js"],
+      "enabled": true
+    }
+  },
+
+  "claude_code_command": "claude mcp add quickfile node /path/to/quickfile-mcp/dist/index.js",
+
+  "claude_desktop": {
+    "_file": "~/Library/Application Support/Claude/claude_desktop_config.json",
+    "mcpServers": {
+      "quickfile": {
+        "command": "node",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"]
+      }
+    }
+  },
+
+  "cursor_macos": {
+    "_file": "~/.cursor/mcp.json",
+    "mcpServers": {
+      "quickfile": {
+        "command": "node",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"]
+      }
+    }
+  },
+
+  "zed_macos": {
+    "_method": "Custom Server UI",
+    "quickfile": {
+      "command": "node",
+      "args": ["/path/to/quickfile-mcp/dist/index.js"],
+      "env": {}
+    }
+  },
+
+  "github_copilot": {
+    "_file": ".vscode/mcp.json (project root)",
+    "servers": {
+      "quickfile": {
+        "type": "stdio",
+        "command": "node",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"]
+      }
+    },
+    "inputs": []
+  },
+
+  "kilo_code": {
+    "_method": "Global MCP Config",
+    "mcpServers": {
+      "quickfile": {
+        "command": "node",
+        "type": "stdio",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"],
+        "disabled": false,
+        "alwaysAllow": ["quickfile_system_get_account", "quickfile_client_search", "quickfile_invoice_search"]
+      }
+    }
+  },
+
+  "kiro": {
+    "_method": "Command Palette: Kiro: Open user MCP config (JSON)",
+    "mcpServers": {
+      "quickfile": {
+        "command": "node",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"],
+        "disabled": false,
+        "autoApprove": ["quickfile_system_get_account"]
+      }
+    }
+  },
+
+  "antigravity": {
+    "_method": "MCP server icon > Manage > View raw config",
+    "mcpServers": {
+      "quickfile": {
+        "command": "node",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"]
+      }
+    }
+  },
+
+  "gemini_cli": {
+    "_file": "~/.gemini/settings.json",
+    "mcpServers": {
+      "quickfile": {
+        "command": "node",
+        "args": ["/path/to/quickfile-mcp/dist/index.js"]
+      }
+    }
+  },
+
+  "droid_command": "droid mcp add quickfile node /path/to/quickfile-mcp/dist/index.js"
+}

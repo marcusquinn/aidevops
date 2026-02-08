@@ -3969,6 +3969,104 @@ setup_google_analytics_mcp() {
     return 0
 }
 
+# Setup QuickFile MCP server (UK accounting API)
+setup_quickfile_mcp() {
+    print_info "Setting up QuickFile MCP server..."
+
+    local quickfile_dir="$HOME/Git/quickfile-mcp"
+    local credentials_dir="$HOME/.config/.quickfile-mcp"
+    local credentials_file="$credentials_dir/credentials.json"
+
+    # Check if Node.js is available
+    if ! command -v node &> /dev/null; then
+        print_warning "Node.js not found - QuickFile MCP setup skipped"
+        print_info "Install Node.js 18+ to enable QuickFile MCP"
+        return 0
+    fi
+
+    # Check if already cloned and built
+    if [[ -f "$quickfile_dir/dist/index.js" ]]; then
+        print_success "QuickFile MCP already installed at $quickfile_dir"
+    else
+        print_info "QuickFile MCP provides AI access to UK accounting (invoices, clients, reports)"
+        read -r -p "Clone and build QuickFile MCP server? [Y/n]: " install_qf
+
+        if [[ "$install_qf" =~ ^[Yy]?$ ]]; then
+            if [[ ! -d "$quickfile_dir" ]]; then
+                if run_with_spinner "Cloning quickfile-mcp" git clone https://github.com/marcusquinn/quickfile-mcp.git "$quickfile_dir"; then
+                    print_success "Cloned quickfile-mcp"
+                else
+                    print_warning "Failed to clone quickfile-mcp"
+                    return 0
+                fi
+            fi
+
+            if run_with_spinner "Installing dependencies" npm install --prefix "$quickfile_dir"; then
+                if run_with_spinner "Building QuickFile MCP" npm run build --prefix "$quickfile_dir"; then
+                    print_success "QuickFile MCP built successfully"
+                else
+                    print_warning "Build failed - try manually: cd $quickfile_dir && npm run build"
+                    return 0
+                fi
+            else
+                print_warning "npm install failed - try manually: cd $quickfile_dir && npm install"
+                return 0
+            fi
+        else
+            print_info "Skipped QuickFile MCP installation"
+            print_info "Install later: git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/quickfile-mcp"
+            return 0
+        fi
+    fi
+
+    # Check credentials
+    if [[ -f "$credentials_file" ]]; then
+        print_success "QuickFile credentials configured at $credentials_file"
+    else
+        print_info "QuickFile credentials not found"
+        print_info "Create credentials:"
+        print_info "  mkdir -p $credentials_dir && chmod 700 $credentials_dir"
+        print_info "  Create $credentials_file with:"
+        print_info "    accountNumber: from QuickFile dashboard (top-right)"
+        print_info "    apiKey: Account Settings > 3rd Party Integrations > API Key"
+        print_info "    applicationId: Account Settings > Create a QuickFile App"
+    fi
+
+    # Update OpenCode config if available
+    local opencode_config
+    if opencode_config=$(find_opencode_config); then
+        local quickfile_entry
+        quickfile_entry=$(jq -r '.mcp.quickfile // empty' "$opencode_config" 2>/dev/null)
+
+        if [[ -z "$quickfile_entry" ]]; then
+            print_info "Adding QuickFile MCP to OpenCode config..."
+            local node_path
+            node_path=$(resolve_mcp_binary_path "node")
+            [[ -z "$node_path" ]] && node_path="node"
+
+            local tmp_config
+            tmp_config=$(mktemp)
+            trap 'rm -f "$tmp_config"' RETURN
+
+            if jq --arg np "$node_path" --arg dp "$quickfile_dir/dist/index.js" \
+                '.mcp.quickfile = {"type": "local", "command": [$np, $dp], "enabled": true}' \
+                "$opencode_config" > "$tmp_config" 2>/dev/null; then
+                create_backup_with_rotation "$opencode_config" "opencode"
+                mv "$tmp_config" "$opencode_config"
+                print_success "QuickFile MCP added to OpenCode config"
+            else
+                rm -f "$tmp_config"
+                print_warning "Failed to update OpenCode config - add manually"
+            fi
+        else
+            print_success "QuickFile MCP already in OpenCode config"
+        fi
+    fi
+
+    print_info "Documentation: ~/.aidevops/agents/services/accounting/quickfile.md"
+    return 0
+}
+
 # Setup multi-tenant credential storage
 setup_multi_tenant_credentials() {
     print_info "Multi-tenant credential storage..."
@@ -4236,6 +4334,7 @@ main() {
         confirm_step "Setup Beads task management" && setup_beads
         confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
         confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
+        confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
         confirm_step "Setup browser automation tools" && setup_browser_tools
         confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
         confirm_step "Setup OpenCode plugins" && setup_opencode_plugins

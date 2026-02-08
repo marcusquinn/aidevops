@@ -1,5 +1,5 @@
 ---
-description: QuickFile accounting API integration
+description: QuickFile accounting API integration via MCP server
 mode: subagent
 tools:
   read: true
@@ -9,6 +9,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
+  quickfile_*: true
 ---
 
 # QuickFile Agent
@@ -19,7 +20,10 @@ tools:
 
 - **Purpose**: QuickFile UK accounting operations - invoices, clients, purchases, banking, reports
 - **Tool Prefix**: `quickfile_*`
+- **MCP Server**: [quickfile-mcp](https://github.com/marcusquinn/quickfile-mcp) (TypeScript, stdio)
 - **Credentials**: `~/.config/.quickfile-mcp/credentials.json`
+- **API Docs**: https://api.quickfile.co.uk/
+- **Config Template**: `configs/mcp-templates/quickfile.json`
 
 **Common Tasks**:
 
@@ -33,6 +37,7 @@ tools:
 | Outstanding debts | `quickfile_report_ageing` |
 
 **Example Prompts**:
+
 - "Show my QuickFile account details"
 - "Find all unpaid invoices"
 - "Create an invoice for Client X for consulting services"
@@ -42,73 +47,217 @@ tools:
 
 ## Description
 
-This agent provides access to QuickFile UK accounting software through the MCP server. Use it for:
+This agent provides access to QuickFile UK accounting software through the
+[quickfile-mcp](https://github.com/marcusquinn/quickfile-mcp) MCP server.
+QuickFile is a free UK cloud accounting platform for small to medium businesses,
+supporting HMRC MTD (Making Tax Digital), VAT filing, and Open Banking feeds.
+
+Use it for:
 
 - **Client Management**: Create, search, update clients and contacts
 - **Invoicing**: Create and send invoices, estimates, credit notes
 - **Purchases**: Record purchase invoices from suppliers
+- **Supplier Management**: Full supplier CRUD operations
 - **Banking**: View accounts, balances, and transactions
 - **Reporting**: P&L, Balance Sheet, VAT, Ageing reports
+- **System**: Account details, event log, notes
 
-## Available Tools
+## Prerequisites
 
-### System
+- **Node.js 18+**: Required to run the MCP server
+- **QuickFile Account**: Free at https://www.quickfile.co.uk/
+- **API Credentials**: Account Number, API Key, Application ID
 
-- `quickfile_system_get_account` - Account details
-- `quickfile_system_search_events` - Event log
-- `quickfile_system_create_note` - Add notes
+## Installation
 
-### Clients
+```bash
+# Clone and build the MCP server
+cd ~/Git
+git clone https://github.com/marcusquinn/quickfile-mcp.git
+cd quickfile-mcp
+npm install && npm run build
 
-- `quickfile_client_search` - Search clients
-- `quickfile_client_get` - Get client details
-- `quickfile_client_create` - New client
-- `quickfile_client_update` - Update client
-- `quickfile_client_delete` - Delete client
-- `quickfile_client_insert_contacts` - Add contact
-- `quickfile_client_login_url` - Client portal URL
+# Or use setup.sh (handles everything automatically)
+./setup.sh  # Select "Setup QuickFile MCP" when prompted
+```
 
-### Invoices
+## Credential Setup
 
-- `quickfile_invoice_search` - Search invoices
-- `quickfile_invoice_get` - Get invoice
-- `quickfile_invoice_create` - Create invoice/estimate
-- `quickfile_invoice_delete` - Delete invoice
-- `quickfile_invoice_send` - Email invoice
-- `quickfile_invoice_get_pdf` - Get PDF URL
-- `quickfile_estimate_accept_decline` - Accept/decline estimate
-- `quickfile_estimate_convert_to_invoice` - Convert to invoice
+Create credentials file (never commit this):
 
-### Purchases
+```bash
+mkdir -p ~/.config/.quickfile-mcp && chmod 700 ~/.config/.quickfile-mcp
+```
 
-- `quickfile_purchase_search` - Search purchases
-- `quickfile_purchase_get` - Get purchase
-- `quickfile_purchase_create` - Create purchase
-- `quickfile_purchase_delete` - Delete purchase
+Create `~/.config/.quickfile-mcp/credentials.json`:
 
-### Suppliers
+```json
+{
+  "accountNumber": "YOUR_ACCOUNT_NUMBER",
+  "apiKey": "YOUR_API_KEY",
+  "applicationId": "YOUR_APPLICATION_ID"
+}
+```
+
+```bash
+chmod 600 ~/.config/.quickfile-mcp/credentials.json
+```
+
+**Where to find credentials:**
+
+| Credential | Location |
+|------------|----------|
+| Account Number | Top-right corner of QuickFile dashboard |
+| API Key | Account Settings > 3rd Party Integrations > API Key |
+| Application ID | Account Settings > Create a QuickFile App > Application ID |
+
+## AI Assistant Configurations
+
+### OpenCode
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "quickfile": {
+      "type": "local",
+      "command": ["node", "/path/to/quickfile-mcp/dist/index.js"],
+      "enabled": true
+    }
+  }
+}
+```
+
+### Claude Code
+
+```bash
+claude mcp add quickfile node ~/Git/quickfile-mcp/dist/index.js
+```
+
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "quickfile": {
+      "command": "node",
+      "args": ["/path/to/quickfile-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "quickfile": {
+      "command": "node",
+      "args": ["/path/to/quickfile-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+### Gemini CLI
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "quickfile": {
+      "command": "node",
+      "args": ["/path/to/quickfile-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+### GitHub Copilot
+
+Add to `.vscode/mcp.json` in project root:
+
+```json
+{
+  "servers": {
+    "quickfile": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/quickfile-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+See `configs/mcp-templates/quickfile.json` for all AI assistant configurations
+(Zed, Kilo Code, Kiro, AntiGravity, Droid).
+
+## Available Tools (37 tools)
+
+### System (3 tools)
+
+- `quickfile_system_get_account` - Account details (company, VAT status, year end)
+- `quickfile_system_search_events` - Search the audit event log
+- `quickfile_system_create_note` - Add notes to invoices, clients, etc.
+
+### Clients (7 tools)
+
+- `quickfile_client_search` - Search clients by name, email, postcode
+- `quickfile_client_get` - Get full client details
+- `quickfile_client_create` - Create a new client
+- `quickfile_client_update` - Update client details
+- `quickfile_client_delete` - Delete a client
+- `quickfile_client_insert_contacts` - Add contacts to a client
+- `quickfile_client_login_url` - Get passwordless login URL for client portal
+
+### Invoices (8 tools)
+
+- `quickfile_invoice_search` - Search invoices by type, client, date, status
+- `quickfile_invoice_get` - Get full invoice with line items
+- `quickfile_invoice_create` - Create invoice, estimate, or credit note
+- `quickfile_invoice_delete` - Delete an invoice
+- `quickfile_invoice_send` - Send invoice by email
+- `quickfile_invoice_get_pdf` - Get PDF download URL
+- `quickfile_estimate_accept_decline` - Accept or decline an estimate
+- `quickfile_estimate_convert_to_invoice` - Convert estimate to invoice
+
+### Purchases (4 tools)
+
+- `quickfile_purchase_search` - Search purchase invoices
+- `quickfile_purchase_get` - Get purchase details
+- `quickfile_purchase_create` - Create purchase invoice
+- `quickfile_purchase_delete` - Delete purchase invoice
+
+### Suppliers (4 tools)
 
 - `quickfile_supplier_search` - Search suppliers
-- `quickfile_supplier_get` - Get supplier
-- `quickfile_supplier_create` - New supplier
-- `quickfile_supplier_delete` - Delete supplier
+- `quickfile_supplier_get` - Get supplier details
+- `quickfile_supplier_create` - Create a new supplier
+- `quickfile_supplier_delete` - Delete a supplier
 
-### Banking
+### Banking (5 tools)
 
-- `quickfile_bank_get_accounts` - List accounts
-- `quickfile_bank_get_balances` - Get balances
+- `quickfile_bank_get_accounts` - List all bank accounts
+- `quickfile_bank_get_balances` - Get account balances
 - `quickfile_bank_search` - Search transactions
-- `quickfile_bank_create_account` - New account
-- `quickfile_bank_create_transaction` - Add transaction
+- `quickfile_bank_create_account` - Create a bank account
+- `quickfile_bank_create_transaction` - Add bank transaction
 
-### Reports
+### Reports (6 tools)
 
-- `quickfile_report_profit_loss` - P&L report
-- `quickfile_report_balance_sheet` - Balance sheet
-- `quickfile_report_vat_obligations` - VAT returns
-- `quickfile_report_ageing` - Debtor/creditor ageing
-- `quickfile_report_chart_of_accounts` - Nominal codes
-- `quickfile_report_subscriptions` - Recurring items
+- `quickfile_report_profit_loss` - Profit & Loss report
+- `quickfile_report_balance_sheet` - Balance Sheet report
+- `quickfile_report_vat_obligations` - VAT returns (filed & open)
+- `quickfile_report_ageing` - Debtor/Creditor ageing
+- `quickfile_report_chart_of_accounts` - List nominal codes
+- `quickfile_report_subscriptions` - Recurring subscriptions
 
 ## Example Prompts
 
@@ -125,7 +274,7 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 ### Invoice Operations
 
 "List all unpaid invoices from the last 30 days"
-"Create an invoice for client 12345 for 8 hours of consulting at £100/hour"
+"Create an invoice for client 12345 for 8 hours of consulting at GBP 100/hour"
 "Send invoice 67890 to the client"
 "Get the PDF for invoice 67890"
 
@@ -138,39 +287,56 @@ This agent provides access to QuickFile UK accounting software through the MCP s
 
 ### Purchase Operations
 
-"Record a purchase invoice from Amazon for £50 office supplies"
+"Record a purchase invoice from Amazon for GBP 50 office supplies"
 "List all purchases from supplier 11111"
+
+## API Rate Limits
+
+- **Default**: 1000 API calls per day per account
+- **Reset**: Daily at approximately midnight
+- **Increase**: Contact QuickFile support
 
 ## Security Notes
 
 - Credentials stored in `~/.config/.quickfile-mcp/credentials.json`
-- File should have 600 permissions
-- API calls are authenticated via MD5 hash
-- Default rate limit: 1000 calls/day
+- File should have 600 permissions (owner read/write only)
+- API calls authenticated via MD5 hash (AccountNumber + APIKey + SubmissionNumber)
+- Each API request uses a unique submission number (no replay attacks)
+- Debug mode (`QUICKFILE_DEBUG=1`) redacts credentials in output
+
+## Verification
+
+After setup, test with:
+
+```text
+"Show me my QuickFile account details"
+```
+
+Expected: Returns company name, VAT status, financial year end, and account metadata.
 
 ## Troubleshooting
 
-If you encounter issues with QuickFile operations, check these resources:
+| Issue | Solution |
+|-------|----------|
+| Credentials not found | Create `~/.config/.quickfile-mcp/credentials.json` with accountNumber, apiKey, applicationId |
+| Authentication failed | Verify all 3 credential values are correct |
+| Rate limit exceeded | Wait until midnight for reset, or contact QuickFile support |
+| Build failed | Ensure Node.js 18+: `node --version` |
+| MCP not responding | Rebuild: `cd ~/Git/quickfile-mcp && npm run build`. Restart AI tool. |
 
-| Resource | URL | Purpose |
-|----------|-----|---------|
-| Support Portal | https://support.quickfile.co.uk/ | Official help articles and FAQs |
-| Community Forum | https://community.quickfile.co.uk/ | User discussions and solutions |
-| API Documentation | https://api.quickfile.co.uk/ | Technical API reference |
+**Debug mode**: `QUICKFILE_DEBUG=1 node ~/Git/quickfile-mcp/dist/index.js`
 
-**Common issues:**
-- **Authentication errors**: Verify credentials in `~/.config/.quickfile-mcp/credentials.json`
-- **Rate limiting**: Default 1000 calls/day - check usage in QuickFile dashboard
-- **API changes**: Check API docs for deprecations or new endpoints
+**Resources**:
+
+| Resource | URL |
+|----------|-----|
+| MCP Server Repo | https://github.com/marcusquinn/quickfile-mcp |
+| QuickFile Support | https://support.quickfile.co.uk/ |
+| Community Forum | https://community.quickfile.co.uk/ |
+| API Documentation | https://api.quickfile.co.uk/ |
+| Context7 API Index | https://context7.com/websites/api_quickfile_co_uk |
 
 ## Related Agents
 
+- `@accounts` - Parent agent for accounting operations
 - `@aidevops` - For infrastructure operations
-- `@code-standards` - For code review
-
-## Reference
-
-- [QuickFile Support Portal](https://support.quickfile.co.uk/)
-- [QuickFile Community Forum](https://community.quickfile.co.uk/)
-- [QuickFile API Documentation](https://api.quickfile.co.uk/)
-- [AGENTS.md](../AGENTS.md) - Full documentation
