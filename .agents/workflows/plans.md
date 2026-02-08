@@ -701,9 +701,11 @@ supervisor-helper.sh unclaim tNNN  # Release the claim
 
 | Actor | Before work | During work | After work |
 |-------|-------------|-------------|------------|
-| **Supervisor** | `claim` before dispatch (auto) | Worker runs | `unclaim` on completion |
+| **Supervisor** | `claim` before dispatch (auto) | Worker runs | Manual `unclaim` or PR merge closes issue |
 | **Human** | `claim` or assign on GitHub | Edit code | PR merge closes issue |
 | **Pre-edit check** | Warns if claimed by another | — | — |
+
+> **Note:** Auto-unclaim on task completion is planned for a future iteration. Currently, claims are released manually or when the GitHub Issue is closed.
 
 **Status labels** on GitHub Issues: `status:available` → `status:claimed` → `status:in-review` → `status:done`
 

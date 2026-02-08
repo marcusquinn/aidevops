@@ -1836,6 +1836,29 @@ cmd_cancel() {
 }
 
 #######################################
+# Find GitHub issue number for a task from TODO.md (t164)
+# Outputs the issue number on stdout, empty if not found.
+# $1: task_id
+# $2: project_root (optional, default: find_project_root)
+#######################################
+find_task_issue_number() {
+    local task_id="${1:-}"
+    local project_root="${2:-}"
+
+    if [[ -z "$project_root" ]]; then
+        project_root=$(find_project_root 2>/dev/null || echo ".")
+    fi
+
+    local todo_file="$project_root/TODO.md"
+    if [[ -f "$todo_file" ]]; then
+        local task_line
+        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo ""
+    fi
+    return 0
+}
+
+#######################################
 # Claim a task via GitHub Issue assignee (t164)
 # Uses GitHub as distributed lock — works across machines
 #######################################
@@ -1847,18 +1870,11 @@ cmd_claim() {
         return 1
     fi
 
-    # Find the GitHub issue number from TODO.md
     local project_root
     project_root=$(find_project_root 2>/dev/null || echo ".")
-    local todo_file="$project_root/TODO.md"
-    local issue_number=""
 
-    if [[ -f "$todo_file" ]]; then
-        local task_line
-        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
-        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-    fi
-
+    local issue_number
+    issue_number=$(find_task_issue_number "$task_id" "$project_root")
     if [[ -z "$issue_number" ]]; then
         log_error "No GitHub issue found for $task_id (missing ref:GH# in TODO.md)"
         return 1
@@ -1886,13 +1902,9 @@ cmd_claim() {
         return 1
     fi
 
-    # Assign to self
-    if gh issue edit "$issue_number" --repo "$repo_slug" --add-assignee "@me" 2>/dev/null; then
+    # Assign to self and update labels in a single call
+    if gh issue edit "$issue_number" --repo "$repo_slug" --add-assignee "@me" --add-label "status:claimed" --remove-label "status:available" 2>/dev/null; then
         log_success "Claimed $task_id (GH#$issue_number assigned to you)"
-
-        # Add status label if it exists
-        gh issue edit "$issue_number" --repo "$repo_slug" --add-label "status:claimed" --remove-label "status:available" 2>/dev/null || true
-
         return 0
     else
         log_error "Failed to claim $task_id (GH#$issue_number)"
@@ -1913,15 +1925,9 @@ cmd_unclaim() {
 
     local project_root
     project_root=$(find_project_root 2>/dev/null || echo ".")
-    local todo_file="$project_root/TODO.md"
-    local issue_number=""
 
-    if [[ -f "$todo_file" ]]; then
-        local task_line
-        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
-        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-    fi
-
+    local issue_number
+    issue_number=$(find_task_issue_number "$task_id" "$project_root")
     if [[ -z "$issue_number" ]]; then
         log_error "No GitHub issue found for $task_id"
         return 1
@@ -1929,13 +1935,17 @@ cmd_unclaim() {
 
     local repo_slug
     repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        log_error "Cannot detect repo slug"
+        return 1
+    fi
 
     local my_login
     my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
 
-    if gh issue edit "$issue_number" --repo "$repo_slug" --remove-assignee "$my_login" 2>/dev/null; then
+    # Remove assignee and update labels in a single call
+    if gh issue edit "$issue_number" --repo "$repo_slug" --remove-assignee "$my_login" --add-label "status:available" --remove-label "status:claimed" 2>/dev/null; then
         log_success "Released $task_id (GH#$issue_number unassigned)"
-        gh issue edit "$issue_number" --repo "$repo_slug" --add-label "status:available" --remove-label "status:claimed" 2>/dev/null || true
         return 0
     else
         log_error "Failed to release $task_id"
@@ -1950,14 +1960,9 @@ cmd_unclaim() {
 check_task_claimed() {
     local task_id="${1:-}"
     local project_root="${2:-.}"
-    local todo_file="$project_root/TODO.md"
-    local issue_number=""
 
-    if [[ -f "$todo_file" ]]; then
-        local task_line
-        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
-        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-    fi
+    local issue_number
+    issue_number=$(find_task_issue_number "$task_id" "$project_root")
 
     # No issue = no claim mechanism = free
     if [[ -z "$issue_number" ]]; then
@@ -2647,7 +2652,7 @@ cmd_dispatch() {
     fi
 
     # Claim the task on GitHub before dispatching (t164)
-    cmd_claim "$task_id" 2>/dev/null || log_verbose "Could not claim $task_id on GitHub (no issue ref or gh unavailable)"
+    cmd_claim "$task_id" 2>/dev/null || log_info "Could not claim $task_id on GitHub (no issue ref or gh unavailable)"
 
     # Check concurrency limit with adaptive load awareness (t151)
     if [[ -n "$batch_id" ]]; then
