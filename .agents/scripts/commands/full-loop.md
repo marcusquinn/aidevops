@@ -172,7 +172,7 @@ The AI will iterate on the task until outputting:
 
 When running as a headless worker (dispatched by the supervisor via `opencode run` or `Claude -p`), the `--headless` flag is passed automatically. The full-loop-helper.sh script enforces these rules:
 
-1. **NEVER prompt for user input** - There is no human at the terminal. If you encounter ambiguity, make a reasonable decision and document it in a commit message. If truly blocked, exit cleanly so the supervisor can evaluate and retry.
+1. **NEVER prompt for user input** - There is no human at the terminal. Use the uncertainty decision framework (rule 7) to decide whether to proceed or exit.
 
 2. **Do NOT edit TODO.md** - Put notes in commit messages or PR body instead. See `workflows/plans.md` "Worker TODO.md Restriction".
 
@@ -183,6 +183,26 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
 5. **Exit cleanly on unrecoverable errors** - If you cannot complete the task (missing dependencies, permissions, etc.), emit a clear error message and exit. Do not loop forever.
 
 6. **git pull --rebase before push** (t174) - The PR create phase automatically runs `git pull --rebase` to sync with any remote changes before pushing, avoiding push rejections.
+
+7. **Uncertainty decision framework** (t176) - When facing ambiguity, use this decision tree:
+
+   **PROCEED autonomously** (document decision in commit message):
+   - Multiple valid approaches exist but all achieve the goal — pick the simplest
+   - Style/naming choices are ambiguous — follow existing codebase conventions
+   - Task description is slightly vague but intent is clear from context
+   - Choosing between equivalent libraries/patterns — match project precedent
+   - Minor scope questions (e.g., fix adjacent issue?) — stay focused on assigned task
+
+   **EXIT cleanly** (include clear explanation in output):
+   - Task description contradicts what you find in the codebase
+   - Completing the task requires breaking changes to public APIs or shared interfaces
+   - The task is already done or obsolete
+   - Required dependencies, credentials, or services are missing and cannot be inferred
+   - The task requires architectural decisions that affect other tasks
+   - Unsure whether to create vs modify a file, and getting it wrong risks data loss
+
+   When proceeding, document the choice: `feat: add retry logic (chose exponential backoff — matches existing patterns)`
+   When exiting, be specific: `BLOCKED: Task says 'update auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
 
 **README gate (MANDATORY - do NOT skip):**
 
