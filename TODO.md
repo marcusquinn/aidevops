@@ -126,9 +126,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.2.5 Verify zero violations with linters-local.sh completed:2026-02-08
     - Notes: PR #492 merged. Replaced 23-rule blanket disable with targeted per-file disables (avg 3-5 rules). 4 scripts now completely clean. 471 violations categorized, all suppressed with targeted rules.
   - [x] t135.3 P0-C: Add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers ~2h blocked-by:none completed:2026-02-07
-    - [ ] t135.3.1 Understand current DB init patterns in all 3 helpers ~30m
-    - [ ] t135.3.2 Add PRAGMA journal_mode=WAL and busy_timeout=5000 to DB init ~30m blocked-by:t135.3.1
-    - [ ] t135.3.3 Test concurrent access scenarios ~1h blocked-by:t135.3.2
+    - [x] t135.3.1 Understand current DB init patterns in all 3 helpers ~30m completed:2026-02-07
+    - [x] t135.3.2 Add PRAGMA journal_mode=WAL and busy_timeout=5000 to DB init ~30m blocked-by:t135.3.1 completed:2026-02-07
+    - [x] t135.3.3 Test concurrent access scenarios ~1h blocked-by:t135.3.2 completed:2026-02-07
+    - Notes: All 3 helpers (supervisor, memory, mail) have WAL mode + busy_timeout=5000 in both init_db() and per-connection db() wrapper. Migration path ensures existing DBs get upgraded.
   - [x] t135.4 P1-A: Fix 2 corrupted JSON config files ~1h blocked-by:none completed:2026-02-07
     - Notes: Already fixed. Both configs/pandoc-config.json.txt and configs/mcp-templates/chrome-devtools.json validate clean with python3 json.load().
   - [x] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none completed:2026-02-07
@@ -153,7 +154,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 completed:2026-02-07
       - Notes: PR #485 merged. Added trap RETURN guards after mktemp calls across 14 scripts (20 files, 29 sites).
   - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
-  - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-07
+  - [ ] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none
     - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
     - [ ] t135.11.2 Add formula version/SHA update to version-manager.sh ~1.5h blocked-by:t135.11.1
   - [x] t135.12 P3-A: Archive fix scripts safely (12 scripts, 0 refs, completed purpose) ~1h blocked-by:none completed:2026-02-07
@@ -171,10 +172,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: All test suites already exist: test-smoke-help.sh (100 help tests, 273 total), test-supervisor-state-machine.sh (53 tests), test-memory-mail.sh (37 tests), test-batch-quality-hardening.sh (56 tests). Total: 419 tests, all passing.
   - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
   - [x] t135.15 P1-D: Add system resource monitoring to supervisor pulse (CPU load, process count, adaptive concurrency) ~2h blocked-by:none completed:2026-02-07
-    - [ ] t135.15.1 Add check_system_load() to supervisor-helper.sh (load avg, process count, memory pressure) ~30m
-    - [ ] t135.15.2 Add adaptive concurrency throttling to pulse cycle (reduce workers when load > cores*2) ~45m blocked-by:t135.15.1
-    - [ ] t135.15.3 Add resource stats to pulse summary output ~15m blocked-by:t135.15.1
-    - [ ] t135.15.4 Add --max-load flag to batch command for configurable threshold ~15m blocked-by:t135.15.2
+    - [x] t135.15.1 Add check_system_load() to supervisor-helper.sh (load avg, process count, memory pressure) ~30m completed:2026-02-07
+    - [x] t135.15.2 Add adaptive concurrency throttling to pulse cycle (reduce workers when load > cores*2) ~45m blocked-by:t135.15.1 completed:2026-02-07
+    - [x] t135.15.3 Add resource stats to pulse summary output ~15m blocked-by:t135.15.1 completed:2026-02-07
+    - [x] t135.15.4 Add --max-load flag to batch command for configurable threshold ~15m blocked-by:t135.15.2 completed:2026-02-07
+    - Notes: check_system_load() at line 197, calculate_adaptive_concurrency() at line 310, resource stats in pulse Phase 5 summary, max_load_factor column in batches table with migration.
     - Notes: Discovered during batch-20260207 run: 3 concurrent workers spawned 51 opencode + 149 node processes, load avg hit 116 on 10-core machine. Supervisor has model health checks and orphan cleanup but no system resource awareness. Each opencode worker spawns ~15-20 sub-processes (MCP servers, LSPs). Need: load average monitoring, process count per worker, adaptive concurrency (pause dispatch when overloaded, resume when load drops).
   - Notes: From Claude Opus 4.6 codebase review (2026-02-07). Review corrected: 100/170 scripts already have set -e (not 2 as initially reported). 29/170 use shared-constants.sh. 95 scripts have blanket 20+ rule ShellCheck disable. 12 fix scripts have 0 references and only exist from the .agent->.agents rename commit. All subtasks designed for /runners dispatch. IMPORTANT: Review recommendation #10 (organize scripts by domain subdirectories) was REJECTED - scripts are cross-domain and flat namespace with naming convention is the intentional design. Recommendation #13 (remove dead fix scripts) changed to ARCHIVE non-destructively. Every subtask requires reading existing code to understand intent before changes.
 - [ ] t132 Cross-Provider Model Routing with Fallbacks #plan #orchestration #multi-model → [todo/PLANS.md#2026-02-06-cross-provider-model-routing-with-fallbacks] ~1.5d (ai:8h test:4h read:2h) logged:2026-02-06
