@@ -41,7 +41,7 @@ tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend
 tools/code-review/,Code quality - linting and security scanning,code-standards|code-simplifier|codacy|coderabbit|qlty|snyk|secretlint|security-analysis
 tools/context/,Context optimization - semantic search and indexing,osgrep|augment-context-engine|context-builder|context7|toon|mcp-discovery|github-search|model-routing
 tools/conversion/,Format conversion - document transformation,pandoc
-tools/document/,Document extraction - conversion and structured data extraction,document-extraction|docstrange
+tools/document/,Document extraction - conversion structured data extraction and workflow orchestration,document-extraction|extraction-workflow|docstrange
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
 tools/voice/,Voice AI - TTS/STT model catalog voice bridge and Pipecat pipeline for talking to AI agents,voice-models|speech-to-speech|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
@@ -80,7 +80,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[45]{name,purpose}:
+<!--TOON:scripts[46]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -109,6 +109,7 @@ memory-embeddings-helper.sh,Semantic memory search with vector embeddings (opt-i
 pattern-tracker-helper.sh,Success/failure pattern tracking and analysis
 pdf-helper.sh,PDF operations (info fields fill merge text)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
+document-extraction-helper.sh,Document extraction with PII redaction (extract batch pii-scan pii-redact convert install status schemas)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
 yt-dlp-helper.sh,YouTube video/audio download and local file conversion
