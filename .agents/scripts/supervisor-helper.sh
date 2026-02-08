@@ -1947,13 +1947,25 @@ find_task_issue_number() {
 
 #######################################
 # Get the identity string for task claiming (t165)
-# Uses AIDEVOPS_IDENTITY env var, falls back to user@hostname
+# Priority: AIDEVOPS_IDENTITY env > GitHub username (cached) > user@hostname
+# The GitHub username is preferred because TODO.md assignees typically use
+# GitHub usernames (e.g., assignee:marcusquinn), not user@host format.
 #######################################
 get_aidevops_identity() {
     if [[ -n "${AIDEVOPS_IDENTITY:-}" ]]; then
         echo "$AIDEVOPS_IDENTITY"
         return 0
     fi
+
+    # Try GitHub username (cached for the session to avoid repeated API calls)
+    if [[ -z "${_CACHED_GH_USERNAME:-}" ]]; then
+        _CACHED_GH_USERNAME=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    fi
+    if [[ -n "$_CACHED_GH_USERNAME" ]]; then
+        echo "$_CACHED_GH_USERNAME"
+        return 0
+    fi
+
     local user host
     user=$(whoami 2>/dev/null || echo "unknown")
     host=$(hostname -s 2>/dev/null || echo "local")
@@ -2020,8 +2032,12 @@ cmd_claim() {
     current_assignee=$(get_task_assignee "$task_id" "$todo_file")
 
     if [[ -n "$current_assignee" ]]; then
-        if [[ "$current_assignee" == "$identity" ]]; then
-            log_info "$task_id already claimed by you (assignee:$identity)"
+        # Use check_task_claimed for consistent fuzzy matching (handles
+        # username vs user@host mismatches)
+        local claimed_other=""
+        claimed_other=$(check_task_claimed "$task_id" "$project_root" 2>/dev/null) || true
+        if [[ -z "$claimed_other" ]]; then
+            log_info "$task_id already claimed by you (assignee:$current_assignee)"
             return 0
         fi
         log_error "$task_id is claimed by assignee:$current_assignee"
@@ -2115,7 +2131,10 @@ cmd_unclaim() {
         return 0
     fi
 
-    if [[ "$current_assignee" != "$identity" ]]; then
+    # Use check_task_claimed for consistent fuzzy matching
+    local claimed_other=""
+    claimed_other=$(check_task_claimed "$task_id" "$project_root" 2>/dev/null) || true
+    if [[ -n "$claimed_other" ]]; then
         log_error "$task_id is claimed by assignee:$current_assignee, not by you (assignee:$identity)"
         return 1
     fi
@@ -2171,8 +2190,22 @@ check_task_claimed() {
     local identity
     identity=$(get_aidevops_identity)
 
-    # Claimed by self = OK
+    # Exact match = claimed by self
     if [[ "$current_assignee" == "$identity" ]]; then
+        return 0
+    fi
+
+    # Fuzzy match: assignee might be just a username while identity is user@host,
+    # or vice versa. Also check the local username (whoami) and GitHub username.
+    local local_user
+    local_user=$(whoami 2>/dev/null || echo "")
+    local gh_user="${_CACHED_GH_USERNAME:-}"
+    local identity_user="${identity%%@*}"  # Strip @host portion
+
+    if [[ "$current_assignee" == "$local_user" ]] ||
+       [[ "$current_assignee" == "$gh_user" ]] ||
+       [[ "$current_assignee" == "$identity_user" ]] ||
+       [[ "${current_assignee%%@*}" == "$identity_user" ]]; then
         return 0
     fi
 
