@@ -5219,9 +5219,83 @@ commit_and_push_todo() {
 }
 
 #######################################
+# Verify task has real deliverables before marking complete (t163.4)
+# Checks: merged PR exists with substantive file changes (not just TODO.md)
+# Returns 0 if verified, 1 if not
+#######################################
+verify_task_deliverables() {
+    local task_id="$1"
+    local pr_url="${2:-}"
+    local repo="${3:-}"
+
+    # Skip verification for diagnostic subtasks (they fix process, not deliverables)
+    if [[ "$task_id" == *-diag-* ]]; then
+        log_info "Skipping deliverable verification for diagnostic task $task_id"
+        return 0
+    fi
+
+    # If no PR URL, task cannot be verified
+    if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
+        log_warn "Task $task_id has no PR URL ($pr_url) - cannot verify deliverables"
+        return 1
+    fi
+
+    # Extract repo slug and PR number from URL
+    local repo_slug pr_number
+    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+
+    if [[ -z "$repo_slug" || -z "$pr_number" ]]; then
+        log_warn "Cannot parse PR URL for $task_id: $pr_url"
+        return 1
+    fi
+
+    # Pre-flight: verify gh CLI is available and authenticated
+    if ! command -v gh &>/dev/null; then
+        log_warn "gh CLI not found; cannot verify deliverables for $task_id"
+        return 1
+    fi
+    if ! gh auth status &>/dev/null 2>&1; then
+        log_warn "gh CLI not authenticated; cannot verify deliverables for $task_id"
+        return 1
+    fi
+
+    # Check PR is actually merged
+    local pr_state
+    if ! pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' 2>>"$SUPERVISOR_LOG"); then
+        log_warn "Failed to fetch PR state for $task_id (#$pr_number)"
+        return 1
+    fi
+    if [[ "$pr_state" != "MERGED" ]]; then
+        log_warn "PR #$pr_number for $task_id is not merged (state: ${pr_state:-unknown})"
+        return 1
+    fi
+
+    # Check PR has substantive file changes (not just TODO.md or planning files)
+    local changed_files
+    if ! changed_files=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>>"$SUPERVISOR_LOG"); then
+        log_warn "Failed to fetch PR files for $task_id (#$pr_number)"
+        return 1
+    fi
+    local substantive_files
+    substantive_files=$(echo "$changed_files" | grep -vE '^(TODO\.md$|todo/|\.github/workflows/)' || true)
+
+    if [[ -z "$substantive_files" ]]; then
+        log_warn "PR #$pr_number for $task_id has no substantive file changes (only planning/workflow files)"
+        return 1
+    fi
+
+    local file_count
+    file_count=$(echo "$substantive_files" | wc -l | tr -d ' ')
+    log_info "Verified $task_id: PR #$pr_number merged with $file_count substantive file(s)"
+    return 0
+}
+
+#######################################
 # Update TODO.md when a task completes
 # Marks the task checkbox as [x], adds completed:YYYY-MM-DD
 # Then commits and pushes the change
+# Guard (t163): requires verified deliverables before marking [x]
 #######################################
 update_todo_on_complete() {
     local task_id="$1"
@@ -5242,6 +5316,13 @@ update_todo_on_complete() {
 
     local trepo tdesc tpr_url
     IFS='|' read -r trepo tdesc tpr_url <<< "$task_row"
+
+    # Verify deliverables before marking complete (t163.4)
+    if ! verify_task_deliverables "$task_id" "$tpr_url" "$trepo"; then
+        log_warn "Task $task_id failed deliverable verification - NOT marking [x] in TODO.md"
+        log_warn "  To manually verify: add 'verified:$(date +%Y-%m-%d)' to the task line"
+        return 1
+    fi
 
     local todo_file="$trepo/TODO.md"
     if [[ ! -f "$todo_file" ]]; then
@@ -5272,7 +5353,6 @@ update_todo_on_complete() {
     fi
 
     log_success "Updated TODO.md: $task_id marked complete ($today)"
-
 
     local commit_msg="chore: mark $task_id complete in TODO.md"
     if [[ -n "$tpr_url" ]]; then

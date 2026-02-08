@@ -104,6 +104,13 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
+**Task completion rules** (CRITICAL - prevents false completion cascade):
+- NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
+- The supervisor `update_todo_on_complete()` is the ONLY path to mark tasks done - it requires a merged PR URL or `verified:YYYY-MM-DD` field
+- Checking that a file exists is NOT sufficient - verify the PR was merged and contains substantive changes
+- If a worker completes with `no_pr` or `task_only`, the task stays `[ ]` until a human or the supervisor verifies the deliverable
+- The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` - false completions cascade into closed issues
+
 **After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. Workers must NOT edit TODO.md -- see `workflows/plans.md` "Worker TODO.md Restriction".
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
