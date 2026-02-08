@@ -12,52 +12,81 @@ Arguments: $ARGUMENTS
 
 **This session is a supervisor. Its sole purpose is orchestration.**
 
-The session that runs `/runners` becomes a long-running supervisor. It must:
+The session that runs `/runners` becomes a long-running control plane. It must be able
+to run for **days** without exhausting its context window. That is only possible if it
+never does task work itself.
 
-1. **Dispatch** tasks to `opencode run` worker processes (each in its own worktree)
-2. **Monitor** worker health, progress, and outcomes via `supervisor-helper.sh pulse`
-3. **React** to failures (retry, reassign, skip) and successes (merge PRs, dispatch next wave)
-4. **Self-improve** the orchestration process when patterns of failure emerge
-5. **Persist** until the batch completes or the user intervenes
+### The feedback loop
 
-**The supervisor MUST NOT do task work itself.** Every task is executed by a separate
-`opencode run` worker process in its own worktree with its own context window. The
-supervisor does not have enough token context to both orchestrate AND implement tasks.
-Attempting to do both will exhaust context and fail at both jobs.
+The supervisor operates a self-improving feedback loop:
 
-**What the supervisor does:**
+```text
+Dispatch tasks → Workers execute → Supervisor observes outcomes
+       ↑                                      │
+       │         ┌────────────────────────────┘
+       │         ▼
+       └── Failures/blockers become new TODOs
+           dispatched as worker tasks
+           whose fixes enable other workers to succeed
+```
+
+Each iteration of this loop makes the next batch more reliable. Over many runs, the
+error rate converges toward zero. The supervisor's end state is simply reporting what
+was accomplished — not doing the work.
+
+### What the supervisor does
 
 - Run `supervisor-helper.sh` commands (add, batch, pulse, status, dispatch, cleanup)
-- Read worker logs to diagnose failures (`tail` log files, check exit codes)
+- Diagnose failures from worker logs (`tail -20`, `grep EXIT`)
+- **Create new TODOs** for any problem that needs code changes
+- **Dispatch those fix tasks** as worker processes (same batch or new batch)
 - Merge PRs created by workers (`gh pr merge`)
 - Update TODO.md with completion timestamps
 - Install and maintain the cron pulse for unattended operation
-- Identify process improvements and apply them (fix dispatch scripts, adjust timeouts)
+- Adjust batch parameters (concurrency, timeouts) based on observed patterns
+- At session end, report a summary of everything that was accomplished
 
-**What the supervisor does NOT do:**
+### What the supervisor NEVER does
 
 - Read source code to understand task requirements
-- Write or edit implementation files
+- Write or edit implementation files (not even "small fixes")
 - Run linters, tests, or quality checks on task output
 - Research topics or fetch documentation for tasks
 - Use the Task tool to spawn subagents for task work
+- Attempt to solve problems inline instead of dispatching them
 
-**Unblock by dispatching, not by solving:** When the supervisor encounters a problem
-that requires implementation work (a script bug, a missing config, a process gap, a
-blocker for other tasks), it does NOT attempt to fix it inline. Instead:
+**The supervisor MUST NOT do task work itself.** Every task — including fixes to the
+orchestration process itself — is executed by a separate `opencode run` worker in its
+own worktree with its own context window. The supervisor does not have enough token
+context to both orchestrate AND implement. Attempting both will exhaust context and
+fail at both jobs. This is the single most important rule.
+
+### Unblock by dispatching, never by solving
+
+When the supervisor encounters ANY problem that requires implementation work — a script
+bug, a missing config, a process gap, a blocker for other tasks, a question that needs
+research — it follows the same pattern every time:
 
 1. Create a new TODO entry for the fix (e.g., `t154 Fix pre-edit-check.sh color vars`)
 2. Add it to the current batch: `$SH add t154 --repo "$(pwd)" --description "..."`
 3. Dispatch it immediately if it blocks other tasks, or queue it for the next wave
 4. Continue supervising — the worker handles the fix
 
-This applies to any question or issue that arises during supervision. The supervisor's
-job is to identify problems and route them to workers, not to solve them.
+The worker's fix (once merged) unblocks the tasks that were waiting on it. The
+supervisor then retries those tasks. This is how the system self-improves: every
+failure produces a fix that prevents the same failure in future batches.
 
-**Context budget discipline:** Keep supervisor context lean. Avoid reading large files,
-long log outputs, or task-specific content. Use `tail -20` not `cat`. Use `--compact`
-flags where available. If a worker log is large, grep for `EXIT:` or `error` rather
-than reading the whole thing.
+### Context budget discipline
+
+This session must run for hours or days. Keep it lean:
+
+- **Do NOT read full worker logs** — use `tail -20` or `grep -E 'error|EXIT|FAIL'`
+- **Do NOT read task source files** — workers handle that
+- **Do NOT use Task tool for research** — that's worker territory
+- **Do NOT read large files for any reason** — if you need to understand something, dispatch a worker to investigate and report back
+- **Summarize, don't accumulate** — after each pulse, output a compact status table
+- **Commit TODO.md updates promptly** — don't let state accumulate in memory
+- **Use `--compact` flags** where available on supervisor-helper commands
 
 ## Step 1: Parse Input
 
@@ -237,33 +266,34 @@ After each pulse, evaluate:
 | t087 | failed | - | - | retry 2/3: timeout |
 ```
 
-### Self-improvement triggers
+### Self-improvement feedback loop
 
-During the monitor loop, watch for these patterns and act:
+Every failure is an opportunity to improve the system. The supervisor's response to
+any problem is always the same: **create a TODO, dispatch a worker to fix it.**
 
-| Pattern | Action |
-|---------|--------|
-| Multiple workers fail with same error | Create fix task, add to batch, dispatch as worker |
-| Workers timing out consistently | Increase timeout or simplify task prompts |
-| Workers creating PRs that fail CI | Create task to fix linters/quality config, dispatch |
-| Cron pulse not firing | Reinstall: `$SH cron install` (this is a supervisor command, not task work) |
-| System load too high | Reduce concurrency: `$SH batch-update --concurrency N` |
-| Worker stuck (no log output for >10m) | Kill process, mark failed, retry |
-| Missing script/config blocks tasks | Create task for the fix, dispatch with high priority |
+| Pattern | Supervisor action (dispatch) | What the worker does |
+|---------|------------------------------|----------------------|
+| Multiple workers fail with same error | Create fix task, dispatch immediately | Worker fixes the root cause, creates PR |
+| Workers timing out consistently | Adjust timeout (supervisor can do this directly) | — |
+| Workers creating PRs that fail CI | Create task to fix linters/quality config | Worker updates configs, creates PR |
+| Cron pulse not firing | Reinstall: `$SH cron install` (direct) | — |
+| System load too high | Reduce concurrency (direct) | — |
+| Worker stuck (>10m no output) | Kill process, mark failed, retry (direct) | — |
+| Missing script/config blocks tasks | Create fix task, dispatch with high priority | Worker creates the missing file, creates PR |
+| Unclear task description causing failures | Create task to refine TODO entries | Worker rewrites task descriptions |
+| Workers can't find a file/tool | Create task to add the missing piece | Worker adds it, unblocking retries |
 
-**Remember:** "Fix root cause" means "dispatch a worker to fix it", not "fix it here".
-The only things the supervisor does directly are supervisor-helper commands, git
-operations on TODO.md, `gh pr merge`, and process kills.
+**Direct actions** (no worker needed): adjusting batch parameters, killing processes,
+reinstalling cron, merging PRs, updating TODO.md status. These are control-plane
+operations that don't require reading or writing implementation code.
 
-### Context preservation
+**Dispatched actions** (worker needed): anything that requires reading source code,
+writing files, running tests, researching tools, or creating PRs. Always a worker.
 
-To keep the supervisor session running for hours without exhausting context:
-
-- **Do NOT read full worker logs** — use `tail -20` or `grep -E 'error|EXIT|FAIL'`
-- **Do NOT read task source files** — workers handle that
-- **Do NOT use Task tool for research** — that's worker territory
-- **Summarize, don't accumulate** — after each pulse, output a compact status table
-- **Commit TODO.md updates promptly** — don't let state accumulate in memory
+Over many iterations, the fix tasks accumulate into a more robust framework. The
+supervisor session that runs next week will encounter fewer errors than this one.
+The goal is convergence: eventually the supervisor just dispatches, monitors, merges,
+and reports — with near-zero failures to react to.
 
 ## Step 6: Batch Complete
 
@@ -283,26 +313,43 @@ $SH kill-workers
 $SH cron uninstall
 ```
 
-Report final summary:
+Report final summary to the user. This is the supervisor's primary deliverable — a
+clear account of what was accomplished during the session:
 
 ```text
 ## Batch Complete
 
-- Completed: 10/12
-- Failed: 2 (t087: auth_error, t088: max retries)
+### Results
+- Completed: 10/12 tasks
+- Failed: 2 (t087: auth_error, t088: max retries exhausted)
 - PRs created: #382, #383, #385, #386, #387, #388, #389, #390, #391
-- Total time: 47m
+- PRs merged: #382, #383, #385, #386, #387, #388, #389
+- Total time: 3h 47m
 - Retries used: 5
+- Fix tasks spawned: 2 (t154: pre-edit-check color vars, t155: Google Search 403 fallback)
 
-Failed tasks may need manual attention. Run `/runners --retry <batch-id>` to retry failed tasks.
+### Process improvements made (by workers)
+- PR #392: Fixed pre-edit-check.sh unbound variable bug (unblocked 4 tasks)
+- PR #393: Added webfetch fallback when Google Search returns 403
+
+### Remaining
+- t087: Needs manual API key setup — cannot be automated
+- t088: Investigate timeout cause in next session
+
+### Recommendations
+- Increase default timeout from 30m to 45m for research tasks
+- Consider adding Google Search API key to avoid 403 fallback path
 ```
 
 ### Post-batch actions
 
 1. **Update TODO.md** — Mark completed tasks `[x]` with `completed:` timestamps
 2. **Merge ready PRs** — `gh pr merge --squash` for PRs with green CI
-3. **Store learnings** — If process improvements were made, `/remember` them
+3. **Store learnings** — `/remember` process improvements for future sessions
 4. **Clean worktrees** — `wt merge` to remove merged branches
+5. **Uninstall cron** — `$SH cron uninstall` (batch is done)
+
+Failed tasks may need manual attention. Run `/runners --retry <batch-id>` to retry.
 
 ## Step 7: Post-PR Lifecycle (if applicable)
 
