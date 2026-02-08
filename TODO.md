@@ -278,7 +278,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Fixed - validate command now correctly receives input_file via $arg2 from case statement. Verified code at lines 437-442 properly passes arguments.
 - [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
-- [ ] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20
+- [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20 completed:2026-02-08
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 logged:2025-12-21
 - [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21
 - [x] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21 completed:2026-02-07
@@ -466,7 +466,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Long-running objective execution via stateless coordinator loop. Safety guardrails: budget limits (max tokens/cost), step limits (max iterations before human review), scope constraints (whitelist of allowed tools/paths), checkpoint reviews (pause after N steps for approval), rollback capability (git worktrees), audit log (all actions to memory). Creates objective-runner-helper.sh. Add to tools/automation/.
 - [ ] t112 VoiceInk to OpenCode via macOS Shortcut #tools #voice #automation ~15m (ai:10m test:5m) ref:GH#525 logged:2026-02-04 started:2026-02-08T00:00Z related:t080,t081
   - Notes: macOS Shortcut that takes VoiceInk transcription and sends to OpenCode server API. Flow: VoiceInk transcription → Shortcut → HTTP POST to OpenCode /session/:id/prompt → response. Document in tools/voice/voiceink-shortcut.md. Include AppleScript/Shortcuts app instructions.
-- [ ] t113 iPhone Shortcut for voice dispatch to OpenCode #tools #voice #mobile ~15m (ai:10m test:5m) ref:GH#526 logged:2026-02-04 started:2026-02-08 related:t112
+- [x] t113 iPhone Shortcut for voice dispatch to OpenCode #tools #voice #mobile ~15m (ai:10m test:5m) ref:GH#526 logged:2026-02-04 started:2026-02-08 related:t112 completed:2026-02-08
   - Notes: iOS Shortcut for voice-to-AI dispatch. Flow: Dictate (iOS STT) → HTTP POST to OpenCode server (via Tailscale/local network) → wait for response → Speak (iOS TTS). Requires OpenCode server accessible from phone. Document in tools/voice/ios-shortcut.md.
 - [ ] t114 Pipecat STS integration with OpenCode #tools #voice #ai ~30m (ai:20m test:5m read:5m) ref:GH#527 logged:2026-02-04 started:2026-02-08 related:t080,t081
   - Notes: Full speech-to-speech conversation with AI via Pipecat pipeline. Flow: Mic → Soniox STT → OpenCode API → Cartesia TTS → Speaker. Real-time voice conversation without typing. Builds on t080/t081 Pipecat setup. Add to tools/voice/pipecat-opencode.md.
@@ -483,7 +483,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Implemented pr command. Runs mandatory privacy filter, builds PR body with evidence, creates PR via gh CLI. Supports --dry-run.
 - [x] t117 Privacy filter for public PRs #security #tools ~3h actual:1h (ai:2h test:45m read:15m) logged:2026-02-04 started:2026-02-04T12:30Z completed:2026-02-04 blocks:t116.4
   - Notes: Implemented privacy-filter-helper.sh with scan/filter/apply/patterns commands. Detects 30+ patterns (credentials, PII, internal URLs). Integrates with secretlint. Created tools/security/privacy-filter.md documentation.
-- [ ] t118 Agent testing framework with OpenCode sessions #tools #testing #agents ~1.5h (ai:1h test:20m read:10m) ref:GH#528 logged:2026-02-04 related:t115
+- [x] t118 Agent testing framework with OpenCode sessions #tools #testing #agents ~1.5h (ai:1h test:20m read:10m) ref:GH#528 logged:2026-02-04 related:t115 completed:2026-02-08
   - Notes: Framework for testing agent changes in isolated OpenCode sessions. Features: create test session, inject test prompts, capture responses, validate against expected patterns, compare before/after agent changes. Uses OpenCode server API. Create agent-test-helper.sh. Add to tools/build-agent/agent-testing.md.
 - [x] t119 Triage SonarCloud security hotspots (53 pre-existing) #security #code-quality ~2h actual:30m (ai:1.5h test:30m) logged:2026-02-04 started:2026-02-04T04:00Z completed:2026-02-04
   - Notes: Consolidated sonar-project.properties exclusions for S5332, S6505, S6506 to all shell scripts. Reduced false positives from 53 to 0. Documented rationale: HTTP URLs are localhost/protocol-detection, npm install needs native deps, curl uses explicit https. PR #307 merged.
