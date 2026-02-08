@@ -2733,6 +2733,7 @@ extract_log_metadata() {
 
     echo "log_exists=true"
     echo "log_bytes=$(wc -c < "$log_file" | tr -d ' ')"
+    echo "log_lines=$(wc -l < "$log_file" | tr -d ' ')"
 
     # Completion signals
     if grep -q 'FULL_LOOP_COMPLETE' "$log_file" 2>/dev/null; then
@@ -2904,6 +2905,20 @@ evaluate_worker() {
     if [[ -n "$meta_pr_url" && "$meta_exit_code" == "0" ]]; then
         echo "complete:${meta_pr_url}"
         return 0
+    fi
+
+    # Backend infrastructure error with EXIT:0 (t095-diag-1): CLI wrappers like
+    # OpenCode exit 0 even when the backend rejects the request (quota exceeded,
+    # Antigravity down). A short log (< 10 lines) with backend errors means the
+    # worker never started - this is NOT content discussion, it's a real failure.
+    # Must be checked BEFORE clean_exit_no_signal to avoid wasting retries.
+    if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
+        local meta_log_lines
+        meta_log_lines=$(_meta_get "log_lines" "0")
+        if [[ "$meta_backend_error_count" -gt 0 && "$meta_log_lines" -lt 10 ]]; then
+            echo "retry:backend_quota_error"
+            return 0
+        fi
     fi
 
     # Clean exit with no completion signal and no PR = likely incomplete
@@ -4497,6 +4512,13 @@ cmd_pulse() {
                     cleanup_worker_processes "$tid"
                     # Store failure pattern in memory (t128.6)
                     store_failure_pattern "$tid" "retry" "$outcome_detail" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+                    # Backend quota errors: defer re-prompt to next pulse (t095-diag-1).
+                    # Quota resets take hours, not minutes. Immediate re-prompt wastes
+                    # retry attempts. Leave in retrying state for deferred retry loop.
+                    if [[ "$outcome_detail" == "backend_quota_error" || "$outcome_detail" == "backend_infrastructure_error" ]]; then
+                        log_warn "  $tid: backend issue ($outcome_detail), deferring re-prompt to next pulse"
+                        continue
+                    fi
                     # Re-prompt in existing worktree (continues context)
                     local reprompt_rc=0
                     cmd_reprompt "$tid" 2>>"$SUPERVISOR_LOG" || reprompt_rc=$?
