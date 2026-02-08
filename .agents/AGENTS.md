@@ -235,7 +235,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting) |
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
-| Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing) |
+| Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing), `/runners-check` (quick queue status) |
 | MCP dev | `tools/build-mcp/build-mcp.md` |
 | Agent design | `tools/build-agent/build-agent.md` |
 | Framework | `aidevops/architecture.md` |
