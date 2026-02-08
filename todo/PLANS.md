@@ -1035,12 +1035,13 @@ p005,Image SEO Enhancement with AI Vision,complete,4,4,,seo|images|ai|accessibil
 
 ### [2025-12-21] Uncloud Integration for aidevops
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~1d (ai:4h test:4h read:2h)
+**Actual:** ~45m (ai:25m test:10m read:10m)
 **Source:** [psviderski/uncloud](https://github.com/psviderski/uncloud)
 
-<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started,completed}:
+p006,Uncloud Integration for aidevops,completed,4,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,2026-02-08T00:00Z,2026-02-08T00:00Z
 -->
 
 #### Purpose
@@ -1081,16 +1082,16 @@ Add Uncloud as a deployment provider option in aidevops. Uncloud is a lightweigh
 
 #### Progress
 
-- [ ] (2025-12-21) Phase 1: Create uncloud.md subagent with Quick Reference ~2h
-- [ ] (2025-12-21) Phase 2: Create uncloud-helper.sh script ~2h
-- [ ] (2025-12-21) Phase 3: Create uncloud-config.json.txt template ~1h
-- [ ] (2025-12-21) Phase 4: Update deployment docs and test workflows ~3h
+- [x] (2026-02-08) Phase 1: Create uncloud.md subagent with Quick Reference ~2h actual:10m
+- [x] (2026-02-08) Phase 2: Create uncloud-helper.sh script ~2h actual:10m
+- [x] (2026-02-08) Phase 3: Create uncloud-config.json.txt template ~1h actual:5m
+- [x] (2026-02-08) Phase 4: Update deployment docs and test workflows ~3h actual:10m
 
 <!--TOON:milestones[4]{id,plan_id,desc,est,actual,scheduled,completed,status}:
-m021,p006,Phase 1: Create uncloud.md subagent with Quick Reference,2h,,2025-12-21T04:00Z,,pending
-m022,p006,Phase 2: Create uncloud-helper.sh script,2h,,2025-12-21T04:00Z,,pending
-m023,p006,Phase 3: Create uncloud-config.json.txt template,1h,,2025-12-21T04:00Z,,pending
-m024,p006,Phase 4: Update deployment docs and test workflows,3h,,2025-12-21T04:00Z,,pending
+m021,p006,Phase 1: Create uncloud.md subagent with Quick Reference,2h,10m,2025-12-21T04:00Z,2026-02-08T00:00Z,completed
+m022,p006,Phase 2: Create uncloud-helper.sh script,2h,10m,2025-12-21T04:00Z,2026-02-08T00:00Z,completed
+m023,p006,Phase 3: Create uncloud-config.json.txt template,1h,5m,2025-12-21T04:00Z,2026-02-08T00:00Z,completed
+m024,p006,Phase 4: Update deployment docs and test workflows,3h,10m,2025-12-21T04:00Z,2026-02-08T00:00Z,completed
 -->
 
 #### Decision Log
@@ -1110,7 +1111,19 @@ d007,p006,Focus on CLI integration not MCP server initially,Uncloud is pre-produ
 
 #### Surprises & Discoveries
 
-(To be populated during implementation)
+- Uncloud has grown significantly since initial planning (4.6k stars, v0.16.0, 900 commits, 14 contributors). Still marked "not ready for production use" but actively developed.
+- CLI is `uc` (not `uncloud`). Install via Homebrew tap or curl script.
+- Unregistry feature allows pushing images directly to machines without an external Docker registry.
+- Decided to skip separate `uncloud-setup.md` file -- the main `uncloud.md` subagent covers installation and setup inline, matching the pattern of `vercel.md` (single file) rather than `coolify.md` + `coolify-setup.md` (split). Uncloud's setup is simpler (single `uc machine init` command vs Coolify's multi-step server provisioning).
+
+#### Outcomes & Retrospective
+
+- Created 3 files: `uncloud.md` (subagent), `uncloud-helper.sh` (CLI wrapper), `uncloud-config.json.txt` (config template)
+- Updated `subagent-index.toon` with uncloud entries
+- Zero ShellCheck violations, valid JSON config, help command tested
+- Actual time ~45m vs estimated ~1d -- plan was over-scoped for what turned out to be a straightforward integration following established patterns
+
+---
 
 #### Purpose
 
@@ -1580,7 +1593,7 @@ p002,Claude Code Destructive Command Hooks,planning,0,4,,claude|git|security,4h,
 p003,Evaluate Merging build-agent and build-mcp into aidevops,planning,0,3,,architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,
 p004,OCR Invoice/Receipt Extraction Pipeline,planning,0,5,,accounting|ocr|automation,3d,1.5d,1d,0.5d,2025-12-21T22:00Z,
 p005,Image SEO Enhancement with AI Vision,planning,0,4,,seo|images|ai|accessibility,6h,3h,2h,1h,2025-12-21T23:30Z,
-p006,Uncloud Integration for aidevops,planning,0,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,
+p006,Uncloud Integration for aidevops,completed,4,4,,deployment|docker|orchestration,1d,4h,4h,2h,2025-12-21T04:00Z,2026-02-08T00:00Z
 p007,SEO Machine Integration for aidevops,planning,0,5,,seo|content|agents,2d,1d,0.5d,0.5d,2025-12-21T15:00Z,
 p008,Enhance Plan+ and Build+ with OpenCode's Latest Features,planning,0,4,,opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,
 p010,Agent Design Pattern Improvements,planning,0,5,,architecture|agents|context|optimization,1d,6h,4h,2h,2025-01-11T00:00Z,

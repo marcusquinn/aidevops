@@ -1,0 +1,83 @@
+{
+  "clusters": {
+    "production": {
+      "name": "Production Cluster",
+      "context": "default",
+      "description": "Primary production cluster",
+      "machines": [
+        {
+          "name": "web-1",
+          "ssh": "root@web1.example.com",
+          "role": "general",
+          "provider": "hetzner",
+          "region": "eu-central"
+        },
+        {
+          "name": "web-2",
+          "ssh": "root@web2.example.com",
+          "role": "general",
+          "provider": "hetzner",
+          "region": "eu-central"
+        }
+      ],
+      "services": [
+        {
+          "name": "my-app",
+          "image": "my-app:latest",
+          "domain": "app.example.com",
+          "port": 8000,
+          "protocol": "https",
+          "replicas": 2,
+          "compose_file": "compose.yaml"
+        }
+      ]
+    },
+    "staging": {
+      "name": "Staging Cluster",
+      "context": "staging",
+      "description": "Staging environment for testing",
+      "machines": [
+        {
+          "name": "staging-1",
+          "ssh": "root@staging.example.com",
+          "role": "general",
+          "provider": "hetzner",
+          "region": "eu-central"
+        }
+      ],
+      "services": [
+        {
+          "name": "my-app-staging",
+          "image": "my-app:staging",
+          "domain": "staging.example.com",
+          "port": 8000,
+          "protocol": "https",
+          "replicas": 1,
+          "compose_file": "compose.yaml"
+        }
+      ]
+    }
+  },
+  "defaults": {
+    "ssh_key": "~/.ssh/id_ed25519",
+    "ssh_user": "root",
+    "compose_file": "compose.yaml"
+  },
+  "dns": {
+    "provider": "uncloud",
+    "custom_domains": [
+      {
+        "domain": "app.example.com",
+        "service": "my-app",
+        "cluster": "production"
+      }
+    ]
+  },
+  "notes": {
+    "uncloud_version": "v0.16.0",
+    "documentation": "https://uncloud.run/docs",
+    "source": "https://github.com/psviderski/uncloud",
+    "cli_install": "brew install psviderski/tap/uncloud",
+    "status": "Active development, not yet production-ready"
+  }
+}
