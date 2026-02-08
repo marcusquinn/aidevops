@@ -5,6 +5,7 @@ mode: subagent
 subagents:
   # Content creation
   - guidelines
+  - platform-personas
   - humanise
   - summarize
   - seo-writer
@@ -42,6 +43,7 @@ subagents:
 | Subagent | Purpose |
 |----------|---------|
 | `guidelines.md` | Content standards and style guide |
+| `platform-personas.md` | Platform-specific voice adaptations (LinkedIn, Instagram, YouTube, X, Facebook) |
 | `humanise.md` | Remove AI writing patterns, make text sound human |
 | `seo-writer.md` | SEO-optimized content writing with keyword integration |
 | `meta-creator.md` | Generate meta titles and descriptions for SEO |
@@ -103,6 +105,11 @@ See `content/guidelines.md` for:
 - Formatting standards
 - SEO requirements
 - Quality checklist
+
+See `content/platform-personas.md` for platform-specific adaptations:
+- LinkedIn, Instagram, YouTube, X, Facebook voice guidelines
+- Structure and length per platform
+- Cross-platform content repurposing
 
 ### Humanising Content
 
