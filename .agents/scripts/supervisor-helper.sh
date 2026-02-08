@@ -16,6 +16,7 @@
 #   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees + processes
 #   supervisor-helper.sh kill-workers [--dry-run]      Kill orphaned worker processes (emergency)
 #   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
+#   supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
 #   supervisor-helper.sh notify <task_id>              Send notification about task state
 #   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
 #   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release (t128.10)
@@ -4682,6 +4683,12 @@ cmd_pulse() {
         log_info "  Cleaned:    $orphan_killed stale worker processes"
     fi
 
+    # Phase 7: Reconcile TODO.md for any stale tasks (t160)
+    # Runs when completed tasks exist and nothing is actively running/queued
+    if [[ "$total_running" -eq 0 && "$total_queued" -eq 0 && "$total_complete" -gt 0 ]]; then
+        cmd_reconcile_todo ${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
+    fi
+
     # Release pulse dispatch lock (t159)
     release_pulse_lock
     # Reset trap to avoid interfering with other commands in the same process
@@ -4975,19 +4982,70 @@ update_todo_with_issue_ref() {
 
     log_success "Added ref:GH#${issue_number} to $task_id in TODO.md"
 
-    # Commit and push with serialized locking (prevents race conditions)
+    commit_and_push_todo "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md"
+    return $?
+}
+
+#######################################
+# Commit and push TODO.md with pull-rebase retry
+# Handles concurrent push conflicts from parallel workers
+# Args: $1=repo_path $2=commit_message $3=max_retries (default 3)
+#######################################
+commit_and_push_todo() {
+    local repo_path="$1"
+    local commit_msg="$2"
+    local max_retries="${3:-3}"
+
     if git -C "$repo_path" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    todo_commit_push "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md" "TODO.md" || {
-        log_warn "Failed to commit/push TODO.md issue ref update for $task_id"
-        return 0
-    }
+    git -C "$repo_path" add TODO.md
 
-    log_success "Committed and pushed issue ref for $task_id"
-    return 0
+    local attempt=0
+    while [[ "$attempt" -lt "$max_retries" ]]; do
+        attempt=$((attempt + 1))
+
+        # Pull-rebase to incorporate any concurrent TODO.md pushes
+        if ! git -C "$repo_path" pull --rebase --autostash 2>>"$SUPERVISOR_LOG"; then
+            log_warn "Pull-rebase failed (attempt $attempt/$max_retries)"
+            # Abort rebase if in progress and retry
+            git -C "$repo_path" rebase --abort 2>>"$SUPERVISOR_LOG" || true
+            sleep "$attempt"
+            continue
+        fi
+
+        # Re-stage TODO.md (rebase may have resolved it)
+        if ! git -C "$repo_path" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
+            git -C "$repo_path" add TODO.md
+        fi
+
+        # Check if our change survived the rebase (may have been applied by another worker)
+        if git -C "$repo_path" diff --cached --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
+            log_info "TODO.md change already applied (likely by another worker)"
+            return 0
+        fi
+
+        # Commit
+        if ! git -C "$repo_path" commit -m "$commit_msg" -- TODO.md 2>>"$SUPERVISOR_LOG"; then
+            log_warn "Commit failed (attempt $attempt/$max_retries)"
+            sleep "$attempt"
+            continue
+        fi
+
+        # Push
+        if git -C "$repo_path" push 2>>"$SUPERVISOR_LOG"; then
+            log_success "Committed and pushed TODO.md update"
+            return 0
+        fi
+
+        log_warn "Push failed (attempt $attempt/$max_retries) - will pull-rebase and retry"
+        sleep "$attempt"
+    done
+
+    log_error "Failed to push TODO.md after $max_retries attempts"
+    return 1
 }
 
 #######################################
@@ -5045,24 +5103,13 @@ update_todo_on_complete() {
 
     log_success "Updated TODO.md: $task_id marked complete ($today)"
 
-    # Commit and push with serialized locking (prevents race conditions)
-    if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
-        log_info "No changes to commit (TODO.md unchanged)"
-        return 0
-    fi
 
     local commit_msg="chore: mark $task_id complete in TODO.md"
     if [[ -n "$tpr_url" ]]; then
         commit_msg="chore: mark $task_id complete in TODO.md (${tpr_url})"
     fi
-
-    todo_commit_push "$trepo" "$commit_msg" "TODO.md" || {
-        log_warn "Failed to commit/push TODO.md update for $task_id (may need manual intervention)"
-        return 1
-    }
-
-    log_success "Committed and pushed TODO.md update for $task_id"
-    return 0
+    commit_and_push_todo "$trepo" "$commit_msg"
+    return $?
 }
 
 #######################################
@@ -5128,19 +5175,8 @@ update_todo_on_blocked() {
 
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"
 
-    # Commit and push with serialized locking (prevents race conditions)
-    if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
-        log_info "No changes to commit (TODO.md unchanged)"
-        return 0
-    fi
-
-    todo_commit_push "$trepo" "chore: mark $task_id blocked in TODO.md" "TODO.md" || {
-        log_warn "Failed to commit/push TODO.md blocked update for $task_id"
-        return 1
-    }
-
-    log_success "Committed and pushed TODO.md blocked update for $task_id"
-    return 0
+    commit_and_push_todo "$trepo" "chore: mark $task_id blocked in TODO.md"
+    return $?
 }
 
 #######################################
@@ -6141,6 +6177,96 @@ cmd_update_todo() {
 }
 
 #######################################
+# Command: reconcile-todo - bulk-update TODO.md for all completed/deployed tasks
+# Finds tasks in supervisor DB that are complete/deployed/merged but still
+# show as open [ ] in TODO.md, and updates them.
+# Handles the case where concurrent push failures left TODO.md stale.
+#######################################
+cmd_reconcile_todo() {
+    local repo_path=""
+    local dry_run="false"
+    local batch_id=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo) repo_path="$2"; shift 2 ;;
+            --batch) batch_id="$2"; shift 2 ;;
+            --dry-run) dry_run="true"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    ensure_db
+
+    # Find completed/deployed/merged tasks
+    local where_clause="t.status IN ('complete', 'deployed', 'merged')"
+    if [[ -n "$batch_id" ]]; then
+        local escaped_batch
+        escaped_batch=$(sql_escape "$batch_id")
+        where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$escaped_batch')"
+    fi
+
+    local completed_tasks
+    completed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT t.id, t.repo, t.pr_url FROM tasks t
+        WHERE $where_clause
+        ORDER BY t.id;
+    ")
+
+    if [[ -z "$completed_tasks" ]]; then
+        log_info "No completed tasks found in supervisor DB"
+        return 0
+    fi
+
+    local stale_count=0
+    local updated_count=0
+    local stale_tasks=""
+
+    while IFS='|' read -r tid trepo tpr_url; do
+        [[ -z "$tid" ]] && continue
+
+        # Use provided repo or task's repo
+        local check_repo="${repo_path:-$trepo}"
+        local todo_file="$check_repo/TODO.md"
+
+        if [[ ! -f "$todo_file" ]]; then
+            continue
+        fi
+
+        # Check if task is still open in TODO.md
+        if grep -qE "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file"; then
+            stale_count=$((stale_count + 1))
+            stale_tasks="${stale_tasks}${stale_tasks:+, }${tid}"
+
+            if [[ "$dry_run" == "true" ]]; then
+                log_warn "[dry-run] $tid: deployed in DB but open in TODO.md"
+            else
+                log_info "Reconciling $tid..."
+                if update_todo_on_complete "$tid"; then
+                    updated_count=$((updated_count + 1))
+                else
+                    log_warn "Failed to reconcile $tid"
+                fi
+            fi
+        fi
+    done <<< "$completed_tasks"
+
+    if [[ "$stale_count" -eq 0 ]]; then
+        log_success "TODO.md is in sync with supervisor DB (no stale tasks)"
+    elif [[ "$dry_run" == "true" ]]; then
+        log_warn "$stale_count stale task(s) found: $stale_tasks"
+        log_info "Run without --dry-run to fix"
+    else
+        log_success "Reconciled $updated_count/$stale_count stale tasks"
+        if [[ "$updated_count" -lt "$stale_count" ]]; then
+            log_warn "$((stale_count - updated_count)) task(s) could not be reconciled"
+        fi
+    fi
+
+    return 0
+}
+
+#######################################
 # Command: notify - manually send notification for a task
 #######################################
 cmd_notify() {
@@ -6994,6 +7120,7 @@ Usage:
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
   supervisor-helper.sh update-todo <task_id>         Update TODO.md for completed/blocked task
+  supervisor-helper.sh reconcile-todo [--batch id] [--dry-run]  Bulk-fix stale TODO.md entries
   supervisor-helper.sh notify <task_id>              Send notification about task state
   supervisor-helper.sh recall <task_id>              Recall memories relevant to a task
   supervisor-helper.sh release [batch_id] [options]  Trigger or configure batch release
@@ -7273,6 +7400,7 @@ main() {
         cleanup) cmd_cleanup "$@" ;;
         kill-workers) cmd_kill_workers "$@" ;;
         update-todo) cmd_update_todo "$@" ;;
+        reconcile-todo) cmd_reconcile_todo "$@" ;;
         notify) cmd_notify "$@" ;;
         auto-pickup) cmd_auto_pickup "$@" ;;
         cron) cmd_cron "$@" ;;
