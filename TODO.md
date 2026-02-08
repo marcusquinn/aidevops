@@ -279,15 +279,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
 - [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) ref:GH#508 logged:2025-12-21
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) ref:GH#509 logged:2025-12-21
-- [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21 ref:GH#510 started:2026-02-08
-  - [ ] t020.1 Build issue-sync-helper.sh core: TODO.md parser + rich issue body composer ~45m blocked-by:none
-  - [ ] t020.2 Add PLANS.md section extraction and todo/tasks/ PRD/task file lookup ~30m blocked-by:t020.1
-  - [ ] t020.3 Add #tag → GitHub label mapping and push/enrich commands ~30m blocked-by:t020.1
-  - [ ] t020.4 Add pull command (GH issue updates → TODO.md ref sync) ~30m blocked-by:t020.1
-  - [ ] t020.5 Add close command (mark [x] in TODO → close GH issue) and status/drift detection ~30m blocked-by:t020.1
-  - [ ] t020.6 Wire supervisor create_github_issue() to delegate to issue-sync-helper.sh ~15m blocked-by:t020.1
-  - [ ] t020.7 Test with existing 46 open issues, enrich plan-linked issues with PLANS.md context ~15m blocked-by:t020.2,t020.3
-  - Notes: Consolidates scattered issue sync code from supervisor-helper.sh (create_github_issue, update_todo_with_issue_ref), github-cli-helper.sh (create_issue, close_issue), and log-issue-helper.sh (search). Absorbs t047 (cross-platform research). GitHub first, GitLab/Gitea support later via platform abstraction.
+- [x] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21 ref:GH#510 started:2026-02-08 completed:2026-02-08
+  - [x] t020.1 Build issue-sync-helper.sh core: TODO.md parser + rich issue body composer ~45m blocked-by:none completed:2026-02-08
+  - [x] t020.2 Add PLANS.md section extraction and todo/tasks/ PRD/task file lookup ~30m blocked-by:t020.1 completed:2026-02-08
+  - [x] t020.3 Add #tag → GitHub label mapping and push/enrich commands ~30m blocked-by:t020.1 completed:2026-02-08
+  - [x] t020.4 Add pull command (GH issue updates → TODO.md ref sync) ~30m blocked-by:t020.1 completed:2026-02-08
+  - [x] t020.5 Add close command (mark [x] in TODO → close GH issue) and status/drift detection ~30m blocked-by:t020.1 completed:2026-02-08
+  - [x] t020.6 Wire supervisor create_github_issue() to delegate to issue-sync-helper.sh ~15m blocked-by:t020.1 completed:2026-02-08
+  - [x] t020.7 Test with existing 46 open issues, enrich plan-linked issues with PLANS.md context ~15m blocked-by:t020.2,t020.3 completed:2026-02-08
+  - Notes: Consolidates scattered issue sync code from supervisor-helper.sh (create_github_issue, update_todo_with_issue_ref), github-cli-helper.sh (create_issue, close_issue), and log-issue-helper.sh (search). Absorbs t047 (cross-platform research). GitHub first, GitLab/Gitea support later via platform abstraction. PR #542 (core script), PR #543 (GHA workflow + PRD content rendering).
 - [x] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~30m (ai:20m test:10m) logged:2025-12-22 completed:2026-01-25
 - [ ] t023 Integrate Shannon AI pentester for security testing #security #tools ~2h (ai:1h test:30m read:30m) logged:2025-01-03 ref:https://github.com/KeygraphHQ/shannon
   - Notes: Previously closed 2026-02-07 as "no public repo found". Repo is now public (9.9k stars, AGPL-3.0, actively maintained). Shannon is a fully autonomous AI pentester: white-box source-aware, Docker-based, covers Injection/XSS/SSRF/Broken Auth, 96.15% XBOW benchmark success rate, uses Claude as reasoning engine, produces pentester-grade reports with reproducible PoCs. Runs ~1-1.5h per scan, ~$50/run on Claude 4.5 Sonnet. Integration plan: create .agents/tools/security/shannon.md subagent, add shannon-helper.sh wrapper script, document setup (Docker + Anthropic API key), wire into preflight/postflight or standalone /pentest command.
@@ -580,7 +580,7 @@ t015,Add MinerU subagent as alternative to Pandoc for PDF conversion,,tools|conv
 t016,Uncloud Integration for aidevops,,plan|deployment|docker|orchestration,45m,25m,10m,10m,2025-12-21T04:00Z,pending,,,
 t017,SEO Machine Integration for aidevops,,plan|seo|content|agents,1.5h,45m,30m,15m,2025-12-21T15:00Z,pending,,,
 t018,Enhance Plan+ and Build+ with OpenCode's Latest Features,,plan|opencode|agents|enhancement,3h,1.5h,1h,30m,2025-12-21T04:30Z,pending,,,
-t020,Git Issues Bi-directional Sync (GitHub GitLab Gitea),,plan|git|sync,3h,1.5h,1h,30m,2025-12-21T16:30Z,in_progress,2026-02-08T00:00Z,,
+t020,Git Issues Bi-directional Sync (GitHub GitLab Gitea),,plan|git|sync,3h,1.5h,1h,30m,2025-12-21T16:30Z,completed,2026-02-08T00:00Z,2026-02-08T00:00Z,
 t021,Auto-mark tasks complete from commit messages in release,,workflow|automation,2h,1h,30m,30m,2025-12-22T05:00Z,pending,,,
 t023,Integrate Shannon AI pentester for security testing,,security|tools,2h,1h,30m,30m,2025-01-03T00:00Z,pending,,,
 t024,Evaluate Dexter autonomous financial research agent,,research|finance|agents,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
