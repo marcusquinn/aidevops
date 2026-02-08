@@ -1,0 +1,268 @@
+name: Issue Sync - Bi-directional TODO.md ↔ GitHub Issues
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'TODO.md'
+      - 'todo/PLANS.md'
+      - 'todo/tasks/**'
+  issues:
+    types: [opened, closed, reopened, edited, labeled]
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Sync command to run'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - status
+          - pull
+          - push
+          - close
+          - enrich
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync-on-push:
+    name: Sync TODO.md → GitHub Issues
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Check commit author
+        id: check-author
+        run: |
+          # Prevent infinite loops: skip if this commit was made by GitHub Actions
+          AUTHOR="${{ github.event.head_commit.author.name }}"
+          if [[ "$AUTHOR" == "GitHub Actions" ]] || [[ "$AUTHOR" == "github-actions[bot]" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping: commit was made by GitHub Actions (loop prevention)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.check-author.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Close issues for completed tasks
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          chmod +x .agents/scripts/issue-sync-helper.sh
+          chmod +x .agents/scripts/shared-constants.sh
+          echo "=== Closing issues for completed tasks ==="
+          bash .agents/scripts/issue-sync-helper.sh close --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push new tasks as issues
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          echo "=== Creating issues for new tasks ==="
+          bash .agents/scripts/issue-sync-helper.sh push --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enrich plan-linked issues
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          echo "=== Enriching plan-linked issues ==="
+          bash .agents/scripts/issue-sync-helper.sh enrich --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull any missing refs back to TODO.md
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          echo "=== Pulling issue refs to TODO.md ==="
+          bash .agents/scripts/issue-sync-helper.sh pull --verbose || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push TODO.md updates
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          if git diff --quiet TODO.md 2>/dev/null; then
+            echo "No TODO.md changes to commit"
+          else
+            git add TODO.md
+            git commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]"
+            # Retry loop for concurrent pushes
+            for i in 1 2 3; do
+              echo "Push attempt $i..."
+              git pull --rebase origin main || true
+              if git push; then
+                echo "Push succeeded on attempt $i"
+                exit 0
+              fi
+              echo "Push failed, retrying..."
+              sleep $((i * 3))
+            done
+            echo "All push attempts failed"
+            exit 1
+          fi
+
+      - name: Show sync status
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          bash .agents/scripts/issue-sync-helper.sh status || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sync-on-issue:
+    name: Sync GitHub Issue → TODO.md
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+
+    steps:
+      - name: Check issue title format
+        id: check-issue
+        run: |
+          TITLE="${{ github.event.issue.title }}"
+          # Only sync issues with t-number prefix (our convention)
+          if echo "$TITLE" | grep -qE '^t[0-9]+'; then
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+            TASK_ID=$(echo "$TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+            echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+            echo "Issue #${{ github.event.issue.number }} matches task $TASK_ID"
+          else
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            echo "Issue #${{ github.event.issue.number }} does not have t-number prefix, skipping"
+          fi
+
+      - name: Checkout
+        if: steps.check-issue.outputs.sync == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        if: steps.check-issue.outputs.sync == 'true'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Sync issue ref to TODO.md
+        if: steps.check-issue.outputs.sync == 'true'
+        run: |
+          chmod +x .agents/scripts/issue-sync-helper.sh
+          chmod +x .agents/scripts/shared-constants.sh
+
+          TASK_ID="${{ steps.check-issue.outputs.task_id }}"
+          ISSUE_NUM="${{ github.event.issue.number }}"
+          ACTION="${{ github.event.action }}"
+
+          echo "=== Issue event: $ACTION for $TASK_ID (#$ISSUE_NUM) ==="
+
+          case "$ACTION" in
+            opened)
+              # Pull the new issue ref into TODO.md
+              bash .agents/scripts/issue-sync-helper.sh pull --verbose || true
+              ;;
+            closed)
+              # If issue was closed, check if TODO.md task should be marked done
+              echo "Issue #$ISSUE_NUM closed. Run 'issue-sync-helper.sh status' to check drift."
+              ;;
+            reopened)
+              echo "Issue #$ISSUE_NUM reopened. Manual TODO.md update may be needed."
+              ;;
+            edited|labeled)
+              # Re-enrich if the issue was edited (might need label sync)
+              echo "Issue #$ISSUE_NUM edited/labeled. No automatic TODO.md update."
+              ;;
+          esac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push TODO.md updates
+        if: steps.check-issue.outputs.sync == 'true'
+        run: |
+          if git diff --quiet TODO.md 2>/dev/null; then
+            echo "No TODO.md changes to commit"
+          else
+            git add TODO.md
+            git commit -m "chore: sync ref:GH#${{ github.event.issue.number }} to TODO.md [skip ci]"
+            for i in 1 2 3; do
+              echo "Push attempt $i..."
+              git pull --rebase origin main || true
+              if git push; then
+                echo "Push succeeded on attempt $i"
+                exit 0
+              fi
+              sleep $((i * 3))
+            done
+            echo "All push attempts failed"
+            exit 1
+          fi
+
+  manual-sync:
+    name: Manual Sync
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Run sync command
+        run: |
+          chmod +x .agents/scripts/issue-sync-helper.sh
+          chmod +x .agents/scripts/shared-constants.sh
+          COMMAND="${{ github.event.inputs.command }}"
+          echo "=== Running: issue-sync-helper.sh $COMMAND ==="
+          bash .agents/scripts/issue-sync-helper.sh "$COMMAND" --verbose
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push TODO.md updates
+        if: github.event.inputs.command == 'pull' || github.event.inputs.command == 'push'
+        run: |
+          if git diff --quiet TODO.md 2>/dev/null; then
+            echo "No TODO.md changes to commit"
+          else
+            git add TODO.md
+            git commit -m "chore: manual issue sync (${{ github.event.inputs.command }}) [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase origin main || true
+              if git push; then
+                exit 0
+              fi
+              sleep $((i * 3))
+            done
+            exit 1
+          fi
