@@ -60,17 +60,18 @@ readonly SUITES_DIR="${TEST_DIR}/suites"
 readonly RESULTS_DIR="${TEST_DIR}/results"
 readonly BASELINES_DIR="${TEST_DIR}/baselines"
 
-# CLI detection
+# CLI detection - opencode is the primary and only supported CLI
 detect_cli() {
     local cli="${AGENT_TEST_CLI:-}"
     if [[ -n "$cli" ]]; then
         echo "$cli"
         return 0
     fi
-    if command -v claude >/dev/null 2>&1; then
-        echo "claude"
-    elif command -v opencode >/dev/null 2>&1; then
+    if command -v opencode >/dev/null 2>&1; then
         echo "opencode"
+    elif command -v claude >/dev/null 2>&1; then
+        # DEPRECATED: claude CLI fallback - install opencode instead
+        echo "claude"
     else
         echo ""
     fi

@@ -241,16 +241,14 @@ Pair with `tools/video/remotion.md` for generated voiceover:
 
 ## Cloud GPU Providers
 
-For server/client deployment when local GPU is insufficient:
+For server/client deployment when local GPU is insufficient, see the shared **[Cloud GPU Deployment Guide](../infrastructure/cloud-gpu.md)** for:
 
-| Provider | GPU Options | Pricing Model | Notes |
-|----------|------------|---------------|-------|
-| NVIDIA Cloud | A100, H100 | Per-hour | Official NVIDIA, best for production |
-| Vast.ai | Consumer + datacenter | Auction/fixed | Cheapest, variable availability |
-| RunPod | A100, 4090, H100 | Per-hour | Good balance of price/reliability |
-| Lambda | A100, H100 | Per-hour | Research-focused |
+- Provider comparison (RunPod, Vast.ai, Lambda, NVIDIA Cloud)
+- GPU selection by VRAM requirements
+- SSH setup, Docker deployment, model caching
+- Cost optimization strategies
 
-Typical setup: SSH into instance, clone repo, install deps, run server mode. Connect from local machine with `listen_and_play.py`.
+Quick reference for voice pipeline GPU needs: 4GB VRAM minimum (low-VRAM config), 8-16GB recommended (full S2S pipeline). See the guide's VRAM requirements table for details.
 
 ## Recommended Configurations
 
@@ -320,6 +318,7 @@ The full S2S pipeline above is for advanced use cases (custom LLMs, server/clien
 
 ## See Also
 
+- `tools/infrastructure/cloud-gpu.md` - Cloud GPU deployment guide (provider comparison, setup, cost optimization)
 - `services/communications/twilio.md` - Phone integration
 - `tools/video/remotion.md` - Video narration
 - `tools/video/heygen-skill/rules/voices.md` - AI voice cloning

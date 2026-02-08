@@ -64,6 +64,17 @@
 #   - Mail: mail-helper.sh for escalation
 #   - Memory: memory-helper.sh for cross-batch learning
 #   - Git: wt/worktree-helper.sh for isolation
+#
+# IMPORTANT - Orchestration Requirements:
+#   - CLI: opencode is the ONLY supported CLI for worker dispatch.
+#     claude CLI fallback is DEPRECATED and will be removed.
+#     Install: npm i -g opencode (https://opencode.ai/)
+#   - Cron pulse: For autonomous operation, install the cron pulse:
+#       supervisor-helper.sh cron install
+#     This runs `pulse` every 2 minutes to check/dispatch/evaluate workers.
+#     Without cron, the supervisor is passive and requires manual `pulse` calls.
+#   - Batch lifecycle: add tasks -> create batch -> cron pulse handles the rest
+#     The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup
 
 set -euo pipefail
 
@@ -236,7 +247,7 @@ check_system_load() {
     process_count=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
     echo "process_count=$process_count"
 
-    # Supervisor worker process count (opencode/claude spawned by supervisor)
+    # Supervisor worker process count (opencode workers spawned by supervisor)
     local supervisor_process_count=0
     if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
         for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
@@ -1718,25 +1729,30 @@ detect_dispatch_mode() {
 
 #######################################
 # Resolve the AI CLI tool to use for dispatch
-# Prefers opencode, falls back to claude
+# Resolve AI CLI for worker dispatch
+# opencode is the ONLY supported CLI for aidevops supervisor workers.
+# claude CLI fallback is DEPRECATED and will be removed in a future release.
 #######################################
 resolve_ai_cli() {
-    # Prefer opencode (supports Anthropic auth + zen free models as fallback)
+    # opencode is the primary and only supported CLI
     if command -v opencode &>/dev/null; then
         echo "opencode"
         return 0
     fi
+    # DEPRECATED: claude CLI fallback - will be removed
     if command -v claude &>/dev/null; then
+        log_warning "Using deprecated claude CLI fallback. Install opencode: npm i -g opencode"
         echo "claude"
         return 0
     fi
-    log_error "Neither opencode nor claude CLI found. Install one to dispatch workers."
+    log_error "opencode CLI not found. Install it: npm i -g opencode"
+    log_error "See: https://opencode.ai/docs/installation/"
     return 1
 }
 
 #######################################
 # Resolve the best available model for a given task tier
-# Priority: Anthropic SOTA via opencode > claude CLI > opencode zen free
+# Priority: Anthropic SOTA via opencode (only supported CLI)
 #
 # Tiers:
 #   coding  - Best SOTA model for code tasks (default)
@@ -2100,7 +2116,7 @@ _list_descendants() {
 
 #######################################
 # Kill all orphaned worker processes (emergency cleanup)
-# Finds opencode/claude processes with PPID=1 that match supervisor patterns
+# Finds opencode worker processes with PPID=1 that match supervisor patterns
 #######################################
 cmd_kill_workers() {
     local dry_run=false
@@ -2151,7 +2167,7 @@ cmd_kill_workers() {
 
     log_info "Protected PIDs (active workers + self): $(echo "$protected_pattern" | tr '|' ' ' | wc -w | tr -d ' ') processes"
 
-    # Find orphaned opencode/claude processes (PPID=1, not in any terminal session)
+    # Find orphaned opencode worker processes (PPID=1, not in any terminal session)
     local orphan_count=0
     local killed_count=0
 

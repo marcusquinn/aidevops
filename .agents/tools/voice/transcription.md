@@ -3,13 +3,7 @@ description: Audio/video transcription with local and cloud models
 mode: subagent
 tools:
   read: true
-  write: true
-  edit: true
   bash: true
-  glob: true
-  grep: true
-  webfetch: true
-  task: true
 ---
 
 # Audio/Video Transcription
@@ -65,32 +59,22 @@ Official usage: https://github.com/SYSTRAN/faster-whisper#usage
 
 ### via whisper.cpp (C++ native)
 
-Optimized for Apple Silicon and CPU inference.
+Optimized for Apple Silicon and CPU inference. Build from source: https://github.com/ggml-org/whisper.cpp
 
 ```bash
-# Build from source (no Homebrew formula)
-git clone https://github.com/ggml-org/whisper.cpp.git
-cd whisper.cpp && cmake -B build && cmake --build build -j --config Release
-
-# Download model
-sh ./models/download-ggml-model.sh large-v3-turbo
-
-# Transcribe
-./build/bin/whisper-cli -f audio.wav -otxt -osrt
+./build/bin/whisper-cli -m models/ggml-large-v3-turbo.bin -f audio.wav -otxt -osrt
 ```
 
 ### Model Comparison
 
 | Model | Size | Speed | Accuracy | Notes |
 |-------|------|-------|----------|-------|
-| Tiny | 75MB | 9.5 | 6.0-6.5 | Draft/preview only |
-| Base | 142MB | 8.5 | 7.2-7.5 | Quick transcription |
-| Small | 461MB | 7.0 | 8.5 | Good balance |
+| Tiny | 75MB | 9.5 | 6.0 | Draft/preview only |
+| Base | 142MB | 8.5 | 7.3 | Quick transcription |
+| Small | 461MB | 7.0 | 8.5 | Good balance, multilingual |
 | Medium | 1.5GB | 5.0 | 9.0 | Solid quality |
-| Large v2 | 2.9GB | 3.0 | 9.6 | High quality |
 | Large v3 | 2.9GB | 3.0 | 9.8 | Best quality |
 | **Large v3 Turbo** | **1.5GB** | **7.5** | **9.7** | **Recommended default** |
-| Large v3 Turbo Q | 547MB | 7.5 | 9.5 | Quantized, smaller |
 
 ### Other Local Models
 
@@ -115,7 +99,7 @@ sh ./models/download-ggml-model.sh large-v3-turbo
 | **Google** | Gemini 3 Flash | 9.5 | Fastest | Low latency |
 | **Soniox** | stt-async-v3 | 9.6 | Async | Batch processing |
 
-### Groq (Fastest Cloud)
+Store API keys via `aidevops secret set <PROVIDER>_API_KEY`. All cloud APIs accept standard multipart file upload. Example (Groq):
 
 ```bash
 curl https://api.groq.com/openai/v1/audio/transcriptions \
@@ -126,79 +110,50 @@ curl https://api.groq.com/openai/v1/audio/transcriptions \
   -F "response_format=verbose_json"
 ```
 
-Docs: https://console.groq.com/docs/speech-text
+## Model Selection Guidance
 
-### OpenAI Whisper API
+| Priority | Local | Cloud |
+|----------|-------|-------|
+| **Best accuracy** | Large v3 (9.8) | ElevenLabs Scribe v2 (9.9) |
+| **Best speed** | Parakeet V2 (English) | Groq Whisper (free tier) |
+| **Best balance** | **Large v3 Turbo** (default) | Groq or Gemini Flash |
+| **Lowest cost** | Any local model ($0) | Groq free tier, then OpenAI ($0.006/min) |
+| **Offline/private** | faster-whisper or whisper.cpp | N/A |
+| **Multilingual** | Large v3 or Small | Voxtral Mini or Gemini Pro |
 
-```bash
-curl https://api.openai.com/v1/audio/transcriptions \
-  -H "Authorization: Bearer ${OPENAI_API_KEY}" \
-  -F "file=@audio.wav" \
-  -F "model=whisper-1" \
-  -F "response_format=srt"
-```
-
-Docs: https://platform.openai.com/docs/api-reference/audio/createTranscription
-
-### ElevenLabs Scribe
-
-```bash
-curl -X POST "https://api.elevenlabs.io/v1/speech-to-text" \
-  -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
-  -F "file=@audio.wav" \
-  -F "model_id=scribe_v1"
-```
-
-Docs: https://elevenlabs.io/docs/api-reference/speech-to-text
+**Decision flow**: Local first (free, private) unless file is very long (use Groq async) or accuracy is critical (use Scribe v2).
 
 ## Output Formats
 
-| Format | Extension | Use Case |
-|--------|-----------|----------|
-| Plain text | `.txt` | Reading, search indexing |
-| SRT | `.srt` | Video subtitles |
-| VTT | `.vtt` | Web video subtitles |
-| JSON | `.json` | Programmatic access, timestamps |
-| TSV | `.tsv` | Spreadsheet analysis |
+| Format | Use Case |
+|--------|----------|
+| `.txt` | Reading, search indexing |
+| `.srt` | Video subtitles (most compatible) |
+| `.vtt` | Web video subtitles |
+| `.json` | Programmatic access, timestamps |
 
-## Transcription Pipeline
+## Workflow
 
 ```text
-Input Source
-    │
-    ├── YouTube URL ──→ yt-dlp -x ──→ audio.wav
-    ├── Video URL ────→ curl + ffmpeg ──→ audio.wav
-    ├── Video file ───→ ffmpeg -vn ──→ audio.wav
-    └── Audio file ───→ (direct) ──→ audio.wav
-                                        │
-                                   Model Selection
-                                        │
-                              ┌─────────┴─────────┐
-                              │                    │
-                         Local Model          Cloud API
-                     (faster-whisper)      (Groq/OpenAI/etc)
-                              │                    │
-                              └─────────┬──────────┘
-                                        │
-                                   Output Format
-                                   (txt/srt/vtt/json)
+Source → Extract Audio (if needed) → Select Model → Transcribe → Output
 ```
+
+1. **Detect source**: YouTube URL, media URL, local audio, or local video
+2. **Extract audio**: `yt-dlp -x` (YouTube), `ffmpeg -vn` (video), direct (audio)
+3. **Select model**: Local (faster-whisper/whisper.cpp) or cloud API (Groq/OpenAI/etc)
+4. **Transcribe**: Run model, generate output in requested format
+5. **Output**: Plain text, SRT, VTT, or JSON with timestamps
 
 ## Dependencies
 
 ```bash
-# Core
-brew install yt-dlp ffmpeg    # macOS
-apt install yt-dlp ffmpeg     # Ubuntu/Debian
-
-# Local inference (pick one)
-pip install faster-whisper     # Python (recommended)
-# whisper.cpp: build from source (see above)
+brew install yt-dlp ffmpeg     # macOS (apt install on Linux)
+pip install faster-whisper      # Local inference (recommended)
 ```
 
 ## Related
 
+- `tools/voice/buzz.md` - Buzz GUI/CLI for offline Whisper transcription
+- `tools/voice/speech-to-speech.md` - Full voice pipeline (VAD + STT + LLM + TTS)
 - `tools/voice/voice-models.md` - TTS models for speech generation
-- `tools/voice/speech-to-speech.md` - Full voice pipeline
-- `tools/content/summarize.md` - Can summarize transcribed content
 - `voice-helper.sh` - CLI for voice operations

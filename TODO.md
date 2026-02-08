@@ -57,7 +57,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m actual:15m (ai:15m) ref:GH#548 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
 
-- [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:1h test:30m) ref:GH#549 logged:2026-02-08
+- [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h actual:25m (ai:25m) ref:GH#552 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
 
 - [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
   - [x] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none completed:2026-02-07
@@ -115,7 +115,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t136.4 Create plugin template ~1h blocked-by:t136.2
   - [ ] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4
   - Notes: Namespaced plugin architecture (pro.md + pro/) to avoid clashes. Plugin AGENTS.md points to main framework. Minimal CI (local linting only) for private repos. aidevops update deploys main + all plugins. Open questions: license (MIT vs proprietary), Gitea Actions availability, plugin deploy order, subagent index strategy.
-- [ ] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) ref:GH#545 logged:2026-02-07
+- [x] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) ref:GH#545 logged:2026-02-07 completed:2026-02-08
   - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08
     - [x] t135.1.1 Audit scripts for intentional failures needing || true guards completed:2026-02-08
     - [x] t135.1.2 Add set -euo pipefail with appropriate guards ~1.5h blocked-by:t135.1.1 completed:2026-02-08
@@ -257,7 +257,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
   - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5
-- [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21
+- [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 started:2026-02-08 completed:2026-02-08
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
@@ -293,7 +293,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t020.7 Test with existing 46 open issues, enrich plan-linked issues with PLANS.md context ~15m blocked-by:t020.2,t020.3 completed:2026-02-08
   - Notes: Consolidates scattered issue sync code from supervisor-helper.sh (create_github_issue, update_todo_with_issue_ref), github-cli-helper.sh (create_issue, close_issue), and log-issue-helper.sh (search). Absorbs t047 (cross-platform research). GitHub first, GitLab/Gitea support later via platform abstraction. PR #542 (core script), PR #543 (GHA workflow + PRD content rendering).
 - [x] t021 Auto-mark tasks complete from commit messages in release #workflow #automation ~30m (ai:20m test:10m) logged:2025-12-22 completed:2026-01-25
-- [ ] t023 Integrate Shannon AI pentester for security testing #security #tools ~2h (ai:1h test:30m read:30m) ref:GH#546 logged:2025-01-03 ref:https://github.com/KeygraphHQ/shannon
+- [x] t023 Integrate Shannon AI pentester for security testing #security #tools ~2h (ai:1h test:30m read:30m) ref:GH#546 logged:2025-01-03 ref:https://github.com/KeygraphHQ/shannon started:2026-02-08 completed:2026-02-08
   - Notes: Previously closed 2026-02-07 as "no public repo found". Repo is now public (9.9k stars, AGPL-3.0, actively maintained). Shannon is a fully autonomous AI pentester: white-box source-aware, Docker-based, covers Injection/XSS/SSRF/Broken Auth, 96.15% XBOW benchmark success rate, uses Claude as reasoning engine, produces pentester-grade reports with reproducible PoCs. Runs ~1-1.5h per scan, ~$50/run on Claude 4.5 Sonnet. Integration plan: create .agents/tools/security/shannon.md subagent, add shannon-helper.sh wrapper script, document setup (Docker + Anthropic API key), wire into preflight/postflight or standalone /pentest command.
 - [x] t024 Evaluate Dexter autonomous financial research agent #research #finance #agents ~10m (ai:8m read:2m) logged:2025-01-03 ref:https://github.com/virattt/dexter completed:2026-02-07
   - Notes: Dexter (11.4k stars, TypeScript, actively maintained Feb 2026). Autonomous agent for deep financial research with task planning, self-reflection, and real-time market data (Financial Datasets API + Exa). Uses Bun runtime + OpenAI. Evaluation: 1) Too domain-specific for core aidevops (financial data APIs only), 2) Task planning/self-validation patterns already implemented in supervisor and ralph-loop, 3) Could be imported as optional skill for finance-focused users. Recommendation: No integration needed. Users can install directly if needed.
@@ -366,12 +366,27 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added consolidate command to memory-helper.sh. Finds similar memories using word overlap, merges tags, keeps older entry. Supports --dry-run and --threshold options.
 - [x] t058 Memory Auto-Capture #plan → [todo/PLANS.md#memory-auto-capture] ~2h actual:1h (ai:1h test:30m read:30m) logged:2026-01-11 started:2026-02-06T01:30Z completed:2026-02-06
   - Notes: Implemented remaining 40% of PRD. Added --auto/--auto-captured flag to memory-helper.sh store (marks auto-captured in DB). Added privacy filters (<private> tag stripping, secret pattern rejection). Added --auto-only/--manual-only recall filters. Added `log` command and /memory-log slash command. Added auto-capture stats to `stats` output. DB migration adds auto_captured column to learning_access table. AGENTS.md updated with auto-capture instructions and privacy guidance. ~60% was already done by prior work (t052 session distillation, proactive memory triggers, consolidation, pattern tracking).
-- [x] t060 Research jj (Jujutsu) VCS for aidevops advantages #research #git #tools ~15m (ai:10m read:5m) ref:GH#514 logged:2026-01-13 ref:https://github.com/jj-vcs/jj completed:2026-02-08
-  - Notes: Git-compatible VCS (24.7k stars) with unique features: working-copy-as-commit (no staging area), operation log with undo, conflicts as first-class objects, automatic rebase of descendants, anonymous branches. Could simplify worktree workflows, enable safer experimentation, and provide better conflict handling. Evaluate: 1) Integration with existing git workflows 2) Colocated mode compatibility 3) Benefits for AI-assisted development 4) Learning curve vs productivity gains.
+- [x] t060 Research jj (Jujutsu) VCS for aidevops advantages #research #git #tools ~15m (ai:10m read:5m) ref:GH#514 logged:2026-01-13 ref:https://github.com/jj-vcs/jj started:2026-02-08T04:04Z completed:2026-02-08
+  - Notes: Git-compatible VCS (25.6k stars, v0.38.0, Apache-2.0, 300+ contributors, backed by Google). Written in Rust, uses gitoxide for Git backend. Key features: working-copy-as-commit (no staging area), operation log with full undo, conflicts as first-class objects, automatic rebase of descendants, anonymous branches (bookmarks), revset query language, safe concurrent replication.
+  - Evaluation for aidevops:
+    - RECOMMENDED: Colocated mode (`jj git init --colocate`) as bridge strategy. Maintains full git compatibility (all 39 scripts + 67 docs still work), allows gradual adoption, preserves GitHub/CI integration. jj and git commands work interchangeably in same repo.
+    - HIGH VALUE: Operation log + undo eliminates the destructive command risk that spawned t009 (PreToolUse hooks). `jj undo` reverses any operation including the equivalent of `git reset --hard`. Would reduce need for pre-edit-check.sh defensive machinery (206 lines).
+    - HIGH VALUE: jj workspaces (`jj workspace add`) are lighter than git worktrees. Could simplify the 3-tier fallback chain (wt -> worktree-helper.sh -> raw git worktree) in supervisor-helper.sh parallel dispatch.
+    - MEDIUM VALUE: No staging area simplifies commit workflow. Working copy is always a commit, eliminating "dirty working copy" errors and `git stash` usage (7 files). Automatic rebase of descendants eliminates manual `git rebase main` after fetching (9 files).
+    - MEDIUM VALUE: First-class conflicts enable committing conflicted state, resolving later. Valuable for supervisor parallel task dispatch where agents touch overlapping files. Conflict resolution propagates through descendants automatically.
+    - MEDIUM VALUE: Change IDs persist through squash-merge/rebase/amend, solving the squash-merge detection problem in worktree-helper.sh `cmd_clean()` (currently uses fragile heuristics).
+    - CONCERN: No git hooks support yet (issue #405). Pre-commit hooks are used by aidevops for quality gates. Workaround: run linters via jj's `run` command (design doc exists) or keep colocated mode where git hooks still fire.
+    - CONCERN: No git submodules support yet. Not a blocker for aidevops (no submodules used).
+    - CONCERN: No .gitattributes support (issue #53). Minor impact.
+    - CONCERN: Still experimental (pre-1.0). Core devs use it daily, but storage format may change before 1.0. Colocated mode mitigates this -- can always fall back to pure git.
+    - CONCERN: Learning curve for team. jj concepts (changes vs commits, bookmarks vs branches, revsets) differ from git mental model. Mitigated by colocated mode allowing gradual adoption.
+  - Recommendation: Add jj as OPTIONAL tool in setup.sh alongside Worktrunk. Create a `tools/git/jj.md` subagent documenting jj equivalents for common aidevops git operations. Do NOT replace git -- use colocated mode as an enhancement layer. Revisit after jj 1.0 for deeper integration.
+  - Follow-up tasks: t060.1 Add jj installation to setup.sh (optional), t060.2 Create tools/git/jj.md subagent, t060.3 Test jj colocated mode with supervisor parallel dispatch.
 - [x] t061 Create debug-opengraph and debug-favicon subagents #tools #seo #browser ~10m (ai:8m test:1m read:1m) logged:2026-01-14 ref:https://opengraphdebug.com/ completed:2026-02-07
   - Notes: Already implemented. seo/debug-opengraph.md and seo/debug-favicon.md both exist in .agents/seo/.
-- [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~10m (ai:8m read:2m) ref:GH#515 logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
-  - Notes: Vercel's Agent Skills collection (332 stars, MIT). Currently includes vercel-deploy skill for instant deployment without auth. Auto-detects 40+ frameworks, returns preview URL + claim URL. Follows agentskills.io format (SKILL.md structure). Evaluate: 1) Add vercel-deploy as aidevops skill 2) Adopt Agent Skills format for aidevops skills 3) Contribute aidevops skills back to ecosystem. BLOCKED: Max retries exceeded: clean_exit_no_signal
+- [x] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~10m (ai:8m read:2m) ref:GH#515 logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills completed:2026-02-08
+  - Notes: Vercel's Agent Skills collection (19.4k stars, MIT, 117 commits, 17 contributors). Now 5 skills: react-best-practices (57 rules, 8 categories), web-design-guidelines (100+ rules), react-native-guidelines (16 rules), composition-patterns, vercel-deploy-claimable. Follows agentskills.io format (SKILL.md structure). agentskills.io is now an open standard adopted by 27+ tools (Claude Code, Cursor, Gemini CLI, OpenCode, VS Code, GitHub Copilot, etc.).
+  - Decision: 1) vercel-deploy-claimable: SKIP - designed for claude.ai/Desktop conversations, not CLI agents. aidevops already has full Vercel CLI integration (tools/deployment/vercel.md + vercel-cli-helper.sh) which is more capable. 2) react-best-practices: CANDIDATE for import via `/add-skill vercel-labs/agent-skills` - 57 rules would complement existing code-standards. Create follow-up task. 3) Agent Skills format: ALREADY ADOPTED - aidevops already generates SKILL.md stubs via generate-skills.sh and imports external skills via add-skill-helper.sh. Full compatibility exists. 4) Contribute back: DEFERRED - aidevops skills use progressive disclosure pattern with subagent folders, which is compatible but more complex than typical SKILL.md. Consider contributing simpler skills (mermaid-diagrams, seo-audit) when the ecosystem matures.
 - [x] t064 Add seo-regex subagent with Search Console regex workflow #seo #tools ~5m (ai:4m read:1m) logged:2026-01-15 completed:2026-02-07
   - Notes: Created seo/seo-regex.md. Covers GSC RE2 regex patterns for brand/non-brand, questions, intent classification, long-tail, page filters, URL analysis, keyword grouping.
 - [x] t083 Create Bing Webmaster Tools subagent #seo #tools ~15m actual:10m (ai:10m test:3m read:2m) logged:2026-01-29 completed:2026-02-06 related:seo-audit-skill
@@ -622,9 +637,9 @@ t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025
 t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,done,t052,t067,
 t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,done,t052,,
 t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
-t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,15m,10m,,5m,2026-01-13T00:00Z,pending,,,
+t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,15m,10m,,5m,2026-01-13T00:00Z,done,,,
 t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,10m,8m,1m,1m,2026-01-14T00:00Z,done,,,
-t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,10m,8m,,2m,2026-01-14T00:00Z,pending,,,
+t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,10m,8m,,2m,2026-01-14T00:00Z,done,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,5m,4m,,1m,2026-01-15T00:00Z,pending,,,
 t067,Optimise OpenCode MCP loading with on-demand activation,,opencode|performance|mcp,4h,2h,1h,1h,2026-01-21T00:00Z,done,t056,,
 t069,Fix toon-helper.sh validate command,,bugfix,15m,10m,2026-01-24T00:00Z,,2026-01-25,done

@@ -64,6 +64,10 @@ credentials/
 .agents/scripts-private/
 scripts-private/
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Backup files
 *.backup
 *.bak
@@ -212,3 +216,4 @@ repomix-output.*
 
 # ML model caches (downloaded at runtime)
 mlx_models/
+__pycache__/
