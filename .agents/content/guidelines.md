@@ -107,3 +107,7 @@ For HTML content fields (especially WordPress content areas), use these HTML tag
 > We finish them with marine-grade coatings — ensuring they resist swelling, warping and weathering.
 
 **Follow these guidelines for all product page updates.**
+
+## Platform-Specific Adaptations
+
+These guidelines define the core voice for website and blog content. When writing for social media or video platforms, see `content/platform-personas.md` for channel-specific adaptations of this voice (LinkedIn, Instagram, YouTube, X, Facebook).
