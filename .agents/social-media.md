@@ -5,6 +5,8 @@ mode: subagent
 subagents:
   # Social tools
   - bird
+  - linkedin
+  - reddit
   # Content
   - guidelines
   - summarize
@@ -75,6 +77,9 @@ subagents:
 
 ### Integration Points
 
+- `tools/social-media/bird.md` - X/Twitter CLI (read, post, reply, search)
+- `tools/social-media/linkedin.md` - LinkedIn API (posts, articles, carousels, analytics)
+- `tools/social-media/reddit.md` - Reddit API via PRAW (read, post, reply)
 - `content.md` - Content creation workflows
 - `marketing.md` - Campaign coordination
 - `seo.md` - Keyword and hashtag research
