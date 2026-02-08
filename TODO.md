@@ -38,6 +38,11 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - `started:` - When branch was created (work began)
 - `completed:` - When task was marked done
 
+**Assignment fields:**
+
+- `assignee:identity` - Who claimed the task (set by `supervisor-helper.sh claim`, identity = `AIDEVOPS_IDENTITY` or `user@host`)
+- `@owner` - Who is responsible for the task (separate from assignee — future feature)
+
 **Machine data:** TOON blocks in HTML comments (invisible when rendered).
 
 <!--TOON:meta{version,format,updated}:
@@ -65,7 +70,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t168.4 Wire up /compare-models and /compare-models-free slash commands ~30m blocked-by:t168.3
     - Notes: Add to workflows/ or scripts/ as command handlers. /compare-models prompts for model selection then task. /compare-models-free skips selection, uses all free models. Both output comparison table. Consider adding --task flag for non-interactive use. Add to AGENTS.md command reference.
   - Notes: Single-session workflow: user invokes command, selects models (or auto-selects free), provides task, subagents execute in parallel, main model compares results. For long-running tasks (>2min per model), fall back to headless dispatch with supervisor collecting results. Builds on t132 (model routing) infrastructure. Key constraint: the evaluating model should not be one of the compared models to avoid bias. Free models vary by provider - OpenRouter, Google (Gemini Flash), Anthropic (Haiku via free tier), Groq, etc.
-- [ ] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) ref:GH#624 logged:2026-02-08
+- [ ] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) ref:GH#624 assignee:marcusquinn logged:2026-02-08
   - [ ] t166.1 Add cron/supervisor daily pulse that triggers CodeRabbit full repo review via gh API ~1h blocked-by:none
     - Notes: Use `gh api` or CodeRabbit CLI to trigger a full codebase review (not just PR diff). Schedule as daily cron job or supervisor pulse phase. CodeRabbit supports `@coderabbitai full review` comment on a tracking PR, or API-triggered reviews. Investigate best trigger mechanism.
   - [ ] t166.2 Monitor and collect CodeRabbit review feedback into structured format ~1h blocked-by:t166.1
@@ -73,7 +78,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t166.3 Auto-create tasks from valid CodeRabbit findings and dispatch workers ~1h blocked-by:t166.2
     - Notes: For verified findings above threshold severity, auto-create TODO.md tasks with ref to CodeRabbit comment. Dispatch via supervisor batch for autonomous fixing. Human review gate for critical/architectural changes. Track which findings were acted on vs dismissed (feedback loop for future filtering).
   - Notes: Self-improving loop: CodeRabbit reviews entire codebase daily, findings become tasks, workers fix them, next review validates fixes. Builds on t163 (completion guards) and t128 (supervisor). Consider rate limits and API costs. Could also integrate other review bots (Codacy, SonarCloud) as additional signal sources.
-- [ ] t167 Investigate Gemini Code Assist for full codebase review in daily pulse #quality #automation #research ~30m (ai:20m read:10m) ref:GH#625 logged:2026-02-08
+- [ ] t167 Investigate Gemini Code Assist for full codebase review in daily pulse #quality #automation #research ~30m (ai:20m read:10m) ref:GH#625 assignee:marcusquinn logged:2026-02-08
   - Notes: Gemini Code Assist (`gemini-code-assist[bot]`) currently only reviews PR diffs - no full codebase review trigger exists as of 2026-02-08. Research options: 1) Create a synthetic "full diff" PR (branch from empty tree or first commit, PR against main) to force a full-repo review. 2) Monitor Gemini Code Assist roadmap for full repo review API. 3) Use Gemini API directly (not the GitHub bot) with repo context for codebase-level analysis. If a viable trigger is found, fold into t166 as an additional signal source alongside CodeRabbit. Gemini's review quality on PR #622 was decent (caught real regex issue) but also had false positives - same bot-review verification rules from t166.2 would apply.
 - [x] t158 Fix supervisor dispatch so dynamically-created tasks work with /full-loop #bugfix #supervisor #orchestration ~1h (ai:45m test:15m) ref:GH#573 logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #574 merged
   - Notes: Problem: supervisor adds tasks to its DB but not to TODO.md, so workers running /full-loop cannot find the task description. Fix: 1) build_dispatch_cmd now passes task description inline in the prompt (` -- description`), 2) full-loop.md Step 0 has 3-tier resolution: inline desc > TODO.md > supervisor DB, 3) full-loop-helper.sh PR creation queries supervisor DB as fallback. Also adds headless worker rules (no user prompts, no TODO.md edits, graceful auth failure handling) and PR creation hardening (gh auth check, rebase before push, proper title/body).

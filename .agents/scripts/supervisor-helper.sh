@@ -7,7 +7,7 @@
 # Usage:
 #   supervisor-helper.sh init                          Initialize supervisor database
 #   supervisor-helper.sh add <task_id> [--repo path] [--description "desc"] [--model model] [--max-retries N]
-#   supervisor-helper.sh batch <name> [--concurrency N] [--tasks "t001,t002,t003"]
+#   supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks "t001,t002,t003"]
 #   supervisor-helper.sh dispatch <task_id> [--batch id] Dispatch a task (worktree + worker)
 #   supervisor-helper.sh reprompt <task_id> [--prompt ""] Re-prompt a retrying task
 #   supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
@@ -402,21 +402,24 @@ check_system_load() {
 # Calculate adaptive concurrency based on system load (t135.15.2)
 # Returns the recommended concurrency limit on stdout
 #
-# Strategy:
-#   - If load < cores: full concurrency (no throttle)
-#   - If load > cores but < cores*2: reduce by 50%
-#   - If load > cores*2: reduce to minimum floor
+# Strategy (bidirectional scaling):
+#   - If load < 50% of cores: scale UP (base * 2, capped at max_concurrency)
+#   - If load 50-100% of cores: use base concurrency (no change)
+#   - If load > cores but < cores*factor: reduce by 50%
+#   - If load > cores*factor: reduce to minimum floor
 #   - If memory pressure is high: reduce to minimum floor
-#   - Minimum floor is 6 (macOS load averages are inflated by I/O-waiting
-#     threads, so low minimums starve dispatch even at moderate CPU usage)
+#   - Minimum floor is 1 (allows at least 1 worker always)
+#   - Maximum cap defaults to cpu_cores (prevents runaway scaling)
 #
 # $1: base concurrency (from batch or global default)
 # $2: max load factor (default: 2)
+# $3: max concurrency cap (default: cpu_cores, hard upper limit)
 #######################################
 calculate_adaptive_concurrency() {
     local base_concurrency="${1:-4}"
     local max_load_factor="${2:-2}"
-    local min_concurrency=6
+    local max_concurrency_cap="${3:-0}"
+    local min_concurrency=1
 
     local load_output
     load_output=$(check_system_load "$max_load_factor")
@@ -426,6 +429,11 @@ calculate_adaptive_concurrency() {
     load_ratio=$(echo "$load_output" | grep '^load_ratio=' | cut -d= -f2)
     memory_pressure=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
     overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
+
+    # Default max cap to cpu_cores if not specified
+    if [[ "$max_concurrency_cap" -le 0 ]]; then
+        max_concurrency_cap="$cpu_cores"
+    fi
 
     local effective_concurrency="$base_concurrency"
 
@@ -439,14 +447,23 @@ calculate_adaptive_concurrency() {
     if [[ "$overloaded" == "true" ]]; then
         # Severely overloaded: minimum floor
         effective_concurrency="$min_concurrency"
-    elif [[ "$load_ratio" -gt $((cpu_cores * 100)) ]]; then
+    elif [[ "$load_ratio" -gt 100 ]]; then
         # Moderately loaded (load > cores but < cores*factor): halve concurrency
         effective_concurrency=$(( (base_concurrency + 1) / 2 ))
+    elif [[ "$load_ratio" -lt 50 ]]; then
+        # Light load (< 50% of cores): scale up to double base
+        effective_concurrency=$((base_concurrency * 2))
     fi
+    # else: load 50-100% of cores — use base_concurrency as-is
 
     # Enforce minimum floor
     if [[ "$effective_concurrency" -lt "$min_concurrency" ]]; then
         effective_concurrency="$min_concurrency"
+    fi
+
+    # Enforce maximum cap
+    if [[ "$effective_concurrency" -gt "$max_concurrency_cap" ]]; then
+        effective_concurrency="$max_concurrency_cap"
     fi
 
     echo "$effective_concurrency"
@@ -655,12 +672,13 @@ MIGRATE
 
     # Backup before ALTER TABLE migrations if any are needed (t162)
     local needs_alter_migration=false
-    local has_max_load has_release_on_complete has_diagnostic_of has_issue_url
+    local has_max_load has_release_on_complete has_diagnostic_of has_issue_url has_max_concurrency
     has_max_load=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
     has_release_on_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='release_on_complete';" 2>/dev/null || echo "0")
     has_diagnostic_of=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='diagnostic_of';" 2>/dev/null || echo "0")
     has_issue_url=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='issue_url';" 2>/dev/null || echo "0")
-    if [[ "$has_max_load" -eq 0 || "$has_release_on_complete" -eq 0 || "$has_diagnostic_of" -eq 0 || "$has_issue_url" -eq 0 ]]; then
+    has_max_concurrency=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_concurrency';" 2>/dev/null || echo "0")
+    if [[ "$has_max_load" -eq 0 || "$has_release_on_complete" -eq 0 || "$has_diagnostic_of" -eq 0 || "$has_issue_url" -eq 0 || "$has_max_concurrency" -eq 0 ]]; then
         needs_alter_migration=true
     fi
     if [[ "$needs_alter_migration" == "true" ]]; then
@@ -675,6 +693,13 @@ MIGRATE
         else
             log_success "Added max_load_factor column to batches"
         fi
+    fi
+
+    # Migrate: add max_concurrency column to batches if missing (adaptive scaling cap)
+    if [[ "$has_max_concurrency" -eq 0 ]]; then
+        log_info "Migrating batches table: adding max_concurrency column..."
+        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        log_success "Added max_concurrency column to batches (0 = auto-detect from cpu_cores)"
     fi
 
     # Migrate: add release_on_complete and release_type columns to batches if missing (t128.10)
@@ -814,6 +839,7 @@ CREATE TABLE IF NOT EXISTS batches (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     concurrency     INTEGER NOT NULL DEFAULT 4,
+    max_concurrency INTEGER NOT NULL DEFAULT 0,
     max_load_factor INTEGER NOT NULL DEFAULT 2,
     release_on_complete INTEGER NOT NULL DEFAULT 0,
     release_type    TEXT NOT NULL DEFAULT 'patch'
@@ -999,7 +1025,7 @@ cmd_add() {
 # Create or manage a batch
 #######################################
 cmd_batch() {
-    local name="" concurrency=4 tasks="" max_load_factor=2
+    local name="" concurrency=4 max_concurrency=0 tasks="" max_load_factor=2
     local release_on_complete=0 release_type="patch"
 
     # First positional arg is batch name
@@ -1011,6 +1037,7 @@ cmd_batch() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --concurrency) [[ $# -lt 2 ]] && { log_error "--concurrency requires a value"; return 1; }; concurrency="$2"; shift 2 ;;
+            --max-concurrency) [[ $# -lt 2 ]] && { log_error "--max-concurrency requires a value"; return 1; }; max_concurrency="$2"; shift 2 ;;
             --tasks) [[ $# -lt 2 ]] && { log_error "--tasks requires a value"; return 1; }; tasks="$2"; shift 2 ;;
             --max-load) [[ $# -lt 2 ]] && { log_error "--max-load requires a value"; return 1; }; max_load_factor="$2"; shift 2 ;;
             --release-on-complete) release_on_complete=1; shift ;;
@@ -1020,7 +1047,7 @@ cmd_batch() {
     done
 
     if [[ -z "$name" ]]; then
-        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major]"
+        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major]"
         return 1
     fi
 
@@ -1042,15 +1069,21 @@ cmd_batch() {
     escaped_release_type=$(sql_escape "$release_type")
 
     db "$SUPERVISOR_DB" "
-        INSERT INTO batches (id, name, concurrency, max_load_factor, release_on_complete, release_type)
-        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type');
+        INSERT INTO batches (id, name, concurrency, max_concurrency, max_load_factor, release_on_complete, release_type)
+        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type');
     "
 
     local release_info=""
     if [[ "$release_on_complete" -eq 1 ]]; then
         release_info=", release: $release_type on complete"
     fi
-    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency, max-load: $max_load_factor${release_info})"
+    local max_conc_info=""
+    if [[ "$max_concurrency" -gt 0 ]]; then
+        max_conc_info=", max: $max_concurrency"
+    else
+        max_conc_info=", max: auto"
+    fi
+    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency${max_conc_info}, max-load: $max_load_factor${release_info})"
 
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
@@ -1577,10 +1610,18 @@ cmd_status() {
     if [[ -n "$batch_row" ]]; then
         local brelease_flag brelease_type
         IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type <<< "$batch_row"
+        local bmax_conc
+        bmax_conc=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "0")
+        local bmax_load
+        bmax_load=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "2")
+        local badaptive
+        badaptive=$(calculate_adaptive_concurrency "${bconc:-4}" "${bmax_load:-2}" "${bmax_conc:-0}")
+        local cap_display="auto"
+        [[ "${bmax_conc:-0}" -gt 0 ]] && cap_display="$bmax_conc"
         echo -e "${BOLD}=== Batch: $bname ===${NC}"
         echo "  ID:          $bid"
         echo "  Status:      $bstatus"
-        echo "  Concurrency: $bconc"
+        echo "  Concurrency: $bconc (adaptive: $badaptive, cap: $cap_display)"
         if [[ "${brelease_flag:-0}" -eq 1 ]]; then
             echo -e "  Release:     ${GREEN}enabled${NC} (${brelease_type:-patch} on complete)"
         else
@@ -1905,8 +1946,54 @@ find_task_issue_number() {
 }
 
 #######################################
-# Claim a task via GitHub Issue assignee (t164)
-# Uses GitHub as distributed lock — works across machines
+# Get the identity string for task claiming (t165)
+# Uses AIDEVOPS_IDENTITY env var, falls back to user@hostname
+#######################################
+get_aidevops_identity() {
+    if [[ -n "${AIDEVOPS_IDENTITY:-}" ]]; then
+        echo "$AIDEVOPS_IDENTITY"
+        return 0
+    fi
+    local user host
+    user=$(whoami 2>/dev/null || echo "unknown")
+    host=$(hostname -s 2>/dev/null || echo "local")
+    echo "${user}@${host}"
+    return 0
+}
+
+#######################################
+# Get the assignee: value from a task line in TODO.md (t165)
+# Outputs the assignee identity string, empty if unassigned.
+# $1: task_id  $2: todo_file path
+#######################################
+get_task_assignee() {
+    local task_id="$1"
+    local todo_file="$2"
+
+    if [[ ! -f "$todo_file" ]]; then
+        return 0
+    fi
+
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
+    local task_line
+    task_line=$(grep -E "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+    if [[ -z "$task_line" ]]; then
+        return 0
+    fi
+
+    # Extract assignee:value — unambiguous key:value field
+    local assignee
+    assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo "")
+    echo "$assignee"
+    return 0
+}
+
+#######################################
+# Claim a task (t165)
+# Primary: TODO.md assignee: field (provider-agnostic, offline-capable)
+# Optional: sync to GitHub Issue assignee if ref:GH# exists and gh is available
 #######################################
 cmd_claim() {
     local task_id="${1:-}"
@@ -1918,51 +2005,87 @@ cmd_claim() {
 
     local project_root
     project_root=$(find_project_root 2>/dev/null || echo ".")
+    local todo_file="$project_root/TODO.md"
 
-    local issue_number
-    issue_number=$(find_task_issue_number "$task_id" "$project_root")
-    if [[ -z "$issue_number" ]]; then
-        log_error "No GitHub issue found for $task_id (missing ref:GH# in TODO.md)"
+    if [[ ! -f "$todo_file" ]]; then
+        log_error "TODO.md not found at $todo_file"
         return 1
     fi
 
-    local repo_slug
-    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
-    if [[ -z "$repo_slug" ]]; then
-        log_error "Cannot detect repo slug"
-        return 1
-    fi
+    local identity
+    identity=$(get_aidevops_identity)
 
-    # Ensure status labels exist before using them
-    ensure_status_labels "$repo_slug"
-
-    # Check current assignee
+    # Check current assignee in TODO.md
     local current_assignee
-    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null || echo "")
+    current_assignee=$(get_task_assignee "$task_id" "$todo_file")
 
     if [[ -n "$current_assignee" ]]; then
-        local my_login
-        my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
-        if [[ "$current_assignee" == "$my_login" ]]; then
-            log_info "$task_id already claimed by you (GH#$issue_number)"
+        if [[ "$current_assignee" == "$identity" ]]; then
+            log_info "$task_id already claimed by you (assignee:$identity)"
             return 0
         fi
-        log_error "$task_id is claimed by @$current_assignee (GH#$issue_number)"
+        log_error "$task_id is claimed by assignee:$current_assignee"
         return 1
     fi
 
-    # Assign to self and update labels in a single call
-    if gh issue edit "$issue_number" --repo "$repo_slug" --add-assignee "@me" --add-label "status:claimed" --remove-label "status:available" 2>/dev/null; then
-        log_success "Claimed $task_id (GH#$issue_number assigned to you)"
-        return 0
-    else
-        log_error "Failed to claim $task_id (GH#$issue_number)"
+    # Verify task exists and is open
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+    local task_line
+    task_line=$(grep -E "^- \[ \] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+    if [[ -z "$task_line" ]]; then
+        log_error "Task $task_id not found as open in $todo_file"
         return 1
     fi
+
+    # Add assignee:identity and started:ISO to the task line
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local line_num
+    line_num=$(grep -nE "^- \[ \] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
+    if [[ -z "$line_num" ]]; then
+        log_error "Could not find line number for $task_id"
+        return 1
+    fi
+
+    # Escape identity for safe sed interpolation (handles . / & \ in user@host)
+    local identity_esc
+    identity_esc=$(printf '%s' "$identity" | sed -e 's/[\/&.\\]/\\&/g')
+
+    # Insert assignee: and started: before logged: or at end of metadata
+    local new_line
+    if echo "$task_line" | grep -qE 'logged:'; then
+        new_line=$(echo "$task_line" | sed -E "s/( logged:)/ assignee:${identity_esc} started:${now}\1/")
+    else
+        new_line="${task_line} assignee:${identity} started:${now}"
+    fi
+    sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
+
+    # Commit and push (optimistic lock — push failure = someone else claimed first)
+    if commit_and_push_todo "$project_root" "chore: claim $task_id by assignee:$identity"; then
+        log_success "Claimed $task_id (assignee:$identity, started:$now)"
+    else
+        # Push failed — check if someone else claimed
+        git -C "$project_root" checkout -- TODO.md 2>/dev/null || true
+        git -C "$project_root" pull --rebase 2>/dev/null || true
+        local new_assignee
+        new_assignee=$(get_task_assignee "$task_id" "$todo_file")
+        if [[ -n "$new_assignee" && "$new_assignee" != "$identity" ]]; then
+            log_error "$task_id was claimed by assignee:$new_assignee (race condition)"
+            return 1
+        fi
+        log_warn "Claimed locally but push failed — will retry on next pulse"
+    fi
+
+    # Optional: sync to GitHub Issue assignee (bi-directional sync layer)
+    sync_claim_to_github "$task_id" "$project_root" "claim"
+    return 0
 }
 
 #######################################
-# Release a claimed task (t164)
+# Release a claimed task (t165)
+# Primary: TODO.md remove assignee:
+# Optional: sync to GitHub Issue
 #######################################
 cmd_unclaim() {
     local task_id="${1:-}"
@@ -1974,53 +2097,105 @@ cmd_unclaim() {
 
     local project_root
     project_root=$(find_project_root 2>/dev/null || echo ".")
+    local todo_file="$project_root/TODO.md"
 
-    local issue_number
-    issue_number=$(find_task_issue_number "$task_id" "$project_root")
-    if [[ -z "$issue_number" ]]; then
-        log_error "No GitHub issue found for $task_id"
+    if [[ ! -f "$todo_file" ]]; then
+        log_error "TODO.md not found at $todo_file"
         return 1
     fi
 
-    local repo_slug
-    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
-    if [[ -z "$repo_slug" ]]; then
-        log_error "Cannot detect repo slug"
-        return 1
-    fi
+    local identity
+    identity=$(get_aidevops_identity)
 
-    local my_login
-    my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
-    if [[ -z "$my_login" ]]; then
-        log_error "Cannot determine GitHub login for unclaim"
-        return 1
-    fi
+    local current_assignee
+    current_assignee=$(get_task_assignee "$task_id" "$todo_file")
 
-    # Ensure status labels exist before using them
-    ensure_status_labels "$repo_slug"
-
-    # Remove assignee and update labels in a single call
-    if gh issue edit "$issue_number" --repo "$repo_slug" --remove-assignee "$my_login" --add-label "status:available" --remove-label "status:claimed" 2>/dev/null; then
-        log_success "Released $task_id (GH#$issue_number unassigned)"
+    if [[ -z "$current_assignee" ]]; then
+        log_info "$task_id is not claimed"
         return 0
-    else
-        log_error "Failed to release $task_id"
+    fi
+
+    if [[ "$current_assignee" != "$identity" ]]; then
+        log_error "$task_id is claimed by assignee:$current_assignee, not by you (assignee:$identity)"
         return 1
     fi
+
+    # Remove assignee:identity and started:... from the task line
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+    local line_num
+    line_num=$(grep -nE "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
+    if [[ -z "$line_num" ]]; then
+        log_error "Could not find line number for $task_id"
+        return 1
+    fi
+
+    local task_line
+    task_line=$(sed -n "${line_num}p" "$todo_file")
+    local new_line
+    # Remove assignee:value and started:value
+    # Use character class pattern (no identity interpolation needed — matches any assignee)
+    new_line=$(echo "$task_line" | sed -E "s/ ?assignee:[A-Za-z0-9._@-]+//; s/ ?started:[0-9T:Z-]+//")
+    sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
+
+    if commit_and_push_todo "$project_root" "chore: unclaim $task_id (released by assignee:$identity)"; then
+        log_success "Released $task_id (unclaimed by assignee:$identity)"
+    else
+        log_warn "Unclaimed locally but push failed — will retry on next pulse"
+    fi
+
+    # Optional: sync to GitHub Issue
+    sync_claim_to_github "$task_id" "$project_root" "unclaim"
+    return 0
 }
 
 #######################################
-# Check if a task is claimed by someone else (t164)
-# Returns 0 if free or claimed by self, 1 if claimed by another
+# Check if a task is claimed by someone else (t165)
+# Primary: TODO.md assignee: field (instant, offline)
+# Returns 0 if free or claimed by self, 1 if claimed by another.
+# Outputs the assignee on stdout if claimed by another.
 #######################################
 check_task_claimed() {
     local task_id="${1:-}"
     local project_root="${2:-.}"
+    local todo_file="$project_root/TODO.md"
+
+    local current_assignee
+    current_assignee=$(get_task_assignee "$task_id" "$todo_file")
+
+    # No assignee = free
+    if [[ -z "$current_assignee" ]]; then
+        return 0
+    fi
+
+    local identity
+    identity=$(get_aidevops_identity)
+
+    # Claimed by self = OK
+    if [[ "$current_assignee" == "$identity" ]]; then
+        return 0
+    fi
+
+    # Claimed by someone else
+    echo "$current_assignee"
+    return 1
+}
+
+#######################################
+# Sync claim/unclaim to GitHub Issue assignee (t165)
+# Optional bi-directional sync layer — fails silently if gh unavailable.
+# $1: task_id  $2: project_root  $3: action (claim|unclaim)
+#######################################
+sync_claim_to_github() {
+    local task_id="$1"
+    local project_root="$2"
+    local action="$3"
+
+    # Skip if gh CLI not available
+    command -v gh &>/dev/null || return 0
 
     local issue_number
     issue_number=$(find_task_issue_number "$task_id" "$project_root")
-
-    # No issue = no claim mechanism = free
     if [[ -z "$issue_number" ]]; then
         return 0
     fi
@@ -2031,28 +2206,22 @@ check_task_claimed() {
         return 0
     fi
 
-    local current_assignee api_exit=0
-    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null) || api_exit=$?
+    ensure_status_labels "$repo_slug"
 
-    if [[ "$api_exit" -ne 0 ]]; then
-        # API failed (network, rate limit, etc.) — fail open to avoid blocking dispatch
-        log_info "Could not check claim status for $task_id (gh api exit $api_exit) — proceeding"
-        return 0
+    if [[ "$action" == "claim" ]]; then
+        gh issue edit "$issue_number" --repo "$repo_slug" \
+            --add-assignee "@me" \
+            --add-label "status:claimed" --remove-label "status:available" 2>/dev/null || true
+    elif [[ "$action" == "unclaim" ]]; then
+        local my_login
+        my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+        if [[ -n "$my_login" ]]; then
+            gh issue edit "$issue_number" --repo "$repo_slug" \
+                --remove-assignee "$my_login" \
+                --add-label "status:available" --remove-label "status:claimed" 2>/dev/null || true
+        fi
     fi
-
-    if [[ -z "$current_assignee" ]]; then
-        return 0
-    fi
-
-    local my_login
-    my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
-
-    if [[ -n "$my_login" && "$current_assignee" == "$my_login" ]]; then
-        return 0
-    fi
-
-    echo "$current_assignee"
-    return 1
+    return 0
 }
 
 #######################################
@@ -2748,17 +2917,20 @@ cmd_dispatch() {
         return 1
     fi
 
-    # Check if task is claimed by someone else on GitHub (t164)
-    # Note: return 0 to let pulse continue dispatching other tasks (return 2 = concurrency limit)
+    # Check if task is claimed by someone else via TODO.md assignee: field (t165)
     local claimed_by=""
     claimed_by=$(check_task_claimed "$task_id" "${trepo:-.}" 2>/dev/null) || true
     if [[ -n "$claimed_by" ]]; then
-        log_warn "Task $task_id is claimed by @$claimed_by on GitHub — skipping dispatch"
+        log_warn "Task $task_id is claimed by assignee:$claimed_by — skipping dispatch"
         return 0
     fi
 
-    # Claim the task on GitHub before dispatching (t164)
-    cmd_claim "$task_id" 2>/dev/null || log_info "Could not claim $task_id on GitHub (no issue ref or gh unavailable)"
+    # Claim the task before dispatching (t165 — TODO.md primary, GH Issue sync optional)
+    # CRITICAL: abort dispatch if claim fails (race condition = another worker claimed first)
+    if ! cmd_claim "$task_id"; then
+        log_error "Failed to claim $task_id — aborting dispatch"
+        return 1
+    fi
 
     # Authoritative concurrency check with adaptive load awareness (t151, t172)
     # This is the single source of truth for concurrency enforcement.
@@ -2768,16 +2940,17 @@ cmd_dispatch() {
     if [[ -n "$batch_id" ]]; then
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
-        local base_concurrency max_load_factor
+        local base_concurrency max_load_factor batch_max_concurrency
         base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
         max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
+        batch_max_concurrency=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
         local concurrency
-        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}")
+        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}" "${batch_max_concurrency:-0}")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
         if [[ "$active_count" -ge "$concurrency" ]]; then
-            log_warn "Concurrency limit reached ($active_count/$concurrency, base:$base_concurrency) for batch $batch_id"
+            log_warn "Concurrency limit reached ($active_count/$concurrency, base:$base_concurrency, adaptive) for batch $batch_id"
             return 2
         fi
     else
@@ -3094,7 +3267,7 @@ evaluate_worker() {
     escaped_id=$(sql_escape "$task_id")
     local task_row
     task_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT status, log_file, retries, max_retries, session_id
+        SELECT status, log_file, retries, max_retries, session_id, pr_url
         FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -3103,8 +3276,8 @@ evaluate_worker() {
         return 1
     fi
 
-    local tstatus tlog tretries tmax_retries tsession
-    IFS='|' read -r tstatus tlog tretries tmax_retries tsession <<< "$task_row"
+    local tstatus tlog tretries tmax_retries tsession tpr_url
+    IFS='|' read -r tstatus tlog tretries tmax_retries tsession tpr_url <<< "$task_row"
 
     if [[ -z "$tlog" || ! -f "$tlog" ]]; then
         echo "failed:no_log_file"
@@ -3130,7 +3303,13 @@ evaluate_worker() {
     meta_pr_url=$(_meta_get "pr_url" "")
     meta_exit_code=$(_meta_get "exit_code" "")
 
-    # Fallback PR URL detection: if log didn't contain a PR URL, check GitHub
+    # Seed PR URL from DB (t171): check_pr_status() or a previous pulse may have
+    # already found and persisted the PR URL. Use it before expensive gh API calls.
+    if [[ -z "$meta_pr_url" && -n "${tpr_url:-}" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
+        meta_pr_url="$tpr_url"
+    fi
+
+    # Fallback PR URL detection: if no PR URL from log or DB, check GitHub
     # for a PR matching the task's branch. Tries the DB branch column first
     # (actual worktree branch), then falls back to feature/${task_id} convention.
     # This fixes the clean_exit_no_signal retry loop (t161): workers that create
@@ -3172,8 +3351,9 @@ evaluate_worker() {
     fi
 
     # TASK_COMPLETE with clean exit = partial success (PR phase may have failed)
+    # If a PR URL is available (from DB or gh fallback), include it.
     if [[ "$meta_signal" == "TASK_COMPLETE" && "$meta_exit_code" == "0" ]]; then
-        echo "complete:task_only"
+        echo "complete:${meta_pr_url:-task_only}"
         return 0
     fi
 
@@ -3200,9 +3380,11 @@ evaluate_worker() {
         fi
     fi
 
-    # Clean exit with no completion signal and no PR = likely incomplete
-    # but NOT an error - the agent finished cleanly, just didn't emit a signal.
-    # This should retry (agent may have run out of context or hit a soft limit).
+    # Clean exit with no completion signal and no PR (checked DB + gh API above)
+    # = likely incomplete. The agent finished cleanly but didn't emit a signal
+    # and no PR was found. Retry (agent may have run out of context or hit a
+    # soft limit). If a PR exists, it was caught at line ~3179 via DB seed (t171)
+    # or gh fallback (t161).
     if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
         echo "retry:clean_exit_no_signal"
         return 0
@@ -5126,6 +5308,27 @@ cmd_pulse() {
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Load:     ${load_color}${sys_load_1m}${NC} / ${sys_load_5m} (${sys_cpu_cores} cores, ratio: ${sys_load_ratio}%)"
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Memory:   ${mem_color}${sys_memory}${NC}"
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Procs:    ${sys_proc_count} total, ${sys_supervisor_procs} supervisor"
+        # Show adaptive concurrency for the active batch
+        if [[ -n "$batch_id" ]]; then
+            local display_base display_max display_load_factor display_adaptive
+            local escaped_display_batch
+            escaped_display_batch=$(sql_escape "$batch_id")
+            display_base=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "?")
+            display_max=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "0")
+            display_load_factor=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "2")
+            display_adaptive=$(calculate_adaptive_concurrency "${display_base:-4}" "${display_load_factor:-2}" "${display_max:-0}")
+            local adaptive_label="base:${display_base}"
+            if [[ "$display_adaptive" -gt "${display_base:-0}" ]]; then
+                adaptive_label="${adaptive_label} ${GREEN}scaled:${display_adaptive}${NC}"
+            elif [[ "$display_adaptive" -lt "${display_base:-0}" ]]; then
+                adaptive_label="${adaptive_label} ${YELLOW}throttled:${display_adaptive}${NC}"
+            else
+                adaptive_label="${adaptive_label} effective:${display_adaptive}"
+            fi
+            local cap_display="auto"
+            [[ "${display_max:-0}" -gt 0 ]] && cap_display="$display_max"
+            echo -e "  ${BLUE}[SUPERVISOR]${NC}   Workers:  ${adaptive_label} (cap:${cap_display})"
+        fi
         if [[ "$sys_overloaded" == "true" ]]; then
             echo -e "  ${BLUE}[SUPERVISOR]${NC}   ${RED}OVERLOADED${NC} - adaptive throttling active"
         fi
@@ -7747,8 +7950,10 @@ Options for 'add':
   --no-issue             Skip GitHub issue creation for this task
 
 Options for 'batch':
-  --concurrency <N>      Max parallel workers (default: 4)
+  --concurrency <N>      Base parallel workers (default: 4, scales up/down with load)
+  --max-concurrency <N>  Hard upper limit (default: 0 = auto, capped at cpu_cores)
   --tasks "t001,t002"    Comma-separated task IDs to add
+  --max-load <N>         Max load factor before throttling (default: 2)
   --release-on-complete  Trigger a release when all tasks complete (t128.10)
   --release-type <type>  Release type: major|minor|patch (default: patch)
 
