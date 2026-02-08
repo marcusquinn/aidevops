@@ -570,7 +570,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Framework for testing agent changes in isolated OpenCode sessions. Features: create test session, inject test prompts, capture responses, validate against expected patterns, compare before/after agent changes. Uses OpenCode server API. Create agent-test-helper.sh. Add to tools/build-agent/agent-testing.md.
 - [x] t119 Triage SonarCloud security hotspots (53 pre-existing) #security #code-quality ~2h actual:30m (ai:1.5h test:30m) logged:2026-02-04 started:2026-02-04T04:00Z completed:2026-02-04
   - Notes: Consolidated sonar-project.properties exclusions for S5332, S6505, S6506 to all shell scripts. Reduced false positives from 53 to 0. Documented rationale: HTTP URLs are localhost/protocol-detection, npm install needs native deps, curl uses explicit https. PR #307 merged.
-- [ ] t120 Review @thymikee post for aidevops inclusion #research #tools ~5m (ai:4m read:1m) ref:GH#529 logged:2026-02-05 ref:https://x.com/thymikee/status/2018786174152970422
+- [ ] t120 Review @thymikee post for aidevops inclusion #research #tools ~5m (ai:4m read:1m) ref:GH#529 assignee:marcusquinn started:2026-02-08T20:55:16Z logged:2026-02-05 ref:https://x.com/thymikee/status/2018786174152970422
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~4h (ai:2.5h test:1h read:30m) ref:GH#530 logged:2026-01-31
   - [ ] t102.1 Cost-Aware Model Routing ~30m blocked-by:none
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
