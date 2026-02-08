@@ -773,6 +773,144 @@ else
 fi
 
 # ============================================================
+# SECTION: Evaluate Worker (t161 - clean_exit_no_signal fix)
+# ============================================================
+section "Evaluate Worker (t161)"
+
+# Helper: create a task with a mock log file for evaluate testing
+create_eval_task() {
+    local task_id="$1"
+    local log_content="$2"
+    local branch="${3:-}"
+
+    # Add task
+    sup add "$task_id" --repo /tmp/test --description "Eval test: $task_id" >/dev/null 2>&1 || true
+
+    # Create log file
+    local log_file="$TEST_DIR/${task_id}.log"
+    echo "$log_content" > "$log_file"
+
+    # Set log_file and status in DB (simulate a completed worker)
+    test_db "UPDATE tasks SET log_file = '$log_file', status = 'running' WHERE id = '$task_id';"
+
+    # Set branch if provided
+    if [[ -n "$branch" ]]; then
+        test_db "UPDATE tasks SET branch = '$branch' WHERE id = '$task_id';"
+    fi
+}
+
+# Test: FULL_LOOP_COMPLETE signal = definitive success
+create_eval_task "eval-t001" "Some work output
+FULL_LOOP_COMPLETE
+EXIT:0"
+eval_result=$(sup evaluate eval-t001 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "complete"; then
+    pass "FULL_LOOP_COMPLETE signal -> complete"
+else
+    fail "FULL_LOOP_COMPLETE signal should be complete" "Got: $eval_result"
+fi
+
+# Test: TASK_COMPLETE with exit 0 = partial success
+create_eval_task "eval-t002" "Some work output
+TASK_COMPLETE
+EXIT:0"
+eval_result=$(sup evaluate eval-t002 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "complete.*task_only"; then
+    pass "TASK_COMPLETE + exit 0 -> complete:task_only"
+else
+    fail "TASK_COMPLETE + exit 0 should be complete:task_only" "Got: $eval_result"
+fi
+
+# Test: Exit 0 with no signal and no PR = retry:clean_exit_no_signal
+# (This is the case where no PR can be found via gh - simulated by using
+# a non-existent repo so gh pr list fails gracefully)
+create_eval_task "eval-t003" "Some work output
+EXIT:0"
+eval_result=$(sup evaluate eval-t003 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
+    pass "Exit 0 + no signal + no PR -> retry:clean_exit_no_signal"
+else
+    fail "Exit 0 + no signal + no PR should be retry:clean_exit_no_signal" "Got: $eval_result"
+fi
+
+# Test: Non-zero exit with auth error = blocked
+create_eval_task "eval-t004" "Some work output
+permission denied
+EXIT:1"
+eval_result=$(sup evaluate eval-t004 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "blocked.*auth_error"; then
+    pass "Non-zero exit + auth error -> blocked:auth_error"
+else
+    fail "Non-zero exit + auth error should be blocked:auth_error" "Got: $eval_result"
+fi
+
+# Test: Non-zero exit with rate limit = retry
+create_eval_task "eval-t005" "Some work output
+429 Too Many Requests
+EXIT:1"
+eval_result=$(sup evaluate eval-t005 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*rate_limited"; then
+    pass "Non-zero exit + rate limit -> retry:rate_limited"
+else
+    fail "Non-zero exit + rate limit should be retry:rate_limited" "Got: $eval_result"
+fi
+
+# Test: Exit 130 (SIGINT) = retry
+create_eval_task "eval-t006" "Some work output
+EXIT:130"
+eval_result=$(sup evaluate eval-t006 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*interrupted_sigint"; then
+    pass "Exit 130 (SIGINT) -> retry:interrupted_sigint"
+else
+    fail "Exit 130 should be retry:interrupted_sigint" "Got: $eval_result"
+fi
+
+# Test: No log file = failed
+sup add eval-t007 --repo /tmp/test --description "No log test" >/dev/null 2>&1 || true
+test_db "UPDATE tasks SET status = 'running' WHERE id = 'eval-t007';"
+eval_result=$(sup evaluate eval-t007 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "failed.*no_log_file"; then
+    pass "No log file -> failed:no_log_file"
+else
+    fail "No log file should be failed:no_log_file" "Got: $eval_result"
+fi
+
+# Test: Non-zero exit with merge conflict = blocked
+create_eval_task "eval-t008" "Some work output
+CONFLICT (content): Merge conflict in file.txt
+EXIT:1"
+eval_result=$(sup evaluate eval-t008 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "blocked.*merge_conflict"; then
+    pass "Non-zero exit + merge conflict -> blocked:merge_conflict"
+else
+    fail "Non-zero exit + merge conflict should be blocked:merge_conflict" "Got: $eval_result"
+fi
+
+# Test: Backend infrastructure error with non-zero exit = retry
+create_eval_task "eval-t009" "Some work output
+HTTP 503 Service Unavailable
+EXIT:1"
+eval_result=$(sup evaluate eval-t009 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*backend_infrastructure_error"; then
+    pass "Non-zero exit + backend error -> retry:backend_infrastructure_error"
+else
+    fail "Non-zero exit + backend error should be retry:backend_infrastructure_error" "Got: $eval_result"
+fi
+
+# Test: Exit 0 with error strings in log = NOT treated as error (content discussion)
+# This verifies that heuristic error patterns are only checked on non-zero exit
+create_eval_task "eval-t010" "Documenting auth flows:
+The API returns 401 unauthorized when token expires
+permission denied errors should be handled gracefully
+EXIT:0"
+eval_result=$(sup evaluate eval-t010 --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
+    pass "Exit 0 + error strings in content -> retry:clean_exit_no_signal (not blocked)"
+else
+    fail "Exit 0 with error strings should NOT be blocked" "Got: $eval_result"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""

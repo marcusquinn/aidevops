@@ -2702,15 +2702,27 @@ evaluate_worker() {
     meta_exit_code=$(_meta_get "exit_code" "")
 
     # Fallback PR URL detection: if log didn't contain a PR URL, check GitHub
-    # for a PR matching the task's branch (feature/tXXX)
+    # for a PR matching the task's branch. Tries the DB branch column first
+    # (actual worktree branch), then falls back to feature/${task_id} convention.
+    # This fixes the clean_exit_no_signal retry loop (t161): workers that create
+    # a PR and exit 0 were retried because the branch name didn't match the
+    # hardcoded feature/${task_id} pattern.
     if [[ -z "$meta_pr_url" ]]; then
-        local task_repo
+        local task_repo task_branch
         task_repo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+        task_branch=$(sqlite3 "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
         if [[ -n "$task_repo" ]]; then
             local repo_slug_detect
             repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
             if [[ -n "$repo_slug_detect" ]]; then
-                meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                # Try DB branch first (actual worktree branch name)
+                if [[ -n "$task_branch" ]]; then
+                    meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "$task_branch" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                fi
+                # Fallback to convention: feature/${task_id}
+                if [[ -z "$meta_pr_url" ]]; then
+                    meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                fi
             fi
         fi
     fi
@@ -3425,7 +3437,9 @@ check_pr_status() {
     local pr_url
     pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$escaped_id';")
 
-    # If no PR URL stored, try to find one via branch name lookup
+    # If no PR URL stored, try to find one via branch name lookup.
+    # Check DB branch column first (actual worktree branch), then fall back
+    # to feature/${task_id} convention. Mirrors evaluate_worker() fix (t161).
     if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
         local task_repo_check
         task_repo_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
@@ -3434,7 +3448,16 @@ check_pr_status() {
             repo_slug_check=$(git -C "$task_repo_check" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
             if [[ -n "$repo_slug_check" ]]; then
                 local found_pr_url
-                found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                # Try DB branch first (actual worktree branch name)
+                local task_branch_check
+                task_branch_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+                if [[ -n "$task_branch_check" ]]; then
+                    found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "$task_branch_check" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                fi
+                # Fallback to convention: feature/${task_id}
+                if [[ -z "${found_pr_url:-}" ]]; then
+                    found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+                fi
                 if [[ -n "$found_pr_url" ]]; then
                     pr_url="$found_pr_url"
                     log_cmd "db-update-pr-url" sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr_url")' WHERE id = '$escaped_id';" || log_warn "Failed to persist PR URL for $task_id"
