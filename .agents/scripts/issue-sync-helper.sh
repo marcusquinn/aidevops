@@ -960,13 +960,46 @@ add_gh_ref_to_todo() {
     return 0
 }
 
+# Verify a completed task has evidence of real work (merged PR or verified: field)
+# Returns 0 if verified, 1 if not
+# shellcheck disable=SC2155
+task_has_completion_evidence() {
+    local task_line="$1"
+    local task_id="$2"
+    local repo_slug="$3"
+
+    # Check 1: Has verified:YYYY-MM-DD field (human-verified)
+    if echo "$task_line" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+        return 0
+    fi
+
+    # Check 2: Has a merged PR reference in the task line (e.g., "PR #NNN merged" in Notes)
+    # Look for the task and its Notes lines
+    if echo "$task_line" | grep -qiE 'PR #[0-9]+ merged|PR.*merged'; then
+        return 0
+    fi
+
+    # Check 3: Search for a merged PR with this task ID in the title
+    if command -v gh &>/dev/null && [[ -n "$repo_slug" ]]; then
+        local merged_pr
+        merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number --jq '.[0].number' 2>/dev/null || echo "")
+        if [[ -n "$merged_pr" ]]; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 # Close: close GitHub issue when TODO.md task is completed
+# Guard (t163): requires merged PR or verified: field before closing
 cmd_close() {
     local target_task="${1:-}"
     local project_root
     project_root=$(find_project_root) || return 1
     local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
     local todo_file="$project_root/TODO.md"
+    local force="${FORCE_CLOSE:-false}"
 
     verify_gh_cli || return 1
 
@@ -990,6 +1023,7 @@ cmd_close() {
     fi
 
     local closed=0
+    local skipped=0
     for task_id in "${tasks[@]}"; do
         local task_line
         task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
@@ -998,6 +1032,26 @@ cmd_close() {
 
         if [[ -z "$issue_number" ]]; then
             continue
+        fi
+
+        # Guard: verify task has completion evidence (merged PR or verified: field)
+        if [[ "$force" != "true" ]]; then
+            # Also check Notes lines (indented under the task)
+            local task_with_notes
+            task_with_notes="$task_line"
+            local notes_line
+            notes_line=$(grep -A1 "^- \[x\] ${task_id} " "$todo_file" | tail -1 || echo "")
+            if [[ "$notes_line" =~ ^[[:space:]]+- ]]; then
+                task_with_notes="$task_line $notes_line"
+            fi
+
+            if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
+                print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
+                log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
+                log_verbose "  To verify: add 'verified:$(date +%Y-%m-%d)' to the task line in TODO.md"
+                skipped=$((skipped + 1))
+                continue
+            fi
         fi
 
         # Check if issue is already closed
@@ -1022,7 +1076,7 @@ cmd_close() {
         fi
     done
 
-    print_info "Close complete: $closed issues closed"
+    print_info "Close complete: $closed issues closed, $skipped skipped (no evidence)"
     return 0
 }
 
@@ -1183,6 +1237,7 @@ Options:
   --repo SLUG     Override repo slug (default: auto-detect from git remote)
   --dry-run       Show what would be done without making changes
   --verbose       Show detailed output
+  --force         Force close: skip merged-PR/verified check (use with caution)
 
 Examples:
   issue-sync-helper.sh push                    # Push all unsynced tasks
@@ -1215,6 +1270,10 @@ main() {
                 ;;
             --verbose)
                 VERBOSE="true"
+                shift
+                ;;
+            --force)
+                FORCE_CLOSE="true"
                 shift
                 ;;
             help|--help|-h)

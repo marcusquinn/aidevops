@@ -161,9 +161,77 @@ check_quality_standards() {
     return 0
 }
 
+# Validate TODO.md task completion transitions (t163.3)
+# When [ ] -> [x], warn if no merged PR evidence exists for the task
+validate_todo_completions() {
+    local violations=0
+
+    # Only check if TODO.md is staged
+    if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+        return 0
+    fi
+
+    print_info "Validating TODO.md task completions..."
+
+    # Find tasks that changed from [ ] to [x] in this commit
+    local newly_completed
+    newly_completed=$(git diff --cached -U0 TODO.md | grep -E '^\+- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+
+    if [[ -z "$newly_completed" ]]; then
+        return 0
+    fi
+
+    local task_count=0
+    local warn_count=0
+    while IFS= read -r line; do
+        local task_id
+        task_id=$(echo "$line" | grep -oE 't[0-9]+' | head -1 || echo "")
+        if [[ -z "$task_id" ]]; then
+            continue
+        fi
+        task_count=$((task_count + 1))
+
+        # Check for evidence: verified: field or merged PR in title
+        local has_evidence=false
+
+        if echo "$line" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+            has_evidence=true
+        fi
+
+        if [[ "$has_evidence" == "false" ]] && command -v gh &>/dev/null; then
+            local repo_slug
+            repo_slug=$(git remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+            if [[ -n "$repo_slug" ]]; then
+                local merged_pr
+                merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number --jq '.[0].number' 2>/dev/null || echo "")
+                if [[ -n "$merged_pr" ]]; then
+                    has_evidence=true
+                fi
+            fi
+        fi
+
+        if [[ "$has_evidence" == "false" ]]; then
+            print_warning "  $task_id: marked [x] but no merged PR or verified: field found"
+            warn_count=$((warn_count + 1))
+        fi
+    done <<< "$newly_completed"
+
+    if [[ "$warn_count" -gt 0 ]]; then
+        print_warning "$warn_count of $task_count newly completed tasks lack completion evidence"
+        print_info "  Add 'verified:$(date +%Y-%m-%d)' to the task line, or ensure a merged PR exists"
+        print_info "  This is a WARNING only - commit will proceed"
+    fi
+
+    return $violations
+}
+
 main() {
-    echo -e "${BLUE}🎯 Pre-commit Quality Validation${NC}"
+    echo -e "${BLUE}Pre-commit Quality Validation${NC}"
     echo -e "${BLUE}================================${NC}"
+
+    # Always run TODO.md completion validation (even if no shell files changed)
+    validate_todo_completions || true
+    echo ""
     
     # Get modified shell files
     local modified_files
