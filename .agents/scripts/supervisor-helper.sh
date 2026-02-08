@@ -2673,6 +2673,14 @@ create_task_worktree() {
     local needs_cleanup=false
 
     if [[ "$force_fresh" == "true" ]]; then
+        # Even with force_fresh, check for open PRs to avoid destroying unmerged work
+        local open_pr_url
+        open_pr_url=$(gh pr list --head "$branch_name" --state open --json url --jq '.[0].url' 2>/dev/null || echo "")
+        if [[ -n "$open_pr_url" && "$open_pr_url" != "null" ]]; then
+            log_warn "Force-fresh requested but branch $branch_name has open PR: $open_pr_url" >&2
+            log_warn "Merging PR before cleanup to preserve work..." >&2
+            gh pr merge "$open_pr_url" --squash 2>/dev/null || log_warn "PR merge failed — work may be lost. Recover via: gh pr view NNN --json commits" >&2
+        fi
         needs_cleanup=true
         log_info "Force-fresh requested for $task_id — cleaning stale worktree/branch" >&2
     elif [[ -d "$worktree_path" ]]; then
