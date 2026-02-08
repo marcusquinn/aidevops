@@ -60,16 +60,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t180 Post-merge verification worker phase — dispatch a verification worker after PR merge to confirm deliverables actually work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 logged:2026-02-08
-  - [ ] t180.1 Add verify state to supervisor state machine (merged -> verifying -> verified/verify_failed -> deployed) ~1h blocked-by:none
-    - Notes: New state between merged and deployed. Dispatch a lightweight worker that: pulls main, checks files exist, runs relevant tests if available, validates the feature described in the task. If verify fails, task goes to verify_failed (not deployed) and creates a follow-up bugfix task.
-  - [ ] t180.2 Create verification worker prompt template ~30m blocked-by:t180.1
-    - Notes: Template that receives: task description, PR diff summary, list of changed files. Worker checks: files exist on main, no syntax errors (shellcheck for .sh, markdownlint for .md), imports/references resolve, any tests pass. Returns pass/fail with evidence.
-  - [ ] t180.3 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
-    - Notes: After merge phase completes, auto-dispatch verify worker. Only transition to deployed after verify passes. Add --skip-verify flag for trusted tasks.
-  - [ ] t180.4 Prevent TODO.md [x] marking until verification passes ~30m blocked-by:t180.1
-    - Notes: update_todo_on_complete() should only mark [x] after verify state, not after merge. This closes the loop on false completion cascade.
-  - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. This adds a testing phase to the supervisor lifecycle.
+- [ ] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 logged:2026-02-08
+  - [ ] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none
+    - Notes: New states between merged and deployed. On merge, supervisor auto-appends entry to todo/VERIFY.md with task ID, PR number, changed files, and auto-generated check commands. Dispatch a verification worker that runs the checks. If verify fails, task goes to verify_failed and reopens the TODO.md task with a bugfix note.
+  - [ ] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1
+    - Notes: After PR merge, supervisor extracts: changed files from PR, generates check commands (shellcheck for .sh, file-exists for .md, rg for index references), appends to todo/VERIFY.md. Format is TOON-style with check: directives per entry.
+  - [ ] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1
+    - Notes: Lightweight worker reads todo/VERIFY.md, runs each check: directive, marks [x] (pass) or [!] (fail) with evidence. On fail, reopens original task in TODO.md and creates follow-up bugfix task. On pass, supervisor transitions to deployed and marks TODO.md [x].
+  - [ ] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
+    - Notes: After merge phase, auto-dispatch verify worker for entries in VERIFY.md. Only transition to deployed after verify passes. Add --skip-verify flag for trusted/trivial tasks. Batch verify multiple tasks in single worker dispatch for efficiency.
+  - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. Design: todo/VERIFY.md acts as a verification queue with machine-parseable check directives. Workers verify, supervisor acts on results.
 - [ ] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) ref:GH#671 logged:2026-02-08
   - [ ] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none
     - Notes: Before inserting, check if a memory with identical or near-identical content already exists (fuzzy match using word overlap, similar to consolidate). Skip insert if >90% match. Currently 23 copies of "Failed: Task blocked" exist.
