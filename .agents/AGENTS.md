@@ -262,6 +262,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |
+| Mobile/E2E | `tools/mobile/maestro.md`, `tools/mobile/ios-simulator-mcp.md`, `tools/mobile/minisim.md` |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
