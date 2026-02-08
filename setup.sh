@@ -1970,6 +1970,60 @@ setup_minisim() {
     return 0
 }
 
+setup_maestro() {
+    print_info "Setting up Maestro (E2E testing for mobile and web)..."
+
+    # Check if Maestro is already installed
+    if command -v maestro >/dev/null 2>&1; then
+        local maestro_version
+        maestro_version=$(maestro --version 2>/dev/null || echo "unknown")
+        print_success "Maestro already installed (${maestro_version})"
+        return 0
+    fi
+
+    # Maestro requires Java 17+
+    if ! command -v java >/dev/null 2>&1; then
+        print_warning "Maestro requires Java 17+ but java is not installed"
+        echo "  Install Java first: brew install openjdk@17"
+        echo "  Then re-run setup to install Maestro"
+        return 0
+    fi
+
+    local java_version
+    java_version=$(java -version 2>&1 | head -1 | sed 's/.*"\([0-9]*\).*/\1/')
+    if [[ -n "$java_version" ]] && [[ "$java_version" -lt 17 ]] 2>/dev/null; then
+        print_warning "Maestro requires Java 17+ but found Java ${java_version}"
+        echo "  Upgrade: brew install openjdk@17"
+        return 0
+    fi
+
+    print_info "Maestro is a YAML-based E2E testing framework"
+    echo "  Features:"
+    echo "    - Cross-platform: Android, iOS, and web apps"
+    echo "    - Human-readable YAML flows (no compilation)"
+    echo "    - Built-in flakiness tolerance and automatic waiting"
+    echo "    - Visual test builder (Maestro Studio)"
+    echo ""
+
+    local install_maestro
+    read -r -p "Install Maestro? [Y/n]: " install_maestro
+
+    if [[ "$install_maestro" =~ ^[Yy]?$ ]]; then
+        if verified_install "Maestro" "https://get.maestro.mobile.dev"; then
+            print_info "Documentation: ~/.aidevops/agents/tools/mobile/maestro.md"
+            print_info "Quick start: maestro studio"
+        else
+            print_warning "Failed to install Maestro"
+            echo "  Install manually: curl -fsSL \"https://get.maestro.mobile.dev\" | bash"
+        fi
+    else
+        print_info "Skipped Maestro installation"
+        print_info "Install later: curl -fsSL \"https://get.maestro.mobile.dev\" | bash"
+    fi
+
+    return 0
+}
+
 # Setup SSH key if needed
 setup_ssh_key() {
     print_info "Checking SSH key setup..."
@@ -4297,6 +4351,7 @@ main() {
         confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
         confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
         confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
+        confirm_step "Setup Maestro (E2E testing for mobile and web)" && setup_maestro
         confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
         confirm_step "Setup file discovery tools (fd, ripgrep)" && setup_file_discovery_tools
         confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
