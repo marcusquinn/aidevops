@@ -197,6 +197,8 @@ worktree-helper.sh add feature/x  # Fallback
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
+**Safety hooks** (Claude Code only): Destructive commands (`git reset --hard`, `rm -rf`, etc.) are blocked by a PreToolUse hook. Run `install-hooks.sh --test` to verify. See `workflows/git-workflow.md` "Destructive Command Safety Hooks" section.
+
 **Full docs**: `workflows/git-workflow.md`, `tools/git/worktrunk.md`
 
 ## Session Completion
