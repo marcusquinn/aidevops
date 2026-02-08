@@ -4781,20 +4781,14 @@ update_todo_with_issue_ref() {
 
     log_success "Added ref:GH#${issue_number} to $task_id in TODO.md"
 
-    # Commit and push (TODO.md lives on main)
+    # Commit and push with serialized locking (prevents race conditions)
     if git -C "$repo_path" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    git -C "$repo_path" add TODO.md
-    git -C "$repo_path" commit -m "chore: add GH#${issue_number} ref to $task_id in TODO.md" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to commit TODO.md issue ref update"
-        return 0
-    }
-
-    git -C "$repo_path" push 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to push TODO.md issue ref update"
+    todo_commit_push "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md" "TODO.md" || {
+        log_warn "Failed to commit/push TODO.md issue ref update for $task_id"
         return 0
     }
 
@@ -4857,24 +4851,19 @@ update_todo_on_complete() {
 
     log_success "Updated TODO.md: $task_id marked complete ($today)"
 
-    # Commit and push from the main repo (TODO.md lives on main)
+    # Commit and push with serialized locking (prevents race conditions)
     if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    git -C "$trepo" add TODO.md
     local commit_msg="chore: mark $task_id complete in TODO.md"
     if [[ -n "$tpr_url" ]]; then
         commit_msg="chore: mark $task_id complete in TODO.md (${tpr_url})"
     fi
-    git -C "$trepo" commit -m "$commit_msg" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to commit TODO.md update (may need manual commit)"
-        return 1
-    }
 
-    git -C "$trepo" push 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to push TODO.md update (may need manual push)"
+    todo_commit_push "$trepo" "$commit_msg" "TODO.md" || {
+        log_warn "Failed to commit/push TODO.md update for $task_id (may need manual intervention)"
         return 1
     }
 
@@ -4945,20 +4934,14 @@ update_todo_on_blocked() {
 
     log_success "Updated TODO.md: $task_id marked blocked ($reason)"
 
-    # Commit and push
+    # Commit and push with serialized locking (prevents race conditions)
     if git -C "$trepo" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
         log_info "No changes to commit (TODO.md unchanged)"
         return 0
     fi
 
-    git -C "$trepo" add TODO.md
-    git -C "$trepo" commit -m "chore: mark $task_id blocked in TODO.md" -- TODO.md 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to commit TODO.md update"
-        return 1
-    }
-
-    git -C "$trepo" push 2>>"$SUPERVISOR_LOG" || {
-        log_warn "Failed to push TODO.md update"
+    todo_commit_push "$trepo" "chore: mark $task_id blocked in TODO.md" "TODO.md" || {
+        log_warn "Failed to commit/push TODO.md blocked update for $task_id"
         return 1
     }
 

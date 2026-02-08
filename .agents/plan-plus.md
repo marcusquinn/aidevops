@@ -120,13 +120,16 @@ Use these instead of `mcp_glob` (which is CPU-intensive):
 
 ## What Plan+ Can Write
 
-Plan+ can write directly to planning files:
+Plan+ can write directly to planning files (interactive sessions only):
+
 - `TODO.md` - Task tracking (root level)
 - `todo/PLANS.md` - Complex execution plans with context
 - `todo/tasks/prd-*.md` - Product requirement documents
 - `todo/tasks/tasks-*.md` - Implementation task lists
 
 **Use this for:** Capturing tasks, writing plans, documenting decisions.
+
+**Worker restriction**: When running as a headless dispatch worker (runner), do NOT edit or commit TODO.md. Workers report status via exit code, log output, and mailbox. The supervisor handles all TODO.md updates.
 
 ## Auto-Commit Planning Files
 
@@ -136,7 +139,8 @@ After modifying TODO.md or todo/, commit and push immediately:
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: {description}"
 ```
 
-**When to auto-commit:**
+**When to auto-commit** (interactive sessions only):
+
 - After adding a new task
 - After updating task status
 - After writing or updating a plan
@@ -151,7 +155,8 @@ After modifying TODO.md or todo/, commit and push immediately:
 | Batch updates | `plan: batch planning updates` |
 
 **Why this bypasses branch/PR workflow:** Planning files are metadata about work,
-not the work itself. They don't need code review - just quick persistence.
+not the work itself. They don't need code review -- just quick persistence.
+The helper uses `todo_commit_push()` for serialized locking.
 
 ## Handoff to Build+ (IMPORTANT)
 

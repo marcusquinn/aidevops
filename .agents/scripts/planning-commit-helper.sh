@@ -106,6 +106,8 @@ show_status() {
 }
 
 # Main commit function
+# Uses todo_commit_push() from shared-constants.sh for serialized locking
+# to prevent race conditions when multiple actors push to TODO.md on main.
 commit_planning_files() {
     local commit_msg="${1:-plan: update planning files}"
     
@@ -123,43 +125,15 @@ commit_planning_files() {
         [[ -n "$file" ]] && echo "  - $file"
     done
     
-    # Pull latest to avoid conflicts (rebase to keep history clean)
-    local current_branch
-    current_branch=$(git branch --show-current)
-    if git remote get-url origin &>/dev/null; then
-        log_info "Pulling latest changes..."
-        if ! git pull --rebase origin "$current_branch" 2>/dev/null; then
-            log_warning "Pull failed (may be offline or new branch)"
-        fi
-    fi
+    local repo_root
+    repo_root=$(git rev-parse --show-toplevel)
     
-    # Stage only planning files
-    git add TODO.md 2>/dev/null || true
-    git add todo/ 2>/dev/null || true
-    
-    # Check if anything was staged
-    if git diff --cached --quiet 2>/dev/null; then
-        log_info "No changes staged after adding planning files"
-        return 0
-    fi
-    
-    # Commit (skip hooks - planning commits don't need full linting)
+    # Use serialized commit+push (flock + pull-rebase-retry)
     log_info "Committing: $commit_msg"
-    if ! git commit -m "$commit_msg" --no-verify; then
-        log_error "Commit failed"
-        return 1
-    fi
-    
-    # Push (silent fail if offline or no permissions)
-    if git remote get-url origin &>/dev/null; then
-        log_info "Pushing to remote..."
-        if git push origin HEAD 2>/dev/null; then
-            log_success "Planning files committed and pushed"
-        else
-            log_warning "Committed locally (push failed - will retry later)"
-        fi
+    if todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"; then
+        log_success "Planning files committed and pushed"
     else
-        log_success "Committed locally (no remote configured)"
+        log_warning "Committed locally (push failed after retries - will retry later)"
     fi
     
     return 0

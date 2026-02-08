@@ -279,9 +279,9 @@ session-checkpoint-helper.sh status
 
 ### Self-Prompting Loop Pattern
 
-For autonomous multi-hour sessions, follow this loop after each task:
+For autonomous multi-hour sessions (interactive only, NOT headless workers), follow this loop after each task:
 
-1. Mark task complete in TODO.md
+1. Mark task complete in TODO.md (interactive sessions only -- workers report via exit code/mailbox)
 2. Save checkpoint to disk
 3. Re-read checkpoint file (forces re-orientation after compaction)
 4. Read TODO.md for next task

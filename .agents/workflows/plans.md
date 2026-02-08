@@ -686,9 +686,45 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 
 **Bottom line**: Use judgment. Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree.
 
+## MANDATORY: Worker TODO.md Restriction
+
+**Workers (headless dispatch runners) must NEVER edit TODO.md directly.** This is the primary cause of merge conflicts when multiple workers + supervisor all push to TODO.md on main simultaneously.
+
+### Ownership model
+
+| Actor | May edit TODO.md? | How they report status |
+|-------|-------------------|----------------------|
+| **Supervisor** (cron pulse) | Yes (via `todo_commit_push()`) | Directly updates TODO.md |
+| **Interactive user session** | Yes (via `planning-commit-helper.sh`) | Directly updates TODO.md |
+| **Worker** (headless runner) | **NO** | Exit code + log output + mailbox |
+
+### How workers report status
+
+Workers communicate outcomes to the supervisor through:
+
+1. **Exit code**: 0 = success, non-zero = failure
+2. **Log output**: The supervisor reads worker logs to extract outcome details
+3. **Mailbox**: `mail-helper.sh send` for structured status reports
+4. **PR creation**: Workers create PRs; the supervisor detects PR URLs
+
+The supervisor then updates TODO.md based on these signals during its pulse cycle.
+
+### Why this matters
+
+Without this restriction, the conflict pattern is:
+
+```text
+T+0:01  Supervisor pulse → update_todo_on_complete("t001") → push
+T+0:01  Worker D (still running) → edits TODO.md → push → CONFLICT
+T+0:02  Supervisor pulse → update_todo_on_complete("t002") → push
+T+0:02  User session → /save-todo → push → CONFLICT
+```
+
+All TODO.md commit+push operations now use `todo_commit_push()` from `shared-constants.sh`, which provides flock-based locking and pull-rebase-retry. But the primary fix is preventing workers from writing to TODO.md at all.
+
 ## MANDATORY: Commit and Push After TODO Changes
 
-After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, you MUST commit and push immediately.
+After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, you MUST commit and push immediately. **This applies to interactive sessions and the supervisor only -- not workers.**
 
 ### Planning-only changes (on main)
 
@@ -698,13 +734,7 @@ Planning files (TODO.md, todo/) are allowed exceptions that can be edited direct
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "chore: add {description} to backlog"
 ```
 
-Or manually:
-
-1. **Stage**: `git add TODO.md todo/`
-2. **Commit**: `git commit -m "chore: add {description} to backlog"`
-3. **Push**: `git push origin main`
-
-No branch, no PR — commit and push directly to main. These are low-risk planning changes.
+No branch, no PR -- commit and push directly to main. The helper uses `todo_commit_push()` for serialized locking to prevent race conditions.
 
 ### Mixed changes (planning + non-exception files)
 
