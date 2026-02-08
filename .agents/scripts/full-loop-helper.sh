@@ -22,9 +22,18 @@
 #   --skip-postflight          Skip postflight monitoring
 #   --no-auto-pr               Don't auto-create PR, pause for human
 #   --no-auto-deploy           Don't auto-run setup.sh (aidevops only)
+#   --headless                  Fully headless worker mode (no prompts, no TODO.md edits)
 #   --dry-run                  Show what would happen without executing
 #
-# Human Decision Points:
+# Headless Mode (t174):
+#   When --headless is set (or FULL_LOOP_HEADLESS=true env var):
+#   - Never prompts for user input or confirmation
+#   - Never edits TODO.md or shared planning files
+#   - Exits cleanly on unrecoverable errors (for supervisor evaluation)
+#   - Suppresses interactive README gate warnings
+#   - Uses git pull --rebase before push to avoid conflicts
+#
+# Human Decision Points (interactive mode only):
 #   - Initial task definition (before start)
 #   - Merge approval (if repo requires human approval)
 #   - Rollback decision (if postflight detects issues)
@@ -67,9 +76,18 @@ readonly PHASE_COMPLETE="complete"
 
 readonly BOLD='\033[1m'
 
+# Headless mode: set via --headless flag or FULL_LOOP_HEADLESS env var (t174)
+# When true, suppresses all interactive prompts and prevents TODO.md edits
+HEADLESS="${FULL_LOOP_HEADLESS:-false}"
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+# Check if running in headless worker mode (t174)
+is_headless() {
+    [[ "$HEADLESS" == "true" ]]
+}
 
 print_phase() {
     local phase="$1"
@@ -112,6 +130,7 @@ skip_preflight: ${SKIP_PREFLIGHT:-false}
 skip_postflight: ${SKIP_POSTFLIGHT:-false}
 no_auto_pr: ${NO_AUTO_PR:-false}
 no_auto_deploy: ${NO_AUTO_DEPLOY:-false}
+headless: ${HEADLESS:-false}
 ---
 
 ${prompt}
@@ -135,6 +154,8 @@ load_state() {
     SKIP_POSTFLIGHT=$(grep '^skip_postflight:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
     NO_AUTO_PR=$(grep '^no_auto_pr:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
     NO_AUTO_DEPLOY=$(grep '^no_auto_deploy:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
+    HEADLESS=$(grep '^headless:' "$STATE_FILE" | cut -d: -f2 | tr -d ' ')
+    HEADLESS="${HEADLESS:-false}"
     
     # Extract prompt (everything after the second ---)
     SAVED_PROMPT=$(sed -n '/^---$/,/^---$/d; p' "$STATE_FILE")
@@ -243,7 +264,9 @@ run_task_phase() {
             --completion-promise "TASK_COMPLETE"
         
         print_info "Task loop initialized. AI will iterate until TASK_COMPLETE promise."
-        print_info "After task completion, run: full-loop-helper.sh resume"
+        if ! is_headless; then
+            print_info "After task completion, run: full-loop-helper.sh resume"
+        fi
     fi
     
     return 0
@@ -287,10 +310,15 @@ run_pr_create_phase() {
     print_phase "PR Creation" "Creating pull request"
     
     if [[ "${NO_AUTO_PR:-false}" == "true" ]]; then
-        print_warning "Auto PR creation disabled. Please create PR manually."
-        print_info "Run: gh pr create --fill"
-        print_info "Then run: full-loop-helper.sh resume"
-        return 0
+        if is_headless; then
+            # In headless mode, override --no-auto-pr since there's no human (t174)
+            print_warning "HEADLESS: Overriding --no-auto-pr (no human to create PR)"
+        else
+            print_warning "Auto PR creation disabled. Please create PR manually."
+            print_info "Run: gh pr create --fill"
+            print_info "Then run: full-loop-helper.sh resume"
+            return 0
+        fi
     fi
     
     # Verify gh CLI is authenticated before attempting PR operations (t156/t158)
@@ -315,6 +343,12 @@ run_pr_create_phase() {
     
     if [[ "$gh_auth_ok" != "true" ]]; then
         print_error "gh CLI not authenticated after $gh_auth_retries attempts."
+        if is_headless; then
+            # In headless mode, exit cleanly so supervisor can evaluate (t174)
+            # The supervisor's evaluate_worker will detect auth_error pattern
+            print_error "HEADLESS: gh auth failure — exiting for supervisor evaluation"
+            return 1
+        fi
         print_error "Run 'gh auth login' to authenticate, then resume with: full-loop-helper.sh resume"
         return 1
     fi
@@ -328,15 +362,28 @@ run_pr_create_phase() {
     local branch
     branch=$(get_current_branch)
     
-    # Rebase onto latest main before pushing to avoid merge conflicts (t156)
-    print_info "Rebasing onto latest main to avoid merge conflicts..."
-    if ! git fetch origin main &>/dev/null; then
-        print_warning "Failed to fetch origin/main, proceeding without rebase"
-    elif ! git rebase origin/main &>/dev/null; then
-        print_warning "Rebase failed (conflicts detected). Aborting rebase and pushing as-is."
-        git rebase --abort &>/dev/null || true
+    # Pull --rebase to sync with any remote changes before push (t174)
+    # This handles: 1) rebasing onto latest main, 2) pulling any remote branch updates
+    print_info "Syncing with remote before push..."
+    if ! git fetch origin &>/dev/null; then
+        print_warning "Failed to fetch origin, proceeding with local state"
     else
-        print_info "Rebase onto origin/main successful"
+        # Pull feature branch changes if it exists remotely (t174)
+        if git ls-remote --exit-code --heads origin "$branch" &>/dev/null; then
+            if ! git pull --rebase origin "$branch" &>/dev/null; then
+                print_warning "Pull --rebase on $branch failed (conflicts). Aborting rebase."
+                git rebase --abort &>/dev/null || true
+            else
+                print_info "Pull --rebase on $branch successful"
+            fi
+        fi
+        # Rebase onto latest main to avoid merge conflicts (t156)
+        if ! git rebase origin/main &>/dev/null; then
+            print_warning "Rebase onto origin/main failed (conflicts). Aborting rebase and pushing as-is."
+            git rebase --abort &>/dev/null || true
+        else
+            print_info "Rebase onto origin/main successful"
+        fi
     fi
     
     # Push branch (force-with-lease after rebase to handle rebased history safely)
@@ -449,12 +496,19 @@ run_pr_review_phase() {
             echo "<promise>PR_MERGED</promise>"
         else
             print_warning "PR #$pr_number is $pr_state (not merged yet)"
-            print_info "Merge PR manually, then run: full-loop-helper.sh resume"
+            if ! is_headless; then
+                print_info "Merge PR manually, then run: full-loop-helper.sh resume"
+            fi
             echo "<promise>PR_APPROVED</promise>"
         fi
     else
-        print_warning "quality-loop-helper.sh not found, waiting for manual merge"
-        print_info "Merge PR manually, then run: full-loop-helper.sh resume"
+        print_warning "quality-loop-helper.sh not found"
+        if is_headless; then
+            # In headless mode, emit PR_WAITING and let supervisor handle (t174)
+            print_info "HEADLESS: PR review skipped, supervisor will evaluate"
+        else
+            print_info "Merge PR manually, then run: full-loop-helper.sh resume"
+        fi
         echo "<promise>PR_WAITING</promise>"
     fi
     
@@ -565,6 +619,10 @@ cmd_start() {
                 NO_AUTO_DEPLOY=true
                 shift
                 ;;
+            --headless)
+                HEADLESS=true
+                shift
+                ;;
             --dry-run)
                 DRY_RUN=true
                 shift
@@ -657,6 +715,7 @@ cmd_start() {
         # Export variables for background process
         export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
         export SKIP_PREFLIGHT SKIP_POSTFLIGHT NO_AUTO_PR NO_AUTO_DEPLOY
+        export FULL_LOOP_HEADLESS="$HEADLESS"
         export SAVED_PROMPT="$prompt"
         
         # Start background process
@@ -710,11 +769,15 @@ cmd_resume() {
                 print_info "Task loop still active. Complete it first."
                 return 0
             fi
-            # README gate reminder before preflight transition
-            print_warning "README GATE: Did this task add/change user-facing features?"
-            print_info "If yes, ensure README.md is updated before proceeding."
-            print_info "For aidevops repo:"
-            print_info "  Run: readme-helper.sh check"
+            # README gate reminder before preflight transition (t174: skip in headless)
+            if is_headless; then
+                print_info "HEADLESS: Skipping interactive README gate reminder"
+            else
+                print_warning "README GATE: Did this task add/change user-facing features?"
+                print_info "If yes, ensure README.md is updated before proceeding."
+                print_info "For aidevops repo:"
+                print_info "  Run: readme-helper.sh check"
+            fi
             save_state "$PHASE_PREFLIGHT" "$SAVED_PROMPT" "" "$STARTED_AT"
             run_preflight_phase
             save_state "$PHASE_PR_CREATE" "$SAVED_PROMPT" "" "$STARTED_AT"
@@ -896,6 +959,7 @@ OPTIONS:
     --skip-postflight             Skip postflight monitoring
     --no-auto-pr                  Don't auto-create PR, pause for human
     --no-auto-deploy              Don't auto-run setup.sh (aidevops only)
+    --headless                    Fully headless worker mode (no prompts, no TODO.md)
     --dry-run                     Show what would happen without executing
     --background, --bg            Run in background (returns immediately)
 
@@ -930,6 +994,12 @@ EXAMPLES:
 
     # Check current status
     full-loop-helper.sh status
+
+    # Headless mode (used by supervisor dispatch)
+    full-loop-helper.sh start "Fix bug X" --headless --background
+
+ENVIRONMENT:
+    FULL_LOOP_HEADLESS=true       Same as --headless flag
 
 EOF
     return 0

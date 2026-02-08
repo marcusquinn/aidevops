@@ -115,6 +115,10 @@ git status --short
 
 ### Step 2: Start Full Loop
 
+**Supervisor dispatch** (headless mode - t174):
+
+When dispatched by the supervisor, `--headless` is passed automatically. This suppresses all interactive prompts, prevents TODO.md edits, and ensures clean exit on errors. You can also set `FULL_LOOP_HEADLESS=true` as an environment variable.
+
 **Recommended: Background mode** (avoids timeout issues):
 
 ```bash
@@ -164,9 +168,9 @@ The AI will iterate on the task until outputting:
 5. Conventional commits used (for auto-changelog)
 6. **Headless rules observed** (see below)
 
-**Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158):**
+**Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158/t174):**
 
-When running as a headless worker (dispatched by the supervisor via `Claude -p` or `opencode run`):
+When running as a headless worker (dispatched by the supervisor via `opencode run` or `Claude -p`), the `--headless` flag is passed automatically. The full-loop-helper.sh script enforces these rules:
 
 1. **NEVER prompt for user input** - There is no human at the terminal. If you encounter ambiguity, make a reasonable decision and document it in a commit message. If truly blocked, exit cleanly so the supervisor can evaluate and retry.
 
@@ -174,9 +178,11 @@ When running as a headless worker (dispatched by the supervisor via `Claude -p` 
 
 3. **Do NOT edit shared planning files** - Files like `todo/PLANS.md`, `todo/tasks/*` are managed by the supervisor. Workers should only modify files relevant to their assigned task.
 
-4. **Handle auth failures gracefully** - If `gh auth status` fails, report the error clearly and exit rather than retrying indefinitely. The supervisor handles retry logic.
+4. **Handle auth failures gracefully** - If `gh auth status` fails, the script retries 3 times then exits cleanly with a clear error for supervisor evaluation. Do NOT retry indefinitely.
 
 5. **Exit cleanly on unrecoverable errors** - If you cannot complete the task (missing dependencies, permissions, etc.), emit a clear error message and exit. Do not loop forever.
+
+6. **git pull --rebase before push** (t174) - The PR create phase automatically runs `git pull --rebase` to sync with any remote changes before pushing, avoiding push rejections.
 
 **README gate (MANDATORY - do NOT skip):**
 
@@ -225,7 +231,9 @@ wt prune                                    # Clean merged worktrees
 
 ### Step 5: Human Decision Points
 
-The loop pauses for human input at:
+> **Note**: In `--headless` mode (t174), the loop never pauses for human input. It proceeds autonomously through all phases and exits cleanly if blocked.
+
+The loop pauses for human input at (interactive mode only):
 
 | Point | When | Action Required |
 |-------|------|-----------------|
@@ -268,6 +276,7 @@ Pass options after the prompt:
 | Option | Description |
 |--------|-------------|
 | `--background`, `--bg` | Run in background (recommended for long tasks) |
+| `--headless` | Fully headless worker mode (no prompts, no TODO.md edits) |
 | `--max-task-iterations N` | Max iterations for task (default: 50) |
 | `--max-preflight-iterations N` | Max iterations for preflight (default: 5) |
 | `--max-pr-iterations N` | Max iterations for PR review (default: 20) |
