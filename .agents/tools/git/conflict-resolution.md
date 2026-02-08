@@ -18,8 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Recommended config**: `git config --global merge.conflictstyle diff3` + `git config --global rerere.enabled true`
+- **Recommended config**: `git config --global merge.conflictstyle diff3` (or zdiff3 on Git 2.35+) + `git config --global rerere.enabled true`
 - **Conflict markers**: `<<<<<<<` (ours), `|||||||` (base, with diff3), `=======`, `>>>>>>>` (theirs)
+- **Strategy options**: `-Xours` (our side wins conflicts), `-Xtheirs` (their side wins), `-Xignore-space-change`
 - **Key commands**: `git merge --abort`, `git checkout --ours/--theirs <file>`, `git log --merge -p`
 
 **Decision Tree** -- when you hit a conflict:
@@ -80,6 +81,8 @@ The `diff3` style (showing the base) is critical for understanding intent. Witho
 ```bash
 git config --global merge.conflictstyle diff3
 ```
+
+Note: Git 2.35+ supports zdiff3, which produces shorter markers by removing common prefix/suffix lines. Prefer zdiff3 if your Git version supports it.
 
 To re-generate markers with diff3 on an already-conflicted file:
 
@@ -208,7 +211,7 @@ Use `git log --merge -p` to understand what each side changed. Read the base ver
 
 ### File renamed on one side, modified on the other
 
-Git's `ort` strategy detects renames automatically. If it fails:
+Git's `ort` strategy (default since Git 2.34) detects renames automatically. If it fails:
 
 ```bash
 git merge -Xfind-renames=30 <branch>   # lower threshold = more aggressive detection
@@ -225,35 +228,20 @@ git rm <file>       # accept the deletion
 
 ### Both sides added a file with the same name (add/add)
 
-```bash
-git checkout --ours <file>      # or --theirs
-git add <file>
-```
+Use per-file resolution to pick one version.
 
 ### Lock files (package-lock.json, yarn.lock, pnpm-lock.yaml)
 
-Never manually merge lock files. Choose one side and regenerate:
+Never manually merge lock files. Use per-file resolution to pick one side, then regenerate:
 
 ```bash
-git checkout --theirs package-lock.json   # or --ours
 npm install                                # regenerate
 git add package-lock.json
 ```
 
-For npm, you can also use `.gitattributes`:
-
-```text
-package-lock.json merge=ours
-```
-
 ### Binary files
 
-Git cannot merge binary files:
-
-```bash
-git checkout --ours <file>      # or --theirs
-git add <file>
-```
+Git cannot merge binary files. Use per-file resolution to pick one version.
 
 ## git rerere (Reuse Recorded Resolution)
 
@@ -346,10 +334,7 @@ git config --global diff.algorithm histogram
 ## Error Recovery
 
 ```bash
-# Abort any in-progress operation
-git merge --abort
-git rebase --abort
-git cherry-pick --abort
+# Abort any in-progress operation -- see decision tree above for abort commands
 
 # Undo a completed merge (before push)
 git reset --hard HEAD^
