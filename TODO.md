@@ -55,6 +55,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) logged:2026-02-08
+  - [ ] t166.1 Add cron/supervisor daily pulse that triggers CodeRabbit full repo review via gh API ~1h blocked-by:none
+    - Notes: Use `gh api` or CodeRabbit CLI to trigger a full codebase review (not just PR diff). Schedule as daily cron job or supervisor pulse phase. CodeRabbit supports `@coderabbitai full review` comment on a tracking PR, or API-triggered reviews. Investigate best trigger mechanism.
+  - [ ] t166.2 Monitor and collect CodeRabbit review feedback into structured format ~1h blocked-by:t166.1
+    - Notes: Poll for review completion, extract comments/suggestions into structured data (SQLite or TOON). Categorise by severity (critical/major/minor/nitpick), file, and type (bug/security/performance/style). Filter out false positives using bot-review verification rules.
+  - [ ] t166.3 Auto-create tasks from valid CodeRabbit findings and dispatch workers ~1h blocked-by:t166.2
+    - Notes: For verified findings above threshold severity, auto-create TODO.md tasks with ref to CodeRabbit comment. Dispatch via supervisor batch for autonomous fixing. Human review gate for critical/architectural changes. Track which findings were acted on vs dismissed (feedback loop for future filtering).
+  - Notes: Self-improving loop: CodeRabbit reviews entire codebase daily, findings become tasks, workers fix them, next review validates fixes. Builds on t163 (completion guards) and t128 (supervisor). Consider rate limits and API costs. Could also integrate other review bots (Codacy, SonarCloud) as additional signal sources.
 - [ ] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) ref:GH#623 logged:2026-02-08
   - Notes: Replace t164's GitHub Issue assignee-based claiming with TODO.md-native approach. Claim = move to In Progress + @owner + started:ISO. Unclaim = move back to Backlog + remove @owner/started. Supervisor checks @owner in TODO.md instead of GH API. GitHub issue sync remains optional overlay. Makes framework work with GitLab, Gitea, self-hosted, or no git provider at all.
 - [x] t158 Fix supervisor dispatch so dynamically-created tasks work with /full-loop #bugfix #supervisor #orchestration ~1h (ai:45m test:15m) ref:GH#573 logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #574 merged
