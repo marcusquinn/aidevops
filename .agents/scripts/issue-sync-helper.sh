@@ -697,6 +697,9 @@ cmd_push() {
 
     print_info "Processing ${#tasks[@]} task(s) for push to $repo_slug"
 
+    # Ensure status:available label exists (t164 — label may not exist in new repos)
+    gh label create "status:available" --repo "$repo_slug" --color "0E8A16" --description "Task is available for claiming" --force 2>/dev/null || true
+
     local created=0
     local skipped=0
     for task_id in "${tasks[@]}"; do

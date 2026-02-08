@@ -1836,6 +1836,26 @@ cmd_cancel() {
 }
 
 #######################################
+# Ensure status labels exist in the repo (t164)
+# Creates status:available, status:claimed, status:in-review, status:done
+# if they don't already exist. Idempotent — safe to call repeatedly.
+# $1: repo_slug (e.g. "owner/repo")
+#######################################
+ensure_status_labels() {
+    local repo_slug="${1:-}"
+    if [[ -z "$repo_slug" ]]; then
+        return 0
+    fi
+
+    # --force updates existing labels without error, creates if missing
+    gh label create "status:available" --repo "$repo_slug" --color "0E8A16" --description "Task is available for claiming" --force 2>/dev/null || true
+    gh label create "status:claimed" --repo "$repo_slug" --color "D93F0B" --description "Task is claimed by a worker" --force 2>/dev/null || true
+    gh label create "status:in-review" --repo "$repo_slug" --color "FBCA04" --description "Task PR is in review" --force 2>/dev/null || true
+    gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
+    return 0
+}
+
+#######################################
 # Find GitHub issue number for a task from TODO.md (t164)
 # Outputs the issue number on stdout, empty if not found.
 # $1: task_id
@@ -1845,6 +1865,14 @@ find_task_issue_number() {
     local task_id="${1:-}"
     local project_root="${2:-}"
 
+    if [[ -z "$task_id" ]]; then
+        return 0
+    fi
+
+    # Escape dots in task_id for regex (e.g. t128.10 -> t128\.10)
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
     if [[ -z "$project_root" ]]; then
         project_root=$(find_project_root 2>/dev/null || echo ".")
     fi
@@ -1852,7 +1880,7 @@ find_task_issue_number() {
     local todo_file="$project_root/TODO.md"
     if [[ -f "$todo_file" ]]; then
         local task_line
-        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        task_line=$(grep -E "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
         echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo ""
     fi
     return 0
@@ -1886,6 +1914,9 @@ cmd_claim() {
         log_error "Cannot detect repo slug"
         return 1
     fi
+
+    # Ensure status labels exist before using them
+    ensure_status_labels "$repo_slug"
 
     # Check current assignee
     local current_assignee
@@ -1942,6 +1973,13 @@ cmd_unclaim() {
 
     local my_login
     my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    if [[ -z "$my_login" ]]; then
+        log_error "Cannot determine GitHub login for unclaim"
+        return 1
+    fi
+
+    # Ensure status labels exist before using them
+    ensure_status_labels "$repo_slug"
 
     # Remove assignee and update labels in a single call
     if gh issue edit "$issue_number" --repo "$repo_slug" --remove-assignee "$my_login" --add-label "status:available" --remove-label "status:claimed" 2>/dev/null; then
@@ -1975,8 +2013,14 @@ check_task_claimed() {
         return 0
     fi
 
-    local current_assignee
-    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null || echo "")
+    local current_assignee api_exit=0
+    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null) || api_exit=$?
+
+    if [[ "$api_exit" -ne 0 ]]; then
+        # API failed (network, rate limit, etc.) — fail open to avoid blocking dispatch
+        log_info "Could not check claim status for $task_id (gh api exit $api_exit) — proceeding"
+        return 0
+    fi
 
     if [[ -z "$current_assignee" ]]; then
         return 0
@@ -1985,7 +2029,7 @@ check_task_claimed() {
     local my_login
     my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
 
-    if [[ "$current_assignee" == "$my_login" ]]; then
+    if [[ -n "$my_login" && "$current_assignee" == "$my_login" ]]; then
         return 0
     fi
 
@@ -2644,11 +2688,12 @@ cmd_dispatch() {
     fi
 
     # Check if task is claimed by someone else on GitHub (t164)
+    # Note: return 0 to let pulse continue dispatching other tasks (return 2 = concurrency limit)
     local claimed_by=""
     claimed_by=$(check_task_claimed "$task_id" "${trepo:-.}" 2>/dev/null) || true
     if [[ -n "$claimed_by" ]]; then
         log_warn "Task $task_id is claimed by @$claimed_by on GitHub — skipping dispatch"
-        return 2
+        return 0
     fi
 
     # Claim the task on GitHub before dispatching (t164)
