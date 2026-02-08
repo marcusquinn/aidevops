@@ -40,10 +40,10 @@ was accomplished — not doing the work.
 - Diagnose failures from worker logs (`tail -20`, `grep EXIT`)
 - **Create new TODOs** for any problem that needs code changes
 - **Dispatch those fix tasks** as worker processes (same batch or new batch)
-- Merge PRs created by workers (`gh pr merge`)
-- Update TODO.md with completion timestamps
+- Merge PRs created by workers (`gh pr merge` — a one-line control-plane command)
 - Install and maintain the cron pulse for unattended operation
 - Adjust batch parameters (concurrency, timeouts) based on observed patterns
+- **Improve the process** so workers complete ALL their own work end-to-end
 - At session end, report a summary of everything that was accomplished
 
 ### What the supervisor NEVER does
@@ -54,12 +54,19 @@ was accomplished — not doing the work.
 - Research topics or fetch documentation for tasks
 - Use the Task tool to spawn subagents for task work
 - Attempt to solve problems inline instead of dispatching them
+- Push branches, create PRs, or resolve merge conflicts on behalf of workers
+- Do git operations in worker worktrees (fetch, merge, rebase, commit)
 
-**The supervisor MUST NOT do task work itself.** Every task — including fixes to the
-orchestration process itself — is executed by a separate `opencode run` worker in its
-own worktree with its own context window. The supervisor does not have enough token
-context to both orchestrate AND implement. Attempting both will exhaust context and
-fail at both jobs. This is the single most important rule.
+**The supervisor MUST NOT do work on behalf of workers.** If a worker fails to push,
+create a PR, or resolve a merge conflict, that is a **process failure** — the fix is
+to improve the worker's instructions, the `/full-loop` prompt, or the dispatch
+tooling so that workers handle it themselves next time. Doing it for them masks the
+problem and prevents convergence.
+
+Every task — including fixes to the orchestration process itself — is executed by a
+separate `opencode run` worker in its own worktree with its own context window. The
+supervisor does not have enough token context to both orchestrate AND implement.
+Attempting both will exhaust context and fail at both jobs.
 
 ### Unblock by dispatching, never by solving
 
@@ -294,11 +301,12 @@ After each pulse, evaluate:
    create a new TODO, add it to the batch, and dispatch it as a worker task. Do not
    attempt to fix it in the supervisor session.
 6. **Merge conflicts on open PRs** — After merging a worker's PR into `main`, other
-   open PRs often conflict on shared files (`TODO.md`, `subagent-index.toon`). Check
-   open PRs for `CONFLICTING` status after each merge. For each conflicted PR:
-   `git -C <worktree> fetch origin main && git -C <worktree> merge origin/main`,
-   resolve conflicts (take `--theirs` for TODO.md, `--ours` for worker's new files),
-   commit and push. This is a recurring cost of parallel work — budget for it.
+   open PRs often conflict on shared files (`TODO.md`, `subagent-index.toon`). If
+   workers are failing to push or create PRs due to conflicts, this is a **process
+   problem**: improve the `/full-loop` prompt or worker tooling so workers pull and
+   rebase before pushing. If a specific PR is stuck, dispatch a worker to fix it:
+   `$SH add tNNN-rebase --description "Rebase feature/tNNN onto main and resolve conflicts"`
+   The supervisor does NOT do git operations in worker worktrees.
 
 ### Progress display
 
@@ -330,20 +338,23 @@ any problem is always the same: **create a TODO, dispatch a worker to fix it.**
 | Unclear task description causing failures | Create task to refine TODO entries | Worker rewrites task descriptions |
 | Workers can't find a file/tool | Create task to add the missing piece | Worker adds it, unblocking retries |
 | Reprompt fails silently | Verify backend health before retry (direct) | — |
-| Open PRs show CONFLICTING after merge | Resolve merge conflicts on shared files (direct) | — |
+| Workers fail to push/create PRs | Create task to fix worker tooling or `/full-loop` prompt | Worker improves the process |
+| Open PRs show CONFLICTING after merge | Dispatch rebase worker, or improve `/full-loop` to rebase before push | Worker resolves conflicts |
+| Workers can't complete end-to-end | Create task to improve worker instructions/tooling | Worker fixes the process gap |
 
 **Direct actions** (no worker needed): adjusting batch parameters, killing processes,
-reinstalling cron, merging PRs, updating TODO.md status, resolving trivial merge
-conflicts, verifying backend health. These are control-plane operations that don't
-require reading or writing implementation code.
+reinstalling cron, merging PRs (`gh pr merge`), verifying backend health. These are
+one-line control-plane commands that don't touch code or worktrees.
 
 **Dispatched actions** (worker needed): anything that requires reading source code,
-writing files, running tests, researching tools, or creating PRs. Always a worker.
+writing files, running tests, researching tools, creating PRs, resolving merge
+conflicts, pushing branches, or fixing process gaps. Always a worker.
 
-Over many iterations, the fix tasks accumulate into a more robust framework. The
-supervisor session that runs next week will encounter fewer errors than this one.
-The goal is convergence: eventually the supervisor just dispatches, monitors, merges,
-and reports — with near-zero failures to react to.
+**The supervisor's job is to improve the process, not compensate for it.** If workers
+can't complete their work end-to-end (push, create PR, pass CI), the answer is never
+"do it for them" — it's "dispatch a fix task so they can do it themselves next time."
+Each fix makes the next batch more autonomous. Over many iterations, the supervisor
+converges to: dispatch, monitor, merge, report — with workers handling everything else.
 
 ### Diagnostic workers
 
