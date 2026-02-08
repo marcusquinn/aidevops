@@ -34,6 +34,8 @@
 #   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
 #   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
+#   supervisor-helper.sh backup [reason]               Backup supervisor database (t162)
+#   supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file) (t162)
 #   supervisor-helper.sh db [sql]                      Direct SQLite access
 #   supervisor-helper.sh help
 #
@@ -450,6 +452,108 @@ db() {
 }
 
 #######################################
+# Backup supervisor database before destructive operations (t162)
+# Creates timestamped copy in supervisor dir. Keeps last 5 backups.
+# Usage: backup_db [reason]
+#######################################
+backup_db() {
+    local reason="${1:-manual}"
+
+    if [[ ! -f "$SUPERVISOR_DB" ]]; then
+        log_warn "No database to backup at: $SUPERVISOR_DB"
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    local backup_file="$SUPERVISOR_DIR/supervisor-backup-${timestamp}-${reason}.db"
+
+    # Use SQLite .backup for consistency (handles WAL correctly)
+    if sqlite3 "$SUPERVISOR_DB" ".backup '$backup_file'" 2>/dev/null; then
+        log_success "Database backed up: $backup_file"
+    else
+        # Fallback to file copy if .backup fails
+        if cp "$SUPERVISOR_DB" "$backup_file" 2>/dev/null; then
+            # Also copy WAL/SHM if present
+            [[ -f "${SUPERVISOR_DB}-wal" ]] && cp "${SUPERVISOR_DB}-wal" "${backup_file}-wal" 2>/dev/null || true
+            [[ -f "${SUPERVISOR_DB}-shm" ]] && cp "${SUPERVISOR_DB}-shm" "${backup_file}-shm" 2>/dev/null || true
+            log_success "Database backed up (file copy): $backup_file"
+        else
+            log_error "Failed to backup database"
+            return 1
+        fi
+    fi
+
+    # Prune old backups: keep last 5
+    local backup_count
+    # shellcheck disable=SC2012
+    backup_count=$(ls -1 "$SUPERVISOR_DIR"/supervisor-backup-*.db 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$backup_count" -gt 5 ]]; then
+        local to_remove
+        to_remove=$((backup_count - 5))
+        # shellcheck disable=SC2012
+        ls -1t "$SUPERVISOR_DIR"/supervisor-backup-*.db 2>/dev/null | tail -n "$to_remove" | while IFS= read -r old_backup; do
+            rm -f "$old_backup" "${old_backup}-wal" "${old_backup}-shm" 2>/dev/null || true
+        done
+        log_info "Pruned $to_remove old backup(s)"
+    fi
+
+    echo "$backup_file"
+    return 0
+}
+
+#######################################
+# Restore supervisor database from backup (t162)
+# Usage: restore_db [backup_file]
+# If no file specified, lists available backups
+#######################################
+restore_db() {
+    local backup_file="${1:-}"
+
+    if [[ -z "$backup_file" ]]; then
+        log_info "Available backups:"
+        # shellcheck disable=SC2012
+        ls -1t "$SUPERVISOR_DIR"/supervisor-backup-*.db 2>/dev/null | while IFS= read -r f; do
+            local size
+            size=$(du -h "$f" 2>/dev/null | cut -f1)
+            local task_count
+            task_count=$(sqlite3 "$f" "SELECT count(*) FROM tasks;" 2>/dev/null || echo "?")
+            echo "  $f ($size, $task_count tasks)"
+        done
+        return 0
+    fi
+
+    if [[ ! -f "$backup_file" ]]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+
+    # Verify backup is valid SQLite
+    if ! sqlite3 "$backup_file" "SELECT count(*) FROM tasks;" >/dev/null 2>&1; then
+        log_error "Backup file is not a valid supervisor database: $backup_file"
+        return 1
+    fi
+
+    # Backup current DB before overwriting
+    if [[ -f "$SUPERVISOR_DB" ]]; then
+        backup_db "pre-restore" >/dev/null 2>&1 || true
+    fi
+
+    cp "$backup_file" "$SUPERVISOR_DB"
+    [[ -f "${backup_file}-wal" ]] && cp "${backup_file}-wal" "${SUPERVISOR_DB}-wal" 2>/dev/null || true
+    [[ -f "${backup_file}-shm" ]] && cp "${backup_file}-shm" "${SUPERVISOR_DB}-shm" 2>/dev/null || true
+
+    local task_count
+    task_count=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+    local batch_count
+    batch_count=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM batches;")
+
+    log_success "Database restored from: $backup_file"
+    log_info "Tasks: $task_count | Batches: $batch_count"
+    return 0
+}
+
+#######################################
 # Ensure supervisor directory and DB exist
 #######################################
 ensure_db() {
@@ -475,6 +579,7 @@ ensure_db() {
     check_sql=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
     if [[ -n "$check_sql" ]] && ! echo "$check_sql" | grep -q 'pr_review'; then
         log_info "Migrating database schema for post-PR lifecycle states (t128.8)..."
+        backup_db "pre-migrate-t128.8" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
         db "$SUPERVISOR_DB" << 'MIGRATE'
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
@@ -499,7 +604,13 @@ CREATE TABLE tasks (
     completed_at    TEXT,
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
-INSERT INTO tasks SELECT * FROM tasks_old;
+INSERT INTO tasks (id, repo, description, status, session_id, worktree, branch,
+    log_file, retries, max_retries, model, error, pr_url,
+    created_at, started_at, completed_at, updated_at)
+SELECT id, repo, description, status, session_id, worktree, branch,
+    log_file, retries, max_retries, model, error, pr_url,
+    created_at, started_at, completed_at, updated_at
+FROM tasks_old;
 DROP TABLE tasks_old;
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo);
@@ -565,6 +676,7 @@ MIGRATE
     check_sql_t148=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
     if [[ -n "$check_sql_t148" ]] && ! echo "$check_sql_t148" | grep -q 'review_triage'; then
         log_info "Migrating database schema for review_triage state (t148)..."
+        backup_db "pre-migrate-t148" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
         db "$SUPERVISOR_DB" << 'MIGRATE_T148'
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
@@ -738,6 +850,22 @@ cmd_init() {
 
     log_info "Tasks: $task_count | Batches: $batch_count"
     return 0
+}
+
+#######################################
+# Backup supervisor database (t162)
+#######################################
+cmd_backup() {
+    local reason="${1:-manual}"
+    backup_db "$reason"
+}
+
+#######################################
+# Restore supervisor database from backup (t162)
+#######################################
+cmd_restore() {
+    local backup_file="${1:-}"
+    restore_db "$backup_file"
 }
 
 #######################################
@@ -7132,6 +7260,8 @@ Usage:
   supervisor-helper.sh running-count [batch_id]      Count active tasks
   supervisor-helper.sh reset <task_id>               Reset task to queued
   supervisor-helper.sh cancel <task_id|batch_id>     Cancel task or batch
+  supervisor-helper.sh backup [reason]               Backup supervisor database
+  supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file)
   supervisor-helper.sh auto-pickup [--repo path]      Scan TODO.md for auto-dispatch tasks
   supervisor-helper.sh cron [install|uninstall|status] Manage cron-based pulse scheduling
   supervisor-helper.sh watch [--repo path]            Watch TODO.md for changes (fswatch)
@@ -7416,6 +7546,8 @@ main() {
         running-count) cmd_running_count "$@" ;;
         reset) cmd_reset "$@" ;;
         cancel) cmd_cancel "$@" ;;
+        backup) cmd_backup "$@" ;;
+        restore) cmd_restore "$@" ;;
         db) cmd_db "$@" ;;
         help|--help|-h) show_usage ;;
         *) log_error "Unknown command: $command"; show_usage; return 1 ;;
