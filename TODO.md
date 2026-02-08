@@ -60,6 +60,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t179 Issue-sync reconciliation: close stale issues, fix ref:GH# drift, wire into supervisor pulse #bugfix #sync #self-improvement ~2h (ai:1.5h test:30m) logged:2026-02-08
+  - [ ] t179.1 Add cmd_close fallback: search by task ID in issue title when ref:GH# doesn't match ~30m blocked-by:none
+    - Notes: cmd_close() currently only looks up issues by ref:GH#NNN from TODO.md. When ref:GH# is stale/wrong (e.g. issue recreated with new number), the close silently skips. Add fallback: gh issue list --search "tNNN in:title" --state open. Also fix ref:GH# in TODO.md when mismatch detected.
+  - [ ] t179.2 Add reconcile command to fix mismatched ref:GH# values in TODO.md ~30m blocked-by:t179.1
+    - Notes: Scan all tasks with ref:GH#, verify the issue number matches an issue with the task ID in its title. Fix mismatches. Run as part of status command output.
+  - [ ] t179.3 Wire issue-sync close into supervisor pulse cycle as periodic reconciliation ~30m blocked-by:t179.1
+    - Notes: Add Phase 8 to pulse cycle: run issue-sync-helper.sh close after TODO reconciliation (Phase 7). Only run when no workers active (same guard as reconcile-todo). Prevents stale issues accumulating between manual syncs.
+  - [ ] t179.4 Add issue-sync close to postflight/session-review checklist ~15m blocked-by:t179.1
+    - Notes: After PR merge and TODO update, remind to check issue sync. Or auto-run close as part of postflight.
+  - Notes: Root cause discovered 2026-02-08: 12 GitHub issues were open for completed tasks because ref:GH# values in TODO.md didn't match actual issue numbers (issues recreated with new numbers by push command). The GHA workflow runs close on push but uses ref:GH# for lookup, missing the mismatched issues. Also fixed: task ID grep truncation bug (t131 matching t131.vision) in PR #668.
 - [x] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 assignee:marcusquinn started:2026-02-08T20:42:38Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #660 merged
   - [ ] t168.1 Build model discovery - enumerate available models from OpenCode config and provider APIs ~1h blocked-by:none
     - Notes: Parse opencode.json and provider configs to list available models. Categorise as free vs paid. For /compare-models, prompt user to select 2+ models from any provider. For /compare-models-free, auto-select all free-tier models. Use model-routing.md tiers as reference. Need to handle provider auth (some models need API keys, free models may not).
