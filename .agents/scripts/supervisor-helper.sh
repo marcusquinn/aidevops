@@ -1836,6 +1836,159 @@ cmd_cancel() {
 }
 
 #######################################
+# Claim a task via GitHub Issue assignee (t164)
+# Uses GitHub as distributed lock — works across machines
+#######################################
+cmd_claim() {
+    local task_id="${1:-}"
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh claim <task_id>"
+        return 1
+    fi
+
+    # Find the GitHub issue number from TODO.md
+    local project_root
+    project_root=$(find_project_root 2>/dev/null || echo ".")
+    local todo_file="$project_root/TODO.md"
+    local issue_number=""
+
+    if [[ -f "$todo_file" ]]; then
+        local task_line
+        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+    fi
+
+    if [[ -z "$issue_number" ]]; then
+        log_error "No GitHub issue found for $task_id (missing ref:GH# in TODO.md)"
+        return 1
+    fi
+
+    local repo_slug
+    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        log_error "Cannot detect repo slug"
+        return 1
+    fi
+
+    # Check current assignee
+    local current_assignee
+    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null || echo "")
+
+    if [[ -n "$current_assignee" ]]; then
+        local my_login
+        my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+        if [[ "$current_assignee" == "$my_login" ]]; then
+            log_info "$task_id already claimed by you (GH#$issue_number)"
+            return 0
+        fi
+        log_error "$task_id is claimed by @$current_assignee (GH#$issue_number)"
+        return 1
+    fi
+
+    # Assign to self
+    if gh issue edit "$issue_number" --repo "$repo_slug" --add-assignee "@me" 2>/dev/null; then
+        log_success "Claimed $task_id (GH#$issue_number assigned to you)"
+
+        # Add status label if it exists
+        gh issue edit "$issue_number" --repo "$repo_slug" --add-label "status:claimed" --remove-label "status:available" 2>/dev/null || true
+
+        return 0
+    else
+        log_error "Failed to claim $task_id (GH#$issue_number)"
+        return 1
+    fi
+}
+
+#######################################
+# Release a claimed task (t164)
+#######################################
+cmd_unclaim() {
+    local task_id="${1:-}"
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh unclaim <task_id>"
+        return 1
+    fi
+
+    local project_root
+    project_root=$(find_project_root 2>/dev/null || echo ".")
+    local todo_file="$project_root/TODO.md"
+    local issue_number=""
+
+    if [[ -f "$todo_file" ]]; then
+        local task_line
+        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+    fi
+
+    if [[ -z "$issue_number" ]]; then
+        log_error "No GitHub issue found for $task_id"
+        return 1
+    fi
+
+    local repo_slug
+    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
+
+    local my_login
+    my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+
+    if gh issue edit "$issue_number" --repo "$repo_slug" --remove-assignee "$my_login" 2>/dev/null; then
+        log_success "Released $task_id (GH#$issue_number unassigned)"
+        gh issue edit "$issue_number" --repo "$repo_slug" --add-label "status:available" --remove-label "status:claimed" 2>/dev/null || true
+        return 0
+    else
+        log_error "Failed to release $task_id"
+        return 1
+    fi
+}
+
+#######################################
+# Check if a task is claimed by someone else (t164)
+# Returns 0 if free or claimed by self, 1 if claimed by another
+#######################################
+check_task_claimed() {
+    local task_id="${1:-}"
+    local project_root="${2:-.}"
+    local todo_file="$project_root/TODO.md"
+    local issue_number=""
+
+    if [[ -f "$todo_file" ]]; then
+        local task_line
+        task_line=$(grep -E "^\- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+    fi
+
+    # No issue = no claim mechanism = free
+    if [[ -z "$issue_number" ]]; then
+        return 0
+    fi
+
+    local repo_slug
+    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
+    if [[ -z "$repo_slug" ]]; then
+        return 0
+    fi
+
+    local current_assignee
+    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null || echo "")
+
+    if [[ -z "$current_assignee" ]]; then
+        return 0
+    fi
+
+    local my_login
+    my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+
+    if [[ "$current_assignee" == "$my_login" ]]; then
+        return 0
+    fi
+
+    echo "$current_assignee"
+    return 1
+}
+
+#######################################
 # Direct SQLite access for debugging
 #######################################
 cmd_db() {
@@ -2484,6 +2637,17 @@ cmd_dispatch() {
         log_error "Task $task_id is in '$tstatus' state, must be 'queued' to dispatch"
         return 1
     fi
+
+    # Check if task is claimed by someone else on GitHub (t164)
+    local claimed_by=""
+    claimed_by=$(check_task_claimed "$task_id" "${trepo:-.}" 2>/dev/null) || true
+    if [[ -n "$claimed_by" ]]; then
+        log_warn "Task $task_id is claimed by @$claimed_by on GitHub — skipping dispatch"
+        return 2
+    fi
+
+    # Claim the task on GitHub before dispatching (t164)
+    cmd_claim "$task_id" 2>/dev/null || log_verbose "Could not claim $task_id on GitHub (no issue ref or gh unavailable)"
 
     # Check concurrency limit with adaptive load awareness (t151)
     if [[ -n "$batch_id" ]]; then
@@ -7588,6 +7752,8 @@ main() {
         running-count) cmd_running_count "$@" ;;
         reset) cmd_reset "$@" ;;
         cancel) cmd_cancel "$@" ;;
+        claim) cmd_claim "$@" ;;
+        unclaim) cmd_unclaim "$@" ;;
         backup) cmd_backup "$@" ;;
         restore) cmd_restore "$@" ;;
         db) cmd_db "$@" ;;

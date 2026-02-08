@@ -686,6 +686,29 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 
 **Bottom line**: Use judgment. Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree.
 
+## Distributed Task Claiming (t164)
+
+When multiple machines or agents work on the same repo, **GitHub Issue assignees** are the single source of truth for task ownership. The supervisor DB is a local cache only.
+
+**Claim flow:**
+
+```bash
+supervisor-helper.sh claim tNNN    # Assign GH issue to yourself
+supervisor-helper.sh unclaim tNNN  # Release the claim
+```
+
+**How it works:**
+
+| Actor | Before work | During work | After work |
+|-------|-------------|-------------|------------|
+| **Supervisor** | `claim` before dispatch (auto) | Worker runs | `unclaim` on completion |
+| **Human** | `claim` or assign on GitHub | Edit code | PR merge closes issue |
+| **Pre-edit check** | Warns if claimed by another | — | — |
+
+**Status labels** on GitHub Issues: `status:available` → `status:claimed` → `status:in-review` → `status:done`
+
+**Why GitHub, not local DB?** The supervisor DB is per-machine (SQLite). GitHub Issues are visible to all machines, all agents, and all humans. No sync needed.
+
 ## MANDATORY: Worker TODO.md Restriction
 
 **Workers (headless dispatch runners) must NEVER edit TODO.md directly.** This is the primary cause of merge conflicts when multiple workers + supervisor all push to TODO.md on main simultaneously.

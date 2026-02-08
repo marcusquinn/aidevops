@@ -745,11 +745,13 @@ cmd_push() {
             continue
         fi
 
-        # Create the issue
+        # Create the issue with status:available label (t164)
         local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$title")
         gh_args+=("--body" "$body")
         if [[ -n "$labels" ]]; then
-            gh_args+=("--label" "$labels")
+            gh_args+=("--label" "${labels},status:available")
+        else
+            gh_args+=("--label" "status:available")
         fi
 
         local issue_url

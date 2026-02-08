@@ -203,6 +203,41 @@ source "${SCRIPT_DIR}/shared-constants.sh"
         echo "FEATURE_BRANCH_WARNING=$current_branch"
         exit 3
     else
+        # Check if task is claimed by someone else on GitHub (t164)
+        local task_id_from_branch=""
+        task_id_from_branch=$(echo "$current_branch" | grep -oE 't[0-9]+' | head -1 || true)
+        if [[ -n "$task_id_from_branch" ]]; then
+            local supervisor_script="$SCRIPT_DIR/supervisor-helper.sh"
+            if [[ -x "$supervisor_script" ]]; then
+                local claimed_by=""
+                claimed_by=$("$supervisor_script" 2>/dev/null <<< "" || true)  # avoid sourcing
+                # Use check_task_claimed directly via the helper
+                local project_root
+                project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+                local todo_file="$project_root/TODO.md"
+                local issue_number=""
+                if [[ -f "$todo_file" ]]; then
+                    local task_line
+                    task_line=$(grep -E "^\- \[.\] ${task_id_from_branch} " "$todo_file" | head -1 || true)
+                    issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
+                fi
+                if [[ -n "$issue_number" ]] && command -v gh &>/dev/null; then
+                    local repo_slug
+                    repo_slug=$(git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || true)
+                    if [[ -n "$repo_slug" ]]; then
+                        local current_assignee
+                        current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null || true)
+                        if [[ -n "$current_assignee" ]]; then
+                            local my_login
+                            my_login=$(gh api user --jq '.login' 2>/dev/null || true)
+                            if [[ "$current_assignee" != "$my_login" ]]; then
+                                echo -e "${YELLOW}WARNING${NC}: Task $task_id_from_branch is claimed by @$current_assignee (GH#$issue_number)"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
         echo -e "${GREEN}OK${NC} - On branch: ${BOLD}$current_branch${NC} (in worktree)"
         exit 0
     fi
