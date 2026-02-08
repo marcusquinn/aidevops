@@ -23,7 +23,7 @@ tools:
 - **Privacy**: Fully local processing via Ollama or Cloudflare Workers AI
 - **PRD**: `todo/tasks/prd-document-extraction.md`
 
-**Status**: Planned (see `todo/tasks/prd-document-extraction.md` for PRD). The Python components below are available for direct use; a CLI helper script is not yet implemented.
+**CLI**: `document-extraction-helper.sh [extract|parse|pii-scan|batch|status|install]`
 
 <!-- AI-CONTEXT-END -->
 
