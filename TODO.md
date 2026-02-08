@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t187 Compaction-resilient session state — ensure critical context survives LLM context compaction #feature #framework #self-improvement ~2h (ai:1.5h test:30m) logged:2026-02-09
+- [ ] t187 Compaction-resilient session state — ensure critical context survives LLM context compaction #feature #framework #self-improvement ~2h (ai:1.5h test:30m) ref:GH#686 logged:2026-02-09
   - [ ] t187.1 Add compaction survival instruction to AGENTS.md/build.txt ~30m blocked-by:none
     - Notes: Add an instruction that is always preserved through compaction summaries. Something like "When summarizing this conversation for compaction, ALWAYS include: current batch ID, active task IDs and their states, worktree paths, and the next 3 action items." This ensures the model retains operational state even after aggressive compaction. Test by verifying the instruction appears in compaction output.
   - [ ] t187.2 Add session-state checkpoint command ~1h blocked-by:none
@@ -68,7 +68,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t187.3 Enhance session-distill to capture operational state ~30m blocked-by:t187.2
     - Notes: Current session-distill captures learnings but not operational state (which tasks are running, what PRs need review). Extend to also emit a checkpoint block that can be fed back as a continuation prompt.
   - Notes: Lesson from 2026-02-09 session: continuation prompt was the single biggest factor in surviving compaction. AGENTS.md provides the "how" (conventions, tools), but the continuation prompt provides the "where we are" (task states, batch IDs, next steps). Without it, the agent can operate the framework but doesn't know what to work on. Tool outputs (supervisor status, git log, gh pr list) can partially reconstruct state but are slower and lossy.
-- [ ] t188 Pre-migration safety backups for non-git state — backup DBs and local state before destructive operations #bugfix #supervisor #self-improvement ~1h (ai:45m test:15m) logged:2026-02-09
+- [ ] t188 Pre-migration safety backups for non-git state — backup DBs and local state before destructive operations #bugfix #supervisor #self-improvement ~1h (ai:45m test:15m) ref:GH#687 logged:2026-02-09
   - [ ] t188.1 Add automatic backup before schema migrations ~30m blocked-by:none
     - Notes: The t180 migration already calls backup_db() but the INSERT INTO tasks SELECT * FROM tasks_old_t180 silently failed, leaving the tasks table empty. Need: (a) verify row count after migration matches before, (b) rollback if mismatch, (c) keep backup until next successful pulse confirms data integrity. The backup existed and saved us — but the migration should have caught its own failure.
   - [ ] t188.2 Add backup-before-modify pattern for non-git state ~30m blocked-by:none
