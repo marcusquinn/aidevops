@@ -38,6 +38,11 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - `started:` - When branch was created (work began)
 - `completed:` - When task was marked done
 
+**Assignment fields:**
+
+- `assignee:identity` - Who claimed the task (set by `supervisor-helper.sh claim`, identity = `AIDEVOPS_IDENTITY` or `user@host`)
+- `@owner` - Who is responsible for the task (separate from assignee — future feature)
+
 **Machine data:** TOON blocks in HTML comments (invisible when rendered).
 
 <!--TOON:meta{version,format,updated}:

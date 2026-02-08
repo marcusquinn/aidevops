@@ -686,30 +686,39 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 
 **Bottom line**: Use judgment. Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree.
 
-## Distributed Task Claiming (t164)
+## Distributed Task Claiming (t164/t165)
 
-When multiple machines or agents work on the same repo, **GitHub Issue assignees** are the single source of truth for task ownership. The supervisor DB is a local cache only.
+**TODO.md is the master source of truth** for task ownership. Git platform issues (GitHub, GitLab) are a public interface for external contributors — they are bi-directionally synced but never authoritative over TODO.md.
 
 **Claim flow:**
 
 ```bash
-supervisor-helper.sh claim tNNN    # Assign GH issue to yourself
-supervisor-helper.sh unclaim tNNN  # Release the claim
+supervisor-helper.sh claim tNNN    # Add assignee:identity + started:ISO to task line, sync to GH issue
+supervisor-helper.sh unclaim tNNN  # Remove assignee: + started:, sync to GH issue
 ```
 
 **How it works:**
 
+| Step | What happens |
+|------|-------------|
+| **Claim** | `git pull` → check `assignee:` in TODO.md → add `assignee:identity started:ISO` → `commit + push` → sync to GH issue |
+| **Check** | `grep "assignee:"` on task line — instant, offline |
+| **Unclaim** | Remove `assignee:` + `started:` → `commit + push` → sync to GH issue |
+| **Race protection** | Git push rejection = someone else claimed first. Pull, re-check, abort. |
+
+**Identity:** Set `AIDEVOPS_IDENTITY` env var, or defaults to `$(whoami)@$(hostname -s)`.
+
+**Who claims:**
+
 | Actor | Before work | During work | After work |
 |-------|-------------|-------------|------------|
-| **Supervisor** | `claim` before dispatch (auto) | Worker runs | Manual `unclaim` or PR merge closes issue |
-| **Human** | `claim` or assign on GitHub | Edit code | PR merge closes issue |
+| **Supervisor** | `claim` before dispatch (auto) | Worker runs | Manual `unclaim` or task completion |
+| **Human** | `claim` or add `assignee:name` manually | Edit code | PR merge, mark `[x]` |
 | **Pre-edit check** | Warns if claimed by another | — | — |
 
-> **Note:** Auto-unclaim on task completion is planned for a future iteration. Currently, claims are released manually or when the GitHub Issue is closed.
+**Bi-directional sync:** When `gh` CLI is available and the task has `ref:GH#`, claiming/unclaiming automatically syncs to GitHub Issue assignees and status labels. If someone assigns themselves on GitHub, `issue-sync pull` brings that back as `assignee:` in TODO.md. The sync is optional — claiming works fully offline with any git remote.
 
 **Status labels** on GitHub Issues: `status:available` → `status:claimed` → `status:in-review` → `status:done`
-
-**Why GitHub, not local DB?** The supervisor DB is per-machine (SQLite). GitHub Issues are visible to all machines, all agents, and all humans. No sync needed.
 
 ## MANDATORY: Worker TODO.md Restriction
 
