@@ -241,6 +241,47 @@ pattern-tracker-helper.sh stats
 
 See `scripts/pattern-tracker-helper.sh` for full documentation.
 
+## Memory Graduation (Sharing Learnings)
+
+Graduate validated local memories into shared documentation so all framework users
+benefit. Memories qualify when they reach high confidence or are accessed frequently.
+
+```bash
+# Check graduation status
+memory-graduate-helper.sh status
+
+# See what's ready to graduate
+memory-graduate-helper.sh candidates
+
+# Preview graduation output
+memory-graduate-helper.sh graduate --dry-run
+
+# Graduate memories into shared docs
+memory-graduate-helper.sh graduate
+
+# Or use via memory-helper.sh
+memory-helper.sh graduate candidates
+memory-helper.sh graduate status
+```
+
+**How it works**:
+
+1. Memories accumulate in local DB via `/remember` and auto-capture
+2. Frequently recalled memories gain `access_count` (proves usefulness)
+3. `memory-graduate-helper.sh candidates` shows what qualifies
+4. `memory-graduate-helper.sh graduate` appends to `.agents/aidevops/graduated-learnings.md`
+5. Graduated memories are marked with `graduated_at` timestamp (won't be proposed again)
+6. Commit and push the updated file to share with all users
+
+**Graduation criteria** (any of):
+
+- `confidence = "high"` (manually marked as high-value)
+- `access_count >= 3` (frequently recalled, proving usefulness)
+
+**Slash command**: `/graduate-memories` or `/graduate-memories --dry-run`
+
+See `scripts/memory-graduate-helper.sh help` for full documentation.
+
 ## Namespaces (Per-Runner Memory Isolation)
 
 Runners can have isolated memory namespaces. Each namespace gets its own SQLite DB,
@@ -316,6 +357,12 @@ memory-helper.sh prune             # Remove stale entries
 # Export
 memory-helper.sh export --format json   # Export as JSON
 memory-helper.sh export --format toon   # Export as TOON (token-efficient)
+
+# Graduation (promote to shared docs)
+memory-helper.sh graduate candidates    # List graduation candidates
+memory-helper.sh graduate status        # Show graduation stats
+memory-helper.sh graduate graduate --dry-run  # Preview graduation
+memory-helper.sh graduate graduate      # Graduate to shared docs
 
 # Namespaces (per-runner isolation)
 memory-helper.sh --namespace my-runner store --content "Runner-specific learning"

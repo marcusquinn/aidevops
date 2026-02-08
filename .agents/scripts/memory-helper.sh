@@ -289,6 +289,13 @@ EOF
         db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" || echo "[WARN] Failed to add auto_captured column (may already exist)" >&2
     fi
     
+    # Add graduated_at column to learning_access if missing (t184 migration)
+    local has_graduated
+    has_graduated=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='graduated_at';" 2>/dev/null || echo "0")
+    if [[ "$has_graduated" == "0" ]]; then
+        db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN graduated_at TEXT DEFAULT NULL;" || echo "[WARN] Failed to add graduated_at column (may already exist)" >&2
+    fi
+    
     return 0
 }
 
@@ -1967,6 +1974,7 @@ COMMANDS:
     dedup       Remove exact and near-duplicate entries
     consolidate Merge similar memories to reduce redundancy
     export      Export all memories
+    graduate    Promote validated memories into shared docs (delegates to memory-graduate-helper.sh)
     namespaces  List all memory namespaces
     help        Show this help
 
@@ -2173,6 +2181,16 @@ main() {
         dedup) cmd_dedup "$@" ;;
         consolidate) cmd_consolidate "$@" ;;
         export) cmd_export "$@" ;;
+        graduate)
+            # Delegate to memory-graduate-helper.sh
+            local graduate_script
+            graduate_script="$(dirname "$0")/memory-graduate-helper.sh"
+            if [[ ! -x "$graduate_script" ]]; then
+                log_error "Graduate helper not found: $graduate_script"
+                return 1
+            fi
+            "$graduate_script" "$@"
+            ;;
         namespaces)
             # Support subcommands: namespaces [list|prune|migrate]
             local ns_subcmd="${1:-list}"
