@@ -229,7 +229,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 |--------|------|
 | Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
 | Code quality | `tools/code-review/code-standards.md` |
-| Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md` |
+| Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |
 | Browser | `tools/browser/browser-automation.md` (decision tree, then tool-specific subagent) |
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |

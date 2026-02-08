@@ -282,8 +282,8 @@ git checkout main
 git pull origin main
 git checkout your-branch
 git merge main
-# Resolve conflicts if any
-```text
+# Resolve conflicts if any -- see tools/git/conflict-resolution.md
+```
 
 ## Safety: Protecting Uncommitted Work
 
