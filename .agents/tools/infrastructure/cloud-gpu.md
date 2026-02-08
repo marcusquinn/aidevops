@@ -21,7 +21,7 @@ tools:
 - **Purpose**: Deploy GPU-intensive AI models (voice, vision, LLMs) to cloud providers
 - **Providers**: NVIDIA Cloud, Vast.ai, RunPod, Lambda
 - **Pattern**: SSH into instance, Docker deploy, expose API, connect from local machine
-- **Cost range**: $0.20/hr (consumer GPUs) to $4.30/hr (H200 SXM)
+- **Cost range**: $0.20/hr (consumer GPUs) to $8.64/hr (B200 SXM)
 
 **When to Use**: Read this when deploying any AI model that requires GPU acceleration and local hardware is insufficient. Referenced by `tools/voice/speech-to-speech.md` and future `tools/vision/` subagents.
 
@@ -31,9 +31,9 @@ tools:
 
 | Provider | GPU Options | Pricing | Best For | Signup |
 |----------|-----------|---------|----------|--------|
-| [RunPod](https://www.runpod.io/) | H200, H100, A100, L40S, RTX 4090/5090 | Per-second billing, $0.40-4.31/hr | General purpose, serverless inference | [runpod.io](https://www.runpod.io/) |
+| [RunPod](https://www.runpod.io/) | B200, H200, H100, A100, L40S, RTX 5090/4090 | Per-second billing, $0.40-8.64/hr | General purpose, serverless inference | [runpod.io](https://www.runpod.io/) |
 | [Vast.ai](https://vast.ai/) | Consumer + datacenter GPUs, 10,000+ available | Auction + fixed pricing, 5-6x cheaper than hyperscalers | Budget workloads, experimentation | [vast.ai](https://vast.ai/) |
-| [Lambda](https://lambdalabs.com/) | GB300 NVL72, B200, H200, H100 | Per-hour, reserved discounts | Research, large-scale training, enterprise | [lambdalabs.com](https://lambdalabs.com/) |
+| [Lambda](https://lambdalabs.com/) | GB300 NVL72, HGX B300, B200, H200, H100 | Per-hour, reserved discounts | Research, large-scale training, enterprise | [lambdalabs.com](https://lambdalabs.com/) |
 | [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/) | A100, H100 (via DGX Cloud) | Per-hour, enterprise contracts | Official NVIDIA stack, production workloads | [nvidia.com/gpu-cloud](https://www.nvidia.com/en-us/gpu-cloud/) |
 
 ### Choosing a Provider
@@ -53,11 +53,14 @@ Match GPU to workload requirements:
 | GPU | VRAM | Use Case | Approx. Cost/hr |
 |-----|------|----------|-----------------|
 | RTX 3090/4090 | 24GB | Small models, fine-tuning, inference | $0.20-0.70 |
+| RTX 5090 | 32GB | Small-medium models, fast inference | $0.77-1.58 |
 | L4 | 24GB | Inference, cost-effective | $0.40-0.60 |
 | L40S | 48GB | Medium models, inference | $0.85-1.22 |
+| RTX Pro 6000 | 96GB | Large models without datacenter GPUs | $1.50-2.00 |
 | A100 (80GB) | 80GB | Large models, training + inference | $1.79-2.72 |
 | H100 (80GB) | 80GB | High throughput, large-scale training | $2.50-4.18 |
 | H200 (141GB) | 141GB | Largest models, maximum throughput | $3.35-5.58 |
+| B200 (180GB) | 180GB | Next-gen training, largest models | $6.84-8.64 |
 
 ### VRAM Requirements by Model Type
 
@@ -65,26 +68,118 @@ Match GPU to workload requirements:
 |---------------|---------------|----------|-----------------|
 | Voice pipeline (STT+TTS) | Whisper + Parler-TTS | 4GB | RTX 3090/4090 |
 | Voice pipeline (full S2S) | Whisper + LLM + TTS | 8-16GB | RTX 4090 / L4 |
-| 7-8B parameter LLM | Llama 3.1 8B, Phi-3 | 8-16GB | RTX 4090 / L4 |
+| 7-8B parameter LLM | Llama 3.3 8B, Phi-4 | 8-16GB | RTX 4090 / L4 |
 | 13B parameter LLM | Llama 2 13B | 16-24GB | RTX 4090 / L40S |
-| 70B parameter LLM | Llama 3.1 70B | 40-80GB | A100 / H100 |
-| Vision models | MiniCPM-o, LLaVA | 8-24GB | RTX 4090 / L40S |
-| Diffusion models | Stable Diffusion XL | 8-16GB | RTX 4090 |
+| 70B parameter LLM | Llama 3.3 70B, Qwen 2.5 72B | 40-80GB | A100 / H100 |
+| 400B+ parameter LLM | Llama 3.1 405B (quantized) | 140-180GB | H200 / B200 |
+| Vision models | MiniCPM-o, LLaVA, Qwen-VL | 8-24GB | RTX 4090 / L40S |
+| Diffusion models | Stable Diffusion XL, FLUX | 8-16GB | RTX 4090 |
+| Video generation | Wan 2.1, CogVideoX | 24-80GB | L40S / A100 |
 
 ## Deployment Workflow
 
 ### 1. Provision Instance
 
-All providers follow a similar pattern:
+#### RunPod (runpodctl CLI)
 
 ```bash
-# RunPod: Create pod via CLI or web console
-# Vast.ai: Search and rent via CLI or web console
-# Lambda: Launch instance from dashboard
-# NVIDIA Cloud: Provision via DGX Cloud portal
+# Install CLI
+brew install runpod/runpodctl/runpodctl  # macOS
+# Or: wget -qO- cli.runpod.net | sudo bash
+
+# Configure API key (get from runpod.io/console/user/settings)
+runpodctl config --apiKey "$RUNPOD_API_KEY"
+
+# List available GPU types and pricing
+runpodctl get gpu
+
+# Create a pod with RTX 4090, 50GB storage, PyTorch image
+runpodctl create pod \
+  --name my-model \
+  --gpuType "NVIDIA GeForce RTX 4090" \
+  --gpuCount 1 \
+  --imageName pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel \
+  --volumeSize 50 \
+  --ports "8000/http,22/tcp"
+
+# List running pods
+runpodctl get pod
+
+# Stop/start/remove
+runpodctl stop pod <pod-id>
+runpodctl start pod <pod-id>
+runpodctl remove pod <pod-id>
 ```
 
-Select:
+#### Vast.ai (vastai CLI)
+
+```bash
+# Install CLI
+pip install vastai
+
+# Configure API key (get from vast.ai/console/account)
+vastai set api-key <your-api-key>
+
+# Search for offers: RTX 4090, min 24GB VRAM, sorted by price
+vastai search offers 'gpu_name=RTX_4090 num_gpus=1 rentable=true' \
+  --order 'dph_total' --limit 10
+
+# Rent an instance (use offer ID from search results)
+vastai create instance <offer-id> \
+  --image pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel \
+  --disk 50 \
+  --ssh
+
+# List your instances
+vastai show instances
+
+# SSH into instance (port shown in instance details)
+vastai ssh-url <instance-id>
+
+# Destroy when done
+vastai destroy instance <instance-id>
+```
+
+#### Lambda (REST API)
+
+```bash
+# Lambda uses a REST API (no dedicated CLI)
+# API key from cloud.lambdalabs.com/api-keys
+export LAMBDA_API_KEY="your-api-key"
+
+# List available instance types
+curl -s -H "Authorization: Bearer $LAMBDA_API_KEY" \
+  https://cloud.lambdalabs.com/api/v1/instance-types | \
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)['data']
+for k, v in data.items():
+    print(f\"{k}: {v['instance_type']['description']}\")
+"
+
+# Launch an instance
+curl -s -X POST -H "Authorization: Bearer $LAMBDA_API_KEY" \
+  -H "Content-Type: application/json" \
+  https://cloud.lambdalabs.com/api/v1/instance-operations/launch \
+  -d '{
+    "region_name": "us-east-1",
+    "instance_type_name": "gpu_1x_h100_sxm5",
+    "ssh_key_names": ["my-key"],
+    "name": "my-model-server"
+  }'
+
+# List running instances
+curl -s -H "Authorization: Bearer $LAMBDA_API_KEY" \
+  https://cloud.lambdalabs.com/api/v1/instances
+
+# Terminate instance
+curl -s -X POST -H "Authorization: Bearer $LAMBDA_API_KEY" \
+  -H "Content-Type: application/json" \
+  https://cloud.lambdalabs.com/api/v1/instance-operations/terminate \
+  -d '{"instance_ids": ["<instance-id>"]}'
+```
+
+Select based on your workload:
 
 - **GPU type** matching your VRAM needs (see table above)
 - **Docker image** (most providers support custom images)
@@ -267,38 +362,48 @@ Avoid paying for idle instances:
 
 ### RunPod
 
+- **CLI**: `runpodctl` (brew or curl install) — manage pods, transfer files, check GPU availability
 - Per-second billing (no minimum commitment)
 - Community Cloud (cheaper, shared) vs. Secure Cloud (dedicated)
 - Serverless option for inference (auto-scaling, pay-per-request)
-- Network volumes persist across pod restarts
+- Instant Clusters for multi-GPU workloads (up to 64 GPUs)
+- Network volumes persist across pod restarts ($0.07/GB/mo under 1TB)
 - 30+ global regions
 - SOC 2 Type II compliant
+- GPUs: B200, H200, H100, RTX Pro 6000, RTX 5090, RTX 4090, L40S, A100, L4
+- File transfer: `runpodctl send <file>` / `runpodctl receive <code>` (peer-to-peer)
 
 ### Vast.ai
 
+- **CLI**: `vastai` (pip install) — search offers, rent, SSH, destroy
 - Marketplace model: hosts set prices, renters bid
-- Cheapest option for non-critical workloads
+- Cheapest option for non-critical workloads (5-6x cheaper than hyperscalers)
 - Variable availability and reliability
 - Good for batch processing and experimentation
-- DLPerf score helps compare GPU performance
+- DLPerf score helps compare GPU performance across hosts
 - Supports custom Docker images
+- On-demand and interruptible pricing tiers
+- Search filters: GPU type, VRAM, disk, bandwidth, region, reliability score
 
 ### Lambda
 
+- **API**: REST at `cloud.lambdalabs.com/api/v1` (no dedicated CLI)
 - Enterprise-focused with SOC 2 Type II, single-tenant options
-- 1-Click Clusters for multi-node training
-- Lambda Stack (pre-configured CUDA, cuDNN, PyTorch)
+- 1-Click Clusters for multi-node training (InfiniBand interconnect)
+- Lambda Stack (pre-configured CUDA, cuDNN, PyTorch, TensorFlow)
 - Reserved capacity with volume discounts
-- Latest NVIDIA hardware (GB300 NVL72, B200, H200)
+- Latest NVIDIA hardware (GB300 NVL72, HGX B300, B200, H200)
 - Research-friendly with academic partnerships
+- Superclusters for large-scale training runs
 
 ### NVIDIA Cloud (DGX Cloud)
 
 - Official NVIDIA infrastructure
-- Tightly integrated with NVIDIA software stack (NeMo, Triton)
+- Tightly integrated with NVIDIA software stack (NeMo, Triton, RAPIDS)
 - Enterprise contracts and support
 - Best for organizations already in the NVIDIA ecosystem
 - Access to latest hardware and optimized frameworks
+- Managed Kubernetes orchestration for multi-node training
 
 ## Common Patterns
 
@@ -358,6 +463,68 @@ python train.py \
 | High latency from client | Choose region closer to you, use SSH tunnel compression: `ssh -C` |
 | Instance terminated (spot) | Use checkpointing, switch to on-demand, or use RunPod Serverless |
 
+## GPU Monitoring
+
+### Health Check on Connect
+
+Run immediately after SSH into any GPU instance:
+
+```bash
+# Verify GPU is detected and healthy
+nvidia-smi
+
+# Quick one-liner: GPU name, VRAM, temperature, utilization
+nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu \
+  --format=csv,noheader
+
+# Continuous monitoring (updates every 2 seconds)
+watch -n 2 nvidia-smi
+
+# Check CUDA version
+nvcc --version 2>/dev/null || cat /usr/local/cuda/version.txt
+
+# Verify PyTorch sees the GPU
+python3 -c "
+import torch
+print(f'CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}, Device: {torch.cuda.get_device_name(0)}')
+"
+```
+
+### Performance Benchmarking
+
+Validate GPU performance before committing to a long workload:
+
+```bash
+# Quick memory bandwidth test
+python3 -c "
+import torch, time
+size = 1024 * 1024 * 256  # 1GB
+a = torch.randn(size, device='cuda')
+torch.cuda.synchronize()
+start = time.time()
+for _ in range(100):
+    b = a.clone()
+torch.cuda.synchronize()
+elapsed = time.time() - start
+gb_per_sec = (size * 4 * 100) / elapsed / 1e9
+print(f'Memory bandwidth: {gb_per_sec:.1f} GB/s')
+"
+
+# For Vast.ai: check DLPerf score matches listing
+# For RunPod: Community Cloud GPUs may have lower bandwidth than Secure Cloud
+```
+
+### Logging GPU Metrics
+
+For long-running jobs, log GPU stats to a file:
+
+```bash
+# Log every 30 seconds to CSV
+nvidia-smi \
+  --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.used,temperature.gpu,power.draw \
+  --format=csv -l 30 > /tmp/gpu_metrics.csv &
+```
+
 ## Security
 
 - Never expose model APIs to the public internet without authentication
@@ -367,8 +534,28 @@ python train.py \
 - Enable provider-level firewalls (security groups)
 - For production: use HTTPS with reverse proxy (nginx/caddy)
 
+## Credential Storage
+
+Store provider API keys securely — never hardcode in scripts:
+
+```bash
+# Store API keys via aidevops secret manager
+aidevops secret set RUNPOD_API_KEY
+aidevops secret set VASTAI_API_KEY
+aidevops secret set LAMBDA_API_KEY
+
+# Or via credentials file (plaintext fallback)
+# Add to ~/.config/aidevops/credentials.sh:
+# export RUNPOD_API_KEY="..."
+# export VASTAI_API_KEY="..."
+# export LAMBDA_API_KEY="..."
+```
+
+See `tools/credentials/api-key-setup.md` for full setup.
+
 ## See Also
 
 - `tools/voice/speech-to-speech.md` - Voice pipeline with cloud GPU deployment
 - `services/hosting/hetzner.md` - Dedicated servers (CPU-only alternative)
 - `tools/credentials/api-key-setup.md` - Secure credential storage
+- `tools/ai-orchestration/overview.md` - AI orchestration frameworks for model serving
