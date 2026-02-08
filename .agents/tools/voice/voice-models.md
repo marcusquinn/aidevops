@@ -166,7 +166,7 @@ Docs: https://github.com/SWivid/F5-TTS
 
 #### Bark (Suno)
 
-Transformer-based TTS with non-speech generation. 28k+ stars, MIT.
+Transformer-based TTS with non-speech generation. 39k+ stars, MIT. **Note**: No active development since 2023.
 
 - **Languages**: English, Chinese, French, German, Hindi, Italian, Japanese, Korean, Polish, Portuguese, Russian, Spanish, Turkish
 - **Features**: Non-speech sounds (music, laughter, background noise), speaker presets, multilingual
@@ -177,7 +177,7 @@ Docs: https://github.com/suno-ai/bark
 
 #### Coqui TTS
 
-Multi-model TTS toolkit with voice cloning. 40k+ stars, MPL-2.0.
+Multi-model TTS toolkit with voice cloning. 44k+ stars, MPL-2.0. **Note**: Coqui company shut down late 2023; repo is community-maintained.
 
 - **Features**: 20+ TTS models (Tacotron2, VITS, YourTTS, Bark, etc.), voice cloning, multi-speaker, training support
 - **Install**: `pip install TTS`
@@ -233,7 +233,8 @@ For comprehensive STT coverage including model comparisons, cloud APIs, and the 
 | Category | Recommended | Notes |
 |----------|-------------|-------|
 | **Local default** | Whisper Large v3 Turbo (1.5GB) | Best speed/accuracy tradeoff |
-| **Local fastest** | NVIDIA Parakeet V2 (474MB) | English-only, speed 9.9 |
+| **Local fastest** | NVIDIA Parakeet V2 (0.6B) | English-only, speed 9.9 |
+| **Local fastest multilingual** | NVIDIA Parakeet V3 (0.6B) | 25 European languages |
 | **Local smallest** | Whisper Tiny (75MB) | Draft quality only |
 | **Cloud fastest** | Groq Whisper | Free tier, lightning inference |
 | **Cloud highest accuracy** | ElevenLabs Scribe v2 | 9.9 accuracy rating |
