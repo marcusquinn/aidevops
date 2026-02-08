@@ -267,6 +267,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
+| Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting) |
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
 | Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing) |

@@ -122,5 +122,6 @@ Once `eval "$(tirith init)"` is in the shell profile, all terminal commands
 
 ## Related
 
+- `tools/security/shannon.md` — AI pentesting for web applications
 - `tools/security/privacy-filter.md` — Content privacy filtering
 - `tools/security/cdn-origin-ip.md` — CDN origin IP leak detection

@@ -49,7 +49,7 @@ tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
 tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys
-tools/security/,Security tools - privacy filtering and scanning,privacy-filter
+tools/security/,Security tools - terminal guards privacy filtering and scanning,tirith|shannon|cdn-origin-ip|privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
 tools/automation/,Automation - cron scheduling objective runner and macOS AppleScript/JXA,cron-agent|objective-runner|mac|macos-automator
