@@ -25,6 +25,7 @@ tools:
 - **Review all changes**: `coderabbit --plain --type all`
 - **Compare branch**: `coderabbit --plain --base develop`
 - **Helper script**: `~/.aidevops/agents/scripts/coderabbit-cli.sh`
+- **Review pulse**: `~/.aidevops/agents/scripts/review-pulse-helper.sh` (daily full codebase review)
 - **Docs**: https://docs.coderabbit.ai/cli/overview
 
 ## CLI Modes
@@ -128,6 +129,32 @@ CodeRabbit analyzes:
 | Security | SQL injection, credential exposure, input validation |
 | Performance | Memory leaks, inefficient loops, resource cleanup |
 | Documentation | Markdown formatting, code blocks, broken links |
+
+## Daily Review Pulse
+
+The review pulse runs a full codebase review via CodeRabbit CLI, parses findings
+into structured JSON, filters false positives, and generates task suggestions.
+
+```bash
+# Run full codebase review (medium+ severity)
+~/.aidevops/agents/scripts/review-pulse-helper.sh run
+
+# View findings
+~/.aidevops/agents/scripts/review-pulse-helper.sh findings
+
+# Generate task suggestions (dry run)
+~/.aidevops/agents/scripts/review-pulse-helper.sh tasks --dry-run
+
+# Check status and history
+~/.aidevops/agents/scripts/review-pulse-helper.sh status
+~/.aidevops/agents/scripts/review-pulse-helper.sh history
+```
+
+The pulse runs automatically via GitHub Actions (`.github/workflows/review-pulse.yml`)
+daily at 3 AM UTC, or can be triggered manually via `workflow_dispatch`.
+
+Findings are stored in `~/.aidevops/.agent-workspace/work/review-pulse/findings/`
+as JSON files with severity classification, false positive filtering, and stats.
 
 ## Troubleshooting
 
