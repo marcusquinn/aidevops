@@ -70,7 +70,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t185.3 Add memory lifecycle states (active/graduated/pruned) ~30m blocked-by:t185.1
     - Notes: Add status column to learnings table: active (default), graduated (moved to docs, link to file:line), pruned (resolved, link to PR#). Graduated memories stay in DB as audit trail but don't appear in recall. This enables the full lifecycle: capture -> validate -> graduate -> prune.
   - Notes: Closes the self-improvement loop. Currently memories accumulate but nothing reviews them for action. This session manually audited 881 memories down to 26, created 6 tasks (t179-t184), and pruned 855 entries. That process should be automated. The pulse checks for: recurring errors needing fix tasks, resolved issues to prune, validated learnings to graduate into shared docs.
-- [ ] t184 Graduate validated memories into shared docs — move local learnings into codebase so all users benefit #docs #self-improvement ~1h (ai:45m test:15m) ref:GH#674 logged:2026-02-08
+- [ ] t184 Graduate validated memories into shared docs — move local learnings into codebase so all users benefit #docs #self-improvement ~1h (ai:45m test:15m) ref:GH#674 assignee:marcusquinn started:2026-02-08T23:07:28Z logged:2026-02-08
   - [ ] t184.1 Add supervisor architecture decisions to architecture.md ~15m blocked-by:none
     - Notes: 7 DECISION memories about supervisor role (pure control plane, never does worker tasks, self-improving dispatch loop), agent tiers (draft/custom/shared), evaluation priority order, concurrency limits. These are framework-defining decisions that new users and contributors need.
   - [ ] t184.2 Add macOS bash 3.2 constraints and model routing to code-standards.md ~15m blocked-by:none
