@@ -33,6 +33,7 @@
 #   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] [--skip-review-triage] Handle post-PR lifecycle
 #   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
 #   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
+#   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
 #   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
 #   supervisor-helper.sh backup [reason]               Backup supervisor database (t162)
 #   supervisor-helper.sh restore [backup_file]         Restore from backup (lists if no file) (t162)
@@ -53,6 +54,11 @@
 #   complete -> pr_review -> merging -> merged -> deploying -> deployed
 #   Workers exit after PR creation. Supervisor handles remaining stages:
 #   wait for CI, merge (squash), postflight, deploy, worktree cleanup.
+#
+# Post-merge verification (t180):
+#   deployed -> verifying -> verified    (all checks pass)
+#                         -> verify_failed (some checks fail)
+#   Runs check: directives from todo/VERIFY.md (file-exists, shellcheck, rg, bash).
 #
 # Outcome evaluation (4-tier):
 #   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
@@ -105,7 +111,7 @@ readonly SESSION_DISTILL_HELPER="${SCRIPT_DIR}/session-distill-helper.sh" # Used
 export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER
 
 # Valid states for the state machine
-readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed blocked failed cancelled"
+readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed verifying verified verify_failed blocked failed cancelled"
 
 # Valid state transitions (from:to pairs)
 # Format: "from_state:to_state" - checked by validate_transition()
@@ -147,7 +153,15 @@ readonly -a VALID_TRANSITIONS=(
     "merged:deployed"
     "deploying:deployed"
     "deploying:failed"
+    # Post-merge verification transitions (t180)
+    "deployed:verifying"
+    "deployed:verified"
     "deployed:cancelled"
+    "verifying:verified"
+    "verifying:verify_failed"
+    "verify_failed:verifying"
+    "verify_failed:cancelled"
+    "verified:cancelled"
 )
 
 readonly BOLD='\033[1m'
@@ -639,7 +653,7 @@ CREATE TABLE tasks (
     repo            TEXT NOT NULL,
     description     TEXT,
     status          TEXT NOT NULL DEFAULT 'queued'
-                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','verifying','verified','verify_failed','blocked','failed','cancelled')),
     session_id      TEXT,
     worktree        TEXT,
     branch          TEXT,
@@ -750,7 +764,7 @@ CREATE TABLE tasks (
     repo            TEXT NOT NULL,
     description     TEXT,
     status          TEXT NOT NULL DEFAULT 'queued'
-                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','verifying','verified','verify_failed','blocked','failed','cancelled')),
     session_id      TEXT,
     worktree        TEXT,
     branch          TEXT,
@@ -786,6 +800,50 @@ MIGRATE_T148
         log_success "Database schema migrated for review_triage state"
     fi
 
+    # Migration: add verifying/verified/verify_failed states to CHECK constraint (t180)
+    # Check if the current schema already supports verify states
+    local has_verify_states
+    has_verify_states=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
+    if [[ -n "$has_verify_states" ]] && ! echo "$has_verify_states" | grep -q "verifying"; then
+        backup_db "pre-migrate-t180" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
+        log_info "Migrating database schema for post-merge verification states (t180)..."
+        db "$SUPERVISOR_DB" << 'MIGRATE_T180'
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+ALTER TABLE tasks RENAME TO tasks_old_t180;
+CREATE TABLE tasks (
+    id              TEXT PRIMARY KEY,
+    repo            TEXT NOT NULL,
+    description     TEXT,
+    status          TEXT NOT NULL DEFAULT 'queued'
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','verifying','verified','verify_failed','blocked','failed','cancelled')),
+    session_id      TEXT,
+    worktree        TEXT,
+    branch          TEXT,
+    log_file        TEXT,
+    retries         INTEGER NOT NULL DEFAULT 0,
+    max_retries     INTEGER NOT NULL DEFAULT 3,
+    model           TEXT DEFAULT 'anthropic/claude-opus-4-6',
+    error           TEXT,
+    pr_url          TEXT,
+    issue_url       TEXT,
+    diagnostic_of   TEXT,
+    triage_result   TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    started_at      TEXT,
+    completed_at    TEXT,
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+INSERT INTO tasks SELECT * FROM tasks_old_t180;
+DROP TABLE tasks_old_t180;
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_diagnostic ON tasks(diagnostic_of);
+COMMIT;
+PRAGMA foreign_keys=ON;
+MIGRATE_T180
+        log_success "Database schema migrated for post-merge verification states"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -812,7 +870,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     repo            TEXT NOT NULL,
     description     TEXT,
     status          TEXT NOT NULL DEFAULT 'queued'
-                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','blocked','failed','cancelled')),
+                    CHECK(status IN ('queued','dispatched','running','evaluating','retrying','complete','pr_review','review_triage','merging','merged','deploying','deployed','verifying','verified','verify_failed','blocked','failed','cancelled')),
     session_id      TEXT,
     worktree        TEXT,
     branch          TEXT,
@@ -1194,7 +1252,7 @@ cmd_transition() {
     fi
 
     # Set completed_at on terminal states
-    if [[ "$new_state" == "complete" || "$new_state" == "deployed" || "$new_state" == "failed" || "$new_state" == "cancelled" ]]; then
+    if [[ "$new_state" == "complete" || "$new_state" == "deployed" || "$new_state" == "verified" || "$new_state" == "failed" || "$new_state" == "cancelled" ]]; then
         update_parts+=("completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
     fi
 
@@ -1408,7 +1466,7 @@ check_batch_completion() {
             SELECT count(*) FROM batch_tasks bt
             JOIN tasks t ON bt.task_id = t.id
             WHERE bt.batch_id = '$escaped_batch'
-            AND t.status NOT IN ('complete', 'deployed', 'merged', 'failed', 'cancelled');
+            AND t.status NOT IN ('complete', 'deployed', 'verified', 'merged', 'failed', 'cancelled');
         ")
 
         if [[ "$incomplete" -eq 0 ]]; then
@@ -1490,10 +1548,10 @@ cmd_status() {
             local color="$NC"
             case "$state" in
                 running|dispatched) color="$GREEN" ;;
-                evaluating|retrying|pr_review|review_triage|merging|deploying) color="$YELLOW" ;;
-                blocked|failed) color="$RED" ;;
+                evaluating|retrying|pr_review|review_triage|merging|deploying|verifying) color="$YELLOW" ;;
+                blocked|failed|verify_failed) color="$RED" ;;
                 complete|merged) color="$CYAN" ;;
-                deployed) color="$GREEN" ;;
+                deployed|verified) color="$GREEN" ;;
             esac
             echo -e "  ${color}${state}${NC}: $count"
         done
@@ -1642,10 +1700,10 @@ cmd_status() {
             local color="$NC"
             case "$tstatus" in
                 running|dispatched) color="$GREEN" ;;
-                evaluating|retrying|pr_review|review_triage|merging|deploying) color="$YELLOW" ;;
-                blocked|failed) color="$RED" ;;
+                evaluating|retrying|pr_review|review_triage|merging|deploying|verifying) color="$YELLOW" ;;
+                blocked|failed|verify_failed) color="$RED" ;;
                 complete|merged) color="$CYAN" ;;
-                deployed) color="$GREEN" ;;
+                deployed|verified) color="$GREEN" ;;
             esac
             local desc_short
             desc_short=$(echo "$tdesc" | head -c 60)
@@ -1731,10 +1789,10 @@ cmd_list() {
             local color="$NC"
             case "$tstatus" in
                 running|dispatched) color="$GREEN" ;;
-                evaluating|retrying|pr_review|review_triage|merging|deploying) color="$YELLOW" ;;
-                blocked|failed) color="$RED" ;;
+                evaluating|retrying|pr_review|review_triage|merging|deploying|verifying) color="$YELLOW" ;;
+                blocked|failed|verify_failed) color="$RED" ;;
                 complete|merged) color="$CYAN" ;;
-                deployed) color="$GREEN" ;;
+                deployed|verified) color="$GREEN" ;;
             esac
             local desc_short
             desc_short=$(echo "$tdesc" | head -c 60)
@@ -5024,6 +5082,9 @@ cmd_pr_lifecycle() {
             # Update TODO.md (non-blocking: housekeeping)
             update_todo_on_complete "$task_id" || log_warn "TODO.md update issue for $task_id (non-blocking)"
 
+            # Populate VERIFY.md queue for post-merge verification (t180.2)
+            populate_verify_queue "$task_id" "$tpr" "$trepo" 2>>"$SUPERVISOR_LOG" || log_warn "Verify queue population issue for $task_id (non-blocking)"
+
             # Final transition
             cmd_transition "$task_id" "deployed" || log_warn "Failed to transition $task_id to deployed"
 
@@ -5410,6 +5471,10 @@ cmd_pulse() {
     # Process tasks that workers completed (PR created) but still need merge/deploy
     process_post_pr_lifecycle "${batch_id:-}" 2>/dev/null || true
 
+    # Phase 3b: Post-merge verification (t180.4)
+    # Run check: directives from VERIFY.md for deployed tasks
+    process_verify_queue "${batch_id:-}" 2>/dev/null || true
+
     # Phase 4: Worker health checks - detect dead, hung, and orphaned workers
     local worker_timeout_seconds="${SUPERVISOR_WORKER_TIMEOUT:-1800}"  # 30 min default
 
@@ -5509,9 +5574,11 @@ cmd_pulse() {
     local total_queued
     total_queued=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';")
     local total_complete
-    total_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed');")
+    total_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed', 'verified');")
     local total_pr_review
     total_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'review_triage', 'merging', 'merged', 'deploying');")
+    local total_verifying
+    total_verifying=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('verifying', 'verify_failed');")
 
     local total_failed
     total_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('failed', 'blocked');")
@@ -5540,6 +5607,7 @@ cmd_pulse() {
     log_info "  Running:    $total_running"
     log_info "  Queued:     $total_queued"
     log_info "  Post-PR:    $total_pr_review"
+    log_info "  Verifying:  $total_verifying"
     log_info "  Total done: $total_complete / $total_tasks"
 
     # Resource stats (t135.15.3)
@@ -5604,7 +5672,7 @@ cmd_pulse() {
             local cleanup_status
             cleanup_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$cleanup_tid")';" 2>/dev/null || echo "")
             case "$cleanup_status" in
-                complete|failed|cancelled|blocked|deployed|pr_review|review_triage|merging|merged|deploying)
+                complete|failed|cancelled|blocked|deployed|verified|verify_failed|pr_review|review_triage|merging|merged|deploying|verifying)
                     cleanup_worker_processes "$cleanup_tid" 2>/dev/null || true
                     orphan_killed=$((orphan_killed + 1))
                     ;;
@@ -5688,7 +5756,7 @@ cmd_cleanup() {
     terminal_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT id, worktree, repo, status FROM tasks
         WHERE worktree IS NOT NULL AND worktree != ''
-        AND status IN ('deployed', 'merged', 'failed', 'cancelled');
+        AND status IN ('deployed', 'verified', 'merged', 'failed', 'cancelled');
     ")
 
     if [[ -z "$terminal_tasks" ]]; then
@@ -6089,6 +6157,478 @@ verify_task_deliverables() {
     local file_count
     file_count=$(echo "$substantive_files" | wc -l | tr -d ' ')
     log_info "Verified $task_id: PR #$pr_number merged with $file_count substantive file(s)"
+    return 0
+}
+
+#######################################
+# Populate VERIFY.md queue after PR merge (t180.2)
+# Extracts changed files from the PR and generates check: directives
+# based on file types (shellcheck for .sh, file-exists for new files, etc.)
+# Appends a new entry to the VERIFY-QUEUE in todo/VERIFY.md
+#######################################
+populate_verify_queue() {
+    local task_id="$1"
+    local pr_url="${2:-}"
+    local repo="${3:-}"
+
+    if [[ -z "$repo" ]]; then
+        log_warn "populate_verify_queue: no repo for $task_id"
+        return 1
+    fi
+
+    local verify_file="$repo/todo/VERIFY.md"
+    if [[ ! -f "$verify_file" ]]; then
+        log_info "No VERIFY.md at $verify_file — skipping verify queue population"
+        return 0
+    fi
+
+    # Extract PR number and repo slug
+    local pr_number repo_slug
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+    repo_slug=$(echo "$pr_url" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+
+    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+        log_warn "populate_verify_queue: cannot parse PR URL for $task_id: $pr_url"
+        return 1
+    fi
+
+    # Check if this task already has a verify entry (idempotency)
+    if grep -q "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
+        log_info "Verify entry already exists for $task_id in VERIFY.md"
+        return 0
+    fi
+
+    # Get changed files from PR
+    local changed_files
+    if ! changed_files=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>>"$SUPERVISOR_LOG"); then
+        log_warn "populate_verify_queue: failed to fetch PR files for $task_id (#$pr_number)"
+        return 1
+    fi
+
+    if [[ -z "$changed_files" ]]; then
+        log_info "No files changed in PR #$pr_number for $task_id"
+        return 0
+    fi
+
+    # Filter to substantive files (skip TODO.md, planning files)
+    local substantive_files
+    substantive_files=$(echo "$changed_files" | grep -vE '^(TODO\.md$|todo/)' || true)
+
+    if [[ -z "$substantive_files" ]]; then
+        log_info "No substantive files in PR #$pr_number for $task_id — skipping verify"
+        return 0
+    fi
+
+    # Get task description from DB
+    local task_desc
+    task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "$task_id")
+    # Truncate long descriptions
+    if [[ ${#task_desc} -gt 60 ]]; then
+        task_desc="${task_desc:0:57}..."
+    fi
+
+    # Determine next verify ID
+    local last_vnum
+    last_vnum=$(grep -oE 'v[0-9]+' "$verify_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
+    local next_vnum=$((last_vnum + 1))
+    local verify_id
+    verify_id=$(printf "v%03d" "$next_vnum")
+
+    local today
+    today=$(date +%Y-%m-%d)
+
+    # Build the verify entry
+    local entry=""
+    entry+="- [ ] $verify_id $task_id $task_desc | PR #$pr_number | merged:$today"
+    entry+=$'\n'
+    entry+="  files: $(echo "$substantive_files" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')"
+
+    # Generate check directives based on file types
+    local checks=""
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        case "$file" in
+            *.sh)
+                checks+=$'\n'"  check: shellcheck $file"
+                checks+=$'\n'"  check: file-exists $file"
+                ;;
+            *.md)
+                checks+=$'\n'"  check: file-exists $file"
+                ;;
+            *.toon)
+                checks+=$'\n'"  check: file-exists $file"
+                ;;
+            *.yml|*.yaml)
+                checks+=$'\n'"  check: file-exists $file"
+                ;;
+            *.json)
+                checks+=$'\n'"  check: file-exists $file"
+                ;;
+            *)
+                checks+=$'\n'"  check: file-exists $file"
+                ;;
+        esac
+    done <<< "$substantive_files"
+
+    # Also add subagent-index check if any .md files in .agents/ were changed
+    if echo "$substantive_files" | grep -qE '\.agents/.*\.md$'; then
+        local base_names
+        base_names=$(echo "$substantive_files" | grep -E '\.agents/.*\.md$' | xargs -I{} basename {} .md || true)
+        while IFS= read -r bname; do
+            [[ -z "$bname" ]] && continue
+            # Only check for subagent-index entries for tool/service/workflow files
+            if echo "$substantive_files" | grep -qE "\.agents/(tools|services|workflows)/.*${bname}\.md$"; then
+                checks+=$'\n'"  check: rg \"$bname\" .agents/subagent-index.toon"
+            fi
+        done <<< "$base_names"
+    fi
+
+    entry+="$checks"
+
+    # Append to VERIFY.md before the end marker
+    if grep -q '<!-- VERIFY-QUEUE-END -->' "$verify_file"; then
+        # Insert before the end marker
+        local temp_file
+        temp_file=$(mktemp)
+        awk -v entry="$entry" '
+            /<!-- VERIFY-QUEUE-END -->/ {
+                print entry
+                print ""
+            }
+            { print }
+        ' "$verify_file" > "$temp_file"
+        mv "$temp_file" "$verify_file"
+    else
+        # No end marker — append to end of file
+        echo "" >> "$verify_file"
+        echo "$entry" >> "$verify_file"
+    fi
+
+    log_success "Added verify entry $verify_id for $task_id to VERIFY.md"
+    return 0
+}
+
+#######################################
+# Run verification checks for a task from VERIFY.md (t180.3)
+# Parses the verify entry, executes each check: directive, and
+# marks the entry as [x] (pass) or [!] (fail)
+# Returns 0 if all checks pass, 1 if any fail
+#######################################
+run_verify_checks() {
+    local task_id="$1"
+    local repo="${2:-}"
+
+    if [[ -z "$repo" ]]; then
+        log_warn "run_verify_checks: no repo for $task_id"
+        return 1
+    fi
+
+    local verify_file="$repo/todo/VERIFY.md"
+    if [[ ! -f "$verify_file" ]]; then
+        log_info "No VERIFY.md at $verify_file — nothing to verify"
+        return 0
+    fi
+
+    # Find the verify entry for this task (pending entries only)
+    local entry_line
+    entry_line=$(grep -n "^- \[ \] v[0-9]* $task_id " "$verify_file" | head -1 || echo "")
+
+    if [[ -z "$entry_line" ]]; then
+        log_info "No pending verify entry for $task_id in VERIFY.md"
+        return 0
+    fi
+
+    local line_num="${entry_line%%:*}"
+    local verify_id
+    verify_id=$(echo "$entry_line" | grep -oE 'v[0-9]+' | head -1 || echo "")
+
+    log_info "Running verification checks for $task_id ($verify_id)..."
+
+    # Extract check: directives from subsequent indented lines
+    local checks=()
+    local check_line=$((line_num + 1))
+    local total_lines
+    total_lines=$(wc -l < "$verify_file")
+
+    while [[ "$check_line" -le "$total_lines" ]]; do
+        local line
+        line=$(sed -n "${check_line}p" "$verify_file")
+        # Stop at next entry or blank line (entries are separated by blank lines)
+        if [[ -z "$line" || "$line" =~ ^-\ \[ ]]; then
+            break
+        fi
+        # Extract check: directives
+        if [[ "$line" =~ ^[[:space:]]*check:[[:space:]]*(.*) ]]; then
+            checks+=("${BASH_REMATCH[1]}")
+        fi
+        check_line=$((check_line + 1))
+    done
+
+    if [[ ${#checks[@]} -eq 0 ]]; then
+        log_info "No check: directives found for $task_id — marking verified"
+        mark_verify_entry "$verify_file" "$task_id" "pass" ""
+        return 0
+    fi
+
+    local all_passed=true
+    local failures=()
+
+    for check_cmd in "${checks[@]}"; do
+        local check_type="${check_cmd%% *}"
+        local check_arg="${check_cmd#* }"
+
+        log_info "  check: $check_cmd"
+
+        case "$check_type" in
+            file-exists)
+                if [[ -f "$repo/$check_arg" ]]; then
+                    log_success "    PASS: $check_arg exists"
+                else
+                    log_error "    FAIL: $check_arg not found"
+                    all_passed=false
+                    failures+=("file-exists: $check_arg not found")
+                fi
+                ;;
+            shellcheck)
+                if command -v shellcheck &>/dev/null; then
+                    if shellcheck "$repo/$check_arg" 2>>"$SUPERVISOR_LOG"; then
+                        log_success "    PASS: shellcheck $check_arg"
+                    else
+                        log_error "    FAIL: shellcheck $check_arg"
+                        all_passed=false
+                        failures+=("shellcheck: $check_arg has violations")
+                    fi
+                else
+                    log_warn "    SKIP: shellcheck not installed"
+                fi
+                ;;
+            rg)
+                # rg "pattern" file — check pattern exists in file
+                local rg_pattern rg_file
+                # Parse: rg "pattern" file or rg 'pattern' file
+                if [[ "$check_arg" =~ ^[\"\'](.+)[\"\'][[:space:]]+(.+)$ ]]; then
+                    rg_pattern="${BASH_REMATCH[1]}"
+                    rg_file="${BASH_REMATCH[2]}"
+                else
+                    # Fallback: first word is pattern, rest is file
+                    rg_pattern="${check_arg%% *}"
+                    rg_file="${check_arg#* }"
+                fi
+                if rg -q "$rg_pattern" "$repo/$rg_file" 2>/dev/null; then
+                    log_success "    PASS: rg \"$rg_pattern\" $rg_file"
+                else
+                    log_error "    FAIL: pattern \"$rg_pattern\" not found in $rg_file"
+                    all_passed=false
+                    failures+=("rg: \"$rg_pattern\" not found in $rg_file")
+                fi
+                ;;
+            bash)
+                if (cd "$repo" && bash "$check_arg" 2>>"$SUPERVISOR_LOG"); then
+                    log_success "    PASS: bash $check_arg"
+                else
+                    log_error "    FAIL: bash $check_arg"
+                    all_passed=false
+                    failures+=("bash: $check_arg failed")
+                fi
+                ;;
+            *)
+                log_warn "    SKIP: unknown check type '$check_type'"
+                ;;
+        esac
+    done
+
+    local today
+    today=$(date +%Y-%m-%d)
+
+    if [[ "$all_passed" == "true" ]]; then
+        mark_verify_entry "$verify_file" "$task_id" "pass" "$today"
+        log_success "All verification checks passed for $task_id ($verify_id)"
+        return 0
+    else
+        local failure_reason
+        failure_reason=$(printf '%s; ' "${failures[@]}")
+        failure_reason="${failure_reason%; }"
+        mark_verify_entry "$verify_file" "$task_id" "fail" "$today" "$failure_reason"
+        log_error "Verification failed for $task_id ($verify_id): $failure_reason"
+        return 1
+    fi
+}
+
+#######################################
+# Mark a verify entry as passed [x] or failed [!] in VERIFY.md (t180.3)
+#######################################
+mark_verify_entry() {
+    local verify_file="$1"
+    local task_id="$2"
+    local result="$3"
+    local today="${4:-$(date +%Y-%m-%d)}"
+    local reason="${5:-}"
+
+    if [[ "$result" == "pass" ]]; then
+        # Mark [x] and add verified:date
+        sed -i.bak "s/^- \[ \] \(v[0-9]* $task_id .*\)/- [x] \1 verified:$today/" "$verify_file"
+    else
+        # Mark [!] and add failed:date reason:description
+        local escaped_reason
+        escaped_reason=$(echo "$reason" | sed 's/[&/\]/\\&/g' | head -c 200)
+        sed -i.bak "s/^- \[ \] \(v[0-9]* $task_id .*\)/- [!] \1 failed:$today reason:$escaped_reason/" "$verify_file"
+    fi
+    rm -f "${verify_file}.bak"
+
+    return 0
+}
+
+#######################################
+# Process verification queue — run checks for deployed tasks (t180.3)
+# Scans VERIFY.md for pending entries, runs checks, updates states
+# Called from pulse Phase 6
+#######################################
+process_verify_queue() {
+    local batch_id="${1:-}"
+
+    ensure_db
+
+    # Find deployed tasks that need verification
+    local deployed_tasks
+    local where_clause="t.status = 'deployed'"
+    if [[ -n "$batch_id" ]]; then
+        where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_id")')"
+    fi
+
+    deployed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT t.id, t.repo, t.pr_url FROM tasks t
+        WHERE $where_clause
+        ORDER BY t.updated_at ASC;
+    ")
+
+    if [[ -z "$deployed_tasks" ]]; then
+        return 0
+    fi
+
+    local verified_count=0
+    local failed_count=0
+
+    while IFS='|' read -r tid trepo tpr; do
+        [[ -z "$tid" ]] && continue
+
+        local verify_file="$trepo/todo/VERIFY.md"
+        if [[ ! -f "$verify_file" ]]; then
+            continue
+        fi
+
+        # Check if there's a pending verify entry for this task
+        if ! grep -q "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
+            continue
+        fi
+
+        log_info "  $tid: running verification checks"
+        cmd_transition "$tid" "verifying" 2>>"$SUPERVISOR_LOG" || {
+            log_warn "  $tid: failed to transition to verifying"
+            continue
+        }
+
+        if run_verify_checks "$tid" "$trepo"; then
+            cmd_transition "$tid" "verified" 2>>"$SUPERVISOR_LOG" || true
+            verified_count=$((verified_count + 1))
+            log_success "  $tid: VERIFIED"
+        else
+            cmd_transition "$tid" "verify_failed" 2>>"$SUPERVISOR_LOG" || true
+            failed_count=$((failed_count + 1))
+            log_warn "  $tid: VERIFY FAILED"
+            send_task_notification "$tid" "verify_failed" "Post-merge verification failed" 2>>"$SUPERVISOR_LOG" || true
+        fi
+    done <<< "$deployed_tasks"
+
+    if [[ $((verified_count + failed_count)) -gt 0 ]]; then
+        log_info "Verification: $verified_count passed, $failed_count failed"
+    fi
+
+    return 0
+}
+
+#######################################
+# Command: verify — manually run verification for a task (t180.3)
+#######################################
+cmd_verify() {
+    local task_id=""
+
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+        task_id="$1"
+        shift
+    fi
+
+    if [[ -z "$task_id" ]]; then
+        log_error "Usage: supervisor-helper.sh verify <task_id>"
+        return 1
+    fi
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT status, repo, pr_url FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_error "Task not found: $task_id"
+        return 1
+    fi
+
+    local tstatus trepo tpr
+    IFS='|' read -r tstatus trepo tpr <<< "$task_row"
+
+    # Allow verify from deployed or verify_failed states
+    if [[ "$tstatus" != "deployed" && "$tstatus" != "verify_failed" ]]; then
+        log_error "Task $task_id is in state '$tstatus' — must be 'deployed' or 'verify_failed' to verify"
+        return 1
+    fi
+
+    cmd_transition "$task_id" "verifying" 2>>"$SUPERVISOR_LOG" || {
+        log_error "Failed to transition $task_id to verifying"
+        return 1
+    }
+
+    if run_verify_checks "$task_id" "$trepo"; then
+        cmd_transition "$task_id" "verified" 2>>"$SUPERVISOR_LOG" || true
+        log_success "Task $task_id: VERIFIED"
+
+        # Commit and push VERIFY.md changes
+        commit_verify_changes "$trepo" "$task_id" "pass" 2>>"$SUPERVISOR_LOG" || true
+        return 0
+    else
+        cmd_transition "$task_id" "verify_failed" 2>>"$SUPERVISOR_LOG" || true
+        log_error "Task $task_id: VERIFY FAILED"
+
+        # Commit and push VERIFY.md changes
+        commit_verify_changes "$trepo" "$task_id" "fail" 2>>"$SUPERVISOR_LOG" || true
+        return 1
+    fi
+}
+
+#######################################
+# Commit and push VERIFY.md changes after verification (t180.3)
+#######################################
+commit_verify_changes() {
+    local repo="$1"
+    local task_id="$2"
+    local result="$3"
+
+    local verify_file="$repo/todo/VERIFY.md"
+    if [[ ! -f "$verify_file" ]]; then
+        return 0
+    fi
+
+    # Check if there are changes to commit
+    if ! git -C "$repo" diff --quiet -- "todo/VERIFY.md" 2>/dev/null; then
+        local msg="chore: mark $task_id verification $result in VERIFY.md [skip ci]"
+        git -C "$repo" add "todo/VERIFY.md" 2>>"$SUPERVISOR_LOG" || return 1
+        git -C "$repo" commit -m "$msg" 2>>"$SUPERVISOR_LOG" || return 1
+        git -C "$repo" push origin main 2>>"$SUPERVISOR_LOG" || return 1
+        log_info "Committed VERIFY.md update for $task_id ($result)"
+    fi
+
     return 0
 }
 
@@ -7205,7 +7745,7 @@ cmd_update_todo() {
     fi
 
     case "$tstatus" in
-        complete|deployed|merged)
+        complete|deployed|merged|verified)
             update_todo_on_complete "$task_id"
             ;;
         blocked)
@@ -7249,8 +7789,8 @@ cmd_reconcile_todo() {
 
     ensure_db
 
-    # Find completed/deployed/merged tasks
-    local where_clause="t.status IN ('complete', 'deployed', 'merged')"
+    # Find completed/deployed/merged/verified tasks
+    local where_clause="t.status IN ('complete', 'deployed', 'merged', 'verified')"
     if [[ -n "$batch_id" ]]; then
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
@@ -7732,10 +8272,11 @@ cmd_dashboard() {
         local status="$1"
         case "$status" in
             running|dispatched) printf '%s' "${c_green}" ;;
-            evaluating|retrying|pr_review|review_triage|merging|deploying) printf '%s' "${c_yellow}" ;;
-            blocked|failed) printf '%s' "${c_red}" ;;
+            evaluating|retrying|pr_review|review_triage|merging|deploying|verifying) printf '%s' "${c_yellow}" ;;
+            blocked|failed|verify_failed) printf '%s' "${c_red}" ;;
             complete|merged) printf '%s' "${c_cyan}" ;;
             deployed) printf '%s' "${c_green}${c_bold}" ;;
+            verified) printf '%s' "${c_green}${c_bold}" ;;
             queued) printf '%s' "${c_white}" ;;
             cancelled) printf '%s' "${c_dim}" ;;
             *) printf '%s' "${c_reset}" ;;
@@ -7757,6 +8298,9 @@ cmd_dashboard() {
             merged) printf '%s' "=" ;;
             deploying) printf '%s' "D" ;;
             deployed) printf '%s' "*" ;;
+            verifying) printf '%s' "V" ;;
+            verified) printf '%s' "#" ;;
+            verify_failed) printf '%s' "!" ;;
             blocked) printf '%s' "X" ;;
             failed) printf '%s' "x" ;;
             queued) printf '%s' "." ;;
@@ -8167,6 +8711,7 @@ Usage:
   supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] [--skip-review-triage] Handle post-PR lifecycle
   supervisor-helper.sh pr-check <task_id>             Check PR CI/review status
   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
+  supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
@@ -8355,12 +8900,16 @@ Post-PR Lifecycle (t128.8, t148):
     4. merged: Pull main, run postflight verification
     5. deploying: Run setup.sh (aidevops repos only)
     6. deployed: Clean up worktree and branch, update TODO.md
+    7. verifying: Run check: directives from VERIFY.md (t180)
+    8. verified: All checks pass — task fully confirmed
 
   Automatic: pulse cycle Phase 3 processes all eligible tasks each run
+  Automatic: pulse cycle Phase 3b runs verification for deployed tasks (t180)
   Manual commands:
     supervisor-helper.sh pr-check <task_id>              # Check CI/review status
     supervisor-helper.sh pr-merge <task_id> [--dry-run]  # Merge PR
     supervisor-helper.sh pr-lifecycle <task_id> [--dry-run] [--skip-review-triage] # Full lifecycle
+    supervisor-helper.sh verify <task_id>                # Run verification checks
 
   CI pending tasks are retried on the next pulse (no state change).
   CI failures and review rejections transition to 'blocked' for human action.
@@ -8373,6 +8922,9 @@ Options for 'pr-check':
 
 Options for 'pr-merge':
   --dry-run              Show what would happen without executing
+
+Options for 'verify':
+  (no options)           Runs check: directives from VERIFY.md for the task
 
 Options for 'auto-pickup':
   --repo <path>          Repository with TODO.md (default: current directory)
@@ -8451,6 +9003,7 @@ main() {
         pr-lifecycle) cmd_pr_lifecycle "$@" ;;
         pr-check) cmd_pr_check "$@" ;;
         pr-merge) cmd_pr_merge "$@" ;;
+        verify) cmd_verify "$@" ;;
         self-heal) cmd_self_heal "$@" ;;
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
