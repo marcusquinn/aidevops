@@ -22,6 +22,7 @@ tools:
 - **Conflict markers**: `<<<<<<<` (ours), `|||||||` (base, with diff3), `=======`, `>>>>>>>` (theirs)
 - **Strategy options**: `-Xours` (our side wins conflicts), `-Xtheirs` (their side wins), `-Xignore-space-change`
 - **Key commands**: `git merge --abort`, `git checkout --ours/--theirs <file>`, `git log --merge -p`
+- **Resolution rules**: Diff is truth, surgical resolution, structure vs values, check migrations (see Intent-Based Resolution Rules)
 
 **Decision Tree** -- when you hit a conflict:
 
@@ -291,6 +292,38 @@ git cherry-pick --no-rerere-autoupdate <commit>
 git rerere diff                 # inspect what rerere did
 git add .                       # stage only if satisfied
 ```
+
+## Intent-Based Resolution Rules
+
+Before resolving any conflict, understand what each side actually changed (see Investigating Conflicts above for full command list). Additionally, check file history for migrations:
+
+```bash
+git log --oneline --follow -- <file>        # check if file was migrated/renamed
+```
+
+### Rule 1: Diff is the source of truth
+
+A conflict block shows the ENTIRE content from each side, not just the changes. Always compare against actual diffs (`git diff --ours`, `git diff --theirs`) to identify which lines were modified vs unchanged context.
+
+### Rule 2: Surgical resolution
+
+Resolve only lines actually changed by each side. Never accept an entire conflict block without verifying each line against the actual diff. Unchanged lines surrounding the conflict should remain as-is.
+
+### Rule 3: Structure from one side, values from the other
+
+When conflicts arise from infrastructure changes (package renames, import paths) on one side and business logic on the other: keep infrastructure changes from the side that made them, apply business values from the other side.
+
+### Rule 4: Modify/delete -- check for migration
+
+Do NOT blindly accept either side (see File Deleted on One Side above for basic commands). Check `git log --follow -- <file>` -- a deleted file may have been renamed, moved, or refactored into another file. If so, apply the modifications to its successor instead.
+
+### Rule 5: Custom values win over upstream defaults (rebase)
+
+When rebasing over upstream, custom values (sizes, colors, copy) take priority over upstream defaults. Upstream provides structure, customizations provide intent.
+
+### Rule 6: Clean up after resolution
+
+Remove orphaned imports and unused variables left behind after replacing code from one side with the other.
 
 ## AI-Assisted Conflict Resolution
 
