@@ -3812,24 +3812,6 @@ cmd_reprompt() {
         return 75
     fi
 
-    # Build re-prompt message with context about the failure
-    local reprompt_msg
-    if [[ -n "$prompt_override" ]]; then
-        reprompt_msg="$prompt_override"
-    elif [[ "$needs_fresh_worktree" == "true" ]]; then
-        reprompt_msg="/full-loop $task_id -- ${tdesc:-$task_id}
-
-NOTE: This is a clean-slate retry. The previous worktree was stale and has been recreated from main. Start fresh — do not look for previous work on this branch."
-    else
-        reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
-
-Please continue the /full-loop for $task_id. Pick up where the previous attempt left off.
-If the task was partially completed, verify what's done and continue from there.
-If it failed entirely, start fresh with /full-loop $task_id.
-
-Task description: ${tdesc:-$task_id}"
-    fi
-
     # Set up log file for this retry attempt
     local log_dir="$SUPERVISOR_DIR/logs"
     mkdir -p "$log_dir"
@@ -3838,6 +3820,8 @@ Task description: ${tdesc:-$task_id}"
 
     # Clean-slate retry: if the previous error suggests the worktree is stale
     # or the worker exited without producing a PR, recreate from fresh main.
+    # (t178: moved before prompt construction so $needs_fresh_worktree is set
+    # when the prompt message references it)
     local needs_fresh_worktree=false
     case "${terror:-}" in
         *clean_exit_no_signal*|*stale*|*diverged*|*worktree*) needs_fresh_worktree=true ;;
@@ -3859,10 +3843,48 @@ Task description: ${tdesc:-$task_id}"
         " 2>/dev/null || true
     fi
 
+    # (t178) Worktree missing but not a clean-slate case — recreate it.
+    # The worktree directory may have been removed between retries (manual
+    # cleanup, disk cleanup, wt prune, etc.). Without this, the worker
+    # falls back to the main repo which is wrong.
+    if [[ -n "$tworktree" && ! -d "$tworktree" && "$needs_fresh_worktree" != "true" ]]; then
+        log_warn "Worktree missing for $task_id ($tworktree) — recreating"
+        local new_worktree
+        new_worktree=$(create_task_worktree "$task_id" "$trepo") || {
+            log_error "Failed to recreate missing worktree for $task_id"
+            cmd_transition "$task_id" "failed" --error "Missing worktree recreation failed"
+            return 1
+        }
+        tworktree="$new_worktree"
+        db "$SUPERVISOR_DB" "
+            UPDATE tasks SET worktree = '$(sql_escape "$tworktree")'
+            WHERE id = '$(sql_escape "$task_id")';
+        " 2>/dev/null || true
+        needs_fresh_worktree=true
+    fi
+
     # Determine working directory
     local work_dir="$trepo"
     if [[ -n "$tworktree" && -d "$tworktree" ]]; then
         work_dir="$tworktree"
+    fi
+
+    # Build re-prompt message with context about the failure
+    local reprompt_msg
+    if [[ -n "$prompt_override" ]]; then
+        reprompt_msg="$prompt_override"
+    elif [[ "$needs_fresh_worktree" == "true" ]]; then
+        reprompt_msg="/full-loop $task_id -- ${tdesc:-$task_id}
+
+NOTE: This is a clean-slate retry. The previous worktree was stale and has been recreated from main. Start fresh — do not look for previous work on this branch."
+    else
+        reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
+
+Please continue the /full-loop for $task_id. Pick up where the previous attempt left off.
+If the task was partially completed, verify what's done and continue from there.
+If it failed entirely, start fresh with /full-loop $task_id.
+
+Task description: ${tdesc:-$task_id}"
     fi
 
     # Transition to dispatched
