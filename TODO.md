@@ -72,7 +72,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t163.4 Add supervisor verify phase after worker PR merge ~1.5h blocked-by:none
     - Notes: After merge, supervisor checks: file exists, not empty, ShellCheck pass for .sh, word count > threshold for .md. Only after verify -> [x] + issue close.
 
-- [ ] t164 Distributed task claiming via GitHub Issue assignees #plan #workflow #orchestration ~3h (ai:1.5h test:1h read:30m) logged:2026-02-08
+- [ ] t164 Distributed task claiming via GitHub Issue assignees #plan #workflow #orchestration ~3h (ai:1.5h test:1h read:30m) ref:GH#619 logged:2026-02-08
   - [ ] t164.1 Add claim/release commands to supervisor-helper.sh using gh issue assignee ~45m blocked-by:none
     - Notes: `supervisor-helper.sh claim tNNN` → finds GH issue by task ID, checks assignee, assigns @me if free, errors if taken. `release tNNN` → unassigns. Atomic via GitHub API — works across machines. Local DB updated as cache.
   - [ ] t164.2 Supervisor dispatch checks GitHub assignee before dispatching ~30m blocked-by:t164.1
