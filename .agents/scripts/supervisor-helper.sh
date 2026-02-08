@@ -3187,6 +3187,22 @@ cmd_dispatch() {
     local log_file
     log_file="$log_dir/${task_id}-$(date +%Y%m%d%H%M%S).log"
 
+    # Pre-create log file with dispatch metadata (t183)
+    # If the worker fails to start (opencode not found, permission error, etc.),
+    # the log file still exists with context for diagnosis instead of no_log_file.
+    {
+        echo "=== DISPATCH METADATA (t183) ==="
+        echo "task_id=$task_id"
+        echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "worktree=$worktree_path"
+        echo "branch=$branch_name"
+        echo "model=${tmodel:-default}"
+        echo "ai_cli=$(resolve_ai_cli 2>/dev/null || echo unknown)"
+        echo "dispatch_mode=$(detect_dispatch_mode 2>/dev/null || echo unknown)"
+        echo "=== END DISPATCH METADATA ==="
+        echo ""
+    } > "$log_file" 2>/dev/null || true
+
     # Transition to dispatched
     cmd_transition "$task_id" "dispatched" \
         --worktree "$worktree_path" \
@@ -3227,7 +3243,9 @@ cmd_dispatch() {
     local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-dispatch.sh"
     {
         echo '#!/usr/bin/env bash'
-        echo "cd '${worktree_path}' || exit 1"
+        echo "# Startup sentinel (t183): if this line appears in the log, the script started"
+        echo "echo 'WORKER_STARTED task_id=${task_id} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "cd '${worktree_path}' || { echo 'WORKER_FAILED: cd to worktree failed: ${worktree_path}'; exit 1; }"
         echo "export ${headless_env}"
         # Write each cmd_part as a properly quoted array element
         printf 'exec '
@@ -3236,20 +3254,34 @@ cmd_dispatch() {
     } > "$dispatch_script"
     chmod +x "$dispatch_script"
 
+    # Wrapper script (t183): captures errors from the dispatch script itself.
+    # Previous approach used nohup bash -c with &>/dev/null which swallowed
+    # errors when the dispatch script failed to start (e.g., opencode not found).
+    # Now errors are appended to the log file for diagnosis.
+    local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-wrapper.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "'${dispatch_script}' >> '${log_file}' 2>&1"
+        echo "rc=\$?"
+        echo "echo \"EXIT:\${rc}\" >> '${log_file}'"
+        echo "if [ \$rc -ne 0 ]; then"
+        echo "  echo \"WORKER_DISPATCH_ERROR: dispatch script exited with code \${rc}\" >> '${log_file}'"
+        echo "fi"
+    } > "$wrapper_script"
+    chmod +x "$wrapper_script"
+
     if [[ "$dispatch_mode" == "tabby" ]]; then
         # Tabby: attempt to open in a new tab via OSC 1337 escape sequence
         log_info "Opening Tabby tab for $task_id..."
-        local tab_cmd
-        tab_cmd="'${dispatch_script}' > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'"
-        printf '\e]1337;NewTab=%s\a' "$tab_cmd" 2>/dev/null || true
+        printf '\e]1337;NewTab=%s\a' "'${wrapper_script}'" 2>/dev/null || true
         # Also start background process as fallback (Tabby may not support OSC 1337)
         # Use nohup + disown to survive parent (cron) exit
-        nohup bash -c "'${dispatch_script}' > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
+        nohup bash "${wrapper_script}" &>/dev/null &
     else
         # Headless: background process
         # Use nohup + disown to survive parent (cron) exit — without this,
         # workers die after ~2 minutes when the cron pulse script exits
-        nohup bash -c "'${dispatch_script}' > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
+        nohup bash "${wrapper_script}" &>/dev/null &
     fi
 
     local worker_pid=$!
@@ -3389,6 +3421,22 @@ extract_log_metadata() {
     echo "log_bytes=$(wc -c < "$log_file" | tr -d ' ')"
     echo "log_lines=$(wc -l < "$log_file" | tr -d ' ')"
 
+    # Worker startup sentinel (t183)
+    if grep -q 'WORKER_STARTED' "$log_file" 2>/dev/null; then
+        echo "worker_started=true"
+    else
+        echo "worker_started=false"
+    fi
+
+    # Dispatch error sentinel (t183)
+    if grep -q 'WORKER_DISPATCH_ERROR\|WORKER_FAILED' "$log_file" 2>/dev/null; then
+        local dispatch_error
+        dispatch_error=$(grep -o 'WORKER_DISPATCH_ERROR:.*\|WORKER_FAILED:.*' "$log_file" 2>/dev/null | head -1 | head -c 200 || echo "")
+        echo "dispatch_error=${dispatch_error:-unknown}"
+    else
+        echo "dispatch_error="
+    fi
+
     # Completion signals
     if grep -q 'FULL_LOOP_COMPLETE' "$log_file" 2>/dev/null; then
         echo "signal=FULL_LOOP_COMPLETE"
@@ -3482,8 +3530,69 @@ evaluate_worker() {
     local tstatus tlog tretries tmax_retries tsession tpr_url
     IFS='|' read -r tstatus tlog tretries tmax_retries tsession tpr_url <<< "$task_row"
 
-    if [[ -z "$tlog" || ! -f "$tlog" ]]; then
-        echo "failed:no_log_file"
+    # Enhanced no_log_file diagnostics (t183)
+    # Instead of a bare "failed:no_log_file", gather context about why the log
+    # is missing so the supervisor can make better retry/block decisions and
+    # self-healing diagnostics have actionable information.
+    if [[ -z "$tlog" ]]; then
+        # No log path in DB at all — dispatch likely failed before setting log_file
+        local diag_detail="no_log_path_in_db"
+        local pid_file="$SUPERVISOR_DIR/pids/${task_id}.pid"
+        if [[ -f "$pid_file" ]]; then
+            local stale_pid
+            stale_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+            if [[ -n "$stale_pid" ]] && ! kill -0 "$stale_pid" 2>/dev/null; then
+                diag_detail="no_log_path_in_db:worker_pid_${stale_pid}_dead"
+            elif [[ -n "$stale_pid" ]]; then
+                diag_detail="no_log_path_in_db:worker_pid_${stale_pid}_alive"
+            fi
+        fi
+        echo "failed:${diag_detail}"
+        return 0
+    fi
+
+    if [[ ! -f "$tlog" ]]; then
+        # Log path set in DB but file doesn't exist — worker wrapper never ran
+        local diag_detail="log_file_missing"
+        local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-dispatch.sh"
+        local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-wrapper.sh"
+        if [[ ! -f "$dispatch_script" && ! -f "$wrapper_script" ]]; then
+            diag_detail="log_file_missing:no_dispatch_scripts"
+        elif [[ -f "$dispatch_script" && ! -x "$dispatch_script" ]]; then
+            diag_detail="log_file_missing:dispatch_script_not_executable"
+        fi
+        local pid_file="$SUPERVISOR_DIR/pids/${task_id}.pid"
+        if [[ -f "$pid_file" ]]; then
+            local stale_pid
+            stale_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+            if [[ -n "$stale_pid" ]] && ! kill -0 "$stale_pid" 2>/dev/null; then
+                diag_detail="${diag_detail}:worker_pid_${stale_pid}_dead"
+            fi
+        else
+            diag_detail="${diag_detail}:no_pid_file"
+        fi
+        echo "failed:${diag_detail}"
+        return 0
+    fi
+
+    # Log file exists but may be empty or contain only metadata header (t183)
+    local log_size
+    log_size=$(wc -c < "$tlog" 2>/dev/null | tr -d ' ')
+    if [[ "$log_size" -eq 0 ]]; then
+        echo "failed:log_file_empty"
+        return 0
+    fi
+
+    # Check if worker never started (only dispatch metadata, no WORKER_STARTED sentinel)
+    if [[ "$log_size" -lt 500 ]] && ! grep -q 'WORKER_STARTED' "$tlog" 2>/dev/null; then
+        # Log has metadata but worker never started — extract any error from log
+        local startup_error=""
+        startup_error=$(grep -i 'WORKER_FAILED\|WORKER_DISPATCH_ERROR\|command not found\|No such file\|Permission denied' "$tlog" 2>/dev/null | head -1 | head -c 200 || echo "")
+        if [[ -n "$startup_error" ]]; then
+            echo "failed:worker_never_started:$(echo "$startup_error" | tr ' ' '_' | tr -cd '[:alnum:]_:-')"
+        else
+            echo "failed:worker_never_started:no_sentinel"
+        fi
         return 0
     fi
 
@@ -3968,6 +4077,19 @@ If it failed entirely, start fresh with /full-loop $task_id.
 Task description: ${tdesc:-$task_id}"
     fi
 
+    # Pre-create log file with reprompt metadata (t183)
+    {
+        echo "=== REPROMPT METADATA (t183) ==="
+        echo "task_id=$task_id"
+        echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "retry=$tretries/$tmax_retries"
+        echo "work_dir=$work_dir"
+        echo "previous_error=${terror:-none}"
+        echo "fresh_worktree=$needs_fresh_worktree"
+        echo "=== END REPROMPT METADATA ==="
+        echo ""
+    } > "$new_log_file" 2>/dev/null || true
+
     # Transition to dispatched
     cmd_transition "$task_id" "dispatched" --log-file "$new_log_file"
 
@@ -3986,19 +4108,33 @@ Task description: ${tdesc:-$task_id}"
     # Ensure PID directory exists
     mkdir -p "$SUPERVISOR_DIR/pids"
 
-    # Write dispatch script to avoid bash -c quoting issues with multi-line prompts
+    # Write dispatch script with startup sentinel (t183)
     local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt.sh"
     {
         echo '#!/usr/bin/env bash'
-        echo "cd '${work_dir}' || exit 1"
+        echo "echo 'WORKER_STARTED task_id=${task_id} retry=${tretries} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
         printf 'exec '
         printf '%q ' "${cmd_parts[@]}"
         printf '\n'
     } > "$dispatch_script"
     chmod +x "$dispatch_script"
 
+    # Wrapper script (t183): captures dispatch errors in log file
+    local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt-wrapper.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "'${dispatch_script}' >> '${new_log_file}' 2>&1"
+        echo "rc=\$?"
+        echo "echo \"EXIT:\${rc}\" >> '${new_log_file}'"
+        echo "if [ \$rc -ne 0 ]; then"
+        echo "  echo \"WORKER_DISPATCH_ERROR: reprompt script exited with code \${rc}\" >> '${new_log_file}'"
+        echo "fi"
+    } > "$wrapper_script"
+    chmod +x "$wrapper_script"
+
     # Use nohup + disown to survive parent (cron) exit
-    nohup bash -c "'${dispatch_script}' > '${new_log_file}' 2>&1; echo \"EXIT:\$?\" >> '${new_log_file}'" &>/dev/null &
+    nohup bash "${wrapper_script}" &>/dev/null &
     local worker_pid=$!
     disown "$worker_pid" 2>/dev/null || true
 
@@ -4332,6 +4468,17 @@ Instructions:
     local log_file
     log_file="$log_dir/${task_id}-review-fix-$(date +%Y%m%d%H%M%S).log"
 
+    # Pre-create log file with review-fix metadata (t183)
+    {
+        echo "=== REVIEW-FIX METADATA (t183) ==="
+        echo "task_id=$task_id"
+        echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "work_dir=$work_dir"
+        echo "fix_threads=$fix_count"
+        echo "=== END REVIEW-FIX METADATA ==="
+        echo ""
+    } > "$log_file" 2>/dev/null || true
+
     # Transition to dispatched for the fix cycle
     cmd_transition "$task_id" "dispatched" --log-file "$log_file" 2>>"$SUPERVISOR_LOG" || true
 
@@ -4352,7 +4499,32 @@ Instructions:
 
     mkdir -p "$SUPERVISOR_DIR/pids"
 
-    nohup bash -c "cd '${work_dir}' && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
+    # Write dispatch script with startup sentinel (t183)
+    local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-review-fix.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "echo 'WORKER_STARTED task_id=${task_id} type=review-fix pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
+        printf 'exec '
+        printf '%q ' "${cmd_parts[@]}"
+        printf '\n'
+    } > "$dispatch_script"
+    chmod +x "$dispatch_script"
+
+    # Wrapper script (t183): captures dispatch errors in log file
+    local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-review-fix-wrapper.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "'${dispatch_script}' >> '${log_file}' 2>&1"
+        echo "rc=\$?"
+        echo "echo \"EXIT:\${rc}\" >> '${log_file}'"
+        echo "if [ \$rc -ne 0 ]; then"
+        echo "  echo \"WORKER_DISPATCH_ERROR: review-fix script exited with code \${rc}\" >> '${log_file}'"
+        echo "fi"
+    } > "$wrapper_script"
+    chmod +x "$wrapper_script"
+
+    nohup bash "${wrapper_script}" &>/dev/null &
     local worker_pid=$!
     disown "$worker_pid" 2>/dev/null || true
 
@@ -7039,8 +7211,11 @@ is_self_heal_eligible() {
     fi
 
     # Skip failures that require human intervention - no diagnostic can fix these
+    # Note (t183): no_log_file removed from exclusion list. With enhanced dispatch
+    # error capture, log files now contain diagnostic metadata even when workers
+    # fail to start, making self-healing viable for these failures.
     case "$failure_reason" in
-        auth_error|merge_conflict|out_of_memory|no_log_file|max_retries)
+        auth_error|merge_conflict|out_of_memory|max_retries)
             return 1
             ;;
     esac
