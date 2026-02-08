@@ -474,6 +474,19 @@ update_version_in_files() {
         print_warning "README.md not found, skipping version badge update"
     fi
     
+    # Update Homebrew formula version (SHA256 is updated by CI publish-packages.yml)
+    local formula_file="$REPO_ROOT/homebrew/aidevops.rb"
+    if [[ -f "$formula_file" ]]; then
+        sed_inplace "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${new_version}.tar.gz\"|" "$formula_file"
+        
+        if grep -q "v${new_version}.tar.gz" "$formula_file"; then
+            print_success "Updated homebrew/aidevops.rb version URL"
+        else
+            print_error "Failed to update homebrew/aidevops.rb"
+            errors=$((errors + 1))
+        fi
+    fi
+    
     # Update Claude Code plugin marketplace.json
     if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
         sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
