@@ -3113,20 +3113,34 @@ cmd_dispatch() {
     # This ensures headless mode even if the AI doesn't parse --headless from the prompt
     local headless_env="FULL_LOOP_HEADLESS=true"
 
+    # Write dispatch script to a temp file to avoid bash -c quoting issues
+    # with multi-line prompts (newlines in printf '%q' break bash -c strings)
+    local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-dispatch.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "cd '${worktree_path}' || exit 1"
+        echo "export ${headless_env}"
+        # Write each cmd_part as a properly quoted array element
+        printf 'exec '
+        printf '%q ' "${cmd_parts[@]}"
+        printf '\n'
+    } > "$dispatch_script"
+    chmod +x "$dispatch_script"
+
     if [[ "$dispatch_mode" == "tabby" ]]; then
         # Tabby: attempt to open in a new tab via OSC 1337 escape sequence
         log_info "Opening Tabby tab for $task_id..."
         local tab_cmd
-        tab_cmd="cd '${worktree_path}' && ${headless_env} ${cmd_parts[*]} > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'"
+        tab_cmd="'${dispatch_script}' > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'"
         printf '\e]1337;NewTab=%s\a' "$tab_cmd" 2>/dev/null || true
         # Also start background process as fallback (Tabby may not support OSC 1337)
         # Use nohup + disown to survive parent (cron) exit
-        nohup bash -c "cd '${worktree_path}' && export ${headless_env} && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
+        nohup bash -c "'${dispatch_script}' > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
     else
         # Headless: background process
         # Use nohup + disown to survive parent (cron) exit — without this,
         # workers die after ~2 minutes when the cron pulse script exits
-        nohup bash -c "cd '${worktree_path}' && export ${headless_env} && $(printf '%q ' "${cmd_parts[@]}") > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
+        nohup bash -c "'${dispatch_script}' > '${log_file}' 2>&1; echo \"EXIT:\$?\" >> '${log_file}'" &>/dev/null &
     fi
 
     local worker_pid=$!
@@ -3787,8 +3801,19 @@ Task description: ${tdesc:-$task_id}"
     # Ensure PID directory exists
     mkdir -p "$SUPERVISOR_DIR/pids"
 
+    # Write dispatch script to avoid bash -c quoting issues with multi-line prompts
+    local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "cd '${work_dir}' || exit 1"
+        printf 'exec '
+        printf '%q ' "${cmd_parts[@]}"
+        printf '\n'
+    } > "$dispatch_script"
+    chmod +x "$dispatch_script"
+
     # Use nohup + disown to survive parent (cron) exit
-    nohup bash -c "cd '${work_dir}' && $(printf '%q ' "${cmd_parts[@]}") > '${new_log_file}' 2>&1; echo \"EXIT:\$?\" >> '${new_log_file}'" &>/dev/null &
+    nohup bash -c "'${dispatch_script}' > '${new_log_file}' 2>&1; echo \"EXIT:\$?\" >> '${new_log_file}'" &>/dev/null &
     local worker_pid=$!
     disown "$worker_pid" 2>/dev/null || true
 
