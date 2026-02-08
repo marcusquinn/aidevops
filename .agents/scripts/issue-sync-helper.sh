@@ -698,6 +698,9 @@ cmd_push() {
 
     print_info "Processing ${#tasks[@]} task(s) for push to $repo_slug"
 
+    # Ensure status:available label exists (t164 — label may not exist in new repos)
+    gh label create "status:available" --repo "$repo_slug" --color "0E8A16" --description "Task is available for claiming" --force 2>/dev/null || true
+
     local created=0
     local skipped=0
     for task_id in "${tasks[@]}"; do
@@ -746,11 +749,13 @@ cmd_push() {
             continue
         fi
 
-        # Create the issue
+        # Create the issue with status:available label (t164)
         local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$title")
         gh_args+=("--body" "$body")
         if [[ -n "$labels" ]]; then
-            gh_args+=("--label" "$labels")
+            gh_args+=("--label" "${labels},status:available")
+        else
+            gh_args+=("--label" "status:available")
         fi
 
         local issue_url
