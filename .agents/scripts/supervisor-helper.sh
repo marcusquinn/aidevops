@@ -175,6 +175,80 @@ log_cmd() {
     return $rc
 }
 
+#######################################
+# Pulse dispatch lock (t159)
+#
+# Prevents concurrent pulse invocations from independently dispatching
+# workers, which can exceed the batch concurrency limit. When both cron
+# pulse and manual pulse (or overlapping cron pulses) run simultaneously,
+# each checks the running count, sees available slots, and dispatches —
+# resulting in 2x the intended concurrency.
+#
+# Uses mkdir-based locking (atomic on all POSIX filesystems, no external
+# dependencies needed on macOS where flock is not built-in).
+#
+# Stale lock detection: if the lock directory is older than
+# SUPERVISOR_PULSE_LOCK_TIMEOUT seconds (default: 600 = 10 minutes),
+# it is considered stale and forcibly removed. This prevents permanent
+# deadlock if a pulse process crashes without releasing the lock.
+#######################################
+readonly PULSE_LOCK_DIR="${SUPERVISOR_DIR}/pulse.lock"
+readonly PULSE_LOCK_TIMEOUT="${SUPERVISOR_PULSE_LOCK_TIMEOUT:-600}"
+
+# Acquire the pulse lock. Returns 0 on success, 1 if another pulse is running.
+acquire_pulse_lock() {
+    # Check for stale lock before attempting acquisition
+    if [[ -d "$PULSE_LOCK_DIR" ]]; then
+        local lock_age=0
+        local lock_mtime
+        if [[ "$(uname)" == "Darwin" ]]; then
+            lock_mtime=$(stat -f %m "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
+        else
+            lock_mtime=$(stat -c %Y "$PULSE_LOCK_DIR" 2>/dev/null || echo "0")
+        fi
+        local now_epoch
+        now_epoch=$(date +%s)
+        lock_age=$(( now_epoch - lock_mtime ))
+
+        if [[ "$lock_age" -gt "$PULSE_LOCK_TIMEOUT" ]]; then
+            log_warn "Stale pulse lock detected (age: ${lock_age}s > timeout: ${PULSE_LOCK_TIMEOUT}s) — breaking lock"
+            rm -rf "$PULSE_LOCK_DIR"
+        fi
+    fi
+
+    # Atomic lock acquisition — mkdir is atomic on POSIX filesystems
+    if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
+        # Write PID for debugging
+        echo $$ > "$PULSE_LOCK_DIR/pid" 2>/dev/null || true
+        return 0
+    fi
+
+    # Lock held by another process — check if that process is still alive
+    local holder_pid
+    holder_pid=$(cat "$PULSE_LOCK_DIR/pid" 2>/dev/null || echo "")
+    if [[ -n "$holder_pid" ]] && ! kill -0 "$holder_pid" 2>/dev/null; then
+        log_warn "Pulse lock held by dead process (PID $holder_pid) — breaking lock"
+        rm -rf "$PULSE_LOCK_DIR"
+        if mkdir "$PULSE_LOCK_DIR" 2>/dev/null; then
+            echo $$ > "$PULSE_LOCK_DIR/pid" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Release the pulse lock. Safe to call multiple times.
+release_pulse_lock() {
+    # Only release if we own the lock (PID matches)
+    local holder_pid
+    holder_pid=$(cat "$PULSE_LOCK_DIR/pid" 2>/dev/null || echo "")
+    if [[ "$holder_pid" == "$$" ]]; then
+        rm -rf "$PULSE_LOCK_DIR"
+    fi
+    return 0
+}
+
 
 #######################################
 # Get the number of CPU cores on this system
@@ -4115,6 +4189,16 @@ cmd_pulse() {
 
     ensure_db
 
+    # Acquire pulse dispatch lock to prevent concurrent pulses from
+    # independently dispatching workers and exceeding concurrency limits (t159)
+    if ! acquire_pulse_lock; then
+        log_warn "Another pulse is already running — skipping this invocation"
+        return 0
+    fi
+    # Ensure lock is released on exit (normal, error, or signal)
+    # shellcheck disable=SC2064
+    trap "release_pulse_lock" EXIT INT TERM
+
     log_info "=== Supervisor Pulse $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
     # Pulse-level health check flag: once health is confirmed in this pulse,
@@ -4508,6 +4592,11 @@ cmd_pulse() {
     if [[ "$orphan_killed" -gt 0 ]]; then
         log_info "  Cleaned:    $orphan_killed stale worker processes"
     fi
+
+    # Release pulse dispatch lock (t159)
+    release_pulse_lock
+    # Reset trap to avoid interfering with other commands in the same process
+    trap - EXIT INT TERM
 
     return 0
 }
