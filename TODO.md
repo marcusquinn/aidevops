@@ -55,6 +55,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) logged:2026-02-08
+  - Notes: Replace t164's GitHub Issue assignee-based claiming with TODO.md-native approach. Claim = move to In Progress + @owner + started:ISO. Unclaim = move back to Backlog + remove @owner/started. Supervisor checks @owner in TODO.md instead of GH API. GitHub issue sync remains optional overlay. Makes framework work with GitLab, Gitea, self-hosted, or no git provider at all.
 - [ ] t158 Fix supervisor dispatch so dynamically-created tasks work with /full-loop #bugfix #supervisor #orchestration ~1h (ai:45m test:15m) ref:GH#573 logged:2026-02-08
   - Notes: Problem: supervisor adds tasks to its DB but not to TODO.md, so workers running /full-loop cannot find the task description. Fix: 1) build_dispatch_cmd now passes task description inline in the prompt (` -- description`), 2) full-loop.md Step 0 has 3-tier resolution: inline desc > TODO.md > supervisor DB, 3) full-loop-helper.sh PR creation queries supervisor DB as fallback. Also adds headless worker rules (no user prompts, no TODO.md edits, graceful auth failure handling) and PR creation hardening (gh auth check, rebase before push, proper title/body).
 - [ ] t160 fix: supervisor TODO.md push fails under concurrent workers, add reconcile-todo command #bugfix #supervisor ~1h (ai:45m test:15m) ref:GH#579 logged:2026-02-08
