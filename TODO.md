@@ -129,7 +129,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t175 Fix `ambiguous_skipped_ai` evaluation — add better heuristic signals #bug #supervisor ~1h (ai:40m) ref:GH#644 assignee:marcusquinn started:2026-02-08T19:38:50Z logged:2026-02-08
   - Notes: Recurring evaluation outcome across batches. Evaluator can't determine success/failure, skips AI eval, defaults to retry. Add heuristics: check for commits on branch, check for uncommitted changes in worktree.
 
-- [ ] t176 Add uncertainty guidance to worker dispatch prompt #feature #supervisor ~30m (ai:20m) ref:GH#645 logged:2026-02-08
+- [ ] t176 Add uncertainty guidance to worker dispatch prompt #feature #supervisor ~30m (ai:20m) ref:GH#645 assignee:marcusquinn started:2026-02-08T19:38:55Z logged:2026-02-08
   - Notes: Workers don't know when to make autonomous decisions vs flag uncertainty. Add decision framework to dispatch prompt for headless workers.
 
 - [ ] t177 Add integration test for dispatch-worktree-evaluate cycle #test #supervisor ~2h (ai:1h) ref:GH#647 logged:2026-02-08
