@@ -55,6 +55,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) logged:2026-02-08
+  - [ ] t168.1 Build model discovery - enumerate available models from OpenCode config and provider APIs ~1h blocked-by:none
+    - Notes: Parse opencode.json and provider configs to list available models. Categorise as free vs paid. For /compare-models, prompt user to select 2+ models from any provider. For /compare-models-free, auto-select all free-tier models. Use model-routing.md tiers as reference. Need to handle provider auth (some models need API keys, free models may not).
+  - [ ] t168.2 Implement task dispatch to each selected model via Task tool subagents ~1.5h blocked-by:t168.1
+    - Notes: For each model, dispatch the user's test task as a subagent call (Task tool with model-specific subagent). Run in-session via parallel Task tool calls where possible. For long-running comparisons (large tasks, many models), support fallback to headless dispatch via supervisor with results collected via mailbox. Each model gets identical prompt + context. Capture: response text, token count, latency, any errors. The main session model orchestrates but does NOT participate in the comparison itself.
+  - [ ] t168.3 Build comparison and scoring framework ~1h blocked-by:t168.2
+    - Notes: Main session model evaluates all responses side-by-side. Criteria: correctness, completeness, code quality (if code task), clarity, adherence to instructions. Output structured comparison table (model, score, strengths, weaknesses, latency, tokens). Support both text tasks and code tasks. Store results in memory for cross-session model selection insights.
+  - [ ] t168.4 Wire up /compare-models and /compare-models-free slash commands ~30m blocked-by:t168.3
+    - Notes: Add to workflows/ or scripts/ as command handlers. /compare-models prompts for model selection then task. /compare-models-free skips selection, uses all free models. Both output comparison table. Consider adding --task flag for non-interactive use. Add to AGENTS.md command reference.
+  - Notes: Single-session workflow: user invokes command, selects models (or auto-selects free), provides task, subagents execute in parallel, main model compares results. For long-running tasks (>2min per model), fall back to headless dispatch with supervisor collecting results. Builds on t132 (model routing) infrastructure. Key constraint: the evaluating model should not be one of the compared models to avoid bias. Free models vary by provider - OpenRouter, Google (Gemini Flash), Anthropic (Haiku via free tier), Groq, etc.
 - [ ] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) logged:2026-02-08
   - [ ] t166.1 Add cron/supervisor daily pulse that triggers CodeRabbit full repo review via gh API ~1h blocked-by:none
     - Notes: Use `gh api` or CodeRabbit CLI to trigger a full codebase review (not just PR diff). Schedule as daily cron job or supervisor pulse phase. CodeRabbit supports `@coderabbitai full review` comment on a tracking PR, or API-triggered reviews. Investigate best trigger mechanism.
