@@ -2680,13 +2680,14 @@ create_task_worktree() {
     if [[ "$needs_cleanup" == "true" ]]; then
         # Remove worktree if it exists
         if [[ -d "$worktree_path" ]]; then
-            git -C "$repo" worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
-            git -C "$repo" worktree prune 2>/dev/null || true
+            git -C "$repo" worktree remove "$worktree_path" --force &>/dev/null || rm -rf "$worktree_path"
+            git -C "$repo" worktree prune &>/dev/null || true
         fi
-        # Delete local branch
-        git -C "$repo" branch -D "$branch_name" 2>/dev/null || true
+        # Delete local branch — MUST suppress stdout (outputs "Deleted branch ...")
+        # which would pollute the function's return value captured by $()
+        git -C "$repo" branch -D "$branch_name" &>/dev/null || true
         # Delete remote branch (best-effort, don't fail if remote is gone)
-        git -C "$repo" push origin --delete "$branch_name" 2>/dev/null || true
+        git -C "$repo" push origin --delete "$branch_name" &>/dev/null || true
     fi
 
     # Try wt first (redirect its verbose output to stderr)
@@ -3049,6 +3050,15 @@ cmd_dispatch() {
         cmd_transition "$task_id" "failed" --error "Worktree creation failed"
         return 1
     }
+
+    # Validate worktree path is an actual directory (guards against stdout
+    # pollution from git commands inside create_task_worktree)
+    if [[ ! -d "$worktree_path" ]]; then
+        log_error "Worktree path is not a directory: '$worktree_path'"
+        log_error "This usually means a git command leaked stdout into the path variable"
+        cmd_transition "$task_id" "failed" --error "Worktree path invalid: $worktree_path"
+        return 1
+    fi
 
     local branch_name="feature/${task_id}"
 
