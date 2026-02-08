@@ -78,7 +78,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t184.4 Add memory graduation workflow to build-agent.md ~15m blocked-by:none
     - Notes: Document the pattern: memories are a staging area for learnings. Once validated (fix merged, pattern confirmed), graduate into shared docs. Add /graduate-memories command or integrate into session-review. Prevents knowledge staying local.
   - Notes: Memory audit found 26 useful learnings that only exist locally. 7 architecture decisions, 5 codebase patterns, 3 model routing insights, and recovery techniques that would help all aidevops users. These need to move from SQLite memory into shipped docs.
-- [ ] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 logged:2026-02-08
+- [ ] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 assignee:marcusquinn started:2026-02-08T22:38:20Z logged:2026-02-08
   - [ ] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none
     - Notes: New states between merged and deployed. On merge, supervisor auto-appends entry to todo/VERIFY.md with task ID, PR number, changed files, and auto-generated check commands. Dispatch a verification worker that runs the checks. If verify fails, task goes to verify_failed and reopens the TODO.md task with a bugfix note.
   - [ ] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1
