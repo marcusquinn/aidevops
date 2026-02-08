@@ -25,8 +25,8 @@ pro,gemini-2.5-pro,Capable large context
 <!--TOON:subagents[39]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison
 memory/,Cross-session memory - SQLite FTS5 storage,README
-seo/,Search optimization - keywords and rankings,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator
-content/,Content creation - copywriting and editorial,guidelines|humanise
+seo/,Search optimization - keywords and rankings,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper
+content/,Content creation - copywriting and editorial,guidelines|humanise|seo-writer|meta-creator|editor|internal-linker|context-templates
 tools/content/,Content tools - summarization and extraction,summarize
 tools/social-media/,Social media tools - X/Twitter CLI,bird
 tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review|agent-testing
@@ -124,4 +124,5 @@ schema-validator-helper.sh,Schema.org structured data validation (validate valid
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
 voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
 voice-bridge.py,Voice bridge Python script (VAD STT LLM TTS with session handback)
+seo-content-analyzer.py,SEO content analysis (readability keywords intent quality scoring)
 -->

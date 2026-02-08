@@ -3,13 +3,19 @@ name: content
 description: Content creation and management - copywriting, guidelines, editorial workflows
 mode: subagent
 subagents:
-  # Content
+  # Content creation
   - guidelines
   - humanise
   - summarize
+  - seo-writer
+  - meta-creator
+  - editor
+  - internal-linker
+  - context-templates
   # SEO integration
   - keyword-research
   - eeat-score
+  - content-analyzer
   # WordPress publishing
   - wp-admin
   - mainwp
@@ -31,20 +37,50 @@ subagents:
 - **Focus**: Quality, SEO-optimized content production
 
 **Subagents** (`content/`):
-- `guidelines.md` - Content standards and style guide
-- `humanise.md` - Remove AI writing patterns, make text sound human
+
+| Subagent | Purpose |
+|----------|---------|
+| `guidelines.md` | Content standards and style guide |
+| `humanise.md` | Remove AI writing patterns, make text sound human |
+| `seo-writer.md` | SEO-optimized content writing with keyword integration |
+| `meta-creator.md` | Generate meta titles and descriptions for SEO |
+| `editor.md` | Transform AI content into human-sounding articles |
+| `internal-linker.md` | Strategic internal linking recommendations |
+| `context-templates.md` | Per-project SEO context templates (brand voice, style, keywords) |
+
+**SEO Analysis** (via `seo/`):
+
+| Subagent | Purpose |
+|----------|---------|
+| `content-analyzer.md` | Full content audit (readability, keywords, SEO quality) |
+| `seo-optimizer.md` | On-page SEO recommendations |
+| `keyword-mapper.md` | Keyword placement and density analysis |
 
 **Integrations**:
-- `seo.md` - Keyword optimization
+- `seo.md` - Keyword research and optimization
 - `tools/wordpress/` - Publishing workflow
 - `tools/context/` - Research tools
 
+**Content Analysis Script**:
+
+```bash
+# Full content analysis with keyword
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "target keyword"
+
+# Individual analyses
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md --keyword "keyword"
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
+```
+
 **Workflow**:
 1. Research (keywords, competitors, audience)
-2. Outline (structure, key points)
-3. Draft (following guidelines)
-4. Optimize (SEO, readability)
-5. Publish (via WordPress or CMS)
+2. Write (`content/seo-writer.md` with keyword targets)
+3. Analyze (`seo-content-analyzer.py analyze`)
+4. Optimize (address issues from analysis)
+5. Edit (`content/editor.md` for human voice)
+6. Publish (via WordPress or CMS)
 
 <!-- AI-CONTEXT-END -->
 

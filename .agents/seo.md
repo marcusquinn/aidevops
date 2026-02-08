@@ -27,6 +27,9 @@ subagents:
   - image-seo
   - moondream
   - upscale
+  - content-analyzer
+  - seo-optimizer
+  - keyword-mapper
   - general
   - explore
 ---
@@ -40,7 +43,7 @@ subagents:
 - **Purpose**: SEO optimization and analysis
 - **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
 - **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7 for comprehensive SEO data and library docs
-- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`
+- **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`, `/seo-write`, `/seo-optimize`, `/seo-analyze-content`
 
 **Subagents** (`seo/` and `services/analytics/`):
 
@@ -67,6 +70,22 @@ subagents:
 | `image-seo.md` | AI-powered image SEO: filename, alt text, tag generation |
 | `moondream.md` | Moondream AI vision model for image analysis and captioning |
 | `upscale.md` | Image upscaling services (Real-ESRGAN, Replicate, Cloudflare) |
+| `content-analyzer.md` | Comprehensive content analysis (readability, keywords, SEO quality) |
+| `seo-optimizer.md` | On-page SEO audit with prioritized recommendations |
+| `keyword-mapper.md` | Keyword placement, density, and distribution analysis |
+
+**Content Analysis** (adapted from [SEO Machine](https://github.com/TheCraigHewitt/seomachine)):
+
+```bash
+# Full content analysis with keyword
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "target keyword"
+
+# Individual analyses
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md --keyword "keyword"
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
+python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
+```
 
 **Key Operations**:
 - Keyword research with weakness detection (`/keyword-research-extended`)
@@ -275,9 +294,23 @@ See `seo/image-seo.md` for the full workflow, `seo/moondream.md` for the vision 
 ### Content Optimization
 
 Integrate with `content.md` for:
-- Keyword-focused content creation
-- Meta optimization
-- Internal linking strategy
+- SEO-optimized content writing (`content/seo-writer.md`)
+- Meta title/description generation (`content/meta-creator.md`)
+- Internal linking strategy (`content/internal-linker.md`)
+- Human voice editing (`content/editor.md`)
+
+**Content analysis workflow** (from SEO Machine integration):
+
+1. **Research**: `/keyword-research` + `/autocomplete-research`
+2. **Write**: Use `content/seo-writer.md` with keyword targets
+3. **Analyze**: `seo-content-analyzer.py analyze` for quality score
+4. **Optimize**: Address issues from `seo/seo-optimizer.md`
+5. **Edit**: `content/editor.md` for human voice
+6. **Publish**: Via WordPress or CMS
+
+**Context templates** for per-project SEO configuration:
+
+See `content/context-templates.md` for brand voice, style guide, target keywords, internal links map, competitor analysis, and SEO guidelines templates. Create a `context/` directory in your project and populate from those templates.
 
 ## Tool Comparison
 
@@ -293,5 +326,3 @@ Integrate with `content.md` for:
 | Competitor Analysis | No | Yes | No | Yes | Yes (Domain vs Domain) |
 | Position Tracking | No | No | No | No | Yes (Projects API) |
 | Pricing | Free | Subscription | Pay-per-search | Subscription | Unit-based |
-
-
