@@ -5262,7 +5262,7 @@ verify_task_deliverables() {
     local changed_files
     changed_files=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null || echo "")
     local substantive_files
-    substantive_files=$(echo "$changed_files" | grep -vE '^(TODO\.md|todo/|\.github/workflows/)$' || true)
+    substantive_files=$(echo "$changed_files" | grep -vE '^(TODO\.md$|todo/|\.github/workflows/)' || true)
 
     if [[ -z "$substantive_files" ]]; then
         log_warn "PR #$pr_number for $task_id has no substantive file changes (only planning/workflow files)"

@@ -35,6 +35,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
+FORCE_CLOSE="${FORCE_CLOSE:-false}"
 REPO_SLUG=""
 
 # =============================================================================
@@ -999,8 +1000,6 @@ cmd_close() {
     project_root=$(find_project_root) || return 1
     local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
     local todo_file="$project_root/TODO.md"
-    local force="${FORCE_CLOSE:-false}"
-
     verify_gh_cli || return 1
 
     # Collect completed tasks with GH refs
@@ -1035,14 +1034,12 @@ cmd_close() {
         fi
 
         # Guard: verify task has completion evidence (merged PR or verified: field)
-        if [[ "$force" != "true" ]]; then
-            # Also check Notes lines (indented under the task)
+        if [[ "$FORCE_CLOSE" != "true" ]]; then
+            # Check the full task block (task line + all subtasks/notes)
             local task_with_notes
-            task_with_notes="$task_line"
-            local notes_line
-            notes_line=$(grep -A1 "^- \[x\] ${task_id} " "$todo_file" | tail -1 || echo "")
-            if [[ "$notes_line" =~ ^[[:space:]]+- ]]; then
-                task_with_notes="$task_line $notes_line"
+            task_with_notes=$(extract_task_block "$task_id" "$todo_file")
+            if [[ -z "$task_with_notes" ]]; then
+                task_with_notes="$task_line"
             fi
 
             if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then

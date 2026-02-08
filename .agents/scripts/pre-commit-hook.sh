@@ -164,8 +164,6 @@ check_quality_standards() {
 # Validate TODO.md task completion transitions (t163.3)
 # When [ ] -> [x], warn if no merged PR evidence exists for the task
 validate_todo_completions() {
-    local violations=0
-
     # Only check if TODO.md is staged
     if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
         return 0
@@ -173,7 +171,8 @@ validate_todo_completions() {
 
     print_info "Validating TODO.md task completions..."
 
-    # Find tasks that changed from [ ] to [x] in this commit
+    # Find top-level tasks that changed from [ ] to [x] in this commit
+    # Subtasks inherit evidence from their parent task, so only check top-level
     local newly_completed
     newly_completed=$(git diff --cached -U0 TODO.md | grep -E '^\+- \[x\] t[0-9]+' | sed 's/^\+//' || true)
 
@@ -191,10 +190,14 @@ validate_todo_completions() {
         fi
         task_count=$((task_count + 1))
 
-        # Check for evidence: verified: field or merged PR in title
+        # Check for evidence: verified: field, "PR #NNN merged" text, or gh API lookup
         local has_evidence=false
 
         if echo "$line" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+            has_evidence=true
+        fi
+
+        if [[ "$has_evidence" == "false" ]] && echo "$line" | grep -qiE 'PR #[0-9]+ merged|PR.*merged'; then
             has_evidence=true
         fi
 
@@ -222,7 +225,7 @@ validate_todo_completions() {
         print_info "  This is a WARNING only - commit will proceed"
     fi
 
-    return $violations
+    return 0
 }
 
 main() {
