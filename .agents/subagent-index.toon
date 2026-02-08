@@ -80,7 +80,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[46]{name,purpose}:
+<!--TOON:scripts[47]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -124,6 +124,7 @@ supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init ad
 objective-runner-helper.sh,Long-running objective execution with safety guardrails (start status pause resume rollback audit list)
 schema-validator-helper.sh,Schema.org structured data validation (validate validate-json status install)
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
+transcription-helper.sh,Audio/video transcription (transcribe models configure install status)
 voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
 voice-bridge.py,Voice bridge Python script (VAD STT LLM TTS with session handback)
 seo-content-analyzer.py,SEO content analysis (readability keywords intent quality scoring)

@@ -13,7 +13,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Transcribe audio/video from YouTube, URLs, or local files
-- **Helper**: `transcription-helper.sh [transcribe|models|configure] [options]`
+- **Helper**: `transcription-helper.sh [transcribe|models|configure|install|status] [options]`
 - **Default model**: Whisper Large v3 Turbo (best speed/accuracy tradeoff)
 - **Dependencies**: `yt-dlp` (YouTube), `ffmpeg` (audio extraction), `faster-whisper` or `whisper.cpp` (local)
 
