@@ -4237,6 +4237,13 @@ main() {
         confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
     fi
 
+    # Refresh version cache so session greeting shows correct version
+    # This ensures `setup.sh` alone (without `aidevops update`) updates the cached version
+    local update_check_script="$HOME/.aidevops/agents/scripts/aidevops-update-check.sh"
+    if [[ -x "$update_check_script" ]]; then
+        "$update_check_script" > /dev/null 2>&1 || true
+    fi
+
     echo ""
     print_success "🎉 Setup complete!"
     echo ""
