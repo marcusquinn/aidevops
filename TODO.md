@@ -70,7 +70,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t168.4 Wire up /compare-models and /compare-models-free slash commands ~30m blocked-by:t168.3
     - Notes: Add to workflows/ or scripts/ as command handlers. /compare-models prompts for model selection then task. /compare-models-free skips selection, uses all free models. Both output comparison table. Consider adding --task flag for non-interactive use. Add to AGENTS.md command reference.
   - Notes: Single-session workflow: user invokes command, selects models (or auto-selects free), provides task, subagents execute in parallel, main model compares results. For long-running tasks (>2min per model), fall back to headless dispatch with supervisor collecting results. Builds on t132 (model routing) infrastructure. Key constraint: the evaluating model should not be one of the compared models to avoid bias. Free models vary by provider - OpenRouter, Google (Gemini Flash), Anthropic (Haiku via free tier), Groq, etc.
-- [ ] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) ref:GH#624 assignee:marcusquinn logged:2026-02-08
+- [x] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) ref:GH#624 assignee:marcusquinn logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #657 merged
   - [ ] t166.1 Add cron/supervisor daily pulse that triggers CodeRabbit full repo review via gh API ~1h blocked-by:none
     - Notes: Use `gh api` or CodeRabbit CLI to trigger a full codebase review (not just PR diff). Schedule as daily cron job or supervisor pulse phase. CodeRabbit supports `@coderabbitai full review` comment on a tracking PR, or API-triggered reviews. Investigate best trigger mechanism.
   - [ ] t166.2 Monitor and collect CodeRabbit review feedback into structured format ~1h blocked-by:t166.1
@@ -126,14 +126,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #642 merged. Added `--headless` flag to full-loop for autonomous worker operation.
 
-- [ ] t175 Fix `ambiguous_skipped_ai` evaluation — add better heuristic signals #bug #supervisor ~1h (ai:40m) ref:GH#644 assignee:marcusquinn started:2026-02-08T19:38:50Z logged:2026-02-08
-  - Notes: Recurring evaluation outcome across batches. Evaluator can't determine success/failure, skips AI eval, defaults to retry. Add heuristics: check for commits on branch, check for uncommitted changes in worktree. BLOCKED: Re-prompt dispatch failed: ambiguous_skipped_ai
+- [x] t175 Fix `ambiguous_skipped_ai` evaluation — add better heuristic signals #bug #supervisor ~1h (ai:40m) ref:GH#644 assignee:marcusquinn started:2026-02-08T19:38:50Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #655 merged
+  - Notes: Added Tier 2.5 git heuristic signals to evaluate_worker(): check commits on branch, uncommitted changes in worktree. Prevents false retry loop for ambiguous_skipped_ai.
 
-- [ ] t176 Add uncertainty guidance to worker dispatch prompt #feature #supervisor ~30m (ai:20m) ref:GH#645 assignee:marcusquinn started:2026-02-08T19:38:55Z logged:2026-02-08
-  - Notes: Workers don't know when to make autonomous decisions vs flag uncertainty. Add decision framework to dispatch prompt for headless workers.
+- [x] t176 Add uncertainty guidance to worker dispatch prompt #feature #supervisor ~30m (ai:20m) ref:GH#645 assignee:marcusquinn started:2026-02-08T19:38:55Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #656 merged
+  - Notes: Added decision framework to dispatch prompt and headless-dispatch.md for headless workers on when to make autonomous decisions vs flag uncertainty.
 
-- [ ] t177 Add integration test for dispatch-worktree-evaluate cycle #test #supervisor ~2h (ai:1h) ref:GH#647 assignee:marcusquinn started:2026-02-08T19:39:00Z logged:2026-02-08
-  - Notes: Tests exist for state machine transitions and lock atomicity, but not for the actual worktree creation + dispatch + evaluation pipeline. Need end-to-end integration tests.
+- [x] t177 Add integration test for dispatch-worktree-evaluate cycle #test #supervisor ~2h (ai:1h) ref:GH#647 assignee:marcusquinn started:2026-02-08T19:39:00Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #658 merged
+  - Notes: Added end-to-end integration tests for worktree creation, dispatch, and evaluation pipeline.
 
 - [x] t178 Fix `cmd_reprompt` to handle missing worktrees #bug #supervisor ~30m (ai:20m) ref:GH#648 assignee:marcusquinn started:2026-02-08T20:09:25Z logged:2026-02-08 completed:2026-02-08
   - Notes: When a worktree is cleaned up between retries, cmd_reprompt fails. Should recreate worktree if missing.
