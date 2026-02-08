@@ -3083,7 +3083,7 @@ evaluate_worker() {
     escaped_id=$(sql_escape "$task_id")
     local task_row
     task_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT status, log_file, retries, max_retries, session_id
+        SELECT status, log_file, retries, max_retries, session_id, pr_url
         FROM tasks WHERE id = '$escaped_id';
     ")
 
@@ -3092,8 +3092,8 @@ evaluate_worker() {
         return 1
     fi
 
-    local tstatus tlog tretries tmax_retries tsession
-    IFS='|' read -r tstatus tlog tretries tmax_retries tsession <<< "$task_row"
+    local tstatus tlog tretries tmax_retries tsession tpr_url
+    IFS='|' read -r tstatus tlog tretries tmax_retries tsession tpr_url <<< "$task_row"
 
     if [[ -z "$tlog" || ! -f "$tlog" ]]; then
         echo "failed:no_log_file"
@@ -3119,7 +3119,13 @@ evaluate_worker() {
     meta_pr_url=$(_meta_get "pr_url" "")
     meta_exit_code=$(_meta_get "exit_code" "")
 
-    # Fallback PR URL detection: if log didn't contain a PR URL, check GitHub
+    # Seed PR URL from DB (t171): check_pr_status() or a previous pulse may have
+    # already found and persisted the PR URL. Use it before expensive gh API calls.
+    if [[ -z "$meta_pr_url" && -n "${tpr_url:-}" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
+        meta_pr_url="$tpr_url"
+    fi
+
+    # Fallback PR URL detection: if no PR URL from log or DB, check GitHub
     # for a PR matching the task's branch. Tries the DB branch column first
     # (actual worktree branch), then falls back to feature/${task_id} convention.
     # This fixes the clean_exit_no_signal retry loop (t161): workers that create
@@ -3161,8 +3167,9 @@ evaluate_worker() {
     fi
 
     # TASK_COMPLETE with clean exit = partial success (PR phase may have failed)
+    # If a PR URL is available (from DB or gh fallback), include it.
     if [[ "$meta_signal" == "TASK_COMPLETE" && "$meta_exit_code" == "0" ]]; then
-        echo "complete:task_only"
+        echo "complete:${meta_pr_url:-task_only}"
         return 0
     fi
 
@@ -3189,9 +3196,11 @@ evaluate_worker() {
         fi
     fi
 
-    # Clean exit with no completion signal and no PR = likely incomplete
-    # but NOT an error - the agent finished cleanly, just didn't emit a signal.
-    # This should retry (agent may have run out of context or hit a soft limit).
+    # Clean exit with no completion signal and no PR (checked DB + gh API above)
+    # = likely incomplete. The agent finished cleanly but didn't emit a signal
+    # and no PR was found. Retry (agent may have run out of context or hit a
+    # soft limit). If a PR exists, it was caught at line ~3179 via DB seed (t171)
+    # or gh fallback (t161).
     if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
         echo "retry:clean_exit_no_signal"
         return 0
