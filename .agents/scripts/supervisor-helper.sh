@@ -1594,12 +1594,16 @@ cmd_status() {
         IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type <<< "$batch_row"
         local bmax_conc
         bmax_conc=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "0")
+        local bmax_load
+        bmax_load=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "2")
         local badaptive
-        badaptive=$(calculate_adaptive_concurrency "${bconc:-4}" "2" "${bmax_conc:-0}")
+        badaptive=$(calculate_adaptive_concurrency "${bconc:-4}" "${bmax_load:-2}" "${bmax_conc:-0}")
+        local cap_display="auto"
+        [[ "${bmax_conc:-0}" -gt 0 ]] && cap_display="$bmax_conc"
         echo -e "${BOLD}=== Batch: $bname ===${NC}"
         echo "  ID:          $bid"
         echo "  Status:      $bstatus"
-        echo "  Concurrency: $bconc (adaptive: $badaptive, cap: ${bmax_conc:-auto})"
+        echo "  Concurrency: $bconc (adaptive: $badaptive, cap: $cap_display)"
         if [[ "${brelease_flag:-0}" -eq 1 ]]; then
             echo -e "  Release:     ${GREEN}enabled${NC} (${brelease_type:-patch} on complete)"
         else
@@ -5156,12 +5160,13 @@ cmd_pulse() {
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Procs:    ${sys_proc_count} total, ${sys_supervisor_procs} supervisor"
         # Show adaptive concurrency for the active batch
         if [[ -n "$batch_id" ]]; then
-            local display_base display_max display_adaptive
+            local display_base display_max display_load_factor display_adaptive
             local escaped_display_batch
             escaped_display_batch=$(sql_escape "$batch_id")
             display_base=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "?")
             display_max=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "0")
-            display_adaptive=$(calculate_adaptive_concurrency "${display_base:-4}" "2" "${display_max:-0}")
+            display_load_factor=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "2")
+            display_adaptive=$(calculate_adaptive_concurrency "${display_base:-4}" "${display_load_factor:-2}" "${display_max:-0}")
             local adaptive_label="base:${display_base}"
             if [[ "$display_adaptive" -gt "${display_base:-0}" ]]; then
                 adaptive_label="${adaptive_label} ${GREEN}scaled:${display_adaptive}${NC}"
@@ -5170,7 +5175,9 @@ cmd_pulse() {
             else
                 adaptive_label="${adaptive_label} effective:${display_adaptive}"
             fi
-            echo -e "  ${BLUE}[SUPERVISOR]${NC}   Workers:  ${adaptive_label} (cap:${display_max:-auto})"
+            local cap_display="auto"
+            [[ "${display_max:-0}" -gt 0 ]] && cap_display="$display_max"
+            echo -e "  ${BLUE}[SUPERVISOR]${NC}   Workers:  ${adaptive_label} (cap:${cap_display})"
         fi
         if [[ "$sys_overloaded" == "true" ]]; then
             echo -e "  ${BLUE}[SUPERVISOR]${NC}   ${RED}OVERLOADED${NC} - adaptive throttling active"
@@ -7793,8 +7800,10 @@ Options for 'add':
   --no-issue             Skip GitHub issue creation for this task
 
 Options for 'batch':
-  --concurrency <N>      Max parallel workers (default: 4)
+  --concurrency <N>      Base parallel workers (default: 4, scales up/down with load)
+  --max-concurrency <N>  Hard upper limit (default: 0 = auto, capped at cpu_cores)
   --tasks "t001,t002"    Comma-separated task IDs to add
+  --max-load <N>         Max load factor before throttling (default: 2)
   --release-on-complete  Trigger a release when all tasks complete (t128.10)
   --release-type <type>  Release type: major|minor|patch (default: patch)
 
