@@ -796,6 +796,7 @@ Files: `~/.aidevops/agents/hooks/git_safety_guard.py` (guard script),
 | `feature-development.md` | Feature implementation patterns |
 | `bug-fixing.md` | Bug fix patterns |
 | `sql-migrations.md` | Database schema version control |
+| `tools/git/lumen.md` | AI-powered diffs, commit messages, change explanations |
 
 ## Platform CLI Reference
 

@@ -387,3 +387,4 @@ git checkout <lost-commit-sha>
 - `workflows/pr.md` -- PR creation and merge
 - `workflows/branch.md` -- Branch management
 - `workflows/branch/release.md` -- Cherry-pick for releases
+- `tools/git/lumen.md` -- Visual diff viewer for conflict review
