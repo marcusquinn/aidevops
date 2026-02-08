@@ -5599,6 +5599,45 @@ cmd_pulse() {
         cmd_reconcile_todo ${batch_id:+--batch "$batch_id"} 2>>"$SUPERVISOR_LOG" || true
     fi
 
+    # Phase 8: Issue-sync reconciliation (t179.3)
+    # Close stale GitHub issues and fix ref:GH# drift.
+    # Runs periodically (every ~50 min) when no workers active, to avoid
+    # excessive GH API calls. Uses a timestamp file to throttle.
+    if [[ "$total_running" -eq 0 && "$total_queued" -eq 0 ]]; then
+        local issue_sync_interval=3000  # seconds (~50 min)
+        local issue_sync_stamp="$SUPERVISOR_DIR/issue-sync-last-run"
+        local now_epoch
+        now_epoch=$(date +%s)
+        local last_run=0
+        if [[ -f "$issue_sync_stamp" ]]; then
+            last_run=$(cat "$issue_sync_stamp" 2>/dev/null || echo 0)
+        fi
+        local elapsed=$((now_epoch - last_run))
+        if [[ "$elapsed" -ge "$issue_sync_interval" ]]; then
+            log_info "  Phase 8: Issue-sync reconciliation (${elapsed}s since last run)"
+            # Find a repo with TODO.md to run against
+            local sync_repo=""
+            sync_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+            if [[ -z "$sync_repo" ]]; then
+                sync_repo="$(pwd)"
+            fi
+            local issue_sync_script="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/issue-sync-helper.sh"
+            if [[ -f "$issue_sync_script" && -f "$sync_repo/TODO.md" ]]; then
+                # Run reconcile to fix ref:GH# drift
+                bash "$issue_sync_script" reconcile --verbose 2>>"$SUPERVISOR_LOG" || true
+                # Run close to close stale issues for completed tasks
+                bash "$issue_sync_script" close --verbose 2>>"$SUPERVISOR_LOG" || true
+                echo "$now_epoch" > "$issue_sync_stamp"
+                log_info "  Phase 8: Issue-sync complete"
+            else
+                log_verbose "  Phase 8: Skipped (issue-sync-helper.sh or TODO.md not found)"
+            fi
+        else
+            local remaining=$((issue_sync_interval - elapsed))
+            log_verbose "  Phase 8: Skipped (${remaining}s until next run)"
+        fi
+    fi
+
     # Release pulse dispatch lock (t159)
     release_pulse_lock
     # Reset trap to avoid interfering with other commands in the same process

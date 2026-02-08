@@ -117,6 +117,7 @@ Verify aidevops best practices were followed:
 | TODO tracking | Tasks logged in TODO.md | Recommended |
 | Commit hygiene | Atomic commits, clear messages | Required |
 | Quality checks | Linters run before commit | Recommended |
+| Issue-sync | `issue-sync-helper.sh status` after PR merge | Recommended |
 | Documentation | Changes documented where needed | Situational |
 
 **Check commands**:
@@ -294,6 +295,7 @@ Run `/session-review` before creating a PR to ensure:
 Run `/session-review` to:
 - Capture learnings via `@agent-review`
 - Update TODO.md with any discovered tasks
+- Check issue-sync drift: `issue-sync-helper.sh status` (t179.4)
 - Ensure clean handoff for future sessions
 
 ### After Ralph Loop Completion
