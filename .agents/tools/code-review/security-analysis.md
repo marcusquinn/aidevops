@@ -525,20 +525,23 @@ const query = buildQuery(validatedInput);
 
 ## Comparison with Other Tools
 
-| Feature | Security Analysis | Ferret | VirusTotal | Snyk Code | SonarCloud | CodeQL |
-|---------|------------------|--------|------------|-----------|------------|--------|
-| AI-Powered | Yes | No | No | Partial | No | No |
-| Taint Analysis | Yes | No | No | Yes | Yes | Yes |
-| Git History Scan | Yes | No | No | No | No | No |
-| Full Codebase | Yes | Yes | No | Yes | Yes | Yes |
-| Dependency Scan | Via OSV | No | No | Yes | Yes | No |
-| File Hash Scan | No | No | Yes (70+ AV) | No | No | No |
-| Domain/URL Scan | No | No | Yes | No | No | No |
-| LLM Safety | Yes | Yes | No | No | No | No |
-| AI CLI Configs | Via Ferret | Yes | No | No | No | No |
-| Prompt Injection | Yes | Yes | No | No | No | No |
-| Local/Offline | Yes | Yes | No | No | No | Yes |
-| MCP Integration | Yes | No | No | Yes | No | No |
+| Feature | Security Analysis | Shannon | Ferret | VirusTotal | Snyk Code | SonarCloud | CodeQL |
+|---------|------------------|---------|--------|------------|-----------|------------|--------|
+| AI-Powered | Yes | Yes | No | No | Partial | No | No |
+| Taint Analysis | Yes | Yes (Pro) | No | No | Yes | Yes | Yes |
+| Git History Scan | Yes | No | No | No | No | No | No |
+| Full Codebase | Yes | Yes | Yes | No | Yes | Yes | Yes |
+| Dependency Scan | Via OSV | No | No | No | Yes | Yes | No |
+| File Hash Scan | No | No | No | Yes (70+ AV) | No | No | No |
+| Domain/URL Scan | No | No | No | Yes | No | No | No |
+| LLM Safety | Yes | No | Yes | No | No | No | No |
+| AI CLI Configs | Via Ferret | No | Yes | No | No | No | No |
+| Prompt Injection | Yes | No | Yes | No | No | No | No |
+| Exploit Validation | No | Yes | No | No | No | No | No |
+| Browser Exploitation | No | Yes | No | No | No | No | No |
+| Auth Bypass Testing | No | Yes | No | No | No | No | No |
+| Local/Offline | Yes | Yes | Yes | No | No | No | Yes |
+| MCP Integration | Yes | No | No | No | Yes | No | No |
 
 ## Troubleshooting
 

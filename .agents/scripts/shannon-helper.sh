@@ -1,385 +1,553 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2059
+# shellcheck disable=SC1091
+
+# Shannon AI Pentester Helper Script
+# Autonomous exploit-driven web application security testing
+# Managed by AI DevOps Framework
+#
+# Usage: ./shannon-helper.sh [command] [options]
+# Commands:
+#   install               - Clone and set up Shannon
+#   start <url> <repo>    - Start a pentest workflow
+#   logs [workflow-id]     - Tail logs for a workflow
+#   query <workflow-id>    - Query workflow progress
+#   stop                   - Stop all Shannon containers
+#   status                 - Check installation and Docker status
+#   report [session-dir]   - Show the latest or specified report
+#   help                   - Show this help message
+#
+# Author: AI DevOps Framework
+# Version: 1.0.0
+# License: MIT
+
+# Set strict mode
 set -euo pipefail
 
-# shannon-helper.sh - Shannon AI pentester integration
-#
-# Wraps the Shannon CLI for autonomous penetration testing of web applications.
-# Shannon uses Docker + Temporal for multi-agent exploit workflows.
-#
-# Usage:
-#   shannon-helper.sh install                     # Clone Shannon repo
-#   shannon-helper.sh start <url> <repo> [config] # Start a pentest
-#   shannon-helper.sh stop [--clean]              # Stop containers
-#   shannon-helper.sh status                      # Check Shannon status
-#   shannon-helper.sh query <workflow-id>          # Query workflow progress
-#   shannon-helper.sh logs [workflow-id]           # Tail workflow logs
-#   shannon-helper.sh reports [hostname]           # List available reports
-#   shannon-helper.sh help                         # Show this help
-#
-# Prerequisites:
-#   - Docker (with docker compose)
-#   - Anthropic API key (ANTHROPIC_API_KEY)
-#
-# Part of: aidevops framework (https://aidevops.sh)
-# Task: t023 - Integrate Shannon AI pentester
+# ------------------------------------------------------------------------------
+# CONFIGURATION & CONSTANTS
+# ------------------------------------------------------------------------------
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export SCRIPT_DIR
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+source "${script_dir}/shared-constants.sh"
 
-readonly SHANNON_DIR="${SHANNON_DIR:-${HOME}/.aidevops/tools/shannon}"
+readonly SHANNON_DIR="${SHANNON_DIR:-${HOME}/.local/share/shannon}"
 readonly SHANNON_REPO="https://github.com/KeygraphHQ/shannon.git"
 
-# Colors (only set if not already defined by shared-constants.sh)
-if [[ -z "${RED:-}" ]]; then
-    readonly RED='\033[0;31m'
-    readonly GREEN='\033[0;32m'
-    readonly YELLOW='\033[1;33m'
-    readonly BLUE='\033[0;34m'
-    readonly CYAN='\033[0;36m'
-    readonly NC='\033[0m'
-fi
+# Error Messages
+readonly ERROR_DOCKER_NOT_RUNNING="Docker is not running or not installed"
+readonly ERROR_SHANNON_NOT_INSTALLED="Shannon is not installed at $SHANNON_DIR"
+readonly ERROR_URL_REQUIRED="Target URL is required"
+readonly ERROR_REPO_REQUIRED="Repository path is required"
+readonly ERROR_WORKFLOW_ID_REQUIRED="Workflow ID is required"
+readonly ERROR_REPO_PATH_NOT_FOUND="Repository path does not exist"
 
-print_usage() {
-    cat << 'EOF'
-Usage: shannon-helper.sh <command> [options]
+# Success Messages
+readonly SUCCESS_INSTALL_COMPLETE="Shannon installed successfully"
+readonly SUCCESS_PENTEST_STARTED="Pentest workflow started"
+readonly SUCCESS_CONTAINERS_STOPPED="Shannon containers stopped"
 
-Commands:
-  install                       Clone/update Shannon repository
-  start <url> <repo> [config]   Start a penetration test
-  stop [--clean]                Stop Shannon containers (--clean removes volumes)
-  status                        Check Shannon installation and container status
-  query <workflow-id>           Query workflow progress
-  logs [workflow-id]            Tail workflow logs (latest if no ID)
-  reports [hostname]            List available pentest reports
-  help                          Show this help
+# ------------------------------------------------------------------------------
+# UTILITY FUNCTIONS
+# ------------------------------------------------------------------------------
 
-Environment:
-  ANTHROPIC_API_KEY             Required for Shannon (or CLAUDE_CODE_OAUTH_TOKEN)
-  SHANNON_DIR                   Override install location (default: ~/.aidevops/tools/shannon)
-
-Examples:
-  shannon-helper.sh install
-  shannon-helper.sh start https://myapp.local:3000 /path/to/repo
-  shannon-helper.sh start https://myapp.local:3000 /path/to/repo ./config.yaml
-  shannon-helper.sh status
-  shannon-helper.sh logs
-  shannon-helper.sh reports myapp.local
-
-Notes:
-  - Shannon runs entirely in Docker containers
-  - Pentests take 1-1.5 hours and cost ~$50 in API usage
-  - NEVER run against production environments
-  - Reports are saved to SHANNON_DIR/audit-logs/
-EOF
+print_header() {
+    local msg="$1"
+    echo -e "${PURPLE}[SHANNON] $msg${NC}"
     return 0
 }
 
-check_docker() {
-    if ! command -v docker &>/dev/null; then
-        printf "${RED}Error: Docker is required but not installed.${NC}\n" >&2
-        printf "Install Docker: https://docs.docker.com/get-docker/\n" >&2
+print_info() {
+    local msg="$1"
+    echo -e "${CYAN}[INFO]${NC} $msg"
+    return 0
+}
+
+print_success() {
+    local msg="$1"
+    echo -e "${GREEN}[OK]${NC} $msg"
+    return 0
+}
+
+print_warning() {
+    local msg="$1"
+    echo -e "${YELLOW}[WARN]${NC} $msg"
+    return 0
+}
+
+print_error() {
+    local msg="$1"
+    echo -e "${RED}[ERROR]${NC} $msg" >&2
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# DEPENDENCY CHECKING
+# ------------------------------------------------------------------------------
+
+check_docker_installed() {
+    if ! command -v docker &> /dev/null; then
         return 1
     fi
-    if ! docker info &>/dev/null 2>&1; then
-        printf "${RED}Error: Docker daemon is not running.${NC}\n" >&2
-        printf "Start Docker and try again.\n" >&2
+    return 0
+}
+
+check_docker_running() {
+    if ! docker info &> /dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+check_shannon_installed() {
+    if [[ ! -d "$SHANNON_DIR" ]] || [[ ! -f "$SHANNON_DIR/shannon" ]]; then
         return 1
     fi
     return 0
 }
 
 check_api_key() {
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        return 0
+    fi
+    if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        return 0
+    fi
     # Source credentials if available
-    # shellcheck source=/dev/null
-    [[ -f "${HOME}/.config/aidevops/credentials.sh" ]] && source "${HOME}/.config/aidevops/credentials.sh"
+    if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
+        # shellcheck disable=SC1091
+        source "${HOME}/.config/aidevops/credentials.sh"
+        if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
 
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-        printf "${RED}Error: ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN required.${NC}\n" >&2
-        printf "Set via: aidevops secret set ANTHROPIC_API_KEY\n" >&2
-        printf "Or add to ~/.config/aidevops/credentials.sh\n" >&2
+check_dependencies() {
+    local has_error=false
+
+    if ! check_docker_installed; then
+        print_error "Docker is not installed"
+        print_info "Install Docker: https://docs.docker.com/get-docker/"
+        has_error=true
+    elif ! check_docker_running; then
+        print_error "$ERROR_DOCKER_NOT_RUNNING"
+        print_info "Start Docker Desktop or the Docker daemon"
+        has_error=true
+    fi
+
+    if ! check_shannon_installed; then
+        print_error "$ERROR_SHANNON_NOT_INSTALLED"
+        print_info "Run: ./shannon-helper.sh install"
+        has_error=true
+    fi
+
+    if $has_error; then
         return 1
     fi
     return 0
 }
 
-cmd_install() {
-    check_docker || return 1
+# ------------------------------------------------------------------------------
+# INSTALLATION
+# ------------------------------------------------------------------------------
 
-    if [[ -d "${SHANNON_DIR}/.git" ]]; then
-        printf "${BLUE}Updating Shannon...${NC}\n"
-        git -C "${SHANNON_DIR}" pull --ff-only 2>/dev/null || {
-            printf "${YELLOW}!${NC} Pull failed, trying reset to origin/main\n"
-            git -C "${SHANNON_DIR}" fetch origin
-            git -C "${SHANNON_DIR}" reset --hard origin/main
-        }
-        printf "${GREEN}+${NC} Shannon updated at %s\n" "${SHANNON_DIR}"
-    else
-        printf "${BLUE}Cloning Shannon...${NC}\n"
-        mkdir -p "$(dirname "${SHANNON_DIR}")"
-        git clone "${SHANNON_REPO}" "${SHANNON_DIR}"
-        printf "${GREEN}+${NC} Shannon installed at %s\n" "${SHANNON_DIR}"
+install_shannon() {
+    print_header "Installing Shannon AI Pentester"
+
+    if ! check_docker_installed; then
+        print_error "Docker is required but not installed"
+        print_info "Install Docker: https://docs.docker.com/get-docker/"
+        return 1
     fi
 
-    chmod +x "${SHANNON_DIR}/shannon"
-
-    # Write .env if API key is available and .env doesn't exist
-    if [[ ! -f "${SHANNON_DIR}/.env" ]]; then
-        # shellcheck source=/dev/null
-        [[ -f "${HOME}/.config/aidevops/credentials.sh" ]] && source "${HOME}/.config/aidevops/credentials.sh"
-        if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-            cat > "${SHANNON_DIR}/.env" << ENVEOF
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
-ENVEOF
-            chmod 600 "${SHANNON_DIR}/.env"
-            printf "${GREEN}+${NC} Created .env with API key\n"
+    if check_shannon_installed; then
+        print_info "Shannon is already installed at $SHANNON_DIR"
+        print_info "Updating to latest version..."
+        if git -C "$SHANNON_DIR" pull --ff-only 2>&1; then
+            print_success "Shannon updated successfully"
         else
-            printf "${YELLOW}!${NC} No ANTHROPIC_API_KEY found. Create %s/.env manually.\n" "${SHANNON_DIR}"
+            print_warning "Update failed - try removing and reinstalling"
+            print_info "  rm -rf $SHANNON_DIR && ./shannon-helper.sh install"
         fi
+        return 0
     fi
 
-    printf "\n${GREEN}Shannon installed!${NC}\n"
-    printf "Next: shannon-helper.sh start <url> <repo>\n"
+    print_info "Cloning Shannon from $SHANNON_REPO..."
+    local parent_dir
+    parent_dir="$(dirname "$SHANNON_DIR")"
+    mkdir -p "$parent_dir"
+
+    if git clone "$SHANNON_REPO" "$SHANNON_DIR" 2>&1; then
+        chmod +x "$SHANNON_DIR/shannon"
+        print_success "$SUCCESS_INSTALL_COMPLETE"
+        print_info "Installed to: $SHANNON_DIR"
+        print_info ""
+        print_info "Next steps:"
+        print_info "  1. Set your API key: aidevops secret set ANTHROPIC_API_KEY"
+        print_info "  2. Run a pentest: ./shannon-helper.sh start <url> <repo-path>"
+    else
+        print_error "Failed to clone Shannon repository"
+        return 1
+    fi
     return 0
 }
 
-cmd_start() {
+# ------------------------------------------------------------------------------
+# PENTEST OPERATIONS
+# ------------------------------------------------------------------------------
+
+start_pentest() {
     local url="${1:-}"
     local repo="${2:-}"
     local config="${3:-}"
+    local output="${4:-}"
 
-    if [[ -z "${url}" ]] || [[ -z "${repo}" ]]; then
-        printf "${RED}Error: URL and REPO are required.${NC}\n" >&2
-        printf "Usage: shannon-helper.sh start <url> <repo> [config]\n" >&2
+    if [[ -z "$url" ]]; then
+        print_error "$ERROR_URL_REQUIRED"
+        print_info "Usage: ./shannon-helper.sh start <url> <repo-path> [config] [output-dir]"
         return 1
     fi
 
-    check_docker || return 1
-    check_api_key || return 1
-
-    if [[ ! -d "${SHANNON_DIR}/.git" ]]; then
-        printf "${YELLOW}Shannon not installed. Installing...${NC}\n"
-        cmd_install || return 1
+    if [[ -z "$repo" ]]; then
+        print_error "$ERROR_REPO_REQUIRED"
+        print_info "Usage: ./shannon-helper.sh start <url> <repo-path> [config] [output-dir]"
+        return 1
     fi
 
     # Resolve repo to absolute path
-    if [[ "${repo}" != /* ]]; then
-        repo="$(cd "${repo}" 2>/dev/null && pwd)" || {
-            printf "${RED}Error: Repository path not found: %s${NC}\n" "${repo}" >&2
-            return 1
-        }
-    fi
-
-    printf "${CYAN}Starting Shannon pentest...${NC}\n"
-    printf "  Target: %s\n" "${url}"
-    printf "  Repo:   %s\n" "${repo}"
-    [[ -n "${config}" ]] && printf "  Config: %s\n" "${config}"
-    printf "\n"
-    printf "${YELLOW}WARNING: This will actively exploit the target application.${NC}\n"
-    printf "${YELLOW}NEVER run against production environments.${NC}\n"
-    printf "${YELLOW}Estimated time: 1-1.5 hours. Estimated cost: ~\$50 USD.${NC}\n"
-    printf "\n"
-
-    local -a args=("URL=${url}" "REPO=${repo}")
-    [[ -n "${config}" ]] && args+=("CONFIG=${config}")
-
-    # Run Shannon
-    "${SHANNON_DIR}/shannon" start "${args[@]}"
-    return $?
-}
-
-cmd_stop() {
-    local clean_flag=""
-    if [[ "${1:-}" == "--clean" ]]; then
-        clean_flag="CLEAN=true"
-    fi
-
-    if [[ ! -d "${SHANNON_DIR}/.git" ]]; then
-        printf "${YELLOW}Shannon not installed.${NC}\n"
-        return 0
-    fi
-
-    printf "${BLUE}Stopping Shannon containers...${NC}\n"
-    if [[ -n "${clean_flag}" ]]; then
-        "${SHANNON_DIR}/shannon" stop "${clean_flag}"
+    if [[ -d "$repo" ]]; then
+        repo="$(cd "$repo" && pwd)"
     else
-        "${SHANNON_DIR}/shannon" stop
+        print_error "$ERROR_REPO_PATH_NOT_FOUND: $repo"
+        return 1
     fi
-    printf "${GREEN}+${NC} Shannon stopped\n"
+
+    if ! check_api_key; then
+        print_error "No API key found (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)"
+        print_info "Set your key: aidevops secret set ANTHROPIC_API_KEY"
+        return 1
+    fi
+
+    print_header "Starting Shannon Pentest"
+    print_info "Target: $url"
+    print_info "Repository: $repo"
+    if [[ -n "$config" ]]; then
+        print_info "Config: $config"
+    fi
+
+    # Build Shannon command arguments
+    local shannon_args="URL=$url REPO=$repo"
+    if [[ -n "$config" ]]; then
+        shannon_args="$shannon_args CONFIG=$config"
+    fi
+    if [[ -n "$output" ]]; then
+        shannon_args="$shannon_args OUTPUT=$output"
+    fi
+
+    print_info "Running: ./shannon start $shannon_args"
+    print_warning "This will actively exploit the target. Only use on staging/dev environments."
+    print_info "Estimated time: 1-1.5 hours | Estimated cost: ~\$50 USD (Claude 4.5 Sonnet)"
+    echo ""
+
+    # Execute Shannon
+    # shellcheck disable=SC2086
+    if "$SHANNON_DIR/shannon" start $shannon_args 2>&1; then
+        print_success "$SUCCESS_PENTEST_STARTED"
+        print_info "Monitor progress: ./shannon-helper.sh logs"
+        print_info "Temporal UI: http://localhost:8233"
+    else
+        print_error "Failed to start pentest workflow"
+        return 1
+    fi
     return 0
 }
 
-cmd_status() {
-    printf "${CYAN}Shannon Status${NC}\n"
-    printf "══════════════════════════════════════\n"
+tail_logs() {
+    local workflow_id="${1:-}"
+
+    print_header "Shannon Workflow Logs"
+
+    if [[ -n "$workflow_id" ]]; then
+        "$SHANNON_DIR/shannon" logs "ID=$workflow_id" 2>&1
+    else
+        # Show latest logs from audit-logs directory
+        local latest_dir
+        latest_dir=$(find "$SHANNON_DIR/audit-logs" -maxdepth 1 -type d -name "*_*" 2>/dev/null | sort -r | head -1)
+        if [[ -n "$latest_dir" ]] && [[ -f "$latest_dir/workflow.log" ]]; then
+            print_info "Tailing latest workflow: $(basename "$latest_dir")"
+            tail -f "$latest_dir/workflow.log"
+        else
+            print_warning "No workflow logs found"
+            print_info "Start a pentest first: ./shannon-helper.sh start <url> <repo>"
+        fi
+    fi
+    return 0
+}
+
+query_workflow() {
+    local workflow_id="$1"
+
+    if [[ -z "$workflow_id" ]]; then
+        print_error "$ERROR_WORKFLOW_ID_REQUIRED"
+        print_info "Usage: ./shannon-helper.sh query <workflow-id>"
+        return 1
+    fi
+
+    print_header "Querying Workflow: $workflow_id"
+    "$SHANNON_DIR/shannon" query "ID=$workflow_id" 2>&1
+    return 0
+}
+
+stop_containers() {
+    local clean="${1:-false}"
+
+    print_header "Stopping Shannon Containers"
+
+    if [[ "$clean" == "true" ]] || [[ "$clean" == "--clean" ]]; then
+        print_warning "Removing all data including volumes..."
+        "$SHANNON_DIR/shannon" stop "CLEAN=true" 2>&1
+    else
+        "$SHANNON_DIR/shannon" stop 2>&1
+    fi
+
+    print_success "$SUCCESS_CONTAINERS_STOPPED"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# REPORTING
+# ------------------------------------------------------------------------------
+
+show_report() {
+    local session_dir="${1:-}"
+
+    print_header "Shannon Security Report"
+
+    if [[ -n "$session_dir" ]]; then
+        local report_file="$session_dir/deliverables/comprehensive_security_assessment_report.md"
+        if [[ -f "$report_file" ]]; then
+            cat "$report_file"
+        else
+            print_error "Report not found: $report_file"
+            return 1
+        fi
+        return 0
+    fi
+
+    # Find latest report
+    local latest_dir
+    latest_dir=$(find "$SHANNON_DIR/audit-logs" -maxdepth 1 -type d -name "*_*" 2>/dev/null | sort -r | head -1)
+    if [[ -z "$latest_dir" ]]; then
+        print_warning "No reports found"
+        print_info "Run a pentest first: ./shannon-helper.sh start <url> <repo>"
+        return 1
+    fi
+
+    local report_file="$latest_dir/deliverables/comprehensive_security_assessment_report.md"
+    if [[ -f "$report_file" ]]; then
+        print_info "Latest report: $report_file"
+        echo ""
+        cat "$report_file"
+    else
+        print_warning "Report not yet generated for: $(basename "$latest_dir")"
+        print_info "The pentest may still be running. Check: ./shannon-helper.sh logs"
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# STATUS
+# ------------------------------------------------------------------------------
+
+show_status() {
+    print_header "Shannon Status"
 
     # Installation
-    if [[ -d "${SHANNON_DIR}/.git" ]]; then
-        local sha
-        sha=$(git -C "${SHANNON_DIR}" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        local date
-        date=$(git -C "${SHANNON_DIR}" log -1 --format='%ci' 2>/dev/null || echo "unknown")
-        printf "${GREEN}Installed${NC}: %s (commit %s, %s)\n" "${SHANNON_DIR}" "${sha}" "${date}"
+    echo ""
+    echo "Installation:"
+    if check_shannon_installed; then
+        print_success "Shannon installed at $SHANNON_DIR"
+        local version
+        version=$(git -C "$SHANNON_DIR" describe --tags 2>/dev/null || git -C "$SHANNON_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        print_info "Version: $version"
     else
-        printf "${RED}Not installed${NC}. Run: shannon-helper.sh install\n"
-        return 0
+        print_error "Shannon not installed"
+        print_info "Run: ./shannon-helper.sh install"
     fi
 
     # Docker
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-        printf "${GREEN}Docker${NC}: running\n"
-    else
-        printf "${RED}Docker${NC}: not available\n"
-        return 0
-    fi
-
-    # Containers
-    local containers
-    containers=$(docker compose -f "${SHANNON_DIR}/docker-compose.yml" ps --format json 2>/dev/null || echo "")
-    if [[ -n "${containers}" ]]; then
-        printf "\nContainers:\n"
-        docker compose -f "${SHANNON_DIR}/docker-compose.yml" ps 2>/dev/null || true
-    else
-        printf "Containers: ${YELLOW}not running${NC}\n"
-    fi
-
-    # API key
-    # shellcheck source=/dev/null
-    [[ -f "${HOME}/.config/aidevops/credentials.sh" ]] && source "${HOME}/.config/aidevops/credentials.sh"
-    if [[ -n "${ANTHROPIC_API_KEY:-}" ]] || [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-        printf "API key: ${GREEN}configured${NC}\n"
-    else
-        printf "API key: ${RED}not set${NC}\n"
-    fi
-
-    # Reports
-    local report_count=0
-    if [[ -d "${SHANNON_DIR}/audit-logs" ]]; then
-        report_count=$(find "${SHANNON_DIR}/audit-logs" -name "comprehensive_security_assessment_report.md" 2>/dev/null | wc -l | tr -d ' ')
-    fi
-    printf "Reports: %s available\n" "${report_count}"
-
-    return 0
-}
-
-cmd_query() {
-    local workflow_id="${1:-}"
-    if [[ -z "${workflow_id}" ]]; then
-        printf "${RED}Error: Workflow ID required.${NC}\n" >&2
-        printf "Usage: shannon-helper.sh query <workflow-id>\n" >&2
-        return 1
-    fi
-
-    if [[ ! -d "${SHANNON_DIR}/.git" ]]; then
-        printf "${RED}Shannon not installed.${NC}\n" >&2
-        return 1
-    fi
-
-    "${SHANNON_DIR}/shannon" query "ID=${workflow_id}"
-    return $?
-}
-
-cmd_logs() {
-    local workflow_id="${1:-}"
-
-    if [[ ! -d "${SHANNON_DIR}/.git" ]]; then
-        printf "${RED}Shannon not installed.${NC}\n" >&2
-        return 1
-    fi
-
-    if [[ -n "${workflow_id}" ]]; then
-        "${SHANNON_DIR}/shannon" logs "ID=${workflow_id}"
-    else
-        # Find the latest workflow log
-        local latest_log
-        latest_log=$(find "${SHANNON_DIR}/audit-logs" -name "workflow.log" -type f -print0 2>/dev/null | \
-            xargs -0 ls -t 2>/dev/null | head -1)
-        if [[ -n "${latest_log}" ]]; then
-            printf "${BLUE}Tailing latest workflow log: %s${NC}\n" "${latest_log}"
-            tail -f "${latest_log}"
+    echo ""
+    echo "Docker:"
+    if check_docker_installed; then
+        print_success "Docker installed"
+        if check_docker_running; then
+            print_success "Docker daemon running"
+            # Check if Shannon containers are running
+            local running
+            running=$(docker ps --filter "name=shannon" --format "{{.Names}}" 2>/dev/null | wc -l | tr -d ' ')
+            if [[ "$running" -gt 0 ]]; then
+                print_info "Shannon containers running: $running"
+                docker ps --filter "name=shannon" --format "  {{.Names}}: {{.Status}}" 2>/dev/null
+            else
+                print_info "No Shannon containers running"
+            fi
         else
-            printf "${YELLOW}No workflow logs found.${NC}\n"
-            printf "Start a pentest first: shannon-helper.sh start <url> <repo>\n"
+            print_error "$ERROR_DOCKER_NOT_RUNNING"
         fi
-    fi
-    return 0
-}
-
-cmd_reports() {
-    local hostname_filter="${1:-}"
-    local audit_dir="${SHANNON_DIR}/audit-logs"
-
-    if [[ ! -d "${audit_dir}" ]]; then
-        printf "${YELLOW}No reports found. Run a pentest first.${NC}\n"
-        return 0
-    fi
-
-    printf "${CYAN}Shannon Pentest Reports${NC}\n"
-    printf "══════════════════════════════════════\n"
-
-    local found=0
-    while IFS= read -r report; do
-        local dir
-        dir=$(dirname "${report}")
-        local session_name
-        session_name=$(basename "${dir}")
-
-        if [[ -n "${hostname_filter}" ]] && [[ "${session_name}" != *"${hostname_filter}"* ]]; then
-            continue
-        fi
-
-        local session_json="${dir}/session.json"
-        local date_str="unknown"
-        if [[ -f "${session_json}" ]]; then
-            date_str=$(python3 -c "
-import json
-with open('${session_json}') as f:
-    d = json.load(f)
-print(d.get('startTime', d.get('start_time', 'unknown'))[:19])
-" 2>/dev/null || echo "unknown")
-        fi
-
-        printf "\n${GREEN}%s${NC}\n" "${session_name}"
-        printf "  Date:   %s\n" "${date_str}"
-        printf "  Report: %s\n" "${report}"
-        found=$((found + 1)) || true
-    done < <(find "${audit_dir}" -name "comprehensive_security_assessment_report.md" -type f 2>/dev/null | sort -r)
-
-    if [[ "${found}" -eq 0 ]]; then
-        printf "${YELLOW}No reports found"
-        [[ -n "${hostname_filter}" ]] && printf " matching '%s'" "${hostname_filter}"
-        printf ".${NC}\n"
     else
-        printf "\nTotal: %d report(s)\n" "${found}"
+        print_error "Docker not installed"
+    fi
+
+    # API Key
+    echo ""
+    echo "API Key:"
+    if check_api_key; then
+        print_success "API key configured"
+    else
+        print_warning "No API key found"
+        print_info "Set your key: aidevops secret set ANTHROPIC_API_KEY"
+    fi
+
+    # Recent reports
+    echo ""
+    echo "Recent Reports:"
+    if check_shannon_installed; then
+        local reports
+        reports=$(find "$SHANNON_DIR/audit-logs" -maxdepth 2 -name "comprehensive_security_assessment_report.md" 2>/dev/null | sort -r | head -5)
+        if [[ -n "$reports" ]]; then
+            echo "$reports" | while IFS= read -r report; do
+                local dir
+                dir=$(dirname "$(dirname "$report")")
+                print_info "$(basename "$dir") - $(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$report" 2>/dev/null || stat -c '%y' "$report" 2>/dev/null | cut -d. -f1)"
+            done
+        else
+            print_info "No reports found"
+        fi
     fi
 
     return 0
 }
+
+# ------------------------------------------------------------------------------
+# HELP
+# ------------------------------------------------------------------------------
+
+show_help() {
+    cat << 'EOF'
+Shannon AI Pentester Helper Script
+Usage: ./shannon-helper.sh [command] [options]
+
+PENTEST OPERATIONS:
+  start <url> <repo> [config] [output]  - Start a pentest workflow
+  logs [workflow-id]                     - Tail logs (latest or specific workflow)
+  query <workflow-id>                    - Query workflow progress
+  stop [--clean]                         - Stop containers (--clean removes data)
+  report [session-dir]                   - Show latest or specified report
+
+INSTALLATION & STATUS:
+  install                                - Clone and set up Shannon
+  status                                 - Check installation and Docker status
+
+GENERAL:
+  help                                   - Show this help message
+
+EXAMPLES:
+  ./shannon-helper.sh install
+  ./shannon-helper.sh status
+  ./shannon-helper.sh start https://staging.example.com /path/to/repo
+  ./shannon-helper.sh start https://staging.example.com /path/to/repo ./config.yaml
+  ./shannon-helper.sh start http://host.docker.internal:3000 /path/to/repo
+  ./shannon-helper.sh logs
+  ./shannon-helper.sh logs shannon-1234567890
+  ./shannon-helper.sh query shannon-1234567890
+  ./shannon-helper.sh report
+  ./shannon-helper.sh stop
+  ./shannon-helper.sh stop --clean
+
+VULNERABILITY COVERAGE:
+  - Injection (SQL, command, NoSQL)
+  - Cross-Site Scripting (XSS)
+  - Server-Side Request Forgery (SSRF)
+  - Broken Authentication & Authorization (IDOR, privilege escalation)
+
+IMPORTANT:
+  - NEVER run on production environments (Shannon actively exploits targets)
+  - Requires written authorization for the target system
+  - Estimated time: 1-1.5 hours per full run
+  - Estimated cost: ~$50 USD (Claude 4.5 Sonnet)
+  - Reports require human validation (LLM-generated)
+
+ENVIRONMENT VARIABLES:
+  ANTHROPIC_API_KEY           - Anthropic API key (recommended)
+  CLAUDE_CODE_OAUTH_TOKEN     - Claude Code OAuth token (alternative)
+  SHANNON_DIR                 - Installation directory (default: ~/.local/share/shannon)
+
+For more information:
+  - GitHub: https://github.com/KeygraphHQ/shannon
+  - Website: https://keygraph.io
+  - Discord: https://discord.gg/KAqzSHHpRt
+EOF
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# MAIN COMMAND HANDLER
+# ------------------------------------------------------------------------------
 
 main() {
     local command="${1:-help}"
-    shift 2>/dev/null || true
+    shift || true
 
-    case "${command}" in
-        install)    cmd_install "$@" ;;
-        start)      cmd_start "$@" ;;
-        stop)       cmd_stop "$@" ;;
-        status)     cmd_status "$@" ;;
-        query)      cmd_query "$@" ;;
-        logs)       cmd_logs "$@" ;;
-        reports)    cmd_reports "$@" ;;
-        help|--help|-h)
-            print_usage
+    # Commands that don't require Shannon to be installed
+    case "$command" in
+        "install")
+            install_shannon
+            return $?
+            ;;
+        "help"|"-h"|"--help")
+            show_help
+            return 0
+            ;;
+        "status")
+            show_status
+            return $?
             ;;
         *)
-            printf "${RED}Unknown command: %s${NC}\n" "${command}" >&2
-            print_usage >&2
+            # Other commands handled below after dependency check
+            ;;
+    esac
+
+    # Check dependencies for other commands
+    if ! check_dependencies; then
+        return 1
+    fi
+
+    case "$command" in
+        "start"|"run"|"pentest")
+            start_pentest "$@"
+            ;;
+        "logs"|"log"|"tail")
+            tail_logs "$@"
+            ;;
+        "query"|"progress")
+            query_workflow "$@"
+            ;;
+        "stop"|"down")
+            stop_containers "$@"
+            ;;
+        "report"|"results")
+            show_report "$@"
+            ;;
+        *)
+            print_error "$ERROR_UNKNOWN_COMMAND: $command"
+            print_info "Use './shannon-helper.sh help' for usage information"
             return 1
             ;;
     esac
+
+    return $?
 }
 
+# Execute main function
 main "$@"
