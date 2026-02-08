@@ -257,7 +257,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
   - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5
-- [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21
+- [ ] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 started:2026-02-08
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
 - [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) logged:2025-12-20 completed:2026-01-24
@@ -571,7 +571,7 @@ t068.6,Stateless Coordinator (coordinator-helper.sh),,orchestration|coordinator,
 t068.7,Model Routing (subagent YAML frontmatter),,agents|models|optimization,2h,1.5h,30m,,2026-01-23T00:00Z,completed,t068.3,,t068
 t068.8,TUI Dashboard (extend bdui or new Ink app),,tui|monitoring|visualization,1h,40m,10m,10m,2026-01-23T00:00Z,pending,t068.4|t068.5,,t068
 t010,Evaluate Merging build-agent and build-mcp into aidevops,,plan|architecture|agents,4h,2h,1h,1h,2025-12-21T14:00Z,pending,,,
-t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,30m,15m,10m,5m,2025-12-21T12:00Z,pending,,,
+t009,Claude Code Destructive Command Hooks,,plan|claude|git|security,30m,15m,10m,5m,2025-12-21T12:00Z,in_progress,2026-02-08T00:00Z,,
 t008,aidevops-opencode Plugin,,plan,1.5h,45m,30m,15m,2025-12-21T01:50Z,pending,,,
 t004,Add Ahrefs MCP server integration,,seo,2d,1d,0.5d,0.5d,2025-12-20T00:00Z,pending,,,
 t005,Implement multi-tenant credential storage,,security,5d,3d,1.5d,0.5d,2025-12-20T00:00Z,done,2026-01-24,,
