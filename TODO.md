@@ -154,9 +154,10 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 completed:2026-02-07
       - Notes: PR #485 merged. Added trap RETURN guards after mktemp calls across 14 scripts (20 files, 29 sites).
   - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
-  - [ ] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none
-    - [ ] t135.11.1 Understand release workflow and where formula auto-updates ~30m
-    - [ ] t135.11.2 Add formula version/SHA update to version-manager.sh ~1.5h blocked-by:t135.11.1
+  - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-08
+    - [x] t135.11.1 Understand release workflow and where formula auto-updates ~30m completed:2026-02-08
+    - [x] t135.11.2 Add formula version/SHA update to version-manager.sh ~1.5h blocked-by:t135.11.1 completed:2026-02-08
+    - Notes: CI publish-packages.yml already updates the tap repo (marcusquinn/homebrew-tap) with correct SHA256 on each release. Added formula URL version update to update_version_in_files() in version-manager.sh and formula version check to validate-version-consistency.sh. Updated local formula from v2.52.1/PLACEHOLDER to v2.105.6. PR #495 merged.
   - [x] t135.12 P3-A: Archive fix scripts safely (12 scripts, 0 refs, completed purpose) ~1h blocked-by:none completed:2026-02-07
     - Notes: PR #436. Moved 11 fix-*.sh + add-missing-returns.sh to .agents/scripts/_archive/ with README.
     - [x] t135.12.1 Read each script, document purpose and what it fixed (preserve knowledge) ~30m completed:2026-02-07
