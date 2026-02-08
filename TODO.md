@@ -301,7 +301,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Already implemented. tools/terminal/terminal-optimization.md exists.
 - [x] t026 Create subscription audit /command and @subagent for accounts agent #accounts #subscriptions #automation ~30m (ai:20m test:5m read:5m) logged:2025-01-03 ref:https://x.com/frankdegods/status/2007199488776253597 completed:2026-02-07
   - Notes: Already implemented. tools/accounts/subscription-audit.md exists.
-- [ ] t027 Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only) #tools #accessibility #linux ~10m (ai:8m read:2m) ref:GH#511 logged:2025-01-03
+- [x] t027 Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only) #tools #accessibility #linux ~10m (ai:8m read:2m) ref:GH#511 logged:2025-01-03 completed:2026-02-08
 - [x] t028 Setup sisyphus-dev-ai style GitHub collaborator for autonomous issue resolution #git #automation #agents ~1d (ai:4h test:4h read:2h) logged:2025-01-03 completed:2025-01-09 ref:https://github.com/code-yeongyu/oh-my-opencode/issues/425
   - Notes: Implemented secure OpenCode GitHub integration with max security approach. Created `.github/workflows/opencode-agent.yml` with trusted-user-only access, ai-approved label requirement, prompt injection detection, audit logging, and 15-min timeout. Documentation in `.agents/tools/git/opencode-github-security.md`. Helper script updated with `create-secure` and `create-labels` commands.
 - [x] t051 Loop System v2 - Fresh sessions per iteration #workflow #automation ~4h (ai:2h test:1h read:1h) logged:2025-01-11 started:2025-01-11T00:00Z completed:2025-01-11 ref:https://github.com/gmickel/gmickel-claude-marketplace/tree/main/plugins/flow-next
@@ -605,7 +605,7 @@ t023,Integrate Shannon AI pentester for security testing,,security|tools,2h,1h,3
 t024,Evaluate Dexter autonomous financial research agent,,research|finance|agents,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
 t025,Create terminal optimization /command and @subagent using Claude,,tools|terminal|productivity,20m,15m,3m,2m,2025-01-03T00:00Z,pending,,,
 t026,Create subscription audit /command and @subagent for accounts agent,,accounts|subscriptions|automation,30m,20m,5m,5m,2025-01-03T00:00Z,pending,,,
-t027,Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only),,tools|accessibility|linux,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
+t027,Add hyprwhspr speech-to-text support (Arch/Omarchy Linux only),,tools|accessibility|linux,10m,8m,,2m,2025-01-03T00:00Z,completed,2026-02-08,,
 t028,Setup sisyphus-dev-ai style GitHub collaborator for autonomous issue resolution,,git|automation|agents,1d,4h,4h,2h,2025-01-03T00:00Z,pending,,,
 t029,Review @penberg post for aidevops inclusion or similar approach,,research|tools,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
 t030,Evaluate @irl_danB post for useful advantages,,research|tools,10m,8m,,2m,2025-01-03T00:00Z,pending,,,
