@@ -7,7 +7,7 @@
 # Usage:
 #   supervisor-helper.sh init                          Initialize supervisor database
 #   supervisor-helper.sh add <task_id> [--repo path] [--description "desc"] [--model model] [--max-retries N]
-#   supervisor-helper.sh batch <name> [--concurrency N] [--tasks "t001,t002,t003"]
+#   supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks "t001,t002,t003"]
 #   supervisor-helper.sh dispatch <task_id> [--batch id] Dispatch a task (worktree + worker)
 #   supervisor-helper.sh reprompt <task_id> [--prompt ""] Re-prompt a retrying task
 #   supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
@@ -384,21 +384,24 @@ check_system_load() {
 # Calculate adaptive concurrency based on system load (t135.15.2)
 # Returns the recommended concurrency limit on stdout
 #
-# Strategy:
-#   - If load < cores: full concurrency (no throttle)
-#   - If load > cores but < cores*2: reduce by 50%
-#   - If load > cores*2: reduce to minimum floor
+# Strategy (bidirectional scaling):
+#   - If load < 50% of cores: scale UP (base * 2, capped at max_concurrency)
+#   - If load 50-100% of cores: use base concurrency (no change)
+#   - If load > cores but < cores*factor: reduce by 50%
+#   - If load > cores*factor: reduce to minimum floor
 #   - If memory pressure is high: reduce to minimum floor
-#   - Minimum floor is 6 (macOS load averages are inflated by I/O-waiting
-#     threads, so low minimums starve dispatch even at moderate CPU usage)
+#   - Minimum floor is 1 (allows at least 1 worker always)
+#   - Maximum cap defaults to cpu_cores (prevents runaway scaling)
 #
 # $1: base concurrency (from batch or global default)
 # $2: max load factor (default: 2)
+# $3: max concurrency cap (default: cpu_cores, hard upper limit)
 #######################################
 calculate_adaptive_concurrency() {
     local base_concurrency="${1:-4}"
     local max_load_factor="${2:-2}"
-    local min_concurrency=6
+    local max_concurrency_cap="${3:-0}"
+    local min_concurrency=1
 
     local load_output
     load_output=$(check_system_load "$max_load_factor")
@@ -408,6 +411,11 @@ calculate_adaptive_concurrency() {
     load_ratio=$(echo "$load_output" | grep '^load_ratio=' | cut -d= -f2)
     memory_pressure=$(echo "$load_output" | grep '^memory_pressure=' | cut -d= -f2)
     overloaded=$(echo "$load_output" | grep '^overloaded=' | cut -d= -f2)
+
+    # Default max cap to cpu_cores if not specified
+    if [[ "$max_concurrency_cap" -le 0 ]]; then
+        max_concurrency_cap="$cpu_cores"
+    fi
 
     local effective_concurrency="$base_concurrency"
 
@@ -421,14 +429,23 @@ calculate_adaptive_concurrency() {
     if [[ "$overloaded" == "true" ]]; then
         # Severely overloaded: minimum floor
         effective_concurrency="$min_concurrency"
-    elif [[ "$load_ratio" -gt $((cpu_cores * 100)) ]]; then
+    elif [[ "$load_ratio" -gt 100 ]]; then
         # Moderately loaded (load > cores but < cores*factor): halve concurrency
         effective_concurrency=$(( (base_concurrency + 1) / 2 ))
+    elif [[ "$load_ratio" -lt 50 ]]; then
+        # Light load (< 50% of cores): scale up to double base
+        effective_concurrency=$((base_concurrency * 2))
     fi
+    # else: load 50-100% of cores — use base_concurrency as-is
 
     # Enforce minimum floor
     if [[ "$effective_concurrency" -lt "$min_concurrency" ]]; then
         effective_concurrency="$min_concurrency"
+    fi
+
+    # Enforce maximum cap
+    if [[ "$effective_concurrency" -gt "$max_concurrency_cap" ]]; then
+        effective_concurrency="$max_concurrency_cap"
     fi
 
     echo "$effective_concurrency"
@@ -637,12 +654,13 @@ MIGRATE
 
     # Backup before ALTER TABLE migrations if any are needed (t162)
     local needs_alter_migration=false
-    local has_max_load has_release_on_complete has_diagnostic_of has_issue_url
+    local has_max_load has_release_on_complete has_diagnostic_of has_issue_url has_max_concurrency
     has_max_load=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
     has_release_on_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='release_on_complete';" 2>/dev/null || echo "0")
     has_diagnostic_of=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='diagnostic_of';" 2>/dev/null || echo "0")
     has_issue_url=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='issue_url';" 2>/dev/null || echo "0")
-    if [[ "$has_max_load" -eq 0 || "$has_release_on_complete" -eq 0 || "$has_diagnostic_of" -eq 0 || "$has_issue_url" -eq 0 ]]; then
+    has_max_concurrency=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_concurrency';" 2>/dev/null || echo "0")
+    if [[ "$has_max_load" -eq 0 || "$has_release_on_complete" -eq 0 || "$has_diagnostic_of" -eq 0 || "$has_issue_url" -eq 0 || "$has_max_concurrency" -eq 0 ]]; then
         needs_alter_migration=true
     fi
     if [[ "$needs_alter_migration" == "true" ]]; then
@@ -657,6 +675,13 @@ MIGRATE
         else
             log_success "Added max_load_factor column to batches"
         fi
+    fi
+
+    # Migrate: add max_concurrency column to batches if missing (adaptive scaling cap)
+    if [[ "$has_max_concurrency" -eq 0 ]]; then
+        log_info "Migrating batches table: adding max_concurrency column..."
+        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        log_success "Added max_concurrency column to batches (0 = auto-detect from cpu_cores)"
     fi
 
     # Migrate: add release_on_complete and release_type columns to batches if missing (t128.10)
@@ -796,6 +821,7 @@ CREATE TABLE IF NOT EXISTS batches (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     concurrency     INTEGER NOT NULL DEFAULT 4,
+    max_concurrency INTEGER NOT NULL DEFAULT 0,
     max_load_factor INTEGER NOT NULL DEFAULT 2,
     release_on_complete INTEGER NOT NULL DEFAULT 0,
     release_type    TEXT NOT NULL DEFAULT 'patch'
@@ -981,7 +1007,7 @@ cmd_add() {
 # Create or manage a batch
 #######################################
 cmd_batch() {
-    local name="" concurrency=4 tasks="" max_load_factor=2
+    local name="" concurrency=4 max_concurrency=0 tasks="" max_load_factor=2
     local release_on_complete=0 release_type="patch"
 
     # First positional arg is batch name
@@ -993,6 +1019,7 @@ cmd_batch() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --concurrency) [[ $# -lt 2 ]] && { log_error "--concurrency requires a value"; return 1; }; concurrency="$2"; shift 2 ;;
+            --max-concurrency) [[ $# -lt 2 ]] && { log_error "--max-concurrency requires a value"; return 1; }; max_concurrency="$2"; shift 2 ;;
             --tasks) [[ $# -lt 2 ]] && { log_error "--tasks requires a value"; return 1; }; tasks="$2"; shift 2 ;;
             --max-load) [[ $# -lt 2 ]] && { log_error "--max-load requires a value"; return 1; }; max_load_factor="$2"; shift 2 ;;
             --release-on-complete) release_on_complete=1; shift ;;
@@ -1002,7 +1029,7 @@ cmd_batch() {
     done
 
     if [[ -z "$name" ]]; then
-        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major]"
+        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major]"
         return 1
     fi
 
@@ -1024,15 +1051,21 @@ cmd_batch() {
     escaped_release_type=$(sql_escape "$release_type")
 
     db "$SUPERVISOR_DB" "
-        INSERT INTO batches (id, name, concurrency, max_load_factor, release_on_complete, release_type)
-        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type');
+        INSERT INTO batches (id, name, concurrency, max_concurrency, max_load_factor, release_on_complete, release_type)
+        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type');
     "
 
     local release_info=""
     if [[ "$release_on_complete" -eq 1 ]]; then
         release_info=", release: $release_type on complete"
     fi
-    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency, max-load: $max_load_factor${release_info})"
+    local max_conc_info=""
+    if [[ "$max_concurrency" -gt 0 ]]; then
+        max_conc_info=", max: $max_concurrency"
+    else
+        max_conc_info=", max: auto"
+    fi
+    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency${max_conc_info}, max-load: $max_load_factor${release_info})"
 
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
@@ -1559,10 +1592,18 @@ cmd_status() {
     if [[ -n "$batch_row" ]]; then
         local brelease_flag brelease_type
         IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type <<< "$batch_row"
+        local bmax_conc
+        bmax_conc=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "0")
+        local bmax_load
+        bmax_load=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "2")
+        local badaptive
+        badaptive=$(calculate_adaptive_concurrency "${bconc:-4}" "${bmax_load:-2}" "${bmax_conc:-0}")
+        local cap_display="auto"
+        [[ "${bmax_conc:-0}" -gt 0 ]] && cap_display="$bmax_conc"
         echo -e "${BOLD}=== Batch: $bname ===${NC}"
         echo "  ID:          $bid"
         echo "  Status:      $bstatus"
-        echo "  Concurrency: $bconc"
+        echo "  Concurrency: $bconc (adaptive: $badaptive, cap: $cap_display)"
         if [[ "${brelease_flag:-0}" -eq 1 ]]; then
             echo -e "  Release:     ${GREEN}enabled${NC} (${brelease_type:-patch} on complete)"
         else
@@ -2219,11 +2260,12 @@ cmd_next() {
         escaped_batch=$(sql_escape "$batch_id")
 
         # Check concurrency limit with adaptive load awareness (t151)
-        local base_concurrency max_load_factor
+        local base_concurrency max_load_factor batch_max_concurrency
         base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
         max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
+        batch_max_concurrency=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
         local concurrency
-        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}")
+        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}" "${batch_max_concurrency:-0}")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
@@ -2888,16 +2930,17 @@ cmd_dispatch() {
     if [[ -n "$batch_id" ]]; then
         local escaped_batch
         escaped_batch=$(sql_escape "$batch_id")
-        local base_concurrency max_load_factor
+        local base_concurrency max_load_factor batch_max_concurrency
         base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
         max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
+        batch_max_concurrency=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
         local concurrency
-        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}")
+        concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}" "${batch_max_concurrency:-0}")
         local active_count
         active_count=$(cmd_running_count "$batch_id")
 
         if [[ "$active_count" -ge "$concurrency" ]]; then
-            log_warn "Concurrency limit reached ($active_count/$concurrency, base:$base_concurrency) for batch $batch_id"
+            log_warn "Concurrency limit reached ($active_count/$concurrency, base:$base_concurrency, adaptive) for batch $batch_id"
             return 2
         fi
     else
@@ -5246,6 +5289,27 @@ cmd_pulse() {
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Load:     ${load_color}${sys_load_1m}${NC} / ${sys_load_5m} (${sys_cpu_cores} cores, ratio: ${sys_load_ratio}%)"
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Memory:   ${mem_color}${sys_memory}${NC}"
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Procs:    ${sys_proc_count} total, ${sys_supervisor_procs} supervisor"
+        # Show adaptive concurrency for the active batch
+        if [[ -n "$batch_id" ]]; then
+            local display_base display_max display_load_factor display_adaptive
+            local escaped_display_batch
+            escaped_display_batch=$(sql_escape "$batch_id")
+            display_base=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "?")
+            display_max=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "0")
+            display_load_factor=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "2")
+            display_adaptive=$(calculate_adaptive_concurrency "${display_base:-4}" "${display_load_factor:-2}" "${display_max:-0}")
+            local adaptive_label="base:${display_base}"
+            if [[ "$display_adaptive" -gt "${display_base:-0}" ]]; then
+                adaptive_label="${adaptive_label} ${GREEN}scaled:${display_adaptive}${NC}"
+            elif [[ "$display_adaptive" -lt "${display_base:-0}" ]]; then
+                adaptive_label="${adaptive_label} ${YELLOW}throttled:${display_adaptive}${NC}"
+            else
+                adaptive_label="${adaptive_label} effective:${display_adaptive}"
+            fi
+            local cap_display="auto"
+            [[ "${display_max:-0}" -gt 0 ]] && cap_display="$display_max"
+            echo -e "  ${BLUE}[SUPERVISOR]${NC}   Workers:  ${adaptive_label} (cap:${cap_display})"
+        fi
         if [[ "$sys_overloaded" == "true" ]]; then
             echo -e "  ${BLUE}[SUPERVISOR]${NC}   ${RED}OVERLOADED${NC} - adaptive throttling active"
         fi
@@ -7867,8 +7931,10 @@ Options for 'add':
   --no-issue             Skip GitHub issue creation for this task
 
 Options for 'batch':
-  --concurrency <N>      Max parallel workers (default: 4)
+  --concurrency <N>      Base parallel workers (default: 4, scales up/down with load)
+  --max-concurrency <N>  Hard upper limit (default: 0 = auto, capped at cpu_cores)
   --tasks "t001,t002"    Comma-separated task IDs to add
+  --max-load <N>         Max load factor before throttling (default: 2)
   --release-on-complete  Trigger a release when all tasks complete (t128.10)
   --release-type <type>  Release type: major|minor|patch (default: patch)
 
