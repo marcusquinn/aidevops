@@ -981,11 +981,139 @@ bootstrap_repo() {
     if [[ -z "$script_path" || "$script_path" == "/dev/stdin" || "$script_path" == "bash" || "$script_path" == /dev/fd/* ]]; then
         print_info "Remote install detected - bootstrapping repository..."
         
-        # Check for git
+        # On macOS, offer choice: install locally or in an OrbStack VM
+        if [[ "$(uname)" == "Darwin" ]]; then
+            echo ""
+            echo "Where would you like to install aidevops?"
+            echo ""
+            echo "  1) Install on this Mac (recommended)"
+            echo "  2) Install in a Linux VM (via OrbStack)"
+            echo ""
+            read -r -p "Choose [1/2] (default: 1): " install_target
+            
+            if [[ "$install_target" == "2" ]]; then
+                print_info "Setting up OrbStack VM installation..."
+                
+                # Install OrbStack if not present
+                if ! command -v orb >/dev/null 2>&1 && [[ ! -d "/Applications/OrbStack.app" ]]; then
+                    if command -v brew >/dev/null 2>&1; then
+                        print_info "Installing OrbStack via Homebrew..."
+                        brew install --cask orbstack
+                    else
+                        print_error "Homebrew is required to install OrbStack"
+                        echo "Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                        echo "Then re-run this installer."
+                        exit 1
+                    fi
+                fi
+                
+                # Wait for OrbStack to be ready
+                if ! command -v orb >/dev/null 2>&1; then
+                    print_info "Waiting for OrbStack CLI to become available..."
+                    # OrbStack installs the CLI at /usr/local/bin/orb
+                    local wait_count=0
+                    while ! command -v orb >/dev/null 2>&1 && [[ $wait_count -lt 30 ]]; do
+                        sleep 2
+                        ((wait_count++)) || true
+                    done
+                    if ! command -v orb >/dev/null 2>&1; then
+                        print_error "OrbStack CLI not found after installation"
+                        echo "Open OrbStack.app manually, then re-run this installer."
+                        exit 1
+                    fi
+                fi
+                
+                # Create or use existing Ubuntu VM
+                local vm_name="aidevops"
+                if orb list 2>/dev/null | grep -q "$vm_name"; then
+                    print_info "Using existing OrbStack VM: $vm_name"
+                else
+                    print_info "Creating Ubuntu VM: $vm_name..."
+                    orb create ubuntu "$vm_name"
+                fi
+                
+                # Run the installer inside the VM
+                print_info "Installing aidevops inside the VM..."
+                echo ""
+                orb run -m "$vm_name" bash -c 'bash <(curl -fsSL https://aidevops.sh/install)'
+                
+                echo ""
+                print_success "aidevops installed in OrbStack VM: $vm_name"
+                echo ""
+                echo "To use aidevops in the VM:"
+                echo "  orb shell $vm_name              # Enter the VM"
+                echo "  orb run -m $vm_name opencode    # Run OpenCode directly"
+                echo ""
+                exit 0
+            fi
+        fi
+        
+        # Auto-install git if missing (required for cloning)
         if ! command -v git >/dev/null 2>&1; then
-            print_error "git is required but not installed"
-            echo "Install git first: brew install git (macOS) or sudo apt install git (Linux)"
-            exit 1
+            print_warning "git is required but not installed - attempting auto-install..."
+            if [[ "$(uname)" == "Darwin" ]]; then
+                # macOS: xcode-select --install triggers git install
+                print_info "Installing Xcode Command Line Tools (includes git)..."
+                if xcode-select --install 2>/dev/null; then
+                    # Wait for installation to complete
+                    print_info "Waiting for Xcode CLT installation to complete..."
+                    until command -v git >/dev/null 2>&1; do
+                        sleep 5
+                    done
+                    print_success "git installed via Xcode Command Line Tools"
+                else
+                    # Already installed or failed
+                    if ! command -v git >/dev/null 2>&1; then
+                        print_error "git installation failed"
+                        echo "Install git manually: brew install git (macOS)"
+                        exit 1
+                    fi
+                fi
+            elif command -v apt-get >/dev/null 2>&1; then
+                print_info "Installing git via apt..."
+                sudo apt-get update -qq && sudo apt-get install -y -qq git
+                if ! command -v git >/dev/null 2>&1; then
+                    print_error "git installation failed"
+                    exit 1
+                fi
+                print_success "git installed"
+            elif command -v dnf >/dev/null 2>&1; then
+                print_info "Installing git via dnf..."
+                sudo dnf install -y git
+                if ! command -v git >/dev/null 2>&1; then
+                    print_error "git installation failed"
+                    exit 1
+                fi
+                print_success "git installed"
+            elif command -v yum >/dev/null 2>&1; then
+                print_info "Installing git via yum..."
+                sudo yum install -y git
+                if ! command -v git >/dev/null 2>&1; then
+                    print_error "git installation failed"
+                    exit 1
+                fi
+                print_success "git installed"
+            elif command -v pacman >/dev/null 2>&1; then
+                print_info "Installing git via pacman..."
+                sudo pacman -S --noconfirm git
+                if ! command -v git >/dev/null 2>&1; then
+                    print_error "git installation failed"
+                    exit 1
+                fi
+                print_success "git installed"
+            elif command -v apk >/dev/null 2>&1; then
+                print_info "Installing git via apk..."
+                sudo apk add git
+                if ! command -v git >/dev/null 2>&1; then
+                    print_error "git installation failed"
+                    exit 1
+                fi
+                print_success "git installed"
+            else
+                print_error "git is required but not installed and no supported package manager found"
+                echo "Install git manually and re-run the installer"
+                exit 1
+            fi
         fi
         
         # Create parent directory
@@ -1802,31 +1930,47 @@ setup_recommended_tools() {
                         echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
                     fi
                 elif [[ "$(uname)" == "Linux" ]]; then
-                    local pkg_manager
-                    pkg_manager=$(detect_package_manager)
-                    case "$pkg_manager" in
-                        apt)
-                            # Add packagecloud repo for Tabby (verified download, not piped to sudo)
-                            VERIFIED_INSTALL_SUDO="true"
-                            if verified_install "Tabby repository (apt)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh"; then
-                                sudo apt-get install -y tabby-terminal
-                            fi
-                            ;;
-                        dnf|yum)
-                            VERIFIED_INSTALL_SUDO="true"
-                            if verified_install "Tabby repository (rpm)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh"; then
-                                sudo "$pkg_manager" install -y tabby-terminal
-                            fi
-                            ;;
-                        pacman)
-                            # AUR package
-                            print_info "Tabby available in AUR as 'tabby-bin'"
-                            echo "  Install with: yay -S tabby-bin"
-                            ;;
-                        *)
-                            echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
-                            ;;
-                    esac
+                    local arch
+                    arch=$(uname -m)
+                    # Tabby packagecloud repo only has x86_64 packages
+                    # ARM64 (aarch64) must use .deb from GitHub releases or skip
+                    if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+                        print_warning "Tabby packages are not available for ARM64 Linux via package manager"
+                        echo "  Download ARM64 .deb from: https://github.com/Eugeny/tabby/releases/latest"
+                        echo "  Or skip Tabby - it's optional (a modern terminal emulator)"
+                    else
+                        local pkg_manager
+                        pkg_manager=$(detect_package_manager)
+                        case "$pkg_manager" in
+                            apt)
+                                # Add packagecloud repo for Tabby (verified download, not piped to sudo)
+                                VERIFIED_INSTALL_SUDO="true"
+                                if verified_install "Tabby repository (apt)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh"; then
+                                    if ! sudo apt-get install -y tabby-terminal; then
+                                        print_warning "Tabby package not found for this architecture"
+                                        echo "  Download from: https://github.com/Eugeny/tabby/releases/latest"
+                                    fi
+                                fi
+                                ;;
+                            dnf|yum)
+                                VERIFIED_INSTALL_SUDO="true"
+                                if verified_install "Tabby repository (rpm)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh"; then
+                                    if ! sudo "$pkg_manager" install -y tabby-terminal; then
+                                        print_warning "Tabby package not found for this architecture"
+                                        echo "  Download from: https://github.com/Eugeny/tabby/releases/latest"
+                                    fi
+                                fi
+                                ;;
+                            pacman)
+                                # AUR package
+                                print_info "Tabby available in AUR as 'tabby-bin'"
+                                echo "  Install with: yay -S tabby-bin"
+                                ;;
+                            *)
+                                echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+                                ;;
+                        esac
+                    fi
                 fi
             else
                 print_info "Skipped Tabby installation"
@@ -3645,6 +3789,194 @@ setup_browser_tools() {
     return 0
 }
 
+# Setup Node.js runtime (required for Bun, OpenCode, and MCP servers)
+setup_nodejs() {
+    # Check if Node.js is already installed
+    if command -v node >/dev/null 2>&1; then
+        local node_version
+        node_version=$(node --version 2>/dev/null || echo "unknown")
+        print_success "Node.js already installed: $node_version"
+        return 0
+    fi
+    
+    print_info "Node.js is required for OpenCode, MCP servers, and many tools"
+    
+    local pkg_manager
+    pkg_manager=$(detect_package_manager)
+    
+    case "$pkg_manager" in
+        brew)
+            read -r -p "Install Node.js via Homebrew? [Y/n]: " install_node
+            if [[ "$install_node" =~ ^[Yy]?$ ]]; then
+                if run_with_spinner "Installing Node.js" brew install node; then
+                    print_success "Node.js installed: $(node --version)"
+                else
+                    print_warning "Node.js installation failed"
+                fi
+            fi
+            ;;
+        apt)
+            read -r -p "Install Node.js via apt? [Y/n]: " install_node
+            if [[ "$install_node" =~ ^[Yy]?$ ]]; then
+                # Use NodeSource for a recent version (apt default may be old)
+                print_info "Installing Node.js (via NodeSource for latest LTS)..."
+                if command -v curl >/dev/null 2>&1; then
+                    VERIFIED_INSTALL_SUDO="true"
+                    if verified_install "NodeSource repository" "https://deb.nodesource.com/setup_22.x"; then
+                        if sudo apt-get install -y nodejs; then
+                            print_success "Node.js installed: $(node --version)"
+                        else
+                            print_warning "Node.js installation failed"
+                        fi
+                    else
+                        # Fallback to distro package
+                        print_info "Falling back to distro Node.js package..."
+                        if sudo apt-get install -y nodejs npm; then
+                            print_success "Node.js installed: $(node --version)"
+                        else
+                            print_warning "Node.js installation failed"
+                        fi
+                    fi
+                else
+                    if sudo apt-get install -y nodejs npm; then
+                        print_success "Node.js installed: $(node --version)"
+                    else
+                        print_warning "Node.js installation failed"
+                    fi
+                fi
+            fi
+            ;;
+        dnf|yum)
+            read -r -p "Install Node.js via $pkg_manager? [Y/n]: " install_node
+            if [[ "$install_node" =~ ^[Yy]?$ ]]; then
+                if sudo "$pkg_manager" install -y nodejs npm; then
+                    print_success "Node.js installed: $(node --version)"
+                else
+                    print_warning "Node.js installation failed"
+                fi
+            fi
+            ;;
+        pacman)
+            read -r -p "Install Node.js via pacman? [Y/n]: " install_node
+            if [[ "$install_node" =~ ^[Yy]?$ ]]; then
+                if sudo pacman -S --noconfirm nodejs npm; then
+                    print_success "Node.js installed: $(node --version)"
+                else
+                    print_warning "Node.js installation failed"
+                fi
+            fi
+            ;;
+        apk)
+            read -r -p "Install Node.js via apk? [Y/n]: " install_node
+            if [[ "$install_node" =~ ^[Yy]?$ ]]; then
+                if sudo apk add nodejs npm; then
+                    print_success "Node.js installed: $(node --version)"
+                else
+                    print_warning "Node.js installation failed"
+                fi
+            fi
+            ;;
+        *)
+            print_warning "No supported package manager found for Node.js installation"
+            echo "  Install manually: https://nodejs.org/"
+            ;;
+    esac
+    
+    return 0
+}
+
+# Setup OpenCode CLI (the AI coding tool that aidevops is built for)
+setup_opencode_cli() {
+    print_info "Setting up OpenCode CLI..."
+    
+    # Check if OpenCode is already installed
+    if command -v opencode >/dev/null 2>&1; then
+        local oc_version
+        oc_version=$(opencode --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "OpenCode already installed: $oc_version"
+        return 0
+    fi
+    
+    # Need either bun or npm to install
+    local installer=""
+    local install_pkg="opencode-ai@latest"
+    
+    if command -v bun >/dev/null 2>&1; then
+        installer="bun"
+    elif command -v npm >/dev/null 2>&1; then
+        installer="npm"
+    else
+        print_warning "Neither bun nor npm found - cannot install OpenCode"
+        print_info "Install Node.js first, then re-run setup"
+        return 0
+    fi
+    
+    print_info "OpenCode is the AI coding tool that aidevops is built for"
+    echo "  It provides an AI-powered terminal interface for development tasks."
+    echo ""
+    
+    read -r -p "Install OpenCode via $installer? [Y/n]: " install_oc
+    if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
+        if run_with_spinner "Installing OpenCode" "$installer" install -g "$install_pkg"; then
+            print_success "OpenCode installed"
+            
+            # Offer authentication
+            echo ""
+            print_info "OpenCode needs authentication to use AI models."
+            print_info "Run 'opencode auth login' to authenticate."
+            echo ""
+        else
+            print_warning "OpenCode installation failed"
+            print_info "Try manually: $installer install -g $install_pkg"
+        fi
+    else
+        print_info "Skipped OpenCode installation"
+        print_info "Install later: $installer install -g $install_pkg"
+    fi
+    
+    return 0
+}
+
+# Setup OrbStack VM (macOS only - offers to install aidevops in a Linux VM)
+setup_orbstack_vm() {
+    # Only available on macOS
+    if [[ "$(uname)" != "Darwin" ]]; then
+        return 0
+    fi
+    
+    # Check if OrbStack is already installed
+    if [[ -d "/Applications/OrbStack.app" ]] || command -v orb >/dev/null 2>&1; then
+        print_success "OrbStack already installed"
+        return 0
+    fi
+    
+    print_info "OrbStack provides fast, lightweight Linux VMs on macOS"
+    echo "  You can run aidevops in an isolated Linux environment."
+    echo "  This is optional - aidevops works natively on macOS too."
+    echo ""
+    
+    if ! command -v brew >/dev/null 2>&1; then
+        print_info "OrbStack available at: https://orbstack.dev/"
+        return 0
+    fi
+    
+    read -r -p "Install OrbStack? [y/N]: " install_orb
+    if [[ "$install_orb" =~ ^[Yy]$ ]]; then
+        if run_with_spinner "Installing OrbStack" brew install --cask orbstack; then
+            print_success "OrbStack installed"
+            print_info "Create a VM: orb create ubuntu aidevops"
+            print_info "Then install aidevops inside: orb run aidevops bash <(curl -fsSL https://aidevops.sh/install)"
+        else
+            print_warning "OrbStack installation failed"
+            print_info "Download manually: https://orbstack.dev/"
+        fi
+    else
+        print_info "Skipped OrbStack installation"
+    fi
+    
+    return 0
+}
+
 # Setup AI Orchestration Frameworks (Langflow, CrewAI, AutoGen)
 setup_ai_orchestration() {
     print_info "Setting up AI orchestration frameworks..."
@@ -4290,8 +4622,14 @@ main() {
         verify_location
         check_requirements
         
+        # Core runtime setup (early - many later steps depend on these)
+        confirm_step "Setup Node.js runtime (required for OpenCode and tools)" && setup_nodejs
+        
         # Shell environment setup (early, so later tools benefit from zsh/Oh My Zsh)
         confirm_step "Setup Oh My Zsh (optional, enhances zsh)" && setup_oh_my_zsh
+        
+        # OrbStack (macOS only - offer VM option early)
+        confirm_step "Setup OrbStack (lightweight Linux VMs on macOS)" && setup_orbstack_vm
         
         # Optional steps with confirmation in interactive mode
         confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
@@ -4337,6 +4675,7 @@ main() {
         confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
         confirm_step "Setup browser automation tools" && setup_browser_tools
         confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
+        confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
         confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
         # Run AFTER all MCP setup functions to ensure disabled state persists
         confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
