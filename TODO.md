@@ -60,6 +60,28 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t180 Post-merge verification worker phase — dispatch a verification worker after PR merge to confirm deliverables actually work #feature #supervisor #quality ~3h (ai:2h test:1h) logged:2026-02-08
+  - [ ] t180.1 Add verify state to supervisor state machine (merged -> verifying -> verified/verify_failed -> deployed) ~1h blocked-by:none
+    - Notes: New state between merged and deployed. Dispatch a lightweight worker that: pulls main, checks files exist, runs relevant tests if available, validates the feature described in the task. If verify fails, task goes to verify_failed (not deployed) and creates a follow-up bugfix task.
+  - [ ] t180.2 Create verification worker prompt template ~30m blocked-by:t180.1
+    - Notes: Template that receives: task description, PR diff summary, list of changed files. Worker checks: files exist on main, no syntax errors (shellcheck for .sh, markdownlint for .md), imports/references resolve, any tests pass. Returns pass/fail with evidence.
+  - [ ] t180.3 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
+    - Notes: After merge phase completes, auto-dispatch verify worker. Only transition to deployed after verify passes. Add --skip-verify flag for trusted tasks.
+  - [ ] t180.4 Prevent TODO.md [x] marking until verification passes ~30m blocked-by:t180.1
+    - Notes: update_todo_on_complete() should only mark [x] after verify state, not after merge. This closes the loop on false completion cascade.
+  - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. This adds a testing phase to the supervisor lifecycle.
+- [ ] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) logged:2026-02-08
+  - [ ] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none
+    - Notes: Before inserting, check if a memory with identical or near-identical content already exists (fuzzy match using word overlap, similar to consolidate). Skip insert if >90% match. Currently 23 copies of "Failed: Task blocked" exist.
+  - [ ] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none
+    - Notes: Auto-distill and supervisor retry logging create duplicate entries every pulse cycle. Either: (a) only store first occurrence of each retry pattern per task, or (b) update existing memory instead of creating new one, or (c) use a separate retry_log table instead of learnings.
+  - [ ] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none
+    - Notes: When a PR merges that fixes an issue referenced in a memory, mark those memories as resolved/stale. Could tag with PR# and auto-archive on merge. Currently 350 ERROR_FIX memories, many for issues fixed weeks ago.
+  - Notes: 881 memories, 654 auto-captured, massive duplication. Top duplicate: "Failed: Task blocked" x23. Auto-distill creates identical entries across pulse cycles. Memory is becoming noise rather than signal.
+- [ ] t182 GHA auto-fix workflow safety — validate auto-fixes before committing #bugfix #ci #quality ~30m (ai:20m test:10m) logged:2026-02-08
+  - Notes: "Monitor & Auto-Fix Code Quality" GHA workflow re-introduced a ShellCheck bug in clawdhub-helper.sh by adding invalid "|| exit" after "then" clauses. The bot's fix patterns need validation against ShellCheck/linters before committing. Options: (a) disable auto-fix for shell scripts, (b) add ShellCheck validation step after auto-fix, (c) require PR instead of direct commit for auto-fixes.
+- [ ] t183 Fix supervisor no_log_file dispatch failures — improve error capture when worker fails to start #bugfix #supervisor ~1h (ai:45m test:15m) logged:2026-02-08
+  - Notes: Many tasks fail with no_log_file — dispatch runs but produces no log. Root cause likely: dispatch command fails silently before worker starts (e.g. opencode binary not found, worktree creation fails, prompt too long). Need: (a) capture stderr from dispatch command, (b) write a minimal log entry even on dispatch failure, (c) distinguish "worker never started" from "worker started but log missing".
 - [ ] t179 Issue-sync reconciliation: close stale issues, fix ref:GH# drift, wire into supervisor pulse #bugfix #sync #self-improvement ~2h (ai:1.5h test:30m) logged:2026-02-08
   - [ ] t179.1 Add cmd_close fallback: search by task ID in issue title when ref:GH# doesn't match ~30m blocked-by:none
     - Notes: cmd_close() currently only looks up issues by ref:GH#NNN from TODO.md. When ref:GH# is stale/wrong (e.g. issue recreated with new number), the close silently skips. Add fallback: gh issue list --search "tNNN in:title" --state open. Also fix ref:GH# in TODO.md when mismatch detected.
