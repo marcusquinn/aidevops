@@ -2409,6 +2409,7 @@ $memory_context"
 create_task_worktree() {
     local task_id="$1"
     local repo="$2"
+    local force_fresh="${3:-false}"
 
     local branch_name="feature/${task_id}"
     # Derive worktree path: ~/Git/repo-name.feature-tXXX (matches wt convention)
@@ -2418,11 +2419,64 @@ create_task_worktree() {
     repo_parent=$(dirname "$repo")
     local worktree_path="${repo_parent}/${repo_basename}.feature-${task_id}"
 
-    # Check if worktree already exists
-    if [[ -d "$worktree_path" ]]; then
-        log_info "Worktree already exists: $worktree_path" >&2
-        echo "$worktree_path"
-        return 0
+    # Detect and clean stale branches/worktrees before creating new ones.
+    # A branch is "stale" if it exists but is not ahead of main (no unique
+    # commits), or if force_fresh is requested (retry with clean slate).
+    local needs_cleanup=false
+
+    if [[ "$force_fresh" == "true" ]]; then
+        needs_cleanup=true
+        log_info "Force-fresh requested for $task_id — cleaning stale worktree/branch" >&2
+    elif [[ -d "$worktree_path" ]]; then
+        # Worktree exists — check if the branch has unmerged work worth keeping
+        local ahead_count
+        ahead_count=$(git -C "$worktree_path" rev-list --count "main..HEAD" 2>/dev/null || echo "0")
+        if [[ "$ahead_count" -eq 0 ]]; then
+            needs_cleanup=true
+            log_info "Stale worktree for $task_id (0 commits ahead of main) — recreating" >&2
+        else
+            # Has commits — check if branch has diverged badly from main
+            # (more than 50 files changed = likely rebased from old main)
+            local diff_files
+            diff_files=$(git -C "$worktree_path" diff --name-only "main..HEAD" 2>/dev/null | wc -l || echo "0")
+            diff_files=$(echo "$diff_files" | tr -d ' ')
+            if [[ "$diff_files" -gt 50 ]]; then
+                needs_cleanup=true
+                log_warn "Stale worktree for $task_id ($diff_files files diverged from main) — recreating" >&2
+            else
+                log_info "Worktree already exists with $ahead_count commit(s): $worktree_path" >&2
+                echo "$worktree_path"
+                return 0
+            fi
+        fi
+    elif git -C "$repo" rev-parse --verify "$branch_name" &>/dev/null; then
+        # No worktree but branch exists — check if it's stale
+        local ahead_count
+        ahead_count=$(git -C "$repo" rev-list --count "main..$branch_name" 2>/dev/null || echo "0")
+        if [[ "$ahead_count" -eq 0 ]]; then
+            needs_cleanup=true
+            log_info "Stale branch $branch_name (0 commits ahead of main) — deleting" >&2
+        else
+            local diff_files
+            diff_files=$(git -C "$repo" diff --name-only "main..$branch_name" 2>/dev/null | wc -l || echo "0")
+            diff_files=$(echo "$diff_files" | tr -d ' ')
+            if [[ "$diff_files" -gt 50 ]]; then
+                needs_cleanup=true
+                log_warn "Stale branch $branch_name ($diff_files files diverged from main) — deleting" >&2
+            fi
+        fi
+    fi
+
+    if [[ "$needs_cleanup" == "true" ]]; then
+        # Remove worktree if it exists
+        if [[ -d "$worktree_path" ]]; then
+            git -C "$repo" worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
+            git -C "$repo" worktree prune 2>/dev/null || true
+        fi
+        # Delete local branch
+        git -C "$repo" branch -D "$branch_name" 2>/dev/null || true
+        # Delete remote branch (best-effort, don't fail if remote is gone)
+        git -C "$repo" push origin --delete "$branch_name" 2>/dev/null || true
     fi
 
     # Try wt first (redirect its verbose output to stderr)
@@ -2439,7 +2493,7 @@ create_task_worktree() {
         return 0
     fi
 
-    # Branch may already exist (retry without -b)
+    # Branch may already exist without worktree (e.g. remote-only)
     if git -C "$repo" worktree add "$worktree_path" "$branch_name" >&2 2>&1; then
         echo "$worktree_path"
         return 0
@@ -3394,6 +3448,10 @@ cmd_reprompt() {
     local reprompt_msg
     if [[ -n "$prompt_override" ]]; then
         reprompt_msg="$prompt_override"
+    elif [[ "$needs_fresh_worktree" == "true" ]]; then
+        reprompt_msg="/full-loop $task_id -- ${tdesc:-$task_id}
+
+NOTE: This is a clean-slate retry. The previous worktree was stale and has been recreated from main. Start fresh — do not look for previous work on this branch."
     else
         reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
 
@@ -3409,6 +3467,29 @@ Task description: ${tdesc:-$task_id}"
     mkdir -p "$log_dir"
     local new_log_file
     new_log_file="$log_dir/${task_id}-retry${tretries}-$(date +%Y%m%d%H%M%S).log"
+
+    # Clean-slate retry: if the previous error suggests the worktree is stale
+    # or the worker exited without producing a PR, recreate from fresh main.
+    local needs_fresh_worktree=false
+    case "${terror:-}" in
+        *clean_exit_no_signal*|*stale*|*diverged*|*worktree*) needs_fresh_worktree=true ;;
+    esac
+
+    if [[ "$needs_fresh_worktree" == "true" && -n "$tworktree" ]]; then
+        log_info "Clean-slate retry for $task_id — recreating worktree from main"
+        local new_worktree
+        new_worktree=$(create_task_worktree "$task_id" "$trepo" "true") || {
+            log_error "Failed to recreate worktree for $task_id"
+            cmd_transition "$task_id" "failed" --error "Clean-slate worktree recreation failed"
+            return 1
+        }
+        tworktree="$new_worktree"
+        # Update worktree path in DB
+        db "$SUPERVISOR_DB" "
+            UPDATE tasks SET worktree = '$(sql_escape "$tworktree")'
+            WHERE id = '$(sql_escape "$task_id")';
+        " 2>/dev/null || true
+    fi
 
     # Determine working directory
     local work_dir="$trepo"
