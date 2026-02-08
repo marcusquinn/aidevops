@@ -4606,6 +4606,8 @@ cmd_cleanup() {
 
 #######################################
 # Create a GitHub issue for a task
+# Delegates to issue-sync-helper.sh for rich issue bodies with PLANS.md context.
+# Falls back to inline creation if helper is unavailable.
 # Returns the issue number on success, empty on failure
 # Requires: gh CLI authenticated, repo with GitHub remote
 #######################################
@@ -4633,32 +4635,13 @@ create_github_issue() {
 
     # Detect repo slug from git remote
     local repo_slug
-    repo_slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+    local remote_url
+    remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null || echo "")
+    remote_url="${remote_url%.git}"
+    repo_slug=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|' || echo "")
     if [[ -z "$repo_slug" ]]; then
         log_warn "Could not detect GitHub repo slug, skipping issue creation"
         return 0
-    fi
-
-    # Build issue title with t{NNN}: prefix convention
-    local issue_title="${task_id}: ${description}"
-
-    # Build issue body from TODO.md context if available
-    local issue_body="Created by supervisor-helper.sh during task dispatch."
-    local todo_file="$repo_path/TODO.md"
-    if [[ -f "$todo_file" ]]; then
-        local todo_context
-        todo_context=$(grep -E "^[[:space:]]*- \[( |x|-)\] ${task_id}( |$)" "$todo_file" 2>/dev/null | head -1 || echo "")
-        if [[ -n "$todo_context" ]]; then
-            issue_body="From TODO.md:\n\n\`\`\`\n${todo_context}\n\`\`\`\n\nCreated by supervisor-helper.sh during task dispatch."
-        fi
-    fi
-
-    # Detect labels from description/TODO.md tags
-    local labels=""
-    if echo "$description" | grep -qiE "bug|fix"; then
-        labels="bug"
-    elif echo "$description" | grep -qiE "feat|enhancement|add"; then
-        labels="enhancement"
     fi
 
     # Check if an issue with this task ID prefix already exists
@@ -4670,7 +4653,47 @@ create_github_issue() {
         return 0
     fi
 
-    # Create the issue
+    # Try delegating to issue-sync-helper.sh for rich issue bodies
+    local issue_sync_helper="${SCRIPT_DIR}/issue-sync-helper.sh"
+    if [[ -x "$issue_sync_helper" ]]; then
+        log_info "Delegating issue creation to issue-sync-helper.sh for $task_id"
+        local push_output
+        push_output=$("$issue_sync_helper" push "$task_id" --repo "$repo_slug" 2>>"$SUPERVISOR_LOG" || echo "")
+        # Extract issue number from push output (looks for "Created #NNN:")
+        local issue_number
+        issue_number=$(echo "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+        if [[ -n "$issue_number" ]]; then
+            log_success "Created GitHub issue #${issue_number} for $task_id via issue-sync-helper.sh"
+            local escaped_id
+            escaped_id=$(sql_escape "$task_id")
+            local escaped_url="https://github.com/${repo_slug}/issues/${issue_number}"
+            escaped_url=$(sql_escape "$escaped_url")
+            db "$SUPERVISOR_DB" "UPDATE tasks SET issue_url = '$escaped_url' WHERE id = '$escaped_id';"
+            echo "$issue_number"
+            return 0
+        fi
+        log_warn "issue-sync-helper.sh did not return issue number, falling back to inline creation"
+    fi
+
+    # Fallback: inline issue creation (bare-bones body)
+    local issue_title="${task_id}: ${description}"
+    local issue_body="Created by supervisor-helper.sh during task dispatch."
+    local todo_file="$repo_path/TODO.md"
+    if [[ -f "$todo_file" ]]; then
+        local todo_context
+        todo_context=$(grep -E "^[[:space:]]*- \[( |x|-)\] ${task_id}( |$)" "$todo_file" 2>/dev/null | head -1 || echo "")
+        if [[ -n "$todo_context" ]]; then
+            issue_body="From TODO.md:\n\n\`\`\`\n${todo_context}\n\`\`\`\n\nCreated by supervisor-helper.sh during task dispatch."
+        fi
+    fi
+
+    local labels=""
+    if echo "$description" | grep -qiE "bug|fix"; then
+        labels="bug"
+    elif echo "$description" | grep -qiE "feat|enhancement|add"; then
+        labels="enhancement"
+    fi
+
     local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$issue_title" "--body" "$(printf '%b' "$issue_body")")
     if [[ -n "$labels" ]]; then
         gh_args+=("--label" "$labels")
@@ -4684,20 +4707,16 @@ create_github_issue() {
         return 0
     fi
 
-    # Extract issue number from URL
     local issue_number
     issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$' || echo "")
 
     if [[ -n "$issue_number" ]]; then
         log_success "Created GitHub issue #${issue_number} for $task_id: $issue_url"
-
-        # Store issue_url in the database
         local escaped_id
         escaped_id=$(sql_escape "$task_id")
         local escaped_url
         escaped_url=$(sql_escape "$issue_url")
         db "$SUPERVISOR_DB" "UPDATE tasks SET issue_url = '$escaped_url' WHERE id = '$escaped_id';"
-
         echo "$issue_number"
     fi
 
