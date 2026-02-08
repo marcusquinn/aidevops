@@ -2574,10 +2574,21 @@ build_dispatch_cmd() {
     # Include task description in the prompt so the worker knows what to do
     # even if TODO.md doesn't have an entry for this task (t158)
     # Always pass --headless for supervisor-dispatched workers (t174)
+    # Inject explicit TODO.md restriction into worker prompt (t173)
     local prompt="/full-loop $task_id --headless"
     if [[ -n "$description" ]]; then
         prompt="/full-loop $task_id --headless -- $description"
     fi
+
+    # t173: Explicit worker restriction — prevents TODO.md race condition
+    prompt="$prompt
+
+## MANDATORY Worker Restrictions (t173)
+- Do NOT edit, commit, or push TODO.md — the supervisor owns all TODO.md updates.
+- Do NOT edit todo/PLANS.md or todo/tasks/* — these are supervisor-managed.
+- Report status via exit code, log output, and PR creation only.
+- Put task notes in commit messages or PR body, never in TODO.md."
+
     if [[ -n "$memory_context" ]]; then
         prompt="$prompt
 

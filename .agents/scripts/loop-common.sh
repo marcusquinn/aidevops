@@ -335,16 +335,23 @@ loop_generate_reanchor() {
     local git_branch
     git_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
     
-    # Get TODO.md in-progress tasks
+    # Detect headless worker mode (t173: workers must not interact with TODO.md)
+    local is_headless="false"
+    if [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+        is_headless="true"
+    fi
+
+    # Get TODO.md in-progress tasks (read-only context, skip in headless mode - t173)
     local todo_in_progress=""
-    if [[ -f "TODO.md" ]]; then
+    if [[ "$is_headless" == "false" && -f "TODO.md" ]]; then
         todo_in_progress=$(grep -A10 "## In Progress" TODO.md 2>/dev/null | head -15 || echo "No tasks in progress")
     fi
     
     # Extract single next task (the "pin" concept from Loom)
     # Focus on ONE task per iteration to reduce context drift
+    # Skip in headless mode — workers work on their assigned task only (t173)
     local next_task=""
-    if [[ -f "TODO.md" ]]; then
+    if [[ "$is_headless" == "false" && -f "TODO.md" ]]; then
         # Get first unchecked task from In Progress section, or first from Backlog
         next_task=$(awk '
             /^## In Progress/,/^##/ { if (/^- \[ \]/) { print; exit } }
@@ -382,12 +389,35 @@ loop_generate_reanchor() {
         latest_receipt=$(cat "$latest_receipt_file")
     fi
     
+    # Build headless worker restriction block (t173)
+    local headless_restriction=""
+    if [[ "$is_headless" == "true" ]]; then
+        headless_restriction="
+## MANDATORY Worker Restrictions (t173 - Headless Mode)
+
+- **Do NOT edit, commit, or push TODO.md** — the supervisor owns all TODO.md updates.
+- **Do NOT edit todo/PLANS.md or todo/tasks/*** — these are supervisor-managed.
+- Report status via exit code, log output, and PR creation only.
+- Put task notes in commit messages or PR body, never in TODO.md.
+- Work ONLY on the assigned task described above. Do not pick tasks from TODO.md.
+"
+    fi
+
+    # Build TODO.md section (omitted in headless mode - t173)
+    local todo_section=""
+    if [[ "$is_headless" == "false" ]]; then
+        todo_section="### TODO.md In Progress
+\`\`\`
+$todo_in_progress
+\`\`\`"
+    fi
+
     # Generate re-anchor prompt with single-task focus
     cat > "$LOOP_REANCHOR_FILE" << EOF
 # Re-Anchor Context (MANDATORY - Read Before Any Work)
 
 **Loop:** $task_id | **Iteration:** $iteration | **Branch:** $git_branch
-
+${headless_restriction}
 ## Original Task
 
 $prompt
@@ -396,7 +426,7 @@ $prompt
 
 Choose the single most important next action. Do NOT try to do everything at once.
 
-${next_task:-"No specific task found in TODO.md - work on the original task above."}
+${next_task:-"Work on the original task above."}
 
 ## Current State
 
@@ -410,10 +440,7 @@ $git_status
 $git_log
 \`\`\`
 
-### TODO.md In Progress
-\`\`\`
-$todo_in_progress
-\`\`\`
+${todo_section}
 
 ## Guardrails (Do Not Repeat These Mistakes)
 

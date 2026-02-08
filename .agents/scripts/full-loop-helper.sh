@@ -89,6 +89,85 @@ is_headless() {
     [[ "$HEADLESS" == "true" ]]
 }
 
+# Install a git pre-commit hook that blocks TODO.md changes in headless mode (t173)
+# This is a hard guard — even if the AI agent tries to commit TODO.md, git rejects it.
+install_headless_todo_guard() {
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null || echo "")
+    if [[ -z "$git_dir" ]]; then
+        return 0
+    fi
+
+    local hooks_dir="$git_dir/hooks"
+    local hook_file="$hooks_dir/pre-commit"
+    local guard_marker="# t173-headless-todo-guard"
+
+    mkdir -p "$hooks_dir"
+
+    # If a pre-commit hook already exists, append our guard (if not already present)
+    if [[ -f "$hook_file" ]]; then
+        if grep -q "$guard_marker" "$hook_file" 2>/dev/null; then
+            return 0  # Already installed
+        fi
+        # Append to existing hook
+        cat >> "$hook_file" << 'GUARD'
+
+# t173-headless-todo-guard
+# Block TODO.md and planning file commits in headless worker mode
+if [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+    if git diff --cached --name-only | grep -qE '^(TODO\.md|todo/)'; then
+        echo "[t173 GUARD] BLOCKED: Headless workers must not commit TODO.md or todo/ files."
+        echo "[t173 GUARD] The supervisor owns all TODO.md updates. Put notes in commit messages or PR body."
+        exit 1
+    fi
+fi
+GUARD
+    else
+        # Create new hook
+        cat > "$hook_file" << 'GUARD'
+#!/usr/bin/env bash
+# t173-headless-todo-guard
+# Block TODO.md and planning file commits in headless worker mode
+if [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+    if git diff --cached --name-only | grep -qE '^(TODO\.md|todo/)'; then
+        echo "[t173 GUARD] BLOCKED: Headless workers must not commit TODO.md or todo/ files."
+        echo "[t173 GUARD] The supervisor owns all TODO.md updates. Put notes in commit messages or PR body."
+        exit 1
+    fi
+fi
+GUARD
+        chmod +x "$hook_file"
+    fi
+
+    return 0
+}
+
+# Remove the t173 headless guard from pre-commit hook (cleanup)
+remove_headless_todo_guard() {
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null || echo "")
+    if [[ -z "$git_dir" ]]; then
+        return 0
+    fi
+
+    local hook_file="$git_dir/hooks/pre-commit"
+    if [[ ! -f "$hook_file" ]]; then
+        return 0
+    fi
+
+    # Remove the guard block (from marker to end of guard)
+    if grep -q "t173-headless-todo-guard" "$hook_file" 2>/dev/null; then
+        # Use sed to remove the guard block
+        local tmp_file
+        tmp_file=$(mktemp)
+        awk '/# t173-headless-todo-guard/{skip=1} /^fi$/ && skip{skip=0; next} !skip' "$hook_file" > "$tmp_file"
+        mv "$tmp_file" "$hook_file"
+        chmod +x "$hook_file"
+    fi
+
+    return 0
+}
+
 print_phase() {
     local phase="$1"
     local description="$2"
@@ -656,6 +735,12 @@ cmd_start() {
         return 1
     fi
 
+    # Install git pre-commit guard to block TODO.md commits in headless mode (t173)
+    if is_headless; then
+        install_headless_todo_guard
+        print_info "HEADLESS: Installed TODO.md commit guard (t173)"
+    fi
+
     # Pre-flight GitHub auth check — workers spawned via nohup/cron may lack
     # SSH keys or valid gh tokens. Fail fast before burning compute.
     if ! gh auth status >/dev/null 2>&1; then
@@ -873,6 +958,9 @@ cmd_cancel() {
     rm -f ".agents/loop-state/quality-loop.local.state" 2>/dev/null
     rm -f ".claude/ralph-loop.local.state" 2>/dev/null
     rm -f ".claude/quality-loop.local.state" 2>/dev/null
+
+    # Remove headless TODO.md guard if installed (t173)
+    remove_headless_todo_guard
     
     print_success "Full loop cancelled"
     return 0
@@ -929,6 +1017,9 @@ cmd_complete() {
     echo ""
     
     clear_state
+
+    # Remove headless TODO.md guard if installed (t173)
+    remove_headless_todo_guard
     
     echo "<promise>FULL_LOOP_COMPLETE</promise>"
     
