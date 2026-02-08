@@ -1,12 +1,63 @@
 ---
-description: Orchestrate parallel task dispatch via supervisor (batch tasks, PRs, or descriptions)
+description: Supervise parallel task dispatch via opencode run workers (batch tasks, PRs, or descriptions)
 agent: Build+
 mode: subagent
 ---
 
-Orchestrate parallel task execution using the supervisor. Accepts task IDs, PR URLs, or descriptions.
+Supervise parallel task execution using the supervisor. Accepts task IDs, PR URLs, or descriptions.
 
 Arguments: $ARGUMENTS
+
+## Supervisor Role (CRITICAL)
+
+**This session is a supervisor. Its sole purpose is orchestration.**
+
+The session that runs `/runners` becomes a long-running supervisor. It must:
+
+1. **Dispatch** tasks to `opencode run` worker processes (each in its own worktree)
+2. **Monitor** worker health, progress, and outcomes via `supervisor-helper.sh pulse`
+3. **React** to failures (retry, reassign, skip) and successes (merge PRs, dispatch next wave)
+4. **Self-improve** the orchestration process when patterns of failure emerge
+5. **Persist** until the batch completes or the user intervenes
+
+**The supervisor MUST NOT do task work itself.** Every task is executed by a separate
+`opencode run` worker process in its own worktree with its own context window. The
+supervisor does not have enough token context to both orchestrate AND implement tasks.
+Attempting to do both will exhaust context and fail at both jobs.
+
+**What the supervisor does:**
+
+- Run `supervisor-helper.sh` commands (add, batch, pulse, status, dispatch, cleanup)
+- Read worker logs to diagnose failures (`tail` log files, check exit codes)
+- Merge PRs created by workers (`gh pr merge`)
+- Update TODO.md with completion timestamps
+- Install and maintain the cron pulse for unattended operation
+- Identify process improvements and apply them (fix dispatch scripts, adjust timeouts)
+
+**What the supervisor does NOT do:**
+
+- Read source code to understand task requirements
+- Write or edit implementation files
+- Run linters, tests, or quality checks on task output
+- Research topics or fetch documentation for tasks
+- Use the Task tool to spawn subagents for task work
+
+**Unblock by dispatching, not by solving:** When the supervisor encounters a problem
+that requires implementation work (a script bug, a missing config, a process gap, a
+blocker for other tasks), it does NOT attempt to fix it inline. Instead:
+
+1. Create a new TODO entry for the fix (e.g., `t154 Fix pre-edit-check.sh color vars`)
+2. Add it to the current batch: `$SH add t154 --repo "$(pwd)" --description "..."`
+3. Dispatch it immediately if it blocks other tasks, or queue it for the next wave
+4. Continue supervising — the worker handles the fix
+
+This applies to any question or issue that arises during supervision. The supervisor's
+job is to identify problems and route them to workers, not to solve them.
+
+**Context budget discipline:** Keep supervisor context lean. Avoid reading large files,
+long log outputs, or task-specific content. Use `tail -20` not `cat`. Use `--compact`
+flags where available. If a worker log is large, grep for `EXIT:` or `error` rather
+than reading the whole thing.
 
 ## Step 1: Parse Input
 
@@ -141,40 +192,78 @@ done
 # Create batch
 BATCH_ID=$($SH batch "$BATCH_NAME" --concurrency "$CONCURRENCY" --tasks "$TASK_IDS_CSV")
 
+# Install cron pulse for unattended operation
+$SH cron install --batch "$BATCH_ID"
+
 # Run first pulse to start dispatching
 $SH pulse --batch "$BATCH_ID"
 ```
 
-## Step 5: Monitor Loop
+## Step 5: Supervise (Monitor + React Loop)
 
-After initial dispatch, enter a monitoring loop:
+**This is the core supervisor loop.** The session stays here until the batch completes.
+Each iteration should be lightweight — check status, react to changes, report progress.
+
+### Pulse cycle
 
 ```bash
-# Poll every 60 seconds until batch completes
-while true; do
-  sleep 60
-  $SH pulse --batch "$BATCH_ID"
-
-  # Check if batch is complete
-  STATUS=$($SH batch-status "$BATCH_ID")
-  if [[ "$STATUS" == "complete" || "$STATUS" == "all_terminal" ]]; then
-    break
-  fi
-done
+# Poll every 2-5 minutes (cron handles the mechanical pulse;
+# the supervisor adds judgment and reaction)
+$SH pulse --batch "$BATCH_ID"
 ```
 
-Display progress updates to the user after each pulse:
+After each pulse, evaluate:
+
+1. **Completed workers** — Check if PRs were created. Merge if CI passes.
+2. **Failed workers** — Read last 20 lines of log. Diagnose: timeout? crash? bad prompt?
+   - If retryable: `$SH dispatch $TASK_ID` (supervisor-helper handles retry count)
+   - If systemic (same error pattern across workers): create a fix task and dispatch it
+3. **Stale workers** — Check `ps aux | grep opencode` for zombie processes. Kill if needed.
+4. **Queued tasks** — Verify slots are available for next dispatch.
+5. **Blockers and issues** — If a problem blocks other tasks or requires code changes,
+   create a new TODO, add it to the batch, and dispatch it as a worker task. Do not
+   attempt to fix it in the supervisor session.
+
+### Progress display
 
 ```text
-## Progress: 8/12 complete
+## Progress: 8/12 complete (2 running, 2 queued)
 
-| Task | Status | PR | Notes |
-|------|--------|----|-------|
-| t083 | complete | #382 | |
-| t084 | running | | retry 1/3 |
-| t085 | queued | | waiting for slot |
-| ... | ... | ... | ... |
+| Task | Status | Worker PID | PR | Notes |
+|------|--------|------------|-----|-------|
+| t083 | deployed | - | #382 merged | |
+| t084 | running | 78330 | - | 12m elapsed |
+| t085 | queued | - | - | waiting for slot |
+| t087 | failed | - | - | retry 2/3: timeout |
 ```
+
+### Self-improvement triggers
+
+During the monitor loop, watch for these patterns and act:
+
+| Pattern | Action |
+|---------|--------|
+| Multiple workers fail with same error | Create fix task, add to batch, dispatch as worker |
+| Workers timing out consistently | Increase timeout or simplify task prompts |
+| Workers creating PRs that fail CI | Create task to fix linters/quality config, dispatch |
+| Cron pulse not firing | Reinstall: `$SH cron install` (this is a supervisor command, not task work) |
+| System load too high | Reduce concurrency: `$SH batch-update --concurrency N` |
+| Worker stuck (no log output for >10m) | Kill process, mark failed, retry |
+| Missing script/config blocks tasks | Create task for the fix, dispatch with high priority |
+
+**Remember:** "Fix root cause" means "dispatch a worker to fix it", not "fix it here".
+The only things the supervisor does directly are supervisor-helper commands, git
+operations on TODO.md, `gh pr merge`, and process kills.
+
+### Context preservation
+
+To keep the supervisor session running for hours without exhausting context:
+
+- **Do NOT read full worker logs** — use `tail -20` or `grep -E 'error|EXIT|FAIL'`
+- **Do NOT read task source files** — workers handle that
+- **Do NOT use Task tool for research** — that's worker territory
+- **Summarize, don't accumulate** — after each pulse, output a compact status table
+- **Commit TODO.md updates promptly** — don't let state accumulate in memory
 
 ## Step 6: Batch Complete
 
@@ -184,11 +273,14 @@ When all tasks reach a terminal state:
 # Run retrospective
 $SH retrospective "$BATCH_ID"
 
-# Clean up worktrees
+# Clean up worktrees for completed tasks
 $SH cleanup
 
 # Kill any orphaned processes
 $SH kill-workers
+
+# Uninstall cron pulse (batch is done)
+$SH cron uninstall
 ```
 
 Report final summary:
@@ -204,6 +296,13 @@ Report final summary:
 
 Failed tasks may need manual attention. Run `/runners --retry <batch-id>` to retry failed tasks.
 ```
+
+### Post-batch actions
+
+1. **Update TODO.md** — Mark completed tasks `[x]` with `completed:` timestamps
+2. **Merge ready PRs** — `gh pr merge --squash` for PRs with green CI
+3. **Store learnings** — If process improvements were made, `/remember` them
+4. **Clean worktrees** — `wt merge` to remove merged branches
 
 ## Step 7: Post-PR Lifecycle (if applicable)
 
