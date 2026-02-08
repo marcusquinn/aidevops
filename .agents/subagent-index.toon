@@ -45,7 +45,7 @@ tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-oc
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
 tools/voice/,Voice AI - voice bridge and Pipecat pipeline for talking to AI agents,speech-to-speech|voice-bridge|hyprwhspr|pipecat-opencode|transcription|voice-models|buzz
 tools/data-extraction/,Data extraction - scraping business data,outscraper
-tools/deployment/,Deployment automation - self-hosted PaaS,coolify|coolify-cli|vercel|cloudron-app-packaging
+tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
 tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys
 tools/security/,Security tools - privacy filtering and scanning,privacy-filter
@@ -79,7 +79,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[42]{name,purpose}:
+<!--TOON:scripts[44]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -87,6 +87,7 @@ version-manager.sh,Version bumps and releases
 linter-manager.sh,Install and manage linters
 github-cli-helper.sh,GitHub operations
 coolify-helper.sh,Coolify deployment management
+uncloud-helper.sh,Uncloud multi-machine container orchestration
 stagehand-helper.sh,Browser automation with Stagehand
 crawl4ai-helper.sh,Web crawling and extraction
 watercrawl-helper.sh,WaterCrawl cloud API for web crawling and search
