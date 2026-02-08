@@ -51,7 +51,7 @@ tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key
 tools/security/,Security tools - privacy filtering and scanning,privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
-tools/automation/,Automation - cron scheduling and macOS AppleScript/JXA,cron-agent|mac|macos-automator
+tools/automation/,Automation - cron scheduling objective runner and macOS AppleScript/JXA,cron-agent|objective-runner|mac|macos-automator
 tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|localwp|mainwp|wp-preferred|scf
 services/hosting/,Hosting providers - DNS and cloud servers,hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/email/,Email services - transactional email and deliverability,ses|email-health-check
@@ -78,7 +78,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[41]{name,purpose}:
+<!--TOON:scripts[42]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
@@ -117,6 +117,7 @@ cron-dispatch.sh,Execute cron jobs via OpenCode server API
 runner-helper.sh,Named headless AI agent instances (create run status list edit logs stop destroy)
 matrix-dispatch-helper.sh,Matrix bot for dispatching messages to AI runners (setup start stop map test)
 supervisor-helper.sh,Autonomous supervisor for multi-task orchestration (init add batch dispatch reprompt evaluate pulse dashboard worker-status cleanup transition status list next running-count reset cancel db)
+objective-runner-helper.sh,Long-running objective execution with safety guardrails (start status pause resume rollback audit list)
 schema-validator-helper.sh,Schema.org structured data validation (validate validate-json status install)
 speech-to-speech-helper.sh,Voice pipeline management (setup start stop status client config benchmark)
 voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices status benchmark)
