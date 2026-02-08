@@ -100,7 +100,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: "Monitor & Auto-Fix Code Quality" GHA workflow re-introduced a ShellCheck bug in clawdhub-helper.sh by adding invalid "|| exit" after "then" clauses. The bot's fix patterns need validation against ShellCheck/linters before committing. Options: (a) disable auto-fix for shell scripts, (b) add ShellCheck validation step after auto-fix, (c) require PR instead of direct commit for auto-fixes.
 - [ ] t183 Fix supervisor no_log_file dispatch failures — improve error capture when worker fails to start #bugfix #supervisor ~1h (ai:45m test:15m) ref:GH#673 logged:2026-02-08
   - Notes: Many tasks fail with no_log_file — dispatch runs but produces no log. Root cause likely: dispatch command fails silently before worker starts (e.g. opencode binary not found, worktree creation fails, prompt too long). Need: (a) capture stderr from dispatch command, (b) write a minimal log entry even on dispatch failure, (c) distinguish "worker never started" from "worker started but log missing".
-- [x] t179 Issue-sync reconciliation: close stale issues, fix ref:GH# drift, wire into supervisor pulse #bugfix #sync #self-improvement ~2h (ai:1.5h test:30m) ref:GH#675 assignee:marcusquinn started:2026-02-08T22:05:19Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #677 merged
+- [x] t179 Issue-sync reconciliation: close stale issues, fix ref:GH# drift, wire into supervisor pulse #bugfix #sync #self-improvement ~2h (ai:1.5h test:30m) ref:GH#669 assignee:marcusquinn started:2026-02-08T22:05:19Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #677 merged
   - [x] t179.1 Add cmd_close fallback: search by task ID in issue title when ref:GH# doesn't match ~30m blocked-by:none
     - Notes: cmd_close() currently only looks up issues by ref:GH#NNN from TODO.md. When ref:GH# is stale/wrong (e.g. issue recreated with new number), the close silently skips. Add fallback: gh issue list --search "tNNN in:title" --state open. Also fix ref:GH# in TODO.md when mismatch detected.
   - [x] t179.2 Add reconcile command to fix mismatched ref:GH# values in TODO.md ~30m blocked-by:t179.1
@@ -164,16 +164,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#553 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #636 merged. Fixed `cmd_import_credentials()` to detect multi-tenant loader and read from `tenants/{tenant}/credentials.sh`.
 
-- [x] t171 Fix clean_exit_no_signal: treat EXIT:0 with PR URL as success #bug #supervisor ~30m (ai:20m) ref:GH#580 logged:2026-02-08 completed:2026-02-08
+- [x] t171 Fix clean_exit_no_signal: treat EXIT:0 with PR URL as success #bug #supervisor ~30m (ai:20m) ref:GH#632 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #638 merged. Seeded PR URL from DB in evaluate_worker to prevent clean_exit_no_signal retry loop.
 
-- [x] t172 Fix supervisor concurrency limiter race condition #bug #supervisor ~30m (ai:20m) ref:GH#578 logged:2026-02-08 completed:2026-02-08
+- [x] t172 Fix supervisor concurrency limiter race condition #bug #supervisor ~30m (ai:20m) ref:GH#633 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #639 merged. TOCTOU race fix: atomic mv for pulse lock + concurrency check moved to cmd_dispatch.
 
-- [x] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#564 assignee:marcusquinn started:2026-02-08T18:46:34Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #649 merged
+- [x] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#634 assignee:marcusquinn started:2026-02-08T18:46:34Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #649 merged
   - Notes: Multiple workers + supervisor all push to TODO.md on main simultaneously causing merge conflicts. Update /full-loop prompt and runner templates to enforce worker TODO.md restriction. Re-dispatched after stdout leak fix (PR #643).
 
-- [x] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08 completed:2026-02-08
+- [x] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#635 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #642 merged. Added `--headless` flag to full-loop for autonomous worker operation.
 
 - [x] t175 Fix `ambiguous_skipped_ai` evaluation — add better heuristic signals #bug #supervisor ~1h (ai:40m) ref:GH#644 assignee:marcusquinn started:2026-02-08T19:38:50Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #655 merged
