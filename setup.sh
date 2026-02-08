@@ -1025,7 +1025,7 @@ bootstrap_repo() {
                 
                 # Create or use existing Ubuntu VM
                 local vm_name="aidevops"
-                if orb list 2>/dev/null | grep -q "$vm_name"; then
+                if orb list 2>/dev/null | grep -qxF "$vm_name"; then
                     print_info "Using existing OrbStack VM: $vm_name"
                 else
                     print_info "Creating Ubuntu VM: $vm_name..."
@@ -1055,10 +1055,18 @@ bootstrap_repo() {
                 # macOS: xcode-select --install triggers git install
                 print_info "Installing Xcode Command Line Tools (includes git)..."
                 if xcode-select --install 2>/dev/null; then
-                    # Wait for installation to complete
-                    print_info "Waiting for Xcode CLT installation to complete..."
+                    # Wait for installation to complete (timeout after 5 minutes)
+                    print_info "Waiting for Xcode CLT installation to complete (timeout: 5m)..."
+                    local xcode_wait=0
+                    local xcode_max_wait=300
                     until command -v git >/dev/null 2>&1; do
                         sleep 5
+                        xcode_wait=$((xcode_wait + 5))
+                        if [[ $xcode_wait -ge $xcode_max_wait ]]; then
+                            print_error "Timed out waiting for Xcode CLT installation after ${xcode_max_wait}s"
+                            echo "Complete the installation manually, then re-run this installer."
+                            exit 1
+                        fi
                     done
                     print_success "git installed via Xcode Command Line Tools"
                 else
