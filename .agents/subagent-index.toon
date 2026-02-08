@@ -34,7 +34,7 @@ tools/build-mcp/,MCP development - creating MCP servers,build-mcp|server-pattern
 tools/ai-assistants/,AI tool integration - OpenCode and headless dispatch,agno|capsolver|claude-code|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
 tools/browser/,Browser automation - scraping and testing,agent-browser|stagehand|playwright|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy
-tools/mobile/,Mobile development - iOS/Android testing and emulators,maestro|minisim|ios-simulator-mcp|xcodebuild-mcp|axe-cli
+tools/mobile/,Mobile development - iOS/macOS build test simulator and emulator automation,xcodebuild-mcp|ios-simulator-mcp|maestro|axe-cli|minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
 tools/performance/,Web performance - Core Web Vitals and network analysis,performance|webpagetest
 tools/ui/,UI components - design systems and debugging,shadcn|ui-skills|frontend-debugging
