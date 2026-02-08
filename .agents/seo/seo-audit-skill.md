@@ -376,5 +376,5 @@ Same format as above
 - **programmatic-seo**: For building SEO pages at scale
 - **schema-markup**: For implementing structured data
 - **schema-validator**: For validating Schema.org structured data (JSON-LD, Microdata, RDFa)
-- **page-cro**: For optimizing pages for conversion (not just ranking)
+- **[mom-test-ux](mom-test-ux.md)**: For UX evaluation and CRO ("Would this confuse my mom?" heuristic)
 - **analytics-tracking**: For measuring SEO performance
