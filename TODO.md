@@ -366,8 +366,22 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added consolidate command to memory-helper.sh. Finds similar memories using word overlap, merges tags, keeps older entry. Supports --dry-run and --threshold options.
 - [x] t058 Memory Auto-Capture #plan → [todo/PLANS.md#memory-auto-capture] ~2h actual:1h (ai:1h test:30m read:30m) logged:2026-01-11 started:2026-02-06T01:30Z completed:2026-02-06
   - Notes: Implemented remaining 40% of PRD. Added --auto/--auto-captured flag to memory-helper.sh store (marks auto-captured in DB). Added privacy filters (<private> tag stripping, secret pattern rejection). Added --auto-only/--manual-only recall filters. Added `log` command and /memory-log slash command. Added auto-capture stats to `stats` output. DB migration adds auto_captured column to learning_access table. AGENTS.md updated with auto-capture instructions and privacy guidance. ~60% was already done by prior work (t052 session distillation, proactive memory triggers, consolidation, pattern tracking).
-- [ ] t060 Research jj (Jujutsu) VCS for aidevops advantages #research #git #tools ~15m (ai:10m read:5m) ref:GH#514 logged:2026-01-13 ref:https://github.com/jj-vcs/jj
-  - Notes: Git-compatible VCS (24.7k stars) with unique features: working-copy-as-commit (no staging area), operation log with undo, conflicts as first-class objects, automatic rebase of descendants, anonymous branches. Could simplify worktree workflows, enable safer experimentation, and provide better conflict handling. Evaluate: 1) Integration with existing git workflows 2) Colocated mode compatibility 3) Benefits for AI-assisted development 4) Learning curve vs productivity gains.
+- [x] t060 Research jj (Jujutsu) VCS for aidevops advantages #research #git #tools ~15m (ai:10m read:5m) ref:GH#514 logged:2026-01-13 ref:https://github.com/jj-vcs/jj started:2026-02-08T04:04Z completed:2026-02-08
+  - Notes: Git-compatible VCS (25.6k stars, v0.38.0, Apache-2.0, 300+ contributors, backed by Google). Written in Rust, uses gitoxide for Git backend. Key features: working-copy-as-commit (no staging area), operation log with full undo, conflicts as first-class objects, automatic rebase of descendants, anonymous branches (bookmarks), revset query language, safe concurrent replication.
+  - Evaluation for aidevops:
+    - RECOMMENDED: Colocated mode (`jj git init --colocate`) as bridge strategy. Maintains full git compatibility (all 39 scripts + 67 docs still work), allows gradual adoption, preserves GitHub/CI integration. jj and git commands work interchangeably in same repo.
+    - HIGH VALUE: Operation log + undo eliminates the destructive command risk that spawned t009 (PreToolUse hooks). `jj undo` reverses any operation including the equivalent of `git reset --hard`. Would reduce need for pre-edit-check.sh defensive machinery (206 lines).
+    - HIGH VALUE: jj workspaces (`jj workspace add`) are lighter than git worktrees. Could simplify the 3-tier fallback chain (wt -> worktree-helper.sh -> raw git worktree) in supervisor-helper.sh parallel dispatch.
+    - MEDIUM VALUE: No staging area simplifies commit workflow. Working copy is always a commit, eliminating "dirty working copy" errors and `git stash` usage (7 files). Automatic rebase of descendants eliminates manual `git rebase main` after fetching (9 files).
+    - MEDIUM VALUE: First-class conflicts enable committing conflicted state, resolving later. Valuable for supervisor parallel task dispatch where agents touch overlapping files. Conflict resolution propagates through descendants automatically.
+    - MEDIUM VALUE: Change IDs persist through squash-merge/rebase/amend, solving the squash-merge detection problem in worktree-helper.sh `cmd_clean()` (currently uses fragile heuristics).
+    - CONCERN: No git hooks support yet (issue #405). Pre-commit hooks are used by aidevops for quality gates. Workaround: run linters via jj's `run` command (design doc exists) or keep colocated mode where git hooks still fire.
+    - CONCERN: No git submodules support yet. Not a blocker for aidevops (no submodules used).
+    - CONCERN: No .gitattributes support (issue #53). Minor impact.
+    - CONCERN: Still experimental (pre-1.0). Core devs use it daily, but storage format may change before 1.0. Colocated mode mitigates this -- can always fall back to pure git.
+    - CONCERN: Learning curve for team. jj concepts (changes vs commits, bookmarks vs branches, revsets) differ from git mental model. Mitigated by colocated mode allowing gradual adoption.
+  - Recommendation: Add jj as OPTIONAL tool in setup.sh alongside Worktrunk. Create a `tools/git/jj.md` subagent documenting jj equivalents for common aidevops git operations. Do NOT replace git -- use colocated mode as an enhancement layer. Revisit after jj 1.0 for deeper integration.
+  - Follow-up tasks: t060.1 Add jj installation to setup.sh (optional), t060.2 Create tools/git/jj.md subagent, t060.3 Test jj colocated mode with supervisor parallel dispatch.
 - [x] t061 Create debug-opengraph and debug-favicon subagents #tools #seo #browser ~10m (ai:8m test:1m read:1m) logged:2026-01-14 ref:https://opengraphdebug.com/ completed:2026-02-07
   - Notes: Already implemented. seo/debug-opengraph.md and seo/debug-favicon.md both exist in .agents/seo/.
 - [ ] t062 Research vercel-labs/agent-skills for inclusion in aidevops #research #tools #deployment ~10m (ai:8m read:2m) ref:GH#515 logged:2026-01-14 ref:https://github.com/vercel-labs/agent-skills
@@ -622,7 +636,7 @@ t055,Document cache-aware prompt patterns,,docs|optimization,1h,30m,15m,15m,2025
 t056,Tool description indexing for on-demand MCP discovery,,tools|context,3h,2h,45m,15m,2025-01-11T00:00Z,done,t052,t067,
 t057,Memory consolidation and pruning,,memory|optimization,2h,1h,45m,15m,2025-01-11T00:00Z,done,t052,,
 t058,Memory Auto-Capture,,plan|memory|automation|context,1d,6h,4h,2h,2026-01-11T12:00Z,pending,,,
-t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,15m,10m,,5m,2026-01-13T00:00Z,pending,,,
+t060,Research jj (Jujutsu) VCS for aidevops advantages,,research|git|tools,15m,10m,,5m,2026-01-13T00:00Z,done,,,
 t061,Create debug-opengraph and debug-favicon subagents,,tools|seo|browser,10m,8m,1m,1m,2026-01-14T00:00Z,done,,,
 t062,Research vercel-labs/agent-skills for inclusion in aidevops,,research|tools|deployment,10m,8m,,2m,2026-01-14T00:00Z,pending,,,
 t064,Add seo-regex subagent with Search Console regex workflow,,seo|tools,5m,4m,,1m,2026-01-15T00:00Z,pending,,,
