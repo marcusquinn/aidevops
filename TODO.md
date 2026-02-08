@@ -103,23 +103,23 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #548 merged. Guard arithmetic with `|| true` to prevent silent exit under `set -e`.
 
-- [ ] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T17:33:28Z logged:2026-02-08
-  - Notes: `cmd_update()` in aidevops.sh calls `bash setup.sh` without `--non-interactive`, so interactive prompts silently skip in non-TTY contexts and agents never deploy. BLOCKED: Re-prompt dispatch failed: ambiguous_skipped_ai BLOCKED: Re-prompt dispatch failed: ambiguous_skipped_ai
+- [ ] t169 Fix `aidevops update` skipping agent deployment — pass `--non-interactive` to setup.sh #bug #setup ~15m (ai:10m) ref:GH#550 assignee:marcusquinn@Marcus-MacBook-Pro started:2026-02-08T18:46:26Z logged:2026-02-08
+  - Notes: `cmd_update()` in aidevops.sh calls `bash setup.sh` without `--non-interactive`, so interactive prompts silently skip in non-TTY contexts and agents never deploy. Re-dispatched after stdout leak fix (PR #643).
 
-- [ ] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#553 logged:2026-02-08
-  - Notes: `cmd_import_credentials()` in secret-helper.sh reads credentials.sh directly but with multi-tenant active, that file is a loader script. Actual credentials are in `tenants/{tenant}/credentials.sh`.
+- [x] t170 Fix `import-credentials` ignoring multi-tenant credential files #bug #credentials ~30m (ai:20m) ref:GH#553 logged:2026-02-08 completed:2026-02-08
+  - Notes: PR #636 merged. Fixed `cmd_import_credentials()` to detect multi-tenant loader and read from `tenants/{tenant}/credentials.sh`.
 
-- [ ] t171 Fix clean_exit_no_signal: treat EXIT:0 with PR URL as success #bug #supervisor ~30m (ai:20m) ref:GH#580 logged:2026-02-08
-  - Notes: Workers exit 0 after completing work but don't emit FULL_LOOP_COMPLETE signal, causing supervisor to retry. Fix evaluate_outcome to treat EXIT:0 + PR URL as success.
+- [x] t171 Fix clean_exit_no_signal: treat EXIT:0 with PR URL as success #bug #supervisor ~30m (ai:20m) ref:GH#580 logged:2026-02-08 completed:2026-02-08
+  - Notes: PR #638 merged. Seeded PR URL from DB in evaluate_worker to prevent clean_exit_no_signal retry loop.
 
-- [ ] t172 Fix supervisor concurrency limiter race condition #bug #supervisor ~30m (ai:20m) ref:GH#578 logged:2026-02-08
-  - Notes: Concurrent pulse invocations (cron + manual) each dispatch independently, exceeding batch concurrency. Need dispatch lock or post-dispatch running count check.
+- [x] t172 Fix supervisor concurrency limiter race condition #bug #supervisor ~30m (ai:20m) ref:GH#578 logged:2026-02-08 completed:2026-02-08
+  - Notes: PR #639 merged. TOCTOU race fix: atomic mv for pulse lock + concurrency check moved to cmd_dispatch.
 
-- [ ] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#564 assignee:marcusquinn started:2026-02-08T18:22:55Z logged:2026-02-08
-  - Notes: Multiple workers + supervisor all push to TODO.md on main simultaneously causing merge conflicts. Update /full-loop prompt and runner templates to enforce worker TODO.md restriction. BLOCKED: Re-prompt dispatch failed: ambiguous_skipped_ai
+- [ ] t173 Fix TODO.md race condition — workers must not write TODO.md #bug #supervisor ~30m (ai:20m) ref:GH#564 assignee:marcusquinn started:2026-02-08T18:46:34Z logged:2026-02-08
+  - Notes: Multiple workers + supervisor all push to TODO.md on main simultaneously causing merge conflicts. Update /full-loop prompt and runner templates to enforce worker TODO.md restriction. Re-dispatched after stdout leak fix (PR #643).
 
-- [ ] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08
-  - Notes: Workers must: pull --rebase before push, handle gh auth failures, NOT edit TODO.md, create PR with proper title/body, never stop to ask for confirmation.
+- [x] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08 completed:2026-02-08
+  - Notes: PR #642 merged. Added `--headless` flag to full-loop for autonomous worker operation.
 
 - [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #552 merged. Added git conflict resolution skill.
