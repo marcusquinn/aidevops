@@ -1,0 +1,34 @@
+{
+  "name": "git-workflow",
+  "description": "Validates git workflow knowledge - branch naming, worktrees, commit conventions",
+  "agent": "Build+",
+  "model": "",
+  "timeout": 90,
+  "tests": [
+    {
+      "id": "branch-naming",
+      "prompt": "What branch naming conventions does aidevops use? List the branch type prefixes. Answer concisely.",
+      "expect_contains": ["feature/", "bugfix/"],
+      "min_length": 50
+    },
+    {
+      "id": "worktree-usage",
+      "prompt": "When and why should you use git worktrees in aidevops? Answer concisely.",
+      "expect_contains": ["worktree"],
+      "min_length": 30
+    },
+    {
+      "id": "commit-conventions",
+      "prompt": "What commit message format does aidevops use? List the conventional commit prefixes. Answer concisely.",
+      "expect_contains": ["feat:", "fix:"],
+      "min_length": 30
+    },
+    {
+      "id": "main-branch-protection",
+      "prompt": "What happens if you try to edit files while on the main branch? Answer concisely.",
+      "expect_contains": ["worktree"],
+      "expect_not_contains": ["go ahead", "proceed"],
+      "min_length": 20
+    }
+  ]
+}

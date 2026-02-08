@@ -20,10 +20,11 @@ tools:
 ## Quick Reference
 
 - **Script**: `agent-test-helper.sh [run|run-one|compare|baseline|list|create|results|help]`
-- **Test suites**: JSON files in `~/.aidevops/.agent-workspace/agent-tests/suites/`
+- **Shipped suites**: `.agents/tests/*.json` (repo-shipped, version-controlled)
+- **User suites**: `~/.aidevops/.agent-workspace/agent-tests/suites/`
 - **Results**: `~/.aidevops/.agent-workspace/agent-tests/results/`
 - **Baselines**: `~/.aidevops/.agent-workspace/agent-tests/baselines/`
-- **CLI support**: Auto-detects `claude` or `opencode` (override with `AGENT_TEST_CLI`)
+- **CLI**: Auto-detects `opencode` (override with `AGENT_TEST_CLI`)
 
 **When to use**:
 
@@ -46,18 +47,19 @@ tools:
                     │  └── Pass/fail criteria       │
                     └──────────┬───────────────────┘
                                │
-              ┌────────────────┼────────────────┐
-              │                │                │
-     Claude Code CLI    OpenCode CLI     OpenCode Server
-     (claude -p)        (opencode run)   (HTTP API)
-              │                │                │
-              └────────────────┼────────────────┘
+               ┌───────────────┼───────────────┐
+               │                               │
+        OpenCode CLI                    OpenCode Server
+        (opencode run --format json)    (HTTP API)
+               │                               │
+               └───────────────┼───────────────┘
                                │
                     ┌──────────┴───────────────┐
                     │  Validation Engine        │
                     │  ├── expect_contains      │
                     │  ├── expect_not_contains  │
                     │  ├── expect_regex         │
+                    │  ├── expect_not_regex     │
                     │  ├── min/max_length       │
                     │  └── Pass/Fail verdict    │
                     └──────────────────────────┘
@@ -113,7 +115,7 @@ Each test can override suite-level defaults:
 {
   "id": "slow-test",
   "prompt": "Generate a comprehensive analysis...",
-  "agent": "plan",
+  "agent": "Plan+",
   "model": "anthropic/claude-opus-4-20250514",
   "timeout": 300,
   "expect_contains": ["analysis"]
@@ -128,8 +130,11 @@ Each test can override suite-level defaults:
 # By file path
 agent-test-helper.sh run path/to/suite.json
 
-# By name (looks in suites/ directory)
-agent-test-helper.sh run build-agent-tests
+# By name (searches suites/ dir and repo-shipped .agents/tests/)
+agent-test-helper.sh run smoke-test
+
+# Run shipped suite directly
+agent-test-helper.sh run agents-md-knowledge
 ```
 
 ### Quick Single-Prompt Test
@@ -154,12 +159,12 @@ The comparison workflow validates that agent changes don't cause regressions:
 
 ```bash
 # 1. Save current behavior as baseline
-agent-test-helper.sh baseline my-tests
+agent-test-helper.sh baseline smoke-test
 
 # 2. Make agent changes (edit AGENTS.md, subagents, etc.)
 
 # 3. Compare against baseline
-agent-test-helper.sh compare my-tests
+agent-test-helper.sh compare smoke-test
 ```
 
 The comparison reports:
@@ -171,85 +176,54 @@ The comparison reports:
 ### Manage Test Suites
 
 ```bash
-# Create a template
+# Create a template in user suites directory
 agent-test-helper.sh create my-new-tests
 
-# List available suites
+# List all available suites (user + shipped)
 agent-test-helper.sh list
 
 # View recent results
 agent-test-helper.sh results
-agent-test-helper.sh results my-tests  # Filter by name
+agent-test-helper.sh results smoke-test  # Filter by name
 ```
 
-## CLI Detection
+## CLI and Output Parsing
 
-The framework auto-detects the available AI CLI:
-
-1. **Claude Code** (`claude -p`): Preferred when available
-2. **OpenCode server** (`curl` to HTTP API): Used when OpenCode server is running
-3. **OpenCode CLI** (`opencode run`): Fallback for OpenCode without server
-
-Override with `AGENT_TEST_CLI=claude` or `AGENT_TEST_CLI=opencode`.
-
-## Example Test Suites
-
-### AGENTS.md Knowledge Test
-
-Tests that the agent has absorbed key instructions from AGENTS.md:
+The framework uses `opencode run --format json` for reliable response extraction. The JSON event stream format outputs one JSON object per line:
 
 ```json
-{
-  "name": "agents-md-knowledge",
-  "description": "Validates core AGENTS.md instruction absorption",
-  "timeout": 90,
-  "tests": [
-    {
-      "id": "pre-edit-check",
-      "prompt": "What must you run before editing any file?",
-      "expect_contains": ["pre-edit-check"],
-      "expect_regex": "pre-edit-check\\.sh"
-    },
-    {
-      "id": "file-discovery",
-      "prompt": "How should you find git-tracked files?",
-      "expect_contains": ["git ls-files"],
-      "expect_not_contains": ["mcp_glob", "Glob"]
-    },
-    {
-      "id": "security-credentials",
-      "prompt": "Where should credentials be stored?",
-      "expect_contains": ["credentials.sh"],
-      "expect_regex": "600"
-    }
-  ]
-}
+{"type":"text","timestamp":...,"part":{"type":"text","text":"response content"}}
 ```
 
-### Subagent Behavior Test
+Text is extracted from events where `type == "text"` via `jq`. This avoids parsing ANSI escape codes from the default formatted output.
 
-Tests that a specific subagent provides correct guidance:
+### Server Mode
 
-```json
-{
-  "name": "git-workflow-tests",
-  "description": "Validates git workflow subagent behavior",
-  "agent": "Build+",
-  "tests": [
-    {
-      "id": "branch-naming",
-      "prompt": "What branch naming conventions should I use?",
-      "expect_contains": ["feature/", "bugfix/"],
-      "min_length": 100
-    },
-    {
-      "id": "worktree-usage",
-      "prompt": "When should I use git worktrees?",
-      "expect_contains": ["worktree", "parallel"],
-      "min_length": 50
-    }
-  ]
-}
+When an OpenCode server is running (`opencode serve`), the framework uses the HTTP API instead:
+
+1. Creates an isolated session via `POST /session`
+2. Sends the prompt via `POST /session/:id/message` (sync)
+3. Extracts text from response parts
+4. Deletes the session for cleanup
+
+Override server location with `OPENCODE_HOST` and `OPENCODE_PORT`.
+
+## Shipped Test Suites
+
+The repo includes ready-to-use test suites in `.agents/tests/`:
+
+| Suite | Tests | Purpose |
+|-------|-------|---------|
+| `smoke-test` | 3 | Quick agent responsiveness and identity check |
+| `agents-md-knowledge` | 5 | Core AGENTS.md instruction absorption |
+| `git-workflow` | 4 | Git workflow knowledge validation |
+
+Run them directly:
+
+```bash
+agent-test-helper.sh run smoke-test
+agent-test-helper.sh run agents-md-knowledge
+agent-test-helper.sh run git-workflow
 ```
 
 ## Integration with CI/CD
@@ -264,13 +238,13 @@ agent-test-helper.sh run agents-md-knowledge || {
 }
 ```
 
-Requires an AI CLI available in the CI environment (e.g., `claude` with API key or `opencode` with server).
+Requires `opencode` CLI available in the CI environment with appropriate API credentials.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_TEST_CLI` | auto-detect | Force `claude` or `opencode` |
+| `AGENT_TEST_CLI` | auto-detect | Force `opencode` |
 | `AGENT_TEST_MODEL` | (suite default) | Override model for all tests |
 | `AGENT_TEST_TIMEOUT` | `120` | Default timeout in seconds |
 | `OPENCODE_HOST` | `localhost` | OpenCode server host |
