@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t185 Memory audit pulse — periodic scan of memories for self-improvement opportunities #feature #memory #supervisor ~2h (ai:1.5h test:30m) logged:2026-02-08
+- [ ] t185 Memory audit pulse — periodic scan of memories for self-improvement opportunities #feature #memory #supervisor ~2h (ai:1.5h test:30m) ref:GH#675 logged:2026-02-08
   - [ ] t185.1 Add memory-audit command to memory-helper.sh ~45m blocked-by:none
     - Notes: New command that scans all memories and produces actionable output. Logic: (1) Find recurring patterns — same error type 3+ times across different tasks = needs a fix task. (2) Check FAILED_APPROACH memories against merged PRs — if the referenced PR/issue is resolved, mark memory as graduated. (3) Identify DECISION/CODEBASE_PATTERN memories not yet in shared docs — flag for graduation. (4) Detect duplicates and near-duplicates for pruning. Output: structured report with proposed TODOs, graduation candidates, and prune candidates.
   - [ ] t185.2 Wire memory audit into supervisor pulse as periodic phase ~30m blocked-by:t185.1
