@@ -206,7 +206,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
         # Check if task is claimed by someone else via TODO.md assignee: field (t165)
         # Note: no 'local' — this runs at script top-level, not inside a function
         task_id_from_branch=""
-        task_id_from_branch=$(echo "$current_branch" | grep -oE 't[0-9]+' | head -1 || true)
+        task_id_from_branch=$(echo "$current_branch" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
         if [[ -n "$task_id_from_branch" ]]; then
             project_root=""
             project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")

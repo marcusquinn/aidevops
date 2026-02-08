@@ -483,7 +483,7 @@ run_pr_create_phase() {
     
     # Build PR title and body from task context (t156/t158)
     local pr_title pr_body task_id_match
-    task_id_match=$(echo "$branch" | grep -oE 't[0-9]+' | head -1 || echo "")
+    task_id_match=$(echo "$branch" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
     
     if [[ -n "$task_id_match" ]]; then
         # Look up task description: TODO.md first, then supervisor DB fallback (t158)

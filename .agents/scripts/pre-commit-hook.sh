@@ -184,7 +184,7 @@ validate_todo_completions() {
     local warn_count=0
     while IFS= read -r line; do
         local task_id
-        task_id=$(echo "$line" | grep -oE 't[0-9]+' | head -1 || echo "")
+        task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
         if [[ -z "$task_id" ]]; then
             continue
         fi
