@@ -78,14 +78,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t184.4 Add memory graduation workflow to build-agent.md ~15m blocked-by:none
     - Notes: Document the pattern: memories are a staging area for learnings. Once validated (fix merged, pattern confirmed), graduate into shared docs. Add /graduate-memories command or integrate into session-review. Prevents knowledge staying local.
   - Notes: Memory audit found 26 useful learnings that only exist locally. 7 architecture decisions, 5 codebase patterns, 3 model routing insights, and recovery techniques that would help all aidevops users. These need to move from SQLite memory into shipped docs.
-- [ ] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 assignee:marcusquinn started:2026-02-08T22:38:20Z logged:2026-02-08
-  - [ ] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none
+- [x] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 assignee:marcusquinn started:2026-02-08T22:38:20Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #679 merged
+  - [x] t180.1 Add verify states to supervisor state machine (merged -> verifying -> verified/verify_failed) ~1h blocked-by:none
     - Notes: New states between merged and deployed. On merge, supervisor auto-appends entry to todo/VERIFY.md with task ID, PR number, changed files, and auto-generated check commands. Dispatch a verification worker that runs the checks. If verify fails, task goes to verify_failed and reopens the TODO.md task with a bugfix note.
-  - [ ] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1
+  - [x] t180.2 Create VERIFY.md auto-population in supervisor merge phase ~30m blocked-by:t180.1
     - Notes: After PR merge, supervisor extracts: changed files from PR, generates check commands (shellcheck for .sh, file-exists for .md, rg for index references), appends to todo/VERIFY.md. Format is TOON-style with check: directives per entry.
-  - [ ] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1
+  - [x] t180.3 Create verification worker prompt and dispatch logic ~30m blocked-by:t180.1
     - Notes: Lightweight worker reads todo/VERIFY.md, runs each check: directive, marks [x] (pass) or [!] (fail) with evidence. On fail, reopens original task in TODO.md and creates follow-up bugfix task. On pass, supervisor transitions to deployed and marks TODO.md [x].
-  - [ ] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
+  - [x] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
     - Notes: After merge phase, auto-dispatch verify worker for entries in VERIFY.md. Only transition to deployed after verify passes. Add --skip-verify flag for trusted/trivial tasks. Batch verify multiple tasks in single worker dispatch for efficiency.
   - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. Design: todo/VERIFY.md acts as a verification queue with machine-parseable check directives. Workers verify, supervisor acts on results.
 - [ ] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) ref:GH#671 logged:2026-02-08
