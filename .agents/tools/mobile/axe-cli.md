@@ -22,7 +22,8 @@ tools:
 - **Install**: `brew install cameroncooke/axe/axe`
 - **Architecture**: Single binary CLI, no server or daemon required
 - **Requirements**: macOS with Xcode and iOS Simulator
-- **GitHub**: https://github.com/cameroncooke/AXe (MIT, by XcodeBuildMCP author)
+- **GitHub**: https://github.com/cameroncooke/AXe (1.2k stars, MIT, by XcodeBuildMCP author)
+- **Version**: v1.3.0 (2026-01-28)
 
 **Why AXe over idb**: Single binary (no client/server), focused on UI automation,
 no external dependencies, complete HID coverage plus gesture presets and timing controls.
@@ -51,6 +52,19 @@ axe type 'Hello World!' --udid $UDID
 echo "text" | axe type --stdin --udid $UDID
 ```
 
+### Keyboard Control
+
+```bash
+# Individual key press by HID keycode (40=Enter, 42=Backspace)
+axe key 40 --udid $UDID
+axe key 42 --duration 1.0 --udid $UDID
+# Key sequences (type "hello" by keycodes)
+axe key-sequence --keycodes 11,8,15,15,18 --udid $UDID
+# Key combos: modifier + key (227=Cmd, 225=Shift)
+axe key-combo --modifiers 227 --key 4 --udid $UDID          # Cmd+A
+axe key-combo --modifiers 227,225 --key 4 --udid $UDID      # Cmd+Shift+A
+```
+
 ### Hardware Buttons and Timing
 
 ```bash
@@ -65,7 +79,9 @@ axe tap -x 100 -y 200 --pre-delay 1.0 --post-delay 0.5 --udid $UDID
 
 ```bash
 axe screenshot --output ~/Desktop/capture.png --udid $UDID    # path printed to stdout
-axe record-video --udid $UDID --fps 15 --output recording.mp4 # Ctrl+C to stop
+# Video recording (H.264 MP4, Ctrl+C to stop and finalise)
+axe record-video --udid $UDID --fps 15 --output recording.mp4
+axe record-video --udid $UDID --fps 10 --quality 60 --scale 0.5 --output low-bw.mp4
 # Stream formats: mjpeg, ffmpeg, raw, bgra
 axe stream-video --udid $UDID --fps 30 --format ffmpeg | \
   ffmpeg -f image2pipe -framerate 30 -i - -c:v libx264 output.mp4
@@ -82,7 +98,9 @@ axe describe-ui --point 100,200 --udid $UDID
 | Dependencies | Single binary | Node.js + MCP runtime |
 | Tap targeting | Coordinates, ID, label | Coordinates only |
 | Gesture presets | 8 built-in | Manual swipe params |
-| Video / a11y tree | Native H.264, `describe-ui` | Not available / via simctl |
+| Video | H.264 recording, 4 stream formats | `record_video` / `stop_recording` |
+| Accessibility | `describe-ui` (full tree or point) | `ui_describe_all`, `ui_describe_point` |
+| App management | Not available | `install_app`, `launch_app` |
 | Best for | Scripts, CI, pipelines | Direct AI tool calling |
 
 ## Integration with XcodeBuildMCP

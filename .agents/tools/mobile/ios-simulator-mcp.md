@@ -112,7 +112,7 @@ Use these prompts after implementing a feature to validate behaviour:
 | **Maestro** | E2E test flows | Maestro for scripted repeatable flows; this MCP for ad-hoc AI-driven QA |
 | **MiniSim** | Simulator launcher | MiniSim manages simulator lifecycle; this MCP interacts with running sims |
 
-## Comparison: ios-simulator-mcp vs AXe CLI (t100)
+## Comparison: ios-simulator-mcp vs AXe CLI
 
 Both enable simulator interaction but take different approaches:
 
@@ -120,10 +120,13 @@ Both enable simulator interaction but take different approaches:
 |--------|-------------------|---------|
 | **Interface** | MCP server (tool calls) | CLI commands |
 | **AI integration** | Native MCP - AI calls tools directly | Requires bash wrapping |
-| **Accessibility** | `ui_describe_all`, `ui_describe_point` | Full accessibility tree queries |
-| **Video** | `record_video` / `stop_recording` | Not available |
+| **Tap targeting** | Coordinates only | Coordinates, accessibility ID, label |
+| **Accessibility** | `ui_describe_all`, `ui_describe_point` | `describe-ui` (full tree or point) |
+| **Video** | `record_video` / `stop_recording` | H.264 recording, 4 stream formats |
+| **Gesture presets** | Manual swipe params | 8 built-in presets |
+| **Keyboard** | Not available | HID keycodes, sequences, combos |
 | **App management** | `install_app`, `launch_app` | Not available |
-| **Best for** | AI-driven QA, interactive testing | Accessibility auditing, tree inspection |
+| **Best for** | AI-driven QA, interactive testing | Scripts, CI, accessibility auditing |
 
 ## Troubleshooting
 
