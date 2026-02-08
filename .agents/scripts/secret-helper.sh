@@ -28,6 +28,7 @@ readonly DIM='\033[2m'
 # Paths
 readonly CONFIG_DIR="$HOME/.config/aidevops"
 readonly CREDENTIALS_FILE="$CONFIG_DIR/credentials.sh"
+readonly TENANTS_DIR="$CONFIG_DIR/tenants"
 readonly GOPASS_PREFIX="aidevops"
 
 # Check if gopass is available and initialized
@@ -42,6 +43,34 @@ has_gopass() {
     return 0
 }
 
+# Check if credentials.sh is a multi-tenant loader (not direct credentials)
+# When multi-tenant is active, credentials.sh contains a source command
+# pointing to tenants/{tenant}/credentials.sh instead of export lines.
+is_tenant_loader() {
+    [[ -f "$CREDENTIALS_FILE" ]] && grep -q 'AIDEVOPS_ACTIVE_TENANT=' "$CREDENTIALS_FILE" 2>/dev/null
+}
+
+# Resolve actual credential files to process.
+# Returns the direct credentials.sh if it contains exports, or all
+# tenant credential files if multi-tenant is active.
+# Output: one file path per line
+resolve_credential_files() {
+    if is_tenant_loader; then
+        # Multi-tenant: return all tenant credential files
+        local tenant_dir
+        for tenant_dir in "$TENANTS_DIR"/*/; do
+            [[ -d "$tenant_dir" ]] || continue
+            local cred_file="$tenant_dir/credentials.sh"
+            if [[ -f "$cred_file" ]]; then
+                echo "$cred_file"
+            fi
+        done
+    elif [[ -f "$CREDENTIALS_FILE" ]]; then
+        echo "$CREDENTIALS_FILE"
+    fi
+    return 0
+}
+
 # Get a secret value from gopass (NEVER print to stdout in agent context)
 # This function is only used internally for subprocess injection
 get_secret_value() {
@@ -49,12 +78,17 @@ get_secret_value() {
     if has_gopass; then
         gopass show -o "${GOPASS_PREFIX}/${name}" 2>/dev/null
     else
-        # Fallback to credentials.sh
-        if [[ -f "$CREDENTIALS_FILE" ]]; then
+        # Fallback to credential files (handles multi-tenant)
+        local cred_file
+        while IFS= read -r cred_file; do
+            [[ -z "$cred_file" ]] && continue
             local value
-            value=$(grep "^export ${name}=" "$CREDENTIALS_FILE" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//')
-            echo "$value"
-        fi
+            value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//')
+            if [[ -n "$value" ]]; then
+                echo "$value"
+                return 0
+            fi
+        done < <(resolve_credential_files)
     fi
     return 0
 }
@@ -76,8 +110,10 @@ collect_secret_values() {
         done <<< "$secrets"
     fi
 
-    # Also collect from credentials.sh as fallback
-    if [[ -f "$CREDENTIALS_FILE" ]]; then
+    # Also collect from credential files as fallback (handles multi-tenant)
+    local cred_file
+    while IFS= read -r cred_file; do
+        [[ -z "$cred_file" ]] && continue
         while IFS= read -r line; do
             if [[ "$line" =~ ^export[[:space:]]+[A-Z_][A-Z0-9_]*= ]]; then
                 local val="${line#*=}"
@@ -89,8 +125,8 @@ collect_secret_values() {
                     values+=("$val")
                 fi
             fi
-        done < "$CREDENTIALS_FILE"
-    fi
+        done < "$cred_file"
+    done < <(resolve_credential_files)
 
     # Output values one per line for the redaction filter
     printf '%s\n' "${values[@]}"
@@ -167,8 +203,10 @@ build_secret_env() {
         fi
     fi
 
-    # Also load from credentials.sh as fallback/supplement
-    if [[ -f "$CREDENTIALS_FILE" ]]; then
+    # Also load from credential files as fallback/supplement (handles multi-tenant)
+    local cred_file
+    while IFS= read -r cred_file; do
+        [[ -z "$cred_file" ]] && continue
         while IFS= read -r line; do
             if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*) ]]; then
                 local name="${BASH_REMATCH[1]}"
@@ -180,8 +218,8 @@ build_secret_env() {
                     env_vars="${env_vars}${name}=${val}\n"
                 fi
             fi
-        done < "$CREDENTIALS_FILE"
-    fi
+        done < "$cred_file"
+    done < <(resolve_credential_files)
 
     printf '%b' "$env_vars"
     return 0
@@ -390,20 +428,12 @@ cmd_run_specific() {
     return "$exit_code"
 }
 
-# Import credentials from credentials.sh to gopass
-cmd_import_credentials() {
-    if ! has_gopass; then
-        print_error "gopass not initialized. Run: aidevops secret init"
-        return 1
-    fi
-
-    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
-        print_info "No credentials.sh found to import"
-        return 0
-    fi
-
-    local imported=0
-    local skipped=0
+# Import a single credential file to gopass, with optional tenant prefix
+# Args: $1=file_path, $2=tenant_name (empty for non-tenant)
+# Sets: imported, skipped (caller's variables via nameref)
+_import_credential_file() {
+    local file="$1"
+    local tenant="$2"
 
     while IFS= read -r line; do
         if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*) ]]; then
@@ -420,19 +450,62 @@ cmd_import_credentials() {
                 continue
             fi
 
+            # Build gopass path: aidevops/NAME or aidevops/tenants/TENANT/NAME
+            local gopass_path="${GOPASS_PREFIX}/${name}"
+            if [[ -n "$tenant" ]]; then
+                gopass_path="${GOPASS_PREFIX}/tenants/${tenant}/${name}"
+            fi
+
             # Check if already in gopass
-            if gopass show -o "${GOPASS_PREFIX}/${name}" &>/dev/null; then
-                print_info "Skipping $name (already in gopass)"
+            if gopass show -o "$gopass_path" &>/dev/null; then
+                print_info "Skipping $name (already in gopass${tenant:+ [$tenant]})"
                 ((skipped++))
                 continue
             fi
 
             # Import to gopass
-            echo "$val" | gopass insert --force "${GOPASS_PREFIX}/${name}"
+            echo "$val" | gopass insert --force "$gopass_path"
             ((imported++))
-            print_success "Imported $name"
+            print_success "Imported $name${tenant:+ (tenant: $tenant)}"
         fi
-    done < "$CREDENTIALS_FILE"
+    done < "$file"
+
+    return 0
+}
+
+# Import credentials from credentials.sh (or tenant files) to gopass
+cmd_import_credentials() {
+    if ! has_gopass; then
+        print_error "gopass not initialized. Run: aidevops secret init"
+        return 1
+    fi
+
+    if [[ ! -f "$CREDENTIALS_FILE" ]] && [[ ! -d "$TENANTS_DIR" ]]; then
+        print_info "No credentials.sh found to import"
+        return 0
+    fi
+
+    local imported=0
+    local skipped=0
+
+    if is_tenant_loader; then
+        # Multi-tenant mode: import from each tenant's credential file
+        print_info "Multi-tenant credentials detected"
+        local tenant_dir
+        for tenant_dir in "$TENANTS_DIR"/*/; do
+            [[ -d "$tenant_dir" ]] || continue
+            local tenant_name
+            tenant_name=$(basename "$tenant_dir")
+            local cred_file="$tenant_dir/credentials.sh"
+            if [[ -f "$cred_file" ]]; then
+                print_info "Importing tenant: $tenant_name"
+                _import_credential_file "$cred_file" "$tenant_name"
+            fi
+        done
+    elif [[ -f "$CREDENTIALS_FILE" ]]; then
+        # Single-mode: import directly from credentials.sh
+        _import_credential_file "$CREDENTIALS_FILE" ""
+    fi
 
     print_success "Imported $imported secret(s), skipped $skipped"
 
