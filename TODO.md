@@ -62,9 +62,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t162 fix: supervisor DB safety - add backup-before-migrate and explicit column migrations #bugfix #supervisor ~30m (ai:25m test:5m) ref:GH#590 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
   - Notes: Root cause: t128.8 migration uses INSERT INTO tasks SELECT * FROM tasks_old which fails on column count mismatch if migrations run out of order. No backup before destructive table rename/recreate migrations. Fix: 1) Add backup_db() helper with SQLite .backup, timestamped copies, auto-prune to 5. 2) Add backup before t128.8 and t148 destructive migrations. 3) Fix t128.8 SELECT * to use explicit column list. 4) Add backup/restore commands for manual recovery.
 
-- [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m actual:15m (ai:15m) ref:GH#548 logged:2026-02-08
+- [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08
 
-- [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h actual:25m (ai:25m) ref:GH#552 logged:2026-02-08
+- [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08
 
 - [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
   - [x] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none completed:2026-02-07
@@ -285,12 +285,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [ ] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#505 logged:2025-12-20
 - [ ] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 logged:2025-12-21
-- [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m actual:25m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21
+- [ ] t013 Image SEO Enhancement with AI Vision #plan → [todo/PLANS.md#image-seo-enhancement-with-ai-vision] ~45m (ai:25m test:10m read:10m) ref:GH#507 logged:2025-12-21
   - Notes: Created 3 subagents: seo/moondream.md (Moondream 3 vision API - caption, query, detect, point, segment with SEO-specific prompts), seo/image-seo.md (orchestrator for alt text, filename, tag generation with WCAG guidelines and WordPress integration), seo/upscale.md (Real-ESRGAN local, Replicate cloud, Cloudflare CDN, Sharp format conversion). Updated seo.md with subagent references and Image SEO workflow section.
 - [x] t014 Document RapidFuzz library for fuzzy string matching #tools #context ~5m (ai:4m read:1m) logged:2025-12-21 completed:2026-02-07
   - Notes: tools/context/rapidfuzz.md created (122 lines). Covers core functions, process module, distance functions, performance tips, and aidevops integration patterns.
 - [x] t015 Add MinerU subagent as alternative to Pandoc for PDF conversion #tools #conversion ~15m actual:15m (ai:10m read:5m) logged:2025-12-21 completed:2026-02-06
-- [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m actual:45m (ai:25m test:10m read:10m) ref:GH#508 logged:2025-12-21
+- [ ] t016 Uncloud Integration for aidevops #plan → [todo/PLANS.md#uncloud-integration-for-aidevops] ~45m (ai:25m test:10m read:10m) ref:GH#508 logged:2025-12-21
   - Notes: Created uncloud.md subagent (deployment provider guide with Quick Reference, CLI examples, Compose format, architecture diagram), uncloud-helper.sh (CLI wrapper with 20 commands, zero ShellCheck violations), uncloud-config.json.txt (cluster config template). Updated subagent-index.toon. Uncloud v0.16.0, 4.6k stars, Apache-2.0, active development.
 - [ ] t017 SEO Machine Integration for aidevops #plan → [todo/PLANS.md#seo-machine-integration-for-aidevops] ~1.5h (ai:45m test:30m read:15m) ref:GH#509 logged:2025-12-21
 - [ ] t020 Git Issues Bi-directional Sync (GitHub, GitLab, Gitea) #plan #git #sync → [todo/PLANS.md#2026-02-08-git-issues-bi-directional-sync] ~3h (ai:1.5h test:1h read:30m) logged:2025-12-21 ref:GH#510
