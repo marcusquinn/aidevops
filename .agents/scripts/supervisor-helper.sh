@@ -2680,8 +2680,16 @@ create_task_worktree() {
         local ahead_count
         ahead_count=$(git -C "$worktree_path" rev-list --count "main..HEAD" 2>/dev/null || echo "0")
         if [[ "$ahead_count" -eq 0 ]]; then
+            # Before deleting, check if branch has an open PR with unmerged work
+            local open_pr_count
+            open_pr_count=$(gh pr list --head "$branch_name" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+            if [[ "$open_pr_count" -gt 0 ]]; then
+                log_warn "Branch $branch_name has 0 commits ahead but has an open PR — keeping" >&2
+                echo "$worktree_path"
+                return 0
+            fi
             needs_cleanup=true
-            log_info "Stale worktree for $task_id (0 commits ahead of main) — recreating" >&2
+            log_info "Stale worktree for $task_id (0 commits ahead of main, no open PR) — recreating" >&2
         else
             # Has commits — check if branch has diverged badly from main
             # (more than 50 files changed = likely rebased from old main)
@@ -2702,8 +2710,15 @@ create_task_worktree() {
         local ahead_count
         ahead_count=$(git -C "$repo" rev-list --count "main..$branch_name" 2>/dev/null || echo "0")
         if [[ "$ahead_count" -eq 0 ]]; then
-            needs_cleanup=true
-            log_info "Stale branch $branch_name (0 commits ahead of main) — deleting" >&2
+            # Before deleting, check if branch has an open PR with unmerged work
+            local open_pr_count
+            open_pr_count=$(gh pr list --head "$branch_name" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+            if [[ "$open_pr_count" -gt 0 ]]; then
+                log_warn "Branch $branch_name has 0 commits ahead but has an open PR — skipping cleanup" >&2
+            else
+                needs_cleanup=true
+                log_info "Stale branch $branch_name (0 commits ahead of main, no open PR) — deleting" >&2
+            fi
         else
             local diff_files
             diff_files=$(git -C "$repo" diff --name-only "main..$branch_name" 2>/dev/null | wc -l || echo "0")
