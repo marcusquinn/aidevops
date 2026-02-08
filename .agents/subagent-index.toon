@@ -47,7 +47,7 @@ tools/video/,Video creation and downloading - programmatic generation and YouTub
 tools/voice/,Voice AI - voice bridge and Pipecat pipeline for talking to AI agents,speech-to-speech|voice-bridge|hyprwhspr|pipecat-opencode|transcription|voice-models|buzz
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
-tools/git/,Git operations - GitHub/GitLab/Gitea CLIs,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk
+tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
 tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys
 tools/security/,Security tools - privacy filtering and scanning,privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
