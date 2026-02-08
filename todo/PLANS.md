@@ -21,6 +21,100 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-08] Git Issues Bi-directional Sync
+
+**Status:** In Progress (Phase 1/7)
+**Estimate:** ~3h (ai:1.5h test:1h read:30m)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p025,Git Issues Bi-directional Sync,in_progress,1,7,,git|sync|planning|github,3h,1.5h,1h,30m,2025-12-21T16:30Z,2026-02-08T00:00Z
+-->
+
+#### Purpose
+
+Create `issue-sync-helper.sh` — a dedicated bi-directional sync tool between TODO.md/PLANS.md and GitHub issues. Consolidates scattered issue sync code from supervisor-helper.sh, github-cli-helper.sh, and log-issue-helper.sh into a single authoritative helper. Composes rich GitHub issue bodies that include subtasks, plan context (purpose, decisions, discoveries), and related PRD/task files.
+
+#### Context
+
+**Existing pieces to consolidate:**
+- `supervisor-helper.sh` `create_github_issue()` (line 4612) — creates bare-bones issues from task ID + one-liner
+- `supervisor-helper.sh` `update_todo_with_issue_ref()` (line 4712) — adds `ref:GH#NNN` to TODO.md
+- `github-cli-helper.sh` `create_issue()` / `close_issue()` — generic gh wrapper, no TODO awareness
+- `log-issue-helper.sh` — diagnostics + issue search for bug reporting
+- `beads-sync-helper.sh` — bi-directional TODO.md ↔ Beads (pattern to follow)
+- `workflows/plans.md` lines 733-778 — documents the sync convention (spec to implement)
+
+**Current state:** 46 open GitHub issues (#496-#541) created manually from TODO.md. Issue bodies contain only the one-liner from TODO.md. No PLANS.md context, no subtask lists, no `#tag` → label mapping, no close-on-complete, no drift detection.
+
+**Absorbs t047** (cross-platform tools research) — GitHub first, GitLab/Gitea deferred to Phase 2.
+
+#### Decision Log
+
+- **Decision:** Dedicated helper script, not extension of supervisor-helper.sh
+  **Rationale:** supervisor-helper.sh is already 4700+ lines. Issue sync is a standalone concern usable by humans, supervisor, and other scripts. Supervisor delegates to it.
+  **Date:** 2026-02-08
+
+- **Decision:** GitHub first, platform abstraction later
+  **Rationale:** All current repos are on GitHub. GitLab/Gitea support (t047 scope) deferred until GitHub sync is proven. Platform abstraction via function dispatch (github_create_issue, gitlab_create_issue, etc.).
+  **Date:** 2026-02-08
+
+- **Decision:** TODO.md is source of truth, GitHub issues are projections
+  **Rationale:** Consistent with existing beads-sync pattern. TODO.md has richer structure (subtasks, TOON blocks, plan links). Issues are the public-facing view.
+  **Date:** 2026-02-08
+
+<!--TOON:decisions[3]{id,plan_id,decision,rationale,date,impact}:
+d060,p025,Dedicated helper script not supervisor extension,Supervisor is 4700+ lines and issue sync is standalone concern,2026-02-08,Architecture
+d061,p025,GitHub first platform abstraction later,All repos on GitHub and GitLab/Gitea deferred until proven,2026-02-08,Scope
+d062,p025,TODO.md is source of truth,Consistent with beads-sync and richer structure,2026-02-08,Architecture
+-->
+
+#### Progress
+
+- [ ] (2026-02-08) Phase 1: Build core TODO.md parser + rich issue body composer ~45m (t020.1)
+  - Parse task line: ID, description, tags, estimate, status, refs, plan link
+  - Parse all subtasks (indented `- [ ]` lines) with their status
+  - Parse Notes blocks
+  - Compose structured GitHub issue body with sections
+- [ ] (2026-02-08) Phase 2: PLANS.md section extraction + todo/tasks/ lookup ~30m (t020.2)
+  - Follow `→ [todo/PLANS.md#anchor]` links to extract plan section
+  - Include: Purpose, Progress (with checkbox status), Decision Log, Discoveries
+  - Check `todo/tasks/` for matching `prd-*.md` and `tasks-*.md` files
+  - Append as collapsible `<details>` sections in issue body
+- [ ] (2026-02-08) Phase 3: #tag → GitHub label mapping + push/enrich ~30m (t020.3)
+  - Map TODO.md `#tags` to existing GitHub labels
+  - `push` command: create issues for tasks without `ref:GH#`
+  - `enrich` command: update existing issue bodies with full context
+- [ ] (2026-02-08) Phase 4: Pull command (GH → TODO.md) ~30m (t020.4)
+  - Detect issues created on GitHub without TODO.md entry
+  - Add `ref:GH#NNN` to TODO.md tasks missing it
+  - Sync label changes back to `#tags`
+- [ ] (2026-02-08) Phase 5: Close + status commands ~30m (t020.5)
+  - `close`: when TODO.md task marked `[x]`, close matching GH issue
+  - `status`: show drift (tasks without issues, issues without tasks, stale)
+- [ ] (2026-02-08) Phase 6: Wire supervisor delegation ~15m (t020.6)
+  - Supervisor's `create_github_issue()` calls `issue-sync-helper.sh push tNNN`
+  - Remove duplicated logic from supervisor-helper.sh
+- [ ] (2026-02-08) Phase 7: Test + enrich existing 46 issues ~15m (t020.7)
+  - Run `enrich` on all plan-linked issues (#496, #497, #498, #500, #501, #504)
+  - Verify all 46 issues have matching `ref:GH#` in TODO.md
+
+<!--TOON:milestones[7]{id,plan_id,desc,est,actual,scheduled,completed,status}:
+m114,p025,Phase 1: Core TODO.md parser + rich issue body composer,45m,,2026-02-08T00:00Z,,in_progress
+m115,p025,Phase 2: PLANS.md section extraction + todo/tasks/ lookup,30m,,2026-02-08T00:00Z,,pending
+m116,p025,Phase 3: Tag-to-label mapping + push/enrich commands,30m,,2026-02-08T00:00Z,,pending
+m117,p025,Phase 4: Pull command (GH → TODO.md),30m,,2026-02-08T00:00Z,,pending
+m118,p025,Phase 5: Close + status commands,30m,,2026-02-08T00:00Z,,pending
+m119,p025,Phase 6: Wire supervisor delegation,15m,,2026-02-08T00:00Z,,pending
+m120,p025,Phase 7: Test + enrich existing 46 issues,15m,,2026-02-08T00:00Z,,pending
+-->
+
+#### Surprises & Discoveries
+
+(To be populated during implementation)
+
+<!--TOON:discoveries[0]{id,plan_id,observation,evidence,impact,date}:
+-->
+
 ### [2026-02-07] Plugin System for Private Extension Repos
 
 **Status:** Planning
