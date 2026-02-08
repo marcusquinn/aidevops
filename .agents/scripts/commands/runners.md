@@ -88,6 +88,19 @@ This session must run for hours or days. Keep it lean:
 - **Commit TODO.md updates promptly** — don't let state accumulate in memory
 - **Use `--compact` flags** where available on supervisor-helper commands
 
+### TODO.md single-writer constraint
+
+When multiple workers and the supervisor all push to TODO.md on `main` simultaneously,
+merge conflicts are inevitable. To prevent this:
+
+- **Only the supervisor writes to TODO.md.** Workers NEVER edit TODO.md directly.
+- Workers report completion/failure via: exit code, log file, and mailbox messages.
+- The supervisor reads worker outcomes and updates TODO.md in a single serialized flow.
+- This also applies to other shared files on `main` (e.g., `subagent-index.toon`).
+
+If a worker's `/full-loop` prompt includes TODO.md updates, that instruction must be
+removed. The supervisor owns the single source of truth for task state on `main`.
+
 ## Step 1: Parse Input
 
 Parse `$ARGUMENTS` to determine the input type and options:
@@ -267,13 +280,25 @@ After each pulse, evaluate:
 
 1. **Completed workers** — Check if PRs were created. Merge if CI passes.
 2. **Failed workers** — Read last 20 lines of log. Diagnose: timeout? crash? bad prompt?
+   - Before retrying, verify the backend is healthy (check if `opencode` process
+     starts and responds). Retrying against a dead backend wastes the retry budget.
    - If retryable: `$SH dispatch $TASK_ID` (supervisor-helper handles retry count)
    - If systemic (same error pattern across workers): create a fix task and dispatch it
-3. **Stale workers** — Check `ps aux | grep opencode` for zombie processes. Kill if needed.
+3. **Stale workers** — The supervisor DB can show workers as `running` after their
+   process has exited (crash, OOM, disconnect). Cross-reference DB state against
+   live PIDs: `ps aux | grep opencode`. For any worker marked `running` whose PID is
+   gone, manually transition: `$SH transition $TASK_ID evaluating` then evaluate.
+   Don't trust the DB alone — always verify PIDs.
 4. **Queued tasks** — Verify slots are available for next dispatch.
 5. **Blockers and issues** — If a problem blocks other tasks or requires code changes,
    create a new TODO, add it to the batch, and dispatch it as a worker task. Do not
    attempt to fix it in the supervisor session.
+6. **Merge conflicts on open PRs** — After merging a worker's PR into `main`, other
+   open PRs often conflict on shared files (`TODO.md`, `subagent-index.toon`). Check
+   open PRs for `CONFLICTING` status after each merge. For each conflicted PR:
+   `git -C <worktree> fetch origin main && git -C <worktree> merge origin/main`,
+   resolve conflicts (take `--theirs` for TODO.md, `--ours` for worker's new files),
+   commit and push. This is a recurring cost of parallel work — budget for it.
 
 ### Progress display
 
@@ -304,10 +329,13 @@ any problem is always the same: **create a TODO, dispatch a worker to fix it.**
 | Missing script/config blocks tasks | Create fix task, dispatch with high priority | Worker creates the missing file, creates PR |
 | Unclear task description causing failures | Create task to refine TODO entries | Worker rewrites task descriptions |
 | Workers can't find a file/tool | Create task to add the missing piece | Worker adds it, unblocking retries |
+| Reprompt fails silently | Verify backend health before retry (direct) | — |
+| Open PRs show CONFLICTING after merge | Resolve merge conflicts on shared files (direct) | — |
 
 **Direct actions** (no worker needed): adjusting batch parameters, killing processes,
-reinstalling cron, merging PRs, updating TODO.md status. These are control-plane
-operations that don't require reading or writing implementation code.
+reinstalling cron, merging PRs, updating TODO.md status, resolving trivial merge
+conflicts, verifying backend health. These are control-plane operations that don't
+require reading or writing implementation code.
 
 **Dispatched actions** (worker needed): anything that requires reading source code,
 writing files, running tests, researching tools, or creating PRs. Always a worker.
@@ -316,6 +344,27 @@ Over many iterations, the fix tasks accumulate into a more robust framework. The
 supervisor session that runs next week will encounter fewer errors than this one.
 The goal is convergence: eventually the supervisor just dispatches, monitors, merges,
 and reports — with near-zero failures to react to.
+
+### Diagnostic workers
+
+When a failure's root cause is unclear, the supervisor spawns a diagnostic subtask
+using the `-diag-N` suffix convention:
+
+```bash
+$SH self-heal t153   # Creates t153-diag-1 automatically
+# Or manually:
+$SH add t153-diag-1 --repo "$(pwd)" --description "Diagnose why t153 failed: read logs, identify root cause"
+```
+
+Diagnostic workers investigate failures and create targeted fixes. This pattern is
+especially valuable when the failure is in the orchestration infrastructure itself —
+the supervisor dispatches a worker to debug the supervisor's own tooling.
+
+**Real example from this session**: Worker t153 kept failing on reprompt. Diagnostic
+worker `t153-pre-diag-1` discovered that `cmd_reprompt()` was missing a health check,
+causing retries against a dead backend. The diagnostic worker created the fix (PR #568),
+the supervisor merged it, and subsequent retries succeeded. The system debugged and
+fixed itself.
 
 ## Step 6: Batch Complete
 
@@ -349,6 +398,10 @@ clear account of what was accomplished during the session:
 - Total time: 3h 47m
 - Retries used: 5
 - Fix tasks spawned: 2 (t154: pre-edit-check color vars, t155: Google Search 403 fallback)
+- Diagnostic workers: 1 (t153-diag-1: reprompt health check bug)
+- Merge conflicts resolved: 3 (TODO.md x2, subagent-index.toon x1)
+- Session duration: 3h 47m (continuous loop, never stopped)
+- Pulse count: ~227 (1/min)
 
 ### Process improvements made (by workers)
 - PR #392: Fixed pre-edit-check.sh unbound variable bug (unblocked 4 tasks)
