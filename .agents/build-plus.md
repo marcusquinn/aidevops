@@ -284,12 +284,14 @@ Once planning is complete and user confirms:
 
 ## Planning File Access
 
-Build+ can write to planning files for task tracking:
+Build+ can write to planning files for task tracking (interactive sessions only):
 
 - `TODO.md` - Task tracking (root level)
 - `todo/PLANS.md` - Complex execution plans
 - `todo/tasks/prd-*.md` - Product requirement documents
 - `todo/tasks/tasks-*.md` - Implementation task lists
+
+**Worker restriction**: When running as a headless dispatch worker (runner), do NOT edit or commit TODO.md. Workers report status via exit code, log output, and mailbox. The supervisor handles all TODO.md updates. See `workflows/plans.md` "Worker TODO.md Restriction".
 
 ### Auto-Commit Planning Files
 
@@ -299,7 +301,8 @@ After modifying TODO.md or todo/, commit and push immediately:
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: {description}"
 ```
 
-**When to auto-commit:**
+**When to auto-commit** (interactive sessions only):
+
 - After adding a new task
 - After updating task status
 - After writing or updating a plan
@@ -314,10 +317,9 @@ After modifying TODO.md or todo/, commit and push immediately:
 | Batch updates | `plan: batch planning updates` |
 
 **Why this bypasses branch/PR workflow:** Planning files are metadata about work,
-not the work itself. They don't need code review - just quick persistence.
-The `pre-edit-check.sh` script already classifies TODO.md and todo/ as docs-only,
-allowing edits on main. The helper script commits with `--no-verify` and pushes
-directly.
+not the work itself. They don't need code review -- just quick persistence.
+The helper script uses `todo_commit_push()` for serialized locking to prevent
+race conditions when multiple actors push to TODO.md on main simultaneously.
 
 ## Context-First Development
 
