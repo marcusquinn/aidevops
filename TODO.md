@@ -60,6 +60,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t186 Add development lifecycle enforcement to AGENTS.md — all work must create TODO entry and either full-loop or queue for runners #docs #workflow #quality ~30m (ai:20m) logged:2026-02-08
+  - Notes: Development work was being done without TODO entries and without full-loop testing. Rule added to AGENTS.md: every change must (1) have a TODO entry, (2) ask user whether to implement now or queue, (3) if implementing, follow full-loop (plan->implement->test->verify->deliver). Prevents shipping untested code.
 - [ ] t185 Memory audit pulse — periodic scan of memories for self-improvement opportunities #feature #memory #supervisor ~2h (ai:1.5h test:30m) ref:GH#675 logged:2026-02-08
   - [ ] t185.1 Add memory-audit command to memory-helper.sh ~45m blocked-by:none
     - Notes: New command that scans all memories and produces actionable output. Logic: (1) Find recurring patterns — same error type 3+ times across different tasks = needs a fix task. (2) Check FAILED_APPROACH memories against merged PRs — if the referenced PR/issue is resolved, mark memory as graduated. (3) Identify DECISION/CODEBASE_PATTERN memories not yet in shared docs — flag for graduation. (4) Detect duplicates and near-duplicates for pruning. Output: structured report with proposed TODOs, graduation candidates, and prune candidates.
