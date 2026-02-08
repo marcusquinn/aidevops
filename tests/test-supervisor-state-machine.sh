@@ -993,6 +993,68 @@ else
 fi
 
 # ============================================================
+# SECTION 7: Worktree Path Integrity
+# ============================================================
+section "Worktree Path Integrity"
+
+# Test: create_task_worktree returns a clean single-line path (no stdout pollution)
+# This is a regression test for the bug where `git branch -D` output ("Deleted branch ...")
+# leaked into the function's return value, causing dispatch to fail with invalid paths.
+
+WORKTREE_TEST_DIR=$(mktemp -d)
+WORKTREE_TEST_REPO="$WORKTREE_TEST_DIR/test-repo"
+trap 'rm -rf "$WORKTREE_TEST_DIR"; rm -rf "$TEST_DIR"' EXIT
+
+# Set up a minimal git repo for worktree testing
+git init "$WORKTREE_TEST_REPO" &>/dev/null
+git -C "$WORKTREE_TEST_REPO" commit --allow-empty -m "initial" &>/dev/null
+
+# Create a branch that will need cleanup (simulates stale branch from prior failed dispatch)
+git -C "$WORKTREE_TEST_REPO" branch "feature/wt-test-001" &>/dev/null
+
+# Add task to supervisor DB
+sup add wt-test-001 --repo "$WORKTREE_TEST_REPO" --description "Worktree stdout leak test" >/dev/null 2>&1 || true
+
+# Call create_task_worktree directly. The script calls main "$@" at the bottom
+# when sourced, so we pass "init" to avoid show_usage. We redirect the source's
+# stdout to /dev/null (suppresses cmd_init output) — function definitions still
+# register in the current shell. Then we call the function we want to test.
+worktree_output=$(bash -c "
+    export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
+    set -- init
+    source '$SUPERVISOR_SCRIPT' >/dev/null
+    create_task_worktree 'wt-test-001' '$WORKTREE_TEST_REPO' true
+" 2>/dev/null)
+
+# Count lines — should be exactly 1 (the path)
+line_count=$(echo "$worktree_output" | wc -l | tr -d ' ')
+if [[ "$line_count" -eq 1 ]]; then
+    pass "create_task_worktree returns exactly 1 line (no stdout pollution)"
+else
+    fail "create_task_worktree returned $line_count lines (stdout pollution detected)" \
+        "Output: $(echo "$worktree_output" | head -3)"
+fi
+
+# Verify the returned path is a real directory
+if [[ -d "$worktree_output" ]]; then
+    pass "create_task_worktree returns a valid directory path"
+else
+    fail "create_task_worktree path is not a directory" "Got: '$worktree_output'"
+fi
+
+# Verify path doesn't contain "Deleted branch" (the specific pollution we fixed)
+if echo "$worktree_output" | grep -qi "deleted branch"; then
+    fail "create_task_worktree output contains 'Deleted branch' pollution" \
+        "Got: '$worktree_output'"
+else
+    pass "create_task_worktree output is free of 'Deleted branch' pollution"
+fi
+
+# Clean up the test worktree
+git -C "$WORKTREE_TEST_REPO" worktree remove "$worktree_output" --force &>/dev/null || rm -rf "$worktree_output"
+git -C "$WORKTREE_TEST_REPO" worktree prune &>/dev/null || true
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""
