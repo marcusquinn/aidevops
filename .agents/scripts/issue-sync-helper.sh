@@ -383,19 +383,95 @@ extract_plan_discoveries() {
 # =============================================================================
 
 # Find related PRD and task files in todo/tasks/
+# Checks both grep matches and explicit ref:todo/tasks/ from the task line
 find_related_files() {
     local task_id="$1"
     local project_root="$2"
     local tasks_dir="$project_root/todo/tasks"
+    local todo_file="$project_root/TODO.md"
+    local all_files=""
 
-    if [[ ! -d "$tasks_dir" ]]; then
+    # 1. Follow explicit ref:todo/tasks/ from the task line
+    if [[ -f "$todo_file" ]]; then
+        local task_line
+        task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        local explicit_refs
+        explicit_refs=$(echo "$task_line" | grep -oE 'ref:todo/tasks/[^ ]+' | sed 's/ref://' || true)
+        while IFS= read -r ref; do
+            if [[ -n "$ref" && -f "$project_root/$ref" ]]; then
+                all_files="${all_files:+$all_files"$'\n'"}$project_root/$ref"
+            fi
+        done <<< "$explicit_refs"
+    fi
+
+    # 2. Search for files referencing this task ID in todo/tasks/
+    if [[ -d "$tasks_dir" ]]; then
+        local grep_files
+        grep_files=$(grep -rl "$task_id" "$tasks_dir" 2>/dev/null || true)
+        if [[ -n "$grep_files" ]]; then
+            all_files="${all_files:+$all_files"$'\n'"}$grep_files"
+        fi
+    fi
+
+    # Deduplicate
+    if [[ -n "$all_files" ]]; then
+        echo "$all_files" | sort -u
+    fi
+    return 0
+}
+
+# Extract a summary from a PRD or task file (first meaningful section, max 30 lines)
+extract_file_summary() {
+    local file_path="$1"
+    local max_lines="${2:-30}"
+
+    if [[ ! -f "$file_path" ]]; then
         return 0
     fi
 
-    # Search for files referencing this task ID
-    local files
-    files=$(grep -rl "$task_id" "$tasks_dir" 2>/dev/null || true)
-    echo "$files"
+    local summary=""
+    local line_count=0
+    local in_content=false
+    local past_frontmatter=false
+
+    while IFS= read -r line; do
+        # Skip YAML frontmatter
+        if [[ "$line" == "---" ]] && [[ "$past_frontmatter" == "false" ]]; then
+            if [[ "$in_content" == "true" ]]; then
+                past_frontmatter=true
+                in_content=false
+                continue
+            fi
+            in_content=true
+            continue
+        fi
+        if [[ "$in_content" == "true" ]]; then
+            continue
+        fi
+
+        # Skip empty lines at the start
+        if [[ -z "${line// /}" ]] && [[ $line_count -eq 0 ]]; then
+            continue
+        fi
+
+        # Skip the title heading (# Title)
+        if [[ $line_count -eq 0 ]] && echo "$line" | grep -qE '^# '; then
+            summary="$line"
+            line_count=1
+            continue
+        fi
+
+        summary="$summary"$'\n'"$line"
+        line_count=$((line_count + 1))
+
+        # Stop at max lines or at a major section break after getting some content
+        if [[ $line_count -ge $max_lines ]]; then
+            summary="$summary"$'\n'"..."
+            break
+        fi
+    done < "$file_path"
+
+    echo "$summary"
     return 0
 }
 
@@ -556,16 +632,21 @@ compose_issue_body() {
         fi
     fi
 
-    # Related PRD/task files
+    # Related PRD/task files (with inline content)
     local related_files
     related_files=$(find_related_files "$task_id" "$project_root")
     if [[ -n "$related_files" ]]; then
-        body="$body"$'\n\n'"## Related Files"$'\n'
+        body="$body"$'\n\n'"## Related Files"
         while IFS= read -r file; do
             if [[ -n "$file" ]]; then
-                local rel_path
+                local rel_path file_summary
                 rel_path="${file#"$project_root"/}"
-                body="$body"$'\n'"- [\`$rel_path\`]($rel_path)"
+                file_summary=$(extract_file_summary "$file" 30)
+                if [[ -n "$file_summary" ]]; then
+                    body="$body"$'\n\n'"<details><summary><code>$rel_path</code></summary>"$'\n\n'"$file_summary"$'\n\n'"</details>"
+                else
+                    body="$body"$'\n\n'"- [\`$rel_path\`]($rel_path)"
+                fi
             fi
         done <<< "$related_files"
     fi
