@@ -1943,6 +1943,14 @@ setup_recommended_tools() {
                     # Tabby packagecloud repo only has x86_64 packages
                     # ARM64 (aarch64) must use .deb from GitHub releases or skip
                     if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+                        # Clean up stale Tabby packagecloud repo if it exists from a previous run
+                        # (it causes apt-get update failures on ARM64)
+                        if [[ -f /etc/apt/sources.list.d/eugeny_tabby.list ]]; then
+                            print_info "Removing stale Tabby packagecloud repo (not available for ARM64)..."
+                            sudo rm -f /etc/apt/sources.list.d/eugeny_tabby.list
+                            sudo rm -f /etc/apt/sources.list.d/eugeny_tabby.sources
+                            sudo apt-get update -qq 2>/dev/null || true
+                        fi
                         print_warning "Tabby packages are not available for ARM64 Linux via package manager"
                         echo "  Download ARM64 .deb from: https://github.com/Eugeny/tabby/releases/latest"
                         echo "  Or skip Tabby - it's optional (a modern terminal emulator)"
@@ -3826,12 +3834,25 @@ setup_nodejs() {
         apt)
             read -r -p "Install Node.js via apt? [Y/n]: " install_node
             if [[ "$install_node" =~ ^[Yy]?$ ]]; then
+                # Clean up stale Tabby packagecloud repo if present (causes apt-get update failures)
+                if [[ -f /etc/apt/sources.list.d/eugeny_tabby.list ]]; then
+                    local arch
+                    arch=$(uname -m)
+                    if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+                        print_info "Removing stale Tabby repo (not available for ARM64)..."
+                        sudo rm -f /etc/apt/sources.list.d/eugeny_tabby.list
+                        sudo rm -f /etc/apt/sources.list.d/eugeny_tabby.sources
+                    fi
+                fi
                 # Use NodeSource for a recent version (apt default may be old)
                 print_info "Installing Node.js (via NodeSource for latest LTS)..."
                 if command -v curl >/dev/null 2>&1; then
                     VERIFIED_INSTALL_SUDO="true"
                     if verified_install "NodeSource repository" "https://deb.nodesource.com/setup_22.x"; then
-                        if sudo apt-get install -y nodejs; then
+                        # Install nodejs (NodeSource bundles npm, but distro fallback may not)
+                        # Include npm explicitly in case NodeSource setup failed silently
+                        # and apt falls back to the distro nodejs package (which lacks npm)
+                        if sudo apt-get install -y nodejs npm 2>/dev/null || sudo apt-get install -y nodejs; then
                             print_success "Node.js installed: $(node --version)"
                         else
                             print_warning "Node.js installation failed"
