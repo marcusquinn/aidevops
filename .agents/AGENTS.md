@@ -110,11 +110,13 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {query}`, `/recall --recent`
 
-**CLI**: `memory-helper.sh [store|recall|log|stats|prune|consolidate|export]`
+**CLI**: `memory-helper.sh [store|recall|log|stats|prune|consolidate|export|graduate]`
 
 **Session distillation**: `session-distill-helper.sh auto` (extract learnings at session end)
 
 **Auto-capture log**: `/memory-log` or `memory-helper.sh log` (review auto-captured memories)
+
+**Graduation**: `/graduate-memories` or `memory-graduate-helper.sh` — promote validated memories into shared docs so all users benefit. Memories qualify at high confidence or 3+ accesses.
 
 **Full docs**: `memory/README.md`
 
