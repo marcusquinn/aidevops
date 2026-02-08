@@ -100,54 +100,54 @@ install_clis() {
     if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "Installing CodeRabbit CLI..."
         if execute_cli_command "$CLI_CODERABBIT" "install"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
     
     if [[ "$target_cli" == "all" || "$target_cli" == "codacy" ]]; then
         print_info "Installing Codacy CLI..."
         if execute_cli_command "codacy" "install"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
     
     if [[ "$target_cli" == "all" || "$target_cli" == "sonar" ]]; then
         print_info "Installing SonarScanner CLI..."
         if execute_cli_command "sonar" "install"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "qlty" ]]; then
         print_info "Installing Qlty CLI..."
         if execute_cli_command "qlty" "install"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
         print_info "Installing Snyk CLI..."
         if execute_cli_command "$CLI_SNYK" "install"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "linters" ]]; then
         print_info "Installing CodeFactor-inspired linters..."
         if bash "$(dirname "$0")/linter-manager.sh" install-detected; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
     
@@ -175,45 +175,45 @@ init_clis() {
     if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "Initializing CodeRabbit CLI..."
         if execute_cli_command "$CLI_CODERABBIT" "setup"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
     
     if [[ "$target_cli" == "all" || "$target_cli" == "codacy" ]]; then
         print_info "Initializing Codacy CLI..."
         if execute_cli_command "codacy" "init"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
     
     if [[ "$target_cli" == "all" || "$target_cli" == "sonar" ]]; then
         print_info "Initializing SonarScanner CLI..."
         if execute_cli_command "sonar" "init"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "qlty" ]]; then
         print_info "Initializing Qlty CLI..."
         if execute_cli_command "qlty" "init"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
         print_info "Initializing Snyk CLI..."
         if execute_cli_command "$CLI_SNYK" "auth"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
     
@@ -243,18 +243,18 @@ analyze_with_clis() {
     if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
         print_info "Running CodeRabbit analysis..."
         if execute_cli_command "$CLI_CODERABBIT" "review" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "codacy" ]]; then
         print_info "Running Codacy analysis..."
         if execute_cli_command "codacy" "analyze" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
@@ -262,18 +262,18 @@ analyze_with_clis() {
     if [[ "$target_cli" == "codacy-fix" ]]; then
         print_info "Running Codacy analysis with auto-fix..."
         if execute_cli_command "codacy" "analyze" "--fix"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "sonar" ]]; then
         print_info "Running SonarQube analysis..."
         if execute_cli_command "sonar" "analyze" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
@@ -285,18 +285,18 @@ analyze_with_clis() {
             qlty_args="$args $QLTY_ORG"
         fi
         if execute_cli_command "qlty" "check" "$qlty_args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_SNYK" ]]; then
         print_info "Running Snyk security analysis..."
         if execute_cli_command "$CLI_SNYK" "full" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
@@ -304,27 +304,27 @@ analyze_with_clis() {
     if [[ "$target_cli" == "snyk-sca" ]]; then
         print_info "Running Snyk SCA (dependency) scan..."
         if execute_cli_command "$CLI_SNYK" "test" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "snyk-code" ]]; then
         print_info "Running Snyk Code (SAST) scan..."
         if execute_cli_command "$CLI_SNYK" "code" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 
     if [[ "$target_cli" == "snyk-iac" ]]; then
         print_info "Running Snyk IaC scan..."
         if execute_cli_command "$CLI_SNYK" "iac" "$args"; then
-            ((success_count++))
+            ((success_count++)) || true
         fi
-        ((total_count++))
+        ((total_count++)) || true
         echo ""
     fi
 

@@ -98,9 +98,9 @@ process_directory() {
 
     # Find all markdown files
     while IFS= read -r -d '' file; do
-        ((total_files++))
+        ((total_files++)) || true
         if fix_markdown_file "$file"; then
-            ((changed_files++))
+            ((changed_files++)) || true
         fi
     done < <(find "$dir" -name "*.md" -type f -print0)
 

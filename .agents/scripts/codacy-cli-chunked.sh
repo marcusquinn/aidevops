@@ -188,7 +188,7 @@ run_quick_analysis() {
     # Count tools
     for tool in $fast_tools; do
         if get_configured_tools | grep -q "^$tool$"; then
-            ((total_tools++))
+            ((total_tools++)) || true
         fi
     done
 
@@ -205,7 +205,7 @@ run_quick_analysis() {
 
     for tool in $fast_tools; do
         if get_configured_tools | grep -q "^$tool$"; then
-            ((completed_tools++))
+            ((completed_tools++)) || true
             print_progress $completed_tools $total_tools "$tool"
             
             print_info "Running: $tool"
@@ -350,7 +350,7 @@ run_chunked_analysis() {
 
         # Update progress
         completed_tools=$chunk_end
-        ((chunk_num++))
+        ((chunk_num++)) || true
         
         # Brief pause between chunks
         if [[ $chunk_end -lt ${#tool_array[@]} ]]; then
