@@ -860,9 +860,9 @@ cmd_pull() {
 
     verify_gh_cli || return 1
 
-    # Get all open issues with t-number prefixes
+    # Get all open issues with t-number prefixes (include assignees for assignee: sync)
     local issues_json
-    issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 200 --json number,title 2>/dev/null || echo "[]")
+    issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 200 --json number,title,assignees 2>/dev/null || echo "[]")
 
     local synced=0
     while IFS= read -r issue_line; do
@@ -933,7 +933,64 @@ cmd_pull() {
         synced=$((synced + 1))
     done < <(echo "$closed_json" | jq -c '.[]' 2>/dev/null || true)
 
-    print_info "Pull complete: $synced refs synced to TODO.md"
+    # Sync GitHub Issue assignees → TODO.md assignee: field (t165 bi-directional sync)
+    local assignee_synced=0
+    while IFS= read -r issue_line; do
+        local issue_number
+        issue_number=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
+        local issue_title
+        issue_title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
+        local assignee_login
+        assignee_login=$(echo "$issue_line" | jq -r '.assignees[0].login // empty' 2>/dev/null || echo "")
+
+        local task_id
+        task_id=$(echo "$issue_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+        if [[ -z "$task_id" || -z "$assignee_login" ]]; then
+            continue
+        fi
+
+        # Check if task exists in TODO.md
+        if ! grep -qE "^- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
+            continue
+        fi
+
+        # Check if TODO.md already has an assignee: on this task
+        local task_line_content
+        task_line_content=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        local existing_assignee
+        existing_assignee=$(echo "$task_line_content" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo "")
+
+        if [[ -n "$existing_assignee" ]]; then
+            # Already has an assignee — TODO.md is authoritative, don't overwrite
+            continue
+        fi
+
+        # No assignee in TODO.md but issue has assignee — sync it
+        if [[ "$DRY_RUN" == "true" ]]; then
+            print_info "[DRY-RUN] Would add assignee:$assignee_login to $task_id (from GH#$issue_number)"
+            assignee_synced=$((assignee_synced + 1))
+            continue
+        fi
+
+        # Add assignee:login before logged: or at end of line
+        local line_num
+        line_num=$(grep -nE "^- \[.\] ${task_id} " "$todo_file" | head -1 | cut -d: -f1)
+        if [[ -n "$line_num" ]]; then
+            local current_line
+            current_line=$(sed -n "${line_num}p" "$todo_file")
+            local new_line
+            if echo "$current_line" | grep -qE 'logged:'; then
+                new_line=$(echo "$current_line" | sed -E "s/( logged:)/ assignee:${assignee_login}\1/")
+            else
+                new_line="${current_line} assignee:${assignee_login}"
+            fi
+            sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
+            log_verbose "Synced assignee:$assignee_login to $task_id (from GH#$issue_number)"
+            assignee_synced=$((assignee_synced + 1))
+        fi
+    done < <(echo "$issues_json" | jq -c '.[]' 2>/dev/null || true)
+
+    print_info "Pull complete: $synced refs synced, $assignee_synced assignees synced to TODO.md"
     return 0
 }
 

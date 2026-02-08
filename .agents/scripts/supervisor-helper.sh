@@ -1887,8 +1887,54 @@ find_task_issue_number() {
 }
 
 #######################################
-# Claim a task via GitHub Issue assignee (t164)
-# Uses GitHub as distributed lock — works across machines
+# Get the identity string for task claiming (t165)
+# Uses AIDEVOPS_IDENTITY env var, falls back to user@hostname
+#######################################
+get_aidevops_identity() {
+    if [[ -n "${AIDEVOPS_IDENTITY:-}" ]]; then
+        echo "$AIDEVOPS_IDENTITY"
+        return 0
+    fi
+    local user host
+    user=$(whoami 2>/dev/null || echo "unknown")
+    host=$(hostname -s 2>/dev/null || echo "local")
+    echo "${user}@${host}"
+    return 0
+}
+
+#######################################
+# Get the assignee: value from a task line in TODO.md (t165)
+# Outputs the assignee identity string, empty if unassigned.
+# $1: task_id  $2: todo_file path
+#######################################
+get_task_assignee() {
+    local task_id="$1"
+    local todo_file="$2"
+
+    if [[ ! -f "$todo_file" ]]; then
+        return 0
+    fi
+
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
+    local task_line
+    task_line=$(grep -E "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+    if [[ -z "$task_line" ]]; then
+        return 0
+    fi
+
+    # Extract assignee:value — unambiguous key:value field
+    local assignee
+    assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo "")
+    echo "$assignee"
+    return 0
+}
+
+#######################################
+# Claim a task (t165)
+# Primary: TODO.md assignee: field (provider-agnostic, offline-capable)
+# Optional: sync to GitHub Issue assignee if ref:GH# exists and gh is available
 #######################################
 cmd_claim() {
     local task_id="${1:-}"
@@ -1900,51 +1946,87 @@ cmd_claim() {
 
     local project_root
     project_root=$(find_project_root 2>/dev/null || echo ".")
+    local todo_file="$project_root/TODO.md"
 
-    local issue_number
-    issue_number=$(find_task_issue_number "$task_id" "$project_root")
-    if [[ -z "$issue_number" ]]; then
-        log_error "No GitHub issue found for $task_id (missing ref:GH# in TODO.md)"
+    if [[ ! -f "$todo_file" ]]; then
+        log_error "TODO.md not found at $todo_file"
         return 1
     fi
 
-    local repo_slug
-    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
-    if [[ -z "$repo_slug" ]]; then
-        log_error "Cannot detect repo slug"
-        return 1
-    fi
+    local identity
+    identity=$(get_aidevops_identity)
 
-    # Ensure status labels exist before using them
-    ensure_status_labels "$repo_slug"
-
-    # Check current assignee
+    # Check current assignee in TODO.md
     local current_assignee
-    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null || echo "")
+    current_assignee=$(get_task_assignee "$task_id" "$todo_file")
 
     if [[ -n "$current_assignee" ]]; then
-        local my_login
-        my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
-        if [[ "$current_assignee" == "$my_login" ]]; then
-            log_info "$task_id already claimed by you (GH#$issue_number)"
+        if [[ "$current_assignee" == "$identity" ]]; then
+            log_info "$task_id already claimed by you (assignee:$identity)"
             return 0
         fi
-        log_error "$task_id is claimed by @$current_assignee (GH#$issue_number)"
+        log_error "$task_id is claimed by assignee:$current_assignee"
         return 1
     fi
 
-    # Assign to self and update labels in a single call
-    if gh issue edit "$issue_number" --repo "$repo_slug" --add-assignee "@me" --add-label "status:claimed" --remove-label "status:available" 2>/dev/null; then
-        log_success "Claimed $task_id (GH#$issue_number assigned to you)"
-        return 0
-    else
-        log_error "Failed to claim $task_id (GH#$issue_number)"
+    # Verify task exists and is open
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+    local task_line
+    task_line=$(grep -E "^- \[ \] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+    if [[ -z "$task_line" ]]; then
+        log_error "Task $task_id not found as open in $todo_file"
         return 1
     fi
+
+    # Add assignee:identity and started:ISO to the task line
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local line_num
+    line_num=$(grep -nE "^- \[ \] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
+    if [[ -z "$line_num" ]]; then
+        log_error "Could not find line number for $task_id"
+        return 1
+    fi
+
+    # Escape identity for safe sed interpolation (handles . / & \ in user@host)
+    local identity_esc
+    identity_esc=$(printf '%s' "$identity" | sed -e 's/[\/&.\\]/\\&/g')
+
+    # Insert assignee: and started: before logged: or at end of metadata
+    local new_line
+    if echo "$task_line" | grep -qE 'logged:'; then
+        new_line=$(echo "$task_line" | sed -E "s/( logged:)/ assignee:${identity_esc} started:${now}\1/")
+    else
+        new_line="${task_line} assignee:${identity} started:${now}"
+    fi
+    sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
+
+    # Commit and push (optimistic lock — push failure = someone else claimed first)
+    if commit_and_push_todo "$project_root" "chore: claim $task_id by assignee:$identity"; then
+        log_success "Claimed $task_id (assignee:$identity, started:$now)"
+    else
+        # Push failed — check if someone else claimed
+        git -C "$project_root" checkout -- TODO.md 2>/dev/null || true
+        git -C "$project_root" pull --rebase 2>/dev/null || true
+        local new_assignee
+        new_assignee=$(get_task_assignee "$task_id" "$todo_file")
+        if [[ -n "$new_assignee" && "$new_assignee" != "$identity" ]]; then
+            log_error "$task_id was claimed by assignee:$new_assignee (race condition)"
+            return 1
+        fi
+        log_warn "Claimed locally but push failed — will retry on next pulse"
+    fi
+
+    # Optional: sync to GitHub Issue assignee (bi-directional sync layer)
+    sync_claim_to_github "$task_id" "$project_root" "claim"
+    return 0
 }
 
 #######################################
-# Release a claimed task (t164)
+# Release a claimed task (t165)
+# Primary: TODO.md remove assignee:
+# Optional: sync to GitHub Issue
 #######################################
 cmd_unclaim() {
     local task_id="${1:-}"
@@ -1956,53 +2038,105 @@ cmd_unclaim() {
 
     local project_root
     project_root=$(find_project_root 2>/dev/null || echo ".")
+    local todo_file="$project_root/TODO.md"
 
-    local issue_number
-    issue_number=$(find_task_issue_number "$task_id" "$project_root")
-    if [[ -z "$issue_number" ]]; then
-        log_error "No GitHub issue found for $task_id"
+    if [[ ! -f "$todo_file" ]]; then
+        log_error "TODO.md not found at $todo_file"
         return 1
     fi
 
-    local repo_slug
-    repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
-    if [[ -z "$repo_slug" ]]; then
-        log_error "Cannot detect repo slug"
-        return 1
-    fi
+    local identity
+    identity=$(get_aidevops_identity)
 
-    local my_login
-    my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
-    if [[ -z "$my_login" ]]; then
-        log_error "Cannot determine GitHub login for unclaim"
-        return 1
-    fi
+    local current_assignee
+    current_assignee=$(get_task_assignee "$task_id" "$todo_file")
 
-    # Ensure status labels exist before using them
-    ensure_status_labels "$repo_slug"
-
-    # Remove assignee and update labels in a single call
-    if gh issue edit "$issue_number" --repo "$repo_slug" --remove-assignee "$my_login" --add-label "status:available" --remove-label "status:claimed" 2>/dev/null; then
-        log_success "Released $task_id (GH#$issue_number unassigned)"
+    if [[ -z "$current_assignee" ]]; then
+        log_info "$task_id is not claimed"
         return 0
-    else
-        log_error "Failed to release $task_id"
+    fi
+
+    if [[ "$current_assignee" != "$identity" ]]; then
+        log_error "$task_id is claimed by assignee:$current_assignee, not by you (assignee:$identity)"
         return 1
     fi
+
+    # Remove assignee:identity and started:... from the task line
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+    local line_num
+    line_num=$(grep -nE "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
+    if [[ -z "$line_num" ]]; then
+        log_error "Could not find line number for $task_id"
+        return 1
+    fi
+
+    local task_line
+    task_line=$(sed -n "${line_num}p" "$todo_file")
+    local new_line
+    # Remove assignee:value and started:value
+    # Use character class pattern (no identity interpolation needed — matches any assignee)
+    new_line=$(echo "$task_line" | sed -E "s/ ?assignee:[A-Za-z0-9._@-]+//; s/ ?started:[0-9T:Z-]+//")
+    sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
+
+    if commit_and_push_todo "$project_root" "chore: unclaim $task_id (released by assignee:$identity)"; then
+        log_success "Released $task_id (unclaimed by assignee:$identity)"
+    else
+        log_warn "Unclaimed locally but push failed — will retry on next pulse"
+    fi
+
+    # Optional: sync to GitHub Issue
+    sync_claim_to_github "$task_id" "$project_root" "unclaim"
+    return 0
 }
 
 #######################################
-# Check if a task is claimed by someone else (t164)
-# Returns 0 if free or claimed by self, 1 if claimed by another
+# Check if a task is claimed by someone else (t165)
+# Primary: TODO.md assignee: field (instant, offline)
+# Returns 0 if free or claimed by self, 1 if claimed by another.
+# Outputs the assignee on stdout if claimed by another.
 #######################################
 check_task_claimed() {
     local task_id="${1:-}"
     local project_root="${2:-.}"
+    local todo_file="$project_root/TODO.md"
+
+    local current_assignee
+    current_assignee=$(get_task_assignee "$task_id" "$todo_file")
+
+    # No assignee = free
+    if [[ -z "$current_assignee" ]]; then
+        return 0
+    fi
+
+    local identity
+    identity=$(get_aidevops_identity)
+
+    # Claimed by self = OK
+    if [[ "$current_assignee" == "$identity" ]]; then
+        return 0
+    fi
+
+    # Claimed by someone else
+    echo "$current_assignee"
+    return 1
+}
+
+#######################################
+# Sync claim/unclaim to GitHub Issue assignee (t165)
+# Optional bi-directional sync layer — fails silently if gh unavailable.
+# $1: task_id  $2: project_root  $3: action (claim|unclaim)
+#######################################
+sync_claim_to_github() {
+    local task_id="$1"
+    local project_root="$2"
+    local action="$3"
+
+    # Skip if gh CLI not available
+    command -v gh &>/dev/null || return 0
 
     local issue_number
     issue_number=$(find_task_issue_number "$task_id" "$project_root")
-
-    # No issue = no claim mechanism = free
     if [[ -z "$issue_number" ]]; then
         return 0
     fi
@@ -2013,28 +2147,22 @@ check_task_claimed() {
         return 0
     fi
 
-    local current_assignee api_exit=0
-    current_assignee=$(gh api "repos/$repo_slug/issues/$issue_number" --jq '.assignee.login // empty' 2>/dev/null) || api_exit=$?
+    ensure_status_labels "$repo_slug"
 
-    if [[ "$api_exit" -ne 0 ]]; then
-        # API failed (network, rate limit, etc.) — fail open to avoid blocking dispatch
-        log_info "Could not check claim status for $task_id (gh api exit $api_exit) — proceeding"
-        return 0
+    if [[ "$action" == "claim" ]]; then
+        gh issue edit "$issue_number" --repo "$repo_slug" \
+            --add-assignee "@me" \
+            --add-label "status:claimed" --remove-label "status:available" 2>/dev/null || true
+    elif [[ "$action" == "unclaim" ]]; then
+        local my_login
+        my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+        if [[ -n "$my_login" ]]; then
+            gh issue edit "$issue_number" --repo "$repo_slug" \
+                --remove-assignee "$my_login" \
+                --add-label "status:available" --remove-label "status:claimed" 2>/dev/null || true
+        fi
     fi
-
-    if [[ -z "$current_assignee" ]]; then
-        return 0
-    fi
-
-    local my_login
-    my_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
-
-    if [[ -n "$my_login" && "$current_assignee" == "$my_login" ]]; then
-        return 0
-    fi
-
-    echo "$current_assignee"
-    return 1
+    return 0
 }
 
 #######################################
@@ -2741,17 +2869,20 @@ cmd_dispatch() {
         return 1
     fi
 
-    # Check if task is claimed by someone else on GitHub (t164)
-    # Note: return 0 to let pulse continue dispatching other tasks (return 2 = concurrency limit)
+    # Check if task is claimed by someone else via TODO.md assignee: field (t165)
     local claimed_by=""
     claimed_by=$(check_task_claimed "$task_id" "${trepo:-.}" 2>/dev/null) || true
     if [[ -n "$claimed_by" ]]; then
-        log_warn "Task $task_id is claimed by @$claimed_by on GitHub — skipping dispatch"
+        log_warn "Task $task_id is claimed by assignee:$claimed_by — skipping dispatch"
         return 0
     fi
 
-    # Claim the task on GitHub before dispatching (t164)
-    cmd_claim "$task_id" 2>/dev/null || log_info "Could not claim $task_id on GitHub (no issue ref or gh unavailable)"
+    # Claim the task before dispatching (t165 — TODO.md primary, GH Issue sync optional)
+    # CRITICAL: abort dispatch if claim fails (race condition = another worker claimed first)
+    if ! cmd_claim "$task_id"; then
+        log_error "Failed to claim $task_id — aborting dispatch"
+        return 1
+    fi
 
     # Check concurrency limit with adaptive load awareness (t151)
     if [[ -n "$batch_id" ]]; then
