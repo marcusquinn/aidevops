@@ -126,7 +126,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t174 Improve /full-loop for fully headless worker operation #feature #supervisor ~1h (ai:40m) ref:GH#571 logged:2026-02-08 completed:2026-02-08
   - Notes: PR #642 merged. Added `--headless` flag to full-loop for autonomous worker operation.
 
-- [ ] t175 Fix `ambiguous_skipped_ai` evaluation — add better heuristic signals #bug #supervisor ~1h (ai:40m) ref:GH#644 logged:2026-02-08
+- [ ] t175 Fix `ambiguous_skipped_ai` evaluation — add better heuristic signals #bug #supervisor ~1h (ai:40m) ref:GH#644 assignee:marcusquinn started:2026-02-08T19:38:50Z logged:2026-02-08
   - Notes: Recurring evaluation outcome across batches. Evaluator can't determine success/failure, skips AI eval, defaults to retry. Add heuristics: check for commits on branch, check for uncommitted changes in worktree.
 
 - [ ] t176 Add uncertainty guidance to worker dispatch prompt #feature #supervisor ~30m (ai:20m) ref:GH#645 logged:2026-02-08
