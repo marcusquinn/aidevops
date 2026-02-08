@@ -67,7 +67,7 @@ find_available_port() {
             echo "$port"
             return 0
         fi
-        ((port++))
+        ((port++)) || true
     done
     
     print_error "No available ports found in range $start_port-$PORT_RANGE_END"

@@ -149,41 +149,41 @@ install_python_linters() {
     print_info "Installing pycodestyle..."
     if pip install pycodestyle &>/dev/null; then
         print_success "pycodestyle installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install pycodestyle"
     fi
-    ((total++))
+    ((total++)) || true
     
     # Pylint (comprehensive Python linter)
     print_info "Installing Pylint..."
     if pip install pylint &>/dev/null; then
         print_success "Pylint installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Pylint"
     fi
-    ((total++))
+    ((total++)) || true
     
     # Bandit (security linter)
     print_info "Installing Bandit..."
     if pip install bandit &>/dev/null; then
         print_success "Bandit installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Bandit"
     fi
-    ((total++))
+    ((total++)) || true
     
     # Ruff (fast Python linter)
     print_info "Installing Ruff..."
     if pip install ruff &>/dev/null; then
         print_success "Ruff installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Ruff"
     fi
-    ((total++))
+    ((total++)) || true
     
     print_info "Python linters: $success/$total installed successfully"
     return $((total - success))
@@ -200,21 +200,21 @@ install_javascript_linters() {
     print_info "Installing ESLint..."
     if install_npm_global eslint; then
         print_success "ESLint installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install ESLint"
     fi
-    ((total++))
+    ((total++)) || true
 
     # TypeScript ESLint parser and plugin
     print_info "Installing TypeScript ESLint support..."
     if install_npm_global @typescript-eslint/parser @typescript-eslint/eslint-plugin; then
         print_success "TypeScript ESLint support installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install TypeScript ESLint support"
     fi
-    ((total++))
+    ((total++)) || true
 
     print_info "JavaScript/TypeScript linters: $success/$total installed successfully"
     return $((total - success))
@@ -231,11 +231,11 @@ install_css_linters() {
     print_info "Installing Stylelint..."
     if install_npm_global stylelint stylelint-config-standard; then
         print_success "Stylelint installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Stylelint"
     fi
-    ((total++))
+    ((total++)) || true
 
     print_info "CSS linters: $success/$total installed successfully"
     return $((total - success))
@@ -252,17 +252,17 @@ install_shell_linters() {
     print_info "Installing ShellCheck..."
     if command -v shellcheck &>/dev/null; then
         print_success "ShellCheck already installed"
-        ((success++))
+        ((success++)) || true
     elif brew install shellcheck &>/dev/null; then
         print_success "ShellCheck installed via Homebrew"
-        ((success++))
+        ((success++)) || true
     elif apt-get install -y shellcheck &>/dev/null; then
         print_success "ShellCheck installed via apt"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install ShellCheck"
     fi
-    ((total++))
+    ((total++)) || true
 
     print_info "Shell linters: $success/$total installed successfully"
     return $((total - success))
@@ -279,14 +279,14 @@ install_docker_linters() {
     print_info "Installing Hadolint..."
     if command -v hadolint &>/dev/null; then
         print_success "Hadolint already installed"
-        ((success++))
+        ((success++)) || true
     elif brew install hadolint &>/dev/null; then
         print_success "Hadolint installed via Homebrew"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Hadolint"
     fi
-    ((total++))
+    ((total++)) || true
 
     print_info "Docker linters: $success/$total installed successfully"
     return $((total - success))
@@ -303,11 +303,11 @@ install_yaml_linters() {
     print_info "Installing yamllint..."
     if pip install yamllint &>/dev/null; then
         print_success "yamllint installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install yamllint"
     fi
-    ((total++))
+    ((total++)) || true
 
     print_info "YAML linters: $success/$total installed successfully"
     return $((total - success))
@@ -324,27 +324,27 @@ install_security_linters() {
     print_info "Installing Trivy..."
     if command -v trivy &>/dev/null; then
         print_success "Trivy already installed"
-        ((success++))
+        ((success++)) || true
     elif brew install trivy &>/dev/null; then
         print_success "Trivy installed via Homebrew"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Trivy"
     fi
-    ((total++))
+    ((total++)) || true
 
     # Secretlint (secret detection)
     print_info "Installing Secretlint..."
     if command -v secretlint &>/dev/null; then
         print_success "Secretlint already installed"
-        ((success++))
+        ((success++)) || true
     elif install_npm_global secretlint @secretlint/secretlint-rule-preset-recommend; then
         print_success "Secretlint installed"
-        ((success++))
+        ((success++)) || true
     else
         print_error "Failed to install Secretlint"
     fi
-    ((total++))
+    ((total++)) || true
 
     print_info "Security linters: $success/$total installed successfully"
     return $((total - success))

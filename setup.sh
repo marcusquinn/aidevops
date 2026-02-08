@@ -288,7 +288,7 @@ cleanup_deprecated_paths() {
     for path in "${deprecated_paths[@]}"; do
         if [[ -e "$path" ]]; then
             rm -rf "$path"
-            ((cleaned++))
+            ((cleaned++)) || true
         fi
     done
     
@@ -345,13 +345,13 @@ migrate_agent_to_agents_folder() {
                 rm -f "$repo_path/.agent"
                 ln -s "$target" "$repo_path/.agents" 2>/dev/null || true
                 print_info "  Migrated symlink: $repo_path/.agent -> .agents"
-                ((migrated++))
+                ((migrated++)) || true
             elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
                 # Real directory (not symlink) - rename it
                 if [[ ! -e "$repo_path/.agents" ]]; then
                     mv "$repo_path/.agent" "$repo_path/.agents"
                     print_info "  Renamed directory: $repo_path/.agent -> .agents"
-                    ((migrated++))
+                    ((migrated++)) || true
                 fi
             fi
             
@@ -393,19 +393,19 @@ migrate_agent_to_agents_folder() {
                     rm -f "$agent_path"
                     ln -s "$target" "$repo_dir/.agents" 2>/dev/null || true
                     print_info "  Migrated symlink: $agent_path -> .agents"
-                    ((migrated++))
+                    ((migrated++)) || true
                 else
                     # .agents already exists, remove stale .agent symlink
                     rm -f "$agent_path"
                     print_info "  Removed stale symlink: $agent_path (.agents already exists)"
-                    ((migrated++))
+                    ((migrated++)) || true
                 fi
             elif [[ -d "$agent_path" ]]; then
                 # Directory: rename to .agents if .agents doesn't exist
                 if [[ ! -e "$repo_dir/.agents" ]]; then
                     mv "$agent_path" "$repo_dir/.agents"
                     print_info "  Renamed directory: $agent_path -> .agents"
-                    ((migrated++))
+                    ((migrated++)) || true
                 fi
             fi
         done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" \( -type l -o -type d \) -print0 2>/dev/null)
@@ -425,7 +425,7 @@ migrate_agent_to_agents_folder() {
                 sed -i '' 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || \
                 sed -i 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || true
                 print_info "  Updated references in $config_file"
-                ((migrated++))
+                ((migrated++)) || true
             fi
         fi
     done
@@ -496,7 +496,7 @@ cleanup_deprecated_mcps() {
     for mcp in "${deprecated_mcps[@]}"; do
         if jq -e ".mcp[\"$mcp\"]" "$tmp_config" > /dev/null 2>&1; then
             jq "del(.mcp[\"$mcp\"])" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-            ((cleaned++))
+            ((cleaned++)) || true
         fi
     done
     
@@ -544,7 +544,7 @@ cleanup_deprecated_mcps() {
             full_path=$(resolve_mcp_binary_path "$bin_name")
             if [[ -n "$full_path" ]]; then
                 jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                ((cleaned++))
+                ((cleaned++)) || true
             fi
         fi
     done
@@ -561,7 +561,7 @@ cleanup_deprecated_mcps() {
                 outscraper_key=$(source "$HOME/.config/aidevops/credentials.sh" && echo "${OUTSCRAPER_API_KEY:-}")
             fi
             jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-            ((cleaned++))
+            ((cleaned++)) || true
         fi
     fi
 
@@ -624,7 +624,7 @@ disable_ondemand_mcps() {
             current_enabled=$(jq -r ".mcp[\"$mcp\"].enabled // \"true\"" "$tmp_config")
             if [[ "$current_enabled" != "false" ]]; then
                 jq ".mcp[\"$mcp\"].enabled = false" "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                ((disabled++))
+                ((disabled++)) || true
             fi
         fi
     done
@@ -772,7 +772,7 @@ migrate_mcp_env_to_credentials() {
         if [[ ! -f "$new_file" ]]; then
             mv "$old_file" "$new_file"
             chmod 600 "$new_file"
-            ((migrated++))
+            ((migrated++)) || true
             print_info "Renamed mcp-env.sh to credentials.sh"
         fi
         # Create backward-compatible symlink
@@ -793,7 +793,7 @@ migrate_mcp_env_to_credentials() {
                 if [[ ! -f "$tenant_new" ]]; then
                     mv "$tenant_old" "$tenant_new"
                     chmod 600 "$tenant_new"
-                    ((migrated++))
+                    ((migrated++)) || true
                 fi
                 if [[ ! -L "$tenant_old" ]]; then
                     ln -sf "credentials.sh" "$tenant_old"
@@ -808,7 +808,7 @@ migrate_mcp_env_to_credentials() {
             # shellcheck disable=SC2016
             sed -i '' 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file" 2>/dev/null || \
             sed -i 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file" 2>/dev/null || true
-            ((migrated++))
+            ((migrated++)) || true
             print_info "Updated $rc_file to source credentials.sh"
         fi
     done
@@ -856,11 +856,11 @@ migrate_old_backups() {
         # Check if it contains agents folder (most common)
         if [[ -d "$backup/agents" ]]; then
             mv "$backup" "$HOME/.aidevops/agents-backups/$backup_name"
-            ((migrated++))
+            ((migrated++)) || true
         # Check if it contains opencode.json
         elif [[ -f "$backup/opencode.json" ]]; then
             mv "$backup" "$HOME/.aidevops/opencode-backups/$backup_name"
-            ((migrated++))
+            ((migrated++)) || true
         fi
     done
     
@@ -934,7 +934,7 @@ migrate_loop_state_directories() {
                     print_warning "  .claude/ has other files, not removing"
                 fi
                 
-                ((migrated++))
+                ((migrated++)) || true
             fi
         fi
         
@@ -948,7 +948,7 @@ migrate_loop_state_directories() {
                 cp -R "$legacy_state_dir"/* "$new_state_dir/" 2>/dev/null || true
                 rm -rf "$legacy_state_dir"
                 print_info "  Migrated .agents/loop-state/ -> .agents/loop-state/"
-                ((migrated++))
+                ((migrated++)) || true
             fi
         fi
         
@@ -2589,7 +2589,7 @@ create_skill_symlinks() {
             # Create symlink (remove existing first)
             rm -f "$target_file" 2>/dev/null || true
             if ln -sf "$full_path" "$target_file" 2>/dev/null; then
-                ((created_count++))
+                ((created_count++)) || true
             fi
         done
     done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
@@ -2672,7 +2672,7 @@ check_skill_updates() {
         fi
         
         if [[ -n "$latest_commit" && "$latest_commit" != "$upstream_commit" ]]; then
-            ((updates_available++))
+            ((updates_available++)) || true
             update_list="${update_list}\n  - $name (${upstream_commit:0:7} → ${latest_commit:0:7})"
         fi
     done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
@@ -2807,7 +2807,7 @@ inject_agents_reference() {
                     cat "$agents_file" >> "$temp_file"
                     mv "$temp_file" "$agents_file"
                     print_success "Added reference to $agents_file"
-                    ((updated_count++))
+                    ((updated_count++)) || true
                 else
                     print_info "Reference already exists in $agents_file"
                 fi
@@ -2815,7 +2815,7 @@ inject_agents_reference() {
                 # Create new file with just the reference
                 echo "$reference_line" > "$agents_file"
                 print_success "Created $agents_file with aidevops reference"
-                ((updated_count++))
+                ((updated_count++)) || true
             fi
         fi
     done
@@ -3042,9 +3042,9 @@ install_mcp_packages() {
     local pkg
     for pkg in "${node_mcps[@]}"; do
         if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
-            ((updated++))
+            ((updated++)) || true
         else
-            ((failed++))
+            ((failed++)) || true
             print_warning "Failed to install/update $pkg"
         fi
     done
@@ -3156,7 +3156,7 @@ update_mcp_paths_in_opencode() {
                 new_path=$(resolve_mcp_binary_path "$bin_name")
                 if [[ -n "$new_path" && "$new_path" != "$current_cmd" ]]; then
                     jq --arg k "$mcp_key" --arg p "$new_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-                    ((updated++))
+                    ((updated++)) || true
                 fi
             fi
             continue
@@ -3173,7 +3173,7 @@ update_mcp_paths_in_opencode() {
 
         if [[ -n "$full_path" && "$full_path" != "$current_cmd" ]]; then
             jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-            ((updated++))
+            ((updated++)) || true
         fi
     done <<< "$mcp_keys"
 
@@ -3187,7 +3187,7 @@ update_mcp_paths_in_opencode() {
         while IFS= read -r mcp_key; do
             [[ -z "$mcp_key" ]] && continue
             jq --arg k "$mcp_key" --arg p "$node_path" '.mcp[$k].command[0] = $p' "$tmp_config" > "${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-            ((updated++))
+            ((updated++)) || true
         done <<< "$node_mcp_keys"
     fi
 
@@ -3444,7 +3444,7 @@ setup_beads_ui() {
             # brew install user/tap/formula auto-taps
             if run_with_spinner "Installing bv via Homebrew" brew install dicklesworthstone/tap/bv; then
                 print_info "Run: bv (in a beads-enabled project)"
-                ((installed_count++))
+                ((installed_count++)) || true
             else
                 print_warning "Homebrew install failed - try manually:"
                 print_info "  brew install dicklesworthstone/tap/bv"
@@ -3456,7 +3456,7 @@ setup_beads_ui() {
                 # Go available - use go install
                 if run_with_spinner "Installing bv via Go" go install github.com/Dicklesworthstone/beads_viewer/cmd/bv@latest; then
                     print_info "Run: bv (in a beads-enabled project)"
-                    ((installed_count++))
+                    ((installed_count++)) || true
                 else
                     print_warning "Go install failed"
                 fi
@@ -3466,7 +3466,7 @@ setup_beads_ui() {
                 if [[ "$use_script" =~ ^[Yy]?$ ]]; then
                     if verified_install "bv (beads viewer)" "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"; then
                         print_info "Run: bv (in a beads-enabled project)"
-                        ((installed_count++))
+                        ((installed_count++)) || true
                     else
                         print_warning "Install script failed - try manually:"
                         print_info "  Homebrew: brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
@@ -3486,7 +3486,7 @@ setup_beads_ui() {
         if [[ "$install_web" =~ ^[Yy]?$ ]]; then
             if run_with_spinner "Installing beads-ui" npm install -g beads-ui; then
                 print_info "Run: beads-ui"
-                ((installed_count++))
+                ((installed_count++)) || true
             fi
         fi
         
@@ -3494,7 +3494,7 @@ setup_beads_ui() {
         if [[ "$install_bdui" =~ ^[Yy]?$ ]]; then
             if run_with_spinner "Installing bdui" npm install -g bdui; then
                 print_info "Run: bdui"
-                ((installed_count++))
+                ((installed_count++)) || true
             fi
         fi
     fi
@@ -3505,7 +3505,7 @@ setup_beads_ui() {
         if [[ "$install_perles" =~ ^[Yy]?$ ]]; then
             if run_with_spinner "Installing perles (Rust compile)" cargo install perles; then
                 print_info "Run: perles"
-                ((installed_count++))
+                ((installed_count++)) || true
             fi
         fi
     fi

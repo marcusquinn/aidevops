@@ -64,7 +64,7 @@ setup_shell_integration() {
             echo "# AI DevOps API Keys (single source of truth)" >> "$config"
             echo "$source_line" >> "$config"
             print_success "Added credentials.sh sourcing to $config"
-            ((updated++))
+            ((updated++)) || true
         fi
     done
     

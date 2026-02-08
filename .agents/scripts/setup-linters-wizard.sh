@@ -248,7 +248,7 @@ install_selected_linters() {
             print_success "$lang linters installed successfully"
         else
             print_warning "Some $lang linters failed to install"
-            ((total_failures++))
+            ((total_failures++)) || true
         fi
         echo ""
     done
