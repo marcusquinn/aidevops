@@ -12,6 +12,7 @@ subagents:
   - editor
   - internal-linker
   - context-templates
+  - content-calendar
   # SEO integration
   - keyword-research
   - eeat-score
@@ -47,6 +48,7 @@ subagents:
 | `editor.md` | Transform AI content into human-sounding articles |
 | `internal-linker.md` | Strategic internal linking recommendations |
 | `context-templates.md` | Per-project SEO context templates (brand voice, style, keywords) |
+| `content-calendar.md` | Content calendar planning with gap analysis and lifecycle tracking |
 
 **SEO Analysis** (via `seo/`):
 
@@ -75,12 +77,13 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 ```
 
 **Workflow**:
-1. Research (keywords, competitors, audience)
-2. Write (`content/seo-writer.md` with keyword targets)
-3. Analyze (`seo-content-analyzer.py analyze`)
-4. Optimize (address issues from analysis)
-5. Edit (`content/editor.md` for human voice)
-6. Publish (via WordPress or CMS)
+1. Plan (`tools/content/content-calendar.md` for gap analysis and scheduling)
+2. Research (keywords, competitors, audience)
+3. Write (`content/seo-writer.md` with keyword targets)
+4. Analyze (`seo-content-analyzer.py analyze`)
+5. Optimize (address issues from analysis)
+6. Edit (`content/editor.md` for human voice)
+7. Publish (via WordPress or CMS)
 
 <!-- AI-CONTEXT-END -->
 
