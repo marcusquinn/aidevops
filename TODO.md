@@ -95,9 +95,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t164 Distributed task claiming via GitHub Issue assignees #feature #supervisor ref:GH#619 logged:2026-02-08 verified:2026-02-08
   - Notes: PR #621 merged. Implements issue assignment-based task claiming to prevent clashes. cmd_claim/cmd_unclaim, check_task_claimed guard in dispatch, pre-edit-check.sh warns if claimed, ensure_status_labels() for bootstrapping.
 
-- [ ] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08
+- [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m (ai:15m) ref:GH#548 logged:2026-02-08 verified:2026-02-08
+  - Notes: PR #548 merged. Guard arithmetic with `|| true` to prevent silent exit under `set -e`.
 
-- [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08
+- [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:25m) ref:GH#552 logged:2026-02-08 verified:2026-02-08
+  - Notes: PR #552 merged. Added git conflict resolution skill.
 
 - [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
   - [x] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none completed:2026-02-07
