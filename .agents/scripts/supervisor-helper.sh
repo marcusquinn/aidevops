@@ -2581,13 +2581,38 @@ build_dispatch_cmd() {
     fi
 
     # t173: Explicit worker restriction — prevents TODO.md race condition
+    # t176: Uncertainty decision framework for headless workers
     prompt="$prompt
 
 ## MANDATORY Worker Restrictions (t173)
 - Do NOT edit, commit, or push TODO.md — the supervisor owns all TODO.md updates.
 - Do NOT edit todo/PLANS.md or todo/tasks/* — these are supervisor-managed.
 - Report status via exit code, log output, and PR creation only.
-- Put task notes in commit messages or PR body, never in TODO.md."
+- Put task notes in commit messages or PR body, never in TODO.md.
+
+## Uncertainty Decision Framework (t176)
+You are a headless worker with no human at the terminal. Use this framework when uncertain:
+
+**PROCEED autonomously when:**
+- Multiple valid approaches exist but all achieve the goal (pick the simplest)
+- Style/naming choices are ambiguous (follow existing conventions in the codebase)
+- Task description is slightly vague but intent is clear from context
+- You need to choose between equivalent libraries/patterns (match project precedent)
+- Minor scope questions (e.g., should I also fix this adjacent issue?) — stay focused on the assigned task
+
+**FLAG uncertainty and exit cleanly when:**
+- The task description contradicts what you find in the codebase
+- Completing the task would require breaking changes to public APIs or shared interfaces
+- You discover the task is already done or obsolete
+- Required dependencies, credentials, or services are missing and cannot be inferred
+- The task requires decisions that would significantly affect architecture or other tasks
+- You are unsure whether a file should be created vs modified, and getting it wrong would cause data loss
+
+**When you proceed autonomously**, document your decision in the commit message:
+\`feat: add retry logic (chose exponential backoff over linear — matches existing patterns in src/utils/retry.ts)\`
+
+**When you exit due to uncertainty**, include a clear explanation in your final output:
+\`BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints (JWT, OAuth, API key). Need clarification on which one.\`"
 
     if [[ -n "$memory_context" ]]; then
         prompt="$prompt

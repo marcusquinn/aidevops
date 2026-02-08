@@ -36,7 +36,7 @@ tools:
 **When NOT to use**:
 
 - Interactive development (use TUI directly)
-- Tasks requiring human-in-the-loop decisions mid-execution
+- Tasks requiring frequent human-in-the-loop decisions (see [Worker Uncertainty Framework](#worker-uncertainty-framework) for what workers can handle autonomously)
 - Single quick questions (just use `opencode run` without server overhead)
 
 **Draft agents for reusable context**: When parallel workers share domain-specific instructions, create a draft agent in `~/.aidevops/agents/draft/` instead of duplicating prompts. Subsequent dispatches can reference the draft. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers" for details.
@@ -456,6 +456,76 @@ export OPENAI_API_KEY="sk-..."
 # Grant all permissions (only in trusted environments)
 OPENCODE_PERMISSION='{"*":"allow"}' opencode run "Fix the failing tests"
 ```
+
+## Worker Uncertainty Framework
+
+Headless workers have no human to ask when they encounter ambiguity. This framework defines when workers should make autonomous decisions vs flag uncertainty and exit.
+
+### Decision Tree
+
+```text
+Encounter ambiguity
+├── Can I infer intent from context + codebase conventions?
+│   ├── YES → Proceed, document decision in commit message
+│   └── NO ↓
+├── Would getting this wrong cause irreversible damage?
+│   ├── YES → Exit cleanly with specific explanation
+│   └── NO ↓
+├── Does this affect only my task scope?
+│   ├── YES → Proceed with simplest valid approach
+│   └── NO → Exit (cross-task architectural decisions need human input)
+```
+
+### Proceed Autonomously
+
+Workers should make their own call and keep going when:
+
+| Situation | Action |
+|-----------|--------|
+| Multiple valid approaches, all achieve the goal | Pick the simplest |
+| Style/naming ambiguity | Follow existing codebase conventions |
+| Slightly vague task description, clear intent | Interpret reasonably, document in commit |
+| Choosing between equivalent patterns/libraries | Match project precedent |
+| Minor adjacent issue discovered | Stay focused on assigned task, note in PR body |
+| Unclear test coverage expectations | Match coverage level of neighboring files |
+
+**Always document**: Include the decision rationale in the commit message so the supervisor and reviewers understand why.
+
+```text
+feat: add retry logic (chose exponential backoff over linear — matches existing patterns in src/utils/retry.ts)
+```
+
+### Flag Uncertainty and Exit
+
+Workers should exit cleanly (allowing supervisor evaluation and retry) when:
+
+| Situation | Why exit |
+|-----------|----------|
+| Task contradicts codebase state | May be stale or misdirected |
+| Requires breaking public API changes | Cross-cutting impact needs human judgment |
+| Task appears already done or obsolete | Avoid duplicate/conflicting work |
+| Missing dependencies, credentials, or services | Cannot be inferred safely |
+| Architectural decisions affecting other tasks | Supervisor coordinates cross-task concerns |
+| Create vs modify ambiguity with data loss risk | Irreversible — needs confirmation |
+| Multiple interpretations with very different outcomes | Wrong guess wastes compute and creates cleanup work |
+
+**Always explain**: Include a specific, actionable description of the blocker so the supervisor can resolve it.
+
+```text
+BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints
+(JWT in src/auth/jwt.ts, OAuth in src/auth/oauth.ts, API key in src/auth/apikey.ts).
+Need clarification on which one(s) to update.
+```
+
+### Integration with Supervisor
+
+The supervisor uses worker exit behavior to drive the self-improvement loop:
+
+- **Worker proceeds + documents** → Supervisor reviews PR normally
+- **Worker exits with BLOCKED** → Supervisor reads explanation, either clarifies and retries, or creates a prerequisite task
+- **Worker exits with unclear error** → Supervisor dispatches a diagnostic worker (`-diag-N` suffix)
+
+This framework reduces wasted retries by giving workers clear criteria for when to attempt vs when to bail. Over time, task descriptions improve because the supervisor learns which ambiguities cause exits.
 
 ## CI/CD Integration
 
