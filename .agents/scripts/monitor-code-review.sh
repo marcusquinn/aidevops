@@ -60,22 +60,23 @@ check_sonarcloud() {
     return 0
 }
 
-# Run Qlty analysis and auto-fix
+# Run Qlty analysis (reporting only — no auto-fix)
 run_qlty_analysis() {
-    print_info "Running Qlty analysis and auto-fixes..."
+    print_info "Running Qlty analysis..."
     
-    # Run analysis with sample to get quick feedback
+    # Run analysis with sample to get quick feedback (reporting only)
     if bash "$REPO_ROOT/.agents/scripts/qlty-cli.sh" check 5 > "$REPO_ROOT/.agents/tmp/qlty-results.txt" 2>&1; then
         local issues
         issues=$(grep -o "ISSUES: [0-9]*" "$REPO_ROOT/.agents/tmp/qlty-results.txt" | grep -o "[0-9]*" || echo "0")
         print_success "Qlty Analysis: $issues issues found"
         
-        # Apply auto-formatting
-        if bash "$REPO_ROOT/.agents/scripts/qlty-cli.sh" fmt --all > "$REPO_ROOT/.agents/tmp/qlty-fmt.txt" 2>&1; then
-            print_success "Qlty auto-formatting completed"
-        fi
+        # DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
+        # "then" clauses). Auto-formatting removed from both monitor and fix paths.
+        # See: https://github.com/marcusquinn/aidevops/issues/333
+        # The GHA workflow validation gate (ShellCheck + bash -n) provides a safety
+        # net, but preventing bad fixes at the source is the primary defense.
         
-        echo "$(date): Qlty - $issues issues found, auto-formatting applied" >> "$MONITOR_LOG"
+        echo "$(date): Qlty - $issues issues found (report only, auto-fix disabled)" >> "$MONITOR_LOG"
         return 0
     else
         print_warning "Qlty analysis completed with warnings (API key may not be configured)"
