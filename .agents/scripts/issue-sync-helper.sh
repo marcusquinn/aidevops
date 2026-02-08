@@ -1029,7 +1029,13 @@ cmd_close() {
             continue
         fi
 
-        if gh issue close "$issue_number" --repo "$repo_slug" --comment "Completed. Task $task_id marked done in TODO.md (verified)." 2>/dev/null; then
+        local close_comment
+        if [[ "$force" == "true" ]]; then
+            close_comment="Completed. Task $task_id marked done in TODO.md (force-closed, verified: field not checked)."
+        else
+            close_comment="Completed. Task $task_id marked done in TODO.md (verified)."
+        fi
+        if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
             print_success "Closed #$issue_number ($task_id)"
             closed=$((closed + 1))
         else

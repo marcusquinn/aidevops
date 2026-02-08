@@ -693,6 +693,7 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 1. **YOU wrote code/content** for it in THIS session (not just verified a file exists)
 2. **Deliverable is substantive** — file exists, content is complete (not a stub/placeholder), passes quality checks
 3. **You can cite what you did** — specific files created/modified, lines changed
+4. **Add `verified:YYYY-MM-DD`** to the task line — `issue-sync close` requires this field to auto-close the linked GitHub Issue
 
 **If someone else did the work** (worker branch, merged PR, another session): leave it `[ ]`. The repo owner or reviewer marks it done after verification.
 

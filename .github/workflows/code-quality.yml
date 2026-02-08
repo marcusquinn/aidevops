@@ -148,9 +148,10 @@ jobs:
         HEAD="${{ github.event.pull_request.head.sha }}"
 
         # Get tasks that changed from [ ] to [x] in this PR
-        NEW_COMPLETIONS=$(diff <(git show "$BASE":TODO.md 2>/dev/null | grep -E '^\- \[ \] t[0-9]+' | grep -oE 't[0-9]+' | sort) \
-                               <(git show "$HEAD":TODO.md 2>/dev/null | grep -E '^\- \[x\] t[0-9]+' | grep -oE 't[0-9]+' | sort) \
-                          2>/dev/null | grep '^>' | sed 's/^> //' || true)
+        # comm -12 finds the intersection: IDs that were [ ] in BASE AND [x] in HEAD
+        BASE_OPEN=$(git show "$BASE":TODO.md 2>/dev/null | grep -E '^\- \[ \] t[0-9]+' | grep -oE 't[0-9]+' | sort || true)
+        HEAD_DONE=$(git show "$HEAD":TODO.md 2>/dev/null | grep -E '^\- \[x\] t[0-9]+' | grep -oE 't[0-9]+' | sort || true)
+        NEW_COMPLETIONS=$(comm -12 <(echo "$BASE_OPEN") <(echo "$HEAD_DONE") || true)
 
         if [[ -z "$NEW_COMPLETIONS" ]]; then
           echo "No new task completions in this PR"

@@ -4854,26 +4854,33 @@ cmd_pulse() {
     fi
 
     # Phase 6: Verify deliverables for merged tasks (t163.4)
-    # Before marking tasks complete in TODO.md, verify that deliverables actually exist
+    # Before marking tasks complete in TODO.md, verify that PRs are actually merged.
+    # Uses state_log to track verification (avoids needing a separate notes column).
     local verified_count=0
     local merged_unverified
-    merged_unverified=$(db "$SUPERVISOR_DB" "SELECT id FROM tasks WHERE status = 'deployed' AND id NOT IN (SELECT id FROM tasks WHERE notes LIKE '%verified:%');" 2>/dev/null || echo "")
+    # Single query: fetch id, pr_url, repo for deployed tasks not yet verified
+    merged_unverified=$(db "$SUPERVISOR_DB" "
+        SELECT t.id, t.pr_url, t.repo FROM tasks t
+        WHERE t.status = 'deployed'
+        AND t.id NOT IN (
+            SELECT task_id FROM state_log WHERE reason LIKE 'verified:%'
+        );
+    " 2>/dev/null || echo "")
     if [[ -n "$merged_unverified" ]]; then
-        while IFS= read -r verify_tid; do
+        while IFS='|' read -r verify_tid verify_pr_url verify_repo; do
             [[ -n "$verify_tid" ]] || continue
-            local verify_pr_url
-            verify_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$verify_tid")';" 2>/dev/null || echo "")
-            local verify_worktree
-            verify_worktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$(sql_escape "$verify_tid")';" 2>/dev/null || echo "")
 
             # Check PR is actually merged
             local pr_merged="false"
             if [[ -n "$verify_pr_url" ]]; then
                 local pr_number
                 pr_number=$(echo "$verify_pr_url" | grep -oE '[0-9]+$' || echo "")
-                if [[ -n "$pr_number" ]]; then
+                # Extract repo slug from PR URL (e.g., https://github.com/owner/repo/pull/123)
+                local pr_repo_slug
+                pr_repo_slug=$(echo "$verify_pr_url" | sed -E 's|.*/([^/]+/[^/]+)/pull/[0-9]+$|\1|' || echo "")
+                if [[ -n "$pr_number" && -n "$pr_repo_slug" ]]; then
                     local pr_state
-                    pr_state=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo "")
+                    pr_state=$(gh pr view "$pr_number" --repo "$pr_repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
                     if [[ "$pr_state" == "MERGED" ]]; then
                         pr_merged="true"
                     fi
@@ -4881,12 +4888,17 @@ cmd_pulse() {
             fi
 
             if [[ "$pr_merged" == "true" ]]; then
-                # PR is merged — deliverable verified
-                db "$SUPERVISOR_DB" "UPDATE tasks SET notes = COALESCE(notes, '') || ' verified:$(date +%Y-%m-%d)' WHERE id = '$(sql_escape "$verify_tid")';" 2>/dev/null || true
+                # PR is merged — record verification in state_log
+                local escaped_verify_tid
+                escaped_verify_tid=$(sql_escape "$verify_tid")
+                db "$SUPERVISOR_DB" "
+                    INSERT INTO state_log (task_id, from_state, to_state, reason)
+                    VALUES ('$escaped_verify_tid', 'deployed', 'deployed', 'verified:$(date +%Y-%m-%d)');
+                " 2>/dev/null || true
                 log_info "  Verified:   $verify_tid (PR merged)"
                 verified_count=$((verified_count + 1))
             else
-                log_verbose "  Unverified: $verify_tid (PR not merged or not found)"
+                log_warn "  Unverified: $verify_tid (PR not merged or not found)"
             fi
         done <<< "$merged_unverified"
     fi
