@@ -282,6 +282,42 @@ memory-helper.sh graduate status
 
 See `scripts/memory-graduate-helper.sh help` for full documentation.
 
+## Memory Audit Pulse (Automated Hygiene)
+
+Periodic scan that deduplicates, prunes, graduates, and identifies improvement
+opportunities. Runs automatically as Phase 9 of the supervisor pulse cycle
+(self-throttled to once per 24 hours).
+
+```bash
+# Run audit pulse manually
+memory-audit-pulse.sh run --force
+
+# Preview without changes
+memory-audit-pulse.sh run --dry-run
+
+# Check audit history
+memory-audit-pulse.sh status
+```
+
+**Phases**:
+
+1. **Dedup** — remove exact and near-duplicate memories
+2. **Prune** — remove stale entries (>90 days, never accessed)
+3. **Graduate** — promote high-value memories to shared docs
+4. **Scan** — identify self-improvement opportunities (recurring failures, noisy auto-capture, untagged memories)
+5. **Report** — summary with JSONL history
+
+**Cron integration** (optional):
+
+```bash
+# Daily at 4 AM
+0 4 * * * ~/.aidevops/agents/scripts/memory-audit-pulse.sh run --quiet
+```
+
+**Slash command**: `/memory-audit` or `/memory-audit --dry-run`
+
+See `scripts/memory-audit-pulse.sh help` for full documentation.
+
 ## Namespaces (Per-Runner Memory Isolation)
 
 Runners can have isolated memory namespaces. Each namespace gets its own SQLite DB,

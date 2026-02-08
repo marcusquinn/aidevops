@@ -108,7 +108,8 @@ readonly MAIL_HELPER="${SCRIPT_DIR}/mail-helper.sh"       # Used by pulse comman
 readonly MEMORY_HELPER="${SCRIPT_DIR}/memory-helper.sh"   # Used by pulse command (t128.6)
 readonly SESSION_REVIEW_HELPER="${SCRIPT_DIR}/session-review-helper.sh"   # Used by batch completion (t128.9)
 readonly SESSION_DISTILL_HELPER="${SCRIPT_DIR}/session-distill-helper.sh" # Used by batch completion (t128.9)
-export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER
+readonly MEMORY_AUDIT_HELPER="${SCRIPT_DIR}/memory-audit-pulse.sh"       # Used by pulse Phase 9 (t185)
+export MAIL_HELPER MEMORY_HELPER SESSION_REVIEW_HELPER SESSION_DISTILL_HELPER MEMORY_AUDIT_HELPER
 
 # Valid states for the state machine
 readonly VALID_STATES="queued dispatched running evaluating retrying complete pr_review review_triage merging merged deploying deployed verifying verified verify_failed blocked failed cancelled"
@@ -5898,6 +5899,15 @@ cmd_pulse() {
             local remaining=$((issue_sync_interval - elapsed))
             log_verbose "  Phase 8: Skipped (${remaining}s until next run)"
         fi
+    fi
+
+    # Phase 9: Memory audit pulse (t185)
+    # Runs dedup, prune, graduate, and opportunity scan.
+    # The audit script self-throttles (24h interval), so calling every pulse is safe.
+    local audit_script="${SCRIPT_DIR}/memory-audit-pulse.sh"
+    if [[ -x "$audit_script" ]]; then
+        log_verbose "  Phase 9: Memory audit pulse"
+        "$audit_script" run --quiet 2>>"$SUPERVISOR_LOG" || true
     fi
 
     # Release pulse dispatch lock (t159)
