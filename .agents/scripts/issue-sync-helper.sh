@@ -13,6 +13,7 @@
 #   enrich [tNNN]   Update existing issue bodies with full context
 #   pull            Sync GitHub issue refs back to TODO.md
 #   close [tNNN]    Close GitHub issue when TODO.md task is [x]
+#   reconcile       Fix mismatched ref:GH# values and detect drift
 #   status          Show sync drift between TODO.md and GitHub
 #   parse [tNNN]    Parse and display task context (dry-run)
 #   help            Show this help message
@@ -994,6 +995,24 @@ cmd_pull() {
     return 0
 }
 
+# Fix a mismatched ref:GH# in TODO.md (t179.1)
+# Replaces old_number with new_number for the given task
+fix_gh_ref_in_todo() {
+    local task_id="$1"
+    local old_number="$2"
+    local new_number="$3"
+    local todo_file="$4"
+
+    if [[ -z "$old_number" || -z "$new_number" || "$old_number" == "$new_number" ]]; then
+        return 0
+    fi
+
+    # Replace the old ref with the new one
+    sed_inplace -E "s/^(- \[.\] ${task_id} .*)ref:GH#${old_number}/\1ref:GH#${new_number}/" "$todo_file"
+    log_verbose "Fixed ref:GH#$old_number -> ref:GH#$new_number for $task_id"
+    return 0
+}
+
 # Add ref:GH#NNN to a task line in TODO.md
 add_gh_ref_to_todo() {
     local task_id="$1"
@@ -1056,6 +1075,7 @@ task_has_completion_evidence() {
 
 # Close: close GitHub issue when TODO.md task is completed
 # Guard (t163): requires merged PR or verified: field before closing
+# Fallback (t179.1): search by task ID in issue title when ref:GH# doesn't match
 cmd_close() {
     local target_task="${1:-}"
     local project_root
@@ -1064,34 +1084,87 @@ cmd_close() {
     local todo_file="$project_root/TODO.md"
     verify_gh_cli || return 1
 
-    # Collect completed tasks with GH refs
+    # Collect completed tasks — both with and without GH refs (t179.1)
     local tasks=()
     if [[ -n "$target_task" ]]; then
         tasks=("$target_task")
     else
+        # Include all completed tasks, not just those with ref:GH#
         while IFS= read -r line; do
             local tid
             tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
             if [[ -n "$tid" ]]; then
                 tasks+=("$tid")
             fi
-        done < <(grep -E '^- \[x\] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
+        done < <(grep -E '^- \[x\] t[0-9]+' "$todo_file" || true)
     fi
 
     if [[ ${#tasks[@]} -eq 0 ]]; then
-        print_info "No completed tasks with GH refs to close"
+        print_info "No completed tasks to close"
         return 0
     fi
 
     local closed=0
     local skipped=0
+    local ref_fixed=0
     for task_id in "${tasks[@]}"; do
         local task_line
         task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
         local issue_number
         issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
+        # t179.1: Fallback — search by task ID in issue title when ref:GH# is missing or stale
         if [[ -z "$issue_number" ]]; then
+            log_verbose "$task_id: no ref:GH# in TODO.md, searching GitHub by title..."
+            issue_number=$(gh issue list --repo "$repo_slug" --state open --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+            if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
+                log_verbose "$task_id: found open issue #$issue_number by title search"
+                # Fix the ref in TODO.md
+                if [[ "$DRY_RUN" != "true" ]]; then
+                    add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+                    ref_fixed=$((ref_fixed + 1))
+                fi
+            else
+                # Also check closed issues (might already be closed)
+                issue_number=$(gh issue list --repo "$repo_slug" --state closed --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                if [[ -n "$issue_number" && "$issue_number" != "null" ]]; then
+                    log_verbose "$task_id: found closed issue #$issue_number (already closed)"
+                    if [[ "$DRY_RUN" != "true" ]]; then
+                        add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+                        ref_fixed=$((ref_fixed + 1))
+                    fi
+                    continue  # Already closed, nothing to do
+                fi
+                log_verbose "$task_id: no matching GitHub issue found"
+                continue
+            fi
+        else
+            # Verify the ref:GH# actually matches an issue with this task ID (t179.1)
+            local ref_title
+            ref_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+            local ref_task_id
+            ref_task_id=$(echo "$ref_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+
+            if [[ -n "$ref_task_id" && "$ref_task_id" != "$task_id" ]]; then
+                # ref:GH# points to a different task's issue — search for the correct one
+                log_verbose "$task_id: ref:GH#$issue_number belongs to $ref_task_id, searching for correct issue..."
+                local correct_number
+                correct_number=$(gh issue list --repo "$repo_slug" --state all --search "in:title ${task_id}:" --json number,state --jq '.[] | select(.state == "OPEN") | .number' 2>/dev/null | head -1 || echo "")
+                if [[ -z "$correct_number" ]]; then
+                    correct_number=$(gh issue list --repo "$repo_slug" --state all --search "in:title ${task_id}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                fi
+                if [[ -n "$correct_number" && "$correct_number" != "null" ]]; then
+                    log_verbose "$task_id: correct issue is #$correct_number (was ref:GH#$issue_number)"
+                    if [[ "$DRY_RUN" != "true" ]]; then
+                        fix_gh_ref_in_todo "$task_id" "$issue_number" "$correct_number" "$todo_file"
+                        ref_fixed=$((ref_fixed + 1))
+                    fi
+                    issue_number="$correct_number"
+                fi
+            fi
+        fi
+
+        if [[ -z "$issue_number" || "$issue_number" == "null" ]]; then
             continue
         fi
 
@@ -1135,7 +1208,7 @@ cmd_close() {
         fi
     done
 
-    print_info "Close complete: $closed issues closed, $skipped skipped (no evidence)"
+    print_info "Close complete: $closed closed, $skipped skipped (no evidence), $ref_fixed refs fixed"
     return 0
 }
 
@@ -1200,6 +1273,115 @@ cmd_status() {
     fi
     if [[ $without_ref -eq 0 && $completed_with_open_issues -eq 0 ]]; then
         print_success "TODO.md and GitHub issues are in sync"
+    fi
+
+    return 0
+}
+
+# Reconcile: fix mismatched ref:GH# values in TODO.md (t179.2)
+# Scans all tasks with ref:GH#, verifies the issue number matches an issue
+# with the task ID in its title, and fixes mismatches.
+# Also finds open issues for completed tasks and closes them.
+cmd_reconcile() {
+    local project_root
+    project_root=$(find_project_root) || return 1
+    local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
+    local todo_file="$project_root/TODO.md"
+
+    verify_gh_cli || return 1
+
+    print_info "Reconciling ref:GH# values in $repo_slug..."
+
+    local ref_fixed=0
+    local ref_ok=0
+    local stale_closed=0
+    local orphan_issues=0
+
+    # Phase 1: Verify all ref:GH# values in TODO.md match actual issues
+    while IFS= read -r line; do
+        local tid
+        tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+        local gh_ref
+        gh_ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+
+        if [[ -z "$tid" || -z "$gh_ref" ]]; then
+            continue
+        fi
+
+        # Verify the issue title matches this task ID
+        local issue_title
+        issue_title=$(gh issue view "$gh_ref" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+        local issue_task_id
+        issue_task_id=$(echo "$issue_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+
+        if [[ "$issue_task_id" == "$tid" ]]; then
+            ref_ok=$((ref_ok + 1))
+            continue
+        fi
+
+        # Mismatch — search for the correct issue
+        print_warning "MISMATCH: $tid has ref:GH#$gh_ref but issue title is '$issue_title'"
+        local correct_number
+        correct_number=$(gh issue list --repo "$repo_slug" --state all --search "in:title ${tid}:" --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+        if [[ -n "$correct_number" && "$correct_number" != "null" && "$correct_number" != "$gh_ref" ]]; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+                print_info "[DRY-RUN] Would fix $tid: ref:GH#$gh_ref -> ref:GH#$correct_number"
+            else
+                fix_gh_ref_in_todo "$tid" "$gh_ref" "$correct_number" "$todo_file"
+                print_success "Fixed $tid: ref:GH#$gh_ref -> ref:GH#$correct_number"
+            fi
+            ref_fixed=$((ref_fixed + 1))
+        elif [[ -z "$correct_number" || "$correct_number" == "null" ]]; then
+            print_warning "$tid: no matching issue found on GitHub (ref:GH#$gh_ref is stale)"
+        fi
+    done < <(grep -E '^- \[.\] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
+
+    # Phase 2: Find open issues for completed tasks (including those without ref:GH#)
+    local open_issues_json
+    open_issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 200 --json number,title 2>/dev/null || echo "[]")
+
+    while IFS= read -r issue_line; do
+        local issue_number
+        issue_number=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
+        local issue_title
+        issue_title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
+
+        local issue_tid
+        issue_tid=$(echo "$issue_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+        if [[ -z "$issue_tid" ]]; then
+            continue
+        fi
+
+        # Check if task is completed in TODO.md
+        if grep -qE "^- \[x\] ${issue_tid} " "$todo_file" 2>/dev/null; then
+            print_warning "STALE: GH#$issue_number ($issue_tid) is open but task is completed"
+            stale_closed=$((stale_closed + 1))
+        fi
+
+        # Check if task exists at all in TODO.md
+        if ! grep -qE "^- \[.\] ${issue_tid} " "$todo_file" 2>/dev/null; then
+            log_verbose "ORPHAN: GH#$issue_number ($issue_tid) has no matching TODO.md entry"
+            orphan_issues=$((orphan_issues + 1))
+        fi
+    done < <(echo "$open_issues_json" | jq -c '.[]' 2>/dev/null || true)
+
+    echo ""
+    echo "=== Reconciliation Report ==="
+    echo "Refs verified OK:          $ref_ok"
+    echo "Refs fixed (mismatch):     $ref_fixed"
+    echo "Stale open issues:         $stale_closed"
+    echo "Orphan issues (no task):   $orphan_issues"
+    echo ""
+
+    if [[ $stale_closed -gt 0 ]]; then
+        print_info "Run 'issue-sync-helper.sh close' to close stale issues"
+    fi
+    if [[ $ref_fixed -gt 0 && "$DRY_RUN" != "true" ]]; then
+        print_success "Fixed $ref_fixed mismatched refs in TODO.md"
+    fi
+    if [[ $ref_fixed -eq 0 && $stale_closed -eq 0 && $orphan_issues -eq 0 ]]; then
+        print_success "All refs are correct, no drift detected"
     fi
 
     return 0
@@ -1288,6 +1470,7 @@ Commands:
   enrich [tNNN]   Update existing issue bodies with full context from PLANS.md
   pull            Sync GitHub issue refs back to TODO.md
   close [tNNN]    Close GitHub issues for completed TODO.md tasks
+  reconcile       Fix mismatched ref:GH# values and detect drift (t179.2)
   status          Show sync drift between TODO.md and GitHub
   parse [tNNN]    Parse and display task context (debug/dry-run)
   help            Show this help message
@@ -1305,6 +1488,8 @@ Examples:
   issue-sync-helper.sh enrich                  # Enrich all open tasks with refs
   issue-sync-helper.sh pull                    # Sync GH refs to TODO.md
   issue-sync-helper.sh close                   # Close issues for done tasks
+  issue-sync-helper.sh reconcile               # Fix ref:GH# mismatches
+  issue-sync-helper.sh reconcile --dry-run     # Preview reconciliation
   issue-sync-helper.sh status                  # Show sync drift
   issue-sync-helper.sh parse t020              # Debug: show parsed context
   issue-sync-helper.sh push --dry-run          # Preview without changes
@@ -1360,6 +1545,9 @@ main() {
             ;;
         close)
             cmd_close "${positional_args[1]:-}"
+            ;;
+        reconcile)
+            cmd_reconcile
             ;;
         status)
             cmd_status

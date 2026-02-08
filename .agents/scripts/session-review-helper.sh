@@ -165,7 +165,17 @@ check_workflow_adherence() {
     else
         issues+="no-todo-file,"
     fi
-    
+
+    # Check 5: Issue-sync drift (t179.4)
+    local issue_sync_script="${SCRIPT_DIR}/issue-sync-helper.sh"
+    if [[ -f "$issue_sync_script" && -f "$project_root/TODO.md" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        local completed_no_close
+        completed_no_close=$(grep -cE '^- \[x\] t[0-9]+' "$project_root/TODO.md" 2>/dev/null || echo "0")
+        if [[ "$completed_no_close" -gt 0 ]]; then
+            passed+="issue-sync-available,"
+        fi
+    fi
+
     echo "passed:${passed%,}|issues:${issues%,}"
     return 0
 }
@@ -253,7 +263,13 @@ gather_context() {
     if [[ "$staged" -gt 0 ]] || [[ "$unstaged" -gt 0 ]]; then
         echo "- Uncommitted changes: $staged staged, $unstaged unstaged"
     fi
-    
+
+    # Issue-sync reminder (t179.4)
+    local issue_sync_script="${SCRIPT_DIR}/issue-sync-helper.sh"
+    if [[ -f "$issue_sync_script" && -f "$project_root/TODO.md" ]] && command -v gh &>/dev/null; then
+        echo "- Run 'issue-sync-helper.sh status' to check GitHub issue drift"
+    fi
+
     echo ""
     echo -e "${BOLD}Run /session-review in AI assistant for full analysis${NC}"
     return 0

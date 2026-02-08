@@ -21,6 +21,7 @@ on:
           - pull
           - push
           - close
+          - reconcile
           - enrich
 
 concurrency:
