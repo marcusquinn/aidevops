@@ -5481,6 +5481,28 @@ cmd_pulse() {
         done <<< "$db_orphans"
     fi
 
+    # Phase 4c: Cancel stale diagnostic subtasks whose parent is already resolved
+    # Diagnostic tasks (diagnostic_of != NULL) become stale when the parent task
+    # reaches a terminal state (deployed, cancelled, failed) before the diagnostic
+    # is dispatched. Cancel them to free queue slots.
+    local stale_diags
+    stale_diags=$(db "$SUPERVISOR_DB" "
+        SELECT d.id, d.diagnostic_of, p.status AS parent_status
+        FROM tasks d
+        JOIN tasks p ON d.diagnostic_of = p.id
+        WHERE d.diagnostic_of IS NOT NULL
+          AND d.status IN ('queued', 'retrying')
+          AND p.status IN ('deployed', 'cancelled', 'failed', 'complete', 'merged');
+    " 2>/dev/null || echo "")
+
+    if [[ -n "$stale_diags" ]]; then
+        while IFS='|' read -r diag_id parent_id parent_status; do
+            [[ -n "$diag_id" ]] || continue
+            log_info "  Cancelling stale diagnostic $diag_id (parent $parent_id is $parent_status)"
+            cmd_transition "$diag_id" "cancelled" --error "Parent task $parent_id already $parent_status" 2>>"$SUPERVISOR_LOG" || true
+        done <<< "$stale_diags"
+    fi
+
     # Phase 5: Summary
     local total_running
     total_running=$(cmd_running_count "${batch_id:-}")
