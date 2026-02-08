@@ -313,14 +313,19 @@ Returns: <a href="{{fc_smart_link slug='demo-cta'}}">Request a Demo</a>
 
 ## Content Marketing Integration
 
+### Platform Voice Guidelines
+
+When creating content for social media or multi-channel campaigns, see `content/platform-personas.md` for platform-specific voice adaptations (LinkedIn, Instagram, YouTube, X, Facebook). This ensures consistent brand voice adapted to each channel's norms.
+
 ### Content to Campaign Workflow
 
 1. **Create content** using `content.md` agent
-2. **Optimize for SEO** using `seo.md` agent
-3. **Create email** promoting content
-4. **Segment audience** by interest
-5. **Send campaign** to relevant segments
-6. **Track engagement** and conversions
+2. **Adapt for platforms** using `content/platform-personas.md` guidelines
+3. **Optimize for SEO** using `seo.md` agent
+4. **Create email** promoting content
+5. **Segment audience** by interest
+6. **Send campaign** to relevant segments
+7. **Track engagement** and conversions
 
 ### Content Promotion Campaigns
 
