@@ -104,6 +104,12 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Dependencies**: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask)
 
+**Task completion rules:**
+- NEVER mark a task `[x]` unless YOU wrote code/content for it in THIS session
+- If a worker branch or merged PR completed the task, leave it `[ ]` — the repo owner or reviewer marks it done
+- Before marking `[x]`, verify: deliverable file exists AND content is substantive (not a stub/placeholder)
+- Marking `[x]` triggers `issue-sync` to auto-close the linked GitHub Issue — false completions cascade
+
 **After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main -- no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. Workers must NOT edit TODO.md -- see `workflows/plans.md` "Worker TODO.md Restriction".
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`

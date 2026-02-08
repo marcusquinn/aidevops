@@ -4853,6 +4853,47 @@ cmd_pulse() {
         log_info "  Cleaned:    $orphan_killed stale worker processes"
     fi
 
+    # Phase 6: Verify deliverables for merged tasks (t163.4)
+    # Before marking tasks complete in TODO.md, verify that deliverables actually exist
+    local verified_count=0
+    local merged_unverified
+    merged_unverified=$(db "$SUPERVISOR_DB" "SELECT id FROM tasks WHERE status = 'deployed' AND id NOT IN (SELECT id FROM tasks WHERE notes LIKE '%verified:%');" 2>/dev/null || echo "")
+    if [[ -n "$merged_unverified" ]]; then
+        while IFS= read -r verify_tid; do
+            [[ -n "$verify_tid" ]] || continue
+            local verify_pr_url
+            verify_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$verify_tid")';" 2>/dev/null || echo "")
+            local verify_worktree
+            verify_worktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$(sql_escape "$verify_tid")';" 2>/dev/null || echo "")
+
+            # Check PR is actually merged
+            local pr_merged="false"
+            if [[ -n "$verify_pr_url" ]]; then
+                local pr_number
+                pr_number=$(echo "$verify_pr_url" | grep -oE '[0-9]+$' || echo "")
+                if [[ -n "$pr_number" ]]; then
+                    local pr_state
+                    pr_state=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo "")
+                    if [[ "$pr_state" == "MERGED" ]]; then
+                        pr_merged="true"
+                    fi
+                fi
+            fi
+
+            if [[ "$pr_merged" == "true" ]]; then
+                # PR is merged — deliverable verified
+                db "$SUPERVISOR_DB" "UPDATE tasks SET notes = COALESCE(notes, '') || ' verified:$(date +%Y-%m-%d)' WHERE id = '$(sql_escape "$verify_tid")';" 2>/dev/null || true
+                log_info "  Verified:   $verify_tid (PR merged)"
+                verified_count=$((verified_count + 1))
+            else
+                log_verbose "  Unverified: $verify_tid (PR not merged or not found)"
+            fi
+        done <<< "$merged_unverified"
+    fi
+    if [[ "$verified_count" -gt 0 ]]; then
+        log_info "  Verified:   $verified_count task deliverables"
+    fi
+
     # Phase 7: Reconcile TODO.md for any stale tasks (t160)
     # Runs when completed tasks exist and nothing is actively running/queued
     if [[ "$total_running" -eq 0 && "$total_queued" -eq 0 && "$total_complete" -gt 0 ]]; then

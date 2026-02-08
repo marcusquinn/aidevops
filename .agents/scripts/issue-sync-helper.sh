@@ -12,7 +12,7 @@
 #   push [tNNN]     Create/update GitHub issues from TODO.md tasks
 #   enrich [tNNN]   Update existing issue bodies with full context
 #   pull            Sync GitHub issue refs back to TODO.md
-#   close [tNNN]    Close GitHub issue when TODO.md task is [x]
+#   close [tNNN]    Close GitHub issue when TODO.md task is [x] (requires verified: field)
 #   status          Show sync drift between TODO.md and GitHub
 #   parse [tNNN]    Parse and display task context (dry-run)
 #   help            Show this help message
@@ -20,6 +20,7 @@
 # Options:
 #   --repo SLUG     Override repo slug (default: auto-detect from git remote)
 #   --dry-run       Show what would be done without making changes
+#   --force         Skip verified: field check in close command
 #   --verbose       Show detailed output
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -35,6 +36,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 VERBOSE="${VERBOSE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
+FORCE="${FORCE:-false}"
 REPO_SLUG=""
 
 # =============================================================================
@@ -961,8 +963,10 @@ add_gh_ref_to_todo() {
 }
 
 # Close: close GitHub issue when TODO.md task is completed
+# Safety: requires verified: field or --force flag to prevent false closure cascades
 cmd_close() {
     local target_task="${1:-}"
+    local force="${FORCE:-false}"
     local project_root
     project_root=$(find_project_root) || return 1
     local repo_slug="${REPO_SLUG:-$(detect_repo_slug "$project_root")}"
@@ -990,6 +994,7 @@ cmd_close() {
     fi
 
     local closed=0
+    local skipped=0
     for task_id in "${tasks[@]}"; do
         local task_line
         task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
@@ -998,6 +1003,16 @@ cmd_close() {
 
         if [[ -z "$issue_number" ]]; then
             continue
+        fi
+
+        # Safety guard: require verified: field unless --force
+        # This prevents false completion cascades (see PR #616 incident)
+        if [[ "$force" != "true" ]]; then
+            if ! echo "$task_line" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+                log_verbose "Skipping #$issue_number ($task_id): no verified: field (use --force to override)"
+                skipped=$((skipped + 1))
+                continue
+            fi
         fi
 
         # Check if issue is already closed
@@ -1014,7 +1029,7 @@ cmd_close() {
             continue
         fi
 
-        if gh issue close "$issue_number" --repo "$repo_slug" --comment "Completed. Task $task_id marked done in TODO.md." 2>/dev/null; then
+        if gh issue close "$issue_number" --repo "$repo_slug" --comment "Completed. Task $task_id marked done in TODO.md (verified)." 2>/dev/null; then
             print_success "Closed #$issue_number ($task_id)"
             closed=$((closed + 1))
         else
@@ -1022,7 +1037,7 @@ cmd_close() {
         fi
     done
 
-    print_info "Close complete: $closed issues closed"
+    print_info "Close complete: $closed issues closed, $skipped skipped (no verified: field)"
     return 0
 }
 
@@ -1174,7 +1189,7 @@ Commands:
   push [tNNN]     Create GitHub issues from TODO.md tasks (all open or specific)
   enrich [tNNN]   Update existing issue bodies with full context from PLANS.md
   pull            Sync GitHub issue refs back to TODO.md
-  close [tNNN]    Close GitHub issues for completed TODO.md tasks
+  close [tNNN]    Close GitHub issues for completed TODO.md tasks (requires verified: field)
   status          Show sync drift between TODO.md and GitHub
   parse [tNNN]    Parse and display task context (debug/dry-run)
   help            Show this help message
@@ -1182,6 +1197,7 @@ Commands:
 Options:
   --repo SLUG     Override repo slug (default: auto-detect from git remote)
   --dry-run       Show what would be done without making changes
+  --force         Skip verified: field check in close command
   --verbose       Show detailed output
 
 Examples:
@@ -1190,7 +1206,8 @@ Examples:
   issue-sync-helper.sh enrich t020             # Enrich issue with plan context
   issue-sync-helper.sh enrich                  # Enrich all open tasks with refs
   issue-sync-helper.sh pull                    # Sync GH refs to TODO.md
-  issue-sync-helper.sh close                   # Close issues for done tasks
+  issue-sync-helper.sh close                   # Close verified done tasks
+  issue-sync-helper.sh close --force           # Close all done tasks (skip verified: check)
   issue-sync-helper.sh status                  # Show sync drift
   issue-sync-helper.sh parse t020              # Debug: show parsed context
   issue-sync-helper.sh push --dry-run          # Preview without changes
@@ -1211,6 +1228,10 @@ main() {
                 ;;
             --dry-run)
                 DRY_RUN="true"
+                shift
+                ;;
+            --force)
+                FORCE="true"
                 shift
                 ;;
             --verbose)

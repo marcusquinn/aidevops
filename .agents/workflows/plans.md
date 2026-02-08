@@ -686,6 +686,20 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 
 **Bottom line**: Use judgment. Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree.
 
+## MANDATORY: Task Completion Rules
+
+**NEVER mark a task `[x]` unless ALL of these are true:**
+
+1. **YOU wrote code/content** for it in THIS session (not just verified a file exists)
+2. **Deliverable is substantive** — file exists, content is complete (not a stub/placeholder), passes quality checks
+3. **You can cite what you did** — specific files created/modified, lines changed
+
+**If someone else did the work** (worker branch, merged PR, another session): leave it `[ ]`. The repo owner or reviewer marks it done after verification.
+
+**Why this matters**: Marking `[x]` triggers `issue-sync` GitHub Action which auto-closes the linked GitHub Issue. False completions cascade — 38 issues were incorrectly closed in a single incident (PR #616).
+
+**The `actual:` field** should only appear on completed `[x]` tasks. Remove it when reverting a task to `[ ]`.
+
 ## MANDATORY: Worker TODO.md Restriction
 
 **Workers (headless dispatch runners) must NEVER edit TODO.md directly.** This is the primary cause of merge conflicts when multiple workers + supervisor all push to TODO.md on main simultaneously.
