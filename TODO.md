@@ -90,12 +90,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t180.4 Wire verify phase into pulse cycle ~30m blocked-by:t180.1
     - Notes: After merge phase, auto-dispatch verify worker for entries in VERIFY.md. Only transition to deployed after verify passes. Add --skip-verify flag for trusted/trivial tasks. Batch verify multiple tasks in single worker dispatch for efficiency.
   - Notes: Root cause: 12 GitHub issues were open for tasks marked [x] that were never verified. Memory audit revealed pattern of tasks marked complete without checking deliverables actually work. Design: todo/VERIFY.md acts as a verification queue with machine-parseable check directives. Workers verify, supervisor acts on results.
-- [ ] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) ref:GH#671 assignee:marcusquinn started:2026-02-08T22:56:04Z logged:2026-02-08
-  - [ ] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none
+- [x] t181 Memory deduplication and auto-pruning — prevent duplicate memories and prune stale entries #bugfix #memory #self-improvement ~1h (ai:45m test:15m) ref:GH#671 assignee:marcusquinn started:2026-02-08T22:56:04Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #681 merged
+  - [x] t181.1 Add content-hash dedup on memory store ~30m blocked-by:none
     - Notes: Before inserting, check if a memory with identical or near-identical content already exists (fuzzy match using word overlap, similar to consolidate). Skip insert if >90% match. Currently 23 copies of "Failed: Task blocked" exist.
-  - [ ] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none
+  - [x] t181.2 Cap supervisor retry/pulse log memories ~15m blocked-by:none
     - Notes: Auto-distill and supervisor retry logging create duplicate entries every pulse cycle. Either: (a) only store first occurrence of each retry pattern per task, or (b) update existing memory instead of creating new one, or (c) use a separate retry_log table instead of learnings.
-  - [ ] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none
+  - [x] t181.3 Auto-prune memories for issues that have been fixed ~15m blocked-by:none
     - Notes: When a PR merges that fixes an issue referenced in a memory, mark those memories as resolved/stale. Could tag with PR# and auto-archive on merge. Currently 350 ERROR_FIX memories, many for issues fixed weeks ago.
   - Notes: 881 memories, 654 auto-captured, massive duplication. Top duplicate: "Failed: Task blocked" x23. Auto-distill creates identical entries across pulse cycles. Memory is becoming noise rather than signal.
 - [ ] t182 GHA auto-fix workflow safety — validate auto-fixes before committing #bugfix #ci #quality ~30m (ai:20m test:10m) ref:GH#672 logged:2026-02-08
