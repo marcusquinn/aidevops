@@ -714,7 +714,7 @@ aidevops itself is lightweight (shell scripts + markdown), but AI model workload
 | **Power User** | Workstation | 8+ cores | 32GB+ | NVIDIA 24GB+ VRAM | Full voice pipeline, local LLMs, parallel agents |
 | **Server** | Cloud GPU | Any | 16GB+ | A100 / H100 | Production voice, multi-user, batch processing |
 
-**Cloud GPU providers** for on-demand GPU access: [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/), [Vast.ai](https://vast.ai/), [RunPod](https://www.runpod.io/), [Lambda](https://lambdalabs.com/).
+**Cloud GPU providers** for on-demand GPU access: [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/), [Vast.ai](https://vast.ai/), [RunPod](https://www.runpod.io/), [Lambda](https://lambdalabs.com/). See `.agents/tools/infrastructure/cloud-gpu.md` for the full deployment guide (SSH setup, Docker, model caching, cost optimization).
 
 **Note:** Most aidevops features (infrastructure management, SEO, code quality, Git workflows) require no GPU. GPU is only needed for local AI model inference (voice pipeline, vision models, local LLMs).
 
