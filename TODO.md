@@ -86,14 +86,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t185.3 Add memory lifecycle states (active/graduated/pruned) ~30m blocked-by:t185.1
     - Notes: Add status column to learnings table: active (default), graduated (moved to docs, link to file:line), pruned (resolved, link to PR#). Graduated memories stay in DB as audit trail but don't appear in recall. This enables the full lifecycle: capture -> validate -> graduate -> prune.
   - Notes: Closes the self-improvement loop. Currently memories accumulate but nothing reviews them for action. This session manually audited 881 memories down to 26, created 6 tasks (t179-t184), and pruned 855 entries. That process should be automated. The pulse checks for: recurring errors needing fix tasks, resolved issues to prune, validated learnings to graduate into shared docs.
-- [ ] t184 Graduate validated memories into shared docs — move local learnings into codebase so all users benefit #docs #self-improvement ~1h (ai:45m test:15m) ref:GH#674 assignee:marcusquinn started:2026-02-08T23:07:28Z logged:2026-02-08
-  - [ ] t184.1 Add supervisor architecture decisions to architecture.md ~15m blocked-by:none
+- [x] t184 Graduate validated memories into shared docs — move local learnings into codebase so all users benefit #docs #self-improvement ~1h (ai:45m test:15m) ref:GH#674 assignee:marcusquinn started:2026-02-08T23:07:28Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #689 merged
+  - [x] t184.1 Add supervisor architecture decisions to architecture.md ~15m blocked-by:none
     - Notes: 7 DECISION memories about supervisor role (pure control plane, never does worker tasks, self-improving dispatch loop), agent tiers (draft/custom/shared), evaluation priority order, concurrency limits. These are framework-defining decisions that new users and contributors need.
-  - [ ] t184.2 Add macOS bash 3.2 constraints and model routing to code-standards.md ~15m blocked-by:none
+  - [x] t184.2 Add macOS bash 3.2 constraints and model routing to code-standards.md ~15m blocked-by:none
     - Notes: No associative arrays, grep-based key=value parsing, heuristic eval gated on non-zero exit. Model routing: Opus for race conditions/bugs, Sonnet for features, Haiku misses edge cases on complex shell. Also: worktree rebase before push pattern.
-  - [ ] t184.3 Add cherry-pick recovery and curl verification limits to relevant subagents ~15m blocked-by:none
+  - [x] t184.3 Add cherry-pick recovery and curl verification limits to relevant subagents ~15m blocked-by:none
     - Notes: Cherry-pick recovery (gh pr view --json commits -> git fetch -> cherry-pick) goes in conflict-resolution.md. Curl/HTTP status code limitation (200 on React crash) goes in browser-automation.md verification section.
-  - [ ] t184.4 Add memory graduation workflow to build-agent.md ~15m blocked-by:none
+  - [x] t184.4 Add memory graduation workflow to build-agent.md ~15m blocked-by:none
     - Notes: Document the pattern: memories are a staging area for learnings. Once validated (fix merged, pattern confirmed), graduate into shared docs. Add /graduate-memories command or integrate into session-review. Prevents knowledge staying local.
   - Notes: Memory audit found 26 useful learnings that only exist locally. 7 architecture decisions, 5 codebase patterns, 3 model routing insights, and recovery techniques that would help all aidevops users. These need to move from SQLite memory into shipped docs.
 - [x] t180 Post-merge verification via todo/VERIFY.md — dispatch verification workers after PR merge to confirm deliverables work #feature #supervisor #quality ~3h (ai:2h test:1h) ref:GH#670 assignee:marcusquinn started:2026-02-08T22:38:20Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09 PR #679 merged
