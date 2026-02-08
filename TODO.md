@@ -57,7 +57,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t152 Fix `((cleaned++))` arithmetic exit code bug in setup.sh causing silent abort under `set -e` #bug #setup ~30m actual:15m (ai:15m) ref:GH#548 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
 
-- [ ] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h (ai:1h test:30m) ref:GH#549 logged:2026-02-08 started:2026-02-08
+- [x] t153 Create git merge/cherry-pick conflict resolution skill #feature #git #tools ~1.5h actual:25m (ai:25m) ref:GH#552 logged:2026-02-08 started:2026-02-08 completed:2026-02-08
 
 - [x] t148 Supervisor: add review-triage phase before PR merge #plan #orchestration #quality → [todo/PLANS.md] ~6h actual:40m (ai:40m) logged:2026-02-07 ref:GH#437 started:2026-02-07 completed:2026-02-07
   - [x] t148.1 Add check_review_threads() to fetch unresolved threads via GraphQL ~1h blocked-by:none completed:2026-02-07
