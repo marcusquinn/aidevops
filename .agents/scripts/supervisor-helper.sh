@@ -580,7 +580,21 @@ ensure_db() {
     if [[ -n "$check_sql" ]] && ! echo "$check_sql" | grep -q 'pr_review'; then
         log_info "Migrating database schema for post-PR lifecycle states (t128.8)..."
         backup_db "pre-migrate-t128.8" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
-        db "$SUPERVISOR_DB" << 'MIGRATE'
+
+        # Detect which optional columns exist in the old table to preserve data (t162)
+        local has_issue_url_col has_diagnostic_of_col has_triage_result_col
+        has_issue_url_col=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='issue_url';" 2>/dev/null || echo "0")
+        has_diagnostic_of_col=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='diagnostic_of';" 2>/dev/null || echo "0")
+        has_triage_result_col=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='triage_result';" 2>/dev/null || echo "0")
+
+        # Build column lists dynamically based on what exists
+        local insert_cols="id, repo, description, status, session_id, worktree, branch, log_file, retries, max_retries, model, error, pr_url, created_at, started_at, completed_at, updated_at"
+        local select_cols="$insert_cols"
+        [[ "$has_issue_url_col" -gt 0 ]] && { insert_cols="$insert_cols, issue_url"; select_cols="$select_cols, issue_url"; }
+        [[ "$has_diagnostic_of_col" -gt 0 ]] && { insert_cols="$insert_cols, diagnostic_of"; select_cols="$select_cols, diagnostic_of"; }
+        [[ "$has_triage_result_col" -gt 0 ]] && { insert_cols="$insert_cols, triage_result"; select_cols="$select_cols, triage_result"; }
+
+        db "$SUPERVISOR_DB" << MIGRATE
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
 ALTER TABLE tasks RENAME TO tasks_old;
@@ -599,31 +613,43 @@ CREATE TABLE tasks (
     model           TEXT DEFAULT 'anthropic/claude-opus-4-6',
     error           TEXT,
     pr_url          TEXT,
+    issue_url       TEXT,
+    diagnostic_of   TEXT,
+    triage_result   TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
-INSERT INTO tasks (id, repo, description, status, session_id, worktree, branch,
-    log_file, retries, max_retries, model, error, pr_url,
-    created_at, started_at, completed_at, updated_at)
-SELECT id, repo, description, status, session_id, worktree, branch,
-    log_file, retries, max_retries, model, error, pr_url,
-    created_at, started_at, completed_at, updated_at
+INSERT INTO tasks ($insert_cols)
+SELECT $select_cols
 FROM tasks_old;
 DROP TABLE tasks_old;
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo);
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_diagnostic ON tasks(diagnostic_of);
 COMMIT;
 PRAGMA foreign_keys=ON;
 MIGRATE
         log_success "Database schema migrated for post-PR lifecycle states"
     fi
 
-    # Migrate: add max_load_factor column to batches if missing (t135.15.4)
-    local has_max_load
+    # Backup before ALTER TABLE migrations if any are needed (t162)
+    local needs_alter_migration=false
+    local has_max_load has_release_on_complete has_diagnostic_of has_issue_url
     has_max_load=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
+    has_release_on_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='release_on_complete';" 2>/dev/null || echo "0")
+    has_diagnostic_of=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='diagnostic_of';" 2>/dev/null || echo "0")
+    has_issue_url=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='issue_url';" 2>/dev/null || echo "0")
+    if [[ "$has_max_load" -eq 0 || "$has_release_on_complete" -eq 0 || "$has_diagnostic_of" -eq 0 || "$has_issue_url" -eq 0 ]]; then
+        needs_alter_migration=true
+    fi
+    if [[ "$needs_alter_migration" == "true" ]]; then
+        backup_db "pre-migrate-alter-columns" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migrations"
+    fi
+
+    # Migrate: add max_load_factor column to batches if missing (t135.15.4)
     if [[ "$has_max_load" -eq 0 ]]; then
         log_info "Migrating batches table: adding max_load_factor column (t135.15.4)..."
         if ! log_cmd "db-migrate" db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN max_load_factor INTEGER NOT NULL DEFAULT 2;"; then
@@ -634,8 +660,6 @@ MIGRATE
     fi
 
     # Migrate: add release_on_complete and release_type columns to batches if missing (t128.10)
-    local has_release_on_complete
-    has_release_on_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='release_on_complete';" 2>/dev/null || echo "0")
     if [[ "$has_release_on_complete" -eq 0 ]]; then
         log_info "Migrating batches table: adding release columns (t128.10)..."
         db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN release_on_complete INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
@@ -644,8 +668,6 @@ MIGRATE
     fi
 
     # Migrate: add diagnostic_of column to tasks if missing (t150)
-    local has_diagnostic_of
-    has_diagnostic_of=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='diagnostic_of';" 2>/dev/null || echo "0")
     if [[ "$has_diagnostic_of" -eq 0 ]]; then
         log_info "Migrating tasks table: adding diagnostic_of column (t150)..."
         db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN diagnostic_of TEXT;" 2>/dev/null || true
@@ -654,8 +676,6 @@ MIGRATE
     fi
 
     # Migrate: add issue_url column (t149)
-    local has_issue_url
-    has_issue_url=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='issue_url';" 2>/dev/null || echo "0")
     if [[ "$has_issue_url" -eq 0 ]]; then
         log_info "Migrating tasks table: adding issue_url column (t149)..."
         db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN issue_url TEXT;" 2>/dev/null || true
