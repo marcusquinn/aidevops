@@ -54,9 +54,10 @@
 #   Workers exit after PR creation. Supervisor handles remaining stages:
 #   wait for CI, merge (squash), postflight, deploy, worktree cleanup.
 #
-# Outcome evaluation (3-tier):
+# Outcome evaluation (4-tier):
 #   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
 #   2. Heuristic: error pattern matching (rate limit, auth, conflict, OOM)
+#   2.5. Git heuristic (t175): check commits on branch + uncommitted changes
 #   3. AI eval: Sonnet dispatch (~30s) for ambiguous outcomes
 #
 # Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
@@ -3345,9 +3346,10 @@ extract_log_metadata() {
 # Evaluate a completed worker's outcome using log analysis
 # Returns: complete:<detail>, retry:<reason>, blocked:<reason>, failed:<reason>
 #
-# Three-tier evaluation:
+# Four-tier evaluation:
 #   1. Deterministic: check for known signals and error patterns
 #   2. Heuristic: analyze exit codes and error counts
+#   2.5. Git heuristic (t175): check commits on branch + uncommitted changes
 #   3. AI eval: dispatch cheap Sonnet call for ambiguous outcomes
 #######################################
 evaluate_worker() {
@@ -3542,6 +3544,59 @@ evaluate_worker() {
     if [[ "$tretries" -ge "$tmax_retries" ]]; then
         echo "failed:max_retries"
         return 0
+    fi
+
+    # --- Tier 2.5: Git heuristic signals (t175) ---
+    # Before expensive AI eval, check for concrete evidence of work in the
+    # task's worktree/branch. This resolves most ambiguous outcomes cheaply
+    # and prevents false retries when the worker completed but didn't emit
+    # a signal (e.g., context exhaustion after creating a PR).
+
+    local task_repo task_branch task_worktree
+    task_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    task_branch=$(db "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    task_worktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+    if [[ -n "$task_repo" && -d "$task_repo" ]]; then
+        # Use worktree path if available, otherwise fall back to repo
+        local git_dir="${task_worktree:-$task_repo}"
+        if [[ ! -d "$git_dir" ]]; then
+            git_dir="$task_repo"
+        fi
+
+        # Check for commits on branch ahead of main/master
+        local branch_commits=0
+        if [[ -n "$task_branch" ]]; then
+            local base_branch
+            base_branch=$(git -C "$git_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
+            branch_commits=$(git -C "$git_dir" rev-list --count "${base_branch}..${task_branch}" 2>/dev/null || echo 0)
+        fi
+
+        # Check for uncommitted changes in worktree
+        local uncommitted_changes=0
+        if [[ -n "$task_worktree" && -d "$task_worktree" ]]; then
+            uncommitted_changes=$(git -C "$task_worktree" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+        fi
+
+        # Decision matrix:
+        # - Commits + PR URL → complete (worker finished, signal was lost)
+        # - Commits + no PR  → complete:task_only (PR creation may have failed)
+        # - No commits + uncommitted changes → retry:work_in_progress
+        # - No commits + no changes → genuine ambiguity (fall through to AI/retry)
+
+        if [[ "$branch_commits" -gt 0 ]]; then
+            if [[ -n "$meta_pr_url" ]]; then
+                echo "complete:${meta_pr_url}"
+            else
+                echo "complete:task_only"
+            fi
+            return 0
+        fi
+
+        if [[ "$uncommitted_changes" -gt 0 ]]; then
+            echo "retry:work_in_progress"
+            return 0
+        fi
     fi
 
     # --- Tier 3: AI evaluation for ambiguous outcomes ---
@@ -8018,10 +8073,11 @@ Post-PR Lifecycle (t128.8 - supervisor handles directly, no worker needed):
   reviewers before merge. Use --skip-review-triage or SUPERVISOR_SKIP_REVIEW_TRIAGE=true
   to bypass.
 
-Outcome Evaluation (3-tier):
+Outcome Evaluation (4-tier):
   1. Deterministic: FULL_LOOP_COMPLETE/TASK_COMPLETE signals, EXIT codes
   2. Heuristic: error pattern matching (rate limit, auth, conflict, OOM, timeout)
-  3. AI eval: Sonnet dispatch (~30s) for ambiguous outcomes
+  2.5. Git heuristic (t175): check commits on branch + uncommitted changes in worktree
+  3. AI eval: Sonnet dispatch (~30s) for remaining ambiguous outcomes
 
 Self-Healing (t150):
   On failure/block, the supervisor auto-creates a diagnostic subtask
