@@ -5250,9 +5250,22 @@ verify_task_deliverables() {
         return 1
     fi
 
+    # Pre-flight: verify gh CLI is available and authenticated
+    if ! command -v gh &>/dev/null; then
+        log_warn "gh CLI not found; cannot verify deliverables for $task_id"
+        return 1
+    fi
+    if ! gh auth status &>/dev/null 2>&1; then
+        log_warn "gh CLI not authenticated; cannot verify deliverables for $task_id"
+        return 1
+    fi
+
     # Check PR is actually merged
     local pr_state
-    pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+    if ! pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' 2>>"$SUPERVISOR_LOG"); then
+        log_warn "Failed to fetch PR state for $task_id (#$pr_number)"
+        return 1
+    fi
     if [[ "$pr_state" != "MERGED" ]]; then
         log_warn "PR #$pr_number for $task_id is not merged (state: ${pr_state:-unknown})"
         return 1
@@ -5260,7 +5273,10 @@ verify_task_deliverables() {
 
     # Check PR has substantive file changes (not just TODO.md or planning files)
     local changed_files
-    changed_files=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null || echo "")
+    if ! changed_files=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>>"$SUPERVISOR_LOG"); then
+        log_warn "Failed to fetch PR files for $task_id (#$pr_number)"
+        return 1
+    fi
     local substantive_files
     substantive_files=$(echo "$changed_files" | grep -vE '^(TODO\.md$|todo/|\.github/workflows/)' || true)
 
