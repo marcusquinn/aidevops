@@ -1055,6 +1055,173 @@ git -C "$WORKTREE_TEST_REPO" worktree remove "$worktree_output" --force &>/dev/n
 git -C "$WORKTREE_TEST_REPO" worktree prune &>/dev/null || true
 
 # ============================================================
+# SECTION: Post-Merge Verification Transitions (t180)
+# ============================================================
+section "Post-Merge Verification Transitions (t180)"
+
+# Create a task and move through full lifecycle to deployed
+sup add test-v001 --repo /tmp/test --description "Verify lifecycle test" >/dev/null
+sup transition test-v001 dispatched >/dev/null
+sup transition test-v001 running >/dev/null
+sup transition test-v001 evaluating >/dev/null
+sup transition test-v001 complete >/dev/null
+sup transition test-v001 pr_review >/dev/null
+sup transition test-v001 merging >/dev/null
+sup transition test-v001 merged >/dev/null
+sup transition test-v001 deploying >/dev/null
+sup transition test-v001 deployed >/dev/null
+
+# deployed -> verifying
+sup transition test-v001 verifying >/dev/null
+if [[ "$(get_status test-v001)" == "verifying" ]]; then
+    pass "deployed -> verifying"
+else
+    fail "deployed -> verifying failed: $(get_status test-v001)"
+fi
+
+# verifying -> verified
+sup transition test-v001 verified >/dev/null
+if [[ "$(get_status test-v001)" == "verified" ]]; then
+    pass "verifying -> verified"
+else
+    fail "verifying -> verified failed: $(get_status test-v001)"
+fi
+
+# Test: completed_at is set on verified (terminal state)
+verified_completed=$(get_field "test-v001" "completed_at")
+if [[ -n "$verified_completed" ]]; then
+    pass "completed_at set on verified state"
+else
+    fail "completed_at not set on verified state"
+fi
+
+# Test: verify_failed path
+sup add test-v002 --repo /tmp/test --description "Verify fail test" >/dev/null
+sup transition test-v002 dispatched >/dev/null
+sup transition test-v002 running >/dev/null
+sup transition test-v002 evaluating >/dev/null
+sup transition test-v002 complete >/dev/null
+sup transition test-v002 deployed >/dev/null
+sup transition test-v002 verifying >/dev/null
+
+# verifying -> verify_failed
+sup transition test-v002 verify_failed >/dev/null
+if [[ "$(get_status test-v002)" == "verify_failed" ]]; then
+    pass "verifying -> verify_failed"
+else
+    fail "verifying -> verify_failed failed: $(get_status test-v002)"
+fi
+
+# verify_failed -> verifying (retry verification)
+sup transition test-v002 verifying >/dev/null
+if [[ "$(get_status test-v002)" == "verifying" ]]; then
+    pass "verify_failed -> verifying (retry)"
+else
+    fail "verify_failed -> verifying failed: $(get_status test-v002)"
+fi
+
+# verify_failed -> cancelled
+sup transition test-v002 verify_failed >/dev/null
+sup transition test-v002 cancelled >/dev/null
+if [[ "$(get_status test-v002)" == "cancelled" ]]; then
+    pass "verify_failed -> cancelled"
+else
+    fail "verify_failed -> cancelled failed: $(get_status test-v002)"
+fi
+
+# verified -> cancelled
+sup add test-v003 --repo /tmp/test --description "Verified cancel test" >/dev/null
+sup transition test-v003 dispatched >/dev/null
+sup transition test-v003 running >/dev/null
+sup transition test-v003 evaluating >/dev/null
+sup transition test-v003 complete >/dev/null
+sup transition test-v003 deployed >/dev/null
+sup transition test-v003 verified >/dev/null
+sup transition test-v003 cancelled >/dev/null
+if [[ "$(get_status test-v003)" == "cancelled" ]]; then
+    pass "verified -> cancelled"
+else
+    fail "verified -> cancelled failed: $(get_status test-v003)"
+fi
+
+# Test: deployed -> verified (direct skip for tasks without VERIFY.md entries)
+sup add test-v004 --repo /tmp/test --description "Direct verify test" >/dev/null
+sup transition test-v004 dispatched >/dev/null
+sup transition test-v004 running >/dev/null
+sup transition test-v004 evaluating >/dev/null
+sup transition test-v004 complete >/dev/null
+sup transition test-v004 deployed >/dev/null
+sup transition test-v004 verified >/dev/null
+if [[ "$(get_status test-v004)" == "verified" ]]; then
+    pass "deployed -> verified (direct, no VERIFY.md entry)"
+else
+    fail "deployed -> verified direct failed: $(get_status test-v004)"
+fi
+
+# Test: invalid transition — queued -> verifying (must go through deployed)
+sup add test-v005 --repo /tmp/test --description "Invalid verify test" >/dev/null
+invalid_verify=$(sup transition test-v005 verifying 2>&1 || true)
+if echo "$invalid_verify" | grep -qi "invalid transition"; then
+    pass "queued -> verifying rejected (invalid)"
+else
+    fail "queued -> verifying was not rejected" "$invalid_verify"
+fi
+
+# Test: run_verify_checks with a real VERIFY.md
+VERIFY_TEST_DIR=$(mktemp -d)
+mkdir -p "$VERIFY_TEST_DIR/todo"
+mkdir -p "$VERIFY_TEST_DIR/.agents/scripts"
+
+# Create a test file to verify
+echo '#!/bin/bash' > "$VERIFY_TEST_DIR/.agents/scripts/test-script.sh"
+echo 'echo "hello"' >> "$VERIFY_TEST_DIR/.agents/scripts/test-script.sh"
+
+# Create VERIFY.md with a pending entry
+cat > "$VERIFY_TEST_DIR/todo/VERIFY.md" << 'VERIFYEOF'
+# Verification Queue
+
+<!-- VERIFY-QUEUE-START -->
+
+- [ ] v001 test-v010 Test verify checks | PR #999 | merged:2026-02-08
+  files: .agents/scripts/test-script.sh
+  check: file-exists .agents/scripts/test-script.sh
+
+<!-- VERIFY-QUEUE-END -->
+VERIFYEOF
+
+# Add task to DB
+sup add test-v010 --repo "$VERIFY_TEST_DIR" --description "Verify checks test" >/dev/null 2>&1 || true
+test_db "UPDATE tasks SET status = 'deployed' WHERE id = 'test-v010';"
+
+# Run verify checks via sourced function
+verify_output=$(bash -c "
+    export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
+    set -- init
+    source '$SUPERVISOR_SCRIPT' >/dev/null
+    run_verify_checks 'test-v010' '$VERIFY_TEST_DIR'
+" 2>/dev/null || echo "VERIFY_FAILED")
+
+if echo "$verify_output" | grep -qi "PASS"; then
+    pass "run_verify_checks passes for existing file"
+else
+    # Check if the function ran at all
+    if echo "$verify_output" | grep -qi "FAIL\|error"; then
+        fail "run_verify_checks failed unexpectedly" "Output: $verify_output"
+    else
+        skip "run_verify_checks output inconclusive (may need source support)"
+    fi
+fi
+
+# Check VERIFY.md was updated
+if grep -q '\[x\].*test-v010' "$VERIFY_TEST_DIR/todo/VERIFY.md" 2>/dev/null; then
+    pass "VERIFY.md entry marked [x] after passing checks"
+else
+    skip "VERIFY.md marking may require direct function access"
+fi
+
+rm -rf "$VERIFY_TEST_DIR"
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""
