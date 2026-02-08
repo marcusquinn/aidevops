@@ -461,7 +461,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Implemented cron-agent.md subagent, cron-helper.sh (list/add/remove/pause/resume/logs/debug/status/run), cron-dispatch.sh (OpenCode server API). Security hardened for remote use (HTTPS by default, proper array expansion). PRs #304, #305 merged.
 - [x] t111 Objective runner with safety guardrails #tools #automation #agents ~1.5h (ai:1h test:20m read:10m) ref:GH#524 logged:2026-02-04 completed:2026-02-08
   - Notes: Long-running objective execution via stateless coordinator loop. Safety guardrails: budget limits (max tokens/cost), step limits (max iterations before human review), scope constraints (whitelist of allowed tools/paths), checkpoint reviews (pause after N steps for approval), rollback capability (git worktrees), audit log (all actions to memory). Creates objective-runner-helper.sh. Add to tools/automation/.
-- [ ] t112 VoiceInk to OpenCode via macOS Shortcut #tools #voice #automation ~15m (ai:10m test:5m) ref:GH#525 logged:2026-02-04 related:t080,t081
+- [ ] t112 VoiceInk to OpenCode via macOS Shortcut #tools #voice #automation ~15m (ai:10m test:5m) ref:GH#525 logged:2026-02-04 started:2026-02-08T00:00Z related:t080,t081
   - Notes: macOS Shortcut that takes VoiceInk transcription and sends to OpenCode server API. Flow: VoiceInk transcription → Shortcut → HTTP POST to OpenCode /session/:id/prompt → response. Document in tools/voice/voiceink-shortcut.md. Include AppleScript/Shortcuts app instructions.
 - [ ] t113 iPhone Shortcut for voice dispatch to OpenCode #tools #voice #mobile ~15m (ai:10m test:5m) ref:GH#526 logged:2026-02-04 related:t112
   - Notes: iOS Shortcut for voice-to-AI dispatch. Flow: Dictate (iOS STT) → HTTP POST to OpenCode server (via Tailscale/local network) → wait for response → Speak (iOS TTS). Requires OpenCode server accessible from phone. Document in tools/voice/ios-shortcut.md.
@@ -561,7 +561,7 @@ t109.4,Matrix bot integration (optional),,matrix|chat|dispatch,6h,6h,,2026-02-03
 t109.5,Documentation & examples,,docs|agents,3h,3h,,2026-02-03T00:00Z,completed,t109.1|t109.2|t109.3,,t109
 t110,Cron agent for scheduled task management,,tools|automation|agents,3h,2h,45m,2026-02-04T00:00Z,done,,,
 t111,Objective runner with safety guardrails,,tools|automation|agents,1.5h,1h,20m,2026-02-04T00:00Z,pending,,,
-t112,VoiceInk to OpenCode via macOS Shortcut,,tools|voice|automation,15m,10m,5m,2026-02-04T00:00Z,pending,,,
+t112,VoiceInk to OpenCode via macOS Shortcut,,tools|voice|automation,15m,10m,5m,2026-02-04T00:00Z,in_progress,,,
 t113,iPhone Shortcut for voice dispatch to OpenCode,,tools|voice|mobile,15m,10m,5m,2026-02-04T00:00Z,pending,,,
 t114,Pipecat STS integration with OpenCode,,tools|voice|ai,30m,20m,5m,2026-02-04T00:00Z,pending,,,
 t115,OpenCode server subagent documentation,,docs|tools|ai-assistants,2h,1.5h,20m,2026-02-04T00:00Z,done,,,
