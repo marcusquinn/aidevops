@@ -1,0 +1,39 @@
+{
+  "opencode": {
+    "ios-simulator": {
+      "type": "local",
+      "command": ["npx", "-y", "ios-simulator-mcp"],
+      "enabled": false
+    }
+  },
+  "claude_code": "claude mcp add ios-simulator npx ios-simulator-mcp",
+  "cursor": {
+    "mcpServers": {
+      "ios-simulator": {
+        "command": "npx",
+        "args": ["-y", "ios-simulator-mcp"]
+      }
+    }
+  },
+  "claude_desktop": {
+    "mcpServers": {
+      "ios-simulator": {
+        "command": "npx",
+        "args": ["-y", "ios-simulator-mcp"]
+      }
+    }
+  },
+  "with_env_vars": {
+    "mcpServers": {
+      "ios-simulator": {
+        "command": "npx",
+        "args": ["-y", "ios-simulator-mcp"],
+        "env": {
+          "IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR": "~/Code/project/tmp",
+          "IOS_SIMULATOR_MCP_FILTERED_TOOLS": "screenshot,record_video,stop_recording",
+          "IOS_SIMULATOR_MCP_IDB_PATH": "~/bin/idb"
+        }
+      }
+    }
+  }
+}

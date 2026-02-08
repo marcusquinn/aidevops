@@ -26,6 +26,10 @@ tools:
 
 **Requirements**: macOS, Xcode with iOS simulators, Node.js, Facebook [IDB](https://fbidb.io/) (`brew tap facebook/fb && brew install idb-companion`)
 
+**Verification prompt**: "Get the booted simulator ID and describe all accessibility elements on screen"
+
+**Enabled for agents**: Disabled globally, enabled via `@ios-simulator-mcp` subagent (`ios-simulator_*: true`)
+
 <!-- AI-CONTEXT-END -->
 
 ## MCP Tools
@@ -48,13 +52,29 @@ tools:
 
 ## Configuration
 
+### Claude Code
+
 ```bash
-# Claude Code
 claude mcp add ios-simulator npx ios-simulator-mcp
 ```
 
+### OpenCode
+
+Managed by `generate-opencode-agents.sh` (macOS only, lazy-loaded):
+
 ```json
-// OpenCode / Cursor (~/.config/opencode/mcp.json or ~/.cursor/mcp.json)
+{
+  "ios-simulator": {
+    "type": "local",
+    "command": ["npx", "-y", "ios-simulator-mcp"],
+    "enabled": false
+  }
+}
+```
+
+### Cursor / Windsurf / Claude Desktop
+
+```json
 {
   "mcpServers": {
     "ios-simulator": {
@@ -65,7 +85,13 @@ claude mcp add ios-simulator npx ios-simulator-mcp
 }
 ```
 
-**Environment variables**: `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` (screenshot/video output, default `~/Downloads`), `IOS_SIMULATOR_MCP_FILTERED_TOOLS` (comma-separated tools to disable), `IOS_SIMULATOR_MCP_IDB_PATH` (custom IDB path).
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` | Screenshot/video output directory | `~/Downloads` |
+| `IOS_SIMULATOR_MCP_FILTERED_TOOLS` | Comma-separated tool names to disable | None |
+| `IOS_SIMULATOR_MCP_IDB_PATH` | Custom path to IDB executable | `idb` (from PATH) |
 
 ## AI-Assisted QA Patterns
 
@@ -108,3 +134,6 @@ Both enable simulator interaction but take different approaches:
 ## Related Tools
 
 - `tools/mobile/minisim.md` - Simulator launcher and lifecycle management
+- `tools/mobile/xcodebuild-mcp.md` - Build iOS/macOS apps (build then install via this MCP)
+- `tools/mobile/maestro.md` - Scripted E2E mobile testing flows
+- `tools/mobile/axe-cli.md` - iOS simulator accessibility automation

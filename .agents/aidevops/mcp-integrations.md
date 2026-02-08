@@ -33,6 +33,9 @@ tools:
 **Document Processing**:
 - Unstract MCP: `UNSTRACT_API_KEY` + `API_BASE_URL` required (Docker-based, self-hosted default)
 
+**Mobile Testing**:
+- iOS Simulator MCP: AI-driven iOS simulator interaction (tap, swipe, screenshot)
+
 **Development**:
 - Claude Code MCP: Claude Code automation (forked server)
 - Next.js DevTools MCP
@@ -57,6 +60,10 @@ This document provides comprehensive setup and usage instructions for advanced M
 - **Ahrefs MCP**: SEO analysis, backlink research, keyword data
 - **Perplexity MCP**: AI-powered web search and research
 - **Google Search Console MCP**: Search performance data and insights
+
+### **📱 Mobile Testing**
+
+- **iOS Simulator MCP**: AI-driven iOS simulator interaction (tap, swipe, type, screenshot, accessibility)
 
 ### **⚡ Development Tools**
 
@@ -101,6 +108,24 @@ playwright-mcp --install-browsers
 # Add to MCP client
 claude mcp add playwright npx playwright-mcp@latest
 ```
+
+### **iOS Simulator MCP**
+
+```bash
+# Prerequisites: macOS, Xcode with iOS simulators, Facebook IDB
+brew tap facebook/fb && brew install idb-companion
+
+# Add to Claude Code
+claude mcp add ios-simulator npx ios-simulator-mcp
+```
+
+**Tools**: `ui_tap`, `ui_swipe`, `ui_type`, `ui_view`, `screenshot`, `record_video`, `ui_describe_all`, `install_app`, `launch_app`, `get_booted_sim_id`.
+
+**Env vars**: `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` (output dir), `IOS_SIMULATOR_MCP_FILTERED_TOOLS` (disable tools), `IOS_SIMULATOR_MCP_IDB_PATH` (custom IDB path).
+
+**Per-Agent Enablement**: The `tools/mobile/ios-simulator-mcp.md` subagent has `ios-simulator_*: true` in its tools section. Disabled globally, enabled on-demand.
+
+See `tools/mobile/ios-simulator-mcp.md` for detailed documentation.
 
 ### **Claude Code MCP (Fork)**
 

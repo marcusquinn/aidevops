@@ -472,7 +472,7 @@ LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-aut
              'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
              'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
              'playwriter', 'augment-context-engine', 'context7',
-             'sentry', 'socket',
+             'sentry', 'socket', 'ios-simulator',
              # Oh-My-OpenCode MCPs - disable globally, use @github-search/@context7 subagents
              'grep_app', 'websearch', 'gh_grep'}
 # Note: gh_grep removed from aidevops but may exist from old configs or OmO
@@ -621,6 +621,22 @@ if platform.system() == 'Darwin':
         config['tools']['macos-automator_*'] = False
         print("  Set macos-automator_* disabled globally")
 
+# iOS Simulator MCP - simulator interaction (macOS only, subagent only)
+# Docs: https://github.com/joshuayoes/ios-simulator-mcp
+# Note: enabled state is set by MCP loading policy above
+if platform.system() == 'Darwin':
+    if 'ios-simulator' not in config['mcp']:
+        config['mcp']['ios-simulator'] = {
+            "type": "local",
+            "command": ["npx", "-y", "ios-simulator-mcp"],
+            "enabled": False
+        }
+        print("  Added ios-simulator MCP (lazy load - @ios-simulator-mcp subagent only)")
+
+    if 'ios-simulator_*' not in config['tools']:
+        config['tools']['ios-simulator_*'] = False
+        print("  Set ios-simulator_* disabled globally")
+
 # Disable Oh-My-OpenCode MCP tools globally
 # OmO installs: grep_app (GitHub search), context7 (docs), websearch (Exa)
 # MCPs are disabled via LAZY_MCPS above, but we also need to disable tools
@@ -689,6 +705,12 @@ while IFS= read -r f; do
             # Only enable macos-automator tools on macOS
             if [[ "$(uname -s)" == "Darwin" ]]; then
                 extra_tools=$'  macos-automator_*: true\n  webfetch: true'
+            fi
+            ;;
+        ios-simulator-mcp)
+            # Only enable ios-simulator tools on macOS
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                extra_tools=$'  ios-simulator_*: true'
             fi
             ;;
         *)
