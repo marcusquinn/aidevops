@@ -13,6 +13,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Source shared-constants for resolve_model_tier() (t132.7)
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
+
 # Configuration
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/aidevops"
 readonly CONFIG_FILE="$CONFIG_DIR/cron-jobs.json"
@@ -256,6 +261,9 @@ main() {
     timeout=$(echo "$job" | jq -r '.timeout // 600')
     model=$(echo "$job" | jq -r '.model // "anthropic/claude-sonnet-4-20250514"')
     notify=$(echo "$job" | jq -r '.notify // "none"')
+
+    # Resolve tier names to full model strings (t132.7)
+    model=$(resolve_model_tier "$model")
     
     log_info "Job: $name"
     log_info "Task: $task"

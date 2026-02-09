@@ -214,7 +214,7 @@ cmd_add() {
     ensure_setup
     
     local schedule="" task="" name="" notify="none" timeout="$DEFAULT_TIMEOUT"
-    local workdir="" model="$DEFAULT_MODEL" paused=false
+    local workdir="" model="$DEFAULT_MODEL" paused=false provider=""
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -225,10 +225,20 @@ cmd_add() {
             --timeout) [[ $# -lt 2 ]] && { log_error "--timeout requires a value"; return 1; }; timeout="$2"; shift 2 ;;
             --workdir) [[ $# -lt 2 ]] && { log_error "--workdir requires a value"; return 1; }; workdir="$2"; shift 2 ;;
             --model) [[ $# -lt 2 ]] && { log_error "--model requires a value"; return 1; }; model="$2"; shift 2 ;;
+            --provider) [[ $# -lt 2 ]] && { log_error "--provider requires a value"; return 1; }; provider="$2"; shift 2 ;;
             --paused) paused=true; shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
+
+    # Resolve tier names to full model strings (t132.7)
+    model=$(resolve_model_tier "$model")
+
+    # Apply provider override if specified (t132.7)
+    if [[ -n "$provider" && "$model" == *"/"* ]]; then
+        local model_id="${model#*/}"
+        model="${provider}/${model_id}"
+    fi
     
     # Validate required fields
     if [[ -z "$schedule" ]]; then
@@ -672,7 +682,9 @@ ADD OPTIONS:
     --notify mail|none      Notification method (default: none)
     --timeout SECONDS       Max execution time (default: 600)
     --workdir PATH          Working directory (default: current)
-    --model MODEL           AI model to use
+    --model TIER_OR_MODEL   AI model: tier name (haiku/sonnet/opus/flash/pro/grok)
+                            or full provider/model string
+    --provider PROVIDER     Override provider (e.g., openrouter, google)
     --paused                Create in paused state
 
 LOGS OPTIONS:

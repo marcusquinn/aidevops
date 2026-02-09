@@ -5,8 +5,8 @@
 # Each runner gets its own AGENTS.md (personality), config, and optional memory namespace.
 #
 # Usage:
-#   runner-helper.sh create <name> [--description "desc"] [--model provider/model] [--workdir path]
-#   runner-helper.sh run <name> "prompt" [--attach URL] [--model provider/model] [--format json] [--timeout N]
+#   runner-helper.sh create <name> [--description "desc"] [--model tier_or_model] [--provider name] [--workdir path]
+#   runner-helper.sh run <name> "prompt" [--attach URL] [--model tier_or_model] [--provider name] [--format json] [--timeout N]
 #   runner-helper.sh status <name>
 #   runner-helper.sh list [--format json]
 #   runner-helper.sh edit <name>          # Open AGENTS.md in $EDITOR
@@ -235,16 +235,26 @@ cmd_create() {
         return 1
     fi
 
-    local description="" model="$DEFAULT_MODEL" workdir=""
+    local description="" model="$DEFAULT_MODEL" workdir="" provider=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --description) [[ $# -lt 2 ]] && { log_error "--description requires a value"; return 1; }; description="$2"; shift 2 ;;
             --model) [[ $# -lt 2 ]] && { log_error "--model requires a value"; return 1; }; model="$2"; shift 2 ;;
+            --provider) [[ $# -lt 2 ]] && { log_error "--provider requires a value"; return 1; }; provider="$2"; shift 2 ;;
             --workdir) [[ $# -lt 2 ]] && { log_error "--workdir requires a value"; return 1; }; workdir="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
+
+    # Resolve tier names to full model strings (t132.7)
+    model=$(resolve_model_tier "$model")
+
+    # Apply provider override if specified (t132.7)
+    if [[ -n "$provider" && "$model" == *"/"* ]]; then
+        local model_id="${model#*/}"
+        model="${provider}/${model_id}"
+    fi
 
     if [[ -z "$description" ]]; then
         description="Runner: $name"
@@ -340,11 +350,13 @@ cmd_run() {
     fi
 
     local attach="" model="" format="" cmd_timeout="$DEFAULT_TIMEOUT" continue_session=false
+    local provider=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --attach) [[ $# -lt 2 ]] && { log_error "--attach requires a value"; return 1; }; attach="$2"; shift 2 ;;
             --model) [[ $# -lt 2 ]] && { log_error "--model requires a value"; return 1; }; model="$2"; shift 2 ;;
+            --provider) [[ $# -lt 2 ]] && { log_error "--provider requires a value"; return 1; }; provider="$2"; shift 2 ;;
             --format) [[ $# -lt 2 ]] && { log_error "--format requires a value"; return 1; }; format="$2"; shift 2 ;;
             --timeout) [[ $# -lt 2 ]] && { log_error "--timeout requires a value"; return 1; }; cmd_timeout="$2"; shift 2 ;;
             --continue|-c) continue_session=true; shift ;;
@@ -355,12 +367,19 @@ cmd_run() {
     local dir
     dir=$(runner_dir "$name")
 
-    # Resolve model (flag > config > default)
+    # Resolve model (flag > config > default), with tier name support (t132.7)
     if [[ -z "$model" ]]; then
         model=$(runner_config "$name" "model")
         if [[ -z "$model" ]]; then
             model="$DEFAULT_MODEL"
         fi
+    fi
+    model=$(resolve_model_tier "$model")
+
+    # Apply provider override if specified (t132.7)
+    if [[ -n "$provider" && "$model" == *"/"* ]]; then
+        local model_id="${model#*/}"
+        model="${provider}/${model_id}"
     fi
 
     # Resolve workdir
@@ -868,12 +887,15 @@ COMMANDS:
 
 CREATE OPTIONS:
     --description "DESC"    Runner description
-    --model PROVIDER/MODEL  AI model (default: anthropic/claude-sonnet-4-20250514)
+    --model TIER_OR_MODEL   AI model: tier name (haiku/sonnet/opus/flash/pro/grok)
+                            or full provider/model string (default: sonnet)
+    --provider PROVIDER     Override provider (e.g., openrouter, google)
     --workdir PATH          Default working directory
 
 RUN OPTIONS:
     --attach URL            Attach to running OpenCode server (avoids MCP cold boot)
-    --model PROVIDER/MODEL  Override model for this run
+    --model TIER_OR_MODEL   Override model: tier name or provider/model string
+    --provider PROVIDER     Override provider for this run
     --format json           Output format (default or json)
     --timeout SECONDS       Max execution time (default: 600)
     --continue, -c          Continue previous session

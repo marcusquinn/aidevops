@@ -890,6 +890,94 @@ cleanup_sqlite_backups() {
 # Export all constants for use in other scripts
 # =============================================================================
 
+# =============================================================================
+# Model tier resolution (t132.7)
+# Shared function for resolving tier names to full provider/model strings.
+# Used by runner-helper.sh, cron-helper.sh, cron-dispatch.sh.
+# Tries: 1) fallback-chain-helper.sh (availability-aware)
+#         2) Static mapping (always works)
+# =============================================================================
+
+#######################################
+# Resolve a model tier name to a full provider/model string (t132.7)
+# Accepts both tier names (haiku, sonnet, opus, flash, pro, grok, coding, eval, health)
+# and full provider/model strings (passed through unchanged).
+# Returns the resolved model string on stdout.
+#######################################
+resolve_model_tier() {
+    local tier="${1:-coding}"
+
+    # If already a full provider/model string (contains /), return as-is
+    if [[ "$tier" == *"/"* ]]; then
+        echo "$tier"
+        return 0
+    fi
+
+    # Try fallback-chain-helper.sh for availability-aware resolution
+    local chain_helper="${BASH_SOURCE[0]%/*}/fallback-chain-helper.sh"
+    if [[ -x "$chain_helper" ]]; then
+        local resolved
+        resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    # Static fallback: map tier names to concrete models
+    case "$tier" in
+        opus|coding)
+            echo "anthropic/claude-opus-4-6"
+            ;;
+        sonnet|eval)
+            echo "anthropic/claude-sonnet-4-20250514"
+            ;;
+        haiku|health)
+            echo "anthropic/claude-3-5-haiku-20241022"
+            ;;
+        flash)
+            echo "google/gemini-2.5-flash-preview-05-20"
+            ;;
+        pro)
+            echo "google/gemini-2.5-pro-preview-06-05"
+            ;;
+        grok)
+            echo "xai/grok-3"
+            ;;
+        *)
+            # Unknown tier — return as-is (may be a model name without provider)
+            echo "$tier"
+            ;;
+    esac
+
+    return 0
+}
+
+#######################################
+# Detect available AI CLI backends (t132.7)
+# Returns a newline-separated list of available backends.
+# Checks: opencode, claude
+#######################################
+detect_ai_backends() {
+    local -a backends=()
+
+    if command -v opencode &>/dev/null; then
+        backends+=("opencode")
+    fi
+
+    if command -v claude &>/dev/null; then
+        backends+=("claude")
+    fi
+
+    if [[ ${#backends[@]} -eq 0 ]]; then
+        echo "none"
+        return 1
+    fi
+
+    printf '%s\n' "${backends[@]}"
+    return 0
+}
+
 # This ensures all constants are available when this file is sourced
 export CONTENT_TYPE_JSON CONTENT_TYPE_FORM USER_AGENT
 export HTTP_OK HTTP_CREATED HTTP_BAD_REQUEST HTTP_UNAUTHORIZED HTTP_FORBIDDEN HTTP_NOT_FOUND HTTP_INTERNAL_ERROR
