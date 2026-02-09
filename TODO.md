@@ -353,8 +353,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: PR #770 merged. model-availability-helper.sh implements probe before dispatch for Anthropic, Google, OpenAI, local Ollama. Caches results with short TTL. Verification v037 passed all checks.
   - [x] t132.4 Fallback chain configuration (per-agent and global defaults) ~2h blocked-by:t132.3 ref:GH#736 assignee:marcusquinn started:2026-02-09T16:07:56Z completed:2026-02-09 verified:2026-02-09 pr:#781
     - Notes: PR #781 merged. fallback-chain-helper.sh and fallback-chain-config.json.txt implement per-agent and global fallback chains with gateway provider support (OpenRouter, Vercel AI Gateway). Triggers: API error, timeout, rate limit, empty response.
-  - [ ] t132.5 Supervisor model resolution from subagent frontmatter ~2h blocked-by:t132.4 ref:GH#737
-    - Notes: supervisor-helper.sh reads `model:` from subagent YAML frontmatter and maps tier names to the corresponding subagent definition in opencode.json. Uses availability checker before dispatch. Falls back through chain on failure by re-dispatching to a different model-specific subagent.
+  - [x] t132.5 Supervisor model resolution from subagent frontmatter ~2h blocked-by:t132.4 ref:GH#737 completed:2026-02-09 pr:#787
+    - Notes: PR #787 merged. Added resolve_model_from_frontmatter() and resolve_task_model() to supervisor-helper.sh. Priority chain: task explicit model > subagent YAML frontmatter > fallback-chain-helper.sh > model-availability-helper.sh > static defaults. Tier names (haiku/sonnet/opus/flash/pro/grok) mapped to concrete provider/model strings.
   - [ ] t132.6 Quality gate with model escalation ~3h blocked-by:t132.5 ref:GH#738
     - Notes: After task completion, evaluate output quality. If unsatisfactory (heuristic or AI eval), re-dispatch to next tier up via a higher-tier subagent. Criteria: empty output, error patterns, user-defined quality checks, token-to-substance ratio. Max escalation depth configurable.
   - [ ] t132.7 Runner and cron-helper multi-provider support ~2h blocked-by:t132.4 ref:GH#739
