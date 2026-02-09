@@ -102,6 +102,13 @@ main() {
     
     echo -e "  Found binary: $OPENCODE_BIN"
     
+    # Check for strings command (from binutils — not always installed on minimal systems)
+    if ! command -v strings &>/dev/null; then
+        echo -e "  ${YELLOW}Skipping prompt extraction (strings command not found)${NC}"
+        echo -e "  ${YELLOW}Install with: sudo apt install binutils (Debian/Ubuntu)${NC}"
+        return 0
+    fi
+    
     # Create cache directory
     mkdir -p "$CACHE_DIR"
     

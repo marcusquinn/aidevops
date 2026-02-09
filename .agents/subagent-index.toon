@@ -2,7 +2,7 @@
 Plan+,plan-plus.md,Read-only planning with semantic codebase search,sonnet
 Build+,build-plus.md,Enhanced Build with context tools,sonnet
 AI-DevOps,aidevops.md,Framework operations and meta-agents,sonnet
-Onboarding,onboarding.md,Interactive setup wizard for new users,sonnet
+Onboarding,aidevops/onboarding.md,Interactive setup wizard for new users,sonnet
 SEO,seo.md,SEO optimization and analysis,sonnet
 Content,content.md,Content creation workflows,sonnet
 Research,research.md,Research and analysis tasks,flash
