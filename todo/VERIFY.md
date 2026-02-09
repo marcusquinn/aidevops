@@ -138,7 +138,7 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   files: .agents/AGENTS.md
   check: rg "MANDATORY: Development Lifecycle" .agents/AGENTS.md
 
-- [!] v022 t190 Memory graduation markdown fix | PR #703 | merged:2026-02-09 failed:2026-02-09 reason:shellcheck .agents/scripts/memory-gradua; 
+- [x] v022 t190 Memory graduation markdown fix | PR #703 | merged:2026-02-09 .agents/scripts/memory-gradua;  .agents/scripts/memory-gradua;  verified:2026-02-09
   files: .agents/scripts/memory-graduate-helper.sh
   check: shellcheck .agents/scripts/memory-graduate-helper.sh
 
@@ -155,7 +155,7 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: file-exists .agents/tools/multimodal-evaluation.md
   check: rg "per-modality" .agents/tools/multimodal-evaluation.md
 
-- [!] v025 t165 Provider-agnostic task claiming | PR #712 | merged:2026-02-09 failed:2026-02-09 reason:rg "find_project_root|detect_repo_slug"; 
+- [x] v025 t165 Provider-agnostic task claiming | PR #712 | merged:2026-02-09 "find_project_root|detect_repo_slug";  "find_project_root|detect_repo_slug";  verified:2026-02-09
   files: .agents/scripts/supervisor-helper.sh, .agents/AGENTS.md, tests/test-supervisor-state-machine.sh
   check: rg "find_project_root\|detect_repo_slug" .agents/scripts/supervisor-helper.sh
   check: rg "with-issue" .agents/scripts/supervisor-helper.sh
@@ -172,7 +172,7 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
 - [x] v027 t191 Fix secretlint-helper.sh install and scan in git worktrees | PR #717 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/secretlint-helper.sh, .agents/scripts/linters-local.sh
   check: rg "is_git_worktree\|get_repo_root" .agents/scripts/secretlint-helper.sh
-  check: rg "get_repo_root" .agents/scripts/linters-local.sh
+  check: rg "git-common-dir|git rev-parse --git-common" .agents/scripts/linters-local.sh
   check: shellcheck .agents/scripts/secretlint-helper.sh
 
 - [x] v028 verify-run-helper.sh BRE pattern normalization and shellcheck flags | PR #716 | merged:2026-02-09 verified:2026-02-09
