@@ -503,53 +503,81 @@ db() {
 }
 
 #######################################
-# Backup supervisor database before destructive operations (t162)
-# Creates timestamped copy in supervisor dir. Keeps last 5 backups.
+# Backup supervisor database before destructive operations (t162, t188)
+# Delegates to shared backup_sqlite_db() from shared-constants.sh.
 # Usage: backup_db [reason]
 #######################################
 backup_db() {
     local reason="${1:-manual}"
+    local backup_file
 
-    if [[ ! -f "$SUPERVISOR_DB" ]]; then
-        log_warn "No database to backup at: $SUPERVISOR_DB"
+    backup_file=$(backup_sqlite_db "$SUPERVISOR_DB" "$reason")
+    local rc=$?
+
+    if [[ $rc -ne 0 ]]; then
+        log_error "Failed to backup database"
         return 1
     fi
 
-    local timestamp
-    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-    local backup_file="$SUPERVISOR_DIR/supervisor-backup-${timestamp}-${reason}.db"
-
-    # Use SQLite .backup for consistency (handles WAL correctly)
-    if sqlite3 "$SUPERVISOR_DB" ".backup '$backup_file'" 2>/dev/null; then
-        log_success "Database backed up: $backup_file"
-    else
-        # Fallback to file copy if .backup fails
-        if cp "$SUPERVISOR_DB" "$backup_file" 2>/dev/null; then
-            # Also copy WAL/SHM if present
-            [[ -f "${SUPERVISOR_DB}-wal" ]] && cp "${SUPERVISOR_DB}-wal" "${backup_file}-wal" 2>/dev/null || true
-            [[ -f "${SUPERVISOR_DB}-shm" ]] && cp "${SUPERVISOR_DB}-shm" "${backup_file}-shm" 2>/dev/null || true
-            log_success "Database backed up (file copy): $backup_file"
-        else
-            log_error "Failed to backup database"
-            return 1
-        fi
-    fi
+    log_success "Database backed up: $backup_file"
 
     # Prune old backups: keep last 5
-    local backup_count
-    # shellcheck disable=SC2012
-    backup_count=$(ls -1 "$SUPERVISOR_DIR"/supervisor-backup-*.db 2>/dev/null | wc -l | tr -d ' ')
-    if [[ "$backup_count" -gt 5 ]]; then
-        local to_remove
-        to_remove=$((backup_count - 5))
-        # shellcheck disable=SC2012
-        ls -1t "$SUPERVISOR_DIR"/supervisor-backup-*.db 2>/dev/null | tail -n "$to_remove" | while IFS= read -r old_backup; do
-            rm -f "$old_backup" "${old_backup}-wal" "${old_backup}-shm" 2>/dev/null || true
-        done
-        log_info "Pruned $to_remove old backup(s)"
-    fi
+    cleanup_sqlite_backups "$SUPERVISOR_DB" 5
 
     echo "$backup_file"
+    return 0
+}
+
+#######################################
+# Run a schema migration with backup, verification, and rollback (t188)
+# Wraps the backup-migrate-verify pattern to prevent silent data loss.
+# Reads migration SQL from stdin to avoid quoting issues with heredocs.
+#
+# Usage:
+#   safe_migrate "t180" "tasks" <<'SQL'
+#   ALTER TABLE tasks ADD COLUMN new_col TEXT;
+#   SQL
+#
+# Arguments:
+#   $1 - migration label (e.g., "t180", "t128.8")
+#   $2 - space-separated list of tables to verify row counts for
+#   stdin - migration SQL
+#
+# Returns: 0 on success, 1 on failure (with automatic rollback)
+#######################################
+safe_migrate() {
+    local label="$1"
+    local verify_tables="$2"
+    local migration_sql
+    migration_sql=$(cat)
+
+    log_info "Migrating database schema ($label)..."
+
+    # Step 1: Backup before migration
+    local backup_file
+    backup_file=$(backup_sqlite_db "$SUPERVISOR_DB" "pre-migrate-${label}")
+    if [[ $? -ne 0 || -z "$backup_file" ]]; then
+        log_error "Backup failed for migration $label — aborting migration"
+        return 1
+    fi
+    log_info "Pre-migration backup: $backup_file"
+
+    # Step 2: Run the migration
+    if ! db "$SUPERVISOR_DB" "$migration_sql"; then
+        log_error "Migration $label FAILED — rolling back from backup"
+        rollback_sqlite_db "$SUPERVISOR_DB" "$backup_file"
+        return 1
+    fi
+
+    # Step 3: Verify row counts didn't decrease
+    if ! verify_migration_rowcounts "$SUPERVISOR_DB" "$backup_file" "$verify_tables"; then
+        log_error "Migration $label VERIFICATION FAILED — row counts decreased, rolling back"
+        rollback_sqlite_db "$SUPERVISOR_DB" "$backup_file"
+        return 1
+    fi
+
+    log_success "Database schema migrated ($label) — row counts verified"
+    cleanup_sqlite_backups "$SUPERVISOR_DB" 5
     return 0
 }
 
@@ -626,11 +654,19 @@ ensure_db() {
 
     # Migrate: add post-PR lifecycle states if CHECK constraint is outdated (t128.8)
     # SQLite doesn't support ALTER CHECK, so we recreate the constraint via a temp table
+    # Note: uses dynamic column lists so cannot use safe_migrate() directly (t188)
     local check_sql
     check_sql=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
     if [[ -n "$check_sql" ]] && ! echo "$check_sql" | grep -q 'pr_review'; then
         log_info "Migrating database schema for post-PR lifecycle states (t128.8)..."
-        backup_db "pre-migrate-t128.8" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
+
+        # Backup before migration (t188: fail-safe — abort if backup fails)
+        local t128_backup
+        t128_backup=$(backup_sqlite_db "$SUPERVISOR_DB" "pre-migrate-t128.8")
+        if [[ $? -ne 0 || -z "$t128_backup" ]]; then
+            log_error "Backup failed for t128.8 migration — aborting"
+            return 1
+        fi
 
         # Detect which optional columns exist in the old table to preserve data (t162)
         local has_issue_url_col has_diagnostic_of_col has_triage_result_col
@@ -683,10 +719,17 @@ CREATE INDEX IF NOT EXISTS idx_tasks_diagnostic ON tasks(diagnostic_of);
 COMMIT;
 PRAGMA foreign_keys=ON;
 MIGRATE
-        log_success "Database schema migrated for post-PR lifecycle states"
+
+        # Verify row counts after migration (t188)
+        if ! verify_migration_rowcounts "$SUPERVISOR_DB" "$t128_backup" "tasks"; then
+            log_error "t128.8 migration VERIFICATION FAILED — rolling back"
+            rollback_sqlite_db "$SUPERVISOR_DB" "$t128_backup"
+            return 1
+        fi
+        log_success "Database schema migrated for post-PR lifecycle states (verified)"
     fi
 
-    # Backup before ALTER TABLE migrations if any are needed (t162)
+    # Backup before ALTER TABLE migrations if any are needed (t162, t188)
     local needs_alter_migration=false
     local has_max_load has_release_on_complete has_diagnostic_of has_issue_url has_max_concurrency
     has_max_load=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='max_load_factor';" 2>/dev/null || echo "0")
@@ -698,7 +741,11 @@ MIGRATE
         needs_alter_migration=true
     fi
     if [[ "$needs_alter_migration" == "true" ]]; then
-        backup_db "pre-migrate-alter-columns" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migrations"
+        local alter_backup
+        alter_backup=$(backup_sqlite_db "$SUPERVISOR_DB" "pre-migrate-alter-columns")
+        if [[ $? -ne 0 || -z "$alter_backup" ]]; then
+            log_warn "Backup failed for ALTER TABLE migrations, proceeding cautiously"
+        fi
     fi
 
     # Migrate: add max_load_factor column to batches if missing (t135.15.4)
@@ -755,7 +802,15 @@ MIGRATE
     check_sql_t148=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
     if [[ -n "$check_sql_t148" ]] && ! echo "$check_sql_t148" | grep -q 'review_triage'; then
         log_info "Migrating database schema for review_triage state (t148)..."
-        backup_db "pre-migrate-t148" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
+
+        # Backup before migration (t188: fail-safe — abort if backup fails)
+        local t148_backup
+        t148_backup=$(backup_sqlite_db "$SUPERVISOR_DB" "pre-migrate-t148")
+        if [[ $? -ne 0 || -z "$t148_backup" ]]; then
+            log_error "Backup failed for t148 migration — aborting"
+            return 1
+        fi
+
         db "$SUPERVISOR_DB" << 'MIGRATE_T148'
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
@@ -798,16 +853,34 @@ CREATE INDEX IF NOT EXISTS idx_tasks_diagnostic ON tasks(diagnostic_of);
 COMMIT;
 PRAGMA foreign_keys=ON;
 MIGRATE_T148
-        log_success "Database schema migrated for review_triage state"
+
+        # Verify row counts after migration (t188)
+        if ! verify_migration_rowcounts "$SUPERVISOR_DB" "$t148_backup" "tasks"; then
+            log_error "t148 migration VERIFICATION FAILED — rolling back"
+            rollback_sqlite_db "$SUPERVISOR_DB" "$t148_backup"
+            return 1
+        fi
+        log_success "Database schema migrated for review_triage state (verified)"
     fi
 
     # Migration: add verifying/verified/verify_failed states to CHECK constraint (t180)
     # Check if the current schema already supports verify states
+    # NOTE: This migration originally used "INSERT INTO tasks SELECT * FROM tasks_old_t180"
+    # which silently fails if column counts don't match. Fixed in t188 to use explicit
+    # column lists and row-count verification with automatic rollback.
     local has_verify_states
     has_verify_states=$(db "$SUPERVISOR_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';" 2>/dev/null || echo "")
     if [[ -n "$has_verify_states" ]] && ! echo "$has_verify_states" | grep -q "verifying"; then
-        backup_db "pre-migrate-t180" >/dev/null 2>&1 || log_warn "Backup failed, proceeding with migration"
         log_info "Migrating database schema for post-merge verification states (t180)..."
+
+        # Backup before migration (t188: fail-safe — abort if backup fails)
+        local t180_backup
+        t180_backup=$(backup_sqlite_db "$SUPERVISOR_DB" "pre-migrate-t180")
+        if [[ $? -ne 0 || -z "$t180_backup" ]]; then
+            log_error "Backup failed for t180 migration — aborting"
+            return 1
+        fi
+
         db "$SUPERVISOR_DB" << 'MIGRATE_T180'
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
@@ -835,13 +908,26 @@ CREATE TABLE tasks (
     completed_at    TEXT,
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
-INSERT INTO tasks SELECT * FROM tasks_old_t180;
+INSERT INTO tasks (id, repo, description, status, session_id, worktree, branch,
+    log_file, retries, max_retries, model, error, pr_url, issue_url, diagnostic_of,
+    triage_result, created_at, started_at, completed_at, updated_at)
+SELECT id, repo, description, status, session_id, worktree, branch,
+    log_file, retries, max_retries, model, error, pr_url, issue_url, diagnostic_of,
+    triage_result, created_at, started_at, completed_at, updated_at
+FROM tasks_old_t180;
 DROP TABLE tasks_old_t180;
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_diagnostic ON tasks(diagnostic_of);
 COMMIT;
 PRAGMA foreign_keys=ON;
 MIGRATE_T180
+
+        # Verify row counts after migration (t188)
+        if ! verify_migration_rowcounts "$SUPERVISOR_DB" "$t180_backup" "tasks"; then
+            log_error "t180 migration VERIFICATION FAILED — rolling back"
+            rollback_sqlite_db "$SUPERVISOR_DB" "$t180_backup"
+            return 1
+        fi
         log_success "Database schema migrated for post-merge verification states"
     fi
 
