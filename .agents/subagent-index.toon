@@ -81,9 +81,10 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[48]{name,purpose}:
+<!--TOON:scripts[49]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
+verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md
 linters-local.sh,Run local linting (ShellCheck secretlint patterns)
 code-audit-helper.sh,Run remote auditing (CodeRabbit Codacy SonarCloud)
 version-manager.sh,Version bumps and releases

@@ -21,6 +21,12 @@ fail `[!]`. Failed verifications reopen the original task in TODO.md.
 - `[x]` — verified, deliverables confirmed working (verified:YYYY-MM-DD)
 - `[!]` — verification failed, task reopened (failed:YYYY-MM-DD reason:description)
 
+## Proof Log
+
+Run `verify-run-helper.sh run <vNNN|--pending|--all>` to execute checks with proof logging.
+Results are appended to `todo/verify-proof-log.md` with timestamps, exit codes, and match
+counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proof.
+
 ## Queue
 
 <!-- VERIFY-QUEUE-START -->
