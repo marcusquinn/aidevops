@@ -647,7 +647,7 @@ run_deploy_phase() {
     print_info "Running setup.sh to deploy changes..."
     
     if [[ -x "$repo_root/setup.sh" ]]; then
-        (cd "$repo_root" && ./setup.sh)
+        (cd "$repo_root" && ./setup.sh --non-interactive)
         print_success "Deployment complete!"
         echo "<promise>DEPLOYED</promise>"
     else
