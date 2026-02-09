@@ -3038,34 +3038,8 @@ inject_agents_reference() {
 update_opencode_config() {
     print_info "Updating OpenCode configuration..."
     
-    local opencode_config
-    if ! opencode_config=$(find_opencode_config); then
-        print_info "OpenCode config not found (checked ~/.config/opencode/, ~/.opencode/, ~/Library/Application Support/opencode/) - skipping"
-        return 0
-    fi
-    
-    print_info "Found OpenCode config at: $opencode_config"
-    
-    # Create backup (with rotation)
-    create_backup_with_rotation "$opencode_config" "opencode"
-    
-    # Generate OpenCode agent configuration
-    # - Primary agents: Added to opencode.json (for Tab order & MCP control)
-    # - Subagents: Generated as markdown in ~/.config/opencode/agent/
-    local generator_script=".agents/scripts/generate-opencode-agents.sh"
-    if [[ -f "$generator_script" ]]; then
-        print_info "Generating OpenCode agent configuration..."
-        if bash "$generator_script"; then
-            print_success "OpenCode agents configured (11 primary in JSON, subagents as markdown)"
-        else
-            print_warning "OpenCode agent generation encountered issues"
-        fi
-    else
-        print_warning "OpenCode agent generator not found at $generator_script"
-    fi
-    
-    # Generate OpenCode commands
-    # - Commands from workflows and agents -> /command-name
+    # Generate OpenCode commands (independent of opencode.json — writes to ~/.config/opencode/command/)
+    # Run this first so /onboarding and other commands exist even if opencode.json hasn't been created yet
     local commands_script=".agents/scripts/generate-opencode-commands.sh"
     if [[ -f "$commands_script" ]]; then
         print_info "Generating OpenCode commands..."
@@ -3076,6 +3050,32 @@ update_opencode_config() {
         fi
     else
         print_warning "OpenCode command generator not found at $commands_script"
+    fi
+    
+    # Generate OpenCode agent configuration (requires opencode.json)
+    # - Primary agents: Added to opencode.json (for Tab order & MCP control)
+    # - Subagents: Generated as markdown in ~/.config/opencode/agent/
+    local opencode_config
+    if ! opencode_config=$(find_opencode_config); then
+        print_info "OpenCode config (opencode.json) not found — agent configuration skipped (commands still generated)"
+        return 0
+    fi
+    
+    print_info "Found OpenCode config at: $opencode_config"
+    
+    # Create backup (with rotation)
+    create_backup_with_rotation "$opencode_config" "opencode"
+    
+    local generator_script=".agents/scripts/generate-opencode-agents.sh"
+    if [[ -f "$generator_script" ]]; then
+        print_info "Generating OpenCode agent configuration..."
+        if bash "$generator_script"; then
+            print_success "OpenCode agents configured (11 primary in JSON, subagents as markdown)"
+        else
+            print_warning "OpenCode agent generation encountered issues"
+        fi
+    else
+        print_warning "OpenCode agent generator not found at $generator_script"
     fi
     
     return 0
@@ -4731,7 +4731,6 @@ main() {
         confirm_step "Check for skill updates from upstream" && check_skill_updates
         confirm_step "Security scan imported skills" && scan_imported_skills
         confirm_step "Inject agents reference into AI configs" && inject_agents_reference
-        confirm_step "Update OpenCode configuration" && update_opencode_config
         confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
         confirm_step "Setup Node.js environment" && setup_nodejs_env
         confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
@@ -4746,6 +4745,8 @@ main() {
         confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
         confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
         confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
+        # Run AFTER OpenCode CLI install so opencode.json may exist for agent config
+        confirm_step "Update OpenCode configuration" && update_opencode_config
         # Run AFTER all MCP setup functions to ensure disabled state persists
         confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
     fi
@@ -4826,38 +4827,56 @@ echo "  aidevops uninstall    - Remove aidevops"
     
     # Offer to launch onboarding for new users (only if not running inside OpenCode and not non-interactive)
     if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "🎯 Ready to configure your services?"
-        echo ""
-        echo "Launch OpenCode with the onboarding wizard to:"
-        echo "  • See which services are already configured"
-        echo "  • Get personalized recommendations based on your work"
-        echo "  • Set up API keys and credentials interactively"
-        echo ""
-        read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
-        if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
+        # Check if OpenCode has any auth configured before offering to launch
+        local auth_file="$HOME/.local/share/opencode/auth.json"
+        local has_auth=false
+        if [[ -f "$auth_file" ]] && [[ -s "$auth_file" ]]; then
+            # Check for at least one provider with a non-empty value
+            if jq -e 'to_entries | map(select(.value != null and .value != "")) | length > 0' "$auth_file" &>/dev/null; then
+                has_auth=true
+            fi
+        fi
+        
+        if [[ "$has_auth" == "false" ]]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "Starting OpenCode with Onboarding agent..."
-            # Detect available auth provider and select appropriate model
-            # Prefer Anthropic (Claude) > Google (Gemini) > OpenCode Zen > OpenAI
-            local onboarding_model=""
-            local auth_file="$HOME/.local/share/opencode/auth.json"
-            if [[ -f "$auth_file" ]]; then
+            echo "OpenCode needs authentication before it can run the onboarding wizard."
+            echo ""
+            echo "Run this command to authenticate:"
+            echo "  opencode auth login"
+            echo ""
+            echo "Then run /onboarding inside OpenCode to configure your services."
+        else
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Ready to configure your services?"
+            echo ""
+            echo "Launch OpenCode with the onboarding wizard to:"
+            echo "  - See which services are already configured"
+            echo "  - Get personalized recommendations based on your work"
+            echo "  - Set up API keys and credentials interactively"
+            echo ""
+            read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
+            if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
+                echo ""
+                echo "Starting OpenCode with Onboarding agent..."
+                # Detect available auth provider and select appropriate model
+                # Prefer Anthropic (Claude) > Google (Gemini) > OpenCode Zen > OpenAI
+                local onboarding_model=""
                 if jq -e '.anthropic' "$auth_file" &>/dev/null; then
                     onboarding_model="anthropic/claude-sonnet-4-5"
                 elif jq -e '.google' "$auth_file" &>/dev/null; then
                     onboarding_model="google/gemini-2.5-flash"
                 fi
+                local opencode_args=("--agent" "Onboarding" "--prompt" "/onboarding")
+                if [[ -n "$onboarding_model" ]]; then
+                    opencode_args+=("--model" "$onboarding_model")
+                fi
+                opencode "${opencode_args[@]}"
+            else
+                echo ""
+                echo "You can run /onboarding anytime in OpenCode to configure services."
             fi
-            local opencode_args=("--agent" "Onboarding" "--prompt" "/onboarding")
-            if [[ -n "$onboarding_model" ]]; then
-                opencode_args+=("--model" "$onboarding_model")
-            fi
-            opencode "${opencode_args[@]}"
-        else
-            echo ""
-            echo "You can run /onboarding anytime in OpenCode to configure services."
         fi
     fi
     
