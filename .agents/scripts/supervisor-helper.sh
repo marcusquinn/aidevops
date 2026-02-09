@@ -2817,14 +2817,11 @@ resolve_model() {
         sonnet|eval|health)
             echo "anthropic/claude-sonnet-4-5"
             ;;
-        haiku)
+        haiku|flash)
             echo "anthropic/claude-haiku-4-5"
             ;;
-        flash)
-            echo "google/gemini-2.5-flash"
-            ;;
         pro)
-            echo "google/gemini-2.5-pro"
+            echo "anthropic/claude-sonnet-4-5"
             ;;
         *)
             # Unknown tier — treat as coding tier default
