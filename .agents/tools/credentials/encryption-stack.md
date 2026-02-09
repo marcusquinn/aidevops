@@ -73,8 +73,9 @@ aidevops secret init
 aidevops secret set DATABASE_URL
 aidevops secret set API_KEY
 
-# 2. Initialize SOPS for config files
-sops-helper.sh init
+# 2. Initialize SOPS for config files (two options)
+aidevops init sops                    # Project-level: creates .sops.yaml + age key
+sops-helper.sh init                   # Standalone: init without aidevops project config
 # Create and encrypt config files
 sops-helper.sh encrypt config.enc.yaml
 
