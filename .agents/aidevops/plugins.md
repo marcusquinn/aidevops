@@ -101,6 +101,14 @@ Disabling removes the deployed directory but preserves the config entry.
 aidevops plugin remove pro       # Removes config entry and deployed files
 ```
 
+### Create a New Plugin
+
+```bash
+aidevops plugin init ./my-plugin my-plugin my-ns
+```
+
+Arguments: `[directory] [name] [namespace]`. Scaffolds a plugin from the built-in template with placeholder substitution. The generated structure includes AGENTS.md, a main agent file, an example subagent, and a scripts directory.
+
 ## Plugin Repository Structure
 
 A plugin repo should follow this structure:
