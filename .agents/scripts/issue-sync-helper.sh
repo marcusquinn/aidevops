@@ -220,6 +220,7 @@ extract_notes() {
 # =============================================================================
 
 # Extract a plan section from PLANS.md given an anchor
+# Uses awk for performance — avoids spawning subprocesses per line on large files
 extract_plan_section() {
     local plan_link="$1"
     local project_root="$2"
@@ -239,144 +240,132 @@ extract_plan_section() {
     local anchor
     anchor="${plan_link#todo/PLANS.md#}"
 
-    # Find the heading that matches the anchor
-    local in_section=false
-    local section=""
-    local heading_level=0
+    # Use awk to extract the section efficiently (single pass, no per-line subprocesses)
+    # Matching strategy: exact > substring > date-prefix + word overlap (handles TODO.md/PLANS.md drift)
+    awk -v anchor="$anchor" '
+    BEGIN {
+        in_section = 0; heading_level = 0
 
-    while IFS= read -r line; do
-        # Check for heading match
-        if [[ "$in_section" == "false" ]]; then
-            # Generate anchor from heading: lowercase, spaces to hyphens, strip special chars
-            local line_anchor
-            line_anchor=$(echo "$line" | sed -E 's/^#+\s+//' | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9 -]//g' | sed -E 's/ /-/g')
+        # Extract date prefix from anchor for fuzzy matching (e.g., "2026-02-08")
+        if (match(anchor, /^[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+            anchor_date = substr(anchor, RSTART, RLENGTH)
+            anchor_rest = substr(anchor, RLENGTH + 2)  # skip date + hyphen
+        } else {
+            anchor_date = ""
+            anchor_rest = anchor
+        }
+        # Split anchor remainder into words for overlap scoring
+        n_anchor_words = split(anchor_rest, anchor_words, "-")
+    }
 
-            if [[ "$line_anchor" == "$anchor" ]] || echo "$line_anchor" | grep -qF "$anchor"; then
-                in_section=true
-                heading_level=$(echo "$line" | grep -oE '^#+' | wc -c)
-                heading_level=$((heading_level - 1))
-                section="$line"
-                continue
-            fi
-        fi
+    function check_match(line_anchor) {
+        # 1. Exact match
+        if (line_anchor == anchor) return 1
+        # 2. Substring containment (either direction)
+        if (index(line_anchor, anchor) > 0 || index(anchor, line_anchor) > 0) return 1
+        # 3. Date-prefix + word overlap (handles renamed/abbreviated headings)
+        if (anchor_date != "" && index(line_anchor, anchor_date) > 0) {
+            score = 0
+            for (i = 1; i <= n_anchor_words; i++) {
+                if (length(anchor_words[i]) >= 3 && index(line_anchor, anchor_words[i]) > 0) {
+                    score++
+                }
+            }
+            # Require >50% word overlap for fuzzy match
+            if (n_anchor_words > 0 && score > n_anchor_words / 2) return 1
+        }
+        return 0
+    }
 
-        if [[ "$in_section" == "true" ]]; then
-            # Check if we've hit the next heading at same or higher level
-            if echo "$line" | grep -qE '^#{1,'"$heading_level"'} [^#]'; then
-                break
-            fi
-            section="$section"$'\n'"$line"
-        fi
-    done < "$plans_file"
+    /^#{1,6} / {
+        if (in_section == 0) {
+            # Generate anchor from heading: strip leading #s, lowercase, strip special chars, spaces to hyphens
+            line_anchor = $0
+            gsub(/^#+[[:space:]]+/, "", line_anchor)
+            line_anchor = tolower(line_anchor)
+            gsub(/[^a-z0-9 -]/, "", line_anchor)
+            gsub(/ /, "-", line_anchor)
 
-    echo "$section"
+            if (check_match(line_anchor)) {
+                in_section = 1
+                match($0, /^#+/)
+                heading_level = RLENGTH
+                print
+                next
+            }
+        } else {
+            # Check if this heading is at same or higher level (ends section)
+            match($0, /^#+/)
+            if (RLENGTH <= heading_level) {
+                exit
+            }
+        }
+    }
+
+    in_section == 1 { print }
+    ' "$plans_file"
+
+    return 0
+}
+
+# Extract a named subsection from a plan section
+# Uses awk for consistent, efficient extraction
+# Args: $1=plan_section, $2=heading_pattern (e.g., "Purpose"), $3=max_lines (0=unlimited)
+_extract_plan_subsection() {
+    local plan_section="$1"
+    local heading_pattern="$2"
+    local max_lines="${3:-0}"
+    local skip_toon="${4:-true}"
+    local skip_placeholder="${5:-false}"
+
+    local result
+    result=$(echo "$plan_section" | awk -v pattern="$heading_pattern" -v skip_toon="$skip_toon" -v max_lines="$max_lines" -v skip_placeholder="$skip_placeholder" '
+    BEGIN { in_section = 0; count = 0 }
+    /^####[[:space:]]+/ {
+        if (in_section == 1) { exit }
+        if ($0 ~ "^####[[:space:]]+" pattern) { in_section = 1; next }
+        next
+    }
+    /^###[[:space:]]+/ { if (in_section == 1) exit }
+    in_section == 1 {
+        if (skip_toon == "true" && $0 ~ /^<!--TOON:/) exit
+        if (/^[[:space:]]*$/) next
+        if (skip_placeholder == "true" && $0 ~ /To be populated/) next
+        if (max_lines > 0 && count >= max_lines) exit
+        print
+        count++
+    }
+    ')
+
+    echo "$result"
     return 0
 }
 
 # Extract just the Purpose section from a plan
 extract_plan_purpose() {
     local plan_section="$1"
-    local in_purpose=false
-    local purpose=""
-
-    while IFS= read -r line; do
-        if echo "$line" | grep -qE '^####\s+Purpose'; then
-            in_purpose=true
-            continue
-        fi
-        if [[ "$in_purpose" == "true" ]]; then
-            if echo "$line" | grep -qE '^####\s+'; then
-                break
-            fi
-            purpose="$purpose"$'\n'"$line"
-        fi
-    done <<< "$plan_section"
-
-    echo "$purpose" | sed '/^$/d' | head -20
+    _extract_plan_subsection "$plan_section" "Purpose" 20 "false"
     return 0
 }
 
 # Extract the Decision Log from a plan
 extract_plan_decisions() {
     local plan_section="$1"
-    local in_decisions=false
-    local decisions=""
-
-    while IFS= read -r line; do
-        if echo "$line" | grep -qE '^####\s+Decision Log'; then
-            in_decisions=true
-            continue
-        fi
-        if [[ "$in_decisions" == "true" ]]; then
-            if echo "$line" | grep -qE '^####\s+'; then
-                break
-            fi
-            # Skip TOON blocks
-            if echo "$line" | grep -qE '^<!--TOON:'; then
-                break
-            fi
-            decisions="$decisions"$'\n'"$line"
-        fi
-    done <<< "$plan_section"
-
-    echo "$decisions" | sed '/^$/d'
+    _extract_plan_subsection "$plan_section" "Decision Log" 0 "true"
     return 0
 }
 
 # Extract Progress section from a plan
 extract_plan_progress() {
     local plan_section="$1"
-    local in_progress=false
-    local progress=""
-
-    while IFS= read -r line; do
-        if echo "$line" | grep -qE '^####\s+Progress'; then
-            in_progress=true
-            continue
-        fi
-        if [[ "$in_progress" == "true" ]]; then
-            if echo "$line" | grep -qE '^####\s+'; then
-                break
-            fi
-            # Skip TOON blocks
-            if echo "$line" | grep -qE '^<!--TOON:'; then
-                break
-            fi
-            progress="$progress"$'\n'"$line"
-        fi
-    done <<< "$plan_section"
-
-    echo "$progress" | sed '/^$/d'
+    _extract_plan_subsection "$plan_section" "Progress" 0 "true"
     return 0
 }
 
 # Extract Discoveries section from a plan
 extract_plan_discoveries() {
     local plan_section="$1"
-    local in_discoveries=false
-    local discoveries=""
-
-    while IFS= read -r line; do
-        if echo "$line" | grep -qE '^####\s+Surprises'; then
-            in_discoveries=true
-            continue
-        fi
-        if [[ "$in_discoveries" == "true" ]]; then
-            if echo "$line" | grep -qE '^####\s+|^###\s+'; then
-                break
-            fi
-            # Skip TOON blocks
-            if echo "$line" | grep -qE '^<!--TOON:'; then
-                break
-            fi
-            discoveries="$discoveries"$'\n'"$line"
-        fi
-    done <<< "$plan_section"
-
-    # Only return if there's actual content (not just placeholder text)
-    local cleaned
-    cleaned=$(echo "$discoveries" | sed '/^$/d' | grep -v 'To be populated' || true)
-    echo "$cleaned"
+    _extract_plan_subsection "$plan_section" "Surprises" 0 "true" "true"
     return 0
 }
 
@@ -433,21 +422,21 @@ extract_file_summary() {
 
     local summary=""
     local line_count=0
-    local in_content=false
+    local in_frontmatter=false
     local past_frontmatter=false
 
     while IFS= read -r line; do
         # Skip YAML frontmatter
         if [[ "$line" == "---" ]] && [[ "$past_frontmatter" == "false" ]]; then
-            if [[ "$in_content" == "true" ]]; then
+            if [[ "$in_frontmatter" == "true" ]]; then
                 past_frontmatter=true
-                in_content=false
+                in_frontmatter=false
                 continue
             fi
-            in_content=true
+            in_frontmatter=true
             continue
         fi
-        if [[ "$in_content" == "true" ]]; then
+        if [[ "$in_frontmatter" == "true" ]]; then
             continue
         fi
 
@@ -456,8 +445,8 @@ extract_file_summary() {
             continue
         fi
 
-        # Skip the title heading (# Title)
-        if [[ $line_count -eq 0 ]] && echo "$line" | grep -qE '^# '; then
+        # Include the title heading (# Title) as first line
+        if [[ $line_count -eq 0 ]] && [[ "$line" == "# "* ]]; then
             summary="$line"
             line_count=1
             continue
@@ -466,7 +455,7 @@ extract_file_summary() {
         summary="$summary"$'\n'"$line"
         line_count=$((line_count + 1))
 
-        # Stop at max lines or at a major section break after getting some content
+        # Stop at max lines
         if [[ $line_count -ge $max_lines ]]; then
             summary="$summary"$'\n'"..."
             break
