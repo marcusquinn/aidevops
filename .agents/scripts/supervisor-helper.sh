@@ -123,17 +123,19 @@ unset _p
 # When `gh auth token` succeeds (interactive), cache it for cron to use later.
 _gh_token_cache="$HOME/.aidevops/.agent-workspace/supervisor/.gh-token-cache"
 if [[ -z "${GH_TOKEN:-}" ]]; then
-    # Try gh auth token (works interactively, fails in cron without keyring)
-    GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+    # Try cached token FIRST (most reliable for cron — written by interactive sessions)
+    if [[ -f "$_gh_token_cache" ]]; then
+        GH_TOKEN=$(cat "$_gh_token_cache" 2>/dev/null || echo "")
+    fi
+    # If no cache, try gh auth token (works interactively, may fail in cron)
+    if [[ -z "$GH_TOKEN" ]]; then
+        GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+    fi
+    # Cache the token if we got one (for future cron runs)
     if [[ -n "$GH_TOKEN" ]]; then
-        # Cache for cron (600 permissions — owner-only read/write)
         mkdir -p "$(dirname "$_gh_token_cache")"
         printf '%s' "$GH_TOKEN" > "$_gh_token_cache" 2>/dev/null || true
         chmod 600 "$_gh_token_cache" 2>/dev/null || true
-    fi
-    if [[ -z "$GH_TOKEN" && -f "$_gh_token_cache" ]]; then
-        # Read from cache (written by a previous interactive session)
-        GH_TOKEN=$(cat "$_gh_token_cache" 2>/dev/null || echo "")
     fi
     if [[ -z "$GH_TOKEN" ]]; then
         # Try gopass (encrypted secret store)
@@ -230,6 +232,19 @@ log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
 log_verbose() { [[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" || true; }
+
+# Check GitHub authentication in a way that works with GH_TOKEN env var.
+# gh auth status may fail in cron even when GH_TOKEN is valid (keyring issues).
+# This function checks GH_TOKEN first, then falls back to gh auth status.
+check_gh_auth() {
+    # If GH_TOKEN is set, verify it works with a lightweight API call
+    if [[ -n "${GH_TOKEN:-}" ]]; then
+        gh api user --jq '.login' >/dev/null 2>&1 && return 0
+    fi
+    # Fall back to gh auth status (works interactively with keyring)
+    gh auth status >/dev/null 2>&1 && return 0
+    return 1
+}
 
 # Supervisor stderr log file - captures stderr from commands that previously
 # used 2>/dev/null, making errors debuggable without cluttering terminal output.
@@ -2551,7 +2566,7 @@ sync_claim_to_github() {
 
     # Skip if gh CLI not available or not authenticated
     command -v gh &>/dev/null || return 0
-    gh auth status &>/dev/null 2>&1 || return 0
+    check_gh_auth || return 0
 
     local issue_number
     issue_number=$(find_task_issue_number "$task_id" "$project_root")
@@ -3872,9 +3887,9 @@ cmd_dispatch() {
     # Pre-dispatch GitHub auth check — verify the worker can push before
     # creating worktrees and burning compute. Workers spawned via nohup/cron
     # may lack SSH keys; gh auth git-credential only works with HTTPS remotes.
-    if ! gh auth status >/dev/null 2>&1; then
-        log_error "GitHub auth unavailable for $task_id — gh auth status failed"
-        log_error "Workers need 'gh auth login' with HTTPS protocol. Skipping dispatch."
+    if ! check_gh_auth; then
+        log_error "GitHub auth unavailable for $task_id — check_gh_auth failed"
+        log_error "Workers need 'gh auth login' or GH_TOKEN set. Skipping dispatch."
         return 3
     fi
 
@@ -6820,7 +6835,7 @@ create_github_issue() {
         return 0
     fi
 
-    if ! gh auth status &>/dev/null 2>&1; then
+    if ! check_gh_auth; then
         log_warn "gh CLI not authenticated, skipping GitHub issue creation"
         return 0
     fi
@@ -7076,7 +7091,7 @@ verify_task_deliverables() {
         log_warn "gh CLI not found; cannot verify deliverables for $task_id"
         return 1
     fi
-    if ! gh auth status &>/dev/null 2>&1; then
+    if ! check_gh_auth; then
         log_warn "gh CLI not authenticated; cannot verify deliverables for $task_id"
         return 1
     fi
@@ -7719,7 +7734,7 @@ generate_verify_entry() {
     local files_list=""
     local -a check_lines=()
 
-    if [[ -n "$pr_number" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+    if [[ -n "$pr_number" ]] && command -v gh &>/dev/null && check_gh_auth; then
         local repo_slug=""
         repo_slug=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
         if [[ -n "$repo_slug" ]]; then
