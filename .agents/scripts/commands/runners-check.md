@@ -33,10 +33,12 @@ git worktree list 2>/dev/null
 Present results as a concise dashboard:
 
 ### Batch Status
+
 - Batch name, total/completed/queued/running/failed counts
 - Any tasks stuck in retrying or evaluating for >10 minutes
 
 ### Action Items
+
 Flag these for the user (most important first):
 1. **PRs ready to merge** — all CI green, no review comments
 2. **PRs with CI failures** — need investigation
@@ -45,6 +47,7 @@ Flag these for the user (most important first):
 5. **Stale worktrees** — for tasks already deployed/merged
 
 ### System Health
+
 - Load, memory, worker count
 - Cron pulse status: `~/.aidevops/agents/scripts/supervisor-helper.sh cron status 2>&1`
 

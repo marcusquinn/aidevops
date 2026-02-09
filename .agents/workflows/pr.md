@@ -550,6 +550,7 @@ Contradictory feedback patterns:
 ### Resolution Process
 
 1. **Verify actual behavior**: Test the code to confirm what works
+
    ```bash
    # Example: Verify application name works in AppleScript
    osascript -e 'tell application "iTerm" to get name'

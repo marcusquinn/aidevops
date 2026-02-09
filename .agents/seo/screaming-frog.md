@@ -34,12 +34,15 @@ tools:
 ## Setup
 
 ### macOS Alias
+
 Add to `~/.zshrc` or `~/.bashrc`:
+
 ```bash
 alias screamingfrogseospider="/Applications/Screaming\ Frog\ SEO\ Spider.app/Contents/MacOS/ScreamingFrogSEOSpiderLauncher"
 ```
 
 ### Verification
+
 ```bash
 screamingfrogseospider --help
 ```
@@ -47,15 +50,18 @@ screamingfrogseospider --help
 ## Usage
 
 ### Basic Crawl
+
 ```bash
 screamingfrogseospider --crawl https://example.com --headless --output-folder ./reports
 ```
 
 ### Configuration
+
 - **Save Config**: Configure in GUI, save as `profile.seospiderconfig`
 - **Load Config**: Use `--config profile.seospiderconfig`
 
 ### Export Options
+
 - `--export-tabs "Internal:All,Response Codes:All"`
 - `--save-crawl` (saves .seospider file)
 - `--bulk-export "All Inlinks"`

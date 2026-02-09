@@ -335,5 +335,3 @@ Focus on:
 - **Build+**: Execute plans with full file/bash permissions
 - **AI-DevOps**: Infrastructure and deployment planning
 - **Research**: Deep investigation and documentation
-
-

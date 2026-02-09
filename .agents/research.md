@@ -81,5 +81,3 @@ Structure findings as:
 - Next steps
 
 Research informs implementation but doesn't perform it.
-
-

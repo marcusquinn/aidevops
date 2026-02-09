@@ -207,5 +207,3 @@ Use Context7 MCP for current documentation:
 - MCP SDK: `resolve library-id for @modelcontextprotocol/sdk`
 - ElysiaJS: `resolve library-id for elysia`
 - Bun: `resolve library-id for bun`
-
-
