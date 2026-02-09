@@ -839,6 +839,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 ## In Progress
 
+- [ ] t192 Fix verify-run-helper.sh bash flag handling — `bash -n` parsed as file path instead of flag #bugfix #verify ~30m (ai:20m test:10m) logged:2026-02-09
+  - Notes: The `bash` check handler regex `^bash (.+)` captures `-n script.sh` as the script path. Needs a `bash-syntax` directive or flag-aware parsing.
+
 - [x] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) ref:GH#623 assignee:marcusquinn started:2026-02-09T01:54:38Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09
   - Notes: PR #712. TODO.md assignee: is now authoritative claim source. GH Issue creation opt-in (--with-issue or SUPERVISOR_AUTO_ISSUE=true). Added find_project_root(), detect_repo_slug(), gh auth check. 14 new tests, 0 regressions.
 
