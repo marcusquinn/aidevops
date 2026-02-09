@@ -484,6 +484,8 @@ cmd_help() {
     echo "  capabilities  Show capability matrix"
     echo "  providers     List supported providers and their models"
     echo "  discover      Detect available providers from local config"
+    echo "  score         Record model comparison scores (from evaluation)"
+    echo "  results       View past comparison results and rankings"
     echo "  help          Show this help"
     echo ""
     echo "Examples:"
@@ -496,6 +498,14 @@ cmd_help() {
     echo "  compare-models-helper.sh discover --probe"
     echo "  compare-models-helper.sh discover --list-models"
     echo "  compare-models-helper.sh discover --json"
+    echo ""
+    echo "Scoring examples:"
+    echo "  compare-models-helper.sh score --task 'fix React bug' --type code \\"
+    echo "    --model claude-sonnet-4 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
+    echo "    --model gpt-4.1 --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
+    echo "    --winner claude-sonnet-4"
+    echo "  compare-models-helper.sh results"
+    echo "  compare-models-helper.sh results --model sonnet --limit 5"
     echo ""
     echo "Discover options:"
     echo "  --probe        Verify API keys by calling provider endpoints"
@@ -862,6 +872,256 @@ cmd_discover() {
 }
 
 # =============================================================================
+# Comparison Scoring Framework
+# =============================================================================
+# Stores and retrieves model comparison results for cross-session insights.
+# Results are stored in SQLite alongside the model registry.
+
+RESULTS_DB="${AIDEVOPS_WORKSPACE_DIR:-$HOME/.aidevops/.agent-workspace}/memory/model-comparisons.db"
+
+init_results_db() {
+    local db_dir
+    db_dir="$(dirname "$RESULTS_DB")"
+    mkdir -p "$db_dir"
+
+    sqlite3 "$RESULTS_DB" <<'SQL'
+CREATE TABLE IF NOT EXISTS comparisons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_description TEXT NOT NULL,
+    task_type TEXT DEFAULT 'general',
+    created_at TEXT DEFAULT (datetime('now')),
+    evaluator_model TEXT,
+    winner_model TEXT
+);
+
+CREATE TABLE IF NOT EXISTS comparison_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    comparison_id INTEGER NOT NULL,
+    model_id TEXT NOT NULL,
+    correctness INTEGER DEFAULT 0,
+    completeness INTEGER DEFAULT 0,
+    code_quality INTEGER DEFAULT 0,
+    clarity INTEGER DEFAULT 0,
+    adherence INTEGER DEFAULT 0,
+    overall INTEGER DEFAULT 0,
+    latency_ms INTEGER DEFAULT 0,
+    tokens_used INTEGER DEFAULT 0,
+    strengths TEXT DEFAULT '',
+    weaknesses TEXT DEFAULT '',
+    response_file TEXT DEFAULT '',
+    FOREIGN KEY (comparison_id) REFERENCES comparisons(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comparisons_task ON comparisons(task_type);
+CREATE INDEX IF NOT EXISTS idx_comparisons_winner ON comparisons(winner_model);
+CREATE INDEX IF NOT EXISTS idx_scores_model ON comparison_scores(model_id);
+SQL
+    return 0
+}
+
+# Record a comparison result
+# Usage: cmd_score --task "description" --type "code" --evaluator "claude-opus-4" \
+#        --model "claude-sonnet-4" --correctness 9 --completeness 8 --quality 7 \
+#        --clarity 8 --adherence 9 --latency 1200 --tokens 500 \
+#        --strengths "Fast, accurate" --weaknesses "Verbose" \
+#        [--model "gpt-4.1" --correctness 8 ...]
+cmd_score() {
+    init_results_db || return 1
+
+    local task="" task_type="general" evaluator="" winner=""
+    local -a model_entries=()
+    local current_model="" current_correct=0 current_complete=0 current_quality=0
+    local current_clarity=0 current_adherence=0 current_latency=0 current_tokens=0
+    local current_strengths="" current_weaknesses="" current_response=""
+
+    flush_model() {
+        if [[ -n "$current_model" ]]; then
+            local overall=$(( (current_correct + current_complete + current_quality + current_clarity + current_adherence) / 5 ))
+            model_entries+=("${current_model}|${current_correct}|${current_complete}|${current_quality}|${current_clarity}|${current_adherence}|${overall}|${current_latency}|${current_tokens}|${current_strengths}|${current_weaknesses}|${current_response}")
+        fi
+        current_model="" current_correct=0 current_complete=0 current_quality=0
+        current_clarity=0 current_adherence=0 current_latency=0 current_tokens=0
+        current_strengths="" current_weaknesses="" current_response=""
+    }
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --task) task="$2"; shift 2 ;;
+            --type) task_type="$2"; shift 2 ;;
+            --evaluator) evaluator="$2"; shift 2 ;;
+            --winner) winner="$2"; shift 2 ;;
+            --model) flush_model; current_model="$2"; shift 2 ;;
+            --correctness) current_correct="$2"; shift 2 ;;
+            --completeness) current_complete="$2"; shift 2 ;;
+            --quality) current_quality="$2"; shift 2 ;;
+            --clarity) current_clarity="$2"; shift 2 ;;
+            --adherence) current_adherence="$2"; shift 2 ;;
+            --latency) current_latency="$2"; shift 2 ;;
+            --tokens) current_tokens="$2"; shift 2 ;;
+            --strengths) current_strengths="$2"; shift 2 ;;
+            --weaknesses) current_weaknesses="$2"; shift 2 ;;
+            --response) current_response="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    flush_model
+
+    if [[ -z "$task" ]]; then
+        echo "Usage: compare-models-helper.sh score --task 'description' --model 'model-id' --correctness N ..."
+        echo ""
+        echo "Score criteria (1-10 scale):"
+        echo "  --correctness   Factual accuracy and correctness"
+        echo "  --completeness  Coverage of all requirements"
+        echo "  --quality       Code quality (if code task)"
+        echo "  --clarity       Response clarity and readability"
+        echo "  --adherence     Following instructions precisely"
+        echo ""
+        echo "Metadata:"
+        echo "  --task <desc>       Task description (required)"
+        echo "  --type <type>       Task type: code, text, analysis, design (default: general)"
+        echo "  --evaluator <model> Model that performed the evaluation"
+        echo "  --winner <model>    Overall winner model"
+        echo "  --model <id>        Start scoring for a model (repeat for each model)"
+        echo "  --latency <ms>      Response latency in milliseconds"
+        echo "  --tokens <n>        Tokens used"
+        echo "  --strengths <text>  Model strengths for this task"
+        echo "  --weaknesses <text> Model weaknesses for this task"
+        echo "  --response <file>   Path to response file"
+        return 1
+    fi
+
+    if [[ ${#model_entries[@]} -eq 0 ]]; then
+        print_error "No model scores provided. Use --model <id> --correctness N ..."
+        return 1
+    fi
+
+    # Insert comparison record
+    local comp_id
+    comp_id=$(sqlite3 "$RESULTS_DB" "INSERT INTO comparisons (task_description, task_type, evaluator_model, winner_model) VALUES ('$(echo "$task" | sed "s/'/''/g")', '$task_type', '$evaluator', '$winner'); SELECT last_insert_rowid();")
+
+    # Insert scores for each model
+    for entry in "${model_entries[@]}"; do
+        IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok m_str m_wea m_res <<< "$entry"
+        sqlite3 "$RESULTS_DB" "INSERT INTO comparison_scores (comparison_id, model_id, correctness, completeness, code_quality, clarity, adherence, overall, latency_ms, tokens_used, strengths, weaknesses, response_file) VALUES ($comp_id, '$m_id', $m_cor, $m_com, $m_qua, $m_cla, $m_adh, $m_ove, $m_lat, $m_tok, '$(echo "$m_str" | sed "s/'/''/g")', '$(echo "$m_wea" | sed "s/'/''/g")', '$(echo "$m_res" | sed "s/'/''/g")');"
+    done
+
+    print_success "Comparison #$comp_id recorded ($task_type: ${#model_entries[@]} models scored)"
+
+    # Display summary table
+    echo ""
+    printf "%-22s %5s %5s %5s %5s %5s %7s %8s %6s\n" \
+        "Model" "Corr" "Comp" "Qual" "Clar" "Adhr" "Overall" "Latency" "Tokens"
+    printf "%-22s %5s %5s %5s %5s %5s %7s %8s %6s\n" \
+        "-----" "----" "----" "----" "----" "----" "-------" "-------" "------"
+
+    for entry in "${model_entries[@]}"; do
+        IFS='|' read -r m_id m_cor m_com m_qua m_cla m_adh m_ove m_lat m_tok _ _ _ <<< "$entry"
+        local lat_fmt="${m_lat}ms"
+        [[ "$m_lat" -eq 0 ]] && lat_fmt="-"
+        [[ "$m_tok" -eq 0 ]] && m_tok="-"
+        printf "%-22s %5d %5d %5d %5d %5d %7d %8s %6s\n" \
+            "$m_id" "$m_cor" "$m_com" "$m_qua" "$m_cla" "$m_adh" "$m_ove" "$lat_fmt" "$m_tok"
+    done
+
+    if [[ -n "$winner" ]]; then
+        echo ""
+        echo "  Winner: $winner"
+    fi
+    echo ""
+
+    return 0
+}
+
+# View past comparison results
+cmd_results() {
+    init_results_db || return 1
+
+    local limit=10
+    local model_filter="" type_filter=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --limit) limit="$2"; shift 2 ;;
+            --model) model_filter="$2"; shift 2 ;;
+            --type) type_filter="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    local where_clause=""
+    if [[ -n "$model_filter" ]]; then
+        where_clause="WHERE cs.model_id LIKE '%${model_filter}%'"
+    fi
+    if [[ -n "$type_filter" ]]; then
+        if [[ -n "$where_clause" ]]; then
+            where_clause="$where_clause AND c.task_type = '$type_filter'"
+        else
+            where_clause="WHERE c.task_type = '$type_filter'"
+        fi
+    fi
+
+    echo ""
+    echo "Model Comparison Results (last $limit)"
+    echo "======================================="
+    echo ""
+
+    local count
+    count=$(sqlite3 "$RESULTS_DB" "SELECT COUNT(DISTINCT c.id) FROM comparisons c LEFT JOIN comparison_scores cs ON c.id = cs.comparison_id $where_clause;" 2>/dev/null || echo "0")
+
+    if [[ "$count" -eq 0 ]]; then
+        echo "No comparison results found."
+        echo "Run a comparison first: compare-models-helper.sh score --task '...' --model '...' ..."
+        echo ""
+        return 0
+    fi
+
+    # Show recent comparisons
+    sqlite3 -separator '|' "$RESULTS_DB" "
+        SELECT c.id, c.created_at, c.task_type, c.task_description, c.winner_model
+        FROM comparisons c
+        ORDER BY c.created_at DESC
+        LIMIT $limit;
+    " 2>/dev/null | while IFS='|' read -r cid cdate ctype cdesc cwinner; do
+        echo "  #$cid [$ctype] $(echo "$cdesc" | head -c 60) ($cdate)"
+        if [[ -n "$cwinner" ]]; then
+            echo "    Winner: $cwinner"
+        fi
+
+        # Show scores for this comparison
+        sqlite3 -separator '|' "$RESULTS_DB" "
+            SELECT model_id, overall, correctness, completeness, code_quality, clarity, adherence
+            FROM comparison_scores
+            WHERE comparison_id = $cid
+            ORDER BY overall DESC;
+        " 2>/dev/null | while IFS='|' read -r mid ov co cm cq cl ca; do
+            printf "    %-20s overall:%d (corr:%d comp:%d qual:%d clar:%d adhr:%d)\n" \
+                "$mid" "$ov" "$co" "$cm" "$cq" "$cl" "$ca"
+        done
+        echo ""
+    done
+
+    # Show aggregate model rankings
+    echo "Aggregate Model Rankings"
+    echo "------------------------"
+    sqlite3 -separator '|' "$RESULTS_DB" "
+        SELECT model_id,
+               COUNT(*) as comparisons,
+               ROUND(AVG(overall), 1) as avg_overall,
+               SUM(CASE WHEN c.winner_model = cs.model_id THEN 1 ELSE 0 END) as wins
+        FROM comparison_scores cs
+        JOIN comparisons c ON c.id = cs.comparison_id
+        $where_clause
+        GROUP BY model_id
+        ORDER BY avg_overall DESC;
+    " 2>/dev/null | while IFS='|' read -r mid cnt avg wins; do
+        printf "  %-22s  avg:%s  wins:%s/%s\n" "$mid" "$avg" "$wins" "$cnt"
+    done
+    echo ""
+
+    return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -893,6 +1153,12 @@ main() {
             ;;
         discover)
             cmd_discover "$@"
+            ;;
+        score)
+            cmd_score "$@"
+            ;;
+        results)
+            cmd_results "$@"
             ;;
         help|--help|-h)
             cmd_help
