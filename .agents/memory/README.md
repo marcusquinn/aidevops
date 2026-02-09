@@ -261,24 +261,43 @@ FTS5 keyword search remains the default and works without any setup.
 
 ## Pattern Tracking
 
-Track what works and what fails across task types and models:
+Track what works and what fails across task types, models, and approaches.
+Patterns are captured automatically by the supervisor after task completion,
+and can also be recorded manually.
 
 ```bash
-# Record a pattern
+# Record a pattern with full metadata
 pattern-tracker-helper.sh record --outcome success --task-type bugfix \
-    --model sonnet --description "Structured debugging found root cause"
+    --model sonnet --task-id t102.3 --duration 120 \
+    --description "Structured debugging found root cause"
 
-# Get suggestions for a task
+# Get suggestions for a task (includes model routing hints)
 pattern-tracker-helper.sh suggest "refactor the auth middleware"
 
-# View pattern statistics
+# Get model recommendation based on historical success rates
+pattern-tracker-helper.sh recommend --task-type bugfix
+
+# View pattern statistics (includes supervisor-generated patterns)
 pattern-tracker-helper.sh stats
 
-# Or use the /patterns command
-/patterns refactor
+# Generate a comprehensive report
+pattern-tracker-helper.sh report
+
+# Export patterns for analysis
+pattern-tracker-helper.sh export --format json > patterns.json
+
+# Or use slash commands
+/patterns refactor          # Suggest patterns for a task
+/patterns report            # Full report
+/patterns recommend bugfix  # Model recommendation
+/route "fix auth bug"       # Model routing (now includes pattern data)
 ```
 
-See `scripts/pattern-tracker-helper.sh` for full documentation.
+**Automatic capture**: The supervisor stores `SUCCESS_PATTERN` and `FAILURE_PATTERN`
+entries after each task evaluation, tagged with model tier, duration, and retry count.
+This data feeds into the `recommend` command for data-driven model routing.
+
+See `scripts/pattern-tracker-helper.sh help` for full documentation.
 
 ## Memory Graduation (Sharing Learnings)
 

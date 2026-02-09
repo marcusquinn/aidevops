@@ -7665,6 +7665,7 @@ $task_memories"
 # Store a failure pattern in memory after evaluation
 # Called when a task fails, is blocked, or retries
 # Tags with supervisor context for future recall
+# Uses FAILURE_PATTERN type for pattern-tracker integration (t102.3)
 #######################################
 store_failure_pattern() {
     local task_id="$1"
@@ -7679,7 +7680,7 @@ store_failure_pattern() {
     # Only store meaningful failure patterns (not transient retries)
     case "$outcome_type" in
         blocked|failed)
-            local memory_type="FAILED_APPROACH"
+            true  # Always store these
             ;;
         retry)
             # Only store retry patterns if they indicate a recurring issue
@@ -7689,23 +7690,43 @@ store_failure_pattern() {
                     return 0
                     ;;
             esac
-            local memory_type="ERROR_FIX"
             ;;
         *)
             return 0
             ;;
     esac
 
+    # Look up model tier from task record for pattern routing (t102.3)
+    local model_tier=""
+    local task_model
+    task_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+    if [[ -n "$task_model" ]]; then
+        # Extract tier name from model string (e.g., "anthropic/claude-opus-4-6" -> "opus")
+        case "$task_model" in
+            *haiku*) model_tier="haiku" ;;
+            *flash*) model_tier="flash" ;;
+            *sonnet*) model_tier="sonnet" ;;
+            *opus*)  model_tier="opus" ;;
+            *pro*)   model_tier="pro" ;;
+        esac
+    fi
+
+    # Build structured content for pattern-tracker compatibility
     local content="Supervisor task $task_id ($outcome_type): $outcome_detail"
     if [[ -n "$description" ]]; then
-        content="$content | Task: $description"
+        content="[task:feature] $content | Task: $description"
     fi
+    [[ -n "$model_tier" ]] && content="$content [model:$model_tier]"
+
+    # Build tags with model info for pattern-tracker queries
+    local tags="supervisor,pattern,$task_id,$outcome_type,$outcome_detail"
+    [[ -n "$model_tier" ]] && tags="$tags,model:$model_tier"
 
     "$MEMORY_HELPER" store \
         --auto \
-        --type "$memory_type" \
+        --type "FAILURE_PATTERN" \
         --content "$content" \
-        --tags "supervisor,$task_id,$outcome_type,$outcome_detail" \
+        --tags "$tags" \
         2>/dev/null || true
 
     log_info "Stored failure pattern in memory: $task_id ($outcome_type: $outcome_detail)"
@@ -7715,6 +7736,7 @@ store_failure_pattern() {
 #######################################
 # Store a success pattern in memory after task completion
 # Records what worked for future reference
+# Uses SUCCESS_PATTERN type for pattern-tracker integration (t102.3)
 #######################################
 store_success_pattern() {
     local task_id="$1"
@@ -7725,26 +7747,63 @@ store_success_pattern() {
         return 0
     fi
 
+    # Look up model tier and timing from task record (t102.3)
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local model_tier=""
+    local task_model duration_info retries
+    task_model=$(db "$SUPERVISOR_DB" "SELECT model FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+
+    # Calculate duration if timestamps available
+    local started completed duration_secs=""
+    started=$(db "$SUPERVISOR_DB" "SELECT started_at FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    completed=$(db "$SUPERVISOR_DB" "SELECT completed_at FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    if [[ -n "$started" && -n "$completed" ]]; then
+        local start_epoch end_epoch
+        start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started" "+%s" 2>/dev/null || date -d "$started" "+%s" 2>/dev/null || echo "")
+        end_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$completed" "+%s" 2>/dev/null || date -d "$completed" "+%s" 2>/dev/null || echo "")
+        if [[ -n "$start_epoch" && -n "$end_epoch" ]]; then
+            duration_secs=$((end_epoch - start_epoch))
+        fi
+    fi
+
+    # Extract tier name from model string
+    if [[ -n "$task_model" ]]; then
+        case "$task_model" in
+            *haiku*) model_tier="haiku" ;;
+            *flash*) model_tier="flash" ;;
+            *sonnet*) model_tier="sonnet" ;;
+            *opus*)  model_tier="opus" ;;
+            *pro*)   model_tier="pro" ;;
+        esac
+    fi
+
+    # Build structured content for pattern-tracker compatibility
     local content="Supervisor task $task_id completed successfully"
     if [[ -n "$detail" && "$detail" != "no_pr" ]]; then
         content="$content | PR: $detail"
     fi
     if [[ -n "$description" ]]; then
-        content="$content | Task: $description"
+        content="[task:feature] $content | Task: $description"
+    fi
+    [[ -n "$model_tier" ]] && content="$content [model:$model_tier]"
+    [[ -n "$duration_secs" ]] && content="$content [duration:${duration_secs}s]"
+    if [[ "$retries" -gt 0 ]]; then
+        content="$content [retries:$retries]"
     fi
 
-    # Get retry count for context
-    local retries=0
-    retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo 0)
-    if [[ "$retries" -gt 0 ]]; then
-        content="$content | Succeeded after $retries retries"
-    fi
+    # Build tags with model and duration info for pattern-tracker queries
+    local tags="supervisor,pattern,$task_id,complete"
+    [[ -n "$model_tier" ]] && tags="$tags,model:$model_tier"
+    [[ -n "$duration_secs" ]] && tags="$tags,duration:$duration_secs"
+    [[ "$retries" -gt 0 ]] && tags="$tags,retries:$retries"
 
     "$MEMORY_HELPER" store \
         --auto \
-        --type "WORKING_SOLUTION" \
+        --type "SUCCESS_PATTERN" \
         --content "$content" \
-        --tags "supervisor,$task_id,complete" \
+        --tags "$tags" \
         2>/dev/null || true
 
     log_info "Stored success pattern in memory: $task_id"
