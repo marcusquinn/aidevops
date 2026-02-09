@@ -21,6 +21,147 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-09] Content Creation Agent Architecture
+
+**Status:** Planning
+**Estimate:** ~8h (ai:5h test:2h read:1h)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p026,Content Creation Agent Architecture,planning,0,5,,content|architecture|multimedia|agents,8h,5h,2h,1h,2026-02-09T00:00Z,
+-->
+
+#### Purpose
+
+Redesign the content creation agent layer to support multi-media (text, image, video, audio) and multi-channel (YouTube, TikTok, Instagram, blog, podcast, social, email, forums) content production from a single research-and-story foundation. Currently, content knowledge is scattered across domain-specific agents (youtube/, video.md, content/, seo/, social-media.md, voice/). This plan unifies them under a layered architecture: Research -> Story -> Production -> Distribution -> Optimization.
+
+#### Context
+
+**Problem:** Content isn't "a video" or "a blog post" -- it's a story expressed through different media and distributed across channels. The same research, narrative, and hooks can become a YouTube video, a blog post, a podcast episode, a social thread, a newsletter, a slideshow, or a book chapter. Current agent structure treats each output format as independent, duplicating research and strategy work.
+
+**Knowledge sources ingested (session 2026-02-09):**
+- 14 AI content creation guides (Miko's Lab) covering: niche selection, audience research (Reddit mining, 11-dimension framework), competitor reverse-engineering (Gemini 3), facial engineering for character consistency, Sora 2 Pro prompt structure (6-section master template), Veo 3.1 ingredients-to-video, seed bracketing (60% cost reduction), 8K camera model prompting, emotional block cues for natural AI speech, Nanobanana Pro JSON prompts for image gen, voice pipeline (CapCut -> ElevenLabs), slideshow workflows, UGC conversion frameworks, content agency production pipelines, A/B hook testing methodology
+- YouTube competitor research system (channel intel, topic research, script writing, SEO optimization) -- merged as PR #811
+- YouTube Data API v3 integration (youtube-helper.sh) with SA auth, quota tracking, 8 commands
+
+**Existing agents that touch content creation:**
+- `youtube.md` + `youtube/` -- YouTube-specific (channel-intel, topic-research, script-writer, optimizer, pipeline)
+- `video.md` + `tools/video/` -- Remotion, Higgsfield, yt-dlp, video prompt design
+- `tools/vision/` -- Image gen, understanding, editing
+- `tools/voice/` -- TTS/STT, voice bridge, transcription
+- `content.md` + `content/` -- Copywriting, editorial, platform personas
+- `social-media.md` + `tools/social-media/` -- X, LinkedIn, Reddit
+- `seo.md` + `seo/` -- SEO optimization
+- `marketing.md` -- Marketing strategy
+
+**Key design principle:** Tools stay in `tools/`, creative workflows live in `content/`, domain strategy stays in domain agents. Three layers, clean separation. The content layer orchestrates production using tools, and distribution agents adapt output for specific channels.
+
+**The multi-media multiplier:** One research session produces one story, which fans out to: YouTube long-form, YouTube Short, blog post, X thread, LinkedIn article, Reddit post, newsletter, podcast segment, carousel, forum answer. The pipeline agent orchestrates this fan-out.
+
+#### Decision Log
+
+- **Decision:** Layered architecture (Research -> Story -> Production -> Distribution -> Optimization) not flat agent list
+  **Rationale:** Content creation is a pipeline, not a collection of independent tools. Each layer feeds the next. Research is media-agnostic, Story is media-agnostic, Production is media-specific, Distribution is channel-specific. This prevents duplication and enables the multi-media multiplier.
+  **Date:** 2026-02-09
+
+- **Decision:** Extend existing `content.md` + `content/` rather than creating new top-level agent
+  **Rationale:** `content.md` already exists as a domain agent. Expanding it preserves the existing agent hierarchy and avoids proliferating top-level agents. YouTube, SEO, social-media remain as distribution-layer references.
+  **Date:** 2026-02-09
+
+- **Decision:** YouTube agents stay YouTube-specific, reference general content layer
+  **Rationale:** YouTube channel-intel, topic-research, script-writer, optimizer have YouTube-specific knowledge (API, algorithm, metadata). They should reference the general content production layer for media creation but keep their platform expertise. Same pattern for future TikTok, podcast, blog agents.
+  **Date:** 2026-02-09
+
+- **Decision:** PDF knowledge stored in memory + agent files, not referenced by source name
+  **Rationale:** The guides are session inspiration. The extracted frameworks, prompts, and tactics become native aidevops knowledge attributed to the agent system, not to external products or creators.
+  **Date:** 2026-02-09
+
+<!--TOON:decisions[4]{id,plan_id,decision,rationale,date,impact}:
+d063,p026,Layered architecture not flat agent list,Content creation is a pipeline where each layer feeds the next,2026-02-09,Architecture
+d064,p026,Extend existing content.md not new top-level agent,Preserves hierarchy and avoids agent proliferation,2026-02-09,Architecture
+d065,p026,YouTube agents stay YouTube-specific,Platform expertise stays in platform agents and references general layer,2026-02-09,Architecture
+d066,p026,PDF knowledge stored natively not by source name,Extracted knowledge becomes native aidevops knowledge,2026-02-09,Scope
+-->
+
+#### Proposed Structure
+
+```text
+content.md (orchestrator -- multi-media, multi-channel content creation)
+├── content/
+│   ├── research.md          — Audience research, niche validation, competitor analysis
+│   │                          Reddit mining (11-dimension framework), pain extraction,
+│   │                          trend detection, creator brain cloning (transcript corpus),
+│   │                          Gemini 3 video reverse-engineering, Whop/Google Trends validation
+│   │
+│   ├── story.md             — Narrative design: hooks, angles, frameworks, arcs
+│   │                          Media-agnostic "what are we saying and why"
+│   │                          Hook formulas (6-12 words), pattern interrupts,
+│   │                          Before/During/After arcs, pain vs aspiration angles,
+│   │                          4-part script framework, campaign audit process
+│   │
+│   ├── production/
+│   │   ├── writing.md       — Long-form, short-form, scripts, copy, captions
+│   │   ├── image.md         — Thumbnails, social graphics, illustrations
+│   │   │                      Nanobanana Pro JSON, Midjourney, Ideogram, Seedream, Flux
+│   │   │                      Style library system, annotated frame workflow
+│   │   ├── video.md         — AI video generation, editing, post-production
+│   │   │                      Sora 2 Pro (UGC), Veo 3.1 (cinematic), Higgsfield
+│   │   │                      Seed bracketing, 8K camera prompting, model routing
+│   │   │                      Shot-by-shot prompt structure, ingredients-to-video
+│   │   ├── audio.md         — Voice, music, sound design
+│   │   │                      ElevenLabs cloning, CapCut cleanup, emotional block cues
+│   │   │                      4-layer audio design (dialogue, ambient, SFX, music)
+│   │   └── characters.md    — Personas, facial engineering, character bibles,
+│   │                          brand identity, visual consistency across outputs
+│   │                          Sora 2 cameos, Veo 3.1 ingredients, character context profiles
+│   │
+│   ├── distribution/        — Channel-specific adaptation (references existing agents)
+│   │   ├── youtube.md       → youtube/ subagents (channel-intel, topic-research, etc.)
+│   │   ├── short-form.md    — TikTok, Reels, Shorts formatting + strategy
+│   │   ├── social.md        → tools/social-media/ (X, LinkedIn, Reddit)
+│   │   ├── blog.md          → seo/ for SEO writing, CMS publishing
+│   │   ├── email.md         — Newsletter, sequences, campaigns
+│   │   └── podcast.md       — Audio-first distribution
+│   │
+│   └── optimization.md      — A/B testing, analytics, iteration loops
+│                               Hook testing (5-10 variants), seed bracketing,
+│                               variant generation, kill/scale thresholds,
+│                               slide-level retention, platform-specific metrics
+```
+
+#### Progress
+
+- [ ] Phase 1: Research + Story agents ~2h (t199.1, t199.2)
+  - Create `content/research.md` with Reddit mining framework, niche validation, competitor analysis, creator brain clone, Gemini 3 reverse-engineering
+  - Create `content/story.md` with hook formulas, narrative arcs, pain/aspiration angles, campaign audit
+  - Migrate relevant knowledge from existing `content/` editorial agents
+- [ ] Phase 2: Production agents ~3h (t199.3, t199.4, t199.5, t199.6, t199.7)
+  - Create `content/production/writing.md` -- scripts, copy, captions, long-form
+  - Create `content/production/image.md` -- Nanobanana JSON, style libraries, thumbnail factory
+  - Create `content/production/video.md` -- Sora 2/Veo 3.1/Higgsfield routing, seed bracketing, prompt structures
+  - Create `content/production/audio.md` -- voice pipeline, emotional cues, sound design
+  - Create `content/production/characters.md` -- facial engineering, character bibles, persona consistency
+- [ ] Phase 3: Distribution + Optimization agents ~1.5h (t199.8, t199.9)
+  - Create distribution reference agents (youtube, short-form, social, blog, email, podcast)
+  - Create `content/optimization.md` -- A/B testing, variant generation, analytics loops
+- [ ] Phase 4: Orchestrator + Integration ~1h (t199.10)
+  - Rewrite `content.md` as the orchestrator that routes to research -> story -> production -> distribution
+  - Update `subagent-index.toon` with new content/ structure
+  - Update AGENTS.md progressive disclosure table
+- [ ] Phase 5: Verify + PR ~30m (t199.11)
+  - ShellCheck any new scripts
+  - Verify all cross-references resolve
+  - Create PR
+
+#### Surprises & Discoveries
+
+- Google silently changed OAuth2 JWT grant type URI from `urn:ietf:params:oauth:2.0:jwt-bearer` to `urn:ietf:params:oauth:grant-type:jwt-bearer` -- documented in youtube-helper.sh
+- Seed bracketing (testing seeds 1000-1010 per prompt) reduces AI video generation costs by 60% and raises success rate from 15% to 70%+
+- Veo 3.1 "Ingredients to Video" has solved character consistency -- upload face as ingredient, stays consistent across scenes. Frame-to-video produces inferior grainy output.
+- The 8K camera model prompt technique (appending specific camera model like "RED Komodo 6K") is described as the single biggest quality uplift for AI video generation
+- Emotional block cues (per-word emotion tagging) dramatically improve AI speech naturalness
+- Nanobanana Pro's visual annotation on starting frames is more effective than text-only prompts for controlling video model output
+- Reddit audience research (exact pain language, failed solutions, purchase triggers) is the #1 differentiator between content that converts and content that doesn't
+
 ### [2026-02-08] Git Issues Bi-directional Sync
 
 **Status:** In Progress (Phase 1/7)

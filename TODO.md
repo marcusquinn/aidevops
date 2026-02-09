@@ -60,6 +60,18 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t199 Content Creation Agent Architecture — multi-media multi-channel production pipeline #plan #content #architecture #multimedia → [todo/PLANS.md#2026-02-09-content-creation-agent-architecture] ~8h (ai:5h test:2h read:1h) logged:2026-02-09
+  - [ ] t199.1 Create content/research.md — audience research, niche validation, competitor analysis ~1h
+  - [ ] t199.2 Create content/story.md — narrative design, hooks, angles, frameworks ~1h
+  - [ ] t199.3 Create content/production/writing.md — scripts, copy, captions ~30m
+  - [ ] t199.4 Create content/production/image.md — AI image gen, thumbnails, style libraries ~45m
+  - [ ] t199.5 Create content/production/video.md — Sora 2, Veo 3.1, Higgsfield, seed bracketing ~45m
+  - [ ] t199.6 Create content/production/audio.md — voice pipeline, sound design, emotional cues ~30m
+  - [ ] t199.7 Create content/production/characters.md — facial engineering, character bibles, personas ~30m
+  - [ ] t199.8 Create content/distribution/ reference agents (youtube, short-form, social, blog, email, podcast) ~45m
+  - [ ] t199.9 Create content/optimization.md — A/B testing, variant generation, analytics loops ~30m
+  - [ ] t199.10 Rewrite content.md orchestrator + update subagent-index.toon + AGENTS.md ~45m
+  - [ ] t199.11 Verify cross-references, ShellCheck, create PR ~30m
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
   - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
