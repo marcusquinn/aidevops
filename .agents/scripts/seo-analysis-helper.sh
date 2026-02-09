@@ -97,7 +97,7 @@ analyze_quick_wins() {
     # Collect data from all sources
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     
     for toon_file in "$domain_dir"/*.toon; do
         [[ -f "$toon_file" ]] || continue
@@ -159,7 +159,7 @@ analyze_striking_distance() {
     
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     
     for toon_file in "$domain_dir"/*.toon; do
         [[ -f "$toon_file" ]] || continue
@@ -224,7 +224,7 @@ analyze_low_ctr() {
     
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     
     for toon_file in "$domain_dir"/*.toon; do
         [[ -f "$toon_file" ]] || continue
@@ -284,7 +284,7 @@ analyze_cannibalization() {
     temp_file=$(mktemp)
     local query_pages
     query_pages=$(mktemp)
-    trap 'rm -f "$temp_file" "$query_pages"' RETURN
+    trap 'rm -f "${temp_file:-}" "${query_pages:-}"' RETURN
     
     # Collect all query-page pairs
     for toon_file in "$domain_dir"/*.toon; do

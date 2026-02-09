@@ -120,7 +120,7 @@ config_set() {
 
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 }
@@ -253,7 +253,7 @@ cmd_setup() {
     # Save config
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     jq -n \
         --arg homeserverUrl "$homeserver" \
         --arg accessToken "$access_token" \
@@ -769,7 +769,7 @@ cmd_map() {
 
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     jq --arg room "$room_id" --arg runner "$runner_name" \
         '.roomMappings[$room] = $runner' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
@@ -801,7 +801,7 @@ cmd_unmap() {
 
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     jq --arg room "$room_id" 'del(.roomMappings[$room])' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"

@@ -134,7 +134,7 @@ check_positional_parameters() {
     # Exclude: heredocs (<<), awk scripts, main script body, and local assignments
     local tmp_file
     tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' RETURN
+    trap 'rm -f "${tmp_file:-}"' RETURN
 
     # Only check inside function bodies, exclude heredocs, awk/sed patterns, and comments
     for file in .agents/scripts/*.sh; do

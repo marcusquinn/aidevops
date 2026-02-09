@@ -597,7 +597,7 @@ cmd_update() {
             print_error "Failed to create temp file for setup script"
             return 1
         }
-        trap 'rm -f "$tmp_setup"' RETURN
+        trap 'rm -f "${tmp_setup:-}"' RETURN
         if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
             chmod +x "$tmp_setup"
             bash "$tmp_setup"
@@ -1485,7 +1485,7 @@ cmd_upgrade_planning() {
                 local temp_file="${todo_file}.merge"
                 local tasks_file
                 tasks_file=$(mktemp)
-                trap 'rm -f "$tasks_file"' RETURN
+                trap 'rm -f "${tasks_file:-}"' RETURN
                 printf '%s\n' "$existing_tasks" > "$tasks_file"
                 # Use while-read to avoid BSD awk "newline in string" warning with -v
                 local in_backlog=false
@@ -1550,7 +1550,7 @@ cmd_upgrade_planning() {
                 local temp_file="${plans_file}.merge"
                 local plans_content_file
                 plans_content_file=$(mktemp)
-                trap 'rm -f "$plans_content_file"' RETURN
+                trap 'rm -f "${plans_content_file:-}"' RETURN
                 printf '%s\n' "$existing_plans" > "$plans_content_file"
                 # Use while-read to avoid BSD awk "newline in string" warning with -v
                 local in_active=false

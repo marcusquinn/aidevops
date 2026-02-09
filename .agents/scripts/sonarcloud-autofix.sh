@@ -35,7 +35,7 @@ fix_missing_returns() {
     # This is a basic implementation - would need more sophisticated logic for production
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     
     awk '
     /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_function = 1 }
