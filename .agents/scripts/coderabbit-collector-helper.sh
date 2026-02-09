@@ -879,6 +879,24 @@ cmd_export() {
 }
 
 # =============================================================================
+# Tasks Command - Delegate to task creator (t166.3)
+# =============================================================================
+
+cmd_tasks() {
+    local task_creator
+    task_creator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/coderabbit-task-creator-helper.sh"
+
+    if [[ -x "$task_creator" ]]; then
+        "$task_creator" create --source db "$@"
+        return $?
+    fi
+
+    log_error "coderabbit-task-creator-helper.sh not found"
+    log_info "Install: ensure coderabbit-task-creator-helper.sh is in the scripts directory"
+    return 1
+}
+
+# =============================================================================
 # Help
 # =============================================================================
 
@@ -894,6 +912,7 @@ COMMANDS:
   poll        Poll until CodeRabbit posts a review on a PR
   query       Query stored comments with filters
   summary     Show severity/category breakdown and stats
+  tasks       Create TODO tasks from collected findings (t166.3)
   status      Show collector status and database info
   export      Export all comments as JSON or CSV
   help        Show this help
@@ -975,6 +994,7 @@ main() {
         poll)       cmd_poll "$@" ;;
         query)      cmd_query "$@" ;;
         summary)    cmd_summary "$@" ;;
+        tasks)      cmd_tasks "$@" ;;
         status)     cmd_status "$@" ;;
         export)     cmd_export "$@" ;;
         help|--help|-h) show_help ;;
