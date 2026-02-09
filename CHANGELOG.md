@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.108.0] - 2026-02-09
+
+### Added
+
+- add YouTube competitor research and content automation agent (#811)
+- add OpenClaw guided onboarding with Tailscale and OrbStack agents
+- add OpenCode model registry integration for daily model refresh (t194) (#810)
+- enhance pull command with orphan issue detection (t020.4) (#809)
+- enhance TODO.md parser with full field extraction and rich issue body (t020.1) (#804)
+- add pre-dispatch verification to prevent dispatching already-done tasks (#806)
+- rewrite PLANS.md extraction with awk for performance + fuzzy anchor matching (t020.2) (#805)
+- add trap cleanup for temp files across 13 scripts (t135.9) (#800)
+
+### Changed
+
+- Documentation: add task ID collision prevention rule to AGENTS.md (t201) (#820)
+- Refactor: delegate supervisor issue creation to issue-sync-helper.sh (t020.6) (#812)
+- Performance: add auth caching and auto model tier routing to supervisor (#794)
+
+### Fixed
+
+- resolve 12 MD022 violations in youtube/script-writer.md (#828)
+- validate PR title/branch contains task ID before attribution (t195) (#826)
+- replace ls with find in review-pulse-helper.sh (SC2012) (t196) (#818)
+- revert false t020.6 completion — supervisor attributed t194's PR #810 to t020.6
+- scope pre-dispatch TODO.md check to first occurrence and skip health probe for OpenCode (#808)
+- prevent pre-dispatch false positives from substring and non-completion matches (#807)
+- make trap RETURN cleanup safe under set -u (nounset) (#802)
+- enforce Anthropic-only model routing, remove all Google/OpenRouter fallbacks (#799)
+- redirect supervisor log functions to stderr (unblocks all workers) (#796)
+
 ## [2.106.0] - 2026-02-09
 
 ### Added
