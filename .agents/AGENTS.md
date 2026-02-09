@@ -278,6 +278,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
 | Vision | `tools/vision/overview.md` (decision tree, then `image-generation.md`, `image-understanding.md`, `image-editing.md`) |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
+| Encryption | `tools/credentials/encryption-stack.md` (decision tree), `tools/credentials/sops.md`, `tools/credentials/gocryptfs.md`, `tools/credentials/gopass.md` |
 | Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting) |
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
