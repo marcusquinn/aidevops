@@ -15,6 +15,7 @@
 #   capabilities  Show capability matrix
 #   providers     List supported providers
 #   discover      Detect available providers and models from local config
+#   cross-review  Dispatch same prompt to multiple models, diff results (t132.8)
 #   help          Show this help
 #
 # Author: AI DevOps Framework
@@ -468,6 +469,192 @@ cmd_providers() {
     return 0
 }
 
+# =============================================================================
+# Cross-Model Review (t132.8)
+# Dispatch the same review prompt to multiple models, collect results, diff.
+# =============================================================================
+
+#######################################
+# Cross-model review: dispatch same prompt to multiple models (t132.8)
+# Usage: compare-models-helper.sh cross-review --prompt "review this code" \
+#          --models "sonnet,opus,pro" [--workdir path] [--timeout N] [--output dir]
+# Dispatches via runner-helper.sh in parallel, collects outputs, produces summary.
+#######################################
+cmd_cross_review() {
+    local prompt="" models="" workdir="" review_timeout="600" output_dir=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --prompt) [[ $# -lt 2 ]] && { print_error "--prompt requires a value"; return 1; }; prompt="$2"; shift 2 ;;
+            --models) [[ $# -lt 2 ]] && { print_error "--models requires a value"; return 1; }; models="$2"; shift 2 ;;
+            --workdir) [[ $# -lt 2 ]] && { print_error "--workdir requires a value"; return 1; }; workdir="$2"; shift 2 ;;
+            --timeout) [[ $# -lt 2 ]] && { print_error "--timeout requires a value"; return 1; }; review_timeout="$2"; shift 2 ;;
+            --output) [[ $# -lt 2 ]] && { print_error "--output requires a value"; return 1; }; output_dir="$2"; shift 2 ;;
+            *) print_error "Unknown option: $1"; return 1 ;;
+        esac
+    done
+
+    if [[ -z "$prompt" ]]; then
+        print_error "--prompt is required"
+        echo "Usage: compare-models-helper.sh cross-review --prompt \"review this code\" --models \"sonnet,opus,pro\""
+        return 1
+    fi
+
+    # Default models: sonnet + opus (Anthropic second opinion)
+    if [[ -z "$models" ]]; then
+        models="sonnet,opus"
+    fi
+
+    # Set up output directory
+    if [[ -z "$output_dir" ]]; then
+        output_dir="${HOME}/.aidevops/.agent-workspace/tmp/cross-review-$(date +%Y%m%d%H%M%S)"
+    fi
+    mkdir -p "$output_dir"
+
+    # Set workdir
+    if [[ -z "$workdir" ]]; then
+        workdir="$(pwd)"
+    fi
+
+    local runner_helper="${SCRIPT_DIR}/runner-helper.sh"
+    if [[ ! -x "$runner_helper" ]]; then
+        print_error "runner-helper.sh not found at $runner_helper"
+        return 1
+    fi
+
+    # Parse models list
+    local -a model_array=()
+    IFS=',' read -ra model_array <<< "$models"
+
+    if [[ ${#model_array[@]} -lt 2 ]]; then
+        print_error "At least 2 models required for cross-review (got ${#model_array[@]})"
+        return 1
+    fi
+
+    echo ""
+    echo "Cross-Model Review"
+    echo "==================="
+    echo "Models: ${models}"
+    echo "Output: ${output_dir}"
+    echo "Timeout: ${review_timeout}s per model"
+    echo ""
+
+    # Create temporary runners for each model and dispatch in parallel
+    local -a pids=()
+    local -a runner_names=()
+    local -a model_names=()
+
+    for model_tier in "${model_array[@]}"; do
+        model_tier=$(echo "$model_tier" | tr -d ' ')
+        [[ -z "$model_tier" ]] && continue
+
+        local runner_name="cross-review-${model_tier}-$$"
+        runner_names+=("$runner_name")
+        model_names+=("$model_tier")
+
+        # Resolve tier to full model string for display
+        local resolved_model
+        resolved_model=$(resolve_model_tier "$model_tier")
+
+        echo "  Dispatching to ${model_tier} (${resolved_model})..."
+
+        # Create runner, dispatch, capture output
+        (
+            "$runner_helper" create "$runner_name" \
+                --model "$model_tier" \
+                --description "Cross-review: $model_tier" \
+                --workdir "$workdir" 2>/dev/null || true
+
+            local result_file="${output_dir}/${model_tier}.txt"
+            "$runner_helper" run "$runner_name" "$prompt" \
+                --model "$model_tier" \
+                --timeout "$review_timeout" \
+                --format json 2>/dev/null > "${output_dir}/${model_tier}.json" || true
+
+            # Extract text response from JSON
+            if [[ -f "${output_dir}/${model_tier}.json" ]]; then
+                jq -r '.parts[]? | select(.type == "text") | .text' \
+                    "${output_dir}/${model_tier}.json" 2>/dev/null > "$result_file" || true
+            fi
+
+            # Clean up runner
+            "$runner_helper" destroy "$runner_name" --force 2>/dev/null || true
+        ) &
+        pids+=($!)
+    done
+
+    # Wait for all dispatches to complete
+    echo ""
+    echo "Waiting for ${#pids[@]} models to respond..."
+    local failed=0
+    for i in "${!pids[@]}"; do
+        if ! wait "${pids[$i]}" 2>/dev/null; then
+            echo "  ${model_names[$i]}: failed"
+            failed=$((failed + 1))
+        else
+            echo "  ${model_names[$i]}: done"
+        fi
+    done
+
+    echo ""
+
+    # Collect and display results
+    local results_found=0
+    for model_tier in "${model_names[@]}"; do
+        local result_file="${output_dir}/${model_tier}.txt"
+        if [[ -f "$result_file" && -s "$result_file" ]]; then
+            results_found=$((results_found + 1))
+            echo "=== ${model_tier} ==="
+            echo ""
+            cat "$result_file"
+            echo ""
+            echo "---"
+            echo ""
+        fi
+    done
+
+    if [[ "$results_found" -lt 2 ]]; then
+        print_warning "Only $results_found model(s) returned results. Need at least 2 for comparison."
+        echo "Check output directory: $output_dir"
+        return 1
+    fi
+
+    # Generate diff summary if we have 2+ results
+    echo "=== DIFF SUMMARY ==="
+    echo ""
+    echo "Models compared: ${models}"
+    echo "Results: ${results_found}/${#model_names[@]} successful"
+    echo ""
+
+    # Word count comparison
+    echo "Response sizes:"
+    for model_tier in "${model_names[@]}"; do
+        local result_file="${output_dir}/${model_tier}.txt"
+        if [[ -f "$result_file" && -s "$result_file" ]]; then
+            local wc_result
+            wc_result=$(wc -w < "$result_file" | tr -d ' ')
+            echo "  ${model_tier}: ${wc_result} words"
+        fi
+    done
+    echo ""
+
+    # If exactly 2 models, show a simple diff
+    if [[ ${#model_names[@]} -eq 2 ]]; then
+        local file_a="${output_dir}/${model_names[0]}.txt"
+        local file_b="${output_dir}/${model_names[1]}.txt"
+        if [[ -f "$file_a" && -f "$file_b" ]]; then
+            echo "Diff (${model_names[0]} vs ${model_names[1]}):"
+            diff --unified=3 "$file_a" "$file_b" 2>/dev/null | head -100 || echo "  (files are identical or diff unavailable)"
+            echo ""
+        fi
+    fi
+
+    echo "Full results saved to: $output_dir"
+    echo ""
+
+    return 0
+}
+
 cmd_help() {
     echo ""
     echo "Compare Models Helper - AI Model Capability Comparison"
@@ -486,6 +673,7 @@ cmd_help() {
     echo "  discover      Detect available providers from local config"
     echo "  score         Record model comparison scores (from evaluation)"
     echo "  results       View past comparison results and rankings"
+    echo "  cross-review  Dispatch same prompt to multiple models, diff results"
     echo "  help          Show this help"
     echo ""
     echo "Examples:"
@@ -511,6 +699,14 @@ cmd_help() {
     echo "  --probe        Verify API keys by calling provider endpoints"
     echo "  --list-models  List live models from each verified provider"
     echo "  --json         Output discovery results as JSON"
+    echo ""
+    echo "Cross-review examples:"
+    echo "  compare-models-helper.sh cross-review \\"
+    echo "    --prompt 'Review this code for security issues: ...' \\"
+    echo "    --models 'sonnet,opus,pro'"
+    echo "  compare-models-helper.sh cross-review \\"
+    echo "    --prompt 'Audit the architecture of this project' \\"
+    echo "    --models 'opus,pro' --timeout 900"
     echo ""
     echo "Data is embedded in this script. Last updated: 2025-02-08."
     echo "For live pricing, use /compare-models (with web fetch)."
@@ -1159,6 +1355,9 @@ main() {
             ;;
         results)
             cmd_results "$@"
+            ;;
+        cross-review)
+            cmd_cross_review "$@"
             ;;
         help|--help|-h)
             cmd_help
