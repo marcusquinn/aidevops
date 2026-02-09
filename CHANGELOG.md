@@ -7,6 +7,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.106.0] - 2026-02-09
+
+### Added
+
+- add SOPS + gocryptfs encryption stack (t134) (#718)
+- add verify-run-helper.sh with proof logging to verify-proof-log.md (#715)
+- add cloud voice agents and S2S model docs (t080) (#713)
+- provider-agnostic task claiming via TODO.md (t165) (#712)
+- add tools/vision/ category for visual AI models (t131) (#710)
+- add OrbStack VM self-test for setup.sh fresh install (#706)
+- add /list-verify command for verification queue (#705)
+- add compaction-resilient session state — continuation prompts and auto-checkpoints (t187) (#699)
+- add pre-migration safety backups for non-git state (t188) (#697)
+- add worktree ownership registry to prevent cross-session removal (t189)
+- add memory audit pulse — periodic self-improvement scan (t185)
+- add transcription-helper.sh for audio/video transcription (t072)
+- add memory graduation — promote validated learnings into shared docs (t184)
+- add memory deduplication and auto-pruning (t181)
+- one-command install — auto-install git, Node.js, Bun, OpenCode, and OrbStack VM support
+- add post-merge verification phase to supervisor state machine (t180)
+- issue-sync reconciliation — close stale issues, fix ref:GH# drift, wire into supervisor pulse (t179)
+- add /runners-check command for quick queue health diagnostics
+- add document extraction subagent, workflow, and CLI helper (t073)
+- add agent-device subagent for AI-driven mobile automation (t120)
+- enhance cloud GPU deployment guide with provider CLIs, monitoring, and updated pricing (t133)
+- add /compare-models and /compare-models-free slash commands for model capability comparison (t168) (#660)
+- add daily CodeRabbit review pulse for self-improving codebase quality (t166) (#657)
+- add uncertainty decision framework for headless workers (t176) (#656)
+- add git heuristic signals to evaluate_worker (t175) (#655)
+- add mission statement with ROI and self-improvement directives (#652)
+- add --headless flag to full-loop for autonomous worker operation (t174) (#642)
+- bidirectional adaptive concurrency - scale up when resources available (#637)
+- provider-agnostic task claiming via TODO.md assignee: field (t165) (#627)
+- register Mom Test UX/CRO agent and fix cross-references (t101)
+- distributed task claiming via GitHub Issue assignees (t164)
+- add platform persona adaptations for content guidelines (t076) (#614)
+- comprehensive TTS/STT model catalog (t071) (#613)
+- integrate Content Calendar Workflow subagent into framework (t075) (#611)
+- integrate LinkedIn and Reddit subagents into framework cross-references (t077) (#610)
+- integrate Tirith terminal security guard into framework (t124) (#605)
+- add Playwright device emulation subagent (t098) (#604)
+- add AXe CLI for iOS simulator accessibility automation (t100) (#603)
+- integrate Lumen subagent into framework cross-references (t078) (#602)
+- add DocStrange subagent for document conversion and structured extraction (t074) (#600)
+- integrate SEO Machine content analysis and writing workflows (t017) (#599)
+- add iOS Simulator MCP integration for AI-driven simulator interaction (t097) (#597)
+- complete XcodeBuildMCP integration with mobile domain indexing (t095) (#596)
+- add Maestro for mobile and web E2E testing (t096) (#595)
+- add Uncloud multi-machine container orchestration integration (t016) (#594)
+- add image SEO enhancement with AI vision subagents (t013) (#593)
+- add intent-based resolution rules to conflict-resolution guide (#592)
+- add Pipecat-OpenCode voice bridge subagent (t114) (#581)
+- improve agent testing framework with JSON output parsing and shipped test suites (t118) (#587)
+- integrate QuickFile MCP server into aidevops framework (t007) (#585)
+- iPhone Shortcut for voice dispatch to OpenCode (t113) (#577)
+- add hyprwhspr speech-to-text subagent for Linux (t027) (#575)
+- add objective-runner-helper.sh with safety guardrails (t111) (#566)
+- add cloud GPU deployment guide for AI model hosting (#565)
+- Claude Code destructive command hooks (t009) (#562)
+- integrate Shannon AI pentester for security testing (t023) (#561)
+- batch subagent creation + orchestration fixes (#557)
+- integrate Shannon AI pentester for security testing (t023) (#556)
+- add Claude Code destructive command safety hooks (t009) (#554)
+- add git conflict resolution skill (t153) (#552)
+- add GHA workflow and PRD content rendering for issue-sync (t020.2, t020.3) (#543)
+- add issue-sync-helper.sh for bi-directional TODO/PLANS ↔ GitHub issue sync (t020) (#542)
+- integrate session-review and agent-review into batch completion lifecycle (t128.9) (#494)
+
+### Changed
+
+- Documentation: evaluate tools/multimodal/ vs current per-modality structure (t132) (#708)
+- Documentation: add development lifecycle enforcement to user guide (t186) (#700)
+- Refactor: extract npm_global_install() helper for sudo-aware global installs (#694)
+- Documentation: add t189 (worktree ownership safety) and immediate AGENTS.md rule to prevent cross-session worktree removal [skip ci]
+- Documentation: add t187 (compaction-resilient sessions) and t188 (pre-migration safety backups) [skip ci]
+- Documentation: add t185 — memory audit pulse for automated self-improvement loop
+- Documentation: add t184 — graduate validated memories into shared docs for all users
+- Documentation: add todo/VERIFY.md for post-merge verification queue, update t180 design
+- Documentation: mark t073 complete (PR #667 merged), fix corrupted task line
+- Documentation: add t180-t183 from memory audit — verification phase, dedup, GHA safety, dispatch errors
+- Documentation: add t179 issue-sync reconciliation task to TODO.md
+- Documentation: mark t120 and t133 complete in TODO.md
+- Documentation: t167 research — Gemini Code Assist full codebase review findings (#650)
+- Refactor: deduplicate agent instructions and trim AGENTS.md for token efficiency (#651)
+- Documentation: add t169-t174 for open bugfixes and runner improvements
+- Documentation: mark t101 complete - PR #628 merged, mom-test-ux registered in index
+- Documentation: mark t060, t062 complete - research notes already in TODO.md, verified content
+- Documentation: mark t152, t153 complete - PRs #548, #552 already merged
+- Documentation: mark t164 complete - PR #621 merged with distributed task claiming
+- Documentation: mark t071, t075, t076, t077 complete with verified merged PRs
+- Documentation: add t168 - /compare-models and /compare-models-free commands for model capability comparison
+- Documentation: add t167 - investigate Gemini Code Assist for full codebase review pulse
+- Documentation: add t166 - daily CodeRabbit full codebase review pulse for self-improving aidevops
+- Documentation: reconcile 20 tasks with verified merged PRs
+- Documentation: mark t163 complete - PR #622 merged with verified deliverables
+- Documentation: VoiceInk to OpenCode macOS Shortcut guide (t112) (#576)
+- Documentation: supervisor improves the process, never does work for workers (#570)
+- Documentation: runners supervisor continuous loop — never stop, 1min pulse (#567)
+- Documentation: complete t060 research - jj (Jujutsu) VCS evaluation for aidevops (#563)
+- Documentation: clarify /runners supervisor role — orchestrate only, dispatch fixes as tasks (#560)
+
+### Fixed
+
+- normalize grep BRE patterns and shellcheck flags in verify-run-helper.sh (#716)
+- strip verbose workflow from /onboarding command prompt (#714)
+- secretlint-helper.sh install and scan in git worktrees (t191) (#717)
+- remove agent: Onboarding from /onboarding command frontmatter (#709)
+- add blank lines before category headings in graduation output (MD022) (#703)
+- remove --agent Onboarding flag from opencode launch (#704)
+- remove auth gate from onboarding launch — OpenCode handles auth itself (#702)
+- add spinner to MCP package installs for visible progress (#701)
+- decouple OpenCode commands from config guard, reorder after CLI install, add auth check (#698)
+- setup.sh set-e resilience, template path, npm/sudo, and venv recovery
+- Tabby repo pollution + missing npm on ARM64 Ubuntu (#688)
+- improve supervisor dispatch error capture when worker fails to start (t183)
+- validate auto-fixes before committing in GHA workflow (t182)
+- xcode-select timeout + OrbStack VM exact match (#683)
+- cancel stale diagnostic subtasks in pulse Phase 4c
+- anchor task ID grep to capture dotted subtask IDs
+- add PR check to force-fresh worktree cleanup path
+- check for open PRs before deleting 'stale' branches in worktree cleanup (#663)
+- handle missing worktrees in cmd_reprompt between retries (t178) (#659)
+- enforce worker TODO.md restriction with multi-layer guards (t173) (#649)
+- pass --non-interactive to setup.sh in aidevops update (t169) (#646)
+- suppress stdout pollution in create_task_worktree (t169, t173) (#643)
+- supervisor identity matching — prefer GitHub username, fuzzy compare (#641)
+- add GitHub auth precheck to cmd_dispatch and full-loop (#640)
+- resolve supervisor concurrency limiter race condition (t172) (#639)
+- seed evaluate_worker PR URL from DB to prevent clean_exit_no_signal retry loop (#638)
+- import-credentials now handles multi-tenant credential files (t170) (#636)
+- detect and clean stale branches before worker dispatch
+- prevent false task completion cascade (t163) (#622)
+- resolve merge conflict - accept PR #616 revert of false completions
+- revert 32 falsely marked-complete tasks in TODO.md (#616)
+- detect backend quota errors on EXIT:0 and defer retries (t095-diag-1) (#601)
+- supervisor DB migration safety - dynamic column detection and backup before ALTER TABLE (t162) (#598)
+- supervisor DB safety - add backup-before-migrate and explicit column migrations (t162) (#591)
+- supervisor TODO.md push fails under concurrent workers (t160) (#589)
+- resolve clean_exit_no_signal retry loop in supervisor evaluation (t161) (#586)
+- reduce duplication and add modern Git features to conflict-resolution (#583)
+- prevent concurrent pulse dispatch exceeding concurrency limits (t159) (#584)
+- supervisor dispatch passes task description to workers (t158) (#574)
+- prevent TODO.md race condition with serialized locking and worker restriction (#569)
+- add health check to supervisor reprompt to prevent wasting retries on dead backends (#568)
+- refresh version cache after setup.sh completes (#551)
+- guard ((var++)) with || true to prevent silent exit under set -e (#548)
+- sync Homebrew formula version during release and add to version validator (t135.11) (#495)
+
 ## [2.105.4] - 2026-02-07
 
 ### Fixed
