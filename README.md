@@ -239,6 +239,7 @@ aidevops init beads              # Enable beads (includes planning)
 | Command | Purpose |
 |---------|---------|
 | `/ready` | Show tasks with no open blockers |
+| `/list-verify` | List verification queue (pending, passed, failed) |
 | `/sync-beads` | Sync TODO.md/PLANS.md with Beads graph |
 | `bd list` | List all tasks in Beads |
 | `bd ready` | Show ready tasks (Beads CLI) |
