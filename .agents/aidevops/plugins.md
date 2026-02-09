@@ -11,7 +11,7 @@ Plugins are configured in `.aidevops.json` under the `plugins` array:
   "plugins": [
     {
       "name": "pro",
-      "repo": "https://github.com/user/aidevops-pro.git",
+      "repo": "https://github.com/marcusquinn/aidevops-pro.git",
       "branch": "main",
       "namespace": "pro",
       "enabled": true
@@ -57,7 +57,7 @@ Plugins deploy to `~/.aidevops/agents/<namespace>/`:
 ### Add a Plugin
 
 ```bash
-aidevops plugin add https://github.com/user/aidevops-pro.git --namespace pro
+aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro
 ```
 
 This:
@@ -146,3 +146,38 @@ Plugins occupy a distinct tier alongside existing tiers:
 Plugin state is stored in `~/.config/aidevops/plugins.json` (global, not per-project). The file is auto-created on first use. Per-project `.aidevops.json` also has a `plugins` array for project-level plugin awareness.
 
 Run `aidevops plugin help` for full CLI documentation.
+
+## Official Plugins
+
+The following plugins are maintained alongside the core aidevops framework:
+
+| Plugin | Namespace | Repo | Description |
+|--------|-----------|------|-------------|
+| **aidevops-pro** | `pro` | `https://github.com/marcusquinn/aidevops-pro.git` | Premium agents: advanced deployment, monitoring, cost optimisation |
+| **aidevops-anon** | `anon` | `https://github.com/marcusquinn/aidevops-anon.git` | Privacy agents: browser fingerprints, proxy rotation, identity isolation |
+
+### Quick Install
+
+```bash
+# Install pro plugin
+aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro
+
+# Install anon plugin
+aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon
+```
+
+### aidevops-pro Agents
+
+| Agent | Purpose |
+|-------|---------|
+| `pro/advanced-deployment.md` | Blue-green, canary, and rolling deployment strategies |
+| `pro/monitoring.md` | Prometheus/Grafana observability stack setup |
+| `pro/cost-optimisation.md` | Cloud spend analysis and right-sizing recommendations |
+
+### aidevops-anon Agents
+
+| Agent | Purpose |
+|-------|---------|
+| `anon/browser-profiles.md` | Browser fingerprint profile creation and management |
+| `anon/proxy-rotation.md` | Proxy pool management and rotation strategies |
+| `anon/identity-isolation.md` | Session isolation and identity separation |

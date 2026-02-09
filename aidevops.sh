@@ -2156,8 +2156,8 @@ cmd_plugin() {
                 echo "  --name <name>        Human-readable name (default: derived from repo)"
                 echo ""
                 echo "Examples:"
-                echo "  aidevops plugin add https://github.com/user/aidevops-pro.git --namespace pro"
-                echo "  aidevops plugin add git@github.com:user/aidevops-anon.git --namespace anon"
+                echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
+                echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon"
                 return 1
             fi
 
@@ -2508,8 +2508,8 @@ cmd_plugin() {
             echo "  --name <name>        Human-readable plugin name"
             echo ""
             echo "Examples:"
-            echo "  aidevops plugin add https://github.com/user/aidevops-pro.git --namespace pro"
-            echo "  aidevops plugin add git@gitea.example.com:user/aidevops-anon.git --namespace anon"
+            echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
+            echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon"
             echo "  aidevops plugin list"
             echo "  aidevops plugin update"
             echo "  aidevops plugin update pro"
