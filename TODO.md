@@ -707,7 +707,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Add `aidevops init sops` feature flag. Creates .sops.yaml with age key, adds patterns for common secret files (*.secret.yaml, configs/*.enc.json). Add to features list. Non-breaking -- only activates when explicitly requested.
   - [ ] t134.4 Document full encryption stack in credentials docs ~30m blocked-by:t134.1,t134.2
     - Notes: Update gopass.md and api-key-setup.md with encryption stack overview: gopass (secret values), SOPS (config files in repos), gocryptfs (local folders). Decision record: chose SOPS over git-crypt (value-level encryption, CNCF backing, key rotation) and gocryptfs over VeraCrypt (no disk images to manage, CLI-native, overlay filesystem).
-- [ ] t191 Fix secretlint-helper.sh install and scan in git worktrees #bugfix #tools #secretlint ~1h (ai:40m test:15m read:5m) ref:GH#711 assignee:marcusquinn started:2026-02-09T02:53:00Z logged:2026-02-09
+- [x] t191 Fix secretlint-helper.sh install and scan in git worktrees #bugfix #tools #secretlint ~1h (ai:40m test:15m read:5m) ref:GH#711 assignee:marcusquinn started:2026-02-09T02:53:00Z logged:2026-02-09 completed:2026-02-09
   - Notes: secretlint-helper.sh install puts packages in main repo node_modules/, but scan runs in CWD. In worktrees, node_modules/ doesn't exist so check_rules_installed() always fails. Fix: resolve main worktree path via `git worktree list --porcelain | head -1`, use `npm list --prefix <main_path>` as fallback, and make install worktree-aware (install to main repo or symlink).
 
 <!--TOON:backlog[90]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
