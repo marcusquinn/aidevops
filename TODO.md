@@ -78,7 +78,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09
   - [x] t020.4 Pull command (GH to TODO.md) #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:36Z completed:2026-02-09
   - [x] t020.5 Close + status commands #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:44Z completed:2026-02-09
-  - [ ] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m assignee:marcusquinn started:2026-02-09T21:13:17Z
+  - [x] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m assignee:marcusquinn started:2026-02-09T21:13:17Z completed:2026-02-09
 - [ ] t195 Supervisor evaluate_worker PR validation — verify PR title/branch contains task ID before attributing #bugfix #supervisor ~1h (ai:45m test:15m) logged:2026-02-09
   - Notes: evaluate_worker() fallback PR detection (line ~4639) uses `gh pr list --head` to find PRs matching the task's branch. If the branch column in the DB is corrupted (e.g., t194's branch was recorded as feature/t020.6), the wrong PR gets attributed to the wrong task, causing false completion. Fix: after finding a PR via branch match, verify the PR title contains the task ID. If not, log a warning and skip. Discovered when t020.6 was falsely marked complete with t194's PR #810.
 - [ ] t196 Fix RETURN trap clobbering in trap cleanup scripts #bugfix #quality #shell ~1h (ai:45m test:15m) logged:2026-02-09
