@@ -236,4 +236,11 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: rg "availability_helper" .agents/scripts/supervisor-helper.sh
   check: file-exists tests/test-model-availability.sh
 
+- [x] v038 t168.3 Response comparison and scoring framework | PR #773 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/scripts/response-scoring-helper.sh, .agents/tools/ai-assistants/response-scoring.md, tests/test-response-scoring.sh
+  check: file-exists .agents/scripts/response-scoring-helper.sh
+  check: shellcheck .agents/scripts/response-scoring-helper.sh
+  check: bash -n .agents/scripts/response-scoring-helper.sh
+  check: file-exists tests/test-response-scoring.sh
+
 <!-- VERIFY-QUEUE-END -->

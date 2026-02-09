@@ -571,3 +571,14 @@ VERIFY.md has the check definitions and pass/fail status.
   PASS | check 5: `file-exists tests/test-model-availability.sh`
   exit: 0 | exists (9409 bytes)
 
+## v038 t168.3 | PASSED | 2026-02-09T15:47:11Z | by:marcusquinn | #773
+
+  PASS | check 1: `file-exists .agents/scripts/response-scoring-helper.sh`
+  exit: 0 | exists (35404 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/response-scoring-helper.sh`
+  exit: 0 | 0 issues
+  PASS | check 3: `bash -n .agents/scripts/response-scoring-helper.sh`
+  exit: 0 | syntax OK
+  PASS | check 4: `file-exists tests/test-response-scoring.sh`
+  exit: 0 | exists (12053 bytes)
+
