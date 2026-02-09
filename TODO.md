@@ -60,6 +60,22 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
+  - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h
+  - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h
+  - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m
+  - [ ] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h
+  - [ ] t135.9 Add trap cleanup for temp files #quality #shell ~1h
+  - [ ] t135.10 Fix package.json main field #bugfix #config ~15m
+  - [ ] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h
+  - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m
+- [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
+  - [ ] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m
+  - [ ] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m
+  - [ ] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m
+  - [ ] t020.4 Pull command (GH to TODO.md) #feature ~30m
+  - [ ] t020.5 Close + status commands #feature ~30m
+  - [ ] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m
 - [x] t189 Worktree ownership safety — prevent sessions from removing worktrees owned by other parallel sessions #bugfix #git #supervisor ~2h (ai:1.5h test:30m) ref:GH#692 assignee:marcusquinn started:2026-02-09T00:24:23Z logged:2026-02-09 completed:2026-02-09 verified:2026-02-09 PR #695 merged
   - [x] t189.1 Add worktree ownership registry ~45m blocked-by:none
     - Notes: When a session creates or claims a worktree, register it in a SQLite table or lockfile: worktree path, session ID, PID, task ID, created timestamp. Before removing any worktree, check the registry — if another session owns it and its PID is still alive, REFUSE to remove. If PID is dead but session is recent (<1h), WARN and require --force. This prevents the exact bug that happened: supervisor session cleaned up a worktree that a parallel interactive session was actively using.
