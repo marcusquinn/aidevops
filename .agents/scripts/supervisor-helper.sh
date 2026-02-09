@@ -2556,12 +2556,24 @@ check_task_already_done() {
     fi
 
     # Check 1: Is the task already marked [x] in TODO.md?
+    # IMPORTANT: TODO.md may contain the same task ID in multiple sections:
+    # - Active task list (authoritative — near the top)
+    # - Completed plan archive (historical — further down, from earlier iterations)
+    # We must check the FIRST occurrence only. If the first match is [x], it's done.
+    # If the first match is [ ] or [-], it's NOT done (even if a later [x] exists).
     local todo_file="$project_root/TODO.md"
     if [[ -f "$todo_file" ]]; then
-        # Match: "- [x] tNNN " with the exact task ID (word boundary via space)
-        if grep -qE "^\s*- \[x\] ${task_id}[[:space:]]" "$todo_file" 2>/dev/null; then
-            log_info "Pre-dispatch check: $task_id is marked [x] in TODO.md" >&2
-            return 0
+        local first_match=""
+        first_match=$(grep -E "^\s*- \[(x| |-)\] ${task_id}[[:space:]]" "$todo_file" 2>/dev/null | head -1) || true
+        if [[ -n "$first_match" ]]; then
+            if [[ "$first_match" =~ \[x\] ]]; then
+                log_info "Pre-dispatch check: $task_id is marked [x] in TODO.md (first occurrence)" >&2
+                return 0
+            else
+                # First occurrence is [ ] or [-] — task is NOT done, skip further checks
+                log_info "Pre-dispatch check: $task_id is [ ] in TODO.md (first occurrence — ignoring any later [x] entries)" >&2
+                return 1
+            fi
         fi
     fi
 
@@ -3385,6 +3397,15 @@ check_model_health() {
                 return 1
                 ;;
             *)
+                # When using OpenCode, the availability helper may fail because OpenCode
+                # manages API keys internally (no standalone ANTHROPIC_API_KEY env var).
+                # In this case, skip the slow CLI probe entirely and trust OpenCode.
+                # If the model is truly unavailable, dispatch will fail and retry handles it.
+                if [[ "$ai_cli" == "opencode" ]]; then
+                    log_info "Model health: skipping probe for OpenCode-managed provider (no direct API key)"
+                    _PULSE_HEALTH_VERIFIED="true"
+                    return 0
+                fi
                 log_verbose "Availability helper returned $avail_exit, falling through to CLI probe"
                 ;;
         esac
