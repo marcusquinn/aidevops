@@ -409,7 +409,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Added run_session_review() to supervisor-helper.sh. On batch completion: captures session context via session-review-helper.sh json, extracts learnings via session-distill-helper.sh auto, stores memory snapshot, suggests @agent-review as non-blocking recommendation. Hooked into check_batch_completion() after run_batch_retrospective(). All calls non-blocking. PR #494 merged.
   - [x] t128.10 Automatic release at batch milestones ~2h blocked-by:t128.8 completed:2026-02-08
     - Notes: Already implemented: trigger_batch_release() handles version-manager.sh release, check_batch_completion() calls it when release_on_complete flag is set, cmd_release() provides manual control. Schema has release_on_complete and release_type columns. cmd_batch accepts --release-on-complete and --release-type flags. Verified complete.
-- [ ] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) ref:GH#499 logged:2026-01-23 started:2026-01-23T00:00Z
+- [x] t068 Multi-Agent Orchestration & Token Efficiency #plan → [todo/PLANS.md#2026-01-23-multi-agent-orchestration--token-efficiency] ~5d (ai:3d test:1d read:1d) ref:GH#499 logged:2026-01-23 started:2026-01-23T00:00Z completed:2026-02-09
   - [x] t068.1 Custom System Prompt (prompts/build.txt) ~2h blocked-by:none completed:2026-01-24
   - [x] t068.2 Compaction Plugin (opencode-aidevops-plugin) ~4h blocked-by:t068.1 completed:2026-01-24
   - [x] t068.3 Lossless AGENTS.md Compression ~3h blocked-by:t068.1 completed:2026-01-24
@@ -417,7 +417,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4 completed:2026-01-24
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
-  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5 ref:GH#499
+  - [x] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5 ref:GH#499 completed:2026-02-09 verified:2026-02-09
+    - Notes: Already implemented as cmd_dashboard() in supervisor-helper.sh (lines 8989-9498). Full interactive TUI with: batch summary, progress bar, task table with status icons/colors, system resources (CPU/memory/processes), active worker PIDs, keyboard controls (q/p/r/j/k/?), scroll support, adaptive column widths.
 - [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 completed:2026-02-08 verified:2026-02-08 PR #562 merged
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
