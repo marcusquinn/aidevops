@@ -92,7 +92,7 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- 13 primary agents (Build+, SEO, Marketing, etc.) with @plan-plus for planning-only mode
+- 11 primary agents (Build+, SEO, Marketing, etc.) with specialist @subagents on demand
 - 735+ subagent markdown files organized by domain
 - 194 helper scripts in `.agents/scripts/`
 - 39 slash commands for common workflows
@@ -1406,7 +1406,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 13 primary agents, 735+ subagents, and 194 helper scripts.
+This installs the complete framework: 11 primary agents, 735+ subagents, and 194 helper scripts.
 
 ### Importing External Skills
 
@@ -1472,13 +1472,11 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Primary agents as registered in `subagent-index.toon` (13 total). MCPs are loaded on-demand per subagent, not per primary agent:
+Primary agents as registered in `subagent-index.toon` (11 total). MCPs are loaded on-demand per subagent, not per primary agent:
 
 | Name | File | Purpose | Model Tier |
 |------|------|---------|------------|
-| Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search | sonnet |
 | Build+ | `build-plus.md` | Enhanced Build with context tools (default agent) | sonnet |
-| AI-DevOps | `aidevops.md` | Framework operations and meta-agents | sonnet |
 | SEO | `seo.md` | SEO optimization and analysis | sonnet |
 | Content | `content.md` | Content creation workflows | sonnet |
 | Research | `research.md` | Research and analysis tasks | flash |
@@ -1490,7 +1488,7 @@ Primary agents as registered in `subagent-index.toon` (13 total). MCPs are loade
 | Social-Media | `social-media.md` | Social media management | sonnet |
 | Video | `video.md` | AI video generation and prompt engineering | sonnet |
 
-**Specialist subagents** (Build-Agent, Build-MCP, WordPress, etc.) live under `tools/` and are invoked via @mention when domain expertise is needed. See `subagent-index.toon` for the full listing.
+**Specialist subagents** (@plan-plus, @aidevops, @wordpress, Build-Agent, Build-MCP, etc.) live under `tools/` or as `mode: subagent` files and are invoked via @mention when domain expertise is needed. See `subagent-index.toon` for the full listing.
 
 ### **Example Subagents with MCP Integration**
 
@@ -2128,7 +2126,7 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 13 primary agents
+│   ├── *.md                       # 11 primary agents
 │   ├── scripts/                   # 194 helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
