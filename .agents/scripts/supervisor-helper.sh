@@ -227,11 +227,11 @@ readonly -a VALID_TRANSITIONS=(
 
 readonly BOLD='\033[1m'
 
-log_info() { echo -e "${BLUE}[SUPERVISOR]${NC} $*"; }
-log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
+log_info() { echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*" >&2; }
+log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*" >&2; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
-log_verbose() { [[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" || true; }
+log_verbose() { [[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2 || true; }
 
 # Check GitHub authentication in a way that works with GH_TOKEN env var.
 # gh auth status may fail in cron even when GH_TOKEN is valid (keyring issues).
@@ -2818,16 +2818,13 @@ resolve_model() {
             echo "anthropic/claude-sonnet-4-5"
             ;;
         haiku)
-            echo "anthropic/claude-3-5-haiku-20241022"
+            echo "anthropic/claude-haiku-4-5"
             ;;
         flash)
-            echo "google/gemini-2.5-flash-preview-05-20"
+            echo "google/gemini-2.5-flash"
             ;;
         pro)
-            echo "google/gemini-2.5-pro-preview-06-05"
-            ;;
-        grok)
-            echo "xai/grok-3"
+            echo "google/gemini-2.5-pro"
             ;;
         *)
             # Unknown tier — treat as coding tier default
