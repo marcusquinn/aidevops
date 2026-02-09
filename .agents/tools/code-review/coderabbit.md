@@ -156,6 +156,34 @@ daily at 3 AM UTC, or can be triggered manually via `workflow_dispatch`.
 Findings are stored in `~/.aidevops/.agent-workspace/work/review-pulse/findings/`
 as JSON files with severity classification, false positive filtering, and stats.
 
+## Auto-Task Creation (t166.3)
+
+The task creator reads findings from both the collector DB (PR reviews) and
+review-pulse JSON (CLI reviews), filters false positives, reclassifies severity,
+deduplicates, and generates TODO-compatible task lines with `#auto-dispatch` tags.
+
+```bash
+# Scan findings and show actionable items
+~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh scan
+
+# Create tasks (dry run first)
+~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh create --dry-run
+~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh create
+
+# Create tasks and dispatch via supervisor
+~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh create --dispatch
+
+# View processing statistics
+~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh stats
+
+# Manually verify a finding
+~/.aidevops/agents/scripts/coderabbit-task-creator-helper.sh verify 42 --false-positive
+```
+
+False positive detection includes: walkthrough summaries, summary tables, bot
+meta-comments, and empty bodies. Severity is reclassified using CodeRabbit's
+emoji markers and content pattern matching for higher accuracy.
+
 ## Troubleshooting
 
 ```bash

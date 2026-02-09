@@ -348,13 +348,32 @@ _add_finding() {
 # =============================================================================
 
 # Create TODO tasks from validated findings
+# Delegates to coderabbit-task-creator-helper.sh for full false-positive
+# filtering, severity reclassification, deduplication, and supervisor dispatch.
 create_tasks_from_findings() {
     local dry_run="${1:-false}"
     local auto_dispatch="${2:-false}"
 
+    local task_creator="${SCRIPT_DIR}/coderabbit-task-creator-helper.sh"
+
+    if [[ -x "$task_creator" ]]; then
+        # Delegate to the dedicated task creator (t166.3)
+        local args=("create" "--source" "pulse")
+        if [[ "$dry_run" == "true" ]]; then
+            args+=("--dry-run")
+        fi
+        if [[ "$auto_dispatch" == "true" ]]; then
+            args+=("--dispatch")
+        fi
+        "$task_creator" "${args[@]}"
+        return $?
+    fi
+
+    # Fallback: basic task generation (pre-t166.3 behaviour)
+    print_warning "coderabbit-task-creator-helper.sh not found, using basic task generation"
+
     ensure_dirs
 
-    # Find the latest findings file
     local latest_findings
     latest_findings=$(ls -t "$FINDINGS_DIR"/*-findings.json 2>/dev/null | head -1)
 
@@ -376,14 +395,12 @@ create_tasks_from_findings() {
     local tasks_created=0
     local task_lines=""
 
-    # Process each finding
     while IFS= read -r finding; do
         local severity file description
         severity=$(echo "$finding" | jq -r '.severity')
         file=$(echo "$finding" | jq -r '.file')
         description=$(echo "$finding" | jq -r '.description' | head -c 120)
 
-        # Map severity to task priority tag
         local priority_tag
         case "$severity" in
             critical) priority_tag="#critical" ;;
@@ -392,7 +409,6 @@ create_tasks_from_findings() {
             *)        priority_tag="#low" ;;
         esac
 
-        # Build task description
         local task_desc="CodeRabbit finding ($severity): $description [${file}] $priority_tag #quality #auto-review"
 
         if [[ "$dry_run" == "true" ]]; then
@@ -409,23 +425,12 @@ create_tasks_from_findings() {
         return 0
     fi
 
-    # Output task lines for supervisor integration
     if [[ $tasks_created -gt 0 ]]; then
         print_success "Generated $tasks_created task descriptions"
         print_info "Task descriptions (for supervisor or manual addition):"
         echo ""
         echo -e "$task_lines"
         echo ""
-
-        # If auto-dispatch is enabled and supervisor is available
-        if [[ "$auto_dispatch" == "true" ]]; then
-            if [[ -x "${SCRIPT_DIR}/supervisor-helper.sh" ]]; then
-                print_info "Auto-dispatch via supervisor is available but requires manual task IDs."
-                print_info "Add tasks to TODO.md first, then use supervisor-helper.sh to dispatch."
-            else
-                print_warning "supervisor-helper.sh not found for auto-dispatch"
-            fi
-        fi
     fi
 
     return 0
