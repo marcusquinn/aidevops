@@ -645,32 +645,115 @@ is_worktree_owned_by_others() {
     return 0
 }
 
-# Prune stale registry entries (dead PIDs, missing directories)
+# Prune stale registry entries (dead PIDs, missing directories, corrupted)
+# Arguments:
+#   --dry-run   Show what would be pruned without removing
+#   --verbose   Show detailed reasons for each pruned entry
+#   --all       Also prune entries with live PIDs if directory is missing/corrupted
+# Output (when verbose): one line per pruned entry with reason
+# Sets global: PRUNE_COUNT (number of entries pruned/would-be-pruned)
 prune_worktree_registry() {
+    local dry_run=false
+    local verbose=false
+    local prune_all=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            --verbose) verbose=true; shift ;;
+            --all) prune_all=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    PRUNE_COUNT=0
     [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
 
-    local entries
-    entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
-        SELECT worktree_path, owner_pid FROM worktree_owners;
+    # Build set of actual git worktree paths for orphan detection
+    local -a actual_worktrees=()
+    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
+                actual_worktrees+=("${BASH_REMATCH[1]}")
+            fi
+        done < <(git worktree list --porcelain 2>/dev/null || true)
+    fi
+
+    # Iterate by rowid to handle entries with embedded newlines/special chars
+    local rowids
+    rowids=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT rowid FROM worktree_owners;
     " 2>/dev/null || echo "")
 
-    [[ -z "$entries" ]] && return 0
+    [[ -z "$rowids" ]] && return 0
 
-    while IFS='|' read -r wt_path owner_pid; do
-        local should_prune=false
+    local rowid
+    while IFS= read -r rowid; do
+        [[ -z "$rowid" ]] && continue
 
-        # Directory no longer exists
-        if [[ ! -d "$wt_path" ]]; then
-            should_prune=true
-        # Owner process is dead
+        local wt_path branch owner_pid task_id
+        wt_path=$(sqlite3 "$WORKTREE_REGISTRY_DB" \
+            "SELECT worktree_path FROM worktree_owners WHERE rowid=$rowid;" 2>/dev/null || echo "")
+        branch=$(sqlite3 "$WORKTREE_REGISTRY_DB" \
+            "SELECT branch FROM worktree_owners WHERE rowid=$rowid;" 2>/dev/null || echo "")
+        owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" \
+            "SELECT owner_pid FROM worktree_owners WHERE rowid=$rowid;" 2>/dev/null || echo "")
+        task_id=$(sqlite3 "$WORKTREE_REGISTRY_DB" \
+            "SELECT task_id FROM worktree_owners WHERE rowid=$rowid;" 2>/dev/null || echo "")
+
+        local reason=""
+
+        # Check 1: Empty/null path (corrupted entry)
+        if [[ -z "$wt_path" ]]; then
+            reason="corrupted: empty worktree path"
+        # Check 2: Path contains control characters (corrupted by log output)
+        elif [[ "$wt_path" == *$'\033'* ]] || [[ "$wt_path" == *$'\n'* ]]; then
+            reason="corrupted: path contains control characters"
+        # Check 3: Directory no longer exists
+        elif [[ ! -d "$wt_path" ]]; then
+            reason="missing directory"
+        # Check 4: Directory exists but is not a valid git worktree
+        elif [[ ! -f "$wt_path/.git" && ! -d "$wt_path/.git" ]]; then
+            reason="corrupted: not a git worktree (no .git)"
+        # Check 5: Owner process is dead
         elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-            should_prune=true
+            reason="dead PID ($owner_pid)"
+        # Check 6: Empty PID (corrupted registration)
+        elif [[ -z "$owner_pid" ]]; then
+            reason="corrupted: no owner PID"
+        # Check 7 (--all only): Not in git worktree list (orphaned from git)
+        elif [[ "$prune_all" == "true" ]] && [[ ${#actual_worktrees[@]} -gt 0 ]]; then
+            local found=false
+            local wt
+            for wt in "${actual_worktrees[@]}"; do
+                if [[ "$wt" == "$wt_path" ]]; then
+                    found=true
+                    break
+                fi
+            done
+            if [[ "$found" == "false" ]]; then
+                reason="orphaned: not in git worktree list"
+            fi
         fi
 
-        if [[ "$should_prune" == "true" ]]; then
-            unregister_worktree "$wt_path"
+        if [[ -n "$reason" ]]; then
+            PRUNE_COUNT=$((PRUNE_COUNT + 1))
+            if [[ "$verbose" == "true" ]]; then
+                local label="${branch:-unknown}"
+                [[ -n "$task_id" ]] && label="$label ($task_id)"
+                # Sanitize path for display (strip control chars)
+                local display_path
+                display_path=$(echo "$wt_path" | tr -d '\033' | tr '\n' ' ' | head -c 120)
+                echo "  $label: $reason"
+                echo "    $display_path"
+            fi
+            if [[ "$dry_run" == "false" ]]; then
+                # Delete by rowid to handle corrupted paths safely
+                sqlite3 "$WORKTREE_REGISTRY_DB" \
+                    "DELETE FROM worktree_owners WHERE rowid=$rowid;" 2>/dev/null || true
+            fi
         fi
-    done <<< "$entries"
+    done <<< "$rowids"
     return 0
 }
 

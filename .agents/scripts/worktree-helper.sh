@@ -580,43 +580,118 @@ cmd_clean() {
 
 cmd_registry() {
     local subcmd="${1:-list}"
+    shift || true
 
     case "$subcmd" in
         list|ls)
             [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && { echo "No registry entries"; return 0; }
             echo -e "${BOLD}Worktree Ownership Registry:${NC}"
             echo ""
-            local entries
-            entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
-                SELECT worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, created_at
-                FROM worktree_owners ORDER BY created_at DESC;
+            local rowids
+            rowids=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+                SELECT rowid FROM worktree_owners ORDER BY created_at DESC;
             " 2>/dev/null || echo "")
-            if [[ -z "$entries" ]]; then
+            if [[ -z "$rowids" ]]; then
                 echo "  (empty)"
                 return 0
             fi
-            while IFS='|' read -r wt_path branch pid session batch task created; do
+            local total_count=0
+            local alive_count=0
+            local dead_count=0
+            local rid
+            while IFS= read -r rid; do
+                [[ -z "$rid" ]] && continue
+                total_count=$((total_count + 1))
+                local wt_path branch pid session batch task created
+                wt_path=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT worktree_path FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                branch=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT branch FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT owner_pid FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                session=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT owner_session FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                batch=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT owner_batch FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                task=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT task_id FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                created=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT created_at FROM worktree_owners WHERE rowid=$rid;" 2>/dev/null)
+                # Sanitize path for display (strip control chars)
+                local display_path
+                display_path=$(echo "$wt_path" | tr -d '\033' | tr '\n' ' ' | head -c 120)
                 local alive_status="${RED}dead${NC}"
                 if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
                     alive_status="${GREEN}alive${NC}"
+                    alive_count=$((alive_count + 1))
+                else
+                    dead_count=$((dead_count + 1))
                 fi
                 echo -e "  ${BOLD}$branch${NC}"
-                echo -e "    Path:    $wt_path"
+                echo -e "    Path:    $display_path"
                 echo -e "    PID:     $pid ($alive_status)"
                 [[ -n "$session" ]] && echo -e "    Session: $session"
                 [[ -n "$batch" ]]   && echo -e "    Batch:   $batch"
                 [[ -n "$task" ]]    && echo -e "    Task:    $task"
                 echo -e "    Created: $created"
                 echo ""
-            done <<< "$entries"
+            done <<< "$rowids"
+            echo -e "Total: $total_count (${GREEN}$alive_count alive${NC}, ${RED}$dead_count dead${NC})"
             ;;
         prune)
-            echo -e "${BLUE}Pruning stale registry entries...${NC}"
-            prune_worktree_registry
-            echo -e "${GREEN}Done${NC}"
+            local dry_run=false
+            local prune_verbose=true
+            local prune_all=false
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --dry-run|-n) dry_run=true; shift ;;
+                    --all|-a) prune_all=true; shift ;;
+                    --quiet|-q) prune_verbose=false; shift ;;
+                    *) shift ;;
+                esac
+            done
+
+            [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && { echo "No registry to prune"; return 0; }
+
+            local before_count
+            before_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT count(*) FROM worktree_owners;" 2>/dev/null || echo "0")
+
+            if [[ "$dry_run" == "true" ]]; then
+                echo -e "${BLUE}Dry run: showing entries that would be pruned...${NC}"
+            else
+                echo -e "${BLUE}Pruning stale registry entries...${NC}"
+            fi
+            echo ""
+
+            # Build args array safely (avoids unbound variable with empty arrays)
+            local prune_cmd="prune_worktree_registry"
+            [[ "$dry_run" == "true" ]] && prune_cmd="$prune_cmd --dry-run"
+            [[ "$prune_verbose" == "true" ]] && prune_cmd="$prune_cmd --verbose"
+            [[ "$prune_all" == "true" ]] && prune_cmd="$prune_cmd --all"
+            $prune_cmd
+
+            local after_count
+            if [[ "$dry_run" == "true" ]]; then
+                after_count="$before_count"
+            else
+                after_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT count(*) FROM worktree_owners;" 2>/dev/null || echo "0")
+            fi
+
+            echo ""
+            if [[ "$PRUNE_COUNT" -eq 0 ]]; then
+                echo -e "${GREEN}Registry is clean — no stale entries found${NC}"
+            elif [[ "$dry_run" == "true" ]]; then
+                echo -e "${YELLOW}Would prune $PRUNE_COUNT of $before_count entries${NC}"
+                echo "Run without --dry-run to apply"
+            else
+                echo -e "${GREEN}Pruned $PRUNE_COUNT entries ($before_count → $after_count)${NC}"
+            fi
             ;;
         *)
-            echo "Usage: worktree-helper.sh registry [list|prune]"
+            echo "Usage: worktree-helper.sh registry <subcommand>"
+            echo ""
+            echo "Subcommands:"
+            echo "  list                 List all registry entries with status"
+            echo "  prune [options]      Remove dead/corrupted entries"
+            echo ""
+            echo "Prune options:"
+            echo "  --dry-run, -n        Show what would be pruned without removing"
+            echo "  --all, -a            Also prune orphaned entries (not in git worktree list)"
+            echo "  --quiet, -q          Suppress per-entry details"
             ;;
     esac
     return 0
@@ -652,6 +727,9 @@ COMMANDS
                          Skips worktrees owned by other active sessions (t189)
   
   registry [list|prune]  View or prune the ownership registry (t189)
+                         prune --dry-run: preview without removing
+                         prune --all: also remove orphaned entries
+                         prune --quiet: suppress per-entry details
   
   help                   Show this help
 
@@ -679,6 +757,15 @@ EXAMPLES
 
   # View ownership registry
   worktree-helper.sh registry list
+
+  # Preview stale entries without removing
+  worktree-helper.sh registry prune --dry-run
+
+  # Remove all dead/corrupted entries
+  worktree-helper.sh registry prune
+
+  # Also remove orphaned entries not in git worktree list
+  worktree-helper.sh registry prune --all
 
 DIRECTORY STRUCTURE
   ~/Git/myrepo/                      # Main worktree (main branch)
