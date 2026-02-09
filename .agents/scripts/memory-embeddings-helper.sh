@@ -815,15 +815,14 @@ cmd_index() {
 
     log_info "Indexing memories with $provider provider..."
 
-    local env_prefix=""
+    local result
     if [[ "$provider" == "openai" ]]; then
         local api_key
         api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
-        env_prefix="OPENAI_API_KEY=$api_key"
+        result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
+    else
+        result=$(python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
     fi
-
-    local result
-    result=$(eval "$env_prefix" python3 "$PYTHON_SCRIPT" index "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB")
 
     local indexed skipped total
     if command -v jq &>/dev/null; then
@@ -884,20 +883,19 @@ cmd_search() {
 
     create_python_engine
 
-    local env_prefix=""
-    if [[ "$provider" == "openai" ]]; then
-        local api_key
-        api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
-        env_prefix="OPENAI_API_KEY=$api_key"
-    fi
-
     local search_cmd="search"
     if [[ "$hybrid" == true ]]; then
         search_cmd="hybrid"
     fi
 
     local result
-    result=$(eval "$env_prefix" python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
+    if [[ "$provider" == "openai" ]]; then
+        local api_key
+        api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
+        result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
+    else
+        result=$(python3 "$PYTHON_SCRIPT" "$search_cmd" "$provider" "$EMBEDDINGS_DB" "$MEMORY_DB" "$query" "$limit")
+    fi
 
     if [[ "$format" == "json" ]]; then
         echo "$result"
@@ -950,15 +948,14 @@ cmd_add() {
 
     create_python_engine
 
-    local env_prefix=""
+    local result
     if [[ "$provider" == "openai" ]]; then
         local api_key
         api_key=$(get_openai_key) || { log_error "OpenAI API key not found"; return 1; }
-        env_prefix="OPENAI_API_KEY=$api_key"
+        result=$(OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
+    else
+        result=$(python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
     fi
-
-    local result
-    result=$(eval "$env_prefix" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id")
 
     if echo "$result" | grep -q '"error"'; then
         log_error "$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['error'])" 2>/dev/null || echo "$result")"
@@ -1000,15 +997,14 @@ cmd_auto_index() {
 
     create_python_engine 2>/dev/null
 
-    local env_prefix=""
+    # Run in background to avoid slowing down store
     if [[ "$provider" == "openai" ]]; then
         local api_key
         api_key=$(get_openai_key 2>/dev/null) || return 0
-        env_prefix="OPENAI_API_KEY=$api_key"
+        (OPENAI_API_KEY="$api_key" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
+    else
+        (python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
     fi
-
-    # Run in background to avoid slowing down store
-    (eval "$env_prefix" python3 "$PYTHON_SCRIPT" add "$provider" "$MEMORY_DB" "$EMBEDDINGS_DB" "$memory_id" >/dev/null 2>&1) &
     disown 2>/dev/null || true
 
     return 0
