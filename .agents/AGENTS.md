@@ -124,6 +124,22 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 **Full docs**: `workflows/plans.md`, `tools/task-management/beads.md`
 
+## Model Routing
+
+Cost-aware routing matches task complexity to the optimal model tier. Use the cheapest model that produces acceptable quality.
+
+**Tiers**: `haiku` (classification, formatting) → `flash` (large context, summarization) → `sonnet` (code, default) → `pro` (large codebase + reasoning) → `opus` (architecture, novel problems)
+
+**Subagent frontmatter**: Add `model: <tier>` to YAML frontmatter. The supervisor resolves this to a concrete model during headless dispatch, with automatic cross-provider fallback.
+
+**Commands**: `/route <task>` (suggest optimal tier with pattern data), `/compare-models` (side-by-side pricing/capabilities)
+
+**Pre-dispatch availability**: `model-availability-helper.sh check <provider>` — cached health probes (~1-2s) verify providers are responding before dispatch. Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=invalid-key.
+
+**Fallback chains**: Each tier has a primary model and cross-provider fallback (e.g., opus: claude-opus-4 → o3). The supervisor and `fallback-chain-helper.sh` handle this automatically.
+
+**Full docs**: `tools/context/model-routing.md`, `tools/ai-assistants/compare-models.md`
+
 ## Memory
 
 Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {query}`, `/recall --recent`
@@ -136,9 +152,29 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Graduation**: `/graduate-memories` or `memory-graduate-helper.sh` — promote validated memories into shared docs so all users benefit. Memories qualify at high confidence or 3+ accesses.
 
+**Semantic search** (opt-in): `memory-embeddings-helper.sh setup --provider local` enables vector similarity search. Use `--semantic` or `--hybrid` flags with recall for meaning-based search beyond keywords.
+
+**Memory audit**: `memory-audit-pulse.sh run` — periodic hygiene (dedup, prune, graduate, scan for improvement opportunities). Runs automatically as Phase 9 of the supervisor pulse cycle.
+
+**Namespaces**: Runners can have isolated memory via `--namespace <name>`. Use `--shared` to also search global memory. List with `memory-helper.sh namespaces`.
+
 **Full docs**: `memory/README.md`
 
 **Proactive memory**: When you detect solutions, preferences, workarounds, failed approaches, or decisions — proactively suggest `/remember {description}`. Use `memory-helper.sh store --auto` for auto-captured memories. Privacy: `<private>` blocks stripped, secrets rejected.
+
+## Pattern Tracking
+
+Track success/failure patterns across task types, models, and approaches. Patterns feed into model routing recommendations for data-driven dispatch.
+
+**CLI**: `pattern-tracker-helper.sh [record|suggest|recommend|analyze|stats|report|export]`
+
+**Commands**: `/patterns <task>` (suggest approach), `/patterns report` (full report), `/patterns recommend <type>` (model recommendation)
+
+**Automatic capture**: The supervisor stores `SUCCESS_PATTERN` and `FAILURE_PATTERN` entries after each task evaluation, tagged with model tier, duration, and retry count.
+
+**Integration with model routing**: `/route <task>` combines routing rules with pattern history. If pattern data shows >75% success rate with 3+ samples for a tier, it is weighted heavily in the recommendation.
+
+**Full docs**: `memory/README.md` "Pattern Tracking" section, `scripts/commands/patterns.md`
 
 ## Inter-Agent Mailbox
 
@@ -283,6 +319,8 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Model routing | `tools/context/model-routing.md`, `model-registry-helper.sh`, `fallback-chain-helper.sh`, `model-availability-helper.sh` |
 | Model comparison | `tools/ai-assistants/compare-models.md`, `tools/ai-assistants/response-scoring.md`, `aidevops/claude-flow-comparison.md` |
+| Pattern tracking | `memory/README.md` "Pattern Tracking", `pattern-tracker-helper.sh`, `scripts/commands/patterns.md` |
+| Self-improvement | `aidevops/self-improving-agents.md`, `self-improve-helper.sh` (analyze → refine → test → pr) |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
 | Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing), `/runners-check` (quick queue status) |
 | MCP dev | `tools/build-mcp/build-mcp.md` |
