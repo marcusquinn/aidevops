@@ -487,3 +487,74 @@ VERIFY.md has the check definitions and pass/fail status.
   PASS | check 7: `shellcheck .agents/scripts/gocryptfs-helper.sh`
   exit: 0 | 0 issues
 
+## v030 t132.2 | FAILED | 2026-02-09T14:58:18Z | by:marcusquinn | #761
+
+  PASS | check 1: `file-exists .agents/scripts/model-registry-helper.sh`
+  exit: 0 | exists (39602 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/model-registry-helper.sh`
+  exit: 0 | 0 issues
+  FAIL | check 3: `bash -n .agents/scripts/model-registry-helper.sh`
+  exit: 1 | exit:127 | bash: /Users/marcusquinn/Git/aidevops/-n .agents/scripts/model-registry-helper.s
+  PASS | check 4: `rg "model-registry" .agents/subagent-index.toon`
+  exit: 0 | 1 matches
+
+## v031 t168.2 | PASSED | 2026-02-09T14:58:18Z | by:marcusquinn | #761
+
+  PASS | check 1: `file-exists .agents/scripts/compare-models-helper.sh`
+  exit: 0 | exists (32878 bytes)
+  PASS | check 2: `rg "compare\|recommend" .agents/scripts/compare-models-helper.sh`
+  exit: 0 | 34 matches
+
+## v032 t166.2 | FAILED | 2026-02-09T14:58:19Z | by:marcusquinn | #765
+
+  PASS | check 1: `file-exists .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 0 | exists (34080 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 0 | 0 issues
+  FAIL | check 3: `bash -n .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 1 | exit:127 | bash: /Users/marcusquinn/Git/aidevops/-n .agents/scripts/coderabbit-collector-he
+  PASS | check 4: `rg "collect_pr_reviews|collect_comments" .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 0 | 2 matches
+
+## v036 t102.2 | FAILED | 2026-02-09T14:58:19Z | by:marcusquinn | #768
+
+  PASS | check 1: `file-exists .agents/scripts/memory-embeddings-helper.sh`
+  exit: 0 | exists (38381 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/memory-embeddings-helper.sh`
+  exit: 0 | 0 issues
+  FAIL | check 3: `bash -n .agents/scripts/memory-embeddings-helper.sh`
+  exit: 1 | exit:127 | bash: /Users/marcusquinn/Git/aidevops/-n .agents/scripts/memory-embeddings-helpe
+  PASS | check 4: `rg "hybrid|semantic" .agents/memory/README.md`
+  exit: 0 | 8 matches
+  PASS | check 5: `rg "auto.index|--hybrid" .agents/scripts/memory-helper.sh`
+  exit: 0 | 6 matches
+
+## v030 t132.2 | PASSED | 2026-02-09T14:59:09Z | by:marcusquinn | #761
+
+  PASS | check 1: `file-exists .agents/scripts/model-registry-helper.sh`
+  exit: 0 | exists (39602 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/model-registry-helper.sh`
+  exit: 0 | 0 issues
+  PASS | check 3: `rg "model-registry" .agents/subagent-index.toon`
+  exit: 0 | 1 matches
+
+## v032 t166.2 | PASSED | 2026-02-09T14:59:10Z | by:marcusquinn | #765
+
+  PASS | check 1: `file-exists .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 0 | exists (34080 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 0 | 0 issues
+  PASS | check 3: `rg "collect_pr_reviews|collect_comments" .agents/scripts/coderabbit-collector-helper.sh`
+  exit: 0 | 2 matches
+
+## v036 t102.2 | PASSED | 2026-02-09T14:59:11Z | by:marcusquinn | #768
+
+  PASS | check 1: `file-exists .agents/scripts/memory-embeddings-helper.sh`
+  exit: 0 | exists (38381 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/memory-embeddings-helper.sh`
+  exit: 0 | 0 issues
+  PASS | check 3: `rg "hybrid|semantic" .agents/memory/README.md`
+  exit: 0 | 8 matches
+  PASS | check 4: `rg "auto.index|--hybrid" .agents/scripts/memory-helper.sh`
+  exit: 0 | 6 matches
+

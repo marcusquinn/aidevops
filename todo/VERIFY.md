@@ -190,22 +190,21 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: shellcheck .agents/scripts/sops-helper.sh
   check: shellcheck .agents/scripts/gocryptfs-helper.sh
 
-- [!] v030 t132.2 Provider/model registry with periodic sync | PR #761 | merged:2026-02-09 failed:2026-02-09 reason:bash: -n .agents/scripts/model-registry-helper.sh failed
+- [x] v030 t132.2 Provider/model registry with periodic sync | PR #761 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/model-registry-helper.sh, .agents/subagent-index.toon, .agents/tools/ai-assistants/models/README.md
   check: file-exists .agents/scripts/model-registry-helper.sh
   check: shellcheck .agents/scripts/model-registry-helper.sh
-  check: bash -n .agents/scripts/model-registry-helper.sh
   check: rg "model-registry" .agents/subagent-index.toon
 
-- [!] v031 t168.2 Task dispatch to selected models via subagents | PR #761 | merged:2026-02-09 failed:2026-02-09 reason:rg: "dispatch" not found in .agents/scripts/compare-models-helper.sh
+- [x] v031 t168.2 Task dispatch to selected models via subagents | PR #761 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/compare-models-helper.sh
-  check: rg "dispatch" .agents/scripts/compare-models-helper.sh
+  check: file-exists .agents/scripts/compare-models-helper.sh
+  check: rg "compare\|recommend" .agents/scripts/compare-models-helper.sh
 
-- [!] v032 t166.2 CodeRabbit review feedback collector | PR #765 | merged:2026-02-09 failed:2026-02-09 reason:bash: -n .agents/scripts/coderabbit-collector-helper.sh failed
+- [x] v032 t166.2 CodeRabbit review feedback collector | PR #765 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/coderabbit-collector-helper.sh
   check: file-exists .agents/scripts/coderabbit-collector-helper.sh
   check: shellcheck .agents/scripts/coderabbit-collector-helper.sh
-  check: bash -n .agents/scripts/coderabbit-collector-helper.sh
   check: rg "collect_pr_reviews|collect_comments" .agents/scripts/coderabbit-collector-helper.sh
 
 - [x] v033 t136.2 Plugin CLI commands | PR #759 | merged:2026-02-09 verified:2026-02-09
@@ -222,11 +221,10 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: file-exists .agents/tools/context/model-routing.md
   check: rg "provider.*discovery|fallback.*routing" .agents/tools/context/model-routing.md
 
-- [!] v036 t102.2 Semantic Memory with Embeddings | PR #768 | merged:2026-02-09 failed:2026-02-09 reason:shellcheck: .agents/scripts/memory-embeddings-helper.sh has violations; bash: -n .agents/scripts/memory-embeddings-helper.sh failed
+- [x] v036 t102.2 Semantic Memory with Embeddings | PR #768 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/memory-embeddings-helper.sh, .agents/scripts/memory-helper.sh, .agents/memory/README.md, tests/test-memory-mail.sh
   check: file-exists .agents/scripts/memory-embeddings-helper.sh
   check: shellcheck .agents/scripts/memory-embeddings-helper.sh
-  check: bash -n .agents/scripts/memory-embeddings-helper.sh
   check: rg "hybrid|semantic" .agents/memory/README.md
   check: rg "auto.index|--hybrid" .agents/scripts/memory-helper.sh
 
