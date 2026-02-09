@@ -2542,6 +2542,7 @@ deploy_aidevops_agents() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local source_dir="$script_dir/.agents"
     local target_dir="$HOME/.aidevops/agents"
+    local plugins_file="$HOME/.config/aidevops/plugins.json"
     
     # Validate source directory exists (catches curl install from wrong directory)
     if [[ ! -d "$source_dir" ]]; then
@@ -2554,6 +2555,14 @@ deploy_aidevops_agents() {
         return 1
     fi
     
+    # Collect plugin namespace directories to preserve during deployment
+    local -a plugin_namespaces=()
+    if [[ -f "$plugins_file" ]] && command -v jq &>/dev/null; then
+        while IFS= read -r ns; do
+            [[ -n "$ns" ]] && plugin_namespaces+=("$ns")
+        done < <(jq -r '.plugins[].namespace // empty' "$plugins_file" 2>/dev/null)
+    fi
+    
     # Create backup if target exists (with rotation)
     if [[ -d "$target_dir" ]]; then
         create_backup_with_rotation "$target_dir" "agents"
@@ -2562,14 +2571,18 @@ deploy_aidevops_agents() {
     # Create target directory and copy agents
     mkdir -p "$target_dir"
     
-    # If clean mode, remove stale files first (preserving user directories)
+    # If clean mode, remove stale files first (preserving user and plugin directories)
     if [[ "$CLEAN_MODE" == "true" ]]; then
-        print_info "Clean mode: removing stale files from $target_dir (preserving custom/, draft/)"
-        # Preserve user-managed directories before clean
+        # Build list of directories to preserve: custom, draft, plus plugin namespaces
         local -a preserved_dirs=("custom" "draft")
-        local tmp_preserve="$(mktemp -d)"
+        for pns in "${plugin_namespaces[@]}"; do
+            preserved_dirs+=("$pns")
+        done
+        print_info "Clean mode: removing stale files from $target_dir (preserving ${preserved_dirs[*]})"
+        local tmp_preserve
+        tmp_preserve="$(mktemp -d)"
         if [[ -z "$tmp_preserve" || ! -d "$tmp_preserve" ]]; then
-            print_error "Failed to create temp dir for preserving custom/draft agents"
+            print_error "Failed to create temp dir for preserving agents"
             return 1
         fi
         local preserve_failed=false
@@ -2581,7 +2594,7 @@ deploy_aidevops_agents() {
             fi
         done
         if [[ "$preserve_failed" == "true" ]]; then
-            print_error "Failed to preserve custom/draft agents; aborting clean"
+            print_error "Failed to preserve user/plugin agents; aborting clean"
             rm -rf "$tmp_preserve"
             return 1
         fi
@@ -2599,15 +2612,24 @@ deploy_aidevops_agents() {
     # - loop-state/ (local runtime state, not agents)
     # - custom/ (user's private agents, never overwritten)
     # - draft/ (user's experimental agents, never overwritten)
+    # - plugin namespace directories (managed separately)
     # Use rsync for selective exclusion
     local deploy_ok=false
     if command -v rsync &>/dev/null; then
-        if rsync -a --exclude='loop-state/' --exclude='custom/' --exclude='draft/' "$source_dir/" "$target_dir/"; then
+        local -a rsync_excludes=("--exclude=loop-state/" "--exclude=custom/" "--exclude=draft/")
+        for pns in "${plugin_namespaces[@]}"; do
+            rsync_excludes+=("--exclude=${pns}/")
+        done
+        if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
             deploy_ok=true
         fi
     else
         # Fallback: use tar with exclusions to match rsync behavior
-        if (cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) | (cd "$target_dir" && tar xf -); then
+        local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
+        for pns in "${plugin_namespaces[@]}"; do
+            tar_excludes+=("--exclude=$pns")
+        done
+        if (cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) | (cd "$target_dir" && tar xf -); then
             deploy_ok=true
         fi
     fi
@@ -2675,9 +2697,99 @@ deploy_aidevops_agents() {
                 print_warning "Mailbox migration had issues (non-critical, old files preserved)"
             fi
         fi
+        
+        # Deploy enabled plugins from plugins.json
+        deploy_plugins "$target_dir" "$plugins_file"
     else
         print_error "Failed to deploy agents"
         return 1
+    fi
+    
+    return 0
+}
+
+# Deploy enabled plugins from plugins.json
+# Arguments: target_dir, plugins_file
+deploy_plugins() {
+    local target_dir="$1"
+    local plugins_file="$2"
+    
+    # Skip if no plugins.json or no jq
+    if [[ ! -f "$plugins_file" ]]; then
+        return 0
+    fi
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq not found; skipping plugin deployment"
+        return 0
+    fi
+    
+    local plugin_count
+    plugin_count=$(jq '.plugins | length' "$plugins_file" 2>/dev/null || echo "0")
+    if [[ "$plugin_count" -eq 0 ]]; then
+        return 0
+    fi
+    
+    local enabled_count
+    enabled_count=$(jq '[.plugins[] | select(.enabled != false)] | length' "$plugins_file" 2>/dev/null || echo "0")
+    if [[ "$enabled_count" -eq 0 ]]; then
+        print_info "No enabled plugins to deploy ($plugin_count configured, all disabled)"
+        return 0
+    fi
+    
+    # Remove directories for disabled plugins (cleanup)
+    local disabled_ns
+    while IFS= read -r disabled_ns; do
+        [[ -z "$disabled_ns" ]] && continue
+        if [[ -d "$target_dir/$disabled_ns" ]]; then
+            rm -rf "$target_dir/$disabled_ns"
+            print_info "  Removed disabled plugin directory: $disabled_ns"
+        fi
+    done < <(jq -r '.plugins[] | select(.enabled == false) | .namespace // empty' "$plugins_file" 2>/dev/null)
+    
+    print_info "Deploying $enabled_count plugin(s)..."
+    
+    local deployed=0
+    local failed=0
+    local skipped=0
+    
+    # Process each enabled plugin
+    while IFS=$'\t' read -r pname prepo pns pbranch; do
+        [[ -z "$pname" ]] && continue
+        pbranch="${pbranch:-main}"
+        local clone_dir="$target_dir/$pns"
+        
+        if [[ -d "$clone_dir" ]]; then
+            # Plugin directory exists — skip re-clone during setup
+            # Users can force update via: aidevops plugin update [name]
+            skipped=$((skipped + 1))
+            continue
+        fi
+        
+        # Clone plugin repo
+        print_info "  Installing plugin '$pname' ($prepo)..."
+        if git clone --branch "$pbranch" --depth 1 "$prepo" "$clone_dir" 2>/dev/null; then
+            # Remove .git directory (tracked via plugins.json, not nested git)
+            rm -rf "$clone_dir/.git"
+            # Set permissions on any scripts
+            if [[ -d "$clone_dir/scripts" ]]; then
+                chmod +x "$clone_dir/scripts/"*.sh 2>/dev/null || true
+            fi
+            deployed=$((deployed + 1))
+        else
+            print_warning "  Failed to install plugin '$pname' (network or auth issue)"
+            failed=$((failed + 1))
+        fi
+    done < <(jq -r '.plugins[] | select(.enabled != false) | [.name, .repo, .namespace, (.branch // "main")] | @tsv' "$plugins_file" 2>/dev/null)
+    
+    # Summary
+    if [[ "$deployed" -gt 0 ]]; then
+        print_success "Deployed $deployed plugin(s)"
+    fi
+    if [[ "$skipped" -gt 0 ]]; then
+        print_info "$skipped plugin(s) already deployed (use 'aidevops plugin update' to refresh)"
+    fi
+    if [[ "$failed" -gt 0 ]]; then
+        print_warning "$failed plugin(s) failed to deploy (non-blocking)"
     fi
     
     return 0

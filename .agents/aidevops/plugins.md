@@ -76,6 +76,16 @@ aidevops plugin update pro       # Update a specific plugin
 
 Pulls the latest from the tracked branch and redeploys.
 
+### Automatic Deployment
+
+Running `aidevops update` automatically deploys any enabled plugins that are not yet installed. Existing plugin directories are preserved (not re-cloned). Disabled plugin directories are cleaned up. Plugin namespaces are protected during clean mode deployments.
+
+To force a refresh of all plugins after update:
+
+```bash
+aidevops plugin update
+```
+
 ### Disable / Enable
 
 ```bash
