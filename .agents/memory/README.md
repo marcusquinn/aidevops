@@ -205,8 +205,11 @@ memory-helper.sh prune --older-than-days 180 --include-accessed
 For similarity-based search beyond keyword matching, enable vector embeddings:
 
 ```bash
-# One-time setup (~90MB model download)
-memory-embeddings-helper.sh setup
+# One-time setup with local model (~90MB download, no API key)
+memory-embeddings-helper.sh setup --provider local
+
+# Or use OpenAI API (requires API key, no local model download)
+memory-embeddings-helper.sh setup --provider openai
 
 # Index existing memories
 memory-embeddings-helper.sh index
@@ -214,11 +217,47 @@ memory-embeddings-helper.sh index
 # Search by meaning (not just keywords)
 memory-helper.sh recall "how to optimize database queries" --semantic
 
+# Hybrid search: combines FTS5 keyword + semantic using Reciprocal Rank Fusion
+memory-helper.sh recall "authentication patterns" --hybrid
+
 # Or use the embeddings helper directly
 memory-embeddings-helper.sh search "authentication patterns"
+memory-embeddings-helper.sh search "authentication patterns" --hybrid
+
+# Check provider and index status
+memory-embeddings-helper.sh status
+
+# Switch between providers
+memory-embeddings-helper.sh provider openai
+memory-embeddings-helper.sh rebuild  # Re-index with new provider
 ```
 
-FTS5 keyword search remains the default. Semantic search requires Python 3.9+ and sentence-transformers.
+### Embedding Providers
+
+| Provider | Model | Dimensions | Requirements |
+|----------|-------|-----------|--------------|
+| `local` | all-MiniLM-L6-v2 | 384 | Python 3.9+, sentence-transformers (~90MB) |
+| `openai` | text-embedding-3-small | 1536 | Python 3.9+, numpy, OpenAI API key |
+
+### Search Modes
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| Keyword (default) | (none) | FTS5 BM25 full-text search |
+| Semantic | `--semantic` | Vector similarity search |
+| Hybrid | `--hybrid` | Combines keyword + semantic using Reciprocal Rank Fusion (RRF) |
+
+Hybrid search is recommended for natural language queries. It finds results that
+match by both exact keywords and semantic meaning, producing better results than
+either method alone.
+
+### Auto-Indexing
+
+Once embeddings are configured (`setup` + `index`), new memories stored via
+`memory-helper.sh store` are automatically indexed in the background. No manual
+re-indexing is needed for new entries.
+
+FTS5 keyword search remains the default and works without any setup.
 
 ## Pattern Tracking
 
