@@ -84,7 +84,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Extend voice-helper.sh or create voice-pipeline-helper.sh for the 2-step voice post-processing chain: (1) CapCut AI voice cleanup (normalize accents/artifacts from raw AI output), (2) ElevenLabs voice cloning/transformation. Critical: never go directly from AI video output to ElevenLabs — the CapCut step cleans artifacts first. Also supports emotional block cues (per-word emotion tagging) for natural AI speech. Related: tools/voice/speech-to-speech.md, tools/voice/voice-bridge.md, content/production/audio.md.
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
   - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z
-    - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
+    - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
   - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal
   - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z
