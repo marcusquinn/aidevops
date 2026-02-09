@@ -172,6 +172,7 @@ update_state() {
 
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
 
     # Build jq expression from key=value pairs
     local jq_expr="."

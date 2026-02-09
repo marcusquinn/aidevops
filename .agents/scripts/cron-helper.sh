@@ -271,6 +271,7 @@ cmd_add() {
     # Add job to config
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq --arg id "$job_id" \
        --arg name "$name" \
        --arg schedule "$schedule" \
@@ -359,6 +360,7 @@ cmd_remove() {
     # Remove from config
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq --arg id "$job_id" '.jobs = [.jobs[] | select(.id != $id)]' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     
@@ -393,6 +395,7 @@ cmd_pause() {
     # Update status
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "paused"' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     
@@ -429,6 +432,7 @@ cmd_resume() {
     # Update status
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq --arg id "$job_id" '(.jobs[] | select(.id == $id)).status = "active"' "$CONFIG_FILE" > "$temp_file"
     mv "$temp_file" "$CONFIG_FILE"
     

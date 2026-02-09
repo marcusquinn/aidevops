@@ -436,6 +436,7 @@ register_skill() {
         log_info "Updating existing skill registration: $name"
         local tmp_file
         tmp_file=$(mktemp)
+        trap 'rm -f "$tmp_file"' RETURN
         jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" > "$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
         rm -f "$tmp_file"
     fi
