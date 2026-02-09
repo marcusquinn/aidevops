@@ -1015,7 +1015,6 @@ echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
 cat > "$OPENCODE_COMMAND_DIR/onboarding.md" << 'EOF'
 ---
 description: Interactive onboarding wizard - discover services, configure integrations
-agent: Onboarding
 ---
 
 Read ~/.aidevops/agents/aidevops/onboarding.md and follow its instructions.
