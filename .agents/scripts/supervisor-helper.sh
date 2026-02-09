@@ -3380,7 +3380,45 @@ You are a headless worker with no human at the terminal. Use this framework when
 \`feat: add retry logic (chose exponential backoff over linear — matches existing patterns in src/utils/retry.ts)\`
 
 **When you exit due to uncertainty**, include a clear explanation in your final output:
-\`BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints (JWT, OAuth, API key). Need clarification on which one.\`"
+\`BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints (JWT, OAuth, API key). Need clarification on which one.\`
+
+## Worker Efficiency Protocol
+
+Maximise your output per token. Follow these practices to avoid wasted work:
+
+**1. Decompose with TodoWrite (MANDATORY)**
+At the START of your session, use the TodoWrite tool to break your task into 3-7 subtasks.
+Example for 'add retry logic to API client':
+- Research: read existing API client code and error handling patterns
+- Implement: add retry with exponential backoff to the HTTP client
+- Test: write unit tests for retry behaviour (success, max retries, backoff timing)
+- Integrate: update callers if the API surface changed
+- Verify: run linters, shellcheck, and existing tests
+
+Mark each subtask in_progress when you start it and completed when done.
+Only have ONE subtask in_progress at a time.
+
+**2. Checkpoint after each subtask**
+After completing each subtask, run:
+\`session-checkpoint-helper.sh save --task <your-task-id> --next 'remaining subtask descriptions'\`
+This persists your progress to disk. If context compacts or the session restarts,
+your checkpoint survives and you can resume from where you left off instead of restarting.
+
+**3. Parallel sub-work with Task tool**
+If your subtasks include independent work (e.g., writing tests while docs are separate),
+use the Task tool to spawn a sub-agent for the independent piece. This is faster than
+doing everything sequentially. Only parallelise when the subtasks don't modify the same files.
+
+**4. Fail fast, not late**
+Before writing any code, verify your assumptions:
+- Read the files you plan to modify (stale assumptions waste entire sessions)
+- Check that dependencies/imports you plan to use actually exist in the project
+- If the task seems already done, EXIT immediately with explanation — don't redo work
+
+**5. Minimise token waste**
+- Don't read entire large files — use line ranges from search results
+- Don't output verbose explanations in commit messages — be concise
+- Don't retry failed approaches more than once — exit with BLOCKED instead"
 
     if [[ -n "$memory_context" ]]; then
         prompt="$prompt
