@@ -182,6 +182,19 @@ execute_check() {
         fi
     fi
 
+    # bash -n <path> (syntax check)
+    if [[ "$directive" =~ ^bash\ -n\ (.+) ]]; then
+        local script_path="${BASH_REMATCH[1]}"
+        local full_path="$project_root/$script_path"
+        output=$(bash -n "$full_path" 2>&1) && exit_code=0 || exit_code=$?
+        if [[ $exit_code -eq 0 ]]; then
+            RESULT_SUMMARY="syntax OK"
+        else
+            RESULT_SUMMARY="syntax error | ${output:0:80}"
+        fi
+        [[ $exit_code -eq 0 ]] && return 0 || return 1
+    fi
+
     # bash <path> (test scripts)
     if [[ "$directive" =~ ^bash\ (.+) ]]; then
         local script_path="${BASH_REMATCH[1]}"
@@ -438,6 +451,7 @@ Check directives (in VERIFY.md):
   file-exists <path>           Test file exists, report size
   rg "pattern" <path>          Ripgrep match count
   shellcheck <path>            ShellCheck analysis
+  bash -n <path>               Syntax check (bash -n), no execution
   bash <path>                  Run test script, capture pass/fail
 
 Proof log:
