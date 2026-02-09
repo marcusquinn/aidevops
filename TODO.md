@@ -658,8 +658,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Add optional HNSW vector index using all-MiniLM-L6-v2 via ONNX (~90MB). Create memory-embeddings-helper.sh. Extend memory-helper.sh with --semantic flag. Keep FTS5 as default, embeddings opt-in.
   - [x] t102.3 Success Pattern Tracking ~1h blocked-by:t102.2 ref:GH#743 assignee:marcusquinn started:2026-02-09T16:07:41Z completed:2026-02-09
     - Notes: Add SUCCESS_PATTERN and FAILURE_PATTERN memory types. Auto-tag with task type, model, outcome. Create pattern-tracker-helper.sh and /patterns command.
+<<<<<<< Updated upstream
   - [x] t102.4 Documentation & Integration ~30m blocked-by:t102.1,t102.2,t102.3 ref:GH#744 completed:2026-02-09 pr:#786
     - Notes: PR #786 merged. Added model-availability-helper.sh, fallback-chain-helper.sh, response-scoring-helper.sh, coderabbit-task-creator-helper.sh to subagent-index.toon. Added Model routing and Model comparison rows to AGENTS.md progressive disclosure table. claude-flow-comparison.md and memory/README.md already documented by prior PRs.
+=======
+  - [ ] t102.4 Documentation   - [ ] t102.4 Documentation & Integration ~30m blocked-by:t102.1,t102.2,t102.3 ref:GH#744 Integration ~30m blocked-by:t102.1,t102.2,t102.3 ref:GH#744 assignee:marcusquinn started:2026-02-09T17:20:22Z
+    - Notes: Create aidevops/claude-flow-comparison.md. Update memory/README.md, AGENTS.md, subagent-index.toon.
+>>>>>>> Stashed changes
 
 - [x] t078 Add Lumen subagent for AI-powered git diffs and commit generation #tools #git #code-review ~10m (ai:8m read:2m) ref:GH#531 logged:2026-01-23 ref:https://github.com/jnsahaj/lumen completed:2026-02-08 verified:2026-02-08 PR #602 merged
   - Notes: Lumen (1.8k stars, Rust, MIT) - Beautiful git diff viewer + AI commit messages + change explanations + git command generation from CLI. Install: `brew install jnsahaj/lumen/lumen` or `cargo install lumen`. Supports OpenAI, Claude, Gemini, Groq, DeepSeek, xAI, Ollama, OpenRouter, Vercel AI Gateway. Config: `~/.config/lumen/lumen.config.json`. Key commands: `lumen diff` (visual diff), `lumen draft` (commit msg), `lumen explain` (change summary), `lumen operate` (natural language git commands). Create subagent at tools/git/lumen.md covering: API key setup (reuse existing keys from mcp-env.sh or per-provider env vars), when to use (pre-commit review, PR diffs, understanding AI-generated changes), integration with aidevops git workflow.
