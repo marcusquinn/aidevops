@@ -67,72 +67,72 @@ fail `[!]`. Failed verifications reopen the original task in TODO.md.
   check: file-exists .github/workflows/review-pulse.yml
   check: file-exists .agents/scripts/review-pulse-helper.sh
 
-- [ ] v010 t179 Issue-sync reconciliation | PR #677 | merged:2026-02-09
+- [x] v010 t179 Issue-sync reconciliation | PR #677 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/issue-sync-helper.sh, .github/workflows/issue-sync.yml
   check: file-exists .agents/scripts/issue-sync-helper.sh
   check: rg "reconcile" .agents/scripts/issue-sync-helper.sh
   check: file-exists .github/workflows/issue-sync.yml
 
-- [ ] v011 t180 Post-merge verification worker phase | PR #679 | merged:2026-02-09
+- [x] v011 t180 Post-merge verification worker phase | PR #679 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/supervisor-helper.sh, tests/test-supervisor-state-machine.sh
   check: rg "post_merge_verify\|verification" .agents/scripts/supervisor-helper.sh
   check: bash tests/test-supervisor-state-machine.sh
 
-- [ ] v012 t181 Memory deduplication and auto-pruning | PR #681 | merged:2026-02-09
+- [x] v012 t181 Memory deduplication and auto-pruning | PR #681 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/memory-helper.sh, tests/test-memory-mail.sh
   check: rg "dedup\|auto_prune\|consolidate" .agents/scripts/memory-helper.sh
   check: bash tests/test-memory-mail.sh
 
-- [ ] v013 t182 GHA auto-fix workflow safety | PR #684 | merged:2026-02-09
+- [x] v013 t182 GHA auto-fix workflow safety | PR #684 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/monitor-code-review.sh, .github/workflows/code-review-monitoring.yml
   check: file-exists .agents/scripts/monitor-code-review.sh
   check: rg "validate\|auto.fix" .agents/scripts/monitor-code-review.sh
 
-- [ ] v014 t183 Fix supervisor no_log_file dispatch | PR #685 | merged:2026-02-09
+- [x] v014 t183 Fix supervisor no_log_file dispatch | PR #685 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/supervisor-helper.sh
   check: rg "no_log_file\|log_file" .agents/scripts/supervisor-helper.sh
 
-- [ ] v015 t184 Graduate memories to docs | PR #689 | merged:2026-02-09
+- [x] v015 t184 Graduate memories to docs | PR #689 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/memory-graduate-helper.sh, .agents/scripts/commands/graduate-memories.md
   check: file-exists .agents/scripts/memory-graduate-helper.sh
   check: file-exists .agents/scripts/commands/graduate-memories.md
   check: shellcheck .agents/scripts/memory-graduate-helper.sh
 
-- [ ] v016 t185 Memory audit pulse | PR #691 | merged:2026-02-09
+- [x] v016 t185 Memory audit pulse | PR #691 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/memory-audit-pulse.sh, .agents/scripts/commands/memory-audit.md
   check: file-exists .agents/scripts/memory-audit-pulse.sh
   check: file-exists .agents/scripts/commands/memory-audit.md
   check: shellcheck .agents/scripts/memory-audit-pulse.sh
 
-- [ ] v017 t072 Audio/Video Transcription subagent | PR #690 | merged:2026-02-09
+- [x] v017 t072 Audio/Video Transcription subagent | PR #690 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/transcription-helper.sh, .agents/tools/voice/transcription.md
   check: file-exists .agents/scripts/transcription-helper.sh
   check: file-exists .agents/tools/voice/transcription.md
   check: shellcheck .agents/scripts/transcription-helper.sh
   check: rg "transcription" .agents/subagent-index.toon
 
-- [ ] v018 t189 Worktree ownership safety | PR #695 | merged:2026-02-09
+- [x] v018 t189 Worktree ownership safety | PR #695 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/shared-constants.sh, .agents/scripts/worktree-helper.sh
   check: rg "worktree_registry\|ownership" .agents/scripts/shared-constants.sh
   check: rg "in_use\|registry" .agents/scripts/worktree-helper.sh
 
-- [ ] v019 t188 Pre-migration safety backups | PR #697 | merged:2026-02-09
+- [x] v019 t188 Pre-migration safety backups | PR #697 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/shared-constants.sh, .agents/scripts/supervisor-helper.sh, .agents/scripts/memory-helper.sh, tests/test-backup-safety.sh
   check: rg "backup_sqlite_db\|verify_migration_rowcounts" .agents/scripts/shared-constants.sh
   check: file-exists tests/test-backup-safety.sh
   check: bash tests/test-backup-safety.sh
 
-- [ ] v020 t187 Compaction-resilient session state | PR #699 | merged:2026-02-09
+- [x] v020 t187 Compaction-resilient session state | PR #699 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/session-checkpoint-helper.sh, .agents/scripts/session-distill-helper.sh, .agents/prompts/build.txt
   check: rg "continuation\|auto.save" .agents/scripts/session-checkpoint-helper.sh
   check: rg "checkpoint" .agents/scripts/session-distill-helper.sh
   check: rg "Context Compaction Survival" .agents/prompts/build.txt
 
-- [ ] v021 t186 Development lifecycle enforcement | PR #700 | merged:2026-02-09
+- [x] v021 t186 Development lifecycle enforcement | PR #700 | merged:2026-02-09 verified:2026-02-09
   files: .agents/AGENTS.md
   check: rg "MANDATORY: Development Lifecycle" .agents/AGENTS.md
 
-- [ ] v022 t190 Memory graduation markdown fix | PR #703 | merged:2026-02-09
+- [x] v022 t190 Memory graduation markdown fix | PR #703 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/memory-graduate-helper.sh
   check: shellcheck .agents/scripts/memory-graduate-helper.sh
 
