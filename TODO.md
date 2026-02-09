@@ -73,7 +73,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h
   - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m
 - [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
-  - [ ] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m
+  - [ ] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z
   - [ ] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m
   - [ ] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m
   - [ ] t020.4 Pull command (GH to TODO.md) #feature ~30m
