@@ -375,12 +375,126 @@ ${line}"
 }
 
 # =============================================================================
-# Sync: Provider APIs (live model discovery)
+# Sync: OpenCode Models (preferred — uses opencode CLI model registry)
 # =============================================================================
+# OpenCode maintains a model registry sourced from models.dev that includes
+# all providers the user has configured. This is faster and more reliable than
+# probing individual provider APIs directly, and works even without direct
+# API keys (OpenCode routes through its gateway for opencode/* models).
+
+sync_opencode() {
+    local added=0
+
+    # Check if opencode CLI is available
+    if ! command -v opencode &>/dev/null; then
+        print_info "OpenCode CLI not found, skipping opencode model sync"
+        return 0
+    fi
+
+    # Try the cached models file first (instant, no network)
+    local cache_file="${HOME}/.cache/opencode/models.json"
+    local model_ids=""
+
+    # Only extract models from providers we track (avoids processing 2500+ models
+    # from the full models.dev registry — we only need ~100 from relevant providers)
+    local relevant_providers='["anthropic","openai","google","openrouter","groq","deepseek","opencode"]'
+
+    if [[ -f "$cache_file" && -s "$cache_file" ]]; then
+        model_ids=$(jq -r --argjson providers "$relevant_providers" '
+            to_entries[] |
+            select(.key as $k | $providers | index($k)) |
+            .key as $provider |
+            .value.models // {} |
+            keys[] |
+            "\($provider)/\(.)"
+        ' "$cache_file" 2>/dev/null) || true
+    fi
+
+    # Fallback: use opencode models CLI if cache is empty or missing
+    if [[ -z "$model_ids" ]]; then
+        print_info "  Cache miss, querying opencode models CLI..."
+        model_ids=$(timeout "$DEFAULT_TIMEOUT" opencode models 2>/dev/null \
+            | grep -E '^(anthropic|openai|google|openrouter|groq|deepseek|opencode)/' | sort) || true
+    fi
+
+    if [[ -z "$model_ids" ]]; then
+        print_warning "No models discovered from OpenCode"
+        return 0
+    fi
+
+    # Build batch SQL for all models (much faster than individual queries)
+    local sql_batch="BEGIN TRANSACTION;"
+    while IFS= read -r full_id; do
+        [[ -z "$full_id" ]] && continue
+        # Skip non-text models (embeddings, tts, whisper, image-only)
+        case "$full_id" in
+            *embed*|*tts*|*whisper*|*dall-e*|*moderation*|*image*) continue ;;
+        esac
+
+        local provider
+        provider="${full_id%%/*}"
+
+        # Normalize provider name to match our conventions
+        local norm_provider
+        case "$provider" in
+            anthropic)  norm_provider="Anthropic" ;;
+            openai)     norm_provider="OpenAI" ;;
+            google)     norm_provider="Google" ;;
+            openrouter) norm_provider="OpenRouter" ;;
+            groq)       norm_provider="Groq" ;;
+            deepseek)   norm_provider="DeepSeek" ;;
+            opencode)   norm_provider="OpenCode" ;;
+            *)          norm_provider="$provider" ;;
+        esac
+
+        sql_batch="${sql_batch}
+            INSERT INTO provider_models (model_id, provider, in_registry, in_subagents, discovered_at)
+            VALUES (
+                '$(sql_escape "$full_id")',
+                '$(sql_escape "$norm_provider")',
+                0, 0,
+                strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            )
+            ON CONFLICT(model_id, provider) DO UPDATE SET
+                discovered_at = excluded.discovered_at;"
+        added=$((added + 1))
+    done <<< "$model_ids"
+    sql_batch="${sql_batch} COMMIT;"
+
+    # Execute batch insert
+    db_query "$sql_batch"
+
+    db_query "
+        INSERT INTO sync_log (sync_type, source, models_added, models_updated, details)
+        VALUES ('opencode', 'opencode-models', $added, 0, 'Discovered from OpenCode model registry');
+    "
+
+    print_info "OpenCode sync: $added models discovered"
+    return 0
+}
+
+# =============================================================================
+# Sync: Provider APIs (fallback — direct API key probing)
+# =============================================================================
+# Falls back to direct API probing when OpenCode CLI is not available.
+# Requires individual provider API keys in environment.
 
 sync_providers() {
     local added=0
     local json_flag="${1:-false}"
+
+    # Skip if opencode sync already ran successfully (check sync_log)
+    local opencode_synced
+    opencode_synced=$(db_query "
+        SELECT models_added FROM sync_log
+        WHERE sync_type = 'opencode'
+        AND (julianday('now') - julianday(timestamp)) * 86400 < 60
+        ORDER BY id DESC LIMIT 1;
+    " 2>/dev/null || echo "")
+    if [[ -n "$opencode_synced" && "$opencode_synced" -gt 0 ]]; then
+        print_info "Skipping direct API probing (OpenCode sync already discovered $opencode_synced models)"
+        return 0
+    fi
 
     # Reuse provider key detection from compare-models-helper.sh
     local provider_env_keys="Anthropic|ANTHROPIC_API_KEY
@@ -559,8 +673,12 @@ cmd_sync() {
     [[ "$quiet" != "true" ]] && print_info "Phase 2: Syncing embedded model data..."
     sync_embedded
 
-    # Phase 3: Sync from provider APIs (if keys available)
-    [[ "$quiet" != "true" ]] && print_info "Phase 3: Discovering models from provider APIs..."
+    # Phase 3: Sync from OpenCode model registry (preferred — fast, no API keys needed)
+    [[ "$quiet" != "true" ]] && print_info "Phase 3: Discovering models from OpenCode registry..."
+    sync_opencode
+
+    # Phase 4: Fallback to direct provider API probing (skipped if Phase 3 succeeded)
+    [[ "$quiet" != "true" ]] && print_info "Phase 4: Direct provider API discovery (fallback)..."
     sync_providers
 
     # Cleanup old backups
@@ -1154,7 +1272,8 @@ cmd_help() {
     echo "Data Sources:"
     echo "  1. Subagent frontmatter ($MODELS_DIR/*.md)"
     echo "  2. Embedded data (compare-models-helper.sh MODEL_DATA)"
-    echo "  3. Provider APIs (Anthropic, OpenAI, Google, OpenRouter, Groq, DeepSeek)"
+    echo "  3. OpenCode model registry (opencode models — preferred, from models.dev)"
+    echo "  4. Provider APIs (Anthropic, OpenAI, Google, OpenRouter, Groq, DeepSeek)"
     echo ""
     return 0
 }
