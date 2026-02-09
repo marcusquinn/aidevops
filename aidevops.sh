@@ -2091,6 +2091,376 @@ cmd_skill() {
     esac
 }
 
+# Plugin management command
+cmd_plugin() {
+    local action="${1:-help}"
+    shift || true
+
+    local plugins_file="$CONFIG_DIR/plugins.json"
+    local agents_dir="$AGENTS_DIR"
+
+    # Reserved namespaces that plugins cannot use
+    local reserved_namespaces="custom draft scripts tools services workflows templates memory plugins seo wordpress aidevops"
+
+    # Ensure config dir exists
+    mkdir -p "$CONFIG_DIR"
+
+    # Initialize plugins.json if missing
+    if [[ ! -f "$plugins_file" ]]; then
+        echo '{"plugins":[]}' > "$plugins_file"
+    fi
+
+    #######################################
+    # Validate a namespace is safe to use
+    # Arguments: namespace
+    # Returns: 0 if valid, 1 if reserved/invalid
+    #######################################
+    validate_namespace() {
+        local ns="$1"
+        # Must be lowercase alphanumeric with hyphens
+        if [[ ! "$ns" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            print_error "Invalid namespace '$ns': must be lowercase alphanumeric with hyphens, starting with a letter"
+            return 1
+        fi
+        # Must not be reserved
+        local reserved
+        for reserved in $reserved_namespaces; do
+            if [[ "$ns" == "$reserved" ]]; then
+                print_error "Namespace '$ns' is reserved. Choose a different name."
+                return 1
+            fi
+        done
+        return 0
+    }
+
+    #######################################
+    # Get a plugin field from plugins.json
+    # Arguments: plugin_name, field
+    #######################################
+    get_plugin_field() {
+        local name="$1"
+        local field="$2"
+        jq -r --arg n "$name" --arg f "$field" '.plugins[] | select(.name == $n) | .[$f] // empty' "$plugins_file" 2>/dev/null || echo ""
+    }
+
+    case "$action" in
+        add|a)
+            if [[ $# -lt 1 ]]; then
+                print_error "Repository URL required"
+                echo ""
+                echo "Usage: aidevops plugin add <repo-url> [options]"
+                echo ""
+                echo "Options:"
+                echo "  --namespace <name>   Namespace directory (default: derived from repo name)"
+                echo "  --branch <branch>    Branch to track (default: main)"
+                echo "  --name <name>        Human-readable name (default: derived from repo)"
+                echo ""
+                echo "Examples:"
+                echo "  aidevops plugin add https://github.com/user/aidevops-pro.git --namespace pro"
+                echo "  aidevops plugin add git@github.com:user/aidevops-anon.git --namespace anon"
+                return 1
+            fi
+
+            local repo_url="$1"
+            shift
+            local namespace="" branch="main" plugin_name=""
+
+            # Parse options
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --namespace|--ns) namespace="$2"; shift 2 ;;
+                    --branch|-b) branch="$2"; shift 2 ;;
+                    --name|-n) plugin_name="$2"; shift 2 ;;
+                    *) print_error "Unknown option: $1"; return 1 ;;
+                esac
+            done
+
+            # Derive namespace from repo URL if not provided
+            if [[ -z "$namespace" ]]; then
+                namespace=$(basename "$repo_url" .git | sed 's/^aidevops-//')
+                namespace=$(echo "$namespace" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+            fi
+
+            # Derive name from namespace if not provided
+            if [[ -z "$plugin_name" ]]; then
+                plugin_name="$namespace"
+            fi
+
+            # Validate namespace
+            if ! validate_namespace "$namespace"; then
+                return 1
+            fi
+
+            # Check if plugin already exists
+            local existing
+            existing=$(jq -r --arg n "$plugin_name" '.plugins[] | select(.name == $n) | .name' "$plugins_file" 2>/dev/null || echo "")
+            if [[ -n "$existing" ]]; then
+                print_error "Plugin '$plugin_name' already exists. Use 'aidevops plugin update $plugin_name' to update."
+                return 1
+            fi
+
+            # Check if namespace is already in use
+            if [[ -d "$agents_dir/$namespace" ]]; then
+                local ns_owner
+                ns_owner=$(jq -r --arg ns "$namespace" '.plugins[] | select(.namespace == $ns) | .name' "$plugins_file" 2>/dev/null || echo "")
+                if [[ -n "$ns_owner" ]]; then
+                    print_error "Namespace '$namespace' is already used by plugin '$ns_owner'"
+                else
+                    print_error "Directory '$agents_dir/$namespace/' already exists"
+                    echo "  Choose a different namespace with --namespace <name>"
+                fi
+                return 1
+            fi
+
+            print_info "Adding plugin '$plugin_name' from $repo_url..."
+            print_info "  Namespace: $namespace"
+            print_info "  Branch: $branch"
+
+            # Clone the repo
+            local clone_dir="$agents_dir/$namespace"
+            if ! git clone --branch "$branch" --depth 1 "$repo_url" "$clone_dir" 2>&1; then
+                print_error "Failed to clone repository"
+                rm -rf "$clone_dir" 2>/dev/null || true
+                return 1
+            fi
+
+            # Remove .git directory (we track via plugins.json, not nested git)
+            rm -rf "$clone_dir/.git"
+
+            # Add to plugins.json
+            local tmp_file="${plugins_file}.tmp"
+            jq --arg name "$plugin_name" \
+               --arg repo "$repo_url" \
+               --arg branch "$branch" \
+               --arg ns "$namespace" \
+               '.plugins += [{"name": $name, "repo": $repo, "branch": $branch, "namespace": $ns, "enabled": true}]' \
+               "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
+
+            print_success "Plugin '$plugin_name' installed to $clone_dir"
+            echo ""
+            echo "  Agents available at: ~/.aidevops/agents/$namespace/"
+            echo "  Update: aidevops plugin update $plugin_name"
+            echo "  Remove: aidevops plugin remove $plugin_name"
+            ;;
+
+        list|ls|l)
+            local count
+            count=$(jq '.plugins | length' "$plugins_file" 2>/dev/null || echo "0")
+
+            if [[ "$count" == "0" ]]; then
+                echo "No plugins installed."
+                echo ""
+                echo "Add a plugin: aidevops plugin add <repo-url> --namespace <name>"
+                return 0
+            fi
+
+            echo "Installed plugins ($count):"
+            echo ""
+            printf "  %-15s %-10s %-8s %s\n" "NAME" "NAMESPACE" "ENABLED" "REPO"
+            printf "  %-15s %-10s %-8s %s\n" "----" "---------" "-------" "----"
+
+            jq -r '.plugins[] | "  \(.name)\t\(.namespace)\t\(.enabled // true)\t\(.repo)"' "$plugins_file" 2>/dev/null | \
+                while IFS=$'\t' read -r name ns enabled repo; do
+                    local status_icon="yes"
+                    if [[ "$enabled" == "false" ]]; then
+                        status_icon="no"
+                    fi
+                    printf "  %-15s %-10s %-8s %s\n" "$name" "$ns" "$status_icon" "$repo"
+                done
+            ;;
+
+        update|u)
+            local target="${1:-}"
+
+            if [[ -n "$target" ]]; then
+                # Update specific plugin
+                local repo ns branch_name
+                repo=$(get_plugin_field "$target" "repo")
+                ns=$(get_plugin_field "$target" "namespace")
+                branch_name=$(get_plugin_field "$target" "branch")
+                branch_name="${branch_name:-main}"
+
+                if [[ -z "$repo" ]]; then
+                    print_error "Plugin '$target' not found"
+                    return 1
+                fi
+
+                print_info "Updating plugin '$target'..."
+                local clone_dir="$agents_dir/$ns"
+                rm -rf "$clone_dir"
+                if git clone --branch "$branch_name" --depth 1 "$repo" "$clone_dir" 2>&1; then
+                    rm -rf "$clone_dir/.git"
+                    print_success "Plugin '$target' updated"
+                else
+                    print_error "Failed to update plugin '$target'"
+                    return 1
+                fi
+            else
+                # Update all enabled plugins
+                local names
+                names=$(jq -r '.plugins[] | select(.enabled != false) | .name' "$plugins_file" 2>/dev/null || echo "")
+                if [[ -z "$names" ]]; then
+                    echo "No enabled plugins to update."
+                    return 0
+                fi
+
+                local failed=0
+                while IFS= read -r pname; do
+                    [[ -z "$pname" ]] && continue
+                    local prepo pns pbranch
+                    prepo=$(get_plugin_field "$pname" "repo")
+                    pns=$(get_plugin_field "$pname" "namespace")
+                    pbranch=$(get_plugin_field "$pname" "branch")
+                    pbranch="${pbranch:-main}"
+
+                    print_info "Updating '$pname'..."
+                    local pdir="$agents_dir/$pns"
+                    rm -rf "$pdir"
+                    if git clone --branch "$pbranch" --depth 1 "$prepo" "$pdir" 2>/dev/null; then
+                        rm -rf "$pdir/.git"
+                        print_success "  '$pname' updated"
+                    else
+                        print_error "  '$pname' failed to update"
+                        failed=$((failed + 1))
+                    fi
+                done <<< "$names"
+
+                if [[ "$failed" -gt 0 ]]; then
+                    print_warning "$failed plugin(s) failed to update"
+                    return 1
+                fi
+                print_success "All plugins updated"
+            fi
+            ;;
+
+        enable)
+            if [[ $# -lt 1 ]]; then
+                print_error "Plugin name required"
+                echo "Usage: aidevops plugin enable <name>"
+                return 1
+            fi
+            local target_name="$1"
+            local target_repo target_ns target_branch
+            target_repo=$(get_plugin_field "$target_name" "repo")
+            if [[ -z "$target_repo" ]]; then
+                print_error "Plugin '$target_name' not found"
+                return 1
+            fi
+
+            target_ns=$(get_plugin_field "$target_name" "namespace")
+            target_branch=$(get_plugin_field "$target_name" "branch")
+            target_branch="${target_branch:-main}"
+
+            # Update enabled flag
+            local tmp_file="${plugins_file}.tmp"
+            jq --arg n "$target_name" '(.plugins[] | select(.name == $n)).enabled = true' "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
+
+            # Deploy if not already present
+            if [[ ! -d "$agents_dir/$target_ns" ]]; then
+                print_info "Deploying plugin '$target_name'..."
+                if git clone --branch "$target_branch" --depth 1 "$target_repo" "$agents_dir/$target_ns" 2>/dev/null; then
+                    rm -rf "$agents_dir/$target_ns/.git"
+                fi
+            fi
+
+            print_success "Plugin '$target_name' enabled"
+            ;;
+
+        disable)
+            if [[ $# -lt 1 ]]; then
+                print_error "Plugin name required"
+                echo "Usage: aidevops plugin disable <name>"
+                return 1
+            fi
+            local target_name="$1"
+            local target_ns
+            target_ns=$(get_plugin_field "$target_name" "namespace")
+            if [[ -z "$target_ns" ]]; then
+                print_error "Plugin '$target_name' not found"
+                return 1
+            fi
+
+            # Update enabled flag
+            local tmp_file="${plugins_file}.tmp"
+            jq --arg n "$target_name" '(.plugins[] | select(.name == $n)).enabled = false' "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
+
+            # Remove deployed files
+            if [[ -d "$agents_dir/$target_ns" ]]; then
+                rm -rf "$agents_dir/$target_ns"
+            fi
+
+            print_success "Plugin '$target_name' disabled (config preserved)"
+            ;;
+
+        remove|rm)
+            if [[ $# -lt 1 ]]; then
+                print_error "Plugin name required"
+                echo "Usage: aidevops plugin remove <name>"
+                return 1
+            fi
+            local target_name="$1"
+            local target_ns
+            target_ns=$(get_plugin_field "$target_name" "namespace")
+            if [[ -z "$target_ns" ]]; then
+                print_error "Plugin '$target_name' not found"
+                return 1
+            fi
+
+            # Remove deployed files
+            if [[ -d "$agents_dir/$target_ns" ]]; then
+                rm -rf "$agents_dir/$target_ns"
+                print_info "Removed $agents_dir/$target_ns/"
+            fi
+
+            # Remove from plugins.json
+            local tmp_file="${plugins_file}.tmp"
+            jq --arg n "$target_name" '.plugins = [.plugins[] | select(.name != $n)]' "$plugins_file" > "$tmp_file" && mv "$tmp_file" "$plugins_file"
+
+            print_success "Plugin '$target_name' removed"
+            ;;
+
+        help|--help|-h)
+            print_header "Plugin Management"
+            echo ""
+            echo "Manage third-party agent plugins that extend aidevops."
+            echo "Plugins deploy to ~/.aidevops/agents/<namespace>/ (isolated from core)."
+            echo ""
+            echo "Usage: aidevops plugin <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  add <repo-url>     Install a plugin from a git repository"
+            echo "  list               List installed plugins"
+            echo "  update [name]      Update specific or all plugins"
+            echo "  enable <name>      Enable a disabled plugin (redeploys files)"
+            echo "  disable <name>     Disable a plugin (removes files, keeps config)"
+            echo "  remove <name>      Remove a plugin entirely"
+            echo ""
+            echo "Options for 'add':"
+            echo "  --namespace <name>   Directory name under ~/.aidevops/agents/"
+            echo "  --branch <branch>    Branch to track (default: main)"
+            echo "  --name <name>        Human-readable plugin name"
+            echo ""
+            echo "Examples:"
+            echo "  aidevops plugin add https://github.com/user/aidevops-pro.git --namespace pro"
+            echo "  aidevops plugin add git@gitea.example.com:user/aidevops-anon.git --namespace anon"
+            echo "  aidevops plugin list"
+            echo "  aidevops plugin update"
+            echo "  aidevops plugin update pro"
+            echo "  aidevops plugin disable pro"
+            echo "  aidevops plugin enable pro"
+            echo "  aidevops plugin remove pro"
+            echo ""
+            echo "Plugin docs: ~/.aidevops/agents/aidevops/plugins.md"
+            ;;
+        *)
+            print_error "Unknown plugin command: $action"
+            echo "Run 'aidevops plugin help' for usage information."
+            return 1
+            ;;
+    esac
+    return 0
+}
+
 # Help command
 cmd_help() {
     local version
@@ -2105,6 +2475,7 @@ cmd_help() {
     echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
     echo "  features           List available features for init"
     echo "  skill <cmd>        Manage agent skills (add/list/check/update/remove)"
+    echo "  plugin <cmd>       Manage plugins (add/list/update/enable/disable/remove)"
     echo "  status             Check installation status of all components"
     echo "  update             Update aidevops to the latest version (alias: upgrade)"
     echo "  upgrade            Alias for update"
@@ -2137,6 +2508,12 @@ cmd_help() {
     echo "  aidevops secret init         # Initialize gopass encrypted store"
     echo "  aidevops secret import       # Import from credentials.sh to gopass"
     echo "  aidevops secret status       # Show backend status"
+    echo ""
+    echo "Plugins:"
+    echo "  aidevops plugin add <url>    # Install a plugin from git repo"
+    echo "  aidevops plugin list         # List installed plugins"
+    echo "  aidevops plugin update       # Update all plugins"
+    echo "  aidevops plugin remove <n>   # Remove a plugin"
     echo ""
     echo "Skills:"
     echo "  aidevops skill add <source>  # Import a skill from GitHub"
@@ -2228,6 +2605,10 @@ main() {
         skill|skills)
             shift
             cmd_skill "$@"
+            ;;
+        plugin|plugins)
+            shift
+            cmd_plugin "$@"
             ;;
         detect|scan)
             cmd_detect
