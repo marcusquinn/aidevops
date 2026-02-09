@@ -709,9 +709,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Update gopass.md and api-key-setup.md with encryption stack overview: gopass (secret values), SOPS (config files in repos), gocryptfs (local folders). Decision record: chose SOPS over git-crypt (value-level encryption, CNCF backing, key rotation) and gocryptfs over VeraCrypt (no disk images to manage, CLI-native, overlay filesystem).
 - [x] t191 Fix secretlint-helper.sh install and scan in git worktrees #bugfix #tools #secretlint ~1h (ai:40m test:15m read:5m) ref:GH#711 assignee:marcusquinn started:2026-02-09T02:53:00Z logged:2026-02-09 completed:2026-02-09
   - Notes: secretlint-helper.sh install puts packages in main repo node_modules/, but scan runs in CWD. In worktrees, node_modules/ doesn't exist so check_rules_installed() always fails. Fix: resolve main worktree path via `git worktree list --porcelain | head -1`, use `npm list --prefix <main_path>` as fallback, and make install worktree-aware (install to main repo or symlink).
-- [ ] t192 Supervisor evaluates successful workers as clean_exit_no_signal — misses PR URL from logs #bugfix #supervisor ~2h (ai:1.5h test:30m) ref:GH#719 assignee:marcusquinn started:2026-02-09T03:38:15Z logged:2026-02-09
+- [x] t192 Supervisor evaluates successful workers as clean_exit_no_signal — misses PR URL from logs #bugfix #supervisor ~2h (ai:1.5h test:30m) ref:GH#719 assignee:marcusquinn started:2026-02-09T03:38:15Z logged:2026-02-09 pr:750 verified:2026-02-09
   - Notes: Workers that create PRs and exit cleanly are evaluated as clean_exit_no_signal because the evaluation heuristic doesn't detect PR URLs from the worker's JSON log output. This causes unnecessary retries (observed for t191 and t134 in backlog-06). Fix: in evaluate_worker(), parse the worker log for gh pr create output or PR URLs before falling back to clean_exit_no_signal. The pr_url field should be populated from the log even when the worker doesn't explicitly signal completion.
-- [ ] t193 setup.sh fails in non-interactive supervisor deploy step #bugfix #setup ~1h (ai:45m test:15m) ref:GH#720 assignee:marcusquinn started:2026-02-09T03:40:31Z logged:2026-02-09
+- [x] t193 setup.sh fails in non-interactive supervisor deploy step #bugfix #setup ~1h (ai:45m test:15m) ref:GH#720 assignee:marcusquinn started:2026-02-09T03:40:31Z logged:2026-02-09 pr:749 verified:2026-02-09
   - Notes: When supervisor runs setup.sh as a deploy step (pr-lifecycle deploying phase), it fails because setup.sh hits an interactive prompt for shell integration. The script needs a --non-interactive or --ci flag that skips interactive prompts and only copies agent files. Observed during t191 deploy — setup.sh output truncated at "Shell integration not detected" with non-zero exit.
 
 <!--TOON:backlog[90]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
@@ -827,8 +827,8 @@ t132,Evaluate tools/multimodal/ vs cross-references for models spanning voice+vi
 t133,Cloud GPU deployment guide for AI model hosting,,tools|infrastructure|gpu,45m,30m,10m,5m,2026-02-06T00:00Z,pending,,,
 t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,2026-02-06T00:00Z,pending,,,
 t191,Fix secretlint-helper.sh install and scan in git worktrees,,bugfix|tools|secretlint,1h,40m,15m,5m,2026-02-09T00:00Z,pending,,,
-t192,Supervisor evaluates successful workers as clean_exit_no_signal,,bugfix|supervisor,2h,1.5h,30m,,2026-02-09T00:00Z,pending,,,
-t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,45m,15m,,2026-02-09T00:00Z,pending,,,
+t192,Supervisor evaluates successful workers as clean_exit_no_signal,,bugfix|supervisor,2h,1.5h,30m,,2026-02-09T00:00Z,done,PR#750,,
+t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,45m,15m,,2026-02-09T00:00Z,done,PR#749,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
