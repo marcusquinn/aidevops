@@ -1331,12 +1331,10 @@ cmd_add() {
 
     # Create GitHub issue only if explicitly requested (t165: opt-in, not default)
     # Use --with-issue flag or SUPERVISOR_AUTO_ISSUE=true env var
+    # t020.6: create_github_issue delegates to issue-sync-helper.sh which also
+    # adds ref:GH#N to TODO.md and commits/pushes — no separate step needed.
     if [[ "$create_issue" == "true" ]]; then
-        local issue_number
-        issue_number=$(create_github_issue "$task_id" "$description" "$repo")
-        if [[ -n "$issue_number" ]]; then
-            update_todo_with_issue_ref "$task_id" "$issue_number" "$repo"
-        fi
+        create_github_issue "$task_id" "$description" "$repo"
     fi
 
     return 0
@@ -7068,9 +7066,9 @@ cmd_cleanup() {
 
 #######################################
 # Create a GitHub issue for a task
-# Delegates to issue-sync-helper.sh for rich issue bodies with PLANS.md context.
-# Falls back to inline creation if helper is unavailable.
-# Returns the issue number on success, empty on failure
+# Delegates to issue-sync-helper.sh push tNNN for rich issue bodies (t020.6).
+# Returns the issue number on success, empty on failure.
+# Also adds ref:GH#N to TODO.md and commits/pushes the change.
 # Requires: gh CLI authenticated, repo with GitHub remote
 #######################################
 create_github_issue() {
@@ -7112,137 +7110,48 @@ create_github_issue() {
         return 0
     fi
 
-    # Try delegating to issue-sync-helper.sh for rich issue bodies
+    # Delegate to issue-sync-helper.sh push tNNN (t020.6: single source of truth)
+    # The helper handles: TODO.md parsing, rich body composition, label mapping,
+    # issue creation via gh CLI, and adding ref:GH#N to TODO.md.
     local issue_sync_helper="${SCRIPT_DIR}/issue-sync-helper.sh"
-    if [[ -x "$issue_sync_helper" ]]; then
-        log_info "Delegating issue creation to issue-sync-helper.sh for $task_id"
-        local push_output
-        push_output=$("$issue_sync_helper" push "$task_id" --repo "$repo_slug" 2>>"$SUPERVISOR_LOG" || echo "")
-        # Extract issue number from push output (looks for "Created #NNN:")
-        local issue_number
-        issue_number=$(echo "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
-        if [[ -n "$issue_number" ]]; then
-            log_success "Created GitHub issue #${issue_number} for $task_id via issue-sync-helper.sh"
-            local escaped_id
-            escaped_id=$(sql_escape "$task_id")
-            local escaped_url="https://github.com/${repo_slug}/issues/${issue_number}"
-            escaped_url=$(sql_escape "$escaped_url")
-            db "$SUPERVISOR_DB" "UPDATE tasks SET issue_url = '$escaped_url' WHERE id = '$escaped_id';"
-            echo "$issue_number"
-            return 0
-        fi
-        log_warn "issue-sync-helper.sh did not return issue number, falling back to inline creation"
-    fi
-
-    # Fallback: inline issue creation (bare-bones body)
-    local issue_title="${task_id}: ${description}"
-    local issue_body="Created by supervisor-helper.sh during task dispatch."
-    local todo_file="$repo_path/TODO.md"
-    if [[ -f "$todo_file" ]]; then
-        local todo_context
-        todo_context=$(grep -E "^[[:space:]]*- \[( |x|-)\] ${task_id}( |$)" "$todo_file" 2>/dev/null | head -1 || echo "")
-        if [[ -n "$todo_context" ]]; then
-            issue_body="From TODO.md:\n\n\`\`\`\n${todo_context}\n\`\`\`\n\nCreated by supervisor-helper.sh during task dispatch."
-        fi
-    fi
-
-    local labels=""
-    if echo "$description" | grep -qiE "bug|fix"; then
-        labels="bug"
-    elif echo "$description" | grep -qiE "feat|enhancement|add"; then
-        labels="enhancement"
-    fi
-
-    local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$issue_title" "--body" "$(printf '%b' "$issue_body")")
-    if [[ -n "$labels" ]]; then
-        gh_args+=("--label" "$labels")
-    fi
-
-    local issue_url
-    issue_url=$(gh "${gh_args[@]}" 2>>"$SUPERVISOR_LOG" || echo "")
-
-    if [[ -z "$issue_url" ]]; then
-        log_warn "Failed to create GitHub issue for $task_id"
+    if [[ ! -x "$issue_sync_helper" ]]; then
+        log_warn "issue-sync-helper.sh not found at $issue_sync_helper, skipping issue creation"
         return 0
     fi
 
-    local issue_number
-    issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$' || echo "")
+    log_info "Delegating issue creation to issue-sync-helper.sh for $task_id"
+    local push_output
+    # Run from repo_path so find_project_root() locates TODO.md
+    push_output=$(cd "$repo_path" && "$issue_sync_helper" push "$task_id" --repo "$repo_slug" 2>>"$SUPERVISOR_LOG" || echo "")
 
-    if [[ -n "$issue_number" ]]; then
-        log_success "Created GitHub issue #${issue_number} for $task_id: $issue_url"
-        local escaped_id
-        escaped_id=$(sql_escape "$task_id")
-        local escaped_url
-        escaped_url=$(sql_escape "$issue_url")
-        db "$SUPERVISOR_DB" "UPDATE tasks SET issue_url = '$escaped_url' WHERE id = '$escaped_id';"
-        echo "$issue_number"
+    # Extract issue number from push output (format: "[SUCCESS] Created #NNN: title")
+    local issue_number
+    issue_number=$(echo "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+
+    if [[ -z "$issue_number" ]]; then
+        log_warn "issue-sync-helper.sh did not return an issue number for $task_id"
+        return 0
     fi
 
+    log_success "Created GitHub issue #${issue_number} for $task_id via issue-sync-helper.sh"
+
+    # Update supervisor DB with issue URL
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local escaped_url="https://github.com/${repo_slug}/issues/${issue_number}"
+    escaped_url=$(sql_escape "$escaped_url")
+    db "$SUPERVISOR_DB" "UPDATE tasks SET issue_url = '$escaped_url' WHERE id = '$escaped_id';"
+
+    # issue-sync-helper.sh already added ref:GH#N to TODO.md — commit and push it
+    commit_and_push_todo "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md"
+
+    echo "$issue_number"
     return 0
 }
 
-#######################################
-# Update TODO.md to add ref:GH#N for a task
-# Appends the GitHub issue reference to the task line
-# Then commits and pushes the change
-#######################################
-update_todo_with_issue_ref() {
-    local task_id="$1"
-    local issue_number="$2"
-    local repo_path="$3"
-
-    local todo_file="$repo_path/TODO.md"
-    if [[ ! -f "$todo_file" ]]; then
-        log_warn "TODO.md not found at $todo_file"
-        return 0
-    fi
-
-    # Check if ref:GH# already exists on this task line
-    if grep -qE "^[[:space:]]*- \[( |x|-)\] ${task_id} .*ref:GH#" "$todo_file"; then
-        log_info "Task $task_id already has a GitHub issue reference in TODO.md"
-        return 0
-    fi
-
-    # Find the task line and append ref:GH#N
-    # Insert before any trailing date fields or at end of line
-    local line_num
-    line_num=$(grep -nE "^[[:space:]]*- \[( |x|-)\] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
-
-    if [[ -z "$line_num" ]]; then
-        log_warn "Task $task_id not found in $todo_file"
-        return 0
-    fi
-
-    # Append ref:GH#N to the task line (before any logged: or started: timestamps if present)
-    local task_line
-    task_line=$(sed -n "${line_num}p" "$todo_file")
-
-    local new_line
-    if echo "$task_line" | grep -qE " logged:"; then
-        # Insert ref:GH#N before logged:
-        new_line=$(echo "$task_line" | sed -E "s/ logged:/ ref:GH#${issue_number} logged:/")
-    elif echo "$task_line" | grep -qE " started:"; then
-        # Insert ref:GH#N before started:
-        new_line=$(echo "$task_line" | sed -E "s/ started:/ ref:GH#${issue_number} started:/")
-    else
-        # Append at end
-        new_line="${task_line} ref:GH#${issue_number}"
-    fi
-
-    sed_inplace "${line_num}s|.*|${new_line}|" "$todo_file"
-
-    # Verify the change
-    if ! grep -qE "^[[:space:]]*- \[( |x|-)\] ${task_id} .*ref:GH#${issue_number}" "$todo_file"; then
-        log_warn "Failed to add ref:GH#${issue_number} to $task_id in TODO.md"
-        return 0
-    fi
-
-    log_success "Added ref:GH#${issue_number} to $task_id in TODO.md"
-
-    commit_and_push_todo "$repo_path" "chore: add GH#${issue_number} ref to $task_id in TODO.md"
-    return $?
-}
+# update_todo_with_issue_ref() removed in t020.6 — ref:GH#N is now added by
+# issue-sync-helper.sh push (called from create_github_issue) and committed
+# by commit_and_push_todo within create_github_issue itself.
 
 #######################################
 # Commit and push TODO.md with pull-rebase retry
