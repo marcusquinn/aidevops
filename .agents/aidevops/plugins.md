@@ -123,11 +123,8 @@ Plugins occupy a distinct tier alongside existing tiers:
 | Plugin | `~/.aidevops/agents/<namespace>/` | Yes (managed separately) | Third-party git repos |
 | Shared | `.agents/` in repo | Overwritten on update | Open-source distribution |
 
-## Current Status
+## Configuration
 
-The plugin schema is defined in `.aidevops.json`. The `aidevops plugin` subcommand is planned for a future release (t136.2+). Until then, plugins can be managed manually:
+Plugin state is stored in `~/.config/aidevops/plugins.json` (global, not per-project). The file is auto-created on first use. Per-project `.aidevops.json` also has a `plugins` array for project-level plugin awareness.
 
-1. Add the entry to `.aidevops.json` `plugins` array
-2. Clone the repo: `git clone <repo> ~/.aidevops/agents/<namespace>/`
-3. To update: `git -C ~/.aidevops/agents/<namespace>/ pull`
-4. To remove: delete the directory and remove the config entry
+Run `aidevops plugin help` for full CLI documentation.
