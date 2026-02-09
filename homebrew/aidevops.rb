@@ -5,8 +5,8 @@
 class Aidevops < Formula
   desc "AI DevOps Framework - AI-assisted development workflows and automation"
   homepage "https://aidevops.sh"
-  url "https://github.com/marcusquinn/aidevops/archive/refs/tags/v2.105.6.tar.gz"
-  sha256 "0e8557216eb745e8aabebd482ae8cc4586f1ae869ce7b78901294a47db2d3494"
+  url "https://github.com/marcusquinn/aidevops/archive/refs/tags/v2.106.0.tar.gz"
+  sha256 "e72f395b3a58b2739deccb782efb9010653897f84b8882c54b8ae6a4e882d58c"
   license "MIT"
   head "https://github.com/marcusquinn/aidevops.git", branch: "main"
 
@@ -35,8 +35,8 @@ class Aidevops < Formula
 
   def post_install
     # Run setup to deploy agents (non-interactive)
-    ENV["AIDEVOPS_NONINTERACTIVE"] = "1"
-    system "bash", "#{libexec}/setup.sh"
+    ENV["AIDEVOPS_NON_INTERACTIVE"] = "true"
+    system "bash", "#{libexec}/setup.sh", "--non-interactive"
   end
 
   def caveats
