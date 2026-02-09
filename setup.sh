@@ -4840,23 +4840,12 @@ echo "  aidevops uninstall    - Remove aidevops"
         read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
         if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
             echo ""
-            echo "Starting OpenCode with Onboarding agent..."
-            # Detect available auth provider and select appropriate model
-            # Prefer Anthropic (Claude) > Google (Gemini)
-            local onboarding_model=""
-            local auth_file="$HOME/.local/share/opencode/auth.json"
-            if [[ -f "$auth_file" ]]; then
-                if jq -e '.anthropic' "$auth_file" &>/dev/null; then
-                    onboarding_model="anthropic/claude-sonnet-4-5"
-                elif jq -e '.google' "$auth_file" &>/dev/null; then
-                    onboarding_model="google/gemini-2.5-flash"
-                fi
-            fi
-            local opencode_args=("--agent" "Onboarding" "--prompt" "/onboarding")
-            if [[ -n "$onboarding_model" ]]; then
-                opencode_args+=("--model" "$onboarding_model")
-            fi
-            opencode "${opencode_args[@]}"
+            echo "Starting OpenCode with onboarding wizard..."
+            # Launch with /onboarding prompt only — don't use --agent flag because
+            # the "Onboarding" agent only exists after generate-opencode-agents.sh
+            # writes to opencode.json, which requires opencode.json to already exist.
+            # On first run it won't, so --agent "Onboarding" causes a fatal error.
+            opencode --prompt "/onboarding"
         else
             echo ""
             echo "You can run /onboarding anytime in OpenCode to configure services."
