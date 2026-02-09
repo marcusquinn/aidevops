@@ -171,6 +171,30 @@ find_python3() {
     return 1
 }
 
+# Install a package globally via npm or bun, with sudo when needed on Linux.
+# Usage: npm_global_install "package-name" OR npm_global_install "package@version"
+# Uses bun if available (no sudo needed), falls back to npm.
+# On Linux with apt-installed npm, automatically prepends sudo.
+# Returns: 0 on success, 1 on failure
+npm_global_install() {
+    local pkg="$1"
+    
+    if command -v bun >/dev/null 2>&1; then
+        bun install -g "$pkg"
+        return $?
+    elif command -v npm >/dev/null 2>&1; then
+        # npm global installs need sudo on Linux when prefix dir isn't writable
+        if [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
+            sudo npm install -g "$pkg"
+        else
+            npm install -g "$pkg"
+        fi
+        return $?
+    else
+        return 1
+    fi
+}
+
 # Confirm step in interactive mode
 # Usage: confirm_step "Step description" && function_to_run
 # Returns: 0 if confirmed or not interactive, 1 if skipped
@@ -3164,10 +3188,10 @@ setup_nodejs_env() {
 
     # Install DSPyGround globally if not already installed
     if ! command -v dspyground &> /dev/null; then
-        if run_with_spinner "Installing DSPyGround" npm install -g dspyground; then
+        if run_with_spinner "Installing DSPyGround" npm_global_install dspyground; then
             : # Success message handled by spinner
         else
-            print_warning "Try manually: npm install -g dspyground"
+            print_warning "Try manually: sudo npm install -g dspyground"
         fi
     else
         print_success "DSPyGround already installed"
@@ -3187,21 +3211,14 @@ install_mcp_packages() {
         "@steipete/claude-code-mcp"
     )
 
-    local installer=""
-    local install_cmd=""
-
-    if command -v bun &> /dev/null; then
-        installer="bun"
-        install_cmd="bun install -g"
-    elif command -v npm &> /dev/null; then
-        installer="npm"
-        install_cmd="npm install -g"
-    else
+    if ! command -v bun &> /dev/null && ! command -v npm &> /dev/null; then
         print_warning "Neither bun nor npm found - cannot install MCP packages"
         print_info "Install bun (recommended): npm install -g bun OR brew install oven-sh/bun/bun"
         return 0
     fi
 
+    local installer="npm"
+    command -v bun &> /dev/null && installer="bun"
     print_info "Using $installer to install/update Node.js MCP packages..."
 
     # Always install latest (bun install -g is fast and idempotent)
@@ -3209,7 +3226,7 @@ install_mcp_packages() {
     local failed=0
     local pkg
     for pkg in "${node_mcps[@]}"; do
-        if $install_cmd "${pkg}@latest" > /dev/null 2>&1; then
+        if npm_global_install "${pkg}@latest" > /dev/null 2>&1; then
             ((updated++)) || true
         else
             ((failed++)) || true
@@ -3406,11 +3423,11 @@ setup_localwp_mcp() {
     read -r -p "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? [Y/n]: " install_mcp
 
     if [[ "$install_mcp" =~ ^[Yy]?$ ]]; then
-        if run_with_spinner "Installing LocalWP MCP server" npm install -g @verygoodplugins/mcp-local-wp; then
+        if run_with_spinner "Installing LocalWP MCP server" npm_global_install "@verygoodplugins/mcp-local-wp"; then
             print_info "Start with: ~/.aidevops/agents/scripts/localhost-helper.sh start-mcp"
             print_info "Or configure in OpenCode MCP settings for auto-start"
         else
-            print_info "Try manually: npm install -g @verygoodplugins/mcp-local-wp"
+            print_info "Try manually: sudo npm install -g @verygoodplugins/mcp-local-wp"
         fi
     else
         print_info "Skipped LocalWP MCP server installation"
@@ -3493,7 +3510,7 @@ setup_osgrep() {
         
         read -r -p "Install osgrep CLI? [Y/n]: " install_osgrep
         if [[ "$install_osgrep" =~ ^[Yy]?$ ]]; then
-            if run_with_spinner "Installing osgrep CLI" npm install -g osgrep; then
+            if run_with_spinner "Installing osgrep CLI" npm_global_install osgrep; then
                 print_info "Now downloading embedding models (~150MB)..."
                 # osgrep setup is interactive, don't use spinner
                 if osgrep setup; then
@@ -3502,7 +3519,7 @@ setup_osgrep() {
                     print_warning "Model download failed - run manually: osgrep setup"
                 fi
             else
-                print_warning "Installation failed - try manually: npm install -g osgrep"
+                print_warning "Installation failed - try manually: sudo npm install -g osgrep"
                 return 0
             fi
         else
@@ -3652,7 +3669,7 @@ setup_beads_ui() {
     if command -v npm &> /dev/null; then
         read -r -p "  Install beads-ui (Web dashboard)? [Y/n]: " install_web
         if [[ "$install_web" =~ ^[Yy]?$ ]]; then
-            if run_with_spinner "Installing beads-ui" npm install -g beads-ui; then
+            if run_with_spinner "Installing beads-ui" npm_global_install beads-ui; then
                 print_info "Run: beads-ui"
                 ((installed_count++)) || true
             fi
@@ -3660,7 +3677,7 @@ setup_beads_ui() {
         
         read -r -p "  Install bdui (React/Ink TUI)? [Y/n]: " install_bdui
         if [[ "$install_bdui" =~ ^[Yy]?$ ]]; then
-            if run_with_spinner "Installing bdui" npm install -g bdui; then
+            if run_with_spinner "Installing bdui" npm_global_install bdui; then
                 print_info "Run: bdui"
                 ((installed_count++)) || true
             fi
@@ -3969,13 +3986,7 @@ setup_opencode_cli() {
         read -r -p "Install OpenCode via $installer? [Y/n]: " install_oc || install_oc="Y"
     fi
     if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
-        # npm global installs need sudo on Linux (apt-installed npm writes to /usr/local/lib)
-        # bun global installs go to ~/.bun/bin and don't need sudo
-        local install_cmd=("$installer" install -g "$install_pkg")
-        if [[ "$installer" == "npm" ]] && [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
-            install_cmd=(sudo npm install -g "$install_pkg")
-        fi
-        if run_with_spinner "Installing OpenCode" "${install_cmd[@]}"; then
+        if run_with_spinner "Installing OpenCode" npm_global_install "$install_pkg"; then
             print_success "OpenCode installed"
             
             # Offer authentication
@@ -3985,7 +3996,7 @@ setup_opencode_cli() {
             echo ""
         else
             print_warning "OpenCode installation failed"
-            print_info "Try manually: ${install_cmd[*]}"
+            print_info "Try manually: sudo npm install -g $install_pkg"
         fi
     else
         print_info "Skipped OpenCode installation"
