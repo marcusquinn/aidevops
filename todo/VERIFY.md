@@ -149,4 +149,11 @@ fail `[!]`. Failed verifications reopen the original task in TODO.md.
   check: file-exists .agents/tools/multimodal-evaluation.md
   check: rg "per-modality" .agents/tools/multimodal-evaluation.md
 
+- [x] v025 t165 Provider-agnostic task claiming | PR #712 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/scripts/supervisor-helper.sh, .agents/AGENTS.md, tests/test-supervisor-state-machine.sh
+  check: rg "find_project_root\|detect_repo_slug" .agents/scripts/supervisor-helper.sh
+  check: rg "with-issue" .agents/scripts/supervisor-helper.sh
+  check: rg "Task claiming" .agents/AGENTS.md
+  check: rg "Task Claiming via TODO.md" tests/test-supervisor-state-machine.sh
+
 <!-- VERIFY-QUEUE-END -->

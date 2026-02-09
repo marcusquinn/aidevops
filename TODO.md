@@ -830,11 +830,11 @@ t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,
 
 ## In Progress
 
-- [ ] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) ref:GH#623 assignee:marcusquinn started:2026-02-09T01:54:38Z logged:2026-02-08 started:2026-02-08
-  - Notes: Claiming via TODO.md @owner field + In Progress section. Optimistic locking via git push. GitHub issue sync as optional overlay. Replaces t164.
+- [x] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) ref:GH#623 assignee:marcusquinn started:2026-02-09T01:54:38Z logged:2026-02-08 completed:2026-02-09 verified:2026-02-09
+  - Notes: PR #712. TODO.md assignee: is now authoritative claim source. GH Issue creation opt-in (--with-issue or SUPERVISOR_AUTO_ISSUE=true). Added find_project_root(), detect_repo_slug(), gh auth check. 14 new tests, 0 regressions.
 
 <!--TOON:in_progress[1]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
-t165,Provider-agnostic task claiming via TODO.md,alexey,orchestration architecture,2h,1h30m,30m,,2026-02-08,2026-02-08,in_progress
+t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration architecture,2h,1h30m,30m,,2026-02-08,2026-02-09,completed
 -->
 
 ## In Review
