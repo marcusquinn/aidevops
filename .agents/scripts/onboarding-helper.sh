@@ -388,6 +388,85 @@ check_wordpress() {
     return 0
 }
 
+# Check containers and VMs
+check_containers() {
+    echo -e "${BLUE}Containers & VMs${NC}"
+    
+    if is_installed "orb"; then
+        local orb_ver
+        orb_ver=$(orb version 2>/dev/null | head -1 | awk '{print $2}')
+        orb_ver="${orb_ver:-unknown}"
+        if orb status &>/dev/null; then
+            print_service "OrbStack" "ready" "v${orb_ver}, running"
+        else
+            print_service "OrbStack" "partial" "v${orb_ver}, not running"
+        fi
+    else
+        print_service "OrbStack" "optional" "not installed (brew install orbstack)"
+    fi
+    
+    if is_installed "docker"; then
+        print_service "Docker" "ready" "available via OrbStack or standalone"
+    else
+        print_service "Docker" "optional" "not installed"
+    fi
+    
+    echo ""
+    return 0
+}
+
+# Check networking tools
+check_networking() {
+    echo -e "${BLUE}Networking${NC}"
+    
+    if is_installed "tailscale"; then
+        if tailscale status &>/dev/null 2>&1; then
+            local ts_hostname
+            ts_hostname=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' 2>/dev/null | sed 's/\.$//' || echo "")
+            if [[ -n "$ts_hostname" ]]; then
+                print_service "Tailscale" "ready" "connected as ${ts_hostname}"
+            else
+                print_service "Tailscale" "ready" "connected"
+            fi
+        else
+            print_service "Tailscale" "partial" "installed, not connected"
+        fi
+    else
+        print_service "Tailscale" "optional" "not installed"
+    fi
+    
+    echo ""
+    return 0
+}
+
+# Check OpenClaw
+check_openclaw() {
+    echo -e "${BLUE}Personal AI (OpenClaw)${NC}"
+    
+    if is_installed "openclaw"; then
+        local oc_ver
+        oc_ver=$(openclaw --version 2>/dev/null | head -1)
+        oc_ver="${oc_ver:-unknown}"
+        # Check if gateway is running
+        if openclaw gateway status &>/dev/null; then
+            print_service "OpenClaw Gateway" "ready" "${oc_ver}, running"
+        else
+            print_service "OpenClaw Gateway" "partial" "${oc_ver}, not running"
+        fi
+        # Check if any channels are configured
+        if [[ -f "$HOME/.openclaw/openclaw.json" ]]; then
+            print_service "OpenClaw Config" "ready" "config exists"
+        else
+            print_service "OpenClaw Config" "needs-setup" "no config found"
+        fi
+    else
+        print_service "OpenClaw" "optional" "not installed"
+    fi
+    
+    echo ""
+    return 0
+}
+
 # Show full status
 show_status() {
     echo ""
@@ -404,6 +483,9 @@ show_status() {
     check_seo
     check_context_tools
     check_browser
+    check_containers
+    check_networking
+    check_openclaw
     check_aws
     check_wordpress
     
@@ -570,9 +652,47 @@ show_guide() {
             echo "4. Store token:"
             echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SONAR_TOKEN \"your-token\""
             ;;
+        openclaw)
+            echo -e "${BLUE}OpenClaw Setup${NC}"
+            echo ""
+            echo "1. Install: curl -fsSL https://openclaw.ai/install.sh | bash"
+            echo "2. Run onboarding: openclaw onboard --install-daemon"
+            echo "3. Connect a channel (e.g., WhatsApp): openclaw channels login"
+            echo "4. Security audit: openclaw security audit --fix"
+            echo "5. Verify: openclaw doctor"
+            echo ""
+            echo "Docs: https://docs.openclaw.ai/start/getting-started"
+            ;;
+        tailscale)
+            echo -e "${BLUE}Tailscale Setup${NC}"
+            echo ""
+            echo "1. Install:"
+            echo "   macOS: brew install tailscale"
+            echo "   Linux: curl -fsSL https://tailscale.com/install.sh | sh"
+            echo "2. Start daemon:"
+            echo "   macOS: sudo tailscaled &"
+            echo "   Linux: sudo systemctl enable --now tailscaled"
+            echo "3. Authenticate: tailscale up"
+            echo "4. Verify: tailscale status"
+            echo ""
+            echo "Free tier: 100 devices, 3 users"
+            echo "Docs: https://tailscale.com/kb"
+            ;;
+        orbstack|orb)
+            echo -e "${BLUE}OrbStack Setup${NC}"
+            echo ""
+            echo "1. Install: brew install orbstack"
+            echo "2. Start: orb start (or open OrbStack.app)"
+            echo "3. Verify: orb status && docker --version"
+            echo ""
+            echo "OrbStack replaces Docker Desktop with better performance."
+            echo "All docker and docker compose commands work as normal."
+            echo "Docs: https://docs.orbstack.dev"
+            ;;
         *)
             echo "Available guides: github, openai, anthropic, hetzner, cloudflare,"
-            echo "                  dataforseo, augment, sonarcloud"
+            echo "                  dataforseo, augment, sonarcloud, openclaw,"
+            echo "                  tailscale, orbstack"
             echo ""
             echo "Usage: $0 guide <service>"
             ;;
@@ -594,7 +714,8 @@ show_help() {
     echo "                        Types: web, devops, seo, wordpress, or leave blank"
     echo "  guide <service>     - Show setup guide for a specific service"
     echo "                        Services: github, openai, anthropic, hetzner, cloudflare,"
-    echo "                                  dataforseo, augment, sonarcloud"
+    echo "                                  dataforseo, augment, sonarcloud, openclaw,"
+    echo "                                  tailscale, orbstack"
     echo "  json                - Output status as JSON for programmatic use"
     echo "  help                - Show this help message"
     echo ""
@@ -669,7 +790,31 @@ output_json() {
     is_installed "osgrep" && json+='true' || json+='false'
     json+='},"sqlite3":{"installed":'
     is_installed "sqlite3" && json+='true' || json+='false'
-    json+='}}'
+    json+='}},'
+    
+    # Containers
+    json+='"containers":{'
+    json+='"orbstack":{"installed":'
+    is_installed "orb" && json+='true' || json+='false'
+    json+='},"docker":{"installed":'
+    is_installed "docker" && json+='true' || json+='false'
+    json+='}},'
+    
+    # Networking
+    json+='"networking":{'
+    json+='"tailscale":{"installed":'
+    is_installed "tailscale" && json+='true' || json+='false'
+    json+=',"connected":'
+    tailscale status &>/dev/null 2>&1 && json+='true' || json+='false'
+    json+='}},'
+    
+    # OpenClaw
+    json+='"openclaw":{'
+    json+='"installed":'
+    is_installed "openclaw" && json+='true' || json+='false'
+    json+=',"config_exists":'
+    [[ -f "$HOME/.openclaw/openclaw.json" ]] && json+='true' || json+='false'
+    json+='}'
     
     json+='}'
     
