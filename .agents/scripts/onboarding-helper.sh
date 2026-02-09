@@ -394,7 +394,8 @@ check_containers() {
     
     if is_installed "orb"; then
         local orb_ver
-        orb_ver=$(orb version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
+        orb_ver=$(orb version 2>/dev/null | head -1 | awk '{print $2}')
+        orb_ver="${orb_ver:-unknown}"
         if orb status &>/dev/null; then
             print_service "OrbStack" "ready" "v${orb_ver}, running"
         else
@@ -444,9 +445,10 @@ check_openclaw() {
     
     if is_installed "openclaw"; then
         local oc_ver
-        oc_ver=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
+        oc_ver=$(openclaw --version 2>/dev/null | head -1)
+        oc_ver="${oc_ver:-unknown}"
         # Check if gateway is running
-        if openclaw gateway status &>/dev/null 2>&1; then
+        if openclaw gateway status &>/dev/null; then
             print_service "OpenClaw Gateway" "ready" "${oc_ver}, running"
         else
             print_service "OpenClaw Gateway" "partial" "${oc_ver}, not running"
