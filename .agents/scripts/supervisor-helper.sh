@@ -2798,10 +2798,21 @@ create_task_worktree() {
     fi
 
     if [[ "$needs_cleanup" == "true" ]]; then
+        # Ownership check (t189): refuse to clean worktrees owned by other sessions
+        if [[ -d "$worktree_path" ]] && is_worktree_owned_by_others "$worktree_path"; then
+            local stale_owner_info
+            stale_owner_info=$(check_worktree_owner "$worktree_path" || echo "unknown")
+            log_warn "Cannot clean stale worktree $worktree_path — owned by another active session (owner: $stale_owner_info)" >&2
+            # Return existing path — let the caller decide
+            echo "$worktree_path"
+            return 0
+        fi
         # Remove worktree if it exists
         if [[ -d "$worktree_path" ]]; then
             git -C "$repo" worktree remove "$worktree_path" --force &>/dev/null || rm -rf "$worktree_path"
             git -C "$repo" worktree prune &>/dev/null || true
+            # Unregister ownership (t189)
+            unregister_worktree "$worktree_path"
         fi
         # Delete local branch — MUST suppress stdout (outputs "Deleted branch ...")
         # which would pollute the function's return value captured by $()
@@ -2813,6 +2824,8 @@ create_task_worktree() {
     # Try wt first (redirect its verbose output to stderr)
     if command -v wt &>/dev/null; then
         if wt switch -c "$branch_name" -C "$repo" >&2 2>&1; then
+            # Register ownership (t189)
+            register_worktree "$worktree_path" "$branch_name" --task "$task_id"
             echo "$worktree_path"
             return 0
         fi
@@ -2820,12 +2833,16 @@ create_task_worktree() {
 
     # Fallback: raw git worktree add (quiet, reliable)
     if git -C "$repo" worktree add "$worktree_path" -b "$branch_name" >&2 2>&1; then
+        # Register ownership (t189)
+        register_worktree "$worktree_path" "$branch_name" --task "$task_id"
         echo "$worktree_path"
         return 0
     fi
 
     # Branch may already exist without worktree (e.g. remote-only)
     if git -C "$repo" worktree add "$worktree_path" "$branch_name" >&2 2>&1; then
+        # Register ownership (t189)
+        register_worktree "$worktree_path" "$branch_name" --task "$task_id"
         echo "$worktree_path"
         return 0
     fi
@@ -2836,22 +2853,38 @@ create_task_worktree() {
 
 #######################################
 # Clean up a worktree for a completed/failed task
+# Checks ownership registry (t189) before removal
 #######################################
 cleanup_task_worktree() {
     local worktree_path="$1"
     local repo="$2"
 
     if [[ ! -d "$worktree_path" ]]; then
+        # Directory gone — clean up registry entry if any
+        unregister_worktree "$worktree_path"
+        return 0
+    fi
+
+    # Ownership check (t189): refuse to remove worktrees owned by other sessions
+    if is_worktree_owned_by_others "$worktree_path"; then
+        local owner_info
+        owner_info=$(check_worktree_owner "$worktree_path" || echo "unknown")
+        log_warn "Skipping cleanup of $worktree_path — owned by another active session (owner: $owner_info)"
         return 0
     fi
 
     # Try wt prune first
     if command -v wt &>/dev/null; then
-        wt remove -C "$repo" "$worktree_path" 2>>"$SUPERVISOR_LOG" && return 0
+        if wt remove -C "$repo" "$worktree_path" 2>>"$SUPERVISOR_LOG"; then
+            unregister_worktree "$worktree_path"
+            return 0
+        fi
     fi
 
     # Fallback: git worktree remove
     git -C "$repo" worktree remove "$worktree_path" --force 2>>"$SUPERVISOR_LOG" || true
+    # Unregister regardless of removal success (directory may be partially cleaned)
+    unregister_worktree "$worktree_path"
     return 0
 }
 
@@ -6019,7 +6052,9 @@ cmd_cleanup() {
         done
     fi
 
+    # Prune stale registry entries (t189)
     if [[ "$dry_run" == "false" ]]; then
+        prune_worktree_registry
         log_success "Cleaned up $cleaned worktrees, $process_cleaned worker processes"
     fi
 

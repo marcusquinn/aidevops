@@ -35,6 +35,10 @@ set -euo pipefail
 
 readonly BOLD='\033[1m'
 
+# Ownership registry functions are in shared-constants.sh (t189):
+#   register_worktree, unregister_worktree, check_worktree_owner,
+#   is_worktree_owned_by_others, prune_worktree_registry
+
 # Get repo info
 get_repo_root() {
     git rev-parse --show-toplevel 2>/dev/null || echo ""
@@ -206,6 +210,9 @@ cmd_add() {
         git worktree add -b "$branch" "$path"
     fi
     
+    # Register ownership (t189)
+    register_worktree "$path" "$branch"
+
     echo ""
     echo -e "${GREEN}Worktree created successfully!${NC}"
     echo ""
@@ -276,12 +283,26 @@ cmd_list() {
 }
 
 cmd_remove() {
-    local target="${1:-}"
+    local target=""
+    local force_remove=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force_remove=true; shift ;;
+            *) target="$1"; shift ;;
+        esac
+    done
     
     if [[ -z "$target" ]]; then
         echo -e "${RED}Error: Path or branch name required${NC}"
-        echo "Usage: worktree-helper.sh remove <path|branch>"
+        echo "Usage: worktree-helper.sh remove <path|branch> [--force]"
         return 1
+    fi
+
+    # Export for ownership check
+    if [[ "$force_remove" == "true" ]]; then
+        export WORKTREE_FORCE_REMOVE="true"
     fi
     
     local path_to_remove=""
@@ -313,6 +334,26 @@ cmd_remove() {
         echo "First: cd $(get_repo_root)" || exit
         return 1
     fi
+
+    # Ownership check (t189): refuse to remove worktrees owned by other sessions
+    if is_worktree_owned_by_others "$path_to_remove"; then
+        local owner_info
+        owner_info=$(check_worktree_owner "$path_to_remove")
+        local owner_pid owner_session owner_batch owner_task
+        IFS='|' read -r owner_pid owner_session owner_batch owner_task _ <<< "$owner_info"
+        echo -e "${RED}Error: Worktree is owned by another active session${NC}"
+        echo -e "  Owner PID:     $owner_pid"
+        [[ -n "$owner_session" ]] && echo -e "  Session:       $owner_session"
+        [[ -n "$owner_batch" ]]   && echo -e "  Batch:         $owner_batch"
+        [[ -n "$owner_task" ]]    && echo -e "  Task:          $owner_task"
+        echo ""
+        echo "Use --force to override, or wait for the owning session to finish."
+        # Allow --force override
+        if [[ "${WORKTREE_FORCE_REMOVE:-}" != "true" ]]; then
+            return 1
+        fi
+        echo -e "${YELLOW}--force specified, proceeding with removal${NC}"
+    fi
     
     # Clean up aidevops runtime files before removal (prevents "contains untracked files" error)
     rm -rf "$path_to_remove/.agents/loop-state" 2>/dev/null || true
@@ -322,6 +363,9 @@ cmd_remove() {
     
     echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
     git worktree remove "$path_to_remove"
+
+    # Unregister ownership (t189)
+    unregister_worktree "$path_to_remove"
     
     echo -e "${GREEN}Worktree removed successfully${NC}"
     return 0
@@ -437,6 +481,18 @@ cmd_clean() {
                     echo ""
                     is_merged=false
                 fi
+
+                # Ownership check (t189): skip if owned by another active session
+                if [[ "$is_merged" == "true" ]] && is_worktree_owned_by_others "$worktree_path"; then
+                    local clean_owner_info
+                    clean_owner_info=$(check_worktree_owner "$worktree_path")
+                    local clean_owner_pid
+                    clean_owner_pid="${clean_owner_info%%|*}"
+                    echo -e "  ${RED}$worktree_branch${NC} (owned by active session PID $clean_owner_pid - skipping)"
+                    echo "    $worktree_path"
+                    echo ""
+                    is_merged=false
+                fi
                 
                 if [[ "$is_merged" == "true" ]]; then
                     found_any=true
@@ -474,6 +530,14 @@ cmd_clean() {
                     if worktree_has_changes "$worktree_path"; then
                         echo -e "${RED}Skipping $worktree_branch - has uncommitted changes${NC}"
                         should_remove=false
+                    # Ownership check (t189): never remove worktrees owned by other sessions
+                    elif is_worktree_owned_by_others "$worktree_path"; then
+                        local rm_owner_info
+                        rm_owner_info=$(check_worktree_owner "$worktree_path")
+                        local rm_owner_pid
+                        rm_owner_pid="${rm_owner_info%%|*}"
+                        echo -e "${RED}Skipping $worktree_branch - owned by active session PID $rm_owner_pid${NC}"
+                        should_remove=false
                     # Check 1: Traditional merge
                     elif git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
                         should_remove=true
@@ -494,6 +558,8 @@ cmd_clean() {
                         if ! git worktree remove "$worktree_path" 2>/dev/null; then
                             echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}"
                         else
+                            # Unregister ownership (t189)
+                            unregister_worktree "$worktree_path"
                             # Also delete the local branch
                             git branch -D "$worktree_branch" 2>/dev/null || true
                         fi
@@ -509,6 +575,50 @@ cmd_clean() {
         echo "Cancelled"
     fi
     
+    return 0
+}
+
+cmd_registry() {
+    local subcmd="${1:-list}"
+
+    case "$subcmd" in
+        list|ls)
+            [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && { echo "No registry entries"; return 0; }
+            echo -e "${BOLD}Worktree Ownership Registry:${NC}"
+            echo ""
+            local entries
+            entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
+                SELECT worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, created_at
+                FROM worktree_owners ORDER BY created_at DESC;
+            " 2>/dev/null || echo "")
+            if [[ -z "$entries" ]]; then
+                echo "  (empty)"
+                return 0
+            fi
+            while IFS='|' read -r wt_path branch pid session batch task created; do
+                local alive_status="${RED}dead${NC}"
+                if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                    alive_status="${GREEN}alive${NC}"
+                fi
+                echo -e "  ${BOLD}$branch${NC}"
+                echo -e "    Path:    $wt_path"
+                echo -e "    PID:     $pid ($alive_status)"
+                [[ -n "$session" ]] && echo -e "    Session: $session"
+                [[ -n "$batch" ]]   && echo -e "    Batch:   $batch"
+                [[ -n "$task" ]]    && echo -e "    Task:    $task"
+                echo -e "    Created: $created"
+                echo ""
+            done <<< "$entries"
+            ;;
+        prune)
+            echo -e "${BLUE}Pruning stale registry entries...${NC}"
+            prune_worktree_registry
+            echo -e "${GREEN}Done${NC}"
+            ;;
+        *)
+            echo "Usage: worktree-helper.sh registry [list|prune]"
+            ;;
+    esac
     return 0
 }
 
@@ -529,15 +639,28 @@ COMMANDS
   
   list                   List all worktrees with status
   
-  remove <path|branch>   Remove a worktree (keeps branch)
+  remove <path|branch> [--force]
+                         Remove a worktree (keeps branch)
+                         Refuses if owned by another active session (t189)
+                         Use --force to override ownership check
   
   status                 Show current worktree info
   
   switch <branch>        Get/create worktree for branch (prints path)
   
   clean                  Remove worktrees for merged branches
+                         Skips worktrees owned by other active sessions (t189)
+  
+  registry [list|prune]  View or prune the ownership registry (t189)
   
   help                   Show this help
+
+OWNERSHIP SAFETY (t189)
+  Worktrees are registered to the creating session's PID. Removal is blocked
+  if another session's process is still alive. This prevents cross-session
+  worktree removal that destroys another agent's working directory.
+
+  Registry: ~/.aidevops/.agent-workspace/worktree-registry.db
 
 EXAMPLES
   # Start work on a feature (creates worktree)
@@ -553,6 +676,9 @@ EXAMPLES
   
   # After merging, clean up
   worktree-helper.sh clean
+
+  # View ownership registry
+  worktree-helper.sh registry list
 
 DIRECTORY STRUCTURE
   ~/Git/myrepo/                      # Main worktree (main branch)
@@ -595,6 +721,9 @@ main() {
             ;;
         clean)
             cmd_clean "$@"
+            ;;
+        registry|reg)
+            cmd_registry "$@"
             ;;
         help|--help|-h)
             cmd_help
