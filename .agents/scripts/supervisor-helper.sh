@@ -2625,8 +2625,10 @@ resolve_ai_cli() {
 
 #######################################
 # Resolve the best available model for a given task tier
-# Uses model-availability-helper.sh for availability-aware resolution
-# with automatic fallback to cross-provider alternatives.
+# Uses fallback-chain-helper.sh (t132.4) for configurable multi-provider
+# fallback chains with gateway support, falling back to
+# model-availability-helper.sh (t132.3) for simple primary/fallback,
+# then static defaults.
 #
 # Tiers:
 #   coding  - Best SOTA model for code tasks (default)
@@ -2641,6 +2643,19 @@ resolve_model() {
     if [[ -n "${SUPERVISOR_MODEL:-}" ]]; then
         echo "$SUPERVISOR_MODEL"
         return 0
+    fi
+
+    # Try fallback-chain-helper.sh for full chain resolution (t132.4)
+    # This walks the configured chain including gateway providers
+    local chain_helper="${SCRIPT_DIR}/fallback-chain-helper.sh"
+    if [[ -x "$chain_helper" ]]; then
+        local resolved
+        resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+        log_verbose "fallback-chain-helper.sh could not resolve tier '$tier', trying availability helper"
     fi
 
     # Try model-availability-helper.sh for availability-aware resolution (t132.3)

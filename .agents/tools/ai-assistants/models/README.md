@@ -41,14 +41,31 @@ The supervisor resolves model tiers from subagent frontmatter:
 2. Supervisor reads `models/pro.md` frontmatter for concrete model ID
 3. Dispatches runner with `--model` flag set to the resolved model
 
+## Fallback Chains (t132.4)
+
+Each tier supports a configurable fallback chain that goes beyond the simple primary/fallback pair. When a provider fails (API error, timeout, rate limit), the system walks the chain until a healthy provider is found, including gateway providers like OpenRouter and Cloudflare AI Gateway.
+
+Add `fallback-chain:` to any model tier's YAML frontmatter for per-agent overrides:
+
+```yaml
+fallback-chain:
+  - anthropic/claude-sonnet-4-20250514
+  - openai/gpt-4.1
+  - google/gemini-2.5-pro
+  - openrouter/anthropic/claude-sonnet-4-20250514
+```
+
+Global defaults are configured in `configs/fallback-chain-config.json`. See `tools/ai-assistants/fallback-chains.md` for full documentation.
+
 ## Adding New Models
 
 1. Create a new subagent file in this directory
 2. Set `model:` in YAML frontmatter to the provider/model ID
-3. Add to the tier mapping in `model-routing.md`
-4. Add to `compare-models-helper.sh` MODEL_DATA if tracking pricing
-5. Run `model-registry-helper.sh sync --force` to update the registry
-6. Run `model-registry-helper.sh check` to verify availability
+3. Optionally add `fallback-chain:` for per-agent chain override
+4. Add to the tier mapping in `model-routing.md`
+5. Add to `compare-models-helper.sh` MODEL_DATA if tracking pricing
+6. Run `model-registry-helper.sh sync --force` to update the registry
+7. Run `model-registry-helper.sh check` to verify availability
 
 ## Model Registry
 
@@ -71,7 +88,9 @@ The registry runs automatically on `aidevops update` and can be added to cron fo
 
 ## Related
 
+- `tools/ai-assistants/fallback-chains.md` — Fallback chain configuration and gateway providers
 - `tools/context/model-routing.md` — Cost-aware routing rules
 - `compare-models-helper.sh discover` — Detect available providers
 - `model-registry-helper.sh` — Provider/model registry with periodic sync
+- `fallback-chain-helper.sh` — Fallback chain resolution with trigger detection
 - `tools/ai-assistants/headless-dispatch.md` — CLI dispatch with model selection
