@@ -75,6 +75,12 @@
 #   Optimistic locking: claim = commit+push TODO.md; push failure = race lost
 #   GH Issue creation: opt-in via --with-issue flag or SUPERVISOR_AUTO_ISSUE=true
 #
+# Model resolution (t132.5):
+#   Priority: task explicit model > subagent frontmatter > fallback chain > static default
+#   Tier names (haiku/sonnet/opus/flash/pro/grok) mapped to concrete provider/model strings
+#   resolve_task_model() orchestrates: resolve_model_from_frontmatter() + resolve_model()
+#   Integrates with: fallback-chain-helper.sh (t132.4), model-availability-helper.sh (t132.3)
+#
 # Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
 #
 # Integration:
@@ -2692,6 +2698,12 @@ resolve_model() {
         return 0
     fi
 
+    # If tier is already a full provider/model string (contains /), return as-is
+    if [[ "$tier" == *"/"* ]]; then
+        echo "$tier"
+        return 0
+    fi
+
     # Try fallback-chain-helper.sh for full chain resolution (t132.4)
     # This walks the configured chain including gateway providers
     local chain_helper="${SCRIPT_DIR}/fallback-chain-helper.sh"
@@ -2718,16 +2730,137 @@ resolve_model() {
         log_verbose "model-availability-helper.sh could not resolve tier '$tier', using static default"
     fi
 
-    # Static fallback (no availability helper or resolution failed)
+    # Static fallback: map tier names to concrete models (t132.5)
     case "$tier" in
-        coding)
+        opus|coding)
             echo "anthropic/claude-opus-4-6"
             ;;
-        eval|health)
+        sonnet|eval|health)
             echo "anthropic/claude-sonnet-4-5"
+            ;;
+        haiku)
+            echo "anthropic/claude-3-5-haiku-20241022"
+            ;;
+        flash)
+            echo "google/gemini-2.5-flash-preview-05-20"
+            ;;
+        pro)
+            echo "google/gemini-2.5-pro-preview-06-05"
+            ;;
+        grok)
+            echo "xai/grok-3"
+            ;;
+        *)
+            # Unknown tier — treat as coding tier default
+            echo "anthropic/claude-opus-4-6"
             ;;
     esac
 
+    return 0
+}
+
+#######################################
+# Read model: field from subagent YAML frontmatter (t132.5)
+# Searches deployed agents dir and repo .agents/ dir
+# Returns the model value or empty string if not found
+#######################################
+resolve_model_from_frontmatter() {
+    local subagent_name="$1"
+    local repo="${2:-.}"
+
+    # Search paths for subagent files
+    local -a search_paths=(
+        "${HOME}/.aidevops/agents"
+        "${repo}/.agents"
+    )
+
+    local agents_dir subagent_file model_value
+    for agents_dir in "${search_paths[@]}"; do
+        [[ -d "$agents_dir" ]] || continue
+
+        # Try exact path first (e.g., "tools/ai-assistants/models/opus.md")
+        subagent_file="${agents_dir}/${subagent_name}"
+        [[ -f "$subagent_file" ]] || subagent_file="${agents_dir}/${subagent_name}.md"
+
+        if [[ -f "$subagent_file" ]]; then
+            # Extract model: from YAML frontmatter (between --- delimiters)
+            model_value=$(sed -n '/^---$/,/^---$/{ /^model:/{ s/^model:[[:space:]]*//; p; q; } }' "$subagent_file" 2>/dev/null) || true
+            if [[ -n "$model_value" ]]; then
+                echo "$model_value"
+                return 0
+            fi
+        fi
+
+        # Try finding by name in subdirectories
+        # shellcheck disable=SC2044
+        local found_file
+        found_file=$(find "$agents_dir" -name "${subagent_name}.md" -type f 2>/dev/null | head -1) || true
+        if [[ -n "$found_file" && -f "$found_file" ]]; then
+            model_value=$(sed -n '/^---$/,/^---$/{ /^model:/{ s/^model:[[:space:]]*//; p; q; } }' "$found_file" 2>/dev/null) || true
+            if [[ -n "$model_value" ]]; then
+                echo "$model_value"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+#######################################
+# Resolve the model for a task (t132.5)
+# Priority: 1) Task's explicit model (if not default)
+#           2) Subagent frontmatter model:
+#           3) resolve_model() with tier/fallback chain
+# Returns the resolved provider/model string
+#######################################
+resolve_task_model() {
+    local task_id="$1"
+    local task_model="${2:-}"
+    local task_repo="${3:-.}"
+    local ai_cli="${4:-opencode}"
+
+    local default_model="anthropic/claude-opus-4-6"
+
+    # 1) If task has an explicit non-default model, use it
+    if [[ -n "$task_model" && "$task_model" != "$default_model" ]]; then
+        # Could be a tier name or full model string — resolve_model handles both
+        local resolved
+        resolved=$(resolve_model "$task_model" "$ai_cli")
+        if [[ -n "$resolved" ]]; then
+            log_info "Model for $task_id: $resolved (from task config)"
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    # 2) Try to find a model-specific subagent definition matching the task
+    #    Look for tools/ai-assistants/models/*.md files that match the task's
+    #    model tier or the task description keywords
+    local model_agents_dir="${HOME}/.aidevops/agents/tools/ai-assistants/models"
+    if [[ -d "$model_agents_dir" ]]; then
+        # If task_model is a tier name, check for a matching model agent
+        if [[ -n "$task_model" && ! "$task_model" == *"/"* ]]; then
+            local tier_agent="${model_agents_dir}/${task_model}.md"
+            if [[ -f "$tier_agent" ]]; then
+                local frontmatter_model
+                frontmatter_model=$(resolve_model_from_frontmatter "tools/ai-assistants/models/${task_model}" "$task_repo") || true
+                if [[ -n "$frontmatter_model" ]]; then
+                    local resolved
+                    resolved=$(resolve_model "$frontmatter_model" "$ai_cli")
+                    log_info "Model for $task_id: $resolved (from subagent frontmatter: ${task_model}.md)"
+                    echo "$resolved"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    # 3) Fall back to resolve_model with default tier
+    local resolved
+    resolved=$(resolve_model "coding" "$ai_cli")
+    log_info "Model for $task_id: $resolved (default coding tier)"
+    echo "$resolved"
     return 0
 }
 
@@ -3513,7 +3646,7 @@ cmd_dispatch() {
         echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "worktree=$worktree_path"
         echo "branch=$branch_name"
-        echo "model=${tmodel:-default}"
+        echo "model=${resolved_model:-${tmodel:-default}}"
         echo "ai_cli=$(resolve_ai_cli 2>/dev/null || echo unknown)"
         echo "dispatch_mode=$(detect_dispatch_mode 2>/dev/null || echo unknown)"
         echo "=== END DISPATCH METADATA ==="
@@ -3537,8 +3670,13 @@ cmd_dispatch() {
         log_info "Injecting ${#memory_context} bytes of memory context for $task_id"
     fi
 
+    # Resolve model via frontmatter + fallback chain (t132.5)
+    local resolved_model
+    resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+
     log_info "Dispatching $task_id via $ai_cli ($dispatch_mode mode)"
     log_info "Worktree: $worktree_path"
+    log_info "Model: $resolved_model"
     log_info "Log: $log_file"
 
     # Build and execute dispatch command
@@ -3546,7 +3684,7 @@ cmd_dispatch() {
     local -a cmd_parts=()
     while IFS= read -r -d '' part; do
         cmd_parts+=("$part")
-    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$tmodel" "$tdesc")
+    done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc")
 
     # Ensure PID directory exists before dispatch
     mkdir -p "$SUPERVISOR_DIR/pids"
