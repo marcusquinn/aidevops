@@ -79,32 +79,32 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: rg "reconcile" .agents/scripts/issue-sync-helper.sh
   check: file-exists .github/workflows/issue-sync.yml
 
-- [!] v011 t180 Post-merge verification worker phase | PR #679 | merged:2026-02-09 failed:2026-02-09 reason:rg "post_merge_verify|verification" .ag; bash tests/test-su
+- [!] v011 t180 Post-merge verification worker phase | PR #679 | merged:2026-02-09 "post_merge_verify|verification" .ag; bash tests/test-su failed:2026-02-09 reason:bash tests/test-supervisor-state-machine; 
   files: .agents/scripts/supervisor-helper.sh, tests/test-supervisor-state-machine.sh
   check: rg "post_merge_verify\|verification" .agents/scripts/supervisor-helper.sh
   check: bash tests/test-supervisor-state-machine.sh
 
-- [!] v012 t181 Memory deduplication and auto-pruning | PR #681 | merged:2026-02-09 failed:2026-02-09 reason:rg "dedup|auto_prune|consolidate" .age; 
+- [x] v012 t181 Memory deduplication and auto-pruning | PR #681 | merged:2026-02-09 "dedup|auto_prune|consolidate" .age;  verified:2026-02-09
   files: .agents/scripts/memory-helper.sh, tests/test-memory-mail.sh
   check: rg "dedup\|auto_prune\|consolidate" .agents/scripts/memory-helper.sh
   check: bash tests/test-memory-mail.sh
 
-- [!] v013 t182 GHA auto-fix workflow safety | PR #684 | merged:2026-02-09 failed:2026-02-09 reason:rg "validate|auto.fix" .agents/scripts/; 
+- [x] v013 t182 GHA auto-fix workflow safety | PR #684 | merged:2026-02-09 "validate|auto.fix" .agents/scripts/;  verified:2026-02-09
   files: .agents/scripts/monitor-code-review.sh, .github/workflows/code-review-monitoring.yml
   check: file-exists .agents/scripts/monitor-code-review.sh
   check: rg "validate\|auto.fix" .agents/scripts/monitor-code-review.sh
 
-- [!] v014 t183 Fix supervisor no_log_file dispatch | PR #685 | merged:2026-02-09 failed:2026-02-09 reason:rg "no_log_file|log_file" .agents/scrip; 
+- [x] v014 t183 Fix supervisor no_log_file dispatch | PR #685 | merged:2026-02-09 "no_log_file|log_file" .agents/scrip;  verified:2026-02-09
   files: .agents/scripts/supervisor-helper.sh
   check: rg "no_log_file\|log_file" .agents/scripts/supervisor-helper.sh
 
-- [!] v015 t184 Graduate memories to docs | PR #689 | merged:2026-02-09 failed:2026-02-09 reason:shellcheck .agents/scripts/memory-gradua; 
+- [x] v015 t184 Graduate memories to docs | PR #689 | merged:2026-02-09 .agents/scripts/memory-gradua;  verified:2026-02-09
   files: .agents/scripts/memory-graduate-helper.sh, .agents/scripts/commands/graduate-memories.md
   check: file-exists .agents/scripts/memory-graduate-helper.sh
   check: file-exists .agents/scripts/commands/graduate-memories.md
   check: shellcheck .agents/scripts/memory-graduate-helper.sh
 
-- [!] v016 t185 Memory audit pulse | PR #691 | merged:2026-02-09 failed:2026-02-09 reason:shellcheck .agents/scripts/memory-audit-; 
+- [x] v016 t185 Memory audit pulse | PR #691 | merged:2026-02-09 .agents/scripts/memory-audit-;  verified:2026-02-09
   files: .agents/scripts/memory-audit-pulse.sh, .agents/scripts/commands/memory-audit.md
   check: file-exists .agents/scripts/memory-audit-pulse.sh
   check: file-exists .agents/scripts/commands/memory-audit.md
@@ -117,18 +117,18 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: shellcheck .agents/scripts/transcription-helper.sh
   check: rg "transcription" .agents/subagent-index.toon
 
-- [!] v018 t189 Worktree ownership safety | PR #695 | merged:2026-02-09 failed:2026-02-09 reason:rg "worktree_registry|ownership" .agent; rg "in_use|regist
+- [x] v018 t189 Worktree ownership safety | PR #695 | merged:2026-02-09 "worktree_registry|ownership" .agent; rg "in_use|regist verified:2026-02-09
   files: .agents/scripts/shared-constants.sh, .agents/scripts/worktree-helper.sh
   check: rg "worktree_registry\|ownership" .agents/scripts/shared-constants.sh
   check: rg "in_use\|registry" .agents/scripts/worktree-helper.sh
 
-- [!] v019 t188 Pre-migration safety backups | PR #697 | merged:2026-02-09 failed:2026-02-09 reason:rg "backup_sqlite_db|verify_migration_r; 
+- [x] v019 t188 Pre-migration safety backups | PR #697 | merged:2026-02-09 "backup_sqlite_db|verify_migration_r;  verified:2026-02-09
   files: .agents/scripts/shared-constants.sh, .agents/scripts/supervisor-helper.sh, .agents/scripts/memory-helper.sh, tests/test-backup-safety.sh
   check: rg "backup_sqlite_db\|verify_migration_rowcounts" .agents/scripts/shared-constants.sh
   check: file-exists tests/test-backup-safety.sh
   check: bash tests/test-backup-safety.sh
 
-- [!] v020 t187 Compaction-resilient session state | PR #699 | merged:2026-02-09 failed:2026-02-09 reason:rg "continuation|auto.save" .agents/scr; 
+- [x] v020 t187 Compaction-resilient session state | PR #699 | merged:2026-02-09 "continuation|auto.save" .agents/scr;  verified:2026-02-09
   files: .agents/scripts/session-checkpoint-helper.sh, .agents/scripts/session-distill-helper.sh, .agents/prompts/build.txt
   check: rg "continuation\|auto.save" .agents/scripts/session-checkpoint-helper.sh
   check: rg "checkpoint" .agents/scripts/session-distill-helper.sh
@@ -175,7 +175,7 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: rg "git-common-dir|git rev-parse --git-common" .agents/scripts/linters-local.sh
   check: shellcheck .agents/scripts/secretlint-helper.sh
 
-- [x] v028 verify-run-helper.sh BRE pattern normalization and shellcheck flags | PR #716 | merged:2026-02-09 verified:2026-02-09
+- [x] v028 t000 verify-run-helper.sh BRE pattern normalization and shellcheck flags | PR #716 | merged:2026-02-09 verified:2026-02-09
   files: .agents/scripts/verify-run-helper.sh
   check: rg "Normalize grep BRE" .agents/scripts/verify-run-helper.sh
   check: rg "shellcheck -x -S warning" .agents/scripts/verify-run-helper.sh
