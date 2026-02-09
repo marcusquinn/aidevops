@@ -4,7 +4,7 @@
 // Part of AI DevOps Framework
 
 import { chromium } from 'playwright';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync, statSync, copyFileSync } from 'fs';
 import { join, basename, extname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
@@ -87,6 +87,19 @@ function parseArgs() {
       options.unlimited = true;
     } else if (args[i] === '--preset' || args[i] === '-s') {
       options.preset = args[++i];
+    } else if (args[i] === '--seed') {
+      options.seed = parseInt(args[++i], 10);
+    } else if (args[i] === '--seed-range') {
+      // Format: "1000-1010" or "1000,1005,1010"
+      options.seedRange = args[++i];
+    } else if (args[i] === '--brief') {
+      options.brief = args[++i];
+    } else if (args[i] === '--character-image') {
+      options.characterImage = args[++i];
+    } else if (args[i] === '--dialogue') {
+      options.dialogue = args[++i];
+    } else if (args[i] === '--scenes') {
+      options.scenes = parseInt(args[++i], 10);
     }
   }
 
@@ -702,19 +715,65 @@ async function configureImageOptions(page, options) {
   }
 
   // Set batch size if specified (1-4 images)
+  // The UI uses a minus/count/plus pattern: [—] 4/4 [+]
+  // The count display shows "N/4" where N is the current batch size.
+  // We click the minus button to decrease or plus button to increase.
   if (options.batch && options.batch >= 1 && options.batch <= 4) {
     console.log(`Setting batch size: ${options.batch}`);
-    const batchBtn = page.locator(`button:has-text("${options.batch}")`);
-    // Batch buttons are typically small numbered buttons (1, 2, 3, 4)
-    // We need to be more specific to avoid matching other buttons
-    const batchGroup = page.locator('[class*="batch"], [class*="count"]');
-    if (await batchGroup.count() > 0) {
-      const btn = batchGroup.locator(`button:has-text("${options.batch}")`);
-      if (await btn.count() > 0) {
-        await btn.first().click({ force: true });
-        await page.waitForTimeout(300);
-        console.log(`Selected batch size: ${options.batch}`);
+
+    // Read the current batch count from the "N/4" display
+    const currentBatch = await page.evaluate(() => {
+      // Look for text matching "N/4" pattern near the Generate button area
+      const allText = document.body.innerText;
+      const batchMatch = allText.match(/(\d)\/4/);
+      return batchMatch ? parseInt(batchMatch[1], 10) : 4; // Default 4 if not found
+    });
+    console.log(`Current batch size: ${currentBatch}, target: ${options.batch}`);
+
+    if (currentBatch !== options.batch) {
+      // Find the minus and plus buttons near the batch counter.
+      // They are small buttons containing "—" (em dash) or "+" text,
+      // or SVG icons, near the "N/4" display.
+      const diff = options.batch - currentBatch;
+
+      if (diff < 0) {
+        // Need to decrease: click minus button |diff| times
+        const minusBtn = page.locator('button:has-text("—"), button:has-text("−"), button:has-text("-")').first();
+        if (await minusBtn.count() > 0) {
+          for (let clicks = 0; clicks < Math.abs(diff); clicks++) {
+            await minusBtn.click({ force: true });
+            await page.waitForTimeout(200);
+          }
+          console.log(`Clicked minus ${Math.abs(diff)} time(s) to set batch to ${options.batch}`);
+        } else {
+          console.log('Could not find minus button for batch size');
+        }
+      } else {
+        // Need to increase: click plus button diff times
+        const plusBtn = page.locator('button:has-text("+")').first();
+        if (await plusBtn.count() > 0) {
+          for (let clicks = 0; clicks < diff; clicks++) {
+            await plusBtn.click({ force: true });
+            await page.waitForTimeout(200);
+          }
+          console.log(`Clicked plus ${diff} time(s) to set batch to ${options.batch}`);
+        } else {
+          console.log('Could not find plus button for batch size');
+        }
       }
+
+      // Verify the new batch size
+      const newBatch = await page.evaluate(() => {
+        const batchMatch = document.body.innerText.match(/(\d)\/4/);
+        return batchMatch ? parseInt(batchMatch[1], 10) : -1;
+      });
+      if (newBatch === options.batch) {
+        console.log(`Batch size confirmed: ${newBatch}`);
+      } else {
+        console.log(`WARNING: Batch size may not have changed (showing ${newBatch})`);
+      }
+    } else {
+      console.log(`Batch size already at ${options.batch}`);
     }
   }
 
@@ -827,16 +886,16 @@ async function generateImage(options = {}) {
     // Configure generation options (aspect ratio, quality, enhance, batch, preset)
     await configureImageOptions(page, options);
 
-    // Snapshot existing image src URLs before generating (to identify new ones later)
-    const existingSrcs = await page.evaluate(() => {
-      const imgs = document.querySelectorAll('img[alt="image generation"]');
-      return new Set([...imgs].map(img => img.src));
+    // Count existing images before generating (to identify new ones later).
+    // NOTE: We count rather than snapshot src URLs because the page replaces
+    // all content during generation — old images are removed and re-rendered
+    // with new CDN wrapper URLs, making src comparison unreliable.
+    // New images always appear at the TOP of the grid, so after generation
+    // the new images are at indices 0..(newTotal - oldCount - 1).
+    const existingImageCount = await page.evaluate(() => {
+      return document.querySelectorAll('img[alt="image generation"]').length;
     });
-    // Note: existingSrcs is serialized as an array, convert back to Set in page context
-    const existingSrcArray = await page.evaluate(() => {
-      return [...document.querySelectorAll('img[alt="image generation"]')].map(img => img.src);
-    });
-    console.log(`Existing images on page: ${existingSrcArray.length}`);
+    console.log(`Existing images on page: ${existingImageCount}`);
 
     // Count "In queue" items before generating
     const queueBefore = await page.evaluate(() => {
@@ -845,14 +904,21 @@ async function generateImage(options = {}) {
     console.log(`Items already in queue: ${queueBefore}`);
 
     // Click generate button - use force to bypass overlays
+    // Capture button text before clicking to verify the click registered
     const generateBtn = page.locator('button:has-text("Generate"), button[type="submit"]');
     const genCount = await generateBtn.count();
     console.log(`Found ${genCount} generate button(s)`);
 
+    const btnTextBefore = genCount > 0
+      ? await generateBtn.last().textContent().catch(() => '')
+      : '';
+
     if (genCount > 0) {
-      const btn = generateBtn.last();
-      await btn.click({ force: true });
-      console.log('Clicked generate button (force)');
+      // Scroll the button into view first to ensure it's clickable
+      await generateBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+      await page.waitForTimeout(300);
+      await generateBtn.last().click({ force: true });
+      console.log(`Clicked generate button (force). Button text was: "${btnTextBefore?.trim()}"`);
     } else {
       await page.evaluate(() => {
         const btn = document.querySelector('button[type="submit"]') ||
@@ -860,6 +926,46 @@ async function generateImage(options = {}) {
         if (btn) btn.click();
       });
       console.log('Clicked generate button via JS');
+    }
+
+    // Verify the Generate click registered by checking for state changes:
+    // - Button text changed (e.g. "Generate" -> "Generating..." or disabled)
+    // - New queue items appeared
+    // - Image count changed
+    // If nothing changed after 10s, retry the click.
+    await page.waitForTimeout(3000);
+    const postClickState = await page.evaluate(({ prevQueue, prevImages }) => {
+      const queueNow = (document.body.innerText.match(/In queue/g) || []).length;
+      const imagesNow = document.querySelectorAll('img[alt="image generation"]').length;
+      // Check for any "generating" or "processing" indicators
+      const hasGeneratingIndicator = document.body.innerText.includes('Generating') ||
+        document.body.innerText.includes('Processing') ||
+        document.querySelectorAll('[class*="spinner"], [class*="loading"], [class*="progress"]').length > 0;
+      // Check if Generate button is now disabled
+      const genBtns = [...document.querySelectorAll('button')].filter(b => b.textContent?.includes('Generate'));
+      const btnDisabled = genBtns.some(b => b.disabled || b.getAttribute('aria-disabled') === 'true');
+      const btnTextNow = genBtns.map(b => b.textContent?.trim()).join(', ');
+      return { queueNow, imagesNow, hasGeneratingIndicator, btnDisabled, btnTextNow };
+    }, { prevQueue: queueBefore, prevImages: existingImageCount });
+
+    const clickRegistered = postClickState.queueNow > queueBefore ||
+      postClickState.imagesNow > existingImageCount ||
+      postClickState.hasGeneratingIndicator ||
+      postClickState.btnDisabled;
+
+    if (!clickRegistered) {
+      console.log(`Generate click may not have registered (queue=${postClickState.queueNow}, images=${postClickState.imagesNow}, btn="${postClickState.btnTextNow}"). Retrying...`);
+      await dismissAllModals(page);
+      // Retry: scroll to button, wait, click again
+      if (genCount > 0) {
+        await generateBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+        await page.waitForTimeout(500);
+        await generateBtn.last().click({ force: true });
+        console.log('Retried Generate click');
+      }
+      await page.waitForTimeout(3000);
+    } else {
+      console.log(`Generate click confirmed (queue=${postClickState.queueNow}, indicator=${postClickState.hasGeneratingIndicator}, disabled=${postClickState.btnDisabled})`);
     }
 
     // Wait for generation: the page adds "In queue" placeholders at the top,
@@ -890,10 +996,13 @@ async function generateImage(options = {}) {
     // Phase 2: Poll until our queue items resolve to images.
     // Track the peak queue count (our items + any pre-existing), then wait for
     // the queue to drop back to the pre-existing level (or zero).
+    // Also detect completion by image count increase (handles fast generations
+    // where the queue phase is missed entirely).
     console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
     const pollInterval = 5000;
     let generationComplete = false;
     let peakQueue = queueBefore;
+    let retryAttempted = false;
 
     while (Date.now() - startTime < timeout) {
       await page.waitForTimeout(pollInterval);
@@ -907,14 +1016,36 @@ async function generateImage(options = {}) {
       if (state.queueItems > peakQueue) peakQueue = state.queueItems;
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images}`);
+      console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue})`);
 
-      // Our generation is complete when the queue has dropped back to at most
-      // the pre-existing level AND we've seen it go higher (peak > before).
+      // Completion condition 1: queue was seen elevated and has now dropped back
       if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
         console.log(`Generation complete! ${state.images} images on page (${elapsed}s)`);
         generationComplete = true;
         break;
+      }
+
+      // Completion condition 2: image count increased and no queue items
+      // (handles fast generations where queue phase was missed)
+      if (state.images > existingImageCount && state.queueItems === 0 && peakQueue === queueBefore) {
+        console.log(`Generation complete (fast)! ${state.images} images on page, ${state.images - existingImageCount} new (${elapsed}s)`);
+        generationComplete = true;
+        break;
+      }
+
+      // Safety: if nothing has changed after 30s and no retry yet, try clicking Generate again
+      if (!retryAttempted && parseInt(elapsed, 10) >= 30 &&
+          state.queueItems === queueBefore && state.images === existingImageCount && peakQueue === queueBefore) {
+        console.log('No activity detected after 30s - retrying Generate click...');
+        await dismissAllModals(page);
+        const retryBtn = page.locator('button:has-text("Generate")');
+        if (await retryBtn.count() > 0) {
+          await retryBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+          await page.waitForTimeout(300);
+          await retryBtn.last().click({ force: true });
+          console.log('Retried Generate click (30s safety)');
+        }
+        retryAttempted = true;
       }
     }
 
@@ -927,19 +1058,18 @@ async function generateImage(options = {}) {
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'generation-result.png'), fullPage: false });
 
-    // Identify which images are new by comparing src URLs
-    const newImageIndices = await page.evaluate((oldSrcs) => {
-      const oldSet = new Set(oldSrcs);
-      const imgs = document.querySelectorAll('img[alt="image generation"]');
-      const indices = [];
-      [...imgs].forEach((img, idx) => {
-        if (!oldSet.has(img.src)) {
-          indices.push(idx);
-        }
-      });
-      return indices;
-    }, existingSrcArray);
-    console.log(`New images: ${newImageIndices.length} (indices: ${newImageIndices.join(', ')})`);
+    // Identify new images by count difference.
+    // New images appear at the TOP of the grid, so they occupy indices
+    // 0..(currentTotal - existingImageCount - 1).
+    const currentImageCount = await page.evaluate(() => {
+      return document.querySelectorAll('img[alt="image generation"]').length;
+    });
+    const newCount = currentImageCount - existingImageCount;
+    const newImageIndices = [];
+    for (let i = 0; i < newCount; i++) {
+      newImageIndices.push(i);
+    }
+    console.log(`New images: ${newImageIndices.length} of ${currentImageCount} total (indices: ${newImageIndices.join(', ')})`);
 
     // Download only the new results
     if (options.wait !== false) {
@@ -970,8 +1100,9 @@ async function generateImage(options = {}) {
 }
 
 // Download a video from the History tab on /create/video or /lipsync-studio
-// History items are <li> elements containing <video> with direct CDN MP4 URLs.
-// Primary strategy: extract video src directly. Fallback: click figure to open dialog.
+// History items are <li> elements containing <video> with CDN preview URLs.
+// Primary strategy: click figure to open Asset showcase dialog, then click Download
+// for full-quality video. Fallback: extract <video src> (lower quality CDN preview).
 async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
   const downloaded = [];
 
@@ -985,9 +1116,6 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
 
     await dismissAllModals(page);
 
-    // Strategy: Extract video URL directly from the first (newest) history list item.
-    // History items contain <video> elements with direct CDN MP4 URLs.
-    // This is more reliable than clicking to open a dialog.
     const historyListItems = page.locator('main li');
     const listCount = await historyListItems.count();
     console.log(`Found ${listCount} item(s) in History tab`);
@@ -997,83 +1125,123 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
       return downloaded;
     }
 
-    // Extract video URL from the first (newest) list item
+    // Extract model/prompt metadata from the first (newest) list item
     const videoInfo = await page.evaluate(() => {
       const firstItem = document.querySelector('main li');
       if (!firstItem) return null;
-
-      // Get video URL from <video> element
-      const video = firstItem.querySelector('video');
-      const videoSrc = video?.src || video?.querySelector('source')?.src || null;
 
       // Get prompt text
       const textbox = firstItem.querySelector('[role="textbox"], textarea');
       const promptText = textbox?.textContent?.trim() || '';
 
-      // Get model name
-      const modelBtn = firstItem.querySelector('button');
-      const modelText = modelBtn?.textContent?.trim() || '';
+      // Get model name — find the button that contains a model icon <img> or
+      // matches known model name patterns. Exclude action buttons.
+      const actionWords = /^(cancel|rerun|retry|download|delete|remove|share|copy|edit)$/i;
+      const buttons = [...firstItem.querySelectorAll('button')];
+      let modelText = '';
+      for (const btn of buttons) {
+        const text = btn.textContent?.trim();
+        const hasIcon = btn.querySelector('img, svg[class*="icon"]');
+        const looksLikeModel = /kling|wan|sora|minimax|veo|flux|soul|nano|seedream|gpt|higgsfield|popcorn/i.test(text);
+        const isAction = actionWords.test(text) || text.length <= 2;
+        if ((hasIcon || looksLikeModel) && !isAction && text.length > 0) {
+          modelText = text;
+          break;
+        }
+      }
+      if (!modelText) {
+        const candidates = buttons
+          .map(b => b.textContent?.trim())
+          .filter(t => t && t.length > 3 && !actionWords.test(t));
+        if (candidates.length > 0) {
+          modelText = candidates.sort((a, b) => b.length - a.length)[0];
+        }
+      }
 
-      return { videoSrc, promptText, modelText };
+      return { promptText, modelText };
     });
 
-    if (videoInfo?.videoSrc) {
-      const combinedMeta = {
-        ...metadata,
-        model: videoInfo.modelText || metadata.model,
-        promptSnippet: videoInfo.promptText?.substring(0, 80) || metadata.promptSnippet,
-      };
-      const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-      const savePath = join(outputDir, filename);
-      try {
-        execSync(`curl -sL -o "${savePath}" "${videoInfo.videoSrc}"`, { timeout: 120000 });
-        console.log(`Downloaded video: ${savePath}`);
-        downloaded.push(savePath);
-      } catch (curlErr) {
-        console.log(`Video download failed: ${curlErr.message}`);
+    // Strategy 1 (PRIMARY): Click the figure to open Asset showcase dialog,
+    // then use the Download button for full-quality video.
+    // The <video src> in History list items is only a CDN preview (e.g. 600x800).
+    console.log('Opening Asset showcase dialog for full-quality download...');
+    const firstFigure = page.locator('main li figure').first();
+    if (await firstFigure.count() > 0) {
+      await firstFigure.click({ force: true });
+      await page.waitForTimeout(2000);
+
+      const dialog = page.locator('[role="dialog"]');
+      if (await dialog.count() > 0) {
+        const dialogMeta = await extractDialogMetadata(page);
+        const combinedMeta = {
+          ...metadata,
+          ...dialogMeta,
+          model: dialogMeta?.model || videoInfo?.modelText || metadata.model,
+          promptSnippet: dialogMeta?.promptSnippet || videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
+        };
+
+        const dlBtn = page.locator('[role="dialog"] button:has-text("Download")');
+        if (await dlBtn.count() > 0) {
+          const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+          await dlBtn.first().click({ force: true });
+          const download = await downloadPromise;
+          if (download) {
+            const origFilename = download.suggestedFilename() || `higgsfield-video-${Date.now()}.mp4`;
+            const descriptiveName = buildDescriptiveFilename(combinedMeta, origFilename, 0);
+            const savePath = join(outputDir, descriptiveName);
+            await download.saveAs(savePath);
+            console.log(`Downloaded full-quality video via dialog: ${savePath}`);
+            downloaded.push(savePath);
+          } else {
+            console.log('Download event did not fire from dialog button');
+          }
+        } else {
+          console.log('No Download button found in dialog');
+        }
+
+        // Close dialog
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(500);
+        await page.evaluate(() => {
+          document.querySelectorAll('[role="dialog"]').forEach(d => {
+            const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
+            if (overlay) overlay.remove();
+            else d.remove();
+          });
+          document.body.style.overflow = '';
+          document.body.style.pointerEvents = '';
+        });
+      } else {
+        console.log('Dialog did not open after clicking figure');
       }
+    } else {
+      console.log('No figure element found in first history item');
     }
 
-    // Fallback: try clicking the first item to open a dialog with Download button
+    // Strategy 2 (FALLBACK): Extract <video src> from the list item directly.
+    // This gives a CDN preview URL (lower quality) but is better than nothing.
     if (downloaded.length === 0) {
-      console.log('Direct URL extraction failed, trying dialog approach...');
-      const firstFigure = page.locator('main li figure').first();
-      if (await firstFigure.count() > 0) {
-        await firstFigure.click({ force: true });
-        await page.waitForTimeout(2000);
+      console.log('Dialog download failed, falling back to CDN preview URL...');
+      const videoSrc = await page.evaluate(() => {
+        const firstItem = document.querySelector('main li');
+        const video = firstItem?.querySelector('video');
+        return video?.src || video?.querySelector('source')?.src || null;
+      });
 
-        const dialog = page.locator('[role="dialog"]');
-        if (await dialog.count() > 0) {
-          const dialogMeta = await extractDialogMetadata(page);
-          const combinedMeta = { ...metadata, ...dialogMeta };
-
-          const dlBtn = page.locator('[role="dialog"] button:has-text("Download")');
-          if (await dlBtn.count() > 0) {
-            const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-            await dlBtn.first().click({ force: true });
-            const download = await downloadPromise;
-            if (download) {
-              const origFilename = download.suggestedFilename() || `higgsfield-video-${Date.now()}.mp4`;
-              const descriptiveName = buildDescriptiveFilename(combinedMeta, origFilename, 0);
-              const savePath = join(outputDir, descriptiveName);
-              await download.saveAs(savePath);
-              console.log(`Downloaded video via dialog: ${savePath}`);
-              downloaded.push(savePath);
-            }
-          }
-
-          // Close dialog
-          await page.keyboard.press('Escape');
-          await page.waitForTimeout(500);
-          await page.evaluate(() => {
-            document.querySelectorAll('[role="dialog"]').forEach(d => {
-              const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
-              if (overlay) overlay.remove();
-              else d.remove();
-            });
-            document.body.style.overflow = '';
-            document.body.style.pointerEvents = '';
-          });
+      if (videoSrc) {
+        const combinedMeta = {
+          ...metadata,
+          model: videoInfo?.modelText || metadata.model,
+          promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
+        };
+        const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+        const savePath = join(outputDir, filename);
+        try {
+          execSync(`curl -sL -o "${savePath}" "${videoSrc}"`, { timeout: 120000 });
+          console.log(`Downloaded video (CDN preview quality): ${savePath}`);
+          downloaded.push(savePath);
+        } catch (curlErr) {
+          console.log(`CDN video download failed: ${curlErr.message}`);
         }
       }
     }
@@ -1245,14 +1413,26 @@ async function generateVideo(options = {}) {
     }
 
     // Count existing History items BEFORE generating (to detect new ones)
+    // Also record the newest item's video src to avoid dedup issues
+    // (items 0 and 1 can share the same cached video src)
     const historyTab = page.locator('[role="tab"]:has-text("History")');
     let existingHistoryCount = 0;
+    let existingNewestVideoSrc = '';
     if (await historyTab.count() > 0) {
       await historyTab.click({ force: true });
       await page.waitForTimeout(1500);
       // Count list items in History (more reliable than img alt matching)
       existingHistoryCount = await page.locator('main li').count();
+      // Record the newest item's video src for dedup comparison later
+      existingNewestVideoSrc = await page.evaluate(() => {
+        const firstItem = document.querySelector('main li');
+        const video = firstItem?.querySelector('video');
+        return video?.src || video?.querySelector('source')?.src || '';
+      });
       console.log(`Existing History items: ${existingHistoryCount}`);
+      if (existingNewestVideoSrc) {
+        console.log(`Existing newest video src: ${existingNewestVideoSrc.substring(0, 80)}...`);
+      }
 
       // Switch back to the generation tab to click Generate
       const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:has-text("Generate")');
@@ -1295,7 +1475,8 @@ async function generateVideo(options = {}) {
 
       // Check if the newest list item has a completed video (with src URL)
       // A new item appears immediately as "In queue" but only gets a <video src> when done
-      const state = await page.evaluate((prevCount) => {
+      // Also verify the video src differs from the pre-existing newest item (dedup)
+      const state = await page.evaluate(({ prevCount, prevSrc }) => {
         const items = document.querySelectorAll('main li');
         const currentCount = items.length;
         // Check if the first (newest) item has a video with a src
@@ -1303,15 +1484,17 @@ async function generateVideo(options = {}) {
         const video = firstItem?.querySelector('video');
         const videoSrc = video?.src || video?.querySelector('source')?.src || '';
         const hasCompletedVideo = videoSrc.includes('.mp4') || videoSrc.includes('cdn.');
+        // Verify this is a genuinely new video, not a cached duplicate of the previous newest
+        const isNewVideo = !prevSrc || videoSrc !== prevSrc;
         // Check for processing indicators in the first item
         const itemText = firstItem?.textContent || '';
         const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
-        return { currentCount, hasCompletedVideo, isProcessing, videoSrc: videoSrc.substring(0, 80) };
-      }, existingHistoryCount);
+        return { currentCount, hasCompletedVideo, isProcessing, isNewVideo, videoSrc: videoSrc.substring(0, 80) };
+      }, { prevCount: existingHistoryCount, prevSrc: existingNewestVideoSrc });
 
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
 
-      if (state.currentCount > existingHistoryCount && state.hasCompletedVideo && !state.isProcessing) {
+      if (state.currentCount > existingHistoryCount && state.hasCompletedVideo && !state.isProcessing && state.isNewVideo) {
         console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, video ready)`);
         generationComplete = true;
         break;
@@ -1320,6 +1503,8 @@ async function generateVideo(options = {}) {
       // Log progress
       if (state.isProcessing) {
         console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
+      } else if (state.hasCompletedVideo && !state.isNewVideo) {
+        console.log(`  ${elapsedSec}s: video present but same src as previous (waiting for new)...`);
       } else {
         console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items, video=${state.hasCompletedVideo})...`);
       }
@@ -2050,6 +2235,355 @@ async function checkCredits(options = {}) {
   }
 }
 
+// Seed bracketing: test a range of seeds with the same prompt to find winners
+// Based on the technique from "How I Cut AI Video Costs By 60%"
+// Recommended ranges: people 1000-1999, action 2000-2999, landscape 3000-3999, product 4000-4999
+async function seedBracket(options = {}) {
+  const prompt = options.prompt;
+  if (!prompt) {
+    console.error('ERROR: --prompt is required for seed bracketing');
+    process.exit(1);
+  }
+
+  // Parse seed range: "1000-1010" or "1000,1005,1010"
+  let seeds = [];
+  const range = options.seedRange || '1000-1010';
+  if (range.includes('-')) {
+    const [start, end] = range.split('-').map(Number);
+    for (let s = start; s <= end; s++) seeds.push(s);
+  } else {
+    seeds = range.split(',').map(Number);
+  }
+
+  console.log(`Seed bracketing: testing ${seeds.length} seeds with prompt: "${prompt.substring(0, 60)}..."`);
+  console.log(`Seeds: ${seeds.join(', ')}`);
+
+  const model = options.model || 'soul';
+  const outputDir = options.output || join(DOWNLOAD_DIR, `seed-bracket-${Date.now()}`);
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+  const results = [];
+
+  for (const seed of seeds) {
+    console.log(`\n--- Testing seed ${seed} ---`);
+    // Generate with this specific seed
+    // Note: Higgsfield UI may not expose seed control directly.
+    // For image models, we append the seed to the prompt as a hint.
+    // For video models with explicit seed fields, we'd fill that instead.
+    const seedPrompt = `${prompt} --seed ${seed}`;
+    const result = await generateImage({
+      ...options,
+      prompt: seedPrompt,
+      output: outputDir,
+      batch: 1, // Single image per seed for efficiency
+    });
+    results.push({ seed, ...result });
+    console.log(`Seed ${seed}: ${result?.success ? 'OK' : 'FAILED'}`);
+  }
+
+  // Summary
+  console.log(`\n=== Seed Bracket Results ===`);
+  console.log(`Prompt: "${prompt}"`);
+  console.log(`Model: ${model}`);
+  console.log(`Output: ${outputDir}`);
+  console.log(`Results: ${results.filter(r => r.success).length}/${results.length} successful`);
+  console.log(`\nReview the images in ${outputDir} and note the best seeds.`);
+  console.log(`Then use --seed <number> with your chosen seed for consistent results.`);
+
+  // Save results manifest
+  const manifest = {
+    prompt,
+    model,
+    seeds: results.map(r => ({ seed: r.seed, success: r.success })),
+    timestamp: new Date().toISOString(),
+  };
+  writeFileSync(join(outputDir, 'bracket-results.json'), JSON.stringify(manifest, null, 2));
+  console.log(`Results saved to ${join(outputDir, 'bracket-results.json')}`);
+
+  return results;
+}
+
+// Video production pipeline: chains image -> video -> lipsync -> assembly
+// Reads a brief JSON file or uses CLI options to define the production
+//
+// Brief format (JSON):
+// {
+//   "title": "Product Demo Short",
+//   "character": { "description": "Young woman, brown hair...", "image": "/path/to/face.png" },
+//   "scenes": [
+//     { "prompt": "Close-up of character holding product...", "duration": 5, "dialogue": "Check this out!" },
+//     { "prompt": "Wide shot of character in kitchen...", "duration": 5, "dialogue": "It changed my life." }
+//   ],
+//   "imageModel": "soul",
+//   "videoModel": "kling-2.6",
+//   "aspect": "9:16",
+//   "music": "/path/to/background.mp3"
+// }
+async function pipeline(options = {}) {
+  // Load brief from file or construct from CLI options
+  let brief;
+  if (options.brief) {
+    if (!existsSync(options.brief)) {
+      console.error(`ERROR: Brief file not found: ${options.brief}`);
+      process.exit(1);
+    }
+    brief = JSON.parse(readFileSync(options.brief, 'utf-8'));
+  } else {
+    // Construct minimal brief from CLI options
+    brief = {
+      title: 'Quick Pipeline',
+      character: {
+        description: options.prompt || 'A friendly young person',
+        image: options.characterImage || options.imageFile || null,
+      },
+      scenes: [{
+        prompt: options.prompt || 'Character speaks to camera with warm expression',
+        duration: parseInt(options.duration, 10) || 5,
+        dialogue: options.dialogue || null,
+      }],
+      imageModel: options.model || 'soul',
+      videoModel: 'kling-2.6', // Default to unlimited
+      aspect: options.aspect || '9:16',
+    };
+  }
+
+  const outputDir = options.output || join(DOWNLOAD_DIR, `pipeline-${Date.now()}`);
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+  console.log(`\n=== Video Production Pipeline ===`);
+  console.log(`Title: ${brief.title}`);
+  console.log(`Scenes: ${brief.scenes.length}`);
+  console.log(`Image model: ${brief.imageModel}`);
+  console.log(`Video model: ${brief.videoModel}`);
+  console.log(`Aspect: ${brief.aspect}`);
+  console.log(`Output: ${outputDir}`);
+
+  const pipelineState = {
+    brief,
+    outputDir,
+    steps: [],
+    startTime: Date.now(),
+  };
+
+  // Step 1: Generate character image if not provided
+  let characterImagePath = brief.character?.image;
+  if (!characterImagePath) {
+    console.log(`\n--- Step 1: Generate character image ---`);
+    const charPrompt = brief.character?.description || 'A photorealistic portrait of a friendly young person, neutral expression, studio lighting, high quality';
+    console.log(`Prompt: "${charPrompt.substring(0, 80)}..."`);
+
+    const charResult = await generateImage({
+      ...options,
+      prompt: charPrompt,
+      model: brief.imageModel,
+      aspect: '1:1', // Square for character portraits
+      batch: 1,
+      output: outputDir,
+    });
+
+    if (charResult?.success) {
+      // Find the most recently created file in outputDir
+      const files = existsSync(outputDir) ? readdirSync(outputDir)
+        .filter(f => f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.webp'))
+        .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
+        .sort((a, b) => b.time - a.time) : [];
+      characterImagePath = files.length > 0 ? join(outputDir, files[0].name) : null;
+      console.log(`Character image: ${characterImagePath || 'NOT FOUND'}`);
+      pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath });
+    } else {
+      console.log('WARNING: Character image generation failed, continuing without it');
+      pipelineState.steps.push({ step: 'character-image', success: false });
+    }
+  } else {
+    console.log(`\n--- Step 1: Using provided character image: ${characterImagePath} ---`);
+    pipelineState.steps.push({ step: 'character-image', success: true, path: characterImagePath, provided: true });
+  }
+
+  // Step 2: Generate scene images (one per scene)
+  console.log(`\n--- Step 2: Generate scene images (${brief.scenes.length} scenes) ---`);
+  const sceneImages = [];
+
+  for (let i = 0; i < brief.scenes.length; i++) {
+    const scene = brief.scenes[i];
+    console.log(`\nScene ${i + 1}/${brief.scenes.length}: "${scene.prompt?.substring(0, 60)}..."`);
+
+    const sceneResult = await generateImage({
+      ...options,
+      prompt: scene.prompt,
+      model: brief.imageModel,
+      aspect: brief.aspect,
+      batch: 1,
+      output: outputDir,
+    });
+
+    if (sceneResult?.success) {
+      // Find the newest image file
+      const files = readdirSync(outputDir)
+        .filter(f => (f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.webp')) && f.includes('hf_'))
+        .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
+        .sort((a, b) => b.time - a.time);
+      const scenePath = files.length > 0 ? join(outputDir, files[0].name) : null;
+      sceneImages.push(scenePath);
+      console.log(`Scene ${i + 1} image: ${scenePath || 'NOT FOUND'}`);
+    } else {
+      sceneImages.push(null);
+      console.log(`Scene ${i + 1} image generation failed`);
+    }
+  }
+  pipelineState.steps.push({ step: 'scene-images', count: sceneImages.filter(Boolean).length, total: brief.scenes.length });
+
+  // Step 3: Animate each scene image into video (using unlimited Kling 2.6)
+  console.log(`\n--- Step 3: Animate scenes into video clips ---`);
+  const sceneVideos = [];
+
+  for (let i = 0; i < brief.scenes.length; i++) {
+    const scene = brief.scenes[i];
+    const sceneImage = sceneImages[i];
+
+    if (!sceneImage) {
+      console.log(`Skipping scene ${i + 1} (no image)`);
+      sceneVideos.push(null);
+      continue;
+    }
+
+    console.log(`\nAnimating scene ${i + 1}/${brief.scenes.length}...`);
+    const videoResult = await generateVideo({
+      ...options,
+      prompt: scene.prompt,
+      imageFile: sceneImage,
+      model: brief.videoModel,
+      duration: String(scene.duration || 5),
+      unlimited: true,
+      output: outputDir,
+    });
+
+    if (videoResult?.success) {
+      // Find the newest video file
+      const files = readdirSync(outputDir)
+          .filter(f => f.endsWith('.mp4'))
+          .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
+          .sort((a, b) => b.time - a.time);
+        const videoPath = files.length > 0 ? join(outputDir, files[0].name) : null;
+        sceneVideos.push(videoPath);
+        console.log(`Scene ${i + 1} video: ${videoPath || 'NOT FOUND'}`);
+    } else {
+      sceneVideos.push(null);
+      console.log(`Scene ${i + 1} video generation failed`);
+    }
+  }
+  pipelineState.steps.push({ step: 'scene-videos', count: sceneVideos.filter(Boolean).length, total: brief.scenes.length });
+
+  // Step 4: Add lipsync dialogue to scenes that have it
+  console.log(`\n--- Step 4: Add lipsync dialogue ---`);
+  const scenesWithDialogue = brief.scenes.filter(s => s.dialogue);
+  const lipsyncVideos = [];
+
+  if (scenesWithDialogue.length > 0 && characterImagePath) {
+    for (let i = 0; i < brief.scenes.length; i++) {
+      const scene = brief.scenes[i];
+      if (!scene.dialogue) {
+        lipsyncVideos.push(sceneVideos[i]); // Keep original video
+        continue;
+      }
+
+      console.log(`\nLipsync scene ${i + 1}: "${scene.dialogue.substring(0, 60)}..."`);
+      const lipsyncResult = await generateLipsync({
+        ...options,
+        prompt: scene.dialogue,
+        imageFile: characterImagePath,
+        output: outputDir,
+      });
+
+      if (lipsyncResult?.success) {
+        const files = readdirSync(outputDir)
+          .filter(f => f.endsWith('.mp4'))
+          .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
+          .sort((a, b) => b.time - a.time);
+        const lipsyncPath = files.length > 0 ? join(outputDir, files[0].name) : null;
+        lipsyncVideos.push(lipsyncPath);
+        console.log(`Lipsync video: ${lipsyncPath || 'NOT FOUND'}`);
+      } else {
+        lipsyncVideos.push(sceneVideos[i]); // Fall back to non-lipsync video
+        console.log(`Lipsync failed, using original video for scene ${i + 1}`);
+      }
+    }
+  } else {
+    console.log('No dialogue scenes or no character image - skipping lipsync');
+    lipsyncVideos.push(...sceneVideos);
+  }
+  pipelineState.steps.push({ step: 'lipsync', count: lipsyncVideos.filter(Boolean).length });
+
+  // Step 5: Assemble final video with ffmpeg
+  console.log(`\n--- Step 5: Assemble final video ---`);
+  const validVideos = lipsyncVideos.filter(Boolean);
+
+  if (validVideos.length > 0) {
+    const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
+
+    if (validVideos.length === 1) {
+      // Single video - just copy/rename
+      copyFileSync(validVideos[0], finalPath);
+      console.log(`Final video (single scene): ${finalPath}`);
+    } else {
+      // Multiple videos - concatenate with ffmpeg
+      const concatList = join(outputDir, 'concat-list.txt');
+      const concatContent = validVideos.map(v => `file '${v}'`).join('\n');
+      writeFileSync(concatList, concatContent);
+
+      try {
+        execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c copy "${finalPath}"`, {
+          timeout: 120000,
+          stdio: 'pipe',
+        });
+        console.log(`Final video (${validVideos.length} scenes concatenated): ${finalPath}`);
+      } catch (ffmpegErr) {
+        // Try re-encoding if copy fails (different codecs/resolutions)
+        try {
+          execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c:v libx264 -c:a aac -movflags +faststart "${finalPath}"`, {
+            timeout: 300000,
+            stdio: 'pipe',
+          });
+          console.log(`Final video (re-encoded, ${validVideos.length} scenes): ${finalPath}`);
+        } catch (reencodeErr) {
+          console.log(`ffmpeg assembly failed: ${reencodeErr.message}`);
+          console.log(`Individual scene videos are in: ${outputDir}`);
+        }
+      }
+    }
+
+    // Add background music if specified
+    if (brief.music && existsSync(brief.music) && existsSync(finalPath)) {
+      const withMusicPath = finalPath.replace('-final.mp4', '-final-music.mp4');
+      try {
+        execSync(`ffmpeg -y -i "${finalPath}" -i "${brief.music}" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest "${withMusicPath}"`, {
+          timeout: 120000,
+          stdio: 'pipe',
+        });
+        console.log(`Final video with music: ${withMusicPath}`);
+      } catch (musicErr) {
+        console.log(`Adding music failed: ${musicErr.message}`);
+      }
+    }
+
+    pipelineState.steps.push({ step: 'assembly', success: true, path: finalPath });
+  } else {
+    console.log('No valid video clips to assemble');
+    pipelineState.steps.push({ step: 'assembly', success: false, reason: 'no valid clips' });
+  }
+
+  // Save pipeline state
+  const elapsed = ((Date.now() - pipelineState.startTime) / 1000).toFixed(0);
+  pipelineState.elapsed = `${elapsed}s`;
+  writeFileSync(join(outputDir, 'pipeline-state.json'), JSON.stringify(pipelineState, null, 2));
+
+  console.log(`\n=== Pipeline Complete ===`);
+  console.log(`Duration: ${elapsed}s`);
+  console.log(`Output: ${outputDir}`);
+  console.log(`Steps: ${pipelineState.steps.map(s => `${s.step}:${s.success !== false ? 'OK' : 'FAIL'}`).join(' -> ')}`);
+
+  return pipelineState;
+}
+
 // Main CLI handler
 async function main() {
   const { command, options } = parseArgs();
@@ -2066,6 +2600,8 @@ Commands:
   image              Generate an image from text prompt
   video              Generate a video (text-to-video or image-to-video)
   lipsync            Generate a lipsync video (image + text/audio)
+  pipeline           Full production: image -> video -> lipsync -> assembly
+  seed-bracket       Test seed range to find best seeds for a prompt
   app                Use a Higgsfield app/effect
   assets             List recent generations
   credits            Check account credits/plan
@@ -2093,12 +2629,21 @@ Options:
   --batch, -b        Number of images to generate (1-4)
   --unlimited        Prefer unlimited models only
   --preset, -s       Style preset name (e.g., "Sunset beach", "CCTV")
+  --seed             Seed number for reproducible generation
+  --seed-range       Seed range for bracketing (e.g., "1000-1010" or "1000,1005,1010")
+  --brief            Path to pipeline brief JSON file
+  --character-image  Path to character face image for pipeline
+  --dialogue         Dialogue text for lipsync in pipeline
+  --scenes           Number of scenes to generate in pipeline
 
 Examples:
   node playwright-automator.mjs login --headed
   node playwright-automator.mjs image -p "A cyberpunk city at night, neon lights"
   node playwright-automator.mjs video -p "Camera pans across landscape" --image-file photo.jpg
   node playwright-automator.mjs lipsync -p "Hello world!" --image-file face.jpg
+  node playwright-automator.mjs pipeline --brief brief.json
+  node playwright-automator.mjs pipeline -p "Person reviews product" --character-image face.png --dialogue "This is amazing!"
+  node playwright-automator.mjs seed-bracket -p "Elegant woman, golden hour" --seed-range 1000-1010
   node playwright-automator.mjs app --effect face-swap --image-file face.jpg
   node playwright-automator.mjs credits
   node playwright-automator.mjs download --model video
@@ -2127,6 +2672,12 @@ Examples:
       break;
     case 'lipsync':
       await generateLipsync(options);
+      break;
+    case 'pipeline':
+      await pipeline(options);
+      break;
+    case 'seed-bracket':
+      await seedBracket(options);
       break;
     case 'app':
       await useApp(options);

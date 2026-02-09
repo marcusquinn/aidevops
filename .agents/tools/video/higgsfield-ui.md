@@ -287,6 +287,96 @@ Example: `hf_higgsfield-soul_2k_sunset-beach_a-serene-mountain-landscape_2026020
 
 Metadata is extracted from the Asset showcase dialog before downloading.
 
+## Production Pipeline
+
+The `pipeline` command chains image generation, video animation, lipsync, and ffmpeg assembly into a single workflow. Provide a brief JSON file or use CLI options.
+
+### Brief JSON Format
+
+```json
+{
+  "title": "Product Demo Short",
+  "character": {
+    "description": "Young woman, brown hair, warm smile, studio lighting",
+    "image": "/path/to/face.png"
+  },
+  "scenes": [
+    {
+      "prompt": "Close-up of character holding product, warm lighting, shallow DOF",
+      "duration": 5,
+      "dialogue": "Check this out! It changed everything."
+    },
+    {
+      "prompt": "Wide shot of character in modern kitchen, natural light",
+      "duration": 5,
+      "dialogue": "I use it every single day."
+    }
+  ],
+  "imageModel": "soul",
+  "videoModel": "kling-2.6",
+  "aspect": "9:16",
+  "music": "/path/to/background.mp3"
+}
+```
+
+### Pipeline Steps
+
+1. **Character image** - Generate or use provided character face
+2. **Scene images** - Generate one image per scene from prompts
+3. **Video animation** - Animate each scene image (Kling 2.6, unlimited)
+4. **Lipsync** - Add dialogue to scenes that have it
+5. **Assembly** - Concatenate clips with ffmpeg, add background music
+
+### Pipeline Examples
+
+```bash
+# From a brief file
+higgsfield-helper.sh pipeline --brief brief.json
+
+# Quick single-scene pipeline
+higgsfield-helper.sh pipeline "Person reviews product" --character-image face.png --dialogue "This is amazing!"
+
+# Multi-scene with output directory
+higgsfield-helper.sh pipeline --brief scenes.json --output ~/Projects/shorts/
+```
+
+Output goes to `~/Downloads/pipeline-{timestamp}/` with all intermediate files and a `pipeline-state.json` manifest.
+
+## Seed Bracketing
+
+Based on the technique from "How I Cut AI Video Costs By 60%". Test a range of seeds with the same prompt to find which produce the best results, then reuse winning seeds.
+
+### How It Works
+
+1. Test 10-11 seeds with the same prompt
+2. Score each result on composition, quality, style match
+3. Pick 2-3 winners as foundations
+4. Use winning seeds for consistent results
+
+### Recommended Seed Ranges
+
+| Content Type | Range | Notes |
+|-------------|-------|-------|
+| People/talking heads | 1000-1999 | Good for faces, expressions, close-ups |
+| Action/movement | 2000-2999 | Dynamic scenes, camera movement |
+| Landscape/establishing | 3000-3999 | Environments, wide shots, cinematic |
+| Product demos | 4000-4999 | Clean commercial look |
+
+### Seed Bracket Examples
+
+```bash
+# Test seeds 1000-1010 for a portrait prompt
+higgsfield-helper.sh seed-bracket "Elegant woman, golden hour lighting, cinematic" --seed-range 1000-1010
+
+# Test specific seeds
+higgsfield-helper.sh seed-bracket "Product on marble table" --seed-range "4000,4003,4008,4015"
+
+# With model selection
+higgsfield-helper.sh seed-bracket "Cyberpunk street" --seed-range 2000-2010 --model nano_banana_pro
+```
+
+Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.json` manifest.
+
 ## CLI Options Reference
 
 ```text
@@ -310,6 +400,12 @@ Metadata is extracted from the Asset showcase dialog before downloading.
 --batch, -b        Number of images to generate (1-4)
 --unlimited        Prefer unlimited models only
 --preset, -s       Style preset name (e.g., "Sunset beach", "CCTV")
+--seed             Seed number for reproducible generation
+--seed-range       Seed range for bracketing (e.g., "1000-1010")
+--brief            Path to pipeline brief JSON file
+--character-image  Character face image for pipeline
+--dialogue         Dialogue text for lipsync in pipeline
+--scenes           Number of scenes to generate
 ```
 
 ## Prompt Engineering Tips

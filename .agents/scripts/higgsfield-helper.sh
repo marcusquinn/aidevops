@@ -165,6 +165,51 @@ cmd_screenshot() {
     run_automator screenshot --prompt "${url}" "$@"
 }
 
+# Generate lipsync
+cmd_lipsync() {
+    local text="${1:-}"
+    shift 2>/dev/null || true
+
+    if [[ -z "${text}" ]]; then
+        print_error "Text is required"
+        print_info "Usage: higgsfield-helper.sh lipsync \"text to speak\" --image-file face.jpg [options]"
+        return 1
+    fi
+
+    print_info "Generating lipsync: ${text}"
+    run_automator lipsync --prompt "${text}" "$@"
+}
+
+# Run production pipeline
+cmd_pipeline() {
+    local first_arg="${1:-}"
+
+    # If first arg doesn't start with --, treat it as a prompt
+    if [[ -n "${first_arg}" && "${first_arg}" != --* ]]; then
+        shift
+        print_info "Running pipeline with prompt: ${first_arg}"
+        run_automator pipeline --prompt "${first_arg}" "$@"
+    else
+        print_info "Running production pipeline..."
+        run_automator pipeline "$@"
+    fi
+}
+
+# Seed bracketing
+cmd_seed_bracket() {
+    local prompt="${1:-}"
+    shift 2>/dev/null || true
+
+    if [[ -z "${prompt}" ]]; then
+        print_error "Prompt is required"
+        print_info "Usage: higgsfield-helper.sh seed-bracket \"your prompt\" --seed-range 1000-1010 [options]"
+        return 1
+    fi
+
+    print_info "Seed bracketing: ${prompt}"
+    run_automator seed-bracket --prompt "${prompt}" "$@"
+}
+
 # Download latest
 cmd_download() {
     print_info "Downloading latest generation..."
@@ -197,6 +242,9 @@ Commands:
   status             Check auth state
   image <prompt>     Generate image from text prompt
   video <prompt>     Generate video (text or image-to-video)
+  lipsync <text>     Generate lipsync video (image + text)
+  pipeline           Full production: image -> video -> lipsync -> assembly
+  seed-bracket       Test seed range to find best seeds for a prompt
   app <effect>       Use a Higgsfield app/effect
   assets             List recent generations
   credits            Check account credits/plan
@@ -207,11 +255,17 @@ Commands:
 Options (pass after command):
   --headed           Show browser window
   --headless         Run without browser window (default)
-  --model, -m        Model: soul, nano_banana, seedream
+  --model, -m        Model: soul, nano_banana, seedream, kling-2.6, etc.
   --output, -o       Output directory
   --image-file       Image file for upload
   --timeout          Timeout in milliseconds
   --effect           App/effect slug
+  --seed             Seed number for reproducible generation
+  --seed-range       Seed range for bracketing (e.g., "1000-1010")
+  --brief            Path to pipeline brief JSON file
+  --character-image  Character face image for pipeline
+  --dialogue         Dialogue text for lipsync
+  --unlimited        Prefer unlimited models only
 
 Examples:
   higgsfield-helper.sh setup
@@ -220,11 +274,12 @@ Examples:
   higgsfield-helper.sh image "Portrait of a woman" --model nano_banana
   higgsfield-helper.sh video "Camera pans across mountain landscape"
   higgsfield-helper.sh video "Person walks forward" --image-file photo.jpg
+  higgsfield-helper.sh lipsync "Hello world!" --image-file face.jpg
+  higgsfield-helper.sh pipeline --brief brief.json
+  higgsfield-helper.sh pipeline "Person reviews product" --character-image face.png
+  higgsfield-helper.sh seed-bracket "Elegant woman, golden hour" --seed-range 1000-1010
   higgsfield-helper.sh app face-swap --image-file face.jpg
-  higgsfield-helper.sh app 3d-render --image-file product.jpg
-  higgsfield-helper.sh assets
   higgsfield-helper.sh credits
-  higgsfield-helper.sh screenshot https://higgsfield.ai/image/soul
 
 Available Apps/Effects:
   face-swap, 3d-render, comic-book, transitions, recast,
@@ -245,6 +300,9 @@ main() {
         status)     cmd_status "$@" ;;
         image)      cmd_image "$@" ;;
         video)      cmd_video "$@" ;;
+        lipsync)    cmd_lipsync "$@" ;;
+        pipeline)   cmd_pipeline "$@" ;;
+        seed-bracket) cmd_seed_bracket "$@" ;;
         app)        cmd_app "$@" ;;
         assets)     cmd_assets "$@" ;;
         credits)    cmd_credits "$@" ;;
