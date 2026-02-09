@@ -27,7 +27,7 @@ mcp:
 - **Single Tool**: `execute` - runs Playwright code snippets
 
 **Key Advantages**:
-- **1 tool vs 17+** - Less context bloat than BrowserMCP/Antigravity
+- **1 tool vs 17+** - Less context bloat than BrowserMCP
 - **Full Playwright API** - LLMs already know it from training
 - **Your existing browser** - Reuse extensions, sessions, cookies
 - **Works with Brave, Edge, Chrome** - Any Chromium-based browser with extension support

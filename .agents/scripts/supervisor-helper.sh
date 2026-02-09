@@ -4387,7 +4387,7 @@ extract_log_metadata() {
     # discusses errors, APIs, status codes as documentation content.
     # Anchored patterns prevent substring matches (e.g., 503 in timestamps).
     local backend_error_count=0
-    backend_error_count=$(grep -ci 'endpoints failed\|Antigravity\|gateway[[:space:]].*error\|service unavailable\|HTTP 503\|503 Service\|"status":[[:space:]]*503\|Quota protection\|over[_ -]\{0,1\}usage\|quota reset' "$log_tail_file" 2>/dev/null || echo 0)
+    backend_error_count=$(grep -ci 'endpoints failed\|gateway[[:space:]].*error\|service unavailable\|HTTP 503\|503 Service\|"status":[[:space:]]*503\|Quota protection\|over[_ -]\{0,1\}usage\|quota reset' "$log_tail_file" 2>/dev/null || echo 0)
 
     rm -f "$log_tail_file"
 
@@ -4590,7 +4590,7 @@ evaluate_worker() {
 
     # Backend infrastructure error with EXIT:0 (t095-diag-1): CLI wrappers like
     # OpenCode exit 0 even when the backend rejects the request (quota exceeded,
-    # Antigravity down). A short log (< 10 lines) with backend errors means the
+    # backend down). A short log (< 10 lines) with backend errors means the
     # worker never started - this is NOT content discussion, it's a real failure.
     # Must be checked BEFORE clean_exit_no_signal to avoid wasting retries.
     if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
@@ -4618,7 +4618,7 @@ evaluate_worker() {
     # are content (e.g., subagents documenting auth flows), not real failures.
 
     if [[ "$meta_exit_code" != "0" ]]; then
-        # Backend infrastructure error (Antigravity, quota, API gateway) = transient retry
+        # Backend infrastructure error (quota, API gateway) = transient retry
         # Only checked on non-zero exit: a clean exit with backend error strings in
         # the log is content discussion, not a real infrastructure failure.
         if [[ "$meta_backend_error_count" -gt 0 ]]; then
@@ -4898,9 +4898,9 @@ cmd_reprompt() {
     ai_cli=$(resolve_ai_cli) || return 1
 
     # Pre-reprompt health check: avoid wasting retry attempts on dead backends
-    # (t153-pre-diag-1: retries 1+2 failed instantly with "All Antigravity
-    # endpoints failed" because reprompt skipped the health check that
-    # cmd_dispatch performs)
+    # (t153-pre-diag-1: retries 1+2 failed instantly with backend endpoint
+    # errors because reprompt skipped the health check that cmd_dispatch
+    # performs)
     local health_model
     health_model=$(resolve_model "health" "$ai_cli")
     if ! check_model_health "$ai_cli" "$health_model"; then

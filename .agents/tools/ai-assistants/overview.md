@@ -18,7 +18,7 @@ tools:
 
 ## Quick Reference
 
-- Primary: OpenCode TUI, OpenCode Desktop, OpenCode extension (Zed/VSCode/AntiGravity/forks)
+- Primary: OpenCode TUI, OpenCode Desktop, OpenCode extension (Zed/VSCode/forks)
 - Companion: claude-code CLI (called from within OpenCode for sub-tasks)
 - Config: `~/.config/opencode/opencode.json`, `~/.claude/`
 - Setup: `aidevops update` deploys agents, configures OpenCode MCPs
@@ -35,7 +35,7 @@ aidevops is developed, tested, and supported exclusively with OpenCode and the c
 |---------|-------------|
 | **OpenCode TUI** | Terminal UI - keyboard-driven, full MCP support |
 | **OpenCode Desktop** | Desktop app with the same capabilities |
-| **OpenCode Extension** | Extension for Zed, VSCode, AntiGravity, and other VSCode forks |
+| **OpenCode Extension** | Extension for Zed, VSCode, and other VSCode forks |
 
 - **Installation**: `curl -fsSL https://opencode.ai/install | bash`
 - **Configuration**: `~/.config/opencode/opencode.json` or project `.opencode/`

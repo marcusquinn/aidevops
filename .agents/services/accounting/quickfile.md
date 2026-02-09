@@ -197,7 +197,7 @@ Add to `.vscode/mcp.json` in project root:
 ```
 
 See `configs/mcp-templates/quickfile.json` for all AI assistant configurations
-(Zed, Kilo Code, Kiro, AntiGravity, Droid).
+(Zed, Kilo Code, Kiro, Droid).
 
 ## Available Tools (37 tools)
 

@@ -327,21 +327,6 @@ Open command palette (Cmd+Shift+P / Ctrl+Shift+P):
 }
 ```
 
-### AntiGravity
-
-Click MCP server icon → Manage MCP server → View raw config:
-
-```json
-{
-  "mcpServers": {
-    "osgrep": {
-      "command": "osgrep",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
 ### Gemini CLI
 
 Edit `~/.gemini/settings.json` (user level) or `.gemini/settings.json` (project):

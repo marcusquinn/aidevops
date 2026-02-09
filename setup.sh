@@ -4265,7 +4265,7 @@ setup_safety_hooks() {
     return 0
 }
 
-# Setup OpenCode Plugins (Antigravity OAuth)
+# Setup OpenCode Plugins
 # Helper function to add/update a single plugin in OpenCode config
 add_opencode_plugin() {
     local plugin_name="$1"
@@ -4339,21 +4339,11 @@ setup_opencode_plugins() {
         print_success "aidevops compaction plugin registered (preserves context across compaction)"
     fi
 
-    # Setup Antigravity OAuth plugin (Google OAuth)
-    print_info "Setting up Antigravity OAuth plugin..."
-    add_opencode_plugin "opencode-antigravity-auth" "opencode-antigravity-auth@latest" "$opencode_config"
-    
-    print_info "Antigravity OAuth plugin enables Google OAuth for OpenCode"
-    print_info "Models available: gemini-3-pro-high, claude-opus-4-5-thinking, etc."
-    print_info "See: https://github.com/NoeFabris/opencode-antigravity-auth"
-    echo ""
-    
     # Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
     # Adding it as an external plugin causes TypeError due to double-loading.
     # Removed in v2.90.0 - see PR #230.
     
     print_info "After setup, authenticate with: opencode auth login"
-    print_info "  • For Google OAuth: Select 'Google' → 'OAuth with Google (Antigravity)'"
     print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max' (built-in)"
     
     return 0

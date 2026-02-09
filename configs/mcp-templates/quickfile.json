@@ -82,16 +82,6 @@
     }
   },
 
-  "antigravity": {
-    "_method": "MCP server icon > Manage > View raw config",
-    "mcpServers": {
-      "quickfile": {
-        "command": "node",
-        "args": ["/path/to/quickfile-mcp/dist/index.js"]
-      }
-    }
-  },
-
   "gemini_cli": {
     "_file": "~/.gemini/settings.json",
     "mcpServers": {

@@ -81,16 +81,6 @@
     }
   },
 
-  "antigravity": {
-    "_method": "MCP server icon → Manage → View raw config",
-    "mcpServers": {
-      "augment-context-engine": {
-        "command": "auggie",
-        "args": ["--mcp", "-m", "default", "-w", "/path/to/your/project"]
-      }
-    }
-  },
-
   "gemini_cli": {
     "_file": "~/.gemini/settings.json",
     "mcpServers": {

@@ -148,17 +148,10 @@ Port 3002: Vaultwarden credentials
 
 ## OpenCode Plugins
 
-**Antigravity OAuth** (`opencode-antigravity-auth`): Enables Google OAuth for OpenCode,
-providing access to Antigravity rate limits and premium models.
+**Anthropic OAuth** (built-in since OpenCode v1.1.36+): Enables Claude Pro/Max authentication.
 
 ```bash
 # Authenticate after setup
 opencode auth login
-# Select: Google → OAuth with Google (Antigravity)
+# Select: Anthropic → Claude Pro/Max
 ```text
-
-**Available models**: gemini-3-pro-high, claude-opus-4-5-thinking, claude-sonnet-4-5-thinking
-
-**Multi-account**: Add multiple Google accounts for load balancing and failover.
-
-See: https://github.com/NoeFabris/opencode-antigravity-auth

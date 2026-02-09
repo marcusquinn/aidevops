@@ -25,7 +25,7 @@ tools:
 
 | Format | Assistants |
 |--------|------------|
-| JSON (mcpServers) | OpenCode, Claude Desktop, Cursor, Windsurf, Kilo Code, Kiro, AntiGravity, Gemini CLI |
+| JSON (mcpServers) | OpenCode, Claude Desktop, Cursor, Windsurf, Kilo Code, Kiro, Gemini CLI |
 | CLI command | Claude Code, Droid |
 | VS Code MCP | GitHub Copilot, Continue.dev, Cody |
 | Custom | Zed, Aider |
@@ -255,21 +255,6 @@ Open command palette (Cmd+Shift+P):
       "args": ["run", "/path/to/my-mcp/src/index.ts"],
       "disabled": false,
       "autoApprove": ["tool_name"]
-    }
-  }
-}
-```
-
-## AntiGravity
-
-Click MCP server icon → Manage MCP server → View raw config:
-
-```json
-{
-  "mcpServers": {
-    "my-mcp": {
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
     }
   }
 }

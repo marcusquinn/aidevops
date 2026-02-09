@@ -272,23 +272,6 @@ Open command palette (Cmd+Shift+P / Ctrl+Shift+P):
 }
 ```
 
-### AntiGravity
-
-Click MCP server icon → Manage MCP server → View raw config:
-
-```json
-{
-  "mcpServers": {
-    "augment-context-engine": {
-      "command": "auggie",
-      "args": ["--mcp", "-m", "default", "-w", "/path/to/your/project"]
-    }
-  }
-}
-```
-
-**Note**: Update `/path/to/your/project` with your actual project path.
-
 ### Gemini CLI
 
 Edit `~/.gemini/settings.json` (user level) or `.gemini/settings.json` (project):

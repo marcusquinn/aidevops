@@ -73,16 +73,6 @@
     }
   },
 
-  "antigravity": {
-    "_method": "MCP server icon → Manage → View raw config",
-    "mcpServers": {
-      "osgrep": {
-        "command": "osgrep",
-        "args": ["serve"]
-      }
-    }
-  },
-
   "gemini_cli": {
     "_file": "~/.gemini/settings.json",
     "mcpServers": {

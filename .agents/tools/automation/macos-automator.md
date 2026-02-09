@@ -41,7 +41,7 @@ Use the macos-automator MCP to get the current Safari URL.
 ```
 
 **Supported AI Tools**: OpenCode, Claude Code, Cursor, Windsurf, Zed, GitHub Copilot,
-Kilo Code, Kiro, AntiGravity, Gemini CLI, Droid (Factory.AI)
+Kilo Code, Kiro, Gemini CLI, Droid (Factory.AI)
 
 **Enabled for Agents**: None by default. Enable via `@mac` subagent.
 

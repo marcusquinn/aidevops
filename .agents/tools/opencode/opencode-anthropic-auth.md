@@ -321,15 +321,13 @@ opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-20250514
 
 ## Comparison with Other Auth Methods
 
-| Feature | Anthropic OAuth (this plugin) | Antigravity OAuth | Manual API Key |
-|---------|-------------------------------|-------------------|----------------|
-| **Claude Pro/Max cost** | $0 (subscription) | N/A | Standard rates |
-| **Google OAuth** | No | Yes | No |
-| **Multi-account rotation** | No | Yes | No |
-| **Auto token refresh** | Yes | Yes | N/A |
-| **Beta features** | Auto-enabled | Manual | Manual |
-| **Setup complexity** | Low (OAuth flow) | Low (OAuth flow) | Lowest (paste key) |
-| **Best for** | Claude subscribers | Gemini/Claude users | API-only users |
+| Feature | Anthropic OAuth (built-in) | Manual API Key |
+|---------|---------------------------|----------------|
+| **Claude Pro/Max cost** | $0 (subscription) | Standard rates |
+| **Auto token refresh** | Yes | N/A |
+| **Beta features** | Auto-enabled | Manual |
+| **Setup complexity** | Low (OAuth flow) | Lowest (paste key) |
+| **Best for** | Claude subscribers | API-only users |
 
 ## Security Considerations
 
@@ -364,7 +362,7 @@ For teams or multi-account scenarios:
 2. **Account switching**: Use `opencode auth logout && opencode auth login`
 3. **Organization accounts**: Ensure organization members have API access enabled
 
-**Note**: Unlike Antigravity, this plugin does not support automatic multi-account load balancing. Use separate OpenCode profiles or environments for true multi-account rotation.
+**Note**: This plugin does not support automatic multi-account load balancing. Use separate OpenCode profiles or environments for true multi-account rotation.
 
 ### Beta Feature Customization
 
@@ -437,7 +435,7 @@ aidevops follows OpenCode's credential storage:
 
 ## Related Documentation
 
-- `tools/opencode/opencode.md` - OpenCode integration overview (includes Antigravity)
+- `tools/opencode/opencode.md` - OpenCode integration overview
 - `tools/ai-assistants/configuration.md` - AI assistant configuration
 - `tools/credentials/api-key-management.md` - API key management
 - `aidevops/setup.md` - Setup script details
