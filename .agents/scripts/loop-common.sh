@@ -175,6 +175,7 @@ loop_set_state() {
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     
     # Determine value type and update
     if [[ "$value" =~ ^[0-9]+$ ]]; then
