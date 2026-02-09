@@ -370,7 +370,7 @@ scan_db_findings() {
     # Write comments to temp file for process substitution (avoids subshell)
     local tmp_file
     tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' RETURN
+    trap 'rm -f "${tmp_file:-}"' RETURN
     echo "$comments_json" | jq -c '.[]' > "$tmp_file"
 
     local total=0
@@ -505,7 +505,7 @@ scan_pulse_findings() {
     # Write findings to temp file to avoid subshell variable loss
     local tmp_file
     tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' RETURN
+    trap 'rm -f "${tmp_file:-}"' RETURN
     jq -c '.findings[]' "$latest_findings" > "$tmp_file"
 
     while IFS= read -r finding; do
@@ -707,7 +707,7 @@ cmd_create() {
     # Write findings to temp file to avoid subshell variable loss
     local tmp_create
     tmp_create=$(mktemp)
-    trap 'rm -f "$tmp_create"' RETURN
+    trap 'rm -f "${tmp_create:-}"' RETURN
     echo "$findings_json" | jq -c '.[]' > "$tmp_create"
 
     while IFS= read -r finding; do

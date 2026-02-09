@@ -334,7 +334,7 @@ cleanup_deprecated_paths() {
         if jq -e '.plugin | index("oh-my-opencode")' "$opencode_config" >/dev/null 2>&1; then
             local tmp_file
             tmp_file=$(mktemp)
-            trap 'rm -f "$tmp_file"' RETURN
+            trap 'rm -f "${tmp_file:-}"' RETURN
             jq '.plugin = [.plugin[] | select(. != "oh-my-opencode")]' "$opencode_config" > "$tmp_file" && mv "$tmp_file" "$opencode_config"
             print_info "Removed oh-my-opencode from OpenCode plugin list"
         fi
@@ -515,7 +515,7 @@ cleanup_deprecated_mcps() {
     local cleaned=0
     local tmp_config
     tmp_config=$(mktemp)
-    trap 'rm -f "$tmp_config"' RETURN
+    trap 'rm -f "${tmp_config:-}"' RETURN
     
     cp "$opencode_config" "$tmp_config"
     
@@ -639,7 +639,7 @@ disable_ondemand_mcps() {
     local disabled=0
     local tmp_config
     tmp_config=$(mktemp)
-    trap 'rm -f "$tmp_config"' RETURN
+    trap 'rm -f "${tmp_config:-}"' RETURN
     
     cp "$opencode_config" "$tmp_config"
     
@@ -717,7 +717,7 @@ validate_opencode_config() {
         if jq -e ".[\"$key\"]" "$opencode_config" > /dev/null 2>&1; then
             local tmp_fix
             tmp_fix=$(mktemp)
-            trap 'rm -f "$tmp_fix"' RETURN
+            trap 'rm -f "${tmp_fix:-}"' RETURN
             if jq "del(.[\"$key\"])" "$opencode_config" > "$tmp_fix" 2>/dev/null; then
                 create_backup_with_rotation "$opencode_config" "opencode"
                 mv "$tmp_fix" "$opencode_config"
@@ -2587,7 +2587,7 @@ deploy_aidevops_agents() {
         print_info "Clean mode: removing stale files from $target_dir (preserving ${preserved_dirs[*]})"
         local tmp_preserve
         tmp_preserve="$(mktemp -d)"
-        trap 'rm -rf "$tmp_preserve"' RETURN
+        trap 'rm -rf "${tmp_preserve:-}"' RETURN
         if [[ -z "$tmp_preserve" || ! -d "$tmp_preserve" ]]; then
             print_error "Failed to create temp dir for preserving agents"
             return 1
@@ -2680,7 +2680,7 @@ deploy_aidevops_agents() {
                 # (awk -v doesn't handle multi-line content with special chars well)
                 local tmp_file
                 tmp_file=$(mktemp)
-                trap 'rm -f "$tmp_file"' RETURN
+                trap 'rm -f "${tmp_file:-}"' RETURN
                 local in_placeholder=false
                 while IFS= read -r line || [[ -n "$line" ]]; do
                     if [[ "$line" == *"OPENCODE-PLAN-REMINDER-INJECT-START"* ]]; then
@@ -3111,7 +3111,7 @@ inject_agents_reference() {
                     # Prepend reference to existing file
                     local temp_file
                     temp_file=$(mktemp)
-                    trap 'rm -f "$temp_file"' RETURN
+                    trap 'rm -f "${temp_file:-}"' RETURN
                     echo "$reference_line" > "$temp_file"
                     echo "" >> "$temp_file"
                     cat "$agents_file" >> "$temp_file"
@@ -3441,7 +3441,7 @@ update_mcp_paths_in_opencode() {
 
     local tmp_config
     tmp_config=$(mktemp)
-    trap 'rm -f "$tmp_config"' RETURN
+    trap 'rm -f "${tmp_config:-}"' RETURN
     cp "$opencode_config" "$tmp_config"
 
     local updated=0
@@ -4285,7 +4285,7 @@ add_opencode_plugin() {
             # Update existing plugin to latest version
             local temp_file
             temp_file=$(mktemp)
-            trap 'rm -f "$temp_file"' RETURN
+            trap 'rm -f "${temp_file:-}"' RETURN
             jq --arg old "$plugin_name" --arg new "$plugin_spec" \
                 '.plugin = [.plugin[] | if startswith($old) then $new else . end]' \
                 "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
@@ -4294,7 +4294,7 @@ add_opencode_plugin() {
             # Add plugin to existing array
             local temp_file
             temp_file=$(mktemp)
-            trap 'rm -f "$temp_file"' RETURN
+            trap 'rm -f "${temp_file:-}"' RETURN
             jq --arg p "$plugin_spec" '.plugin += [$p]' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
             print_success "Added $plugin_name plugin to OpenCode config"
         fi
@@ -4302,7 +4302,7 @@ add_opencode_plugin() {
         # Create plugin array with the plugin
         local temp_file
         temp_file=$(mktemp)
-        trap 'rm -f "$temp_file"' RETURN
+        trap 'rm -f "${temp_file:-}"' RETURN
         jq --arg p "$plugin_spec" '. + {plugin: [$p]}' "$opencode_config" > "$temp_file" && mv "$temp_file" "$opencode_config"
         print_success "Created plugin array with $plugin_name"
     fi
@@ -4445,7 +4445,7 @@ setup_google_analytics_mcp() {
         if [[ "$enable_mcp" == "true" ]]; then
             local tmp_config
             tmp_config=$(mktemp)
-            trap 'rm -f "$tmp_config"' RETURN
+            trap 'rm -f "${tmp_config:-}"' RETURN
             if jq --arg creds "$creds_path" --arg proj "$project_id" \
                 '.mcp["google-analytics-mcp"].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
                  .mcp["google-analytics-mcp"].environment.GOOGLE_PROJECT_ID = $proj |
@@ -4466,7 +4466,7 @@ setup_google_analytics_mcp() {
     # Add google-analytics-mcp to opencode.json
     local tmp_config
     tmp_config=$(mktemp)
-    trap 'rm -f "$tmp_config"' RETURN
+    trap 'rm -f "${tmp_config:-}"' RETURN
     
     if jq --arg creds "$creds_path" --arg proj "$project_id" --argjson enabled "$enable_mcp" \
         '.mcp["google-analytics-mcp"] = {
@@ -4579,7 +4579,7 @@ setup_quickfile_mcp() {
 
             local tmp_config
             tmp_config=$(mktemp)
-            trap 'rm -f "$tmp_config"' RETURN
+            trap 'rm -f "${tmp_config:-}"' RETURN
 
             if jq --arg np "$node_path" --arg dp "$quickfile_dir/dist/index.js" \
                 '.mcp.quickfile = {"type": "local", "command": [$np, $dp], "enabled": true}' \

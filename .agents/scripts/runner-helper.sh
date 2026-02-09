@@ -500,7 +500,7 @@ $full_prompt"
     # Update config with run metadata
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     local status="success"
     if [[ $exit_code -ne 0 ]]; then
         status="failed"

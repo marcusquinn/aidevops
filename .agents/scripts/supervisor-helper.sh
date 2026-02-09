@@ -3365,7 +3365,7 @@ check_model_health() {
         else
             local probe_pid probe_tmpfile
             probe_tmpfile=$(mktemp)
-            trap 'rm -f "$probe_tmpfile"' RETURN
+            trap 'rm -f "${probe_tmpfile:-}"' RETURN
             ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
             probe_pid=$!
             local waited=0
@@ -3395,7 +3395,7 @@ check_model_health() {
         else
             local probe_pid probe_tmpfile
             probe_tmpfile=$(mktemp)
-            trap 'rm -f "$probe_tmpfile"' RETURN
+            trap 'rm -f "${probe_tmpfile:-}"' RETURN
             ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
             probe_pid=$!
             local waited=0
@@ -4372,7 +4372,7 @@ extract_log_metadata() {
     # Only the final lines contain actual execution status/errors.
     local log_tail_file
     log_tail_file=$(mktemp)
-    trap 'rm -f "$log_tail_file"' RETURN
+    trap 'rm -f "${log_tail_file:-}"' RETURN
     tail -20 "$log_file" > "$log_tail_file" 2>/dev/null || true
 
     local rate_limit_count=0 auth_error_count=0 conflict_count=0 timeout_count=0 oom_count=0
@@ -7410,7 +7410,7 @@ populate_verify_queue() {
         # Insert before the end marker
         local temp_file
         temp_file=$(mktemp)
-        trap 'rm -f "$temp_file"' RETURN
+        trap 'rm -f "${temp_file:-}"' RETURN
         awk -v entry="$entry" '
             /<!-- VERIFY-QUEUE-END -->/ {
                 print entry
@@ -7946,7 +7946,7 @@ generate_verify_entry() {
     # Insert before marker using temp file (portable across macOS/Linux)
     local tmp_file
     tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' RETURN
+    trap 'rm -f "${tmp_file:-}"' RETURN
     awk -v entry="$full_entry" -v mark="$marker" '{
         if (index($0, mark) > 0) { print entry; }
         print;

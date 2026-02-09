@@ -180,7 +180,7 @@ update_last_checked() {
     
     local tmp_file
     tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' RETURN
+    trap 'rm -f "${tmp_file:-}"' RETURN
     
     jq --arg name "$skill_name" --arg ts "$timestamp" \
         '.skills = [.skills[] | if .name == $name then .last_checked = $ts else . end]' \

@@ -105,7 +105,7 @@ tabby_enable_dynamic_titles() {
     # Replace all instances (cross-platform: works on both macOS and Linux)
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     sed 's/disableDynamicTitle: true/disableDynamicTitle: false/g' "$TABBY_CONFIG_FILE" > "$temp_file" && mv "$temp_file" "$TABBY_CONFIG_FILE"
     
     local count
@@ -304,7 +304,7 @@ remove_integration() {
     # Remove our integration block (cross-platform: works on both macOS and Linux)
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "$temp_file"' RETURN
+    trap 'rm -f "${temp_file:-}"' RETURN
     sed "/$MARKER_START/,/$MARKER_END/d" "$rc_file" > "$temp_file" && mv "$temp_file" "$rc_file"
     
     log_success "Removed integration from $rc_file (backup: ${rc_file}.aidevops-backup)"

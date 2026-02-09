@@ -789,7 +789,7 @@ do_webmaster_research() {
     # Combine and deduplicate keywords
     local combined_keywords
     combined_keywords=$(mktemp)
-    trap 'rm -f "$combined_keywords"' RETURN
+    trap 'rm -f "${combined_keywords:-}"' RETURN
     
     # Process GSC data
     if [[ -n "$gsc_data" ]]; then
