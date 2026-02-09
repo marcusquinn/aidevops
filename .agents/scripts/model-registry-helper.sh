@@ -1019,6 +1019,94 @@ cmd_export() {
     return $?
 }
 
+cmd_route() {
+    local description="$*"
+    local json_flag=false
+
+    # Parse flags
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json_flag=true; shift ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+    description="${args[*]}"
+
+    if [[ -z "$description" ]]; then
+        echo ""
+        echo "Usage: model-registry-helper.sh route <task description>"
+        echo ""
+        echo "Examples:"
+        echo "  model-registry-helper.sh route 'rename variable X to Y'"
+        echo "  model-registry-helper.sh route 'design auth system architecture'"
+        echo "  model-registry-helper.sh route 'summarize this 200-page PDF'"
+        echo ""
+        return 1
+    fi
+
+    local desc_lower
+    desc_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
+
+    local tier="sonnet"
+    local reason="Default tier for general development tasks"
+    local cost="1x"
+
+    # Opus indicators: architecture, design, security audit, novel, trade-off, evaluate
+    if echo "$desc_lower" | grep -qE 'architect|system.design|security.audit|novel|trade.?off|evaluat|complex.*(plan|design|decision)|from.scratch'; then
+        tier="opus"
+        reason="Complex reasoning, architecture, or novel problem-solving"
+        cost="3x"
+    # Haiku indicators: rename, format, classify, triage, commit message, simple
+    elif echo "$desc_lower" | grep -qE 'rename|reformat|classify|triage|commit.message|simple.*(text|transform)|extract.field|sort|prioriti[sz]e|route|tag|label'; then
+        tier="haiku"
+        reason="Simple classification, formatting, or text transform"
+        cost="0.25x"
+    # Flash indicators: summarize, large context, bulk, read, scan
+    elif echo "$desc_lower" | grep -qE 'summari[sz]e|large.*(file|context|document|pdf)|bulk|scan.*files|read.*all|200.page|overview|skim'; then
+        tier="flash"
+        reason="Large context processing or summarization"
+        cost="0.20x"
+    # Pro indicators: large codebase, many files, refactor across
+    elif echo "$desc_lower" | grep -qE 'large.codebase|500.file|many.files|refactor.across|entire.project|full.repo|cross.file'; then
+        tier="pro"
+        reason="Large codebase analysis requiring both context and reasoning"
+        cost="1.5x"
+    fi
+
+    # Look up the primary model for this tier from the registry
+    local primary_model=""
+    local fallback_model=""
+    primary_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_primary = 1 LIMIT 1;" 2>/dev/null || echo "")
+    fallback_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_fallback = 1 LIMIT 1;" 2>/dev/null || echo "")
+
+    # Defaults if registry is empty
+    case "$tier" in
+        haiku)   primary_model="${primary_model:-claude-3-5-haiku}"; fallback_model="${fallback_model:-gemini-2.5-flash}" ;;
+        flash)   primary_model="${primary_model:-gemini-2.5-flash}"; fallback_model="${fallback_model:-gpt-4.1-mini}" ;;
+        sonnet)  primary_model="${primary_model:-claude-sonnet-4}"; fallback_model="${fallback_model:-gpt-4.1}" ;;
+        pro)     primary_model="${primary_model:-gemini-2.5-pro}"; fallback_model="${fallback_model:-claude-sonnet-4}" ;;
+        opus)    primary_model="${primary_model:-claude-opus-4}"; fallback_model="${fallback_model:-o3}" ;;
+    esac
+
+    if [[ "$json_flag" == "true" ]]; then
+        printf '{"tier":"%s","model":"%s","fallback":"%s","cost":"%s","reason":"%s"}\n' \
+            "$tier" "$primary_model" "$fallback_model" "$cost" "$reason"
+    else
+        echo ""
+        echo "Task: $description"
+        echo ""
+        echo "  Recommended tier:  $tier"
+        echo "  Primary model:     $primary_model"
+        echo "  Fallback model:    $fallback_model"
+        echo "  Relative cost:     $cost"
+        echo "  Reason:            $reason"
+        echo ""
+    fi
+
+    return 0
+}
+
 cmd_help() {
     echo ""
     echo "Model Registry Helper - Provider/Model Registry with Periodic Sync"
@@ -1034,6 +1122,7 @@ cmd_help() {
     echo "  suggest       Suggest new models discovered from APIs but not tracked"
     echo "  deprecations  Show deprecated/renamed/unavailable models"
     echo "  diff          Show differences between registry and local config"
+    echo "  route <desc>  Recommend optimal model tier for a task description"
     echo "  export        Export registry data (JSON or CSV)"
     echo "  help          Show this help"
     echo ""
@@ -1054,6 +1143,7 @@ cmd_help() {
     echo "  model-registry-helper.sh check                   # Verify subagent models"
     echo "  model-registry-helper.sh suggest                 # New model suggestions"
     echo "  model-registry-helper.sh diff                    # Config vs registry"
+    echo "  model-registry-helper.sh route 'fix React bug'  # Recommend model tier"
     echo "  model-registry-helper.sh export --json           # Export as JSON"
     echo ""
     echo "Integration:"
@@ -1103,6 +1193,9 @@ main() {
             ;;
         diff)
             cmd_diff "$@"
+            ;;
+        route)
+            cmd_route "$@"
             ;;
         export)
             cmd_export "$@"
