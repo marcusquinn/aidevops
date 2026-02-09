@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t189 Worktree ownership safety — prevent sessions from removing worktrees owned by other parallel sessions #bugfix #git #supervisor ~2h (ai:1.5h test:30m) logged:2026-02-09
+- [ ] t189 Worktree ownership safety — prevent sessions from removing worktrees owned by other parallel sessions #bugfix #git #supervisor ~2h (ai:1.5h test:30m) ref:GH#692 assignee:marcusquinn started:2026-02-09T00:24:23Z logged:2026-02-09
   - [ ] t189.1 Add worktree ownership registry ~45m blocked-by:none
     - Notes: When a session creates or claims a worktree, register it in a SQLite table or lockfile: worktree path, session ID, PID, task ID, created timestamp. Before removing any worktree, check the registry — if another session owns it and its PID is still alive, REFUSE to remove. If PID is dead but session is recent (<1h), WARN and require --force. This prevents the exact bug that happened: supervisor session cleaned up a worktree that a parallel interactive session was actively using.
   - [ ] t189.2 Add "in use" detection to worktree cleanup ~30m blocked-by:t189.1
