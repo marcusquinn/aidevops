@@ -60,7 +60,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t199 Content Creation Agent Architecture — multi-media multi-channel production pipeline #plan #content #architecture #multimedia → [todo/PLANS.md#2026-02-09-content-creation-agent-architecture] ~8h (ai:5h test:2h read:1h) logged:2026-02-09
+- [ ] t199 Content Creation Agent Architecture — multi-media multi-channel production pipeline #plan #content #architecture #multimedia → [todo/PLANS.md#2026-02-09-content-creation-agent-architecture] ~8h (ai:5h test:2h read:1h) ref:GH#819 logged:2026-02-09
   - [ ] t199.1 Create content/research.md — audience research, niche validation, competitor analysis ~1h
   - [ ] t199.2 Create content/story.md — narrative design, hooks, angles, frameworks ~1h
   - [ ] t199.3 Create content/production/writing.md — scripts, copy, captions ~30m
