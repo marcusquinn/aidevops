@@ -289,7 +289,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: GH#398. Raw git pull diff stat exceeds 51KB tool output limit on large updates (e.g. 500 file rename). Fix: quiet pull + filtered commit log (feat/fix/refactor only, head -20) in cmd_update(). Low severity, only affects large updates.
 - [x] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint).
-- [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) ref:GH#496 logged:2026-02-07
+- [x] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) ref:GH#496 logged:2026-02-07 completed:2026-02-09 verified:2026-02-09 PR #755,#759,#762,#763,#792 merged
   - [x] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none ref:GH#728 completed:2026-02-09 pr:#755
   - [x] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1 ref:GH#729 completed:2026-02-09 pr:#759
   - [x] t136.3 Extend setup.sh to deploy plugins ~2h blocked-by:t136.2 ref:GH#730 completed:2026-02-09 pr:#762
