@@ -151,6 +151,7 @@ Use discovery output to filter `/compare-models` to only show models the user ca
 
 ## Related
 
+- `tools/ai-assistants/response-scoring.md` - Evaluate actual model response quality
 - `tools/context/model-routing.md` - Cost-aware model routing within aidevops
 - `tools/voice/voice-ai-models.md` - Voice-specific model comparison
 - `tools/voice/voice-models.md` - TTS/STT model catalog
