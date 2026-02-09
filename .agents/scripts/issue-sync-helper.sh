@@ -11,7 +11,7 @@
 # Commands:
 #   push [tNNN]     Create/update GitHub issues from TODO.md tasks
 #   enrich [tNNN]   Update existing issue bodies with full context
-#   pull            Sync GitHub issue refs back to TODO.md
+#   pull            Sync GitHub issue refs back to TODO.md + detect orphan issues
 #   close [tNNN]    Close GitHub issue when TODO.md task is [x]
 #   reconcile       Fix mismatched ref:GH# values and detect drift
 #   status          Show sync drift between TODO.md and GitHub
@@ -932,6 +932,8 @@ cmd_enrich() {
 }
 
 # Pull: sync GitHub issue refs back to TODO.md
+# Detects orphan issues (GH issues with t-number titles but no TODO.md entry),
+# adds ref:GH#NNN to tasks missing it, and syncs assignees from GH to TODO.md.
 cmd_pull() {
     local project_root
     project_root=$(find_project_root) || return 1
@@ -940,11 +942,15 @@ cmd_pull() {
 
     verify_gh_cli || return 1
 
+    print_info "Pulling issue refs from $repo_slug to TODO.md..."
+
     # Get all open issues with t-number prefixes (include assignees for assignee: sync)
     local issues_json
     issues_json=$(gh issue list --repo "$repo_slug" --state open --limit 200 --json number,title,assignees 2>/dev/null || echo "[]")
 
     local synced=0
+    local orphan_open=0
+    local orphan_open_list=""
     while IFS= read -r issue_line; do
         local issue_number
         issue_number=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
@@ -963,9 +969,12 @@ cmd_pull() {
             continue
         fi
 
-        # Check if task exists in TODO.md
+        # Check if task exists in TODO.md (any checkbox state)
         if ! grep -qE "^- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
-            log_verbose "Issue #$issue_number ($task_id) has no matching TODO.md entry"
+            # Orphan: GH issue exists but no TODO.md entry
+            print_warning "ORPHAN: GH#$issue_number ($task_id: $issue_title) — no TODO.md entry"
+            orphan_open=$((orphan_open + 1))
+            orphan_open_list="${orphan_open_list:+$orphan_open_list, }#$issue_number ($task_id)"
             continue
         fi
 
@@ -976,6 +985,7 @@ cmd_pull() {
         fi
 
         add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+        print_success "Added ref:GH#$issue_number to $task_id"
         synced=$((synced + 1))
     done < <(echo "$issues_json" | jq -c '.[]' 2>/dev/null || true)
 
@@ -983,6 +993,7 @@ cmd_pull() {
     local closed_json
     closed_json=$(gh issue list --repo "$repo_slug" --state closed --limit 200 --json number,title 2>/dev/null || echo "[]")
 
+    local orphan_closed=0
     while IFS= read -r issue_line; do
         local issue_number
         issue_number=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
@@ -1000,6 +1011,8 @@ cmd_pull() {
         fi
 
         if ! grep -qE "^- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
+            log_verbose "ORPHAN (closed): GH#$issue_number ($task_id) — no TODO.md entry"
+            orphan_closed=$((orphan_closed + 1))
             continue
         fi
 
@@ -1010,6 +1023,7 @@ cmd_pull() {
         fi
 
         add_gh_ref_to_todo "$task_id" "$issue_number" "$todo_file"
+        print_success "Added ref:GH#$issue_number to $task_id (closed issue)"
         synced=$((synced + 1))
     done < <(echo "$closed_json" | jq -c '.[]' 2>/dev/null || true)
 
@@ -1070,7 +1084,23 @@ cmd_pull() {
         fi
     done < <(echo "$issues_json" | jq -c '.[]' 2>/dev/null || true)
 
-    print_info "Pull complete: $synced refs synced, $assignee_synced assignees synced to TODO.md"
+    # Summary
+    echo ""
+    echo "=== Pull Summary ==="
+    echo "Refs synced to TODO.md:    $synced"
+    echo "Assignees synced:          $assignee_synced"
+    echo "Orphan issues (open):      $orphan_open"
+    echo "Orphan issues (closed):    $orphan_closed"
+    echo ""
+
+    if [[ $orphan_open -gt 0 ]]; then
+        print_warning "$orphan_open open issue(s) have no TODO.md entry: $orphan_open_list"
+        print_info "Add tasks to TODO.md or close orphan issues on GitHub"
+    fi
+    if [[ $synced -eq 0 && $assignee_synced -eq 0 && $orphan_open -eq 0 ]]; then
+        print_success "TODO.md refs are up to date with GitHub"
+    fi
+
     return 0
 }
 
@@ -1547,7 +1577,7 @@ Usage: issue-sync-helper.sh [command] [options]
 Commands:
   push [tNNN]     Create GitHub issues from TODO.md tasks (all open or specific)
   enrich [tNNN]   Update existing issue bodies with full context from PLANS.md
-  pull            Sync GitHub issue refs back to TODO.md
+  pull            Sync GitHub issue refs back to TODO.md + detect orphan issues
   close [tNNN]    Close GitHub issues for completed TODO.md tasks
   reconcile       Fix mismatched ref:GH# values and detect drift (t179.2)
   status          Show sync drift between TODO.md and GitHub
