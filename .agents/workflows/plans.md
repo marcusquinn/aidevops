@@ -820,7 +820,7 @@ gh issue create --title "t146: bug: supervisor no_pr retry counter non-functiona
 ### When Creating Both Together
 
 1. Assign the next available t-number
-2. Create the GitHub issue with `t{NNN}: ` prefix in the title
+2. Create the GitHub issue with `t{NNN}:` prefix in the title
 3. Add the task to TODO.md with `ref:GH#{issue_number}`
 4. Commit and push TODO.md immediately
 
@@ -829,7 +829,7 @@ gh issue create --title "t146: bug: supervisor no_pr retry counter non-functiona
 The supervisor's `update_todo_on_complete()` and `send_task_notification()` functions should maintain this sync. When the supervisor creates issues or updates TODO.md, it must:
 
 1. Check if a matching GitHub issue exists (search by `t{NNN}` in title)
-2. If not, create one with the `t{NNN}: ` prefix
+2. If not, create one with the `t{NNN}:` prefix
 3. If the TODO.md task lacks `ref:GH#`, add it after issue creation
 4. When closing a task, close the matching GitHub issue with a comment
 

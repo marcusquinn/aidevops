@@ -68,5 +68,3 @@ MainWP provides centralized WordPress management:
 - Backup, Staging, Development tools
 
 Always prefer curated plugins for reliability.
-
-

@@ -1061,5 +1061,3 @@ Monitor your API usage for cache hit rates. High cache hits indicate:
 ### Reviewing Existing Agents
 
 See `build-agent/agent-review.md` for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
-
-

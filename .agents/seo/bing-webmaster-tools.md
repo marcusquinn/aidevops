@@ -42,6 +42,7 @@ export BING_API_KEY="your_api_key_here"
 ```
 
 Reload the environment:
+
 ```bash
 source ~/.config/aidevops/credentials.sh
 ```
@@ -131,18 +132,22 @@ curl -s -G "https://ssl.bing.com/webmaster/api.svc/json/GetFeedStats" \
 ## Troubleshooting
 
 ### HTTP 400 Bad Request
+
 - Check JSON syntax in request body
 - Verify `siteUrl` matches exactly what is registered in Bing Webmaster Tools (including http/https and www/non-www)
 
 ### HTTP 401 Unauthorized
+
 - Verify `BING_API_KEY` is correct
 - Ensure the API key has not been revoked
 
 ### HTTP 500 Internal Server Error
+
 - Retry the request
 - Check Bing Webmaster Tools status
 
 ### Quota Limits
+
 - **SubmitUrl**: 10,000 URLs per day per site
 - **Crawl Rate**: Dependent on site authority and history
 

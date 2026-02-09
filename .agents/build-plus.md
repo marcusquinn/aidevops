@@ -382,5 +382,3 @@ Communicate clearly and concisely in a casual, friendly yet professional tone:
 - Re-read a file to refresh context before a second edit, or if you suspect another tool (e.g. Bash) has modified it.
 - If content has not changed since your last read, do NOT re-read it.
 - Use internal memory and previous context to avoid redundant reads.
-
-
