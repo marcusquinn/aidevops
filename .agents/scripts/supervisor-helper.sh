@@ -237,12 +237,42 @@ log_verbose() { [[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SU
 # gh auth status may fail in cron even when GH_TOKEN is valid (keyring issues).
 # This function checks GH_TOKEN first, then falls back to gh auth status.
 check_gh_auth() {
+    # Cache auth check result for 5 minutes to avoid repeated API calls.
+    # Each pulse calls this 1-5 times; cron runs every 2-5 minutes.
+    # Caching saves ~288 API calls/day at 2-min pulse intervals.
+    local cache_file="${SUPERVISOR_DIR:-.}/.gh-auth-cache"
+    local cache_ttl=300  # 5 minutes
+
+    if [[ -f "$cache_file" ]]; then
+        local cache_age
+        local cache_mtime
+        cache_mtime=$(stat -f '%m' "$cache_file" 2>/dev/null || stat -c '%Y' "$cache_file" 2>/dev/null || echo "0")
+        cache_age=$(( $(date +%s) - cache_mtime ))
+        if [[ "$cache_age" -lt "$cache_ttl" ]]; then
+            local cached_result
+            cached_result=$(cat "$cache_file" 2>/dev/null || echo "")
+            if [[ "$cached_result" == "ok" ]]; then
+                return 0
+            fi
+            # Cached failure — still retry in case token was refreshed
+        fi
+    fi
+
     # If GH_TOKEN is set, verify it works with a lightweight API call
     if [[ -n "${GH_TOKEN:-}" ]]; then
-        gh api user --jq '.login' >/dev/null 2>&1 && return 0
+        if gh api user --jq '.login' >/dev/null 2>&1; then
+            mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
+            echo "ok" > "$cache_file" 2>/dev/null || true
+            return 0
+        fi
     fi
     # Fall back to gh auth status (works interactively with keyring)
-    gh auth status >/dev/null 2>&1 && return 0
+    if gh auth status >/dev/null 2>&1; then
+        mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
+        echo "ok" > "$cache_file" 2>/dev/null || true
+        return 0
+    fi
+    echo "fail" > "$cache_file" 2>/dev/null || true
     return 1
 }
 
@@ -2857,10 +2887,81 @@ resolve_model_from_frontmatter() {
 }
 
 #######################################
+# Classify task complexity from description to suggest model tier.
+# Returns: "sonnet" for simple tasks, "opus" for complex ones.
+# Simple tasks: docs updates, config changes, renaming, formatting,
+#   adding comments, updating references, simple script additions.
+# Complex tasks: architecture, novel features, multi-file refactors,
+#   security, anything requiring deep reasoning.
+#######################################
+classify_task_complexity() {
+    local description="$1"
+    local desc_lower
+    desc_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
+
+    # Patterns that indicate simple/docs/config tasks → sonnet
+    local simple_patterns=(
+        "update.*readme"
+        "update.*docs"
+        "update.*documentation"
+        "add.*comment"
+        "add.*reference"
+        "update.*reference"
+        "rename"
+        "fix.*typo"
+        "update.*version"
+        "bump.*version"
+        "update.*changelog"
+        "add.*to.*index"
+        "update.*index"
+        "wire.*up.*command"
+        "add.*slash.*command"
+        "update.*agents\.md"
+        "progressive.*disclosure"
+        "cross-reference"
+    )
+
+    for pattern in "${simple_patterns[@]}"; do
+        if [[ "$desc_lower" =~ $pattern ]]; then
+            echo "sonnet"
+            return 0
+        fi
+    done
+
+    # Patterns that indicate complex tasks → opus
+    local complex_patterns=(
+        "architect"
+        "design.*system"
+        "security.*audit"
+        "refactor.*major"
+        "migration"
+        "novel"
+        "from.*scratch"
+        "implement.*new.*system"
+        "multi.*provider"
+        "cross.*model"
+        "quality.*gate"
+        "fallback.*chain"
+    )
+
+    for pattern in "${complex_patterns[@]}"; do
+        if [[ "$desc_lower" =~ $pattern ]]; then
+            echo "opus"
+            return 0
+        fi
+    done
+
+    # Default: opus for safety (complex tasks fail on weaker models)
+    echo "opus"
+    return 0
+}
+
+#######################################
 # Resolve the model for a task (t132.5)
 # Priority: 1) Task's explicit model (if not default)
 #           2) Subagent frontmatter model:
-#           3) resolve_model() with tier/fallback chain
+#           3) Task complexity classification (auto-route simple tasks to sonnet)
+#           4) resolve_model() with tier/fallback chain
 # Returns the resolved provider/model string
 #######################################
 resolve_task_model() {
@@ -2905,7 +3006,24 @@ resolve_task_model() {
         fi
     fi
 
-    # 3) Fall back to resolve_model with default tier
+    # 3) Auto-classify task complexity from description
+    #    Route simple tasks (docs, config, renaming) to sonnet (~5x cheaper)
+    #    Keep complex tasks (architecture, novel features) on opus
+    local task_desc
+    task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+    if [[ -n "$task_desc" ]]; then
+        local suggested_tier
+        suggested_tier=$(classify_task_complexity "$task_desc")
+        if [[ "$suggested_tier" != "opus" ]]; then
+            local resolved
+            resolved=$(resolve_model "$suggested_tier" "$ai_cli")
+            log_info "Model for $task_id: $resolved (auto-classified as $suggested_tier)"
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    # 4) Fall back to resolve_model with default tier
     local resolved
     resolved=$(resolve_model "coding" "$ai_cli")
     log_info "Model for $task_id: $resolved (default coding tier)"
