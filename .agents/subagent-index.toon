@@ -1,23 +1,24 @@
 <!--TOON:agents[11]{name,file,purpose,model_tier}:
 Build+,build-plus.md,Enhanced Build with context tools,opus
-SEO,seo.md,SEO optimization and analysis,opus
-Content,content.md,Content creation workflows,opus
-Research,research.md,Research and analysis tasks,flash
-Marketing,marketing.md,Marketing strategy and email campaigns (FluentCRM),opus
-Sales,sales.md,Sales operations and CRM pipeline (FluentCRM),opus
-Legal,legal.md,Legal compliance,opus
 Accounts,accounts.md,Financial operations,opus
+Content,content.md,Content creation workflows,opus
 Health,health.md,Health and wellness,opus
+Legal,legal.md,Legal compliance,opus
+Marketing,marketing.md,Marketing strategy and email campaigns (FluentCRM),opus
+Research,research.md,Research and analysis tasks,gemini/grok
+Sales,sales.md,Sales operations and CRM pipeline (FluentCRM),opus
+SEO,seo.md,SEO optimization and analysis,opus
 Social-Media,social-media.md,Social media management,opus
 Video,video.md,AI video generation and prompt engineering,opus
 -->
 
-<!--TOON:model_tiers[5]{tier,model_id,use_case}:
+<!--TOON:model_tiers[6]{tier,model_id,use_case}:
 haiku,claude-3-5-haiku-20241022,Triage routing and simple tasks
 sonnet,claude-sonnet-4-20250514,Code review and implementation
 opus,claude-opus-4-20250514,Architecture and complex reasoning
 flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
+grok,grok-3,Research and real-time web knowledge
 -->
 
 <!--TOON:subagents[41]{folder,purpose,key_files}:
