@@ -75,30 +75,37 @@ Insert every 2-3 minutes to reset attention:
 The hook is the most critical part. Use these proven formulas:
 
 ### 1. Bold Claim
+
 > "[Surprising statement that challenges assumptions]"
 > Example: "This $5 tool outperforms every $500 alternative I've tested."
 
 ### 2. Question Hook
+
 > "[Question that the viewer desperately wants answered]"
 > Example: "Why do 90% of YouTube channels never reach 1,000 subscribers?"
 
 ### 3. Story Hook
+
 > "[Drop into the middle of a compelling story]"
 > Example: "Three months ago, I made a video that got 47 views. Last week, it hit 2 million."
 
 ### 4. Contrarian Hook
+
 > "[Statement that goes against popular belief]"
 > Example: "Everything you've been told about YouTube SEO is wrong."
 
 ### 5. Result Hook
+
 > "[Show the end result, then explain how]"
 > Example: "This channel went from 0 to 100K subscribers in 6 months. Here's exactly how."
 
 ### 6. Problem-Agitate Hook
+
 > "[Name a pain point, then make it worse]"
 > Example: "Your YouTube thumbnails are costing you views. And the fix isn't what you think."
 
 ### 7. Curiosity Gap Hook
+
 > "[Reveal partial information that demands completion]"
 > Example: "There's one setting in YouTube Studio that 95% of creators never touch. It changed everything for me."
 
@@ -107,17 +114,20 @@ The hook is the most critical part. Use these proven formulas:
 Choose based on content type:
 
 ### AIDA (Best for: product reviews, tutorials)
+
 1. **Attention**: Hook with the problem or result
 2. **Interest**: Why this matters to the viewer
 3. **Desire**: Show the solution working
 4. **Action**: CTA (subscribe, try it, comment)
 
 ### Three-Act Structure (Best for: documentaries, deep dives)
+
 1. **Setup**: Introduce the topic, establish stakes
 2. **Confrontation**: Present the conflict/challenge/mystery
 3. **Resolution**: Deliver the answer/solution/revelation
 
 ### Hero's Journey (Best for: personal stories, transformations)
+
 1. **Ordinary world**: Where you/subject started
 2. **Call to adventure**: The challenge that appeared
 3. **Trials**: What was tried, what failed
@@ -125,6 +135,7 @@ Choose based on content type:
 5. **Return**: What was learned, how it applies to viewer
 
 ### Problem-Solution-Result (Best for: how-to, educational)
+
 1. **Problem**: What's broken/missing/painful
 2. **Failed approaches**: What doesn't work (and why)
 3. **Solution**: The method that works
@@ -132,6 +143,7 @@ Choose based on content type:
 5. **Implementation**: Step-by-step for the viewer
 
 ### Listicle with Stakes (Best for: "Top X" videos)
+
 1. **Hook**: Why this list matters
 2. **Items N through 2**: Build anticipation (save best for last)
 3. **Item 1**: The most impactful/surprising entry
