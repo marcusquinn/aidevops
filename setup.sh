@@ -3226,7 +3226,8 @@ install_mcp_packages() {
     local failed=0
     local pkg
     for pkg in "${node_mcps[@]}"; do
-        if npm_global_install "${pkg}@latest" > /dev/null 2>&1; then
+        local short_name="${pkg##*/}"  # Strip @scope/ prefix for display
+        if run_with_spinner "Installing $short_name" npm_global_install "${pkg}@latest"; then
             ((updated++)) || true
         else
             ((failed++)) || true
