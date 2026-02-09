@@ -505,6 +505,176 @@ _todo_commit_push_inner() {
 }
 
 # =============================================================================
+# Worktree Ownership Registry (t189)
+# =============================================================================
+# SQLite-backed registry that tracks which session/batch owns each worktree.
+# Prevents cross-session worktree removal — the root cause of t189.
+#
+# Available to all scripts that source shared-constants.sh.
+
+WORKTREE_REGISTRY_DIR="${HOME}/.aidevops/.agent-workspace"
+WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+
+# SQL-escape a value for SQLite (double single quotes)
+_wt_sql_escape() {
+    local val="$1"
+    echo "${val//\'/\'\'}"
+}
+
+# Initialize the registry database
+_init_registry_db() {
+    mkdir -p "$WORKTREE_REGISTRY_DIR" 2>/dev/null || true
+    sqlite3 "$WORKTREE_REGISTRY_DB" "
+        CREATE TABLE IF NOT EXISTS worktree_owners (
+            worktree_path TEXT PRIMARY KEY,
+            branch        TEXT,
+            owner_pid     INTEGER,
+            owner_session TEXT DEFAULT '',
+            owner_batch   TEXT DEFAULT '',
+            task_id       TEXT DEFAULT '',
+            created_at    TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+    " 2>/dev/null || true
+    return 0
+}
+
+# Register ownership of a worktree
+# Arguments:
+#   $1 - worktree path (required)
+#   $2 - branch name (required)
+#   Flags: --task <id>, --batch <id>, --session <id>
+register_worktree() {
+    local wt_path="$1"
+    local branch="$2"
+    shift 2
+
+    local task_id="" batch_id="" session_id=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --task) task_id="${2:-}"; shift 2 ;;
+            --batch) batch_id="${2:-}"; shift 2 ;;
+            --session) session_id="${2:-}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    _init_registry_db
+
+    sqlite3 "$WORKTREE_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
+        VALUES
+            ('$(_wt_sql_escape "$wt_path")',
+             '$(_wt_sql_escape "$branch")',
+             $$,
+             '$(_wt_sql_escape "$session_id")',
+             '$(_wt_sql_escape "$batch_id")',
+             '$(_wt_sql_escape "$task_id")');
+    " 2>/dev/null || true
+    return 0
+}
+
+# Unregister ownership of a worktree
+# Arguments:
+#   $1 - worktree path (required)
+unregister_worktree() {
+    local wt_path="$1"
+
+    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+
+    sqlite3 "$WORKTREE_REGISTRY_DB" "
+        DELETE FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || true
+    return 0
+}
+
+# Check who owns a worktree
+# Arguments:
+#   $1 - worktree path
+# Output: owner info (pid|session|batch|task|created_at) or empty
+# Returns: 0 if owned, 1 if not owned
+check_worktree_owner() {
+    local wt_path="$1"
+
+    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+
+    local owner_info
+    owner_info=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
+        SELECT owner_pid, owner_session, owner_batch, task_id, created_at
+        FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "")
+
+    if [[ -n "$owner_info" ]]; then
+        echo "$owner_info"
+        return 0
+    fi
+    return 1
+}
+
+# Check if a worktree is owned by a DIFFERENT process (still alive)
+# Arguments:
+#   $1 - worktree path
+# Returns: 0 if owned by another live process, 1 if safe to remove
+is_worktree_owned_by_others() {
+    local wt_path="$1"
+
+    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+
+    local owner_pid
+    owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT owner_pid FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "")
+
+    # No owner registered
+    [[ -z "$owner_pid" ]] && return 1
+
+    # We own it
+    [[ "$owner_pid" == "$$" ]] && return 1
+
+    # Owner process is dead — stale entry, safe to remove
+    if ! kill -0 "$owner_pid" 2>/dev/null; then
+        # Clean up stale entry
+        unregister_worktree "$wt_path"
+        return 1
+    fi
+
+    # Owner process is alive and it's not us — NOT safe to remove
+    return 0
+}
+
+# Prune stale registry entries (dead PIDs, missing directories)
+prune_worktree_registry() {
+    [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+
+    local entries
+    entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
+        SELECT worktree_path, owner_pid FROM worktree_owners;
+    " 2>/dev/null || echo "")
+
+    [[ -z "$entries" ]] && return 0
+
+    while IFS='|' read -r wt_path owner_pid; do
+        local should_prune=false
+
+        # Directory no longer exists
+        if [[ ! -d "$wt_path" ]]; then
+            should_prune=true
+        # Owner process is dead
+        elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+            should_prune=true
+        fi
+
+        if [[ "$should_prune" == "true" ]]; then
+            unregister_worktree "$wt_path"
+        fi
+    done <<< "$entries"
+    return 0
+}
+
+# =============================================================================
 # Export all constants for use in other scripts
 # =============================================================================
 

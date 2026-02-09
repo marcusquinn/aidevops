@@ -382,7 +382,33 @@ git worktree remove --force ~/Git/myrepo-feature-old
 git branch -D feature/old
 ```
 
-### 4. Don't Checkout Same Branch in Multiple Worktrees
+### 4. Ownership Safety (t189)
+
+Worktrees are registered to the creating session's PID in a SQLite registry. This prevents cross-session worktree removal — the root cause of disrupted parallel sessions.
+
+**How it works**:
+
+- `worktree-helper.sh add` and `supervisor-helper.sh dispatch` register ownership
+- `worktree-helper.sh remove` and `clean` refuse to touch worktrees owned by other live processes
+- `supervisor-helper.sh cleanup` skips worktrees owned by other sessions
+- Stale entries (dead PIDs, missing directories) are auto-pruned
+
+**Commands**:
+
+```bash
+# View the ownership registry
+worktree-helper.sh registry list
+
+# Prune stale entries (dead PIDs, missing directories)
+worktree-helper.sh registry prune
+
+# Force remove despite ownership (use with caution)
+worktree-helper.sh remove feature/branch --force
+```
+
+**Registry location**: `~/.aidevops/.agent-workspace/worktree-registry.db`
+
+### 5. Don't Checkout Same Branch in Multiple Worktrees
 
 Git prevents this - each branch can only be checked out in one worktree:
 
