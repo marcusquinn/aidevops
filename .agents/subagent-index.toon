@@ -22,7 +22,7 @@ flash,gemini-2.5-flash,Fast cheap large context
 pro,gemini-2.5-pro,Capable large context
 -->
 
-<!--TOON:subagents[40]{folder,purpose,key_files}:
+<!--TOON:subagents[41]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
@@ -44,6 +44,7 @@ tools/conversion/,Format conversion - document transformation,pandoc
 tools/document/,Document extraction - conversion structured data extraction and workflow orchestration,document-extraction|extraction-workflow|docstrange
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
+tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
 tools/voice/,Voice AI - TTS/STT model catalog voice bridge and Pipecat pipeline for talking to AI agents,voice-models|speech-to-speech|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
