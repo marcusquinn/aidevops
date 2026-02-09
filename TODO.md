@@ -84,7 +84,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: Extend voice-helper.sh or create voice-pipeline-helper.sh for the 2-step voice post-processing chain: (1) CapCut AI voice cleanup (normalize accents/artifacts from raw AI output), (2) ElevenLabs voice cloning/transformation. Critical: never go directly from AI video output to ElevenLabs — the CapCut step cleans artifacts first. Also supports emotional block cues (per-word emotion tagging) for natural AI speech. Related: tools/voice/speech-to-speech.md, tools/voice/voice-bridge.md, content/production/audio.md.
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
   - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z
-    - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
+    - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
   - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
   - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z
@@ -914,6 +914,16 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 
 ## Done
 
+- [x] t205 YouTube competitor research and content automation agent #feature #youtube #content ~6h actual:4h logged:2026-02-09 started:2026-02-09 completed:2026-02-09 pr:811
+  - [x] t205.1 youtube-helper.sh — YouTube Data API v3 wrapper with SA JWT auth, token caching, quota tracking, 8 commands ~2h
+  - [x] t205.2 youtube.md orchestrator agent — architecture, data sources, quick start ~30m
+  - [x] t205.3 youtube/channel-intel.md — competitor profiling, outlier detection, content DNA ~30m
+  - [x] t205.4 youtube/topic-research.md — content gaps, trend detection, keyword clustering ~30m
+  - [x] t205.5 youtube/script-writer.md — hook formulas, storytelling frameworks, retention optimization ~30m
+  - [x] t205.6 youtube/optimizer.md — title CTR, tag strategy, description templates, thumbnail briefs ~30m
+  - [x] t205.7 youtube/pipeline.md — cron-driven autonomous pipeline with 4 isolated workers ~30m
+  - [x] t205.8 Register in subagent-index.toon and AGENTS.md progressive disclosure table ~15m
+  - Notes: GCP SA auth (seo-utils@evergreen-je), all youtube-helper.sh commands tested live (channel, videos, video, competitors, quota). ShellCheck zero violations. Google OAuth2 JWT grant type discovery documented. PR #811 merged via squash.
 - [x] t190 Fix Codacy MD022 violations in memory graduation output #bugfix #quality ~30m actual:15m assignee:alexey ref:GH#703 logged:2026-02-09 started:2026-02-09 completed:2026-02-09 verified:2026-02-09 PR #703 merged
   - Notes: memory-graduate-helper.sh generates markdown without blank lines before ### category headings (MD022). Root cause: bash `$(cat file)` strips trailing newlines. Fixed generator with first_category flag and corrected existing output.
 - [x] t069 Fix toon-helper.sh validate command #bugfix ~15m actual:10m logged:2026-01-24 completed:2026-01-25
