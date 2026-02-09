@@ -3,44 +3,36 @@
   "_docs": "See .agents/tools/ai-assistants/fallback-chains.md for full documentation",
 
   "chains": {
-    "_comment": "Per-tier fallback chains. Models tried in order. Formats: provider/model, openrouter/provider/model, gateway/cf/provider/model",
+    "_comment": "Per-tier fallback chains. Models tried in order. Only use providers configured in OpenCode (anthropic, google). Never use openrouter (expensive gateway).",
 
     "haiku": [
-      "anthropic/claude-3-5-haiku-20241022",
-      "google/gemini-2.5-flash",
-      "openrouter/anthropic/claude-3-5-haiku-20241022"
+      "anthropic/claude-haiku-4-5",
+      "google/gemini-2.5-flash"
     ],
     "flash": [
       "google/gemini-2.5-flash",
-      "openai/gpt-4.1-mini",
-      "openrouter/google/gemini-2.5-flash"
+      "anthropic/claude-haiku-4-5"
     ],
     "sonnet": [
-      "anthropic/claude-sonnet-4-20250514",
-      "openai/gpt-4.1",
-      "google/gemini-2.5-pro",
-      "openrouter/anthropic/claude-sonnet-4-20250514"
+      "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-pro"
     ],
     "pro": [
       "google/gemini-2.5-pro",
-      "anthropic/claude-sonnet-4-20250514",
-      "openrouter/google/gemini-2.5-pro"
+      "anthropic/claude-sonnet-4-5"
     ],
     "opus": [
       "anthropic/claude-opus-4-6",
-      "openai/o3",
-      "openrouter/anthropic/claude-opus-4-6"
+      "google/gemini-2.5-pro"
     ],
     "coding": [
       "anthropic/claude-opus-4-6",
-      "openai/o3",
-      "anthropic/claude-sonnet-4-20250514",
-      "openrouter/anthropic/claude-opus-4-6"
+      "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-pro"
     ],
     "eval": [
       "anthropic/claude-sonnet-4-5",
-      "google/gemini-2.5-flash",
-      "openrouter/anthropic/claude-sonnet-4-5"
+      "google/gemini-2.5-flash"
     ],
     "health": [
       "anthropic/claude-sonnet-4-5",
@@ -48,10 +40,8 @@
     ],
 
     "default": [
-      "anthropic/claude-sonnet-4-20250514",
-      "openai/gpt-4.1",
-      "google/gemini-2.5-pro",
-      "openrouter/anthropic/claude-sonnet-4-20250514"
+      "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-pro"
     ]
   },
 
@@ -89,7 +79,7 @@
     "_comment": "Gateway provider configuration for provider-level fallback routing",
 
     "openrouter": {
-      "enabled": true,
+      "enabled": false,
       "endpoint": "https://openrouter.ai/api/v1",
       "key_env_var": "OPENROUTER_API_KEY",
       "description": "OpenRouter - multi-provider gateway with unified API"
