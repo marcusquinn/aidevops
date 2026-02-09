@@ -55,8 +55,11 @@ readonly DEFAULT_HEALTH_TTL=300    # 5 minutes for health checks
 readonly DEFAULT_RATELIMIT_TTL=60  # 1 minute for rate limit data
 readonly PROBE_TIMEOUT=10          # HTTP request timeout in seconds
 
-# Known providers list
-readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek"
+# Known providers list (opencode is a meta-provider routing through its gateway)
+readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode"
+
+# OpenCode models cache (from models.dev, refreshed by opencode CLI)
+readonly OPENCODE_MODELS_CACHE="${HOME}/.cache/opencode/models.json"
 
 # Provider API endpoints for lightweight probes
 # These endpoints are chosen for minimal cost: /models endpoints are free
@@ -71,6 +74,7 @@ get_provider_endpoint() {
         openrouter) echo "https://openrouter.ai/api/v1/models" ;;
         groq)       echo "https://api.groq.com/openai/v1/models" ;;
         deepseek)   echo "https://api.deepseek.com/v1/models" ;;
+        opencode)   echo "https://opencode.ai/zen/v1/models" ;;
         *) return 1 ;;
     esac
     return 0
@@ -86,6 +90,7 @@ get_provider_key_vars() {
         openrouter) echo "OPENROUTER_API_KEY" ;;
         groq)       echo "GROQ_API_KEY" ;;
         deepseek)   echo "DEEPSEEK_API_KEY" ;;
+        opencode)   echo "OPENCODE_API_KEY" ;;
         *) return 1 ;;
     esac
     return 0
@@ -95,26 +100,44 @@ get_provider_key_vars() {
 is_known_provider() {
     local provider="$1"
     case "$provider" in
-        anthropic|openai|google|openrouter|groq|deepseek) return 0 ;;
+        anthropic|openai|google|openrouter|groq|deepseek|opencode) return 0 ;;
         *) return 1 ;;
     esac
 }
 
 # Tier to primary/fallback model mapping
 # Format: primary_provider/model|fallback_provider/model
+# When OpenCode is available, prefer opencode/* model IDs (routed through
+# OpenCode's gateway, no direct API keys needed for these).
 get_tier_models() {
     local tier="$1"
-    case "$tier" in
-        haiku)  echo "anthropic/claude-3-5-haiku-20241022|google/gemini-2.5-flash" ;;
-        flash)  echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
-        sonnet) echo "anthropic/claude-sonnet-4-20250514|openai/gpt-4.1" ;;
-        pro)    echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-20250514" ;;
-        opus)   echo "anthropic/claude-opus-4-6|openai/o3" ;;
-        health) echo "anthropic/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
-        eval)   echo "anthropic/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
-        coding) echo "anthropic/claude-opus-4-6|openai/o3" ;;
-        *) return 1 ;;
-    esac
+
+    # Check if OpenCode is available (CLI installed and models cache exists)
+    if _is_opencode_available; then
+        case "$tier" in
+            haiku)  echo "opencode/claude-3-5-haiku|opencode/gemini-3-flash" ;;
+            flash)  echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
+            sonnet) echo "opencode/claude-sonnet-4|anthropic/claude-sonnet-4-20250514" ;;
+            pro)    echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
+            opus)   echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
+            health) echo "opencode/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
+            eval)   echo "opencode/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
+            coding) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
+            *) return 1 ;;
+        esac
+    else
+        case "$tier" in
+            haiku)  echo "anthropic/claude-3-5-haiku-20241022|google/gemini-2.5-flash" ;;
+            flash)  echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
+            sonnet) echo "anthropic/claude-sonnet-4-20250514|openai/gpt-4.1" ;;
+            pro)    echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-20250514" ;;
+            opus)   echo "anthropic/claude-opus-4-6|openai/o3" ;;
+            health) echo "anthropic/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
+            eval)   echo "anthropic/claude-sonnet-4-5|google/gemini-2.5-flash" ;;
+            coding) echo "anthropic/claude-opus-4-6|openai/o3" ;;
+            *) return 1 ;;
+        esac
+    fi
     return 0
 }
 
@@ -125,6 +148,52 @@ is_known_tier() {
         haiku|flash|sonnet|pro|opus|health|eval|coding) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# =============================================================================
+# OpenCode Integration
+# =============================================================================
+# OpenCode maintains a model registry from models.dev cached at
+# ~/.cache/opencode/models.json. This provides instant model discovery
+# without needing direct API keys for each provider.
+
+_is_opencode_available() {
+    # Check if opencode CLI exists and models cache is present
+    if command -v opencode &>/dev/null && [[ -f "$OPENCODE_MODELS_CACHE" && -s "$OPENCODE_MODELS_CACHE" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if a model exists in the OpenCode models cache.
+# Returns 0 if found, 1 if not.
+_opencode_model_exists() {
+    local model_spec="$1"
+    local provider model_id
+
+    if [[ "$model_spec" == *"/"* ]]; then
+        provider="${model_spec%%/*}"
+        model_id="${model_spec#*/}"
+    else
+        model_id="$model_spec"
+        provider=""
+    fi
+
+    if [[ ! -f "$OPENCODE_MODELS_CACHE" || ! -s "$OPENCODE_MODELS_CACHE" ]]; then
+        return 1
+    fi
+
+    # Check the cache JSON: providers are top-level keys, models are nested
+    if [[ -n "$provider" ]]; then
+        jq -e --arg p "$provider" --arg m "$model_id" \
+            '.[$p].models[$m] // empty' "$OPENCODE_MODELS_CACHE" >/dev/null 2>&1
+        return $?
+    else
+        # Search all providers for this model ID
+        jq -e --arg m "$model_id" \
+            '[.[] | .models[$m] // empty] | length > 0' "$OPENCODE_MODELS_CACHE" >/dev/null 2>&1
+        return $?
+    fi
 }
 
 # =============================================================================
@@ -389,6 +458,25 @@ probe_provider() {
                 [[ "$quiet" != "true" ]] && print_warning "$provider: cached unhealthy"
                 return 1
             fi
+        fi
+    fi
+
+    # OpenCode provider: check via models cache (no API key needed)
+    if [[ "$provider" == "opencode" ]]; then
+        if _is_opencode_available; then
+            local oc_models_count=0
+            oc_models_count=$(jq -r '.opencode.models | length' "$OPENCODE_MODELS_CACHE" 2>/dev/null || echo "0")
+            _record_health "opencode" "healthy" 200 0 "" "$oc_models_count"
+            [[ "$quiet" != "true" ]] && print_success "opencode: healthy ($oc_models_count models in cache)"
+            db_query "
+                INSERT INTO probe_log (provider, action, result, duration_ms, details)
+                VALUES ('opencode', 'cache_check', 'healthy', 0, '$oc_models_count models from cache');
+            " || true
+            return 0
+        else
+            _record_health "opencode" "unhealthy" 0 0 "OpenCode CLI or models cache not found" 0
+            [[ "$quiet" != "true" ]] && print_warning "opencode: CLI or models cache not available"
+            return 1
         fi
     fi
 
@@ -703,7 +791,14 @@ check_model_available() {
         fi
     fi
 
-    # Model-level check: query the model-registry if available
+    # Model-level check 1: OpenCode models cache (instant, preferred)
+    if _opencode_model_exists "$model_spec"; then
+        _record_model_availability "$model_id" "$provider" 1
+        [[ "$quiet" != "true" ]] && print_success "$model_spec: available (OpenCode cache confirmed)"
+        return 0
+    fi
+
+    # Model-level check 2: query the model-registry SQLite if available
     local registry_db="${AVAILABILITY_DIR}/model-registry.db"
     if [[ -f "$registry_db" ]]; then
         local in_registry
@@ -1275,8 +1370,16 @@ cmd_help() {
     echo "  eval    - Cheap evaluation model"
     echo "  coding  - Best SOTA coding model"
     echo ""
+    echo "Providers:"
+    echo "  anthropic, openai, google, openrouter, groq, deepseek, opencode"
+    echo "  The 'opencode' provider uses the OpenCode models cache (~/.cache/opencode/models.json)"
+    echo "  instead of direct API probing. When OpenCode is available, tier resolution"
+    echo "  prefers opencode/* model IDs (routed through OpenCode's gateway)."
+    echo ""
     echo "Examples:"
     echo "  model-availability-helper.sh check anthropic"
+    echo "  model-availability-helper.sh check opencode"
+    echo "  model-availability-helper.sh check opencode/claude-sonnet-4"
     echo "  model-availability-helper.sh check anthropic/claude-sonnet-4-20250514"
     echo "  model-availability-helper.sh check sonnet"
     echo "  model-availability-helper.sh probe --all"
@@ -1304,6 +1407,7 @@ cmd_help() {
     echo "  3 - API key invalid or missing"
     echo ""
     echo "Cache: $AVAILABILITY_DB"
+    echo "OpenCode models: $OPENCODE_MODELS_CACHE"
     echo "TTL: ${DEFAULT_HEALTH_TTL}s (health), ${DEFAULT_RATELIMIT_TTL}s (rate limits)"
     echo ""
     return 0

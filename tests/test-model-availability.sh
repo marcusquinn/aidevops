@@ -188,12 +188,12 @@ fi
 
 # Check with known provider (may succeed or fail depending on keys)
 # Use || true to prevent set -e from aborting on non-zero exit
-for provider in anthropic openai google; do
+for provider in anthropic openai google opencode; do
     check_exit=0
     run_with_timeout 15 bash "$HELPER" check "$provider" --quiet >/dev/null 2>&1 || check_exit=$?
     case "$check_exit" in
         0) pass "check $provider: healthy" ;;
-        1) pass "check $provider: unhealthy (expected without key)" ;;
+        1) pass "check $provider: unhealthy (expected without key or CLI)" ;;
         2) pass "check $provider: rate limited" ;;
         3) pass "check $provider: no key (expected in CI)" ;;
         *) fail "check $provider: unexpected exit code $check_exit" ;;
@@ -255,7 +255,41 @@ else
 fi
 
 # ============================================================
-# SECTION 7: JSON output
+# SECTION 7: OpenCode Integration
+# ============================================================
+section "OpenCode Integration"
+
+# Verify opencode is a known provider
+if bash "$HELPER" help 2>&1 | grep -q "opencode"; then
+    pass "help mentions opencode provider"
+else
+    fail "help mentions opencode provider"
+fi
+
+# Check opencode provider (should succeed if CLI installed, fail gracefully otherwise)
+check_oc_exit=0
+run_with_timeout 10 bash "$HELPER" check opencode --quiet >/dev/null 2>&1 || check_oc_exit=$?
+case "$check_oc_exit" in
+    0) pass "check opencode: healthy (CLI and cache available)" ;;
+    1) pass "check opencode: unhealthy (CLI or cache not available)" ;;
+    *) fail "check opencode: unexpected exit code $check_oc_exit" ;;
+esac
+
+# Verify opencode model check (if opencode is available)
+if command -v opencode &>/dev/null && [[ -f "$HOME/.cache/opencode/models.json" ]]; then
+    oc_model_exit=0
+    run_with_timeout 10 bash "$HELPER" check "opencode/claude-sonnet-4" --quiet >/dev/null 2>&1 || oc_model_exit=$?
+    case "$oc_model_exit" in
+        0) pass "check opencode/claude-sonnet-4: available" ;;
+        1) pass "check opencode/claude-sonnet-4: not available (provider unhealthy)" ;;
+        *) fail "check opencode/claude-sonnet-4: unexpected exit code $oc_model_exit" ;;
+    esac
+else
+    skip "opencode model check (opencode CLI not installed)"
+fi
+
+# ============================================================
+# SECTION 8: JSON output
 # ============================================================
 section "JSON Output"
 
