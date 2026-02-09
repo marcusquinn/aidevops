@@ -42,6 +42,24 @@ Exit 0 = proceed. Exit 1 = STOP (on main). Exit 2 = create worktree. Exit 3 = wa
 
 ---
 
+## MANDATORY: Development Lifecycle
+
+All development work MUST follow this lifecycle:
+
+1. **Create a TODO entry** in `TODO.md` before starting any work
+2. **Ask the user**: implement now (full-loop) or queue for runner orchestration?
+3. **If implementing now**, follow the full-loop development lifecycle:
+   - Create branch/worktree
+   - Implement changes
+   - Run tests (syntax, shellcheck, Docker tests, integration tests as applicable)
+   - Verify the changes work end-to-end
+   - Only then offer to commit/PR
+4. **If queuing**, add the task to `TODO.md` with appropriate metadata (`~estimate`, `#tags`, dependencies) so the supervisor can dispatch it to a runner when orchestration next runs
+
+Never skip testing. Never declare work "done" without verification. The full-loop means: plan -> implement -> test -> verify -> deliver.
+
+---
+
 ## MANDATORY: File Discovery
 
 > **NEVER use `mcp_glob` when Bash is available.**
