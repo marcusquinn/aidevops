@@ -948,8 +948,21 @@ cmd_init() {
       "backend": "age",
       "patterns": ["*.secret.yaml", "*.secret.json", "configs/*.enc.json", "configs/*.enc.yaml"]
     }
-  }
+  },
+  "plugins": []
+}
 EOF
+    # Note: plugins array is always present but empty by default.
+    # Users add plugins via: aidevops plugin add <repo-url> [--namespace <name>]
+    # Schema per plugin entry:
+    # {
+    #   "name": "pro",
+    #   "repo": "https://github.com/user/aidevops-pro.git",
+    #   "branch": "main",
+    #   "namespace": "pro",
+    #   "enabled": true
+    # }
+    # Plugins deploy to ~/.aidevops/agents/<namespace>/ (namespaced, no collisions)
     print_success "Created .aidevops.json"
     
     # Create .agents symlink (or migrate from legacy .agent)
@@ -1646,6 +1659,14 @@ cmd_features() {
     echo "                 - .sops.yaml with age backend (simpler than GPG)"
     echo "                 - Patterns: *.secret.yaml, configs/*.enc.json"
     echo "                 - See: .agents/tools/credentials/sops.md"
+    echo ""
+    echo "Extensibility:"
+    echo ""
+    echo "  plugins        Third-party agent plugins (configured in .aidevops.json)"
+    echo "                 - Git repos deployed to ~/.aidevops/agents/<namespace>/"
+    echo "                 - Namespaced to avoid collisions with core agents"
+    echo "                 - Enable/disable per-plugin without removal"
+    echo "                 - See: .agents/aidevops/plugins.md"
     echo ""
     echo "Usage:"
     echo "  aidevops init                    # Enable all features (except sops)"
