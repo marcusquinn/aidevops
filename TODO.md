@@ -653,7 +653,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~4h (ai:2.5h test:1h read:30m) ref:GH#530 logged:2026-01-31
   - [x] t102.1 Cost-Aware Model Routing ~30m blocked-by:none ref:GH#741 completed:2026-02-09 pr:#766
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
-  - [ ] t102.2 Semantic Memory with Embeddings ~2h blocked-by:none ref:GH#742 assignee:marcusquinn started:2026-02-09T14:23:55Z
+  - [x] t102.2 Semantic Memory with Embeddings ~2h blocked-by:none ref:GH#742 completed:2026-02-09 pr:#768
     - Notes: Add optional HNSW vector index using all-MiniLM-L6-v2 via ONNX (~90MB). Create memory-embeddings-helper.sh. Extend memory-helper.sh with --semantic flag. Keep FTS5 as default, embeddings opt-in.
   - [ ] t102.3 Success Pattern Tracking ~1h blocked-by:t102.2 ref:GH#743
     - Notes: Add SUCCESS_PATTERN and FAILURE_PATTERN memory types. Auto-tag with task type, model, outcome. Create pattern-tracker-helper.sh and /patterns command.
