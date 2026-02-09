@@ -4,8 +4,8 @@
 // Part of AI DevOps Framework
 
 import { chromium } from 'playwright';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, basename } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { join, basename, extname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
 
@@ -71,6 +71,22 @@ function parseArgs() {
       options.timeout = parseInt(args[++i], 10);
     } else if (args[i] === '--effect') {
       options.effect = args[++i];
+    } else if (args[i] === '--quality' || args[i] === '-q') {
+      options.quality = args[++i];
+    } else if (args[i] === '--enhance') {
+      options.enhance = true;
+    } else if (args[i] === '--no-enhance') {
+      options.enhance = false;
+    } else if (args[i] === '--sound') {
+      options.sound = true;
+    } else if (args[i] === '--no-sound') {
+      options.sound = false;
+    } else if (args[i] === '--batch' || args[i] === '-b') {
+      options.batch = parseInt(args[++i], 10);
+    } else if (args[i] === '--unlimited') {
+      options.unlimited = true;
+    } else if (args[i] === '--preset' || args[i] === '-s') {
+      options.preset = args[++i];
     }
   }
 
@@ -630,6 +646,93 @@ async function checkAuth(page) {
   return isLoggedIn;
 }
 
+// Configure image generation options on the page (aspect ratio, quality, enhance, batch, preset)
+async function configureImageOptions(page, options) {
+  // Select aspect ratio if specified
+  if (options.aspect) {
+    console.log(`Setting aspect ratio: ${options.aspect}`);
+    // Aspect ratio buttons are typically in a button group
+    const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
+    if (await aspectBtn.count() > 0) {
+      await aspectBtn.first().click({ force: true });
+      await page.waitForTimeout(300);
+      console.log(`Selected aspect ratio: ${options.aspect}`);
+    } else {
+      // Try clicking the aspect ratio dropdown/selector first
+      const aspectSelector = page.locator('button:has-text("Aspect"), [class*="aspect"]');
+      if (await aspectSelector.count() > 0) {
+        await aspectSelector.first().click({ force: true });
+        await page.waitForTimeout(500);
+        const option = page.locator(`[role="option"]:has-text("${options.aspect}"), button:has-text("${options.aspect}")`);
+        if (await option.count() > 0) {
+          await option.first().click({ force: true });
+          await page.waitForTimeout(300);
+          console.log(`Selected aspect ratio: ${options.aspect}`);
+        }
+      }
+    }
+  }
+
+  // Select quality if specified
+  if (options.quality) {
+    console.log(`Setting quality: ${options.quality}`);
+    const qualityBtn = page.locator(`button:has-text("${options.quality}")`);
+    if (await qualityBtn.count() > 0) {
+      await qualityBtn.first().click({ force: true });
+      await page.waitForTimeout(300);
+      console.log(`Selected quality: ${options.quality}`);
+    }
+  }
+
+  // Toggle enhance on/off
+  if (options.enhance !== undefined) {
+    const enhanceLabel = page.locator('label:has-text("Enhance"), button:has-text("Enhance")');
+    if (await enhanceLabel.count() > 0) {
+      const isChecked = await page.evaluate(() => {
+        const el = document.querySelector('label:has(input) span:has-text("Enhance")');
+        const input = el?.closest('label')?.querySelector('input');
+        return input?.checked || false;
+      });
+      if (isChecked !== options.enhance) {
+        await enhanceLabel.first().click({ force: true });
+        await page.waitForTimeout(300);
+        console.log(`${options.enhance ? 'Enabled' : 'Disabled'} enhance`);
+      }
+    }
+  }
+
+  // Set batch size if specified (1-4 images)
+  if (options.batch && options.batch >= 1 && options.batch <= 4) {
+    console.log(`Setting batch size: ${options.batch}`);
+    const batchBtn = page.locator(`button:has-text("${options.batch}")`);
+    // Batch buttons are typically small numbered buttons (1, 2, 3, 4)
+    // We need to be more specific to avoid matching other buttons
+    const batchGroup = page.locator('[class*="batch"], [class*="count"]');
+    if (await batchGroup.count() > 0) {
+      const btn = batchGroup.locator(`button:has-text("${options.batch}")`);
+      if (await btn.count() > 0) {
+        await btn.first().click({ force: true });
+        await page.waitForTimeout(300);
+        console.log(`Selected batch size: ${options.batch}`);
+      }
+    }
+  }
+
+  // Select style preset if specified
+  if (options.preset) {
+    console.log(`Selecting preset: ${options.preset}`);
+    // Presets are shown as a scrollable list of style cards
+    const presetBtn = page.locator(`button:has-text("${options.preset}"), [class*="preset"]:has-text("${options.preset}")`);
+    if (await presetBtn.count() > 0) {
+      await presetBtn.first().click({ force: true });
+      await page.waitForTimeout(500);
+      console.log(`Selected preset: ${options.preset}`);
+    } else {
+      console.log(`Preset "${options.preset}" not found on page`);
+    }
+  }
+}
+
 // Generate image via UI
 async function generateImage(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
@@ -638,12 +741,26 @@ async function generateImage(options = {}) {
     const prompt = options.prompt || 'A serene mountain landscape at golden hour, photorealistic, 8k';
     const model = options.model || 'soul';
 
-    // Navigate to image creation page
-    const imageUrl = model === 'nano_banana' || model === 'nano-banana'
-      ? `${BASE_URL}/image/nano_banana`
-      : model === 'seedream'
-        ? `${BASE_URL}/image/seedream`
-        : `${BASE_URL}/image/soul`;
+    // Navigate to image creation page - map model names to URL slugs
+    const modelUrlMap = {
+      'soul': '/image/soul',
+      'nano_banana': '/image/nano_banana',
+      'nano-banana': '/image/nano_banana',
+      'nano_banana_pro': '/image/nano_banana_2',
+      'nano-banana-pro': '/image/nano_banana_2',
+      'seedream': '/image/seedream',
+      'seedream-4': '/image/seedream',
+      'wan2': '/image/wan2',
+      'wan': '/image/wan2',
+      'gpt': '/image/gpt',
+      'gpt-image': '/image/gpt',
+      'kontext': '/image/kontext',
+      'flux-kontext': '/image/kontext',
+      'flux': '/image/flux',
+      'flux-pro': '/image/flux',
+    };
+    const modelPath = modelUrlMap[model] || `/image/${model}`;
+    const imageUrl = `${BASE_URL}${modelPath}`;
 
     console.log(`Navigating to ${imageUrl}...`);
     await page.goto(imageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -707,17 +824,25 @@ async function generateImage(options = {}) {
       console.log('Entered prompt via JS fallback');
     }
 
-    // Record existing image IDs before generating (so we can detect new ones)
-    const existingIdArray = await page.evaluate(() => {
+    // Configure generation options (aspect ratio, quality, enhance, batch, preset)
+    await configureImageOptions(page, options);
+
+    // Snapshot existing image src URLs before generating (to identify new ones later)
+    const existingSrcs = await page.evaluate(() => {
       const imgs = document.querySelectorAll('img[alt="image generation"]');
-      return [...imgs].map(img => {
-        const match = img.src.match(/hf_\d{8}_\d{6}_([a-f0-9-]+)/);
-        return match ? match[1] : img.src;
-      });
+      return new Set([...imgs].map(img => img.src));
     });
-    const existingIds = new Set(existingIdArray);
-    const existingCount = await page.locator('img[alt="image generation"]').count();
-    console.log(`Existing images on page: ${existingCount}`);
+    // Note: existingSrcs is serialized as an array, convert back to Set in page context
+    const existingSrcArray = await page.evaluate(() => {
+      return [...document.querySelectorAll('img[alt="image generation"]')].map(img => img.src);
+    });
+    console.log(`Existing images on page: ${existingSrcArray.length}`);
+
+    // Count "In queue" items before generating
+    const queueBefore = await page.evaluate(() => {
+      return (document.body.innerText.match(/In queue/g) || []).length;
+    });
+    console.log(`Items already in queue: ${queueBefore}`);
 
     // Click generate button - use force to bypass overlays
     const generateBtn = page.locator('button:has-text("Generate"), button[type="submit"]');
@@ -725,12 +850,10 @@ async function generateImage(options = {}) {
     console.log(`Found ${genCount} generate button(s)`);
 
     if (genCount > 0) {
-      // Use the last matching button (the submit one in the form area)
       const btn = generateBtn.last();
       await btn.click({ force: true });
       console.log('Clicked generate button (force)');
     } else {
-      // Fallback: click via JS
       await page.evaluate(() => {
         const btn = document.querySelector('button[type="submit"]') ||
                     [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Generate'));
@@ -739,24 +862,64 @@ async function generateImage(options = {}) {
       console.log('Clicked generate button via JS');
     }
 
-    // Wait for NEW images to appear (count must increase beyond existing)
-    console.log('Waiting for image generation...');
-    const timeout = options.timeout || 120000;
+    // Wait for generation: the page adds "In queue" placeholders at the top,
+    // then replaces them with img[alt="image generation"] when done.
+    // Strategy: wait for new queue items to appear, then wait for them to resolve.
+    const timeout = options.timeout || 300000; // 5 min default (images can take 2+ min)
     const startTime = Date.now();
 
+    // Phase 1: Wait for new "In queue" items to confirm generation started
+    console.log('Waiting for generation to start...');
     try {
       await page.waitForFunction(
-        (prevCount) => {
-          const imgs = document.querySelectorAll('img[alt="image generation"]');
-          return imgs.length > prevCount;
+        (prevQueueCount) => {
+          return (document.body.innerText.match(/In queue/g) || []).length > prevQueueCount;
         },
-        existingCount,
-        { timeout, polling: 2000 }
+        queueBefore,
+        { timeout: 15000, polling: 1000 }
       );
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`New generation result detected! (${elapsed}s)`);
+      const newQueueCount = await page.evaluate(() =>
+        (document.body.innerText.match(/In queue/g) || []).length
+      );
+      console.log(`Generation started! ${newQueueCount} item(s) in queue`);
     } catch {
-      console.log('Timeout waiting for new results, checking page state...');
+      // Generation may have started and already completed, or the queue text differs
+      console.log('Queue detection timed out - generation may have started differently');
+    }
+
+    // Phase 2: Poll until our queue items resolve to images.
+    // Track the peak queue count (our items + any pre-existing), then wait for
+    // the queue to drop back to the pre-existing level (or zero).
+    console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
+    const pollInterval = 5000;
+    let generationComplete = false;
+    let peakQueue = queueBefore;
+
+    while (Date.now() - startTime < timeout) {
+      await page.waitForTimeout(pollInterval);
+
+      const state = await page.evaluate(() => {
+        const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
+        const images = document.querySelectorAll('img[alt="image generation"]').length;
+        return { queueItems, images };
+      });
+
+      if (state.queueItems > peakQueue) peakQueue = state.queueItems;
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+      console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images}`);
+
+      // Our generation is complete when the queue has dropped back to at most
+      // the pre-existing level AND we've seen it go higher (peak > before).
+      if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
+        console.log(`Generation complete! ${state.images} images on page (${elapsed}s)`);
+        generationComplete = true;
+        break;
+      }
+    }
+
+    if (!generationComplete) {
+      console.log('Timeout waiting for generation. Some items may still be processing.');
     }
 
     // Allow images to fully load
@@ -764,17 +927,18 @@ async function generateImage(options = {}) {
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'generation-result.png'), fullPage: false });
 
-    // Identify which images are new
-    const allImageIds = await page.evaluate(() => {
+    // Identify which images are new by comparing src URLs
+    const newImageIndices = await page.evaluate((oldSrcs) => {
+      const oldSet = new Set(oldSrcs);
       const imgs = document.querySelectorAll('img[alt="image generation"]');
-      return [...imgs].map((img, idx) => {
-        const match = img.src.match(/hf_\d{8}_\d{6}_([a-f0-9-]+)/);
-        return { idx, id: match ? match[1] : `unknown-${idx}` };
+      const indices = [];
+      [...imgs].forEach((img, idx) => {
+        if (!oldSet.has(img.src)) {
+          indices.push(idx);
+        }
       });
-    });
-    const newImageIndices = allImageIds
-      .filter(img => !existingIds.has(img.id))
-      .map(img => img.idx);
+      return indices;
+    }, existingSrcArray);
     console.log(`New images: ${newImageIndices.length} (indices: ${newImageIndices.join(', ')})`);
 
     // Download only the new results
@@ -782,10 +946,13 @@ async function generateImage(options = {}) {
       const outputDir = options.output || DOWNLOAD_DIR;
       if (newImageIndices.length > 0) {
         await downloadSpecificImages(page, outputDir, newImageIndices);
-      } else {
-        // Fallback: download all if we can't distinguish new from old
-        console.log('Could not identify new images, downloading all...');
+      } else if (generationComplete) {
+        // All images are new (page was refreshed during generation)
+        console.log('All images appear new, downloading all...');
         await downloadLatestResult(page, outputDir, true);
+      } else {
+        console.log('No new images detected. Generation may still be in progress.');
+        console.log('Try: node playwright-automator.mjs download');
       }
     }
 
@@ -802,105 +969,381 @@ async function generateImage(options = {}) {
   }
 }
 
+// Download a video from the History tab on /create/video or /lipsync-studio
+// History items are <li> elements containing <video> with direct CDN MP4 URLs.
+// Primary strategy: extract video src directly. Fallback: click figure to open dialog.
+async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
+  const downloaded = [];
+
+  try {
+    // Switch to History tab if not already there
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    if (await historyTab.count() > 0) {
+      await historyTab.click({ force: true });
+      await page.waitForTimeout(2000);
+    }
+
+    await dismissAllModals(page);
+
+    // Strategy: Extract video URL directly from the first (newest) history list item.
+    // History items contain <video> elements with direct CDN MP4 URLs.
+    // This is more reliable than clicking to open a dialog.
+    const historyListItems = page.locator('main li');
+    const listCount = await historyListItems.count();
+    console.log(`Found ${listCount} item(s) in History tab`);
+
+    if (listCount === 0) {
+      console.log('No history items found to download');
+      return downloaded;
+    }
+
+    // Extract video URL from the first (newest) list item
+    const videoInfo = await page.evaluate(() => {
+      const firstItem = document.querySelector('main li');
+      if (!firstItem) return null;
+
+      // Get video URL from <video> element
+      const video = firstItem.querySelector('video');
+      const videoSrc = video?.src || video?.querySelector('source')?.src || null;
+
+      // Get prompt text
+      const textbox = firstItem.querySelector('[role="textbox"], textarea');
+      const promptText = textbox?.textContent?.trim() || '';
+
+      // Get model name
+      const modelBtn = firstItem.querySelector('button');
+      const modelText = modelBtn?.textContent?.trim() || '';
+
+      return { videoSrc, promptText, modelText };
+    });
+
+    if (videoInfo?.videoSrc) {
+      const combinedMeta = {
+        ...metadata,
+        model: videoInfo.modelText || metadata.model,
+        promptSnippet: videoInfo.promptText?.substring(0, 80) || metadata.promptSnippet,
+      };
+      const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+      const savePath = join(outputDir, filename);
+      try {
+        execSync(`curl -sL -o "${savePath}" "${videoInfo.videoSrc}"`, { timeout: 120000 });
+        console.log(`Downloaded video: ${savePath}`);
+        downloaded.push(savePath);
+      } catch (curlErr) {
+        console.log(`Video download failed: ${curlErr.message}`);
+      }
+    }
+
+    // Fallback: try clicking the first item to open a dialog with Download button
+    if (downloaded.length === 0) {
+      console.log('Direct URL extraction failed, trying dialog approach...');
+      const firstFigure = page.locator('main li figure').first();
+      if (await firstFigure.count() > 0) {
+        await firstFigure.click({ force: true });
+        await page.waitForTimeout(2000);
+
+        const dialog = page.locator('[role="dialog"]');
+        if (await dialog.count() > 0) {
+          const dialogMeta = await extractDialogMetadata(page);
+          const combinedMeta = { ...metadata, ...dialogMeta };
+
+          const dlBtn = page.locator('[role="dialog"] button:has-text("Download")');
+          if (await dlBtn.count() > 0) {
+            const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+            await dlBtn.first().click({ force: true });
+            const download = await downloadPromise;
+            if (download) {
+              const origFilename = download.suggestedFilename() || `higgsfield-video-${Date.now()}.mp4`;
+              const descriptiveName = buildDescriptiveFilename(combinedMeta, origFilename, 0);
+              const savePath = join(outputDir, descriptiveName);
+              await download.saveAs(savePath);
+              console.log(`Downloaded video via dialog: ${savePath}`);
+              downloaded.push(savePath);
+            }
+          }
+
+          // Close dialog
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(500);
+          await page.evaluate(() => {
+            document.querySelectorAll('[role="dialog"]').forEach(d => {
+              const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
+              if (overlay) overlay.remove();
+              else d.remove();
+            });
+            document.body.style.overflow = '';
+            document.body.style.pointerEvents = '';
+          });
+        }
+      }
+    }
+
+    await page.screenshot({ path: join(STATE_DIR, 'video-download-result.png'), fullPage: false });
+  } catch (error) {
+    console.log(`Video download error: ${error.message}`);
+  }
+
+  return downloaded;
+}
+
 // Generate video via UI
-// Requires a start frame image (--image-file). If not provided, generates one first.
+// Supports two flows:
+//   1. Upload start frame image (--image-file) + prompt
+//   2. Direct navigation to /create/video with prompt only (some models support text-to-video)
+// Results appear in the History tab, not as inline <video> elements.
 async function generateVideo(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const prompt = options.prompt || 'Camera slowly pans across a beautiful landscape as clouds drift overhead';
+    const model = options.model || 'kling-2.6'; // Default to unlimited model
 
     // Navigate to video creation page
     console.log('Navigating to video creation page...');
     await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-
-    // Dismiss any promo modals
+    await page.waitForTimeout(4000);
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'video-page.png'), fullPage: false });
 
-    // Video requires a start frame image
+    // Upload start frame image if provided
     if (options.imageFile) {
-      // Upload the provided image as start frame
       console.log(`Uploading start frame: ${options.imageFile}`);
-      // Click the "Start frame" button to open upload area
-      const startFrameBtn = page.locator('button:has-text("Start frame")');
-      if (await startFrameBtn.count() > 0) {
-        await startFrameBtn.click({ force: true });
-        await page.waitForTimeout(1000);
+
+      // Step 1: If there's an existing start frame, remove it first
+      // The existing frame shows as button "Uploaded image" with a small X button nearby
+      const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
+      if (await existingFrame.count() > 0) {
+        // The X/remove button is a small 20x20 button below the start frame area
+        // Find it by looking for a small button near the uploaded image
+        const smallButtons = await page.evaluate(() => {
+          const btns = [...document.querySelectorAll('main button')];
+          return btns
+            .filter(b => {
+              const r = b.getBoundingClientRect();
+              return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300;
+            })
+            .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
+        });
+        if (smallButtons.length > 0) {
+          await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
+          await page.waitForTimeout(1500);
+          console.log('Removed existing start frame');
+        }
       }
 
-      const fileInput = page.locator('input[type="file"]');
-      if (await fileInput.count() > 0) {
-        await fileInput.first().setInputFiles(options.imageFile);
-        await page.waitForTimeout(3000);
-        console.log('Start frame uploaded');
+      // Step 2: Click the "Upload image or generate it" button and handle file chooser
+      const uploadBtn = page.getByRole('button', { name: /Upload image/ });
+      if (await uploadBtn.count() > 0) {
+        try {
+          const [fileChooser] = await Promise.all([
+            page.waitForEvent('filechooser', { timeout: 10000 }),
+            uploadBtn.click({ force: true }),
+          ]);
+          await fileChooser.setFiles(options.imageFile);
+          await page.waitForTimeout(3000);
+          console.log('Start frame uploaded successfully');
+        } catch (uploadErr) {
+          console.log(`Start frame upload failed: ${uploadErr.message}`);
+        }
       } else {
-        console.error('Could not find file input for start frame upload');
+        // Fallback: try clicking the start frame area directly
+        try {
+          const [fileChooser] = await Promise.all([
+            page.waitForEvent('filechooser', { timeout: 5000 }),
+            page.mouse.click(160, 200),
+          ]);
+          await fileChooser.setFiles(options.imageFile);
+          await page.waitForTimeout(3000);
+          console.log('Start frame uploaded via area click');
+        } catch {
+          console.log('WARNING: Could not upload start frame image');
+        }
       }
     } else {
-      console.log('NOTE: Video generation requires a start frame image (--image-file).');
-      console.log('Generate an image first with: node playwright-automator.mjs image -p "your prompt"');
-      console.log('Then use it: node playwright-automator.mjs video --image-file ~/Downloads/your-image.png -p "camera motion"');
-      await browser.close();
-      return { success: false, error: 'Start frame image required. Use --image-file to provide one.' };
+      console.log('No start frame image provided. Some models support text-to-video.');
+      console.log('For best results, provide --image-file with a start frame.');
     }
 
-    // Fill the prompt
-    const promptInput = page.locator('textbox[name="Prompt"], textarea, input[placeholder*="Describe" i]');
-    const promptCount = await promptInput.count();
-    console.log(`Found ${promptCount} prompt input(s)`);
+    // Wait for page to stabilize after upload and dismiss any new modals
+    await page.waitForTimeout(3000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'video-after-upload.png'), fullPage: false });
 
-    if (promptCount > 0) {
-      await promptInput.first().click({ force: true });
+    // Select model if specified (click model selector, find matching option)
+    if (options.model) {
+      console.log(`Selecting model: ${options.model}`);
+      // The model selector is typically a dropdown/button group
+      const modelSelector = page.locator('button:has-text("Model"), [class*="model-select"]');
+      if (await modelSelector.count() > 0) {
+        await modelSelector.first().click({ force: true });
+        await page.waitForTimeout(1000);
+
+        // Find the model option matching the requested model
+        const modelOption = page.locator(`[role="option"]:has-text("${options.model}"), button:has-text("${options.model}")`);
+        if (await modelOption.count() > 0) {
+          await modelOption.first().click({ force: true });
+          await page.waitForTimeout(500);
+          console.log(`Selected model: ${options.model}`);
+        } else {
+          console.log(`Model "${options.model}" not found in selector, using default`);
+        }
+      }
+    }
+
+    // Enable "Unlimited mode" switch if available (saves credits on supported models)
+    const unlimitedSwitch = page.locator('[role="switch"][aria-label="Unlimited mode"], switch[name="Unlimited mode"]');
+    if (await unlimitedSwitch.count() > 0) {
+      const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
+      if (!isChecked) {
+        await unlimitedSwitch.click({ force: true });
+        await page.waitForTimeout(500);
+        const nowChecked = await unlimitedSwitch.isChecked().catch(() => false);
+        console.log(nowChecked ? 'Enabled Unlimited mode' : 'WARNING: Could not enable Unlimited mode');
+      } else {
+        console.log('Unlimited mode already enabled');
+      }
+    } else {
+      console.log('No Unlimited mode switch found on this page');
+    }
+
+    // Fill the prompt - try multiple selectors
+    let promptFilled = false;
+    // Strategy 1: ARIA textbox named "Prompt"
+    const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
+    if (await promptByRole.count() > 0) {
+      await promptByRole.click({ force: true });
       await page.waitForTimeout(300);
-      await promptInput.first().fill('', { force: true });
-      await promptInput.first().fill(prompt, { force: true });
-      console.log(`Entered prompt: "${prompt}"`);
-      await page.waitForTimeout(500);
+      await promptByRole.fill(prompt, { force: true });
+      promptFilled = true;
+      console.log(`Entered prompt via ARIA textbox: "${prompt.substring(0, 60)}..."`);
+    }
+    // Strategy 2: textarea or input with placeholder
+    if (!promptFilled) {
+      const promptInput = page.locator('textarea, input[placeholder*="Describe" i], input[placeholder*="prompt" i]');
+      if (await promptInput.count() > 0) {
+        await promptInput.first().click({ force: true });
+        await page.waitForTimeout(300);
+        await promptInput.first().fill(prompt, { force: true });
+        promptFilled = true;
+        console.log(`Entered prompt via textarea: "${prompt.substring(0, 60)}..."`);
+      }
+    }
+    // Strategy 3: contenteditable div
+    if (!promptFilled) {
+      const editable = page.locator('[contenteditable="true"], [role="textbox"]');
+      if (await editable.count() > 0) {
+        await editable.first().click({ force: true });
+        await page.waitForTimeout(300);
+        await page.keyboard.press('Meta+a');
+        await page.keyboard.type(prompt);
+        promptFilled = true;
+        console.log(`Entered prompt via contenteditable: "${prompt.substring(0, 60)}..."`);
+      }
+    }
+    if (!promptFilled) {
+      console.log('WARNING: Could not find prompt input field');
     }
 
-    // Record existing content before generating
-    const existingVideos = await page.locator('video').count();
+    // Count existing History items BEFORE generating (to detect new ones)
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    let existingHistoryCount = 0;
+    if (await historyTab.count() > 0) {
+      await historyTab.click({ force: true });
+      await page.waitForTimeout(1500);
+      // Count list items in History (more reliable than img alt matching)
+      existingHistoryCount = await page.locator('main li').count();
+      console.log(`Existing History items: ${existingHistoryCount}`);
+
+      // Switch back to the generation tab to click Generate
+      const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:has-text("Generate")');
+      if (await createTab.count() > 0) {
+        await createTab.first().click({ force: true });
+        await page.waitForTimeout(1000);
+      }
+    }
 
     // Click generate button
     const generateBtn = page.locator('button:has-text("Generate")');
     if (await generateBtn.count() > 0) {
       await generateBtn.last().click({ force: true });
-      console.log('Clicked generate button');
+      console.log('Clicked Generate button');
+    } else {
+      console.log('WARNING: Generate button not found');
+      await page.screenshot({ path: join(STATE_DIR, 'video-no-generate-btn.png'), fullPage: false });
     }
 
-    // Wait for video generation (longer timeout - videos take 1-5 minutes)
-    const timeout = options.timeout || 300000; // 5 minutes default
+    await page.waitForTimeout(3000);
+    await page.screenshot({ path: join(STATE_DIR, 'video-generate-clicked.png'), fullPage: false });
+
+    // Wait for video generation by polling the History tab for new list items
+    const timeout = options.timeout || 600000; // 10 minutes default (videos can take 5-10 min)
     console.log(`Waiting up to ${timeout / 1000}s for video generation...`);
     const startTime = Date.now();
 
-    // Check the History tab for new results
-    const historyTab = page.locator('tab:has-text("History")');
+    // Switch to History tab to monitor progress
     if (await historyTab.count() > 0) {
       await historyTab.click({ force: true });
       await page.waitForTimeout(1000);
     }
 
-    try {
-      // Wait for new video content to appear
-      await page.waitForFunction(
-        (prevCount) => document.querySelectorAll('video').length > prevCount,
-        existingVideos,
-        { timeout, polling: 5000 }
-      );
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`Video generation result detected! (${elapsed}s)`);
-    } catch {
-      console.log('Timeout waiting for video result, checking page state...');
+    let generationComplete = false;
+    const pollInterval = 10000; // Check every 10 seconds
+
+    while (Date.now() - startTime < timeout) {
+      await page.waitForTimeout(pollInterval);
+      await dismissAllModals(page);
+
+      // Check if the newest list item has a completed video (with src URL)
+      // A new item appears immediately as "In queue" but only gets a <video src> when done
+      const state = await page.evaluate((prevCount) => {
+        const items = document.querySelectorAll('main li');
+        const currentCount = items.length;
+        // Check if the first (newest) item has a video with a src
+        const firstItem = items[0];
+        const video = firstItem?.querySelector('video');
+        const videoSrc = video?.src || video?.querySelector('source')?.src || '';
+        const hasCompletedVideo = videoSrc.includes('.mp4') || videoSrc.includes('cdn.');
+        // Check for processing indicators in the first item
+        const itemText = firstItem?.textContent || '';
+        const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
+        return { currentCount, hasCompletedVideo, isProcessing, videoSrc: videoSrc.substring(0, 80) };
+      }, existingHistoryCount);
+
+      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
+
+      if (state.currentCount > existingHistoryCount && state.hasCompletedVideo && !state.isProcessing) {
+        console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, video ready)`);
+        generationComplete = true;
+        break;
+      }
+
+      // Log progress
+      if (state.isProcessing) {
+        console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
+      } else {
+        console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items, video=${state.hasCompletedVideo})...`);
+      }
     }
 
-    await page.waitForTimeout(3000);
+    if (!generationComplete) {
+      console.log('Timeout waiting for video generation. The video may still be processing.');
+      console.log('Check back later with: node playwright-automator.mjs download --model video');
+    }
+
+    await page.waitForTimeout(2000);
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'video-result.png'), fullPage: false });
 
-    if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+    // Download the video from History
+    if (generationComplete && options.wait !== false) {
+      const outputDir = options.output || DOWNLOAD_DIR;
+      const videoMeta = { model, promptSnippet: prompt.substring(0, 80) };
+      const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta);
+      if (downloads.length > 0) {
+        console.log(`Video downloaded successfully: ${downloads.join(', ')}`);
+      } else {
+        console.log('Video appeared in History but download failed. Try manually or re-run download command.');
+      }
     }
 
     console.log('Video generation complete');
@@ -910,6 +1353,159 @@ async function generateVideo(options = {}) {
 
   } catch (error) {
     console.error('Error during video generation:', error.message);
+    await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true });
+    await browser.close();
+    return { success: false, error: error.message };
+  }
+}
+
+// Generate lipsync video via UI
+// Requires an image (--image-file) and text prompt or audio file
+async function generateLipsync(options = {}) {
+  const { browser, context, page } = await launchBrowser(options);
+
+  try {
+    const prompt = options.prompt || 'Hello! Welcome to our channel. Today we have something amazing to show you.';
+
+    console.log('Navigating to Lipsync Studio...');
+    await page.goto(`${BASE_URL}/lipsync-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'lipsync-page.png'), fullPage: false });
+
+    // Upload character image
+    if (options.imageFile) {
+      console.log(`Uploading character image: ${options.imageFile}`);
+      const fileInput = page.locator('input[type="file"]');
+      if (await fileInput.count() > 0) {
+        await fileInput.first().setInputFiles(options.imageFile);
+        await page.waitForTimeout(3000);
+        console.log('Character image uploaded');
+      } else {
+        // Try clicking an upload button first
+        const uploadBtn = page.locator('button:has-text("Upload"), [class*="upload"]');
+        if (await uploadBtn.count() > 0) {
+          await uploadBtn.first().click({ force: true });
+          await page.waitForTimeout(1000);
+          const fileInput2 = page.locator('input[type="file"]');
+          if (await fileInput2.count() > 0) {
+            await fileInput2.first().setInputFiles(options.imageFile);
+            await page.waitForTimeout(3000);
+            console.log('Character image uploaded (after clicking upload button)');
+          }
+        }
+      }
+    } else {
+      console.log('WARNING: Lipsync requires a character image (--image-file)');
+      await browser.close();
+      return { success: false, error: 'Character image required. Use --image-file to provide one.' };
+    }
+
+    // Select model if specified
+    if (options.model) {
+      console.log(`Selecting lipsync model: ${options.model}`);
+      const modelSelector = page.locator('button:has-text("Model"), [class*="model"]');
+      if (await modelSelector.count() > 0) {
+        await modelSelector.first().click({ force: true });
+        await page.waitForTimeout(1000);
+        const modelOption = page.locator(`[role="option"]:has-text("${options.model}"), button:has-text("${options.model}")`);
+        if (await modelOption.count() > 0) {
+          await modelOption.first().click({ force: true });
+          await page.waitForTimeout(500);
+          console.log(`Selected model: ${options.model}`);
+        }
+      }
+    }
+
+    // Fill the text prompt (for text-to-speech lipsync)
+    const textInput = page.locator('textarea, input[placeholder*="text" i], input[placeholder*="speak" i], input[placeholder*="say" i]');
+    if (await textInput.count() > 0) {
+      await textInput.first().click({ force: true });
+      await page.waitForTimeout(300);
+      await textInput.first().fill(prompt, { force: true });
+      console.log(`Entered text: "${prompt}"`);
+    }
+
+    // Count existing History items before generating
+    const historyTab = page.locator('[role="tab"]:has-text("History")');
+    let existingHistoryCount = 0;
+    if (await historyTab.count() > 0) {
+      await historyTab.click({ force: true });
+      await page.waitForTimeout(1500);
+      existingHistoryCount = await page.locator('main li').count();
+      console.log(`Existing History items: ${existingHistoryCount}`);
+      // Switch back
+      const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:first-child');
+      if (await createTab.count() > 0) {
+        await createTab.first().click({ force: true });
+        await page.waitForTimeout(1000);
+      }
+    }
+
+    // Click generate
+    const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.last().click({ force: true });
+      console.log('Clicked Generate button');
+    }
+
+    await page.waitForTimeout(3000);
+    await page.screenshot({ path: join(STATE_DIR, 'lipsync-generate-clicked.png'), fullPage: false });
+
+    // Wait for result in History tab
+    const timeout = options.timeout || 600000; // 10 min default
+    console.log(`Waiting up to ${timeout / 1000}s for lipsync generation...`);
+    const startTime = Date.now();
+
+    if (await historyTab.count() > 0) {
+      await historyTab.click({ force: true });
+      await page.waitForTimeout(1000);
+    }
+
+    let generationComplete = false;
+    const pollInterval = 10000;
+
+    while (Date.now() - startTime < timeout) {
+      await page.waitForTimeout(pollInterval);
+      await dismissAllModals(page);
+
+      const currentCount = await page.locator('main li').count();
+      if (currentCount > existingHistoryCount) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`Lipsync result detected! (${elapsed}s)`);
+        generationComplete = true;
+        break;
+      }
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+      console.log(`  ${elapsed}s: waiting for lipsync result...`);
+    }
+
+    if (!generationComplete) {
+      console.log('Timeout waiting for lipsync generation.');
+    }
+
+    await page.waitForTimeout(2000);
+    await dismissAllModals(page);
+    await page.screenshot({ path: join(STATE_DIR, 'lipsync-result.png'), fullPage: false });
+
+    // Download from History
+    if (generationComplete && options.wait !== false) {
+      const outputDir = options.output || DOWNLOAD_DIR;
+      const meta = { model: options.model || 'lipsync', promptSnippet: prompt.substring(0, 80) };
+      const downloads = await downloadVideoFromHistory(page, outputDir, meta);
+      if (downloads.length > 0) {
+        console.log(`Lipsync video downloaded: ${downloads.join(', ')}`);
+      }
+    }
+
+    console.log('Lipsync generation complete');
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true, screenshot: join(STATE_DIR, 'lipsync-result.png') };
+
+  } catch (error) {
+    console.error('Error during lipsync generation:', error.message);
     await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true });
     await browser.close();
     return { success: false, error: error.message };
@@ -960,6 +1556,92 @@ async function listAssets(options = {}) {
   }
 }
 
+// Extract metadata from the open Asset showcase dialog
+// Returns { model, preset, quality, promptSnippet } or null
+async function extractDialogMetadata(page) {
+  try {
+    return await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog) return null;
+
+      const paragraphs = [...dialog.querySelectorAll('p, span, paragraph')];
+      const getText = (label) => {
+        for (let i = 0; i < paragraphs.length; i++) {
+          if (paragraphs[i].textContent?.trim() === label && paragraphs[i + 1]) {
+            return paragraphs[i + 1].textContent?.trim();
+          }
+        }
+        return null;
+      };
+
+      // The dialog structure: "Model" paragraph followed by model name paragraph,
+      // "Preset" followed by preset name, "Quality" followed by quality value
+      const model = getText('Model');
+      const preset = getText('Preset');
+      const quality = getText('Quality');
+
+      // Get prompt text from the tabpanel
+      // Structure: p"Prompt", p"{actual prompt text}", p"See all", ...
+      const tabpanel = dialog.querySelector('[role="tabpanel"]');
+      let promptText = '';
+      if (tabpanel) {
+        const allP = [...tabpanel.querySelectorAll('p')];
+        for (let i = 0; i < allP.length; i++) {
+          if (allP[i].textContent?.trim() === 'Prompt' && allP[i + 1]) {
+            promptText = allP[i + 1].textContent?.trim() || '';
+            break;
+          }
+        }
+        if (!promptText) {
+          // Fallback: longest paragraph (likely the prompt)
+          promptText = allP
+            .map(p => p.textContent?.trim())
+            .filter(t => t && t.length > 30)
+            .sort((a, b) => b.length - a.length)[0] || '';
+        }
+      }
+
+      return { model, preset, quality, promptSnippet: promptText.substring(0, 80) };
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Build a descriptive filename from metadata
+// Format: hf_{model}_{quality}_{aspect}_{promptSlug}_{index}.{ext}
+function buildDescriptiveFilename(metadata, originalFilename, index) {
+  const ext = extname(originalFilename) || '.png';
+  const parts = ['hf'];
+
+  if (metadata?.model) {
+    parts.push(metadata.model.toLowerCase().replace(/[\s.]+/g, '-').replace(/[^a-z0-9-]/g, ''));
+  }
+  if (metadata?.quality) {
+    parts.push(metadata.quality.toLowerCase());
+  }
+  if (metadata?.preset && metadata.preset !== 'General') {
+    parts.push(metadata.preset.toLowerCase().replace(/[\s.]+/g, '-').replace(/[^a-z0-9-]/g, ''));
+  }
+  if (metadata?.promptSnippet) {
+    const slug = metadata.promptSnippet
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .split(/\s+/)
+      .slice(0, 6)
+      .join('-');
+    if (slug) parts.push(slug);
+  }
+
+  // Add timestamp and index for uniqueness
+  const ts = new Date().toISOString().replace(/[-:T]/g, '').substring(0, 14);
+  parts.push(ts);
+  if (index !== undefined) parts.push(String(index + 1));
+
+  return parts.join('_') + ext;
+}
+
 // Download generated results from the current page
 // Strategy: click each generated image to open the "Asset showcase" dialog,
 // then click the Download button in the dialog. Falls back to extracting
@@ -992,6 +1674,9 @@ async function downloadLatestResult(page, outputDir, downloadAll = true) {
           const dialogVisible = await dialog.count() > 0;
 
           if (dialogVisible) {
+            // Extract metadata from dialog before downloading
+            const metadata = await extractDialogMetadata(page);
+
             // Look for Download button inside the dialog
             const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
             const dlBtnCount = await dlBtn.count();
@@ -1003,8 +1688,9 @@ async function downloadLatestResult(page, outputDir, downloadAll = true) {
 
               const download = await downloadPromise;
               if (download) {
-                const filename = download.suggestedFilename() || `higgsfield-${Date.now()}-${i}.png`;
-                const savePath = join(outputDir, filename);
+                const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${i}.png`;
+                const descriptiveName = buildDescriptiveFilename(metadata, origFilename, i);
+                const savePath = join(outputDir, descriptiveName);
                 await download.saveAs(savePath);
                 console.log(`Downloaded [${i + 1}/${toDownload}]: ${savePath}`);
                 downloaded.push(savePath);
@@ -1110,6 +1796,9 @@ async function downloadSpecificImages(page, outputDir, indices) {
       // Wait for dialog
       const dialog = page.locator('[role="dialog"]');
       if (await dialog.count() > 0) {
+        // Extract metadata for descriptive filename
+        const metadata = await extractDialogMetadata(page);
+
         const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
         if (await dlBtn.count() > 0) {
           const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
@@ -1117,8 +1806,9 @@ async function downloadSpecificImages(page, outputDir, indices) {
 
           const download = await downloadPromise;
           if (download) {
-            const filename = download.suggestedFilename() || `higgsfield-${Date.now()}-${idx}.png`;
-            const savePath = join(outputDir, filename);
+            const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${idx}.png`;
+            const descriptiveName = buildDescriptiveFilename(metadata, origFilename, downloaded.length);
+            const savePath = join(outputDir, descriptiveName);
             await download.saveAs(savePath);
             console.log(`Downloaded [${downloaded.length + 1}/${indices.length}]: ${savePath}`);
             downloaded.push(savePath);
@@ -1280,42 +1970,75 @@ async function screenshot(options = {}) {
   }
 }
 
-// Check account credits/status
+// Check account credits/status via the subscription settings page
 async function checkCredits(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     console.log('Checking account credits...');
-    await page.goto(`${BASE_URL}/pricing`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
+    await page.goto(`${BASE_URL}/me/settings/subscription`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(5000);
+    await dismissAllModals(page);
 
-    // Try to find credit/plan info
+    // Scroll down to load the unlimited models table
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(2000);
+
+    // Change rows-per-page to 50 so all models are visible on one page
+    const rowsPerPageSelect = page.locator('select');
+    if (await rowsPerPageSelect.count() > 0) {
+      await rowsPerPageSelect.selectOption('50');
+      await page.waitForTimeout(2000);
+      console.log('Set rows per page to 50 to show all models');
+    }
+
+    // Extract credit info
     const creditInfo = await page.evaluate(() => {
       const text = document.body.innerText;
-      const creditMatch = text.match(/(\d+)\s*credits?/i);
-      const planMatch = text.match(/(free|pro|premium|enterprise|starter|basic)\s*plan/i);
-      return {
-        credits: creditMatch ? creditMatch[1] : 'unknown',
-        plan: planMatch ? planMatch[1] : 'unknown',
-        pageText: text.substring(0, 2000),
-      };
+
+      // Parse "6 004/ 6 000" or "6,004/ 6,000" format
+      const creditMatch = text.match(/([\d\s,]+)\/([\d\s,]+)/);
+      const remaining = creditMatch ? creditMatch[1].trim().replace(/[\s,]/g, '') : 'unknown';
+      const total = creditMatch ? creditMatch[2].trim().replace(/[\s,]/g, '') : 'unknown';
+
+      // Parse plan name
+      const planMatch = text.match(/(Creator|Team|Enterprise|Free)\s*Plan/i);
+      const plan = planMatch ? planMatch[1] : 'unknown';
+
+      // Parse unlimited models from the table (all rows now visible)
+      const rows = document.querySelectorAll('table tbody tr');
+      const unlimitedModels = [];
+      for (const row of rows) {
+        const cells = [...row.querySelectorAll('td')];
+        if (cells.length >= 4 && cells[3]?.textContent?.trim() === 'Active') {
+          unlimitedModels.push({
+            model: cells[0]?.textContent?.trim(),
+            starts: cells[1]?.textContent?.trim(),
+            expires: cells[2]?.textContent?.trim(),
+          });
+        }
+      }
+
+      // Parse pagination info for verification
+      const pageInfo = text.match(/Page (\d+) of (\d+)/);
+      const currentPage = pageInfo ? parseInt(pageInfo[1], 10) : 1;
+      const totalPages = pageInfo ? parseInt(pageInfo[2], 10) : 1;
+
+      return { remaining, total, plan, unlimitedModels, currentPage, totalPages };
     });
 
     console.log(`Plan: ${creditInfo.plan}`);
-    console.log(`Credits: ${creditInfo.credits}`);
-
-    // Also check profile page
-    await page.goto(`${BASE_URL}/profile`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2000);
-    await page.screenshot({ path: join(STATE_DIR, 'profile.png'), fullPage: false });
-
-    const profileInfo = await page.evaluate(() => {
-      return document.body.innerText.substring(0, 2000);
+    console.log(`Credits: ${creditInfo.remaining} / ${creditInfo.total}`);
+    console.log(`\nUnlimited models (${creditInfo.unlimitedModels.length}):`);
+    creditInfo.unlimitedModels.forEach(m => {
+      console.log(`  ${m.model} (expires: ${m.expires})`);
     });
 
-    console.log('\n--- Profile Info ---');
-    console.log(profileInfo);
+    if (creditInfo.totalPages > 1) {
+      console.log(`\nWARNING: Still showing page ${creditInfo.currentPage} of ${creditInfo.totalPages} - some models may be missing`);
+    }
 
+    await page.screenshot({ path: join(STATE_DIR, 'subscription.png'), fullPage: true });
     await context.storageState({ path: STATE_FILE });
     await browser.close();
     return creditInfo;
@@ -1342,33 +2065,43 @@ Commands:
   discover           Force re-scan site for new features/models/apps
   image              Generate an image from text prompt
   video              Generate a video (text-to-video or image-to-video)
+  lipsync            Generate a lipsync video (image + text/audio)
   app                Use a Higgsfield app/effect
   assets             List recent generations
   credits            Check account credits/plan
   screenshot         Take screenshot of any page
-  download           Download latest generation
+  download           Download latest generation (use --model video for videos)
 
 Options:
   --prompt, -p       Text prompt for generation
-  --model, -m        Model to use (soul, nano_banana, seedream)
-  --aspect, -a       Aspect ratio (16:9, 9:16, 1:1)
+  --model, -m        Model to use (soul, nano_banana, seedream, kling-2.6, etc.)
+  --aspect, -a       Aspect ratio (16:9, 9:16, 1:1, 3:4, 4:3, 2:3, 3:2)
+  --quality, -q      Quality setting (1K, 1.5K, 2K, 4K)
   --output, -o       Output directory or file path
   --headed           Run browser in headed mode (visible)
   --headless         Run browser in headless mode (default)
-  --duration, -d     Video duration in seconds
+  --duration, -d     Video duration in seconds (5, 10, 15)
   --image-file       Path to image file for upload
   --image-url, -i    URL of image for image-to-video
   --wait             Wait for generation to complete
   --timeout          Timeout in milliseconds
   --effect           App/effect slug (e.g., face-swap, 3d-render)
+  --enhance          Enable prompt enhancement
+  --no-enhance       Disable prompt enhancement
+  --sound            Enable sound/audio for video
+  --no-sound         Disable sound/audio
+  --batch, -b        Number of images to generate (1-4)
+  --unlimited        Prefer unlimited models only
+  --preset, -s       Style preset name (e.g., "Sunset beach", "CCTV")
 
 Examples:
   node playwright-automator.mjs login --headed
   node playwright-automator.mjs image -p "A cyberpunk city at night, neon lights"
   node playwright-automator.mjs video -p "Camera pans across landscape" --image-file photo.jpg
+  node playwright-automator.mjs lipsync -p "Hello world!" --image-file face.jpg
   node playwright-automator.mjs app --effect face-swap --image-file face.jpg
-  node playwright-automator.mjs assets
   node playwright-automator.mjs credits
+  node playwright-automator.mjs download --model video
   node playwright-automator.mjs screenshot -p "https://higgsfield.ai/image/soul"
 `);
     return;
@@ -1392,6 +2125,9 @@ Examples:
     case 'video':
       await generateVideo(options);
       break;
+    case 'lipsync':
+      await generateLipsync(options);
+      break;
     case 'app':
       await useApp(options);
       break;
@@ -1405,16 +2141,27 @@ Examples:
       await screenshot(options);
       break;
     case 'download': {
-      // Navigate to image page (has Download button in asset dialog)
-      // or model-specific page if --model is specified
       const dlModel = options.model || 'soul';
-      const dlUrl = `${BASE_URL}/image/${dlModel}`;
+      const isVideoDownload = dlModel === 'video' || options.duration;
       const { browser: dlBrowser, context: dlCtx, page: dlPage } = await launchBrowser(options);
-      console.log(`Navigating to ${dlUrl} to download latest generations...`);
-      await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await dlPage.waitForTimeout(5000);
-      await dismissAllModals(dlPage);
-      await downloadLatestResult(dlPage, options.output || DOWNLOAD_DIR, true);
+
+      if (isVideoDownload) {
+        // Download latest video from /create/video History tab
+        console.log('Navigating to video page to download from History...');
+        await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await dlPage.waitForTimeout(5000);
+        await dismissAllModals(dlPage);
+        await downloadVideoFromHistory(dlPage, options.output || DOWNLOAD_DIR);
+      } else {
+        // Download latest image from image page
+        const dlUrl = `${BASE_URL}/image/${dlModel}`;
+        console.log(`Navigating to ${dlUrl} to download latest generations...`);
+        await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await dlPage.waitForTimeout(5000);
+        await dismissAllModals(dlPage);
+        await downloadLatestResult(dlPage, options.output || DOWNLOAD_DIR, true);
+      }
+
       await dlCtx.storageState({ path: STATE_FILE });
       await dlBrowser.close();
       break;

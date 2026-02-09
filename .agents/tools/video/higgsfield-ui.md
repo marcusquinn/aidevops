@@ -14,7 +14,7 @@ tools:
 
 # Higgsfield UI Automator
 
-Browser-based automation for Higgsfield AI using Playwright. This subagent drives the Higgsfield web UI to generate images, videos, and apply effects using **subscription credits** (which are only available through the UI, not the API).
+Browser-based automation for Higgsfield AI using Playwright. This subagent drives the Higgsfield web UI to generate images, videos, lipsync, and effects using **subscription credits** (which are only available through the UI, not the API).
 
 ## When to Use
 
@@ -34,30 +34,34 @@ Use this subagent instead of the API subagent (`higgsfield.md`) when:
 # Login (opens browser, saves auth state)
 ~/.aidevops/agents/scripts/higgsfield-helper.sh login
 
-# Generate image
-~/.aidevops/agents/scripts/higgsfield-helper.sh image "A cyberpunk city at night"
+# Generate image (with options)
+~/.aidevops/agents/scripts/higgsfield-helper.sh image "A cyberpunk city" --model soul --aspect 16:9 --quality 2k
 
-# Generate video
-~/.aidevops/agents/scripts/higgsfield-helper.sh video "Camera pans across landscape"
+# Generate video (image-to-video)
+~/.aidevops/agents/scripts/higgsfield-helper.sh video "Camera pans across landscape" --image-file photo.jpg
+
+# Generate lipsync video
+~/.aidevops/agents/scripts/higgsfield-helper.sh lipsync "Hello world!" --image-file face.jpg
 
 # Use an app/effect
 ~/.aidevops/agents/scripts/higgsfield-helper.sh app face-swap --image-file photo.jpg
 
-# Check credits
+# Check credits and unlimited models
 ~/.aidevops/agents/scripts/higgsfield-helper.sh credits
 
-# List recent generations
-~/.aidevops/agents/scripts/higgsfield-helper.sh assets
+# Download latest video from History
+~/.aidevops/agents/scripts/higgsfield-helper.sh download --model video
 ```
 
 ## Architecture
 
 ```text
 higgsfield-helper.sh (shell wrapper)
-  └── higgsfield/playwright-automator.mjs (Playwright automation)
+  └── higgsfield/playwright-automator.mjs (Playwright automation, ~2000 lines)
         ├── Persistent auth state (~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json)
+        ├── Site discovery cache (~/.aidevops/.agent-workspace/work/higgsfield/routes-cache.json)
         ├── Credentials from ~/.config/aidevops/credentials.sh
-        └── Downloads to ~/Downloads/
+        └── Downloads to ~/Downloads/ (descriptive filenames: hf_{model}_{quality}_{prompt}_{ts}.ext)
 ```
 
 **Why Playwright direct?** Fastest browser automation (0.9s form fill), full API control, headless/headed modes, persistent auth via `storageState`. No wrapper overhead.
@@ -93,38 +97,57 @@ Auth state is saved to `~/.aidevops/.agent-workspace/work/higgsfield/auth-state.
 ### Image Generation
 
 ```bash
-# Basic image
+# Basic image (defaults to Soul model)
 higgsfield-helper.sh image "A serene mountain landscape at golden hour"
 
 # With model selection
 higgsfield-helper.sh image "Portrait photo" --model nano_banana
 higgsfield-helper.sh image "Anime character" --model seedream
+higgsfield-helper.sh image "Product photo" --model gpt
+
+# With options
+higgsfield-helper.sh image "Landscape" --aspect 16:9 --quality 2k --enhance
+higgsfield-helper.sh image "Portrait" --aspect 9:16 --preset "Sunset beach" --batch 4
 
 # Headed mode (see the browser)
 higgsfield-helper.sh image "Cyberpunk city" --headed
 
-# Custom output
+# Custom output directory
 higgsfield-helper.sh image "Product photo" --output ~/Projects/assets/
 ```
 
 ### Video Generation
 
-Video requires a start frame image. Generate an image first, then animate it:
+Video results appear in the History tab. The automator polls History for new items and downloads via the asset dialog.
 
 ```bash
-# Step 1: Generate a start frame image
+# Image-to-video (recommended flow)
 higgsfield-helper.sh image "A serene mountain landscape at golden hour"
-
-# Step 2: Animate it (image-to-video)
 higgsfield-helper.sh video "Camera slowly zooms in" --image-file ~/Downloads/hf_*.png
 
+# With model and options
+higgsfield-helper.sh video "Epic pan" --image-file photo.jpg --model kling-2.6 --unlimited
+
 # With timeout for long generations (default 5 min)
-higgsfield-helper.sh video "Epic landscape pan" --image-file photo.jpg --timeout 600000
+higgsfield-helper.sh video "Cinematic shot" --image-file photo.jpg --timeout 600000
+
+# Download latest video from History
+higgsfield-helper.sh download --model video
+```
+
+### Lipsync Generation
+
+```bash
+# Text-to-speech lipsync
+higgsfield-helper.sh lipsync "Hello! Welcome to our channel." --image-file face.jpg
+
+# With model selection
+higgsfield-helper.sh lipsync "Breaking news today..." --image-file anchor.jpg --model "Wan 2.5 Speak"
 ```
 
 ### Apps and Effects
 
-Higgsfield has 100+ apps for one-click content creation:
+Higgsfield has 86+ apps for one-click content creation:
 
 ```bash
 # Face swap
@@ -136,9 +159,6 @@ higgsfield-helper.sh app 3d-render --image-file product.jpg
 # Comic book style
 higgsfield-helper.sh app comic-book --image-file photo.jpg
 
-# Transitions between shots
-higgsfield-helper.sh app transitions --image-file shot1.jpg
-
 # Sketch to real
 higgsfield-helper.sh app sketch-to-real --image-file sketch.jpg
 ```
@@ -148,61 +168,149 @@ higgsfield-helper.sh app sketch-to-real --image-file sketch.jpg
 ### Account Management
 
 ```bash
-# Check credits and plan
+# Check credits, plan, and unlimited models
 higgsfield-helper.sh credits
 
 # List recent generations
 higgsfield-helper.sh assets
 
-# Check auth status
-higgsfield-helper.sh status
-
 # Take screenshot of any page
 higgsfield-helper.sh screenshot https://higgsfield.ai/image/soul
 
 # Download latest generation
-higgsfield-helper.sh download
+higgsfield-helper.sh download              # images (default)
+higgsfield-helper.sh download --model video # videos from History
 ```
 
-## Available Models (UI)
+## Available Models (UI) - Complete Map
 
 ### Image Models
 
-| Model | Slug | Best For |
-|-------|------|----------|
-| Soul | `soul` | High-aesthetic photos, portraits |
-| Nano Banana Pro | `nano_banana` | 4K images, best quality |
-| Seedream 4.5 | `seedream` | Next-gen 4K images |
-| Flux Kontext | `kontext` | Context-aware generation |
-| GPT Image | `gpt` | GPT-powered generation |
-| Wan 2.2 | `wan2` | Versatile generation |
+| Model | Slug | URL | Controls | Cost | Unlimited? |
+|-------|------|-----|----------|------|------------|
+| Higgsfield Soul | `soul` | `/image/soul` | aspect (9:16,3:4,2:3,1:1,4:3,16:9,3:2), quality (1.5k,2k), enhance, batch 1-4, presets/styles, CHARACTER | 2 credits | Yes (365) |
+| Nano Banana | `nano_banana` | `/image/nano_banana` | batch 1-4, auto aspect | 1 credit | Yes (365) |
+| Nano Banana Pro | `nano_banana_pro` | `/image/nano_banana_2` | aspect, quality (1K), batch 1-4 | 2 credits | Yes (365) |
+| Seedream 4.0 | `seedream` | `/image/seedream` | mode (Basic), aspect, batch 1-4 | 1 credit | Yes (365) |
+| Seedream 4.5 | `seedream-4.5` | `/image/seedream` | aspect, batch 1-4 | 1 credit | Yes (365) |
+| WAN 2.2 | `wan2` | `/image/wan2` | aspect, enhance | 1 credit | No |
+| GPT Image | `gpt` | `/image/gpt` | aspect, quality (Mid), batch 1-4, presets | 2 credits | Yes (365) |
+| Flux Kontext Max | `kontext` | `/image/kontext` | batch 1-4, auto aspect, enhance | 1.5 credits | Yes (365) |
+| FLUX.2 Pro | `flux` | `/image/flux` | model selector | varies | Yes (365) |
+| Kling O1 Image | `kling-o1` | `/image/kling_o1` | varies | varies | Yes (365) |
 
-### Video Models (via UI)
+**Visual Styles/Presets** (Soul model): Categories include All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art. Examples: General, Sunset beach, CCTV, Nail Check, 0.5 Outfit, Sand, Giant Accessory, iPhone, Mt. Fuji, Bimbocore.
 
-| Model | Best For |
-|-------|----------|
-| DOP Standard/Turbo | Image animation |
-| Kling 2.6 | Cinematic with audio |
-| Kling 3.0 | Latest Kling model |
-| Kling O1 | Reasoning-enhanced video |
-| Seedance 2.0 | Professional multi-shot |
-| Sora 2 | OpenAI video model |
-| Wan 2.6 | Advanced video |
-| Veo 3.1 | Google video model |
-| MiniMax Hailuo 02 | Dynamic VFX |
+### Video Models
+
+| Model | Resolution | Duration | Cost | Unlimited? |
+|-------|-----------|----------|------|------------|
+| Kling 3.0 (Exclusive) | 1080p | 3-15s | varies | No |
+| Kling 2.6 | 1080p | 5-10s | 10 credits | Yes |
+| Kling 2.5 Turbo | 1080p | 5-10s | varies | Yes |
+| Seedance 1.5 Pro | 720p | 4-12s | varies | No |
+| Grok Imagine | 720p | 1-15s | varies | No |
+| Minimax Hailuo | varies | varies | varies | No |
+| OpenAI Sora 2 | varies | varies | varies | No |
+| Google Veo | varies | varies | varies | No |
+| Wan | varies | varies | varies | No |
+
+**Video controls**: Duration (5s, 10s), Aspect Ratio (Auto or from image), Sound/Audio toggle, Unlimited mode toggle, Prompt with Enhance on/off, 250+ presets for camera control/framing/VFX.
+
+### Lipsync Models
+
+| Model | Resolution | Duration | Cost |
+|-------|-----------|----------|------|
+| Kling 2.6 Lipsync | 1080p | 10s | varies |
+| Google Veo 3 | 720p | 8s | varies |
+| Veo 3 Fast | 720p | 8s | varies |
+| Wan 2.5 Speak | 480-1080p | 10s | 9 credits |
+| Wan 2.5 Speak Fast | varies | varies | varies |
+| Kling Avatars 2.0 | 720-1080p | up to 5min | varies |
+| Higgsfield Speak 2.0 | 720p | 15s | varies |
+| Infinite Talk | 480-720p | 15s | varies |
+| Kling Lipsync | 720p | 15s | varies |
+| Sync Lipsync 2 Pro | 4K | 15s | varies |
 
 ### Special Features (UI-only)
 
-| Feature | URL Path | Description |
-|---------|----------|-------------|
-| Cinema Studio | `/cinema-studio` | Multi-shot cinematic videos |
-| Vibe Motion | `/vibe-motion` | Motion-designed videos from prompts |
-| AI Influencer | `/ai-influencer-studio` | Create AI influencer characters |
-| Lipsync Studio | `/lipsync-studio` | Talking avatar clips |
-| Motion Control | `/create/motion-control` | Precise character control |
-| Mixed Media | `/mixed-media-intro` | Artistic style presets |
-| UGC Factory | `/ugc-factory` | User-generated content |
-| Photodump Studio | `/photodump-studio` | Photo collections |
+| Feature | URL Path | Description | Cost |
+|---------|----------|-------------|------|
+| Cinema Studio | `/cinema-studio` | Professional cinematic with real camera/lens simulation. Camera Setup, Bring It to Life, Camera Movements, Start & End Frame, Multiple Angles. Controls: aspect (16:9), quality (2K), camera/lens preset. | 20 credits (has free gens) |
+| Vibe Motion | `/vibe-motion` | Sub-types: Infographics, Text Animation, Posters, Presentation, From Scratch. Styles: Minimal, Corporate, Fashion, Marketing. Duration: Auto/5/10/15/30s. | 8-60 credits |
+| AI Influencer | `/ai-influencer-studio` | Character builder: Type (Human, Ant, Bee, Octopus, Alien, Elf, etc.), Gender, Ethnicity. | 30 free gens |
+| Lipsync Studio | `/lipsync-studio` | Image + text/audio to talking video. 10 models available. | 9+ credits |
+| Motion Control | `/create/motion-control` | Upload motion reference video (3-30s) + character image. Scene control, background source. | UNLIMITED (Kling) |
+| Edit Video | `/create/edit` | Upload video + character image for editing. | varies |
+| Upscale | `/upscale` | Upload media for AI upscaling. | varies |
+| Character | `/character` | Create consistent characters from photos. | varies |
+| Inpaint/Edit | various | 5 models for image editing/inpainting. | varies |
+| Fashion Factory | `/fashion-factory` | AI fashion content. | varies |
+| UGC Factory | `/ugc-factory` | User-generated content creation. | varies |
+| Photodump Studio | `/photodump-studio` | Photo collection generation. | varies |
+| Storyboard Generator | `/storyboard-generator` | Storyboard creation. | varies |
+
+### Asset Dialog Actions
+
+When viewing any generated image, the "Open in" menu provides:
+
+- **Multishot** - Create multiple angles/shots
+- **Inpaint** - Edit specific regions
+- **Skin Enhancer** - Improve skin quality
+- **Angles** - Generate different viewing angles
+- **Relight** - Change lighting conditions
+- **AI Stylist** - Apply style transformations
+- **Upscale** - Increase resolution
+- **Animate** - Send to video generation as start frame
+
+## Unlimited Models Strategy
+
+The account has 19 unlimited models (no credit cost). Always prefer these:
+
+**Image (unlimited)**: Soul, Nano Banana, Nano Banana Pro, Seedream 4.0, GPT Image, Flux Kontext, FLUX.2 Pro, Kling O1 Image, Seedream 4.5, Reve, Z Image
+
+**Video (unlimited)**: Kling 2.6, Kling 2.5 Turbo, Kling 2.6 Motion Control, Kling O1 Video, Kling O1 Video Edit
+
+**Other (unlimited)**: Higgsfield Soul, Higgsfield Face Swap, Higgsfield Popcorn
+
+Use `--unlimited` flag to restrict to unlimited models only.
+
+## Download Filenames
+
+All downloads use descriptive filenames:
+
+```text
+hf_{model}_{quality}_{preset}_{prompt-slug}_{timestamp}_{index}.{ext}
+```
+
+Example: `hf_higgsfield-soul_2k_sunset-beach_a-serene-mountain-landscape_20260209193400_1.png`
+
+Metadata is extracted from the Asset showcase dialog before downloading.
+
+## CLI Options Reference
+
+```text
+--prompt, -p       Text prompt for generation
+--model, -m        Model slug (soul, nano_banana, seedream, kling-2.6, gpt, kontext, flux)
+--aspect, -a       Aspect ratio (16:9, 9:16, 1:1, 3:4, 4:3, 2:3, 3:2)
+--quality, -q      Quality setting (1K, 1.5K, 2K, 4K)
+--output, -o       Output directory or file path
+--headed           Run browser in headed mode (visible)
+--headless         Run browser in headless mode (default)
+--duration, -d     Video duration in seconds (5, 10, 15)
+--image-file       Path to image file for upload
+--image-url, -i    URL of image for image-to-video
+--wait             Wait for generation to complete
+--timeout          Timeout in milliseconds
+--effect           App/effect slug (e.g., face-swap, 3d-render)
+--enhance          Enable prompt enhancement
+--no-enhance       Disable prompt enhancement
+--sound            Enable sound/audio for video
+--no-sound         Disable sound/audio
+--batch, -b        Number of images to generate (1-4)
+--unlimited        Prefer unlimited models only
+--preset, -s       Style preset name (e.g., "Sunset beach", "CCTV")
+```
 
 ## Prompt Engineering Tips
 
@@ -246,6 +354,14 @@ higgsfield-helper.sh login
 2. Try headed mode: `higgsfield-helper.sh image "test" --headed`
 3. Check screenshots in `~/.aidevops/.agent-workspace/work/higgsfield/`
 
+### Video Download Issues
+
+Video results appear in the History tab, not as inline elements. If download fails:
+
+1. Try downloading manually: `higgsfield-helper.sh download --model video`
+2. Check `video-result.png` screenshot for the current state
+3. The video may still be processing -- try again after a few minutes
+
 ### Browser Not Found
 
 ```bash
@@ -258,9 +374,13 @@ All operations save debug screenshots to `~/.aidevops/.agent-workspace/work/higg
 
 - `login-debug.png` - Login page state
 - `image-page.png` - Image generation page
-- `generation-result.png` - After generation
+- `generation-result.png` - After image generation
 - `video-page.png` - Video generation page
-- `assets-page.png` - Assets listing
+- `video-generate-clicked.png` - After clicking Generate for video
+- `video-result.png` - Video generation result
+- `video-download-result.png` - After video download attempt
+- `lipsync-page.png` - Lipsync studio page
+- `subscription.png` - Account/credits page
 - `error.png` - Error state
 
 ## Headed vs Headless
