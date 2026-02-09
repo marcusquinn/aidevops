@@ -21,7 +21,7 @@ NC='\033[0m' # No Color
 # Global flags
 CLEAN_MODE=false
 INTERACTIVE_MODE=false
-NON_INTERACTIVE=false
+NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 INSTALL_DIR="$HOME/Git/aidevops"

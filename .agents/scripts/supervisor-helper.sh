@@ -5056,14 +5056,14 @@ run_deploy_for_task() {
     fi
 
     if [[ -n "$timeout_cmd" ]]; then
-        if ! deploy_output=$(cd "$repo" && $timeout_cmd ./setup.sh 2>&1); then
+        if ! deploy_output=$(cd "$repo" && AIDEVOPS_NON_INTERACTIVE=true $timeout_cmd ./setup.sh --non-interactive 2>&1); then
             log_warn "Deploy (setup.sh) returned non-zero for $task_id (see $deploy_log)"
             echo "$deploy_output" > "$deploy_log" 2>/dev/null || true
             return 1
         fi
     else
         # Fallback: background process with manual timeout
-        (cd "$repo" && ./setup.sh > "$deploy_log" 2>&1) &
+        (cd "$repo" && AIDEVOPS_NON_INTERACTIVE=true ./setup.sh --non-interactive > "$deploy_log" 2>&1) &
         local deploy_pid=$!
         local waited=0
         while kill -0 "$deploy_pid" 2>/dev/null && [[ "$waited" -lt 300 ]]; do
