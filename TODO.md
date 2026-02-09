@@ -61,7 +61,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 ## Backlog
 
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
-  - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h
+  - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z
   - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h
   - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m
   - [ ] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h
