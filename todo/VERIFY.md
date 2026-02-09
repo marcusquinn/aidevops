@@ -136,4 +136,17 @@ fail `[!]`. Failed verifications reopen the original task in TODO.md.
   files: .agents/scripts/memory-graduate-helper.sh
   check: shellcheck .agents/scripts/memory-graduate-helper.sh
 
+- [x] v023 t131 Create tools/vision/ category | PR #710 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/tools/vision/overview.md, .agents/tools/vision/image-generation.md, .agents/tools/vision/image-editing.md, .agents/tools/vision/image-understanding.md
+  check: file-exists .agents/tools/vision/overview.md
+  check: file-exists .agents/tools/vision/image-generation.md
+  check: file-exists .agents/tools/vision/image-editing.md
+  check: file-exists .agents/tools/vision/image-understanding.md
+  check: rg "vision" .agents/subagent-index.toon
+
+- [x] v024 t132 Evaluate multimodal vs per-modality structure | PR #708 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/tools/multimodal-evaluation.md
+  check: file-exists .agents/tools/multimodal-evaluation.md
+  check: rg "per-modality" .agents/tools/multimodal-evaluation.md
+
 <!-- VERIFY-QUEUE-END -->
