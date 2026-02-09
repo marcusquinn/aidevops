@@ -651,7 +651,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t120 Review @thymikee post for aidevops inclusion #research #tools ~5m (ai:4m read:1m) ref:GH#529 assignee:marcusquinn started:2026-02-08T20:55:16Z logged:2026-02-05 ref:https://x.com/thymikee/status/2018786174152970422 completed:2026-02-08 verified:2026-02-08 PR #665 merged
   - Notes: Added agent-device subagent (tools/mobile/agent-device.md) for AI-driven iOS/Android device automation CLI by @thymikee/Callstack. Token-efficient ref-based element targeting, cross-platform, pure CLI (no MCP required). Updated AGENTS.md and subagent-index.toon.
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~4h (ai:2.5h test:1h read:30m) ref:GH#530 logged:2026-01-31
-  - [ ] t102.1 Cost-Aware Model Routing ~30m blocked-by:none ref:GH#741
+  - [ ] t102.1 Cost-Aware Model Routing ~30m blocked-by:none ref:GH#741 assignee:marcusquinn started:2026-02-09T05:32:58Z
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
   - [ ] t102.2 Semantic Memory with Embeddings ~2h blocked-by:none ref:GH#742
     - Notes: Add optional HNSW vector index using all-MiniLM-L6-v2 via ONNX (~90MB). Create memory-embeddings-helper.sh. Extend memory-helper.sh with --semantic flag. Keep FTS5 as default, embeddings opt-in.
