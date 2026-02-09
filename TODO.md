@@ -75,7 +75,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
   - [ ] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
-  - [ ] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z
+  - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09
   - [ ] t020.4 Pull command (GH to TODO.md) #feature ~30m
   - [ ] t020.5 Close + status commands #feature ~30m
   - [ ] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m
