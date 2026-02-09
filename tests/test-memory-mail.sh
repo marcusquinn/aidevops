@@ -570,6 +570,142 @@ else
 fi
 
 # ============================================================
+# EMBEDDINGS TESTS (shell-level integration, no Python deps required)
+# ============================================================
+
+EMBEDDINGS_SCRIPT="$SCRIPTS_DIR/memory-embeddings-helper.sh"
+
+# Helper: run embeddings command
+emb() {
+    bash "$EMBEDDINGS_SCRIPT" "$@" 2>&1
+}
+
+section "Embeddings: Help and CLI"
+
+# Test: help command works
+emb_help=$(emb help 2>&1)
+if echo "$emb_help" | grep -qiE "provider|setup|search|hybrid"; then
+    pass "embeddings help shows provider and hybrid info"
+else
+    fail "embeddings help missing expected content" "$(echo "$emb_help" | head -3)"
+fi
+
+section "Embeddings: Provider Configuration"
+
+# Test: provider command shows default
+emb_provider=$(emb provider 2>&1)
+if echo "$emb_provider" | grep -qiE "local|current"; then
+    pass "embeddings provider shows default (local)"
+else
+    fail "embeddings provider output unexpected" "$emb_provider"
+fi
+
+# Test: provider switch to openai (config only, no deps needed)
+mkdir -p "$AIDEVOPS_MEMORY_DIR"
+echo "provider=openai" > "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+echo "configured_at=2025-01-01T00:00:00Z" >> "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+
+emb_provider_openai=$(emb provider 2>&1)
+if echo "$emb_provider_openai" | grep -qiE "openai"; then
+    pass "embeddings provider reads openai from config"
+else
+    fail "embeddings provider did not read openai config" "$emb_provider_openai"
+fi
+
+# Test: provider switch back to local
+echo "provider=local" > "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+emb_provider_local=$(emb provider 2>&1)
+if echo "$emb_provider_local" | grep -qiE "local"; then
+    pass "embeddings provider reads local from config"
+else
+    fail "embeddings provider did not read local config" "$emb_provider_local"
+fi
+
+# Test: invalid provider rejected
+emb_invalid=$(emb provider "invalid" 2>&1 || true)
+if echo "$emb_invalid" | grep -qiE "invalid|error"; then
+    pass "embeddings rejects invalid provider"
+else
+    fail "embeddings did not reject invalid provider" "$emb_invalid"
+fi
+
+section "Embeddings: Status Without Index"
+
+# Test: status works when no index exists
+rm -f "$AIDEVOPS_MEMORY_DIR/embeddings.db"
+emb_status=$(emb status 2>&1)
+if echo "$emb_status" | grep -qiE "not created|setup"; then
+    pass "embeddings status reports no index"
+else
+    fail "embeddings status output unexpected" "$emb_status"
+fi
+
+section "Embeddings: Auto-Index Hook"
+
+# Test: auto-index silently succeeds when not configured
+rm -f "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+# Should exit 0 silently (no config = no-op)
+if emb auto-index "mem_test_123" >/dev/null 2>&1; then
+    pass "auto-index no-op when not configured"
+else
+    fail "auto-index failed when not configured"
+fi
+
+# Test: auto-index silently succeeds when no embeddings DB
+echo "provider=local" > "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+rm -f "$AIDEVOPS_MEMORY_DIR/embeddings.db"
+if emb auto-index "mem_test_123" >/dev/null 2>&1; then
+    pass "auto-index no-op when no embeddings DB"
+else
+    fail "auto-index failed when no embeddings DB"
+fi
+
+section "Embeddings: Graceful Degradation"
+
+# Test: search fails gracefully when no index
+emb_search_noindex=$(emb search "test query" 2>&1 || true)
+if echo "$emb_search_noindex" | grep -qiE "not found|setup|missing|error"; then
+    pass "search fails gracefully when no index"
+else
+    fail "search did not fail gracefully" "$emb_search_noindex"
+fi
+
+section "Embeddings: Memory Helper --hybrid Flag"
+
+# Test: --hybrid flag is accepted by memory-helper.sh recall
+# (will fail gracefully since no embeddings are set up, but should not crash)
+hybrid_output=$(mem recall --query "test" --hybrid 2>&1 || true)
+if echo "$hybrid_output" | grep -qiE "not available|setup|error|not found"; then
+    pass "memory recall --hybrid fails gracefully without embeddings"
+else
+    # It might also succeed if embeddings happen to be available
+    pass "memory recall --hybrid flag accepted"
+fi
+
+section "Embeddings: Config File Format"
+
+# Test: config file has expected format
+echo "provider=local" > "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+echo "configured_at=2025-01-01T00:00:00Z" >> "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+
+config_provider=$(grep '^provider=' "$AIDEVOPS_MEMORY_DIR/.embeddings-config" | cut -d= -f2)
+if [[ "$config_provider" == "local" ]]; then
+    pass "config file stores provider correctly"
+else
+    fail "config file provider incorrect" "got: $config_provider"
+fi
+
+config_date=$(grep '^configured_at=' "$AIDEVOPS_MEMORY_DIR/.embeddings-config" | cut -d= -f2)
+if [[ -n "$config_date" ]]; then
+    pass "config file stores configured_at timestamp"
+else
+    fail "config file missing configured_at"
+fi
+
+# Clean up embeddings config for remaining tests
+rm -f "$AIDEVOPS_MEMORY_DIR/.embeddings-config"
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""

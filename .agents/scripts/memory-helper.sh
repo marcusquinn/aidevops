@@ -72,6 +72,14 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 #######################################
+# Return the global (non-namespaced) memory DB path
+#######################################
+global_db_path() {
+    echo "$MEMORY_BASE_DIR/memory.db"
+    return 0
+}
+
+#######################################
 # SQLite wrapper: sets busy_timeout on every connection (t135.3)
 # busy_timeout is per-connection and must be set each time
 #######################################
@@ -692,6 +700,19 @@ EOF
     fi
     
     log_success "Stored learning: $id"
+    
+    # Auto-index for semantic search (non-blocking, background)
+    local embeddings_script
+    embeddings_script="$(dirname "$0")/memory-embeddings-helper.sh"
+    if [[ -x "$embeddings_script" ]]; then
+        local auto_args=()
+        if [[ -n "$MEMORY_NAMESPACE" ]]; then
+            auto_args+=("--namespace" "$MEMORY_NAMESPACE")
+        fi
+        auto_args+=("auto-index" "$id")
+        "$embeddings_script" "${auto_args[@]}" 2>/dev/null || true
+    fi
+    
     echo "$id"
 }
 
@@ -707,6 +728,7 @@ cmd_recall() {
     local format="text"
     local recent_mode=false
     local semantic_mode=false
+    local hybrid_mode=false
     local shared_mode=false
     local auto_only=false
     local manual_only=false
@@ -720,6 +742,7 @@ cmd_recall() {
             --project|-p) project_filter="$2"; shift 2 ;;
             --recent) recent_mode=true; limit="${2:-10}"; shift; [[ "${1:-}" =~ ^[0-9]+$ ]] && shift ;;
             --semantic|--similar) semantic_mode=true; shift ;;
+            --hybrid) hybrid_mode=true; shift ;;
             --shared) shared_mode=true; shift ;;
             --auto-only) auto_only=true; shift ;;
             --manual-only) manual_only=true; shift ;;
@@ -765,8 +788,8 @@ cmd_recall() {
         return 1
     fi
     
-    # Handle --semantic mode (delegate to embeddings helper)
-    if [[ "$semantic_mode" == true ]]; then
+    # Handle --semantic or --hybrid mode (delegate to embeddings helper)
+    if [[ "$semantic_mode" == true || "$hybrid_mode" == true ]]; then
         local embeddings_script
         embeddings_script="$(dirname "$0")/memory-embeddings-helper.sh"
         if [[ ! -x "$embeddings_script" ]]; then
@@ -778,6 +801,9 @@ cmd_recall() {
             semantic_args+=("--namespace" "$MEMORY_NAMESPACE")
         fi
         semantic_args+=("search" "$query" "--limit" "$limit")
+        if [[ "$hybrid_mode" == true ]]; then
+            semantic_args+=("--hybrid")
+        fi
         if [[ "$format" == "json" ]]; then
             semantic_args+=("--json")
         fi
@@ -2132,6 +2158,7 @@ RECALL OPTIONS:
     --manual-only         Show only manually stored memories
     --semantic            Use semantic similarity search (requires embeddings setup)
     --similar             Alias for --semantic
+    --hybrid              Combine FTS5 keyword + semantic search using RRF
     --stats               Show memory statistics
     --json                Output as JSON
 
@@ -2209,6 +2236,9 @@ EXAMPLES:
 
     # Recall learnings (semantic similarity - opt-in, requires setup)
     memory-helper.sh recall --query "how to optimize queries" --semantic
+
+    # Recall learnings (hybrid FTS5+semantic - best results)
+    memory-helper.sh recall --query "authentication patterns" --hybrid
 
     # Check for stale entries
     memory-helper.sh validate
