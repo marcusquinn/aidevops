@@ -122,6 +122,10 @@ When using the Task tool to dispatch subagents, the `model:` field in the subage
 
 For headless dispatch, the supervisor reads `model:` from subagent frontmatter and passes it as the `--model` flag to the CLI.
 
+## Model Registry
+
+The model registry (`model-registry-helper.sh`) maintains a SQLite database tracking all known models across providers. It syncs from subagent frontmatter, embedded pricing data, and live provider APIs. Use `model-registry-helper.sh status` to check registry health and `model-registry-helper.sh check` to verify configured models are available.
+
 <!-- AI-CONTEXT-END -->
 
 ## Decision Flowchart

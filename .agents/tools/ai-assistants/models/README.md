@@ -46,10 +46,32 @@ The supervisor resolves model tiers from subagent frontmatter:
 1. Create a new subagent file in this directory
 2. Set `model:` in YAML frontmatter to the provider/model ID
 3. Add to the tier mapping in `model-routing.md`
-4. Run `compare-models-helper.sh discover --probe` to verify access
+4. Add to `compare-models-helper.sh` MODEL_DATA if tracking pricing
+5. Run `model-registry-helper.sh sync --force` to update the registry
+6. Run `model-registry-helper.sh check` to verify availability
+
+## Model Registry
+
+The model registry (`model-registry-helper.sh`) maintains a SQLite database of all known models, synced from three sources:
+
+1. **Subagent frontmatter** — tier definitions from `models/*.md`
+2. **Embedded data** — pricing/capabilities from `compare-models-helper.sh`
+3. **Provider APIs** — live model discovery from configured providers
+
+```bash
+model-registry-helper.sh sync          # Sync from all sources
+model-registry-helper.sh status        # Registry health and tier mapping
+model-registry-helper.sh check         # Verify subagent models exist
+model-registry-helper.sh suggest       # New models worth adding
+model-registry-helper.sh deprecations  # Deprecated/unavailable models
+model-registry-helper.sh diff          # Registry vs local config
+```
+
+The registry runs automatically on `aidevops update` and can be added to cron for periodic sync. Storage: `~/.aidevops/.agent-workspace/model-registry.db`
 
 ## Related
 
 - `tools/context/model-routing.md` — Cost-aware routing rules
 - `compare-models-helper.sh discover` — Detect available providers
+- `model-registry-helper.sh` — Provider/model registry with periodic sync
 - `tools/ai-assistants/headless-dispatch.md` — CLI dispatch with model selection

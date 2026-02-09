@@ -81,7 +81,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[51]{name,purpose}:
+<!--TOON:scripts[52]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
 verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md
@@ -132,6 +132,7 @@ voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices
 voice-bridge.py,Voice bridge Python script (VAD STT LLM TTS with session handback)
 seo-content-analyzer.py,SEO content analysis (readability keywords intent quality scoring)
 compare-models-helper.sh,AI model capability comparison (list compare recommend pricing context capabilities providers)
+model-registry-helper.sh,Provider/model registry with periodic sync (sync list status check suggest deprecations diff export)
 sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 -->
