@@ -102,9 +102,25 @@ Approximate relative costs (sonnet = 1x baseline):
 | pro | 1.25x | 2.5x | ~1.5x |
 | opus | 3x | 3x | ~3x |
 
+## Model-Specific Subagents
+
+Concrete model subagents are defined in `tools/ai-assistants/models/`:
+
+| Tier | Subagent | Primary Model | Fallback |
+|------|----------|---------------|----------|
+| `haiku` | `models/haiku.md` | claude-3-5-haiku | gemini-2.5-flash |
+| `flash` | `models/flash.md` | gemini-2.5-flash | gpt-4.1-mini |
+| `sonnet` | `models/sonnet.md` | claude-sonnet-4 | gpt-4.1 |
+| `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4 |
+| `opus` | `models/opus.md` | claude-opus-4 | o3 |
+
+Cross-provider reviewers: `models/gemini-reviewer.md`, `models/gpt-reviewer.md`
+
 ## Integration with Task Tool
 
 When using the Task tool to dispatch subagents, the `model:` field in the subagent's frontmatter serves as a recommendation. The orchestrating agent can override based on task complexity.
+
+For headless dispatch, the supervisor reads `model:` from subagent frontmatter and passes it as the `--model` flag to the CLI.
 
 <!-- AI-CONTEXT-END -->
 
