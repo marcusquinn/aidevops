@@ -1444,6 +1444,11 @@ cmd_transition() {
         log_info "Reason: $error_msg"
     fi
 
+    # Auto-generate VERIFY.md entry when task reaches deployed (t180.4)
+    if [[ "$new_state" == "deployed" ]]; then
+        generate_verify_entry "$task_id" 2>>"$SUPERVISOR_LOG" || true
+    fi
+
     # Check if batch is complete after task completion
     check_batch_completion "$task_id"
 
@@ -7113,6 +7118,228 @@ update_todo_on_complete() {
     fi
     commit_and_push_todo "$trepo" "$commit_msg"
     return $?
+}
+
+#######################################
+# Generate a VERIFY.md entry for a deployed task (t180.4)
+# Auto-creates check directives based on PR files:
+#   - .sh files: shellcheck + bash -n + file-exists
+#   - .md files: file-exists
+#   - test files: bash <test>
+#   - other: file-exists
+# Appends entry before <!-- VERIFY-QUEUE-END --> marker
+# $1: task_id
+#######################################
+generate_verify_entry() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT repo, description, pr_url FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        log_warn "generate_verify_entry: task not found: $task_id"
+        return 1
+    fi
+
+    local trepo tdesc tpr_url
+    IFS='|' read -r trepo tdesc tpr_url <<< "$task_row"
+
+    local verify_file="$trepo/todo/VERIFY.md"
+    if [[ ! -f "$verify_file" ]]; then
+        log_warn "generate_verify_entry: VERIFY.md not found at $verify_file"
+        return 1
+    fi
+
+    # Check if entry already exists for this task
+    local task_id_escaped
+    task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+    if grep -qE "^- \[.\] v[0-9]+ ${task_id_escaped} " "$verify_file"; then
+        log_info "generate_verify_entry: entry already exists for $task_id"
+        return 0
+    fi
+
+    # Get next vNNN number
+    local last_v
+    last_v=$(grep -oE '^- \[.\] v([0-9]+)' "$verify_file" | grep -oE '[0-9]+' | sort -n | tail -1 || echo "0")
+    local next_v=$((last_v + 1))
+    local vid
+    vid=$(printf "v%03d" "$next_v")
+
+    # Extract PR number
+    local pr_number=""
+    if [[ "$tpr_url" =~ /pull/([0-9]+) ]]; then
+        pr_number="${BASH_REMATCH[1]}"
+    fi
+
+    local today
+    today=$(date +%Y-%m-%d)
+
+    # Get files changed in PR (requires gh CLI)
+    local files_list=""
+    local -a check_lines=()
+
+    if [[ -n "$pr_number" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        local repo_slug=""
+        repo_slug=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
+        if [[ -n "$repo_slug" ]]; then
+            files_list=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+
+            # Generate check directives based on file types
+            while IFS= read -r fpath; do
+                [[ -z "$fpath" ]] && continue
+                case "$fpath" in
+                    tests/*.sh|test-*.sh)
+                        check_lines+=("  check: bash $fpath")
+                        ;;
+                    *.sh)
+                        check_lines+=("  check: file-exists $fpath")
+                        check_lines+=("  check: shellcheck $fpath")
+                        check_lines+=("  check: bash -n $fpath")
+                        ;;
+                    *.md)
+                        check_lines+=("  check: file-exists $fpath")
+                        ;;
+                    *)
+                        check_lines+=("  check: file-exists $fpath")
+                        ;;
+                esac
+            done < <(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null)
+        fi
+    fi
+
+    # Fallback: if no checks generated, add basic file-exists for PR
+    if [[ ${#check_lines[@]} -eq 0 && -n "$pr_number" ]]; then
+        check_lines+=("  check: rg \"$task_id\" $trepo/TODO.md")
+    fi
+
+    # Build the entry
+    local entry_header="- [ ] $vid $task_id ${tdesc%% *} | PR #${pr_number:-unknown} | merged:$today"
+    local entry_body=""
+    if [[ -n "$files_list" ]]; then
+        entry_body+="  files: $files_list"$'\n'
+    fi
+    for cl in "${check_lines[@]}"; do
+        entry_body+="$cl"$'\n'
+    done
+
+    # Insert before <!-- VERIFY-QUEUE-END -->
+    local marker="<!-- VERIFY-QUEUE-END -->"
+    if ! grep -q "$marker" "$verify_file"; then
+        log_warn "generate_verify_entry: VERIFY-QUEUE-END marker not found"
+        return 1
+    fi
+
+    # Build full entry text
+    local full_entry
+    full_entry=$(printf '%s\n%s\n' "$entry_header" "$entry_body")
+
+    # Insert before marker using temp file (portable across macOS/Linux)
+    local tmp_file
+    tmp_file=$(mktemp)
+    awk -v entry="$full_entry" -v mark="$marker" '{
+        if (index($0, mark) > 0) { print entry; }
+        print;
+    }' "$verify_file" > "$tmp_file" && mv "$tmp_file" "$verify_file"
+
+    log_success "Generated verify entry $vid for $task_id (PR #${pr_number:-unknown})"
+
+    # Commit and push
+    commit_and_push_todo "$trepo" "chore: add verify entry $vid for $task_id" 2>>"$SUPERVISOR_LOG" || true
+
+    return 0
+}
+
+#######################################
+# Process pending verifications from VERIFY.md (t180.4)
+# Called as Phase 3b of the pulse cycle.
+# Runs verify-run-helper.sh on pending entries, then transitions
+# tasks from deployed -> verified or verify_failed.
+# $1: batch_id (optional, for filtering)
+#######################################
+process_verify_queue() {
+    local batch_id="${1:-}"
+
+    ensure_db
+
+    # Find deployed tasks that need verification
+    local where_clause="t.status = 'deployed'"
+    if [[ -n "$batch_id" ]]; then
+        where_clause="$where_clause AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.task_id = t.id AND bt.batch_id = '$(sql_escape "$batch_id")')"
+    fi
+
+    local deployed_tasks
+    deployed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT t.id, t.repo FROM tasks t
+        WHERE $where_clause
+        ORDER BY t.completed_at ASC
+        LIMIT 5;
+    ")
+
+    if [[ -z "$deployed_tasks" ]]; then
+        return 0
+    fi
+
+    local verify_script="${SCRIPT_DIR}/verify-run-helper.sh"
+    if [[ ! -x "$verify_script" ]]; then
+        log_verbose "  Phase 3b: verify-run-helper.sh not found"
+        return 0
+    fi
+
+    local verified_count=0
+    local failed_count=0
+
+    while IFS='|' read -r tid trepo; do
+        local verify_file="$trepo/todo/VERIFY.md"
+        [[ -f "$verify_file" ]] || continue
+
+        # Find the verify entry for this task
+        local task_id_escaped
+        task_id_escaped=$(printf '%s' "$tid" | sed 's/\./\\./g')
+        local vid=""
+        vid=$(grep -oE "^- \[ \] (v[0-9]+) ${task_id_escaped} " "$verify_file" | grep -oE 'v[0-9]+' | head -1 || echo "")
+
+        if [[ -z "$vid" ]]; then
+            # No pending verify entry -- generate one
+            generate_verify_entry "$tid" 2>>"$SUPERVISOR_LOG" || continue
+            vid=$(grep -oE "^- \[ \] (v[0-9]+) ${task_id_escaped} " "$verify_file" | grep -oE 'v[0-9]+' | head -1 || echo "")
+            [[ -z "$vid" ]] && continue
+        fi
+
+        # Run verification
+        log_info "  Phase 3b: Verifying $tid ($vid)"
+        if (cd "$trepo" && bash "$verify_script" run "$vid" 2>>"$SUPERVISOR_LOG"); then
+            # Check if it passed (entry marked [x])
+            if grep -qE "^- \[x\] $vid " "$verify_file"; then
+                cmd_transition "$tid" "verified" 2>>"$SUPERVISOR_LOG" || true
+                verified_count=$((verified_count + 1))
+                log_success "  $tid: verified ($vid passed)"
+            elif grep -qE "^- \[!\] $vid " "$verify_file"; then
+                cmd_transition "$tid" "verify_failed" 2>>"$SUPERVISOR_LOG" || true
+                failed_count=$((failed_count + 1))
+                log_warn "  $tid: verification failed ($vid)"
+            fi
+        else
+            log_warn "  $tid: verify-run-helper.sh failed for $vid"
+        fi
+    done <<< "$deployed_tasks"
+
+    if [[ $((verified_count + failed_count)) -gt 0 ]]; then
+        log_info "  Phase 3b: Verified $verified_count, failed $failed_count"
+        # Commit verify results
+        local first_repo
+        first_repo=$(echo "$deployed_tasks" | head -1 | cut -d'|' -f2)
+        if [[ -n "$first_repo" ]]; then
+            commit_and_push_todo "$first_repo" "chore: verify results (${verified_count} passed, ${failed_count} failed)" 2>>"$SUPERVISOR_LOG" || true
+        fi
+    fi
+
+    return 0
 }
 
 #######################################

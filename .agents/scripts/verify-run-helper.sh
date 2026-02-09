@@ -63,7 +63,7 @@ parse_entry() {
 
     while IFS= read -r line; do
         # Match entry header
-        if [[ "$line" =~ ^-\ \[(.)\]\ (v[0-9]+)\ (t[0-9]+)\ (.+) ]]; then
+        if [[ "$line" =~ ^-\ \[(.)\]\ (v[0-9]+)\ (t[0-9.]+)\ (.+) ]]; then
             if $in_entry; then
                 break
             fi
