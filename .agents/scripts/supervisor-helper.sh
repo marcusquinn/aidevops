@@ -6,8 +6,10 @@
 #
 # Usage:
 #   supervisor-helper.sh init                          Initialize supervisor database
-#   supervisor-helper.sh add <task_id> [--repo path] [--description "desc"] [--model model] [--max-retries N]
+#   supervisor-helper.sh add <task_id> [--repo path] [--description "desc"] [--model model] [--max-retries N] [--with-issue]
 #   supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks "t001,t002,t003"]
+#   supervisor-helper.sh claim <task_id>               Claim task via TODO.md assignee: (t165)
+#   supervisor-helper.sh unclaim <task_id>             Release claimed task (t165)
 #   supervisor-helper.sh dispatch <task_id> [--batch id] Dispatch a task (worktree + worker)
 #   supervisor-helper.sh reprompt <task_id> [--prompt ""] Re-prompt a retrying task
 #   supervisor-helper.sh evaluate <task_id> [--no-ai]  Evaluate a worker's outcome
@@ -65,6 +67,13 @@
 #   2. Heuristic: error pattern matching (rate limit, auth, conflict, OOM)
 #   2.5. Git heuristic (t175): check commits on branch + uncommitted changes
 #   3. AI eval: Sonnet dispatch (~30s) for ambiguous outcomes
+#
+# Task claiming (t165 - provider-agnostic):
+#   Primary: TODO.md assignee: field (instant, offline, works with any git host)
+#   Optional: GitHub Issue assignee sync (best-effort, requires gh CLI)
+#   Identity: AIDEVOPS_IDENTITY env > GitHub username (cached) > user@hostname
+#   Optimistic locking: claim = commit+push TODO.md; push failure = race lost
+#   GH Issue creation: opt-in via --with-issue flag or SUPERVISOR_AUTO_ISSUE=true
 #
 # Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
 #
@@ -483,6 +492,45 @@ calculate_adaptive_concurrency() {
     fi
 
     echo "$effective_concurrency"
+    return 0
+}
+
+#######################################
+# Find the project root (directory containing TODO.md) (t165)
+# Walks up from $PWD until it finds TODO.md or hits /.
+# Outputs the path on stdout, returns 1 if not found.
+#######################################
+find_project_root() {
+    local dir="$PWD"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/TODO.md" ]]; then
+            echo "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    log_error "No TODO.md found in directory tree"
+    return 1
+}
+
+#######################################
+# Detect GitHub repo slug from git remote (t165)
+# Handles both HTTPS and SSH remote URLs.
+# $1: project_root (directory with .git)
+# Outputs "owner/repo" on stdout, returns 1 if not detected.
+#######################################
+detect_repo_slug() {
+    local project_root="${1:-.}"
+    local remote_url
+    remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || echo "")
+    remote_url="${remote_url%.git}"
+    local slug
+    slug=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|' || echo "")
+    if [[ -z "$slug" ]]; then
+        log_error "Could not detect GitHub repo slug from git remote"
+        return 1
+    fi
+    echo "$slug"
     return 0
 }
 
@@ -1083,7 +1131,10 @@ cmd_restore() {
 #######################################
 cmd_add() {
     local task_id="" repo="" description="" model="anthropic/claude-opus-4-6" max_retries=3
-    local skip_issue=false
+    # t165: GH Issue creation is now opt-in (--with-issue), not opt-out.
+    # TODO.md is the primary task registry; GH Issues are an optional sync layer.
+    # SUPERVISOR_AUTO_ISSUE=true restores the old default for backward compat.
+    local create_issue=false
 
     # First positional arg is task_id
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -1097,10 +1148,16 @@ cmd_add() {
             --description) [[ $# -lt 2 ]] && { log_error "--description requires a value"; return 1; }; description="$2"; shift 2 ;;
             --model) [[ $# -lt 2 ]] && { log_error "--model requires a value"; return 1; }; model="$2"; shift 2 ;;
             --max-retries) [[ $# -lt 2 ]] && { log_error "--max-retries requires a value"; return 1; }; max_retries="$2"; shift 2 ;;
-            --no-issue) skip_issue=true; shift ;;
+            --with-issue) create_issue=true; shift ;;
+            --no-issue) create_issue=false; shift ;;  # Kept for backward compat (now the default)
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
+
+    # Backward compat: SUPERVISOR_AUTO_ISSUE=true restores old default
+    if [[ "${SUPERVISOR_AUTO_ISSUE:-false}" == "true" && "$create_issue" == "false" ]]; then
+        create_issue=true
+    fi
 
     if [[ -z "$task_id" ]]; then
         log_error "Usage: supervisor-helper.sh add <task_id> [--repo path] [--description \"desc\"]"
@@ -1155,8 +1212,9 @@ cmd_add() {
         log_info "Description: $(echo "$description" | head -c 80)"
     fi
 
-    # Create GitHub issue unless opted out (t149)
-    if [[ "$skip_issue" == "false" ]]; then
+    # Create GitHub issue only if explicitly requested (t165: opt-in, not default)
+    # Use --with-issue flag or SUPERVISOR_AUTO_ISSUE=true env var
+    if [[ "$create_issue" == "true" ]]; then
         local issue_number
         issue_number=$(create_github_issue "$task_id" "$description" "$repo")
         if [[ -n "$issue_number" ]]; then
@@ -2362,7 +2420,9 @@ check_task_claimed() {
 
 #######################################
 # Sync claim/unclaim to GitHub Issue assignee (t165)
-# Optional bi-directional sync layer — fails silently if gh unavailable.
+# Optional bi-directional sync layer — fails silently if gh unavailable
+# or if the task has no ref:GH# in TODO.md. This is a best-effort
+# convenience; TODO.md assignee: is the authoritative claim source.
 # $1: task_id  $2: project_root  $3: action (claim|unclaim)
 #######################################
 sync_claim_to_github() {
@@ -2370,8 +2430,9 @@ sync_claim_to_github() {
     local project_root="$2"
     local action="$3"
 
-    # Skip if gh CLI not available
+    # Skip if gh CLI not available or not authenticated
     command -v gh &>/dev/null || return 0
+    gh auth status &>/dev/null 2>&1 || return 0
 
     local issue_number
     issue_number=$(find_task_issue_number "$task_id" "$project_root")
@@ -6159,11 +6220,8 @@ create_github_issue() {
     local description="$2"
     local repo_path="$3"
 
-    # Check if auto-issue is disabled
-    if [[ "${SUPERVISOR_AUTO_ISSUE:-true}" == "false" ]]; then
-        log_info "GitHub issue creation disabled (SUPERVISOR_AUTO_ISSUE=false)"
-        return 0
-    fi
+    # t165: Callers are responsible for gating (cmd_add uses --with-issue flag).
+    # This function always attempts creation when called.
 
     # Verify gh CLI is available and authenticated
     if ! command -v gh &>/dev/null; then
@@ -9086,12 +9144,20 @@ Worker Dispatch:
     tabby     - Tabby terminal tab (when TERM_PROGRAM=Tabby)
   Override: SUPERVISOR_DISPATCH_MODE=headless|tabby
 
+Task Claiming (t165 - provider-agnostic, TODO.md primary):
+  claim <task_id>        Claim a task (adds assignee: to TODO.md, optional GH sync)
+  unclaim <task_id>      Release a claimed task (removes assignee: from TODO.md)
+  Claiming is automatic during dispatch. TODO.md assignee: field is the
+  authoritative source. GitHub Issue sync is optional (best-effort).
+  Identity: AIDEVOPS_IDENTITY env > GitHub username > user@hostname
+
 Options for 'add':
   --repo <path>          Repository path (default: current directory)
   --description "desc"   Task description (auto-detected from TODO.md)
   --model <model>        AI model (default: anthropic/claude-opus-4-6)
   --max-retries <N>      Max retry attempts (default: 3)
-  --no-issue             Skip GitHub issue creation for this task
+  --with-issue           Create a GitHub issue for this task (opt-in)
+  --no-issue             Alias for default (no GitHub issue creation)
 
 Options for 'batch':
   --concurrency <N>      Base parallel workers (default: 4, scales up/down with load)

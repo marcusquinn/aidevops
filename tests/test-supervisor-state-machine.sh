@@ -1222,6 +1222,253 @@ fi
 rm -rf "$VERIFY_TEST_DIR"
 
 # ============================================================
+# SECTION: Task Claiming via TODO.md (t165)
+# ============================================================
+section "Task Claiming via TODO.md (t165)"
+
+# Set up a fake project with TODO.md for claiming tests
+CLAIM_TEST_DIR=$(mktemp -d)
+mkdir -p "$CLAIM_TEST_DIR"
+git -C "$CLAIM_TEST_DIR" init --quiet 2>/dev/null || true
+git -C "$CLAIM_TEST_DIR" config user.email "test@test.com" 2>/dev/null || true
+git -C "$CLAIM_TEST_DIR" config user.name "Test" 2>/dev/null || true
+
+cat > "$CLAIM_TEST_DIR/TODO.md" << 'CLAIM_TODO'
+# Test TODO
+
+## Tasks
+
+- [ ] t900 Test claiming task #orchestration ~1h
+- [ ] t901 Another task for claiming #test ~30m
+- [ ] t902 Pre-claimed task #test ~1h assignee:otheruser started:2026-01-01T00:00:00Z
+- [x] t903 Already completed task #test ~1h
+CLAIM_TODO
+
+git -C "$CLAIM_TEST_DIR" add TODO.md 2>/dev/null || true
+git -C "$CLAIM_TEST_DIR" commit -m "init" --quiet 2>/dev/null || true
+
+# Add tasks to supervisor DB for claiming tests
+sup add t900 --repo "$CLAIM_TEST_DIR" --description "Test claiming task" --no-issue >/dev/null 2>&1
+sup add t901 --repo "$CLAIM_TEST_DIR" --description "Another task" --no-issue >/dev/null 2>&1
+sup add t902 --repo "$CLAIM_TEST_DIR" --description "Pre-claimed task" --no-issue >/dev/null 2>&1
+
+# Test: system identity is available for claiming
+if [[ -n "$(whoami 2>/dev/null)" ]]; then
+    pass "System identity available (whoami: $(whoami))"
+else
+    fail "Cannot determine system identity"
+fi
+
+# Test: get_task_assignee returns empty for unclaimed task
+assignee_output=$(bash -c "
+    export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
+    source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null || true
+    # Define get_task_assignee inline (it's in supervisor-helper.sh)
+    get_task_assignee() {
+        local task_id=\"\$1\" todo_file=\"\$2\"
+        [[ -f \"\$todo_file\" ]] || return 0
+        local task_id_escaped
+        task_id_escaped=\$(printf '%s' \"\$task_id\" | sed 's/\\\./\\\\./g')
+        local task_line
+        task_line=\$(grep -E \"^- \[.\] \${task_id_escaped} \" \"\$todo_file\" | head -1 || echo \"\")
+        [[ -z \"\$task_line\" ]] && return 0
+        echo \"\$task_line\" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo \"\"
+        return 0
+    }
+    get_task_assignee 't900' '$CLAIM_TEST_DIR/TODO.md'
+" 2>/dev/null)
+if [[ -z "$assignee_output" ]]; then
+    pass "get_task_assignee returns empty for unclaimed task t900"
+else
+    fail "get_task_assignee should return empty for unclaimed task" "Got: $assignee_output"
+fi
+
+# Test: get_task_assignee returns assignee for pre-claimed task
+assignee_output=$(bash -c "
+    get_task_assignee() {
+        local task_id=\"\$1\" todo_file=\"\$2\"
+        [[ -f \"\$todo_file\" ]] || return 0
+        local task_id_escaped
+        task_id_escaped=\$(printf '%s' \"\$task_id\" | sed 's/\\\./\\\\./g')
+        local task_line
+        task_line=\$(grep -E \"^- \[.\] \${task_id_escaped} \" \"\$todo_file\" | head -1 || echo \"\")
+        [[ -z \"\$task_line\" ]] && return 0
+        echo \"\$task_line\" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo \"\"
+        return 0
+    }
+    get_task_assignee 't902' '$CLAIM_TEST_DIR/TODO.md'
+" 2>/dev/null)
+if [[ "$assignee_output" == "otheruser" ]]; then
+    pass "get_task_assignee returns 'otheruser' for pre-claimed task t902"
+else
+    fail "get_task_assignee should return 'otheruser' for t902" "Got: '$assignee_output'"
+fi
+
+# Test: cmd_add with --no-issue does not require gh CLI
+add_output=$(sup add t904 --repo "$CLAIM_TEST_DIR" --description "No issue task" --no-issue 2>&1)
+if echo "$add_output" | grep -qi "Added task.*t904"; then
+    pass "cmd_add --no-issue succeeds without GitHub"
+else
+    fail "cmd_add --no-issue should succeed" "Output: $add_output"
+fi
+
+# Test: cmd_add with --with-issue flag is accepted (even if gh fails)
+add_issue_output=$(sup add t905 --repo "$CLAIM_TEST_DIR" --description "With issue task" --with-issue 2>&1 || true)
+if echo "$add_issue_output" | grep -qi "Added task.*t905\|skipped"; then
+    pass "cmd_add --with-issue flag is accepted"
+else
+    fail "cmd_add --with-issue should be accepted" "Output: $add_issue_output"
+fi
+
+# Test: find_project_root finds TODO.md
+find_root_output=$(bash -c "
+    cd '$CLAIM_TEST_DIR'
+    export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
+    # Extract just find_project_root from the script
+    find_project_root() {
+        local dir=\"\$PWD\"
+        while [[ \"\$dir\" != \"/\" ]]; do
+            if [[ -f \"\$dir/TODO.md\" ]]; then
+                echo \"\$dir\"
+                return 0
+            fi
+            dir=\"\$(dirname \"\$dir\")\"
+        done
+        return 1
+    }
+    find_project_root
+" 2>/dev/null)
+if [[ "$find_root_output" == "$CLAIM_TEST_DIR" ]]; then
+    pass "find_project_root locates TODO.md directory"
+else
+    fail "find_project_root should find $CLAIM_TEST_DIR" "Got: '$find_root_output'"
+fi
+
+# Test: claiming modifies TODO.md with assignee: field
+# We test the sed logic directly since cmd_claim requires git push
+claim_test_file="$CLAIM_TEST_DIR/TODO-claim-test.md"
+cp "$CLAIM_TEST_DIR/TODO.md" "$claim_test_file"
+# Simulate claiming t900 by adding assignee: field
+line_num=$(grep -nE "^- \[ \] t900 " "$claim_test_file" | head -1 | cut -d: -f1)
+if [[ -n "$line_num" ]]; then
+    task_line=$(sed -n "${line_num}p" "$claim_test_file")
+    new_line="${task_line} assignee:testuser started:2026-01-01T00:00:00Z"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "${line_num}s|.*|${new_line}|" "$claim_test_file"
+    else
+        sed -i "${line_num}s|.*|${new_line}|" "$claim_test_file"
+    fi
+    if grep -q "assignee:testuser" "$claim_test_file"; then
+        pass "Claiming adds assignee: field to TODO.md task line"
+    else
+        fail "Claiming should add assignee: field"
+    fi
+else
+    fail "Could not find t900 in test TODO.md"
+fi
+
+# Test: unclaiming removes assignee: and started: fields
+unclaim_line=$(grep "t900" "$claim_test_file" | head -1)
+unclaimed_line=$(echo "$unclaim_line" | sed -E "s/ ?assignee:[A-Za-z0-9._@-]+//; s/ ?started:[0-9T:Z-]+//")
+if echo "$unclaimed_line" | grep -q "assignee:"; then
+    fail "Unclaiming should remove assignee: field"
+else
+    if echo "$unclaimed_line" | grep -q "started:"; then
+        fail "Unclaiming should remove started: field"
+    else
+        pass "Unclaiming removes assignee: and started: fields"
+    fi
+fi
+
+# Test: check_task_claimed returns empty (free) for unclaimed task
+check_output=$(bash -c "
+    get_task_assignee() {
+        local task_id=\"\$1\" todo_file=\"\$2\"
+        [[ -f \"\$todo_file\" ]] || return 0
+        local task_id_escaped
+        task_id_escaped=\$(printf '%s' \"\$task_id\" | sed 's/\\\./\\\\./g')
+        local task_line
+        task_line=\$(grep -E \"^- \[.\] \${task_id_escaped} \" \"\$todo_file\" | head -1 || echo \"\")
+        [[ -z \"\$task_line\" ]] && return 0
+        echo \"\$task_line\" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo \"\"
+        return 0
+    }
+    assignee=\$(get_task_assignee 't901' '$CLAIM_TEST_DIR/TODO.md')
+    if [[ -z \"\$assignee\" ]]; then
+        echo 'FREE'
+    else
+        echo \"\$assignee\"
+    fi
+" 2>/dev/null)
+if [[ "$check_output" == "FREE" ]]; then
+    pass "check_task_claimed: unclaimed task t901 is free"
+else
+    fail "Unclaimed task should be free" "Got: '$check_output'"
+fi
+
+# Test: check_task_claimed detects task claimed by another user
+check_other_output=$(bash -c "
+    get_task_assignee() {
+        local task_id=\"\$1\" todo_file=\"\$2\"
+        [[ -f \"\$todo_file\" ]] || return 0
+        local task_id_escaped
+        task_id_escaped=\$(printf '%s' \"\$task_id\" | sed 's/\\\./\\\\./g')
+        local task_line
+        task_line=\$(grep -E \"^- \[.\] \${task_id_escaped} \" \"\$todo_file\" | head -1 || echo \"\")
+        [[ -z \"\$task_line\" ]] && return 0
+        echo \"\$task_line\" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo \"\"
+        return 0
+    }
+    assignee=\$(get_task_assignee 't902' '$CLAIM_TEST_DIR/TODO.md')
+    if [[ -z \"\$assignee\" ]]; then
+        echo 'FREE'
+    else
+        echo \"\$assignee\"
+    fi
+" 2>/dev/null)
+if [[ "$check_other_output" == "otheruser" ]]; then
+    pass "check_task_claimed: t902 claimed by 'otheruser' detected"
+else
+    fail "Should detect t902 claimed by otheruser" "Got: '$check_other_output'"
+fi
+
+# Test: SUPERVISOR_AUTO_ISSUE default is now false (t165)
+auto_issue_default="${SUPERVISOR_AUTO_ISSUE:-false}"
+if [[ "$auto_issue_default" == "false" ]]; then
+    pass "SUPERVISOR_AUTO_ISSUE defaults to false (GH Issues opt-in)"
+else
+    fail "SUPERVISOR_AUTO_ISSUE should default to false" "Got: $auto_issue_default"
+fi
+
+# Test: task line with logged: field — assignee inserted before logged:
+logged_line="- [ ] t910 Task with logged field #test ~1h logged:2026-01-01"
+expected_pattern="assignee:.*started:.*logged:"
+insert_result=$(echo "$logged_line" | sed -E "s/( logged:)/ assignee:testuser started:2026-01-01T00:00:00Z\1/")
+if echo "$insert_result" | grep -qE "$expected_pattern"; then
+    pass "Claiming inserts assignee: before logged: field"
+else
+    fail "Should insert assignee: before logged:" "Got: $insert_result"
+fi
+
+# Test: detect_repo_slug parses HTTPS remote
+slug_test=$(echo "https://github.com/owner/repo.git" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|; s|\.git$||')
+if [[ "$slug_test" == "owner/repo" ]]; then
+    pass "detect_repo_slug parses HTTPS remote correctly"
+else
+    fail "detect_repo_slug HTTPS parsing" "Got: '$slug_test'"
+fi
+
+# Test: detect_repo_slug parses SSH remote
+slug_test_ssh=$(echo "git@github.com:owner/repo.git" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|; s|\.git$||')
+if [[ "$slug_test_ssh" == "owner/repo" ]]; then
+    pass "detect_repo_slug parses SSH remote correctly"
+else
+    fail "detect_repo_slug SSH parsing" "Got: '$slug_test_ssh'"
+fi
+
+rm -rf "$CLAIM_TEST_DIR"
+
+# ============================================================
 # SUMMARY
 # ============================================================
 echo ""

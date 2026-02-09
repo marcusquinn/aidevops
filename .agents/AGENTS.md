@@ -201,6 +201,11 @@ worktree-helper.sh add feature/x  # Fallback
 supervisor-helper.sh add t001 --repo "$(pwd)" --description "Task description"
 supervisor-helper.sh batch "my-batch" --concurrency 3 --tasks "t001,t002,t003"
 
+# Task claiming (t165 — provider-agnostic, TODO.md primary)
+supervisor-helper.sh claim t001     # Adds assignee: to TODO.md, optional GH sync
+supervisor-helper.sh unclaim t001   # Releases claim (removes assignee:)
+# Claiming is automatic during dispatch. Manual claim/unclaim for coordination.
+
 # Install cron pulse (REQUIRED for autonomous operation)
 supervisor-helper.sh cron install
 
@@ -211,6 +216,8 @@ supervisor-helper.sh pulse --batch <batch-id>
 supervisor-helper.sh dashboard --batch <batch-id>
 supervisor-helper.sh status <batch-id>
 ```
+
+**Task claiming** (t165): TODO.md `assignee:` field is the authoritative claim source. Works offline, with any git host. GitHub Issue sync is optional best-effort (requires `gh` CLI + `ref:GH#` in TODO.md). GH Issue creation is opt-in: use `--with-issue` flag or `SUPERVISOR_AUTO_ISSUE=true`.
 
 **Cron pulse is mandatory** for autonomous operation. Without it, the supervisor is passive and requires manual `pulse` calls. The pulse cycle: check workers -> evaluate outcomes -> dispatch next -> cleanup.
 
