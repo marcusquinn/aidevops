@@ -67,13 +67,6 @@ jobs:
       run: |
         .agents/scripts/review-pulse-helper.sh tasks --dry-run || true
 
-    - name: Auto-Create Tasks from Findings (t166.3)
-      if: always()
-      run: |
-        chmod +x .agents/scripts/coderabbit-task-creator-helper.sh 2>/dev/null || true
-        .agents/scripts/coderabbit-task-creator-helper.sh create --source pulse --dry-run || true
-        .agents/scripts/coderabbit-task-creator-helper.sh stats || true
-
     - name: Upload Findings Artifact
       if: always()
       uses: actions/upload-artifact@v4
