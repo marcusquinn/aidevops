@@ -707,6 +707,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Add `aidevops init sops` feature flag. Creates .sops.yaml with age key, adds patterns for common secret files (*.secret.yaml, configs/*.enc.json). Add to features list. Non-breaking -- only activates when explicitly requested.
   - [ ] t134.4 Document full encryption stack in credentials docs ~30m blocked-by:t134.1,t134.2
     - Notes: Update gopass.md and api-key-setup.md with encryption stack overview: gopass (secret values), SOPS (config files in repos), gocryptfs (local folders). Decision record: chose SOPS over git-crypt (value-level encryption, CNCF backing, key rotation) and gocryptfs over VeraCrypt (no disk images to manage, CLI-native, overlay filesystem).
+- [ ] t191 Fix secretlint-helper.sh install and scan in git worktrees #bugfix #tools #secretlint ~1h (ai:40m test:15m read:5m) ref:GH#711 logged:2026-02-09
+  - Notes: secretlint-helper.sh install puts packages in main repo node_modules/, but scan runs in CWD. In worktrees, node_modules/ doesn't exist so check_rules_installed() always fails. Fix: resolve main worktree path via `git worktree list --porcelain | head -1`, use `npm list --prefix <main_path>` as fallback, and make install worktree-aware (install to main repo or symlink).
 
 <!--TOON:backlog[90]{id,desc,owner,tags,est,est_ai,est_test,logged,status,blocked_by,blocks,parent}:
 t137,Test Matrix bot end-to-end with matrix.marcusquinn.com,,testing|matrix|agents,30m,20m,10m,2026-02-07T00:00Z,pending,,,
@@ -820,6 +822,7 @@ t131,Create tools/vision/ category for visual AI models,,tools|vision|ai,30m,20m
 t132,Evaluate tools/multimodal/ vs cross-references for models spanning voice+vision,,architecture|tools|ai,15m,10m,,5m,2026-02-06T00:00Z,completed,2026-02-09,PR#708,
 t133,Cloud GPU deployment guide for AI model hosting,,tools|infrastructure|gpu,45m,30m,10m,5m,2026-02-06T00:00Z,pending,,,
 t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,2026-02-06T00:00Z,pending,,,
+t191,Fix secretlint-helper.sh install and scan in git worktrees,,bugfix|tools|secretlint,1h,40m,15m,5m,2026-02-09T00:00Z,pending,,,
 -->
 
 <!--TOON:subtasks[0]{id,desc,est,status,blocked_by,parent}:
