@@ -2818,16 +2818,13 @@ resolve_model() {
             echo "anthropic/claude-sonnet-4-5"
             ;;
         haiku)
-            echo "anthropic/claude-3-5-haiku-20241022"
+            echo "anthropic/claude-haiku-4-5"
             ;;
         flash)
-            echo "google/gemini-2.5-flash-preview-05-20"
+            echo "google/gemini-2.5-flash"
             ;;
         pro)
-            echo "google/gemini-2.5-pro-preview-06-05"
-            ;;
-        grok)
-            echo "xai/grok-3"
+            echo "google/gemini-2.5-pro"
             ;;
         *)
             # Unknown tier — treat as coding tier default

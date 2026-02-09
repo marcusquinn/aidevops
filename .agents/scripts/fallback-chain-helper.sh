@@ -257,13 +257,13 @@ get_chain_for_tier() {
     # Use the existing model-availability-helper.sh tier mapping
     local tier_spec=""
     case "$tier" in
-        haiku)  tier_spec='["anthropic/claude-3-5-haiku-20241022","google/gemini-2.5-flash","openrouter/anthropic/claude-3-5-haiku-20241022"]' ;;
-        flash)  tier_spec='["google/gemini-2.5-flash","openai/gpt-4.1-mini","openrouter/google/gemini-2.5-flash"]' ;;
-        sonnet) tier_spec='["anthropic/claude-sonnet-4-20250514","openai/gpt-4.1","openrouter/anthropic/claude-sonnet-4-20250514"]' ;;
-        pro)    tier_spec='["google/gemini-2.5-pro","anthropic/claude-sonnet-4-20250514","openrouter/google/gemini-2.5-pro"]' ;;
-        opus)   tier_spec='["anthropic/claude-opus-4-6","openai/o3","openrouter/anthropic/claude-opus-4-6"]' ;;
-        coding) tier_spec='["anthropic/claude-opus-4-6","openai/o3","openrouter/anthropic/claude-opus-4-6"]' ;;
-        eval)   tier_spec='["anthropic/claude-sonnet-4-5","google/gemini-2.5-flash","openrouter/anthropic/claude-sonnet-4-5"]' ;;
+        haiku)  tier_spec='["anthropic/claude-haiku-4-5","google/gemini-2.5-flash"]' ;;
+        flash)  tier_spec='["google/gemini-2.5-flash","anthropic/claude-haiku-4-5"]' ;;
+        sonnet) tier_spec='["anthropic/claude-sonnet-4-5","google/gemini-2.5-pro"]' ;;
+        pro)    tier_spec='["google/gemini-2.5-pro","anthropic/claude-sonnet-4-5"]' ;;
+        opus)   tier_spec='["anthropic/claude-opus-4-6","google/gemini-2.5-pro"]' ;;
+        coding) tier_spec='["anthropic/claude-opus-4-6","google/gemini-2.5-pro"]' ;;
+        eval)   tier_spec='["anthropic/claude-sonnet-4-5","google/gemini-2.5-flash"]' ;;
         health) tier_spec='["anthropic/claude-sonnet-4-5","google/gemini-2.5-flash"]' ;;
         *)
             print_error "Unknown tier: $tier"
