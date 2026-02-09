@@ -40,6 +40,7 @@ candidates and appends them here. Each graduation batch is timestamped.
 
 - **[FAILURE_PATTERN]** [task:refactor] Haiku missed edge cases when refactoring complex shell scripts with many conditionals [model:haiku]
   *(confidence: high, validated: 3x)*
+
 ### Architecture Decisions
 
 - **[ARCHITECTURAL_DECISION]** YAML handoffs are more token-efficient than markdown (~400 vs ~2000 tokens)
@@ -50,10 +51,12 @@ candidates and appends them here. Each graduation batch is timestamped.
 
 - **[DECISION]** Agent lifecycle uses three tiers: draft/ (R&D, orchestration-created), custom/ (private, permanent), shared (.agents/ via PR). Both draft/ and custom/ survive setup.sh deployments. Orchestration agents (Build+, Ralph loop, runners) know they can create drafts for reusable parallel processing context and propose them for inclusion in aidevops.
   *(confidence: medium, validated: 3x)*
+
 ### Configuration & Preferences
 
 - **[USER_PREFERENCE]** Prefer conventional commits with scope: feat(memory): description
   *(confidence: medium, validated: 4x)*
+
 ### Patterns & Best Practices
 
 - **[SUCCESS_PATTERN]** [task:feature] Breaking task into 4 phases with separate commits worked well for Claude-Flow feature adoption [model:sonnet]
@@ -64,4 +67,3 @@ candidates and appends them here. Each graduation batch is timestamped.
 
 - **[CODEBASE_PATTERN]** Memory daemon should auto-extract learnings from thinking blocks when sessions end
   *(confidence: medium, validated: 5x)*
-
