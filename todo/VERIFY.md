@@ -228,4 +228,12 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: rg "hybrid|semantic" .agents/memory/README.md
   check: rg "auto.index|--hybrid" .agents/scripts/memory-helper.sh
 
+- [x] v037 t132.3 Model availability checker | PR #770 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/scripts/model-availability-helper.sh, .agents/scripts/supervisor-helper.sh, tests/test-model-availability.sh
+  check: file-exists .agents/scripts/model-availability-helper.sh
+  check: shellcheck .agents/scripts/model-availability-helper.sh
+  check: rg "resolve\|probe\|check" .agents/scripts/model-availability-helper.sh
+  check: rg "availability_helper" .agents/scripts/supervisor-helper.sh
+  check: file-exists tests/test-model-availability.sh
+
 <!-- VERIFY-QUEUE-END -->

@@ -558,3 +558,16 @@ VERIFY.md has the check definitions and pass/fail status.
   PASS | check 4: `rg "auto.index|--hybrid" .agents/scripts/memory-helper.sh`
   exit: 0 | 6 matches
 
+## v037 t132.3 | PASSED | 2026-02-09T15:03:20Z | by:marcusquinn | #770
+
+  PASS | check 1: `file-exists .agents/scripts/model-availability-helper.sh`
+  exit: 0 | exists (44552 bytes)
+  PASS | check 2: `shellcheck .agents/scripts/model-availability-helper.sh`
+  exit: 0 | 0 issues
+  PASS | check 3: `rg "resolve\|probe\|check" .agents/scripts/model-availability-helper.sh`
+  exit: 0 | 114 matches
+  PASS | check 4: `rg "availability_helper" .agents/scripts/supervisor-helper.sh`
+  exit: 0 | 6 matches
+  PASS | check 5: `file-exists tests/test-model-availability.sh`
+  exit: 0 | exists (9409 bytes)
+
