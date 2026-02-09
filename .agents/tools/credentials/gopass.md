@@ -180,8 +180,19 @@ See `tools/credentials/psst.md` for psst documentation.
               5. Return exit code
 ```
 
+## Encryption Stack
+
+gopass handles **individual secrets** (API keys, tokens, passwords). For other encryption needs:
+
+- **Config files in git** (YAML/JSON with encrypted values): Use SOPS -- `tools/credentials/sops.md`
+- **Directory encryption at rest** (sensitive folders): Use gocryptfs -- `tools/credentials/gocryptfs.md`
+- **Decision guide**: `tools/credentials/encryption-stack.md`
+
 ## Related
 
+- `tools/credentials/encryption-stack.md` -- Full encryption stack overview and decision tree
+- `tools/credentials/sops.md` -- SOPS config file encryption (age backend)
+- `tools/credentials/gocryptfs.md` -- gocryptfs directory encryption
 - `tools/credentials/api-key-setup.md` -- Plaintext credential setup
 - `tools/credentials/multi-tenant.md` -- Multi-tenant credential storage
 - `tools/credentials/psst.md` -- psst alternative for solo devs

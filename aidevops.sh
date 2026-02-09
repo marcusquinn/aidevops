@@ -851,6 +851,7 @@ cmd_init() {
     local enable_time_tracking=false
     local enable_database=false
     local enable_beads=false
+    local enable_sops=false
     
     case "$features" in
         all)
@@ -881,6 +882,9 @@ cmd_init() {
             enable_beads=true
             enable_planning=true  # beads requires planning
             ;;
+        sops)
+            enable_sops=true
+            ;;
         *)
             # Comma-separated list
             IFS=',' read -ra FEATURE_LIST <<< "$features"
@@ -898,6 +902,7 @@ cmd_init() {
                         enable_beads=true
                         enable_planning=true
                         ;;
+                    sops) enable_sops=true ;;
                 esac
             done
             ;;
@@ -933,12 +938,17 @@ cmd_init() {
     "seeds_path": "seeds",
     "auto_generate_migration": true
   },
-  "beads": {
-    "enabled": $enable_beads,
-    "sync_on_commit": false,
-    "auto_ready_check": true
+    "beads": {
+      "enabled": $enable_beads,
+      "sync_on_commit": false,
+      "auto_ready_check": true
+    },
+    "sops": {
+      "enabled": $enable_sops,
+      "backend": "age",
+      "patterns": ["*.secret.yaml", "*.secret.json", "configs/*.enc.json", "configs/*.enc.yaml"]
+    }
   }
-}
 EOF
     print_success "Created .aidevops.json"
     
@@ -1109,6 +1119,77 @@ EOF
         fi
     fi
     
+    # Initialize SOPS if enabled
+    if [[ "$enable_sops" == "true" ]]; then
+        print_info "Setting up SOPS encrypted config support..."
+        
+        # Check for sops and age
+        local sops_ready=true
+        if ! command -v sops &>/dev/null; then
+            print_warning "SOPS not installed"
+            echo "  Install with: brew install sops"
+            sops_ready=false
+        fi
+        if ! command -v age-keygen &>/dev/null; then
+            print_warning "age not installed (default SOPS backend)"
+            echo "  Install with: brew install age"
+            sops_ready=false
+        fi
+        
+        # Generate age key if none exists
+        local age_key_file="$HOME/.config/sops/age/keys.txt"
+        if [[ "$sops_ready" == "true" ]] && [[ ! -f "$age_key_file" ]]; then
+            print_info "Generating age key for SOPS..."
+            mkdir -p "$(dirname "$age_key_file")"
+            age-keygen -o "$age_key_file" 2>/dev/null
+            chmod 600 "$age_key_file"
+            print_success "Age key generated at $age_key_file"
+        fi
+        
+        # Create .sops.yaml if it doesn't exist
+        if [[ ! -f "$project_root/.sops.yaml" ]]; then
+            local age_pubkey=""
+            if [[ -f "$age_key_file" ]]; then
+                age_pubkey=$(grep -o 'age1[a-z0-9]*' "$age_key_file" | head -1)
+            fi
+            
+            if [[ -n "$age_pubkey" ]]; then
+                cat > "$project_root/.sops.yaml" << SOPSEOF
+# SOPS configuration - encrypts values in config files while keeping keys visible
+# See: .agents/tools/credentials/sops.md
+creation_rules:
+  - path_regex: '\.secret\.(yaml|yml|json)$'
+    age: >-
+      $age_pubkey
+  - path_regex: 'configs/.*\.enc\.(yaml|yml|json)$'
+    age: >-
+      $age_pubkey
+SOPSEOF
+                print_success "Created .sops.yaml with age key"
+            else
+                cat > "$project_root/.sops.yaml" << 'SOPSEOF'
+# SOPS configuration - encrypts values in config files while keeping keys visible
+# See: .agents/tools/credentials/sops.md
+#
+# Generate an age key first:
+#   age-keygen -o ~/.config/sops/age/keys.txt
+#
+# Then replace AGE_PUBLIC_KEY below with your public key:
+creation_rules:
+  - path_regex: '\.secret\.(yaml|yml|json)$'
+    age: >-
+      AGE_PUBLIC_KEY
+  - path_regex: 'configs/.*\.enc\.(yaml|yml|json)$'
+    age: >-
+      AGE_PUBLIC_KEY
+SOPSEOF
+                print_warning "Created .sops.yaml template (replace AGE_PUBLIC_KEY with your key)"
+            fi
+        else
+            print_info ".sops.yaml already exists"
+        fi
+    fi
+    
     # Add to .gitignore if needed
     local gitignore="$project_root/.gitignore"
     if [[ -f "$gitignore" ]]; then
@@ -1159,6 +1240,7 @@ EOF
     [[ "$enable_time_tracking" == "true" ]] && features_list="${features_list}time-tracking,"
     [[ "$enable_database" == "true" ]] && features_list="${features_list}database,"
     [[ "$enable_beads" == "true" ]] && features_list="${features_list}beads,"
+    [[ "$enable_sops" == "true" ]] && features_list="${features_list}sops,"
     features_list="${features_list%,}"  # Remove trailing comma
     
     # Register repo in repos.json
@@ -1174,6 +1256,7 @@ EOF
     [[ "$enable_time_tracking" == "true" ]] && echo "  ✓ Time tracking (estimates, actuals)"
     [[ "$enable_database" == "true" ]] && echo "  ✓ Database (schemas/, migrations/, seeds/)"
     [[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
+    [[ "$enable_sops" == "true" ]] && echo "  ✓ SOPS (encrypted config files with age backend)"
     echo ""
     echo "Next steps:"
     if [[ "$enable_beads" == "true" ]]; then
@@ -1558,12 +1641,19 @@ cmd_features() {
     echo "                 - Ready task detection (/ready)"
     echo "                 - Bi-directional sync with TODO.md/PLANS.md"
     echo ""
+    echo "  sops           Encrypted config files with SOPS + age"
+    echo "                 - Value-level encryption (keys visible, values encrypted)"
+    echo "                 - .sops.yaml with age backend (simpler than GPG)"
+    echo "                 - Patterns: *.secret.yaml, configs/*.enc.json"
+    echo "                 - See: .agents/tools/credentials/sops.md"
+    echo ""
     echo "Usage:"
-    echo "  aidevops init                    # Enable all features"
+    echo "  aidevops init                    # Enable all features (except sops)"
     echo "  aidevops init planning           # Enable only planning"
+    echo "  aidevops init sops               # Enable SOPS encryption"
     echo "  aidevops init beads              # Enable beads (includes planning)"
     echo "  aidevops init database           # Enable only database"
-    echo "  aidevops init planning,database  # Enable multiple"
+    echo "  aidevops init planning,sops      # Enable multiple"
     echo ""
 }
 

@@ -264,3 +264,12 @@ aidevops secret init              # One-time setup
 aidevops secret set API_KEY       # Store (hidden input)
 aidevops secret run some-command  # Use (injected + redacted)
 ```
+
+## Beyond API Keys
+
+For config files and directories with secrets, see the full encryption stack:
+
+- **Config files in git** (YAML/JSON with encrypted values): `tools/credentials/sops.md`
+- **Directory encryption at rest**: `tools/credentials/gocryptfs.md`
+- **Decision guide**: `tools/credentials/encryption-stack.md`
+- **Project setup**: `aidevops init sops` to add SOPS support to a project
