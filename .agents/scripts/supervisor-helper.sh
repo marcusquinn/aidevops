@@ -4506,6 +4506,68 @@ extract_log_metadata() {
 }
 
 #######################################
+# Validate that a PR belongs to a task by checking title/branch for task ID (t195)
+#
+# Prevents false attribution: a PR found via branch lookup must contain the
+# task ID in its title or head branch name. Without this, stale branches or
+# reused branch names could cause the supervisor to attribute an unrelated PR
+# to a task, triggering false completion cascades (TODO.md [x] → GH issue close).
+#
+# $1: task_id (e.g., "t195")
+# $2: repo_slug (e.g., "owner/repo")
+# $3: pr_url (the candidate PR URL to validate)
+#
+# Returns 0 if PR belongs to task, 1 if not
+# Outputs validated PR URL to stdout on success (empty on failure)
+#######################################
+validate_pr_belongs_to_task() {
+    local task_id="$1"
+    local repo_slug="$2"
+    local pr_url="$3"
+
+    if [[ -z "$pr_url" || -z "$task_id" || -z "$repo_slug" ]]; then
+        return 1
+    fi
+
+    # Extract PR number from URL
+    local pr_number
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+    if [[ -z "$pr_number" ]]; then
+        return 1
+    fi
+
+    # Fetch PR title and head branch in a single API call
+    local pr_info
+    pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
+        --json title,headRefName 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+
+    if [[ -z "$pr_info" ]]; then
+        log_warn "validate_pr_belongs_to_task: cannot fetch PR #$pr_number for $task_id"
+        return 1
+    fi
+
+    local pr_title pr_branch
+    pr_title=$(echo "$pr_info" | jq -r '.title // ""' 2>/dev/null || echo "")
+    pr_branch=$(echo "$pr_info" | jq -r '.headRefName // ""' 2>/dev/null || echo "")
+
+    # Check if task ID appears in title or branch (case-insensitive).
+    # Uses word boundary \b so "t195" matches "feature/t195", "(t195)",
+    # "t195-fix-auth" but NOT "t1950" or "t1195".
+    if echo "$pr_title" | grep -qi "\b${task_id}\b" 2>/dev/null; then
+        echo "$pr_url"
+        return 0
+    fi
+
+    if echo "$pr_branch" | grep -qi "\b${task_id}\b" 2>/dev/null; then
+        echo "$pr_url"
+        return 0
+    fi
+
+    log_warn "validate_pr_belongs_to_task: PR #$pr_number does not reference $task_id (title='$pr_title', branch='$pr_branch')"
+    return 1
+}
+
+#######################################
 # Evaluate a completed worker's outcome using log analysis
 # Returns: complete:<detail>, retry:<reason>, blocked:<reason>, failed:<reason>
 #
@@ -4628,28 +4690,52 @@ evaluate_worker() {
         meta_pr_url="$tpr_url"
     fi
 
+    # Resolve repo slug early — needed for PR validation (t195) and fallback detection
+    local task_repo task_branch repo_slug_detect
+    task_repo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    task_branch=$(sqlite3 "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    repo_slug_detect=""
+    if [[ -n "$task_repo" ]]; then
+        repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+    fi
+
+    # Validate DB-seeded PR URL belongs to this task (t195): a previous pulse
+    # may have stored a PR URL that doesn't actually reference this task ID
+    # (e.g., branch reuse, stale data). Validate before using for attribution.
+    if [[ -n "$meta_pr_url" && -n "$repo_slug_detect" ]]; then
+        local validated_url
+        validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_detect" "$meta_pr_url") || validated_url=""
+        if [[ -z "$validated_url" ]]; then
+            log_warn "evaluate_worker: DB PR URL for $task_id failed task ID validation — clearing"
+            meta_pr_url=""
+        fi
+    fi
+
     # Fallback PR URL detection: if no PR URL from log or DB, check GitHub
     # for a PR matching the task's branch. Tries the DB branch column first
     # (actual worktree branch), then falls back to feature/${task_id} convention.
     # This fixes the clean_exit_no_signal retry loop (t161): workers that create
     # a PR and exit 0 were retried because the branch name didn't match the
     # hardcoded feature/${task_id} pattern.
-    if [[ -z "$meta_pr_url" ]]; then
-        local task_repo task_branch
-        task_repo=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-        task_branch=$(sqlite3 "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-        if [[ -n "$task_repo" ]]; then
-            local repo_slug_detect
-            repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
-            if [[ -n "$repo_slug_detect" ]]; then
-                # Try DB branch first (actual worktree branch name)
-                if [[ -n "$task_branch" ]]; then
-                    meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "$task_branch" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
-                fi
-                # Fallback to convention: feature/${task_id}
-                if [[ -z "$meta_pr_url" ]]; then
-                    meta_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
-                fi
+    # Validated against task ID before attribution (t195).
+    if [[ -z "$meta_pr_url" && -n "$repo_slug_detect" ]]; then
+        local candidate_pr_url=""
+        # Try DB branch first (actual worktree branch name)
+        if [[ -n "$task_branch" ]]; then
+            candidate_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "$task_branch" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+        fi
+        # Fallback to convention: feature/${task_id}
+        if [[ -z "$candidate_pr_url" ]]; then
+            candidate_pr_url=$(gh pr list --repo "$repo_slug_detect" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
+        fi
+        # Validate candidate PR contains task ID in title or branch (t195)
+        if [[ -n "$candidate_pr_url" ]]; then
+            local validated_url
+            validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_detect" "$candidate_pr_url") || validated_url=""
+            if [[ -n "$validated_url" ]]; then
+                meta_pr_url="$validated_url"
+            else
+                log_warn "evaluate_worker: candidate PR for $task_id failed task ID validation — ignoring"
             fi
         fi
     fi
@@ -4776,9 +4862,8 @@ evaluate_worker() {
     # and prevents false retries when the worker completed but didn't emit
     # a signal (e.g., context exhaustion after creating a PR).
 
-    local task_repo task_branch task_worktree
-    task_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
-    task_branch=$(db "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    # Reuse task_repo/task_branch from PR detection above; fetch worktree
+    local task_worktree
     task_worktree=$(db "$SUPERVISOR_DB" "SELECT worktree FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
 
     if [[ -n "$task_repo" && -d "$task_repo" ]]; then
@@ -5560,6 +5645,7 @@ check_pr_status() {
     # If no PR URL stored, try to find one via branch name lookup.
     # Check DB branch column first (actual worktree branch), then fall back
     # to feature/${task_id} convention. Mirrors evaluate_worker() fix (t161).
+    # Validated against task ID before persisting (t195).
     if [[ -z "$pr_url" || "$pr_url" == "no_pr" || "$pr_url" == "task_only" ]]; then
         local task_repo_check
         task_repo_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
@@ -5567,7 +5653,7 @@ check_pr_status() {
             local repo_slug_check
             repo_slug_check=$(git -C "$task_repo_check" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
             if [[ -n "$repo_slug_check" ]]; then
-                local found_pr_url
+                local found_pr_url=""
                 # Try DB branch first (actual worktree branch name)
                 local task_branch_check
                 task_branch_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
@@ -5578,9 +5664,18 @@ check_pr_status() {
                 if [[ -z "${found_pr_url:-}" ]]; then
                     found_pr_url=$(gh pr list --repo "$repo_slug_check" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
                 fi
+                # Validate candidate PR contains task ID before persisting (t195)
                 if [[ -n "$found_pr_url" ]]; then
-                    pr_url="$found_pr_url"
-                    log_cmd "db-update-pr-url" sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$found_pr_url")' WHERE id = '$escaped_id';" || log_warn "Failed to persist PR URL for $task_id"
+                    local validated_url
+                    validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_check" "$found_pr_url") || validated_url=""
+                    if [[ -n "$validated_url" ]]; then
+                        pr_url="$validated_url"
+                        log_cmd "db-update-pr-url" sqlite3 "$SUPERVISOR_DB" "UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")' WHERE id = '$escaped_id';" || log_warn "Failed to persist PR URL for $task_id"
+                    else
+                        log_warn "check_pr_status: candidate PR for $task_id failed task ID validation — not persisting"
+                        echo "no_pr"
+                        return 0
+                    fi
                 else
                     echo "no_pr"
                     return 0
