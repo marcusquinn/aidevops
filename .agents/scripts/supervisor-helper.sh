@@ -2214,14 +2214,27 @@ get_task_assignee() {
 #######################################
 cmd_claim() {
     local task_id="${1:-}"
+    local explicit_root="${2:-}"
 
     if [[ -z "$task_id" ]]; then
-        log_error "Usage: supervisor-helper.sh claim <task_id>"
+        log_error "Usage: supervisor-helper.sh claim <task_id> [project_root]"
         return 1
     fi
 
     local project_root
-    project_root=$(find_project_root 2>/dev/null || echo ".")
+    if [[ -n "$explicit_root" && -f "$explicit_root/TODO.md" ]]; then
+        project_root="$explicit_root"
+    else
+        project_root=$(find_project_root 2>/dev/null || echo "")
+        # Fallback: look up repo from task DB record (needed for cron/non-interactive)
+        if [[ -z "$project_root" || ! -f "$project_root/TODO.md" ]]; then
+            local db_repo=""
+            db_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+            if [[ -n "$db_repo" && -f "$db_repo/TODO.md" ]]; then
+                project_root="$db_repo"
+            fi
+        fi
+    fi
     local todo_file="$project_root/TODO.md"
 
     if [[ ! -f "$todo_file" ]]; then
@@ -2310,14 +2323,27 @@ cmd_claim() {
 #######################################
 cmd_unclaim() {
     local task_id="${1:-}"
+    local explicit_root="${2:-}"
 
     if [[ -z "$task_id" ]]; then
-        log_error "Usage: supervisor-helper.sh unclaim <task_id>"
+        log_error "Usage: supervisor-helper.sh unclaim <task_id> [project_root]"
         return 1
     fi
 
     local project_root
-    project_root=$(find_project_root 2>/dev/null || echo ".")
+    if [[ -n "$explicit_root" && -f "$explicit_root/TODO.md" ]]; then
+        project_root="$explicit_root"
+    else
+        project_root=$(find_project_root 2>/dev/null || echo "")
+        # Fallback: look up repo from task DB record (needed for cron/non-interactive)
+        if [[ -z "$project_root" || ! -f "$project_root/TODO.md" ]]; then
+            local db_repo=""
+            db_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+            if [[ -n "$db_repo" && -f "$db_repo/TODO.md" ]]; then
+                project_root="$db_repo"
+            fi
+        fi
+    fi
     local todo_file="$project_root/TODO.md"
 
     if [[ ! -f "$todo_file" ]]; then
@@ -3263,7 +3289,8 @@ cmd_dispatch() {
 
     # Claim the task before dispatching (t165 — TODO.md primary, GH Issue sync optional)
     # CRITICAL: abort dispatch if claim fails (race condition = another worker claimed first)
-    if ! cmd_claim "$task_id"; then
+    # Pass trepo so claim works from cron (where $PWD != repo dir)
+    if ! cmd_claim "$task_id" "${trepo:-.}"; then
         log_error "Failed to claim $task_id — aborting dispatch"
         return 1
     fi
