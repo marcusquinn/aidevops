@@ -655,7 +655,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
   - [x] t102.2 Semantic Memory with Embeddings ~2h blocked-by:none ref:GH#742 completed:2026-02-09 pr:#768
     - Notes: Add optional HNSW vector index using all-MiniLM-L6-v2 via ONNX (~90MB). Create memory-embeddings-helper.sh. Extend memory-helper.sh with --semantic flag. Keep FTS5 as default, embeddings opt-in.
-  - [ ] t102.3 Success Pattern Tracking ~1h blocked-by:t102.2 ref:GH#743
+  - [ ] t102.3 Success Pattern Tracking ~1h blocked-by:t102.2 ref:GH#743 assignee:marcusquinn started:2026-02-09T16:07:41Z
     - Notes: Add SUCCESS_PATTERN and FAILURE_PATTERN memory types. Auto-tag with task type, model, outcome. Create pattern-tracker-helper.sh and /patterns command.
   - [ ] t102.4 Documentation & Integration ~30m blocked-by:t102.1,t102.2,t102.3 ref:GH#744
     - Notes: Create aidevops/claude-flow-comparison.md. Update memory/README.md, AGENTS.md, subagent-index.toon.
