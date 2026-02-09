@@ -180,6 +180,7 @@ log_info() { echo -e "${BLUE}[SUPERVISOR]${NC} $*"; }
 log_success() { echo -e "${GREEN}[SUPERVISOR]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*"; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
+log_verbose() { [[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" || true; }
 
 # Supervisor stderr log file - captures stderr from commands that previously
 # used 2>/dev/null, making errors debuggable without cluttering terminal output.
