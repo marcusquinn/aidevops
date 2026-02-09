@@ -992,6 +992,46 @@ else
     fail "Exit 0 with error strings should NOT be blocked" "Got: $eval_result"
 fi
 
+# Test: PR URL extracted from final "type":"text" JSON entry (t192)
+# Workers using opencode --format json emit PR URLs in their final text output.
+# The supervisor should extract this and return complete:<pr_url> instead of
+# retry:clean_exit_no_signal. This is the core fix for t192.
+create_eval_task "eval-t192a" '{"type":"step_start","timestamp":1770606000000}
+{"type":"text","timestamp":1770606100000,"part":{"type":"text","text":"Reading TODO.md... found PR https://github.com/other/repo/pull/999 from prior task"}}
+{"type":"tool_use","timestamp":1770606200000,"part":{"type":"tool_use","name":"bash","input":"gh pr create"}}
+{"type":"text","timestamp":1770606693412,"part":{"type":"text","text":"Task eval-t192a is complete. PR created: https://github.com/marcusquinn/aidevops/pull/718\n\nImplemented the feature successfully."}}
+{"type":"step_finish","timestamp":1770606693614,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t192a --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "complete.*https://github.com/marcusquinn/aidevops/pull/718"; then
+    pass "PR URL from final text entry -> complete:<pr_url> (t192)"
+else
+    fail "PR URL in final text should yield complete, not retry" "Got: $eval_result"
+fi
+
+# Test: PR URL from earlier text entry is NOT used when final entry has no PR (t192/t151)
+# The last "type":"text" entry is authoritative. Earlier entries may reference other PRs.
+# Include WORKER_STARTED sentinel and enough content to pass the t183 early checks.
+create_eval_task "eval-t192b" 'WORKER_STARTED task_id=eval-t192b pid=12345 timestamp=2026-02-09T03:00:00Z
+{"type":"step_start","timestamp":1770606000000,"part":{"type":"step-start"}}
+{"type":"text","timestamp":1770606100000,"part":{"type":"text","text":"Memory recall: PR https://github.com/other/repo/pull/555 was merged yesterday"}}
+{"type":"tool_use","timestamp":1770606200000,"part":{"type":"tool_use","name":"bash","input":"echo working"}}
+{"type":"text","timestamp":1770606300000,"part":{"type":"text","text":"Working on the task..."}}
+{"type":"text","timestamp":1770606693412,"part":{"type":"text","text":"I was unable to complete the task due to missing dependencies."}}
+{"type":"step_finish","timestamp":1770606693614,"part":{"type":"step-finish","reason":"stop"}}
+EXIT:0'
+eval_result=$(sup evaluate eval-t192b --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*clean_exit_no_signal"; then
+    pass "No PR in final text + exit 0 -> retry:clean_exit_no_signal (t192 safe)"
+else
+    # Also acceptable: complete:task_only if git heuristic finds commits
+    if echo "$eval_result" | grep -q "complete.*task_only\|retry"; then
+        pass "No PR in final text -> retry or task_only (t192 safe, no false PR)"
+    else
+        fail "Should not extract PR from earlier text entries" "Got: $eval_result"
+    fi
+fi
+
 # ============================================================
 # SECTION 7: Worktree Path Integrity
 # ============================================================
