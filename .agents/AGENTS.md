@@ -312,6 +312,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | WordPress | `tools/wordpress/wp-dev.md`, `tools/wordpress/mainwp.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md` |
+| YouTube | `youtube.md` (orchestrator), `youtube/channel-intel.md`, `youtube/topic-research.md`, `youtube/script-writer.md`, `youtube/optimizer.md`, `youtube/pipeline.md` |
 | Vision | `tools/vision/overview.md` (decision tree, then `image-generation.md`, `image-understanding.md`, `image-editing.md`) |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
 | Encryption | `tools/credentials/encryption-stack.md` (decision tree), `tools/credentials/sops.md`, `tools/credentials/gocryptfs.md`, `tools/credentials/gopass.md` |
