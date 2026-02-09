@@ -122,6 +122,60 @@ When using the Task tool to dispatch subagents, the `model:` field in the subage
 
 For headless dispatch, the supervisor reads `model:` from subagent frontmatter and passes it as the `--model` flag to the CLI.
 
+## Provider Discovery
+
+Before routing to a model, verify the provider is available. The `compare-models-helper.sh discover` command detects configured providers by checking environment variables, gopass secrets, and `credentials.sh`:
+
+```bash
+# Quick check: which providers have API keys?
+compare-models-helper.sh discover
+
+# Verify keys work by probing provider APIs
+compare-models-helper.sh discover --probe
+
+# List live models from each verified provider
+compare-models-helper.sh discover --list-models
+
+# Machine-readable output for scripting
+compare-models-helper.sh discover --json
+```
+
+Discovery checks three sources (in order): environment variables, gopass encrypted secrets, plaintext `credentials.sh`. Use discovery output to constrain routing to models the user can actually access.
+
+## Fallback Routing
+
+Each tier defines a primary model and a fallback from a different provider. When the primary provider is unavailable (no API key configured, key invalid, or API down), route to the fallback:
+
+| Tier | Primary | Fallback | When to Fallback |
+|------|---------|----------|------------------|
+| `haiku` | claude-3-5-haiku | gemini-2.5-flash | No Anthropic key |
+| `flash` | gemini-2.5-flash | gpt-4.1-mini | No Google key |
+| `sonnet` | claude-sonnet-4 | gpt-4.1 | No Anthropic key |
+| `pro` | gemini-2.5-pro | claude-sonnet-4 | No Google key |
+| `opus` | claude-opus-4 | o3 | No Anthropic key |
+
+The supervisor resolves fallbacks automatically during headless dispatch. For interactive sessions, the orchestrating agent should run `compare-models-helper.sh discover` to check availability before selecting a model.
+
+## Model Comparison
+
+For detailed model comparison (pricing, context windows, capabilities), use the compare-models helper:
+
+```bash
+# List all tracked models with pricing
+compare-models-helper.sh list
+
+# Compare specific models side-by-side
+compare-models-helper.sh compare sonnet gpt-4o gemini-pro
+
+# Get task-specific recommendations
+compare-models-helper.sh recommend "code review"
+
+# Show capability matrix
+compare-models-helper.sh capabilities
+```
+
+Interactive commands: `/compare-models` (with live web fetch), `/compare-models-free` (offline), `/route <task>` (suggest optimal tier).
+
 ## Model Registry
 
 The model registry (`model-registry-helper.sh`) maintains a SQLite database tracking all known models across providers. It syncs from subagent frontmatter, embedded pricing data, and live provider APIs. Use `model-registry-helper.sh status` to check registry health and `model-registry-helper.sh check` to verify configured models are available.
@@ -154,3 +208,11 @@ Is the task simple classification/formatting?
 | "Generate a commit message" | haiku | Simple text generation |
 | "Write unit tests for this module" | sonnet | Code generation |
 | "Evaluate 3 database options for our use case" | opus | Complex trade-off analysis |
+
+## Related
+
+- `tools/ai-assistants/compare-models.md` — Full model comparison subagent
+- `tools/ai-assistants/models/README.md` — Model-specific subagent definitions
+- `scripts/compare-models-helper.sh` — CLI for model comparison and provider discovery
+- `scripts/model-registry-helper.sh` — Provider/model registry with periodic sync
+- `scripts/commands/route.md` — `/route` command (uses this document's routing rules)
