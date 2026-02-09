@@ -3627,11 +3627,20 @@ extract_log_metadata() {
         echo "signal=none"
     fi
 
-    # PR URL: NOT extracted from log content (t151)
-    # Log grep picks up any PR URL mentioned in worker context (memory recalls,
-    # TODO reads, git log), causing wrong PR URLs on tasks. Authoritative lookup
-    # via gh pr list --head is done in evaluate_worker() and check_pr_status().
-    echo "pr_url="
+    # PR URL extraction (t192): Extract from the worker's FINAL text output only.
+    # Full-log grep is unsafe (t151) — memory recalls, TODO reads, and git log
+    # embed PR URLs from other tasks. But the last "type":"text" JSON entry is
+    # the worker's own summary and is authoritative. This eliminates the race
+    # condition where gh pr list --head (in evaluate_worker) misses a just-created
+    # PR, causing false clean_exit_no_signal retries.
+    # Fallback: gh pr list --head in evaluate_worker() remains as a safety net.
+    local final_pr_url=""
+    local last_text_line
+    last_text_line=$(grep '"type":"text"' "$log_file" 2>/dev/null | tail -1 || true)
+    if [[ -n "$last_text_line" ]]; then
+        final_pr_url=$(echo "$last_text_line" | grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' | tail -1 || true)
+    fi
+    echo "pr_url=${final_pr_url}"
 
     # Exit code
     local exit_line
