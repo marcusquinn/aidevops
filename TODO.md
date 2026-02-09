@@ -358,7 +358,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <<<<<<< Updated upstream
   - [x] t132.6 Quality gate with model escalation ~3h blocked-by:t132.5 ref:GH#738 completed:2026-02-09 pr:#788
     - Notes: PR #788 merged. Added get_next_tier(), check_output_quality(), run_quality_gate() to supervisor-helper.sh. Heuristic quality checks (log size, error patterns, file changes, syntax errors, token-to-substance ratio). Escalation chain: haiku->sonnet->opus, flash->pro. Schema: escalation_depth/max_escalation on tasks, skip_quality_gate on batches. --skip-quality-gate flag on batch command.
-  - [ ] t132.7 Runner and cron-helper multi-provider support ~2h blocked-by:t132.4 ref:GH#739
+  - [ ] t132.7 Runner and cron-helper multi-provider support ~2h blocked-by:t132.4 ref:GH#739 assignee:marcusquinn started:2026-02-09T17:25:32Z
     - Notes: Extend runner-helper.sh and cron-helper.sh --model flag to accept tier names (not just provider/model strings). Add --provider flag. Support Gemini CLI, OpenCode server, Claude CLI as dispatch backends. Auto-detect available backends.
   - [ ] t132.8 Cross-model review workflow (second-opinion pattern) ~2h blocked-by:t132.7 ref:GH#740
     - Notes: Dispatch same review task to multiple models (e.g., Claude + Gemini), collect results, merge/diff findings. Use case: code review, security audit, architecture review. Configurable via `review-models:` in task metadata.
