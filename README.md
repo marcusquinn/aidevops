@@ -1477,14 +1477,14 @@ Primary agents as registered in `subagent-index.toon` (11 total). MCPs are loade
 | Name | File | Purpose | Model Tier |
 |------|------|---------|------------|
 | Build+ | `build-plus.md` | Enhanced Build with context tools (default agent) | opus |
-| SEO | `seo.md` | SEO optimization and analysis | opus |
-| Content | `content.md` | Content creation workflows | opus |
-| Research | `research.md` | Research and analysis tasks | flash |
-| Marketing | `marketing.md` | Marketing strategy and email campaigns | opus |
-| Sales | `sales.md` | Sales operations and CRM pipeline | opus |
-| Legal | `legal.md` | Legal compliance | opus |
 | Accounts | `accounts.md` | Financial operations | opus |
+| Content | `content.md` | Content creation workflows | opus |
 | Health | `health.md` | Health and wellness | opus |
+| Legal | `legal.md` | Legal compliance | opus |
+| Marketing | `marketing.md` | Marketing strategy and email campaigns | opus |
+| Research | `research.md` | Research and analysis tasks | gemini/grok |
+| Sales | `sales.md` | Sales operations and CRM pipeline | opus |
+| SEO | `seo.md` | SEO optimization and analysis | opus |
 | Social-Media | `social-media.md` | Social media management | opus |
 | Video | `video.md` | AI video generation and prompt engineering | opus |
 
