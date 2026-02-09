@@ -257,26 +257,6 @@ See `.agents/tools/task-management/beads.md` for complete documentation and inst
 
 **Your AI assistant now has agentic access to 30+ service integrations.**
 
-### OpenCode Antigravity OAuth Plugin
-
-The setup automatically installs the [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) plugin, enabling Google OAuth authentication for OpenCode. This gives you access to Antigravity rate limits and premium models.
-
-**After setup, authenticate:**
-
-```bash
-opencode auth login
-# Select: Google → OAuth with Google (Antigravity)
-# Press Enter to skip Project ID prompt
-```
-
-**Available models via Antigravity:**
-
-- `gemini-3-pro-high` / `gemini-3-pro-low` / `gemini-3-flash`
-- `claude-sonnet-4-5` / `claude-sonnet-4-5-thinking` / `claude-opus-4-5-thinking`
-- `gpt-oss-120b-medium`
-
-**Multi-account load balancing:** Add multiple Google accounts for automatic rate limit distribution and failover. See the [plugin documentation](https://github.com/NoeFabris/opencode-antigravity-auth) for model configuration.
-
 ### OpenCode Anthropic OAuth (Built-in)
 
 OpenCode v1.1.36+ includes Anthropic OAuth authentication natively. No external plugin is needed.
@@ -888,7 +868,7 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 
 ## **MCP Integrations**
 
-**Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity).
+**Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode).
 
 ### **All Supported MCPs (19 available)**
 

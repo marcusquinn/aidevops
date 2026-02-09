@@ -25,7 +25,7 @@ tools:
 
 - OpenCode, Cursor, Claude Code/Desktop, Gemini CLI
 - Windsurf, Continue.dev, Cody, Zed
-- GitHub Copilot, Kilo Code, Kiro, AntiGravity
+- GitHub Copilot, Kilo Code, Kiro
 - Droid (Factory.AI), Warp AI, Aider, Qwen
 
 **Checklist**:
@@ -216,7 +216,7 @@ Use `.agents/tools/context/augment-context-engine.md` as a reference template.
 5. **AI Assistant Configurations** - One section per assistant:
    - OpenCode, Claude Code, Cursor, Windsurf
    - Continue.dev, Cody, Zed, GitHub Copilot
-   - Kilo Code, Kiro, AntiGravity, Gemini CLI
+   - Kilo Code, Kiro, Gemini CLI
    - Droid (Factory.AI), Warp AI, Aider, Qwen
 
 6. **Verification** - Test prompt and expected results
@@ -304,7 +304,7 @@ configure_{mcp_name}_mcp() {
 | Zed | Custom server UI | Document only |
 | GitHub Copilot | `.vscode/mcp.json` | Per-project |
 | Kilo/Kiro | Global MCP config | JSON merge |
-| AntiGravity | `~/.gemini/antigravity/` | JSON merge |
+
 
 ## Step 7: Update setup.sh (If Prerequisites Needed)
 

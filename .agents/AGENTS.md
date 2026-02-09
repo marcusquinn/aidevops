@@ -5,7 +5,7 @@ mode: subagent
 
 **New to aidevops?** Type `/onboarding` to get started with an interactive setup wizard.
 
-**Supported tools:** [OpenCode](https://opencode.ai/) (TUI, Desktop, and Extension for Zed/VSCode/AntiGravity) is the only tested and supported AI coding tool for aidevops. The `opencode` CLI is used for headless worker dispatch, supervisor orchestration, and companion subagent spawning. aidevops is also available in the Claude marketplace.
+**Supported tools:** [OpenCode](https://opencode.ai/) (TUI, Desktop, and Extension for Zed/VSCode) is the only tested and supported AI coding tool for aidevops. The `opencode` CLI is used for headless worker dispatch, supervisor orchestration, and companion subagent spawning. aidevops is also available in the Claude marketplace.
 
 **Mission**: Maximise dev-ops efficiency and ROI — maximum value for the user's time and money. Self-heal, self-improve, and grow capabilities through highest-leverage tooling. See `prompts/build.txt` for the full mission statement.
 
