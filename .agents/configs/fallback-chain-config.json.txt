@@ -3,45 +3,36 @@
   "_docs": "See .agents/tools/ai-assistants/fallback-chains.md for full documentation",
 
   "chains": {
-    "_comment": "Per-tier fallback chains. Models tried in order. Only use providers configured in OpenCode (anthropic, google). Never use openrouter (expensive gateway).",
+    "_comment": "Per-tier fallback chains. Anthropic ONLY. Never use openrouter, openai, or google providers for worker dispatch.",
 
     "haiku": [
-      "anthropic/claude-haiku-4-5",
-      "google/gemini-2.5-flash"
+      "anthropic/claude-haiku-4-5"
     ],
     "flash": [
-      "google/gemini-2.5-flash",
       "anthropic/claude-haiku-4-5"
     ],
     "sonnet": [
-      "anthropic/claude-sonnet-4-5",
-      "google/gemini-2.5-pro"
+      "anthropic/claude-sonnet-4-5"
     ],
     "pro": [
-      "google/gemini-2.5-pro",
       "anthropic/claude-sonnet-4-5"
     ],
     "opus": [
-      "anthropic/claude-opus-4-6",
-      "google/gemini-2.5-pro"
+      "anthropic/claude-opus-4-6"
     ],
     "coding": [
       "anthropic/claude-opus-4-6",
-      "anthropic/claude-sonnet-4-5",
-      "google/gemini-2.5-pro"
+      "anthropic/claude-sonnet-4-5"
     ],
     "eval": [
-      "anthropic/claude-sonnet-4-5",
-      "google/gemini-2.5-flash"
+      "anthropic/claude-sonnet-4-5"
     ],
     "health": [
-      "anthropic/claude-sonnet-4-5",
-      "google/gemini-2.5-flash"
+      "anthropic/claude-sonnet-4-5"
     ],
 
     "default": [
-      "anthropic/claude-sonnet-4-5",
-      "google/gemini-2.5-pro"
+      "anthropic/claude-sonnet-4-5"
     ]
   },
 
