@@ -76,7 +76,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
   - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09
-  - [ ] t020.4 Pull command (GH to TODO.md) #feature ~30m
+  - [ ] t020.4 Pull command (GH to TODO.md) #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:36Z
   - [ ] t020.5 Close + status commands #feature ~30m
   - [ ] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m
 - [ ] t194 Daily model registry refresh — detect new/changed model IDs from OpenCode providers #feature #supervisor #model-routing ~2h (ai:1.5h test:30m) ref:GH#798 assignee:marcusquinn started:2026-02-09T20:46:06Z logged:2026-02-09
