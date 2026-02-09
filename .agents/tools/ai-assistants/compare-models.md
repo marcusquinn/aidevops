@@ -21,7 +21,8 @@ model: sonnet
 
 - **Purpose**: Compare AI models by capability, pricing, context window, and task suitability
 - **Commands**: `/compare-models` (full, with web fetch), `/compare-models-free` (offline, embedded data)
-- **Helper**: `compare-models-helper.sh [list|compare|recommend|pricing|context|providers|capabilities]`
+- **Helper**: `compare-models-helper.sh [list|compare|recommend|pricing|context|providers|capabilities|discover]`
+- **Discovery**: `compare-models-helper.sh discover [--probe] [--list-models] [--json]`
 - **Data sources**: Embedded reference data + optional live web fetch for latest pricing
 
 <!-- AI-CONTEXT-END -->
@@ -122,6 +123,31 @@ For each comparison, include:
 1. **Winner by category**: Best for cost, capability, context, speed
 2. **aidevops tier mapping**: How models map to haiku/flash/sonnet/pro/opus tiers
 3. **Trade-offs**: What you gain/lose with each choice
+
+## Model Discovery
+
+Before comparing models, discover which providers the user has configured:
+
+```bash
+# Quick check: which providers have API keys configured?
+~/.aidevops/agents/scripts/compare-models-helper.sh discover
+
+# Verify keys actually work by probing provider APIs
+~/.aidevops/agents/scripts/compare-models-helper.sh discover --probe
+
+# List all live models from each verified provider
+~/.aidevops/agents/scripts/compare-models-helper.sh discover --list-models
+
+# Machine-readable output for scripting
+~/.aidevops/agents/scripts/compare-models-helper.sh discover --json
+```
+
+Discovery checks three sources for API keys (in order):
+1. Environment variables (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
+2. gopass encrypted secrets (`aidevops/<KEY_NAME>`)
+3. Plaintext credentials (`~/.config/aidevops/credentials.sh`)
+
+Use discovery output to filter `/compare-models` to only show models the user can actually use.
 
 ## Related
 
