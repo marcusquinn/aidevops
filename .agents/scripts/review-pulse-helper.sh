@@ -375,7 +375,7 @@ create_tasks_from_findings() {
     ensure_dirs
 
     local latest_findings
-    latest_findings=$(ls -t "$FINDINGS_DIR"/*-findings.json 2>/dev/null | head -1)
+    latest_findings=$(find "$FINDINGS_DIR" -maxdepth 1 -name '*-findings.json' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -1 | cut -f2-)
 
     if [[ -z "$latest_findings" || ! -f "$latest_findings" ]]; then
         print_warning "No findings files found. Run 'review-pulse-helper.sh run' first."
@@ -448,7 +448,7 @@ show_findings() {
     ensure_dirs
 
     local latest_findings
-    latest_findings=$(ls -t "$FINDINGS_DIR"/*-findings.json 2>/dev/null | head -1)
+    latest_findings=$(find "$FINDINGS_DIR" -maxdepth 1 -name '*-findings.json' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -1 | cut -f2-)
 
     if [[ -z "$latest_findings" || ! -f "$latest_findings" ]]; then
         print_warning "No findings files found. Run 'review-pulse-helper.sh run' first."
@@ -552,7 +552,7 @@ show_status() {
     # Check data directory
     if [[ -d "$FINDINGS_DIR" ]]; then
         local findings_count
-        findings_count=$(ls "$FINDINGS_DIR"/*-findings.json 2>/dev/null | wc -l | tr -d ' ')
+        findings_count=$(find "$FINDINGS_DIR" -maxdepth 1 -name '*-findings.json' 2>/dev/null | wc -l | tr -d ' ')
         print_info "Findings files: $findings_count"
     else
         print_info "Findings directory: not created yet"
