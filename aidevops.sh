@@ -2419,6 +2419,72 @@ cmd_plugin() {
             print_success "Plugin '$target_name' removed"
             ;;
 
+        init)
+            local target_dir="${1:-.}"
+            local plugin_name="${2:-my-plugin}"
+            local namespace="${3:-$plugin_name}"
+
+            if [[ "$target_dir" != "." && -d "$target_dir" ]]; then
+                local existing_count
+                existing_count=$(find "$target_dir" -maxdepth 1 -type f | wc -l | tr -d ' ')
+                if [[ "$existing_count" -gt 0 ]]; then
+                    print_error "Directory '$target_dir' already has files. Use an empty directory."
+                    return 1
+                fi
+            fi
+
+            mkdir -p "$target_dir"
+
+            local template_dir="$agents_dir/templates/plugin-template"
+            if [[ ! -d "$template_dir" ]]; then
+                print_error "Plugin template not found at $template_dir"
+                print_info "Run 'aidevops update' to get the latest templates."
+                return 1
+            fi
+
+            # Copy template files with placeholder substitution
+            local plugin_name_upper
+            plugin_name_upper=$(echo "$plugin_name" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+
+            # AGENTS.md
+            sed -e "s|{{PLUGIN_NAME}}|$plugin_name|g" \
+                -e "s|{{PLUGIN_NAME_UPPER}}|$plugin_name_upper|g" \
+                -e "s|{{NAMESPACE}}|$namespace|g" \
+                -e "s|{{REPO_URL}}|https://github.com/user/aidevops-$namespace.git|g" \
+                "$template_dir/AGENTS.md" > "$target_dir/AGENTS.md"
+
+            # Main agent file
+            sed -e "s|{{PLUGIN_NAME}}|$plugin_name|g" \
+                -e "s|{{PLUGIN_DESCRIPTION}}|$plugin_name plugin for aidevops|g" \
+                -e "s|{{NAMESPACE}}|$namespace|g" \
+                "$template_dir/main-agent.md" > "$target_dir/$namespace.md"
+
+            # Example subagent directory
+            mkdir -p "$target_dir/$namespace"
+            sed -e "s|{{PLUGIN_NAME}}|$plugin_name|g" \
+                -e "s|{{NAMESPACE}}|$namespace|g" \
+                "$template_dir/example-subagent.md" > "$target_dir/$namespace/example.md"
+
+            # Scripts directory
+            mkdir -p "$target_dir/scripts"
+
+            print_success "Plugin scaffolded in $target_dir/"
+            echo ""
+            echo "Structure:"
+            echo "  $target_dir/"
+            echo "  ├── AGENTS.md              # Plugin documentation"
+            echo "  ├── $namespace.md           # Main agent"
+            echo "  ├── $namespace/"
+            echo "  │   └── example.md          # Example subagent"
+            echo "  └── scripts/                # Helper scripts (empty)"
+            echo ""
+            echo "Next steps:"
+            echo "  1. Edit $namespace.md with your agent instructions"
+            echo "  2. Add subagents to $namespace/"
+            echo "  3. Push to a git repo"
+            echo "  4. Install: aidevops plugin add <repo-url> --namespace $namespace"
+            ;;
+
         help|--help|-h)
             print_header "Plugin Management"
             echo ""
@@ -2434,6 +2500,7 @@ cmd_plugin() {
             echo "  enable <name>      Enable a disabled plugin (redeploys files)"
             echo "  disable <name>     Disable a plugin (removes files, keeps config)"
             echo "  remove <name>      Remove a plugin entirely"
+            echo "  init [dir] [name]  Scaffold a new plugin from template"
             echo ""
             echo "Options for 'add':"
             echo "  --namespace <name>   Directory name under ~/.aidevops/agents/"
@@ -2449,6 +2516,7 @@ cmd_plugin() {
             echo "  aidevops plugin disable pro"
             echo "  aidevops plugin enable pro"
             echo "  aidevops plugin remove pro"
+            echo "  aidevops plugin init ./my-plugin my-plugin"
             echo ""
             echo "Plugin docs: ~/.aidevops/agents/aidevops/plugins.md"
             ;;
