@@ -1173,7 +1173,7 @@ cmd_add() {
     if [[ -z "$description" ]]; then
         local todo_file="$repo/TODO.md"
         if [[ -f "$todo_file" ]]; then
-            description=$(grep -E "^- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 | sed -E 's/^- \[( |x|-)\] [^ ]* //' || true)
+            description=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
         fi
     fi
 
@@ -2143,7 +2143,7 @@ find_task_issue_number() {
     local todo_file="$project_root/TODO.md"
     if [[ -f "$todo_file" ]]; then
         local task_line
-        task_line=$(grep -E "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+        task_line=$(grep -E "^[[:space:]]*- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
         echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo ""
     fi
     return 0
@@ -2194,7 +2194,7 @@ get_task_assignee() {
     task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
 
     local task_line
-    task_line=$(grep -E "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+    task_line=$(grep -E "^[[:space:]]*- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
     if [[ -z "$task_line" ]]; then
         return 0
     fi
@@ -2248,11 +2248,11 @@ cmd_claim() {
         return 1
     fi
 
-    # Verify task exists and is open
+    # Verify task exists and is open (supports both top-level and indented subtasks)
     local task_id_escaped
     task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
     local task_line
-    task_line=$(grep -E "^- \[ \] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
+    task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
     if [[ -z "$task_line" ]]; then
         log_error "Task $task_id not found as open in $todo_file"
         return 1
@@ -2262,7 +2262,7 @@ cmd_claim() {
     local now
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     local line_num
-    line_num=$(grep -nE "^- \[ \] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
+    line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
     if [[ -z "$line_num" ]]; then
         log_error "Could not find line number for $task_id"
         return 1
@@ -2347,7 +2347,7 @@ cmd_unclaim() {
     local task_id_escaped
     task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
     local line_num
-    line_num=$(grep -nE "^- \[.\] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
+    line_num=$(grep -nE "^[[:space:]]*- \[.\] ${task_id_escaped} " "$todo_file" | head -1 | cut -d: -f1)
     if [[ -z "$line_num" ]]; then
         log_error "Could not find line number for $task_id"
         return 1
