@@ -408,11 +408,20 @@ EOF
 
 "
 
+    local first_category=true
     for entries_file in "$tmp_dir"/*.entries; do
         [[ -f "$entries_file" ]] || continue
         local base_name cat_name
         base_name=$(basename "$entries_file" .entries)
         cat_name=$(cat "$tmp_dir/${base_name}.name" 2>/dev/null || echo "$base_name")
+        # Add blank line before heading (MD022) - skip for first category
+        # (already has blank line from ## Graduated header above)
+        if [[ "$first_category" == true ]]; then
+            first_category=false
+        else
+            new_content+="
+"
+        fi
         new_content+="### $cat_name
 
 "
