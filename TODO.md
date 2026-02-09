@@ -830,10 +830,13 @@ t134,SOPS + gocryptfs encryption stack,,tools|security|encryption,4h,3h,45m,15m,
 
 ## In Progress
 
+- [ ] t190 Fix Codacy MD022 violations in memory graduation output #bugfix #quality ~30m (ai:20m test:10m) logged:2026-02-09 started:2026-02-09
+  - Notes: memory-graduate-helper.sh generates markdown without blank lines before ### category headings (MD022). Root cause: bash `$(cat file)` strips trailing newlines, leaving only one newline between last entry and next heading. Fix both the generated file and the generator script.
 - [ ] t165 Provider-agnostic task claiming via TODO.md (replace GH Issue-based claiming) #orchestration #architecture ~2h (ai:1h30m test:30m) ref:GH#623 logged:2026-02-08 started:2026-02-08
   - Notes: Claiming via TODO.md @owner field + In Progress section. Optimistic locking via git push. GitHub issue sync as optional overlay. Replaces t164.
 
-<!--TOON:in_progress[1]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
+<!--TOON:in_progress[2]{id,desc,owner,tags,est,est_ai,est_test,est_read,logged,started,status}:
+t190,Fix Codacy MD022 violations in memory graduation output,alexey,bugfix quality,30m,20m,10m,,2026-02-09,2026-02-09,in_progress
 t165,Provider-agnostic task claiming via TODO.md,alexey,orchestration architecture,2h,1h30m,30m,,2026-02-08,2026-02-08,in_progress
 -->
 
