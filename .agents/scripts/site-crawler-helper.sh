@@ -734,7 +734,8 @@ EOF
     if find_python && "$PYTHON_CMD" -c "import openpyxl" 2>/dev/null; then
         local xlsx_script
         xlsx_script=$(mktemp /tmp/xlsx_gen_XXXXXX.py)
-        trap 'rm -f "${xlsx_script:-}"' RETURN
+        _save_cleanup_scope; trap '_run_cleanups' RETURN
+        push_cleanup "rm -f '${xlsx_script}'"
         cat > "$xlsx_script" << 'PYXLSX'
 import sys
 import csv
@@ -1183,7 +1184,8 @@ do_crawl() {
     # Generate and run crawler
     local crawler_script
     crawler_script=$(mktemp /tmp/site_crawler_XXXXXX.py)
-    trap 'rm -f "${crawler_script:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${crawler_script}'"
     generate_fallback_crawler > "$crawler_script"
     
     "$PYTHON_CMD" "$crawler_script" "$url" "$output_dir" "$max_urls" "$depth" "$format"

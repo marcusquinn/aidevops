@@ -172,7 +172,8 @@ update_state() {
 
     local temp_file
     temp_file=$(mktemp)
-    trap 'rm -f "${temp_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${temp_file}'"
 
     # Build jq expression from key=value pairs
     local jq_expr="."

@@ -338,6 +338,109 @@ suppress_stderr() {
 }
 
 # =============================================================================
+# RETURN Trap Cleanup Stack (t196)
+# =============================================================================
+# Prevents RETURN trap clobbering when a function needs multiple temp files.
+# In bash, setting `trap '...' RETURN` twice in the same function silently
+# replaces the first trap — the first temp file leaks.
+#
+# IMPORTANT: `trap` applies to the function that calls it, NOT the caller's
+# caller. Therefore push_cleanup cannot set the trap for you — the calling
+# function must set `trap '_run_cleanups' RETURN` itself.
+#
+# Usage pattern (replaces raw `trap 'rm ...' RETURN`):
+#
+#   my_func() {
+#       _save_cleanup_scope
+#       trap '_run_cleanups' RETURN
+#       local tmp1; tmp1=$(mktemp)
+#       push_cleanup "rm -f '${tmp1}'"
+#       local tmp2; tmp2=$(mktemp)
+#       push_cleanup "rm -f '${tmp2}'"
+#       # ... both files cleaned up on return (LIFO order)
+#   }
+#
+# Single-file shorthand (most common case — no change needed):
+#
+#   my_func() {
+#       local tmp; tmp=$(mktemp)
+#       trap 'rm -f "${tmp:-}"' RETURN
+#       # ... single file, no clobbering risk
+#   }
+#
+# Nesting: RETURN traps are function-scoped in bash 3.2+, so nested
+# function calls each get their own trap. _save_cleanup_scope saves the
+# parent's cleanup list; _run_cleanups restores it after executing.
+#
+# Migration from raw trap (only needed for multi-cleanup functions):
+#   BEFORE: trap 'rm -f "${a:-}"' RETURN  # second trap clobbers first
+#           trap 'rm -f "${b:-}"' RETURN
+#   AFTER:  _save_cleanup_scope
+#           trap '_run_cleanups' RETURN
+#           push_cleanup "rm -f '${a}'"
+#           push_cleanup "rm -f '${b}'"
+
+# Global state for the cleanup stack.
+# _CLEANUP_CMDS: newline-separated list of commands for the current scope.
+# _CLEANUP_SAVE_STACK: saved parent scopes (unit-separator delimited).
+_CLEANUP_CMDS=""
+_CLEANUP_SAVE_STACK=""
+
+# Add a cleanup command to the current scope.
+# The command runs when the calling function returns (LIFO order).
+# Caller MUST have set `trap '_run_cleanups' RETURN` in their own scope.
+# Arguments:
+#   $1 - shell command to eval on cleanup (required)
+push_cleanup() {
+    local cmd="$1"
+    if [[ -n "$_CLEANUP_CMDS" ]]; then
+        _CLEANUP_CMDS="${_CLEANUP_CMDS}"$'\n'"${cmd}"
+    else
+        _CLEANUP_CMDS="${cmd}"
+    fi
+    return 0
+}
+
+# Run all cleanup commands for the current scope (reverse order),
+# then restore the parent scope's cleanup list.
+# This is the RETURN trap handler — do not call directly.
+_run_cleanups() {
+    if [[ -n "$_CLEANUP_CMDS" ]]; then
+        # Reverse the command list (LIFO) and execute each
+        local reversed
+        # tail -r is macOS, tac is GNU — try both
+        reversed=$(echo "$_CLEANUP_CMDS" | tail -r 2>/dev/null) \
+            || reversed=$(echo "$_CLEANUP_CMDS" | tac 2>/dev/null) \
+            || reversed="$_CLEANUP_CMDS"
+        local line
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            eval "$line" 2>/dev/null || true
+        done <<< "$reversed"
+    fi
+    # Restore parent scope (pop from save stack)
+    local sep=$'\x1F'
+    if [[ -n "$_CLEANUP_SAVE_STACK" ]]; then
+        _CLEANUP_CMDS="${_CLEANUP_SAVE_STACK%%"${sep}"*}"
+        _CLEANUP_SAVE_STACK="${_CLEANUP_SAVE_STACK#*"${sep}"}"
+    else
+        _CLEANUP_CMDS=""
+    fi
+    return 0
+}
+
+# Save the current cleanup scope and start a fresh one.
+# Call at the top of any function that uses push_cleanup, BEFORE setting
+# `trap '_run_cleanups' RETURN`. This preserves the parent function's
+# cleanup list so nested calls don't interfere.
+_save_cleanup_scope() {
+    local sep=$'\x1F'
+    _CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK}"
+    _CLEANUP_CMDS=""
+    return 0
+}
+
+# =============================================================================
 # TODO.md Serialized Commit+Push
 # =============================================================================
 # Provides atomic locking and pull-rebase-retry for TODO.md operations.

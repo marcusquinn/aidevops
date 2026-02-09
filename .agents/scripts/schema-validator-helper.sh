@@ -57,18 +57,19 @@ install_deps() {
     fi
 
     # Ensure type: module for ESM imports
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
     if ! grep -q '"type": "module"' "$TOOL_DIR/package.json" 2>/dev/null; then
         if command_exists jq; then
             local tmp
             tmp=$(mktemp)
-            trap 'rm -f "${tmp:-}"' RETURN
+            push_cleanup "rm -f '${tmp}'"
             jq '. + {"type": "module"}' "$TOOL_DIR/package.json" > "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
             rm -f "$tmp"
         else
             # Fallback: write "type": "module" into package.json without jq
             local tmp
             tmp=$(mktemp)
-            trap 'rm -f "${tmp:-}"' RETURN
+            push_cleanup "rm -f '${tmp}'"
             printf '{\n  "type": "module",\n' > "$tmp"
             # Append everything after the opening brace
             tail -n +2 "$TOOL_DIR/package.json" >> "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"

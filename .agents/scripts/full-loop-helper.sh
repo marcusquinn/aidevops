@@ -160,7 +160,8 @@ remove_headless_todo_guard() {
         # Use sed to remove the guard block
         local tmp_file
         tmp_file=$(mktemp)
-        trap 'rm -f "${tmp_file:-}"' RETURN
+        _save_cleanup_scope; trap '_run_cleanups' RETURN
+        push_cleanup "rm -f '${tmp_file}'"
         awk '/# t173-headless-todo-guard/{skip=1} /^fi$/ && skip{skip=0; next} !skip' "$hook_file" > "$tmp_file"
         mv "$tmp_file" "$hook_file"
         chmod +x "$hook_file"

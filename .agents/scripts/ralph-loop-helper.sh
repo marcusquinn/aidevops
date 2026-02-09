@@ -234,7 +234,8 @@ run_v2_loop() {
 
     local iteration=1
     output_file="$(mktemp)"
-    trap 'rm -f "${output_file:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${output_file}'"
 
     while [[ $iteration -le $max_iterations ]]; do
         print_step "=== Iteration $iteration/$max_iterations ==="

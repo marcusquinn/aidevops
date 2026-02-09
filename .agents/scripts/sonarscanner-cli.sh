@@ -95,7 +95,8 @@ install_sonar_scanner() {
     # Create temporary directory with trap cleanup for early returns
     local temp_dir
     temp_dir=$(mktemp -d)
-    trap 'rm -rf "$temp_dir"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -rf '${temp_dir}'"
     local zip_file="$temp_dir/sonar-scanner.zip"
     
     # Download

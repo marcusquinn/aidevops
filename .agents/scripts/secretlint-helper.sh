@@ -888,7 +888,8 @@ setup_husky_integration() {
     if command -v jq &> /dev/null; then
         local tmp_file
         tmp_file=$(mktemp)
-        trap 'rm -f "${tmp_file:-}"' RETURN
+        _save_cleanup_scope; trap '_run_cleanups' RETURN
+        push_cleanup "rm -f '${tmp_file}'"
         jq '. + {"lint-staged": {"*": ["secretlint"]}}' package.json > "$tmp_file" && mv "$tmp_file" package.json
         print_success "Added lint-staged configuration"
     else

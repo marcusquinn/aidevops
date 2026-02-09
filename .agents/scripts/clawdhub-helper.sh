@@ -157,7 +157,8 @@ fetch_skill_content_playwright() {
     # Create a temporary Node.js project with Playwright to extract SKILL.md
     local pw_dir
     pw_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawdhub-pw-XXXXXX")
-    trap 'rm -rf "$pw_dir"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -rf '${pw_dir}'"
 
     # Create package.json for the temporary project
     cat > "$pw_dir/package.json" << 'PKGJSON'

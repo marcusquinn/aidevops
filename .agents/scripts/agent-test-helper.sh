@@ -343,7 +343,9 @@ run_prompt_opencode_cli() {
     local stderr_file raw_output
     stderr_file=$(mktemp)
     raw_output=$(mktemp)
-    trap 'rm -f "${stderr_file:-}" "${raw_output:-}"' RETURN
+    _save_cleanup_scope; trap '_run_cleanups' RETURN
+    push_cleanup "rm -f '${stderr_file}'"
+    push_cleanup "rm -f '${raw_output}'"
 
     local exit_code=0
     portable_timeout "${timeout}" "${cmd[@]}" "$prompt" >"$raw_output" 2>"$stderr_file" || {
