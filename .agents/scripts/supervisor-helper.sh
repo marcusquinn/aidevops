@@ -2542,6 +2542,60 @@ cmd_unclaim() {
 # Returns 0 if free or claimed by self, 1 if claimed by another.
 # Outputs the assignee on stdout if claimed by another.
 #######################################
+# check_task_already_done() — pre-dispatch verification
+# Checks git history for evidence that a task was already completed.
+# Returns 0 (true) if task appears done, 1 (false) if not.
+# Searches for: (1) commits with task ID in message, (2) TODO.md [x] marker,
+# (3) merged PR references. Fast path: git log grep is O(log n) on packed refs.
+check_task_already_done() {
+    local task_id="${1:-}"
+    local project_root="${2:-.}"
+
+    if [[ -z "$task_id" ]]; then
+        return 1
+    fi
+
+    # Check 1: Is the task already marked [x] in TODO.md?
+    local todo_file="$project_root/TODO.md"
+    if [[ -f "$todo_file" ]]; then
+        # Match: "- [x] tNNN " with the exact task ID (word boundary via space)
+        if grep -qE "^\s*- \[x\] ${task_id}[[:space:]]" "$todo_file" 2>/dev/null; then
+            log_info "Pre-dispatch check: $task_id is marked [x] in TODO.md" >&2
+            return 0
+        fi
+    fi
+
+    # Check 2: Are there merged commits referencing this task ID?
+    # Look for commit messages containing the task ID (e.g., "t135.4", "(t135.4)")
+    # Only search the last 500 commits for performance
+    local commit_count=0
+    commit_count=$(git -C "$project_root" log --oneline -500 --all --grep="$task_id" 2>/dev/null | wc -l | tr -d ' ') || true
+    if [[ "$commit_count" -gt 0 ]]; then
+        # Verify at least one commit looks like a completion (not just "claim" or "blocked")
+        local completion_evidence=""
+        completion_evidence=$(git -C "$project_root" log --oneline -500 --all --grep="$task_id" 2>/dev/null \
+            | grep -iE "(feat|fix|refactor|chore|perf|test).*${task_id}|${task_id}.*(\(#[0-9]+\)|PR #[0-9]+|merged)" \
+            | head -1) || true
+        if [[ -n "$completion_evidence" ]]; then
+            log_info "Pre-dispatch check: $task_id has completion evidence: $completion_evidence" >&2
+            return 0
+        fi
+    fi
+
+    # Check 3: Does a merged PR exist for this task?
+    # Only check if gh CLI is available and authenticated (cached check)
+    if command -v gh &>/dev/null && check_gh_auth 2>/dev/null; then
+        local pr_count=0
+        pr_count=$(gh pr list --repo "$project_root" --state merged --search "$task_id in:title" --limit 1 --json number --jq 'length' 2>/dev/null) || true
+        if [[ "$pr_count" -gt 0 ]]; then
+            log_info "Pre-dispatch check: $task_id has a merged PR on GitHub" >&2
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 check_task_claimed() {
     local task_id="${1:-}"
     local project_root="${2:-.}"
@@ -3963,6 +4017,17 @@ cmd_dispatch() {
     if [[ "$tstatus" != "queued" ]]; then
         log_error "Task $task_id is in '$tstatus' state, must be 'queued' to dispatch"
         return 1
+    fi
+
+    # Pre-dispatch verification: check if task was already completed in a prior batch.
+    # Searches git history for commits referencing this task ID. If a merged PR commit
+    # exists, the task is already done — cancel it instead of wasting an Opus session.
+    # This prevents the exact bug from backlog-10 where 6 t135 subtasks were dispatched
+    # despite being completed months earlier.
+    if check_task_already_done "$task_id" "${trepo:-.}"; then
+        log_warn "Task $task_id appears already completed in git history — cancelling"
+        db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Pre-dispatch: already completed in git history' WHERE id='$(sql_escape "$task_id")';"
+        return 0
     fi
 
     # Check if task is claimed by someone else via TODO.md assignee: field (t165)
