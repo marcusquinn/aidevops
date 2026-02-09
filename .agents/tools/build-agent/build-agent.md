@@ -84,7 +84,7 @@ Main agents are for high-level project orchestration:
 - **Role**: Coordinates subagents, makes strategic decisions
 - **Context**: Needs awareness of multiple related concerns
 - **Location**: Root of `.agents/` folder
-- **Examples**: `seo.md`, `aidevops.md`, `build-plus.md`
+- **Examples**: `seo.md`, `build-plus.md`, `marketing.md`
 
 **Main agent characteristics:**
 - Calls subagents when specialized work needed
