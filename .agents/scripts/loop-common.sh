@@ -523,6 +523,7 @@ EOF
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq ".receipts += [\"$(basename "$receipt_file")\"]" "$LOOP_STATE_FILE" > "$temp_file"
     mv "$temp_file" "$LOOP_STATE_FILE"
     
@@ -643,6 +644,7 @@ loop_track_attempt() {
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq ".attempts[\"$task_id\"] = $new_attempts" "$LOOP_STATE_FILE" > "$temp_file"
     mv "$temp_file" "$LOOP_STATE_FILE"
     
@@ -686,6 +688,7 @@ loop_block_task() {
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     jq ".blocked_tasks += [{\"id\": \"$task_id\", \"reason\": \"$reason\", \"blocked_at\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}]" "$LOOP_STATE_FILE" > "$temp_file"
     mv "$temp_file" "$LOOP_STATE_FILE"
     

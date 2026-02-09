@@ -477,6 +477,7 @@ crawl_with_crawl4ai() {
         if [[ ${#batch_urls[@]} -gt 0 ]]; then
             local new_queue
             new_queue=$(mktemp)
+            trap 'rm -f "$new_queue"' RETURN
             while IFS= read -r queue_url; do
                 if ! grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
                     echo "$queue_url"

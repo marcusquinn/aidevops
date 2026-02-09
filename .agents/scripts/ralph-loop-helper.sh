@@ -727,6 +727,7 @@ increment_iteration() {
 
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     sed "s/^iteration: .*/iteration: $next_iteration/" "$RALPH_STATE_FILE" > "$temp_file"
     mv "$temp_file" "$RALPH_STATE_FILE"
 

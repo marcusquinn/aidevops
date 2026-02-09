@@ -26,6 +26,7 @@ fix_common_strings_in_file() {
     local backup_file="${file}.backup"
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     local changes_made=0
     
     print_info "Processing: $file"

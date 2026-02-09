@@ -1209,6 +1209,7 @@ fi
 
 # Test: run_verify_checks with a real VERIFY.md
 VERIFY_TEST_DIR=$(mktemp -d)
+trap 'rm -rf "$WORKTREE_TEST_DIR" "$TEST_DIR" "$VERIFY_TEST_DIR" "$CLAIM_TEST_DIR"' EXIT
 mkdir -p "$VERIFY_TEST_DIR/todo"
 mkdir -p "$VERIFY_TEST_DIR/.agents/scripts"
 

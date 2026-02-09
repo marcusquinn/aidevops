@@ -15,6 +15,7 @@ fix_sc2155_in_file() {
     local file="$1"
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     local changes_made=0
     
     # Create backup
@@ -70,6 +71,7 @@ fix_sc2181_in_file() {
     local file="$1"
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     local changes_made=0
     
     # Fix common SC2181 patterns

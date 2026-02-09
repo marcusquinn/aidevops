@@ -301,6 +301,7 @@ update_verify_status() {
     # Write the replacement using awk (sed delimiters conflict with | in content)
     local tmp_file
     tmp_file=$(mktemp)
+    trap 'rm -f "$tmp_file"' RETURN
     awk -v ln="$line_num" -v rep="$new_line" 'NR==ln{print rep; next}{print}' "$verify_file" > "$tmp_file"
     mv "$tmp_file" "$verify_file"
 

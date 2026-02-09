@@ -44,6 +44,7 @@ analyze_repeated_strings() {
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     
     # Find all shell files and extract string literals
     find "$target_dir" -name "*.sh" -type f | while read -r file; do
@@ -89,6 +90,7 @@ create_string_constants() {
     
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     local constants_added=0
     local replacements_made=0
     

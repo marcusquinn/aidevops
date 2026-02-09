@@ -144,6 +144,7 @@ add_default_case() {
         # Create temp file and insert default case
         local temp_file
         temp_file=$(mktemp)
+        trap 'rm -f "$temp_file"' RETURN
         
         head -n $((esac_line - 1)) "$file" > "$temp_file"
         {

@@ -66,6 +66,7 @@ fix_return_statements() {
             # Find functions that don't end with return statement
             local temp_file
             temp_file=$(mktemp)
+            trap 'rm -f "$temp_file"' RETURN
             local in_function=false
             local function_name=""
             local brace_count=0
@@ -141,6 +142,7 @@ fix_positional_parameters() {
         if [[ -f "$file" ]]; then
             local temp_file
             temp_file=$(mktemp)
+            trap 'rm -f "$temp_file"' RETURN
 
             
             # Process main() functions specifically
@@ -178,6 +180,7 @@ analyze_string_literals() {
     
     local constants_file
     constants_file=$(mktemp)
+    trap 'rm -f "$constants_file"' RETURN
     
     for file in .agents/scripts/*.sh; do
         if [[ -f "$file" ]]; then

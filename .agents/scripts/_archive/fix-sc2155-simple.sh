@@ -15,6 +15,7 @@ fix_sc2155_simple() {
     local file="$1"
     local temp_file
     temp_file=$(mktemp)
+    trap 'rm -f "$temp_file"' RETURN
     local changes_made=0
     
     print_info "Processing: $file"
