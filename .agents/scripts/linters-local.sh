@@ -260,15 +260,22 @@ check_secrets() {
     local secretlint_script=".agents/scripts/secretlint-helper.sh"
     local violations=0
 
-    # Check if secretlint is available
-    if command -v secretlint &> /dev/null || [[ -f "node_modules/.bin/secretlint" ]]; then
-        # Run secretlint scan
-        local secretlint_cmd
-        if command -v secretlint &> /dev/null; then
-            secretlint_cmd="secretlint"
-        else
-            secretlint_cmd="./node_modules/.bin/secretlint"
+    # Check if secretlint is available (global, local, or main repo for worktrees)
+    local secretlint_cmd=""
+    if command -v secretlint &> /dev/null; then
+        secretlint_cmd="secretlint"
+    elif [[ -f "node_modules/.bin/secretlint" ]]; then
+        secretlint_cmd="./node_modules/.bin/secretlint"
+    else
+        # Check main repo node_modules (handles git worktrees)
+        local repo_root
+        repo_root=$(git rev-parse --git-common-dir 2>/dev/null | xargs -I{} sh -c 'cd "{}/.." && pwd' 2>/dev/null || echo "")
+        if [[ -n "$repo_root" ]] && [[ "$repo_root" != "$(pwd)" ]] && [[ -f "$repo_root/node_modules/.bin/secretlint" ]]; then
+            secretlint_cmd="$repo_root/node_modules/.bin/secretlint"
         fi
+    fi
+
+    if [[ -n "$secretlint_cmd" ]]; then
 
         if [[ -f ".secretlintrc.json" ]]; then
             # Run scan and capture exit code
@@ -481,7 +488,18 @@ check_remote_cli_status() {
     # Secretlint
     local secretlint_script=".agents/scripts/secretlint-helper.sh"
     if [[ -f "$secretlint_script" ]]; then
+        # Check global, local, and main repo node_modules (worktree support)
+        local sl_found=false
         if command -v secretlint &> /dev/null || [[ -f "node_modules/.bin/secretlint" ]]; then
+            sl_found=true
+        else
+            local sl_repo_root
+            sl_repo_root=$(git rev-parse --git-common-dir 2>/dev/null | xargs -I{} sh -c 'cd "{}/.." && pwd' 2>/dev/null || echo "")
+            if [[ -n "$sl_repo_root" ]] && [[ "$sl_repo_root" != "$(pwd)" ]] && [[ -f "$sl_repo_root/node_modules/.bin/secretlint" ]]; then
+                sl_found=true
+            fi
+        fi
+        if [[ "$sl_found" == "true" ]]; then
             print_success "Secretlint: Ready"
         else
             print_info "Secretlint: Available for setup"
