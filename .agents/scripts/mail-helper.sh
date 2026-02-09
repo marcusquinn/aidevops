@@ -492,6 +492,13 @@ cmd_prune() {
     # --force: actually delete
     log_info "Pruning with --force (${older_than_days}-day threshold)..."
 
+    # Backup before bulk delete (t188)
+    local prune_backup
+    prune_backup=$(backup_sqlite_db "$MAIL_DB" "pre-prune")
+    if [[ $? -ne 0 || -z "$prune_backup" ]]; then
+        log_warn "Backup failed before prune — proceeding cautiously"
+    fi
+
     # Capture discoveries and status reports to memory before pruning
     local remembered=0
     if [[ -x "$MEMORY_HELPER" ]]; then
@@ -543,6 +550,9 @@ cmd_prune() {
 
     log_success "Pruned $pruned messages, archived $auto_archived read messages ($remembered captured to memory)"
     log_info "Storage: ${db_size_kb}KB → ${new_size_kb}KB (saved ${saved_kb}KB)"
+
+    # Clean up old backups (t188)
+    cleanup_sqlite_backups "$MAIL_DB" 5
 }
 
 #######################################

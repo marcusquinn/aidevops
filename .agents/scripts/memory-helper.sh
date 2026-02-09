@@ -109,10 +109,102 @@ resolve_namespace() {
 }
 
 #######################################
-# Get the global (non-namespaced) DB path
+# Migrate existing database to new schema
+# Now with backup-before-modify pattern (t188)
 #######################################
-global_db_path() {
-    echo "$MEMORY_BASE_DIR/memory.db"
+migrate_db() {
+    # Check if event_date column exists in FTS5 table
+    # FTS5 tables don't support ALTER TABLE, so we check via pragma
+    local has_event_date
+    has_event_date=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learnings') WHERE name='event_date';" 2>/dev/null || echo "0")
+    
+    if [[ "$has_event_date" == "0" ]]; then
+        log_info "Migrating database to add event_date and relations..."
+
+        # Backup before destructive FTS5 table recreation (t188)
+        local migrate_backup
+        migrate_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-migrate-event-date")
+        if [[ $? -ne 0 || -z "$migrate_backup" ]]; then
+            log_error "Backup failed for memory migration — aborting"
+            return 1
+        fi
+        log_info "Pre-migration backup: $migrate_backup"
+
+        # Get pre-migration row count for verification
+        local pre_count
+        pre_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+        
+        db "$MEMORY_DB" <<'EOF'
+-- Create new FTS5 table with event_date
+CREATE VIRTUAL TABLE IF NOT EXISTS learnings_new USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    content,
+    type,
+    tags,
+    confidence UNINDEXED,
+    created_at UNINDEXED,
+    event_date UNINDEXED,
+    project_path UNINDEXED,
+    source UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+-- Copy existing data (event_date defaults to created_at for existing entries)
+INSERT INTO learnings_new (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+SELECT id, session_id, content, type, tags, confidence, created_at, created_at, project_path, source FROM learnings;
+
+-- Drop old table and rename new
+DROP TABLE learnings;
+ALTER TABLE learnings_new RENAME TO learnings;
+
+-- Create relations table if not exists
+CREATE TABLE IF NOT EXISTS learning_relations (
+    id TEXT PRIMARY KEY,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+
+        # Verify row counts after migration (t188)
+        local post_count
+        post_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+        if [[ "$post_count" -lt "$pre_count" ]]; then
+            log_error "Memory migration FAILED: row count decreased ($pre_count -> $post_count) — rolling back"
+            rollback_sqlite_db "$MEMORY_DB" "$migrate_backup"
+            return 1
+        fi
+
+        log_success "Database migrated successfully ($pre_count rows preserved)"
+        cleanup_sqlite_backups "$MEMORY_DB" 5
+    fi
+    
+    # Ensure relations table exists (for databases created before this feature)
+    db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS learning_relations (
+    id TEXT PRIMARY KEY,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+    
+    # Add auto_captured column to learning_access if missing (t058 migration)
+    local has_auto_captured
+    has_auto_captured=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='auto_captured';" 2>/dev/null || echo "0")
+    if [[ "$has_auto_captured" == "0" ]]; then
+        db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN auto_captured INTEGER DEFAULT 0;" || echo "[WARN] Failed to add auto_captured column (may already exist)" >&2
+    fi
+    
+    # Add graduated_at column to learning_access if missing (t184 migration)
+    local has_graduated
+    has_graduated=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='graduated_at';" 2>/dev/null || echo "0")
+    if [[ "$has_graduated" == "0" ]]; then
+        db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN graduated_at TEXT DEFAULT NULL;" || echo "[WARN] Failed to add graduated_at column (may already exist)" >&2
+    fi
+    
+    return 0
 }
 
 #######################################
@@ -1437,6 +1529,13 @@ EOF
             log_error "--older-than-days must be a positive integer"
             return 1
         fi
+
+        # Backup before bulk delete (t188)
+        local prune_backup
+        prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune")
+        if [[ $? -ne 0 || -z "$prune_backup" ]]; then
+            log_warn "Backup failed before prune — proceeding cautiously"
+        fi
         
         # Use efficient single DELETE with subquery
         local subquery
@@ -1458,6 +1557,9 @@ EOF
         # Rebuild FTS index
         db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
         log_info "Rebuilt search index"
+
+        # Clean up old backups (t188)
+        cleanup_sqlite_backups "$MEMORY_DB" 5
     fi
 }
 
@@ -1538,6 +1640,13 @@ EOF
         echo ""
         log_info "Run without --dry-run to consolidate"
     else
+        # Backup before consolidation deletes (t188)
+        local consolidate_backup
+        consolidate_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-consolidate")
+        if [[ $? -ne 0 || -z "$consolidate_backup" ]]; then
+            log_warn "Backup failed before consolidation — proceeding cautiously"
+        fi
+
         local consolidated=0
         
         # Use here-string instead of pipe to avoid subshell variable scope issue
@@ -1589,6 +1698,9 @@ EOF
         db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
         
         log_success "Consolidated $consolidated memory pairs"
+
+        # Clean up old backups (t188)
+        cleanup_sqlite_backups "$MEMORY_DB" 5
     fi
 }
 
@@ -1880,8 +1992,9 @@ EOF
 
     log_success "Migrated $count entries from '$from_ns' to '$to_ns'"
 
-    # If --move, delete from source
+    # If --move, delete from source (with backup — t188)
     if [[ "$move" == true ]]; then
+        backup_sqlite_db "$from_db" "pre-move-to-${to_ns}" >/dev/null 2>&1 || log_warn "Backup of source failed before move"
         db "$from_db" "DELETE FROM learning_relations;"
         db "$from_db" "DELETE FROM learning_access;"
         db "$from_db" "DELETE FROM learnings;"
