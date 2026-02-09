@@ -23,7 +23,7 @@ tools:
 - **Pattern**: SSH into instance, Docker deploy, expose API, connect from local machine
 - **Cost range**: $0.20/hr (consumer GPUs) to $8.64/hr (B200 SXM)
 
-**When to Use**: Read this when deploying any AI model that requires GPU acceleration and local hardware is insufficient. Referenced by `tools/voice/speech-to-speech.md` and future `tools/vision/` subagents.
+**When to Use**: Read this when deploying any AI model that requires GPU acceleration and local hardware is insufficient. Referenced by `tools/voice/speech-to-speech.md` and `tools/vision/` subagents.
 
 <!-- AI-CONTEXT-END -->
 
