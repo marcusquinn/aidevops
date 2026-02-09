@@ -406,34 +406,199 @@ auggie token print  # Verify
 | Chrome DevTools | Chrome running | `--remote-debugging-port=9222` | Browser debugging |
 | Playwriter | Browser extension | Install from Chrome Web Store | Extension-based automation |
 
-### Personal AI Assistant (Mobile Access)
+### Containers & VMs
 
 | Service | Requirements | Setup | Purpose |
 |---------|--------------|-------|---------|
-| OpenClaw | Node.js >= 22 | `npm install -g openclaw@latest && openclaw onboard` | AI via WhatsApp, Telegram, Slack, Discord |
+| OrbStack | macOS | `brew install orbstack` | Docker + Linux VMs (replaces Docker Desktop) |
 
-**OpenClaw setup** (recommended for mobile AI access):
+OrbStack is the recommended container runtime for aidevops on macOS. It provides Docker-compatible CLI with lower resource usage and native macOS integration.
+
+**Docs**: `@orbstack` or `tools/containers/orbstack.md`
+
+### Networking
+
+| Service | Requirements | Setup | Purpose |
+|---------|--------------|-------|---------|
+| Tailscale | Any OS | `brew install tailscale` (macOS) or `curl -fsSL https://tailscale.com/install.sh \| sh` (Linux) | Zero-config mesh VPN |
+
+Tailscale connects your devices (laptop, phone, VPS) into a secure private network without port forwarding. Essential for remote OpenClaw gateway access and SSH to VPS servers.
+
+**Docs**: `@tailscale` or `services/networking/tailscale.md`
+
+### Personal AI Assistant (OpenClaw)
+
+| Service | Requirements | Setup | Purpose |
+|---------|--------------|-------|---------|
+| OpenClaw | Node.js >= 22 | `curl -fsSL https://openclaw.ai/install.sh \| bash && openclaw onboard` | AI via WhatsApp, Telegram, Slack, Discord, Signal, iMessage |
+
+OpenClaw is a personal AI assistant accessible via messaging channels. It complements aidevops by providing always-on, mobile-accessible AI from any messaging platform.
+
+**Full docs**: `@openclaw` or `tools/ai-assistants/openclaw.md`
+
+**To set up OpenClaw during onboarding, follow the guided flow below.**
+
+#### OpenClaw Guided Setup
+
+When a user expresses interest in OpenClaw or mobile AI access, follow this conversation flow:
+
+**Step A: Business Discovery**
+
+Ask about their business and use cases to tailor the setup:
+
+```text
+OpenClaw gives you AI accessible from WhatsApp, Telegram, Slack, Discord, Signal,
+iMessage, and more. Before we set it up, tell me a bit about your situation:
+
+1. What does your business/work involve?
+2. Do you manage clients or a team?
+3. What messaging platforms do you already use?
+4. Do you need AI available 24/7, or just when your laptop is open?
+5. Do you already have a VPS (Hetzner, Hostinger, etc.)?
+```
+
+Based on their answers, suggest specific use cases:
+
+| Business Type | OpenClaw Use Cases |
+|---------------|-------------------|
+| Agency/freelancer | Client communication bot, project status via WhatsApp, automated reporting |
+| SaaS/product | Customer support triage, internal team bot, deployment notifications |
+| Content creator | Research assistant via Telegram, voice notes transcription, content scheduling |
+| DevOps/sysadmin | Server monitoring alerts, incident response via messaging, cron-triggered health checks |
+| Consultant | Meeting prep via voice, quick research from phone, client follow-ups |
+
+**Step B: Deployment Tier Selection**
+
+```text
+How would you like to run OpenClaw?
+
+1. Native local - Runs on your laptop (simplest, only available when laptop is on)
+2. OrbStack container - Docker on your Mac (isolated, easy to reset)
+3. Remote VPS - Always-on server with Tailscale (available 24/7 from any device)
+
+Which sounds right for you?
+```
+
+**Step C: Installation (based on tier)**
+
+For **Tier 1 (Native local)**:
 
 ```bash
-# Install globally
-npm install -g openclaw@latest
+# Install OpenClaw
+curl -fsSL https://openclaw.ai/install.sh | bash
 
-# Run onboarding wizard (installs daemon, connects channels)
+# Run onboarding wizard
 openclaw onboard --install-daemon
 
 # Verify
 openclaw doctor
 ```
 
-OpenClaw lets you interact with AI from your phone via WhatsApp, Telegram, or any messaging platform. The gateway runs locally as a daemon, always available.
+For **Tier 2 (OrbStack container)**:
 
-**Key features:**
-- Multi-channel inbox (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams)
-- Voice Wake + Talk Mode (macOS/iOS/Android)
-- Skills system compatible with aidevops agents
-- Browser control, cron jobs, webhooks
+```bash
+# Ensure OrbStack is running
+orb status  # Install with: brew install orbstack
 
-**Docs**: https://docs.openclaw.ai
+# Clone and set up OpenClaw in Docker
+git clone https://github.com/openclaw/openclaw.git
+cd openclaw
+./docker-setup.sh
+
+# Access Control UI at http://127.0.0.1:18789/
+```
+
+For **Tier 3 (Remote VPS)**:
+
+```text
+We'll need to:
+1. Provision a VPS (I can help via @hetzner or @hostinger)
+2. Install Tailscale on both your machine and the VPS
+3. Install OpenClaw on the VPS
+4. Configure Tailscale Serve for secure HTTPS access
+
+Shall I walk you through each step?
+```
+
+Guide them through:
+
+1. VPS provisioning (use `@hetzner` -- minimum CX22: 2 vCPU, 4GB RAM)
+2. Tailscale setup on both machines (see `@tailscale`)
+3. OpenClaw install on VPS via SSH over Tailscale
+4. Gateway config with Tailscale Serve
+
+**Step D: Channel Setup (Security-First)**
+
+```text
+Which messaging channels would you like to connect?
+
+1. WhatsApp (most popular, QR code pairing)
+2. Telegram (simple bot token setup)
+3. Discord (bot in your server)
+4. Slack (workspace app)
+5. Signal (privacy-focused)
+6. iMessage (via BlueBubbles on macOS)
+7. Skip for now (use Control UI only)
+```
+
+For each selected channel, guide through setup with security defaults:
+
+- DM policy: `pairing` (default, recommended)
+- Group policy: `requireMention: true`
+- Allowlists configured before going live
+
+```bash
+# After channel setup, verify security
+openclaw security audit --fix
+```
+
+**Step E: Security Hardening**
+
+Always run the security audit after setup:
+
+```bash
+openclaw security audit --deep
+```
+
+Walk through each finding and explain:
+
+```text
+The security audit checks:
+- Who can message your bot (DM policies, allowlists)
+- What the bot can do (tool permissions, sandboxing)
+- Network exposure (gateway bind, auth tokens)
+- File permissions (~/.openclaw/ directory)
+- Plugin trust (only load what you explicitly trust)
+
+Any findings marked as warnings should be addressed before going live.
+```
+
+**Step F: aidevops vs OpenClaw Decision Tree**
+
+Explain when to use each tool:
+
+```text
+Now that OpenClaw is set up, here's when to use each:
+
+aidevops (terminal/IDE):
+- Writing and editing code
+- Git workflows, PRs, releases
+- Server management and deployment
+- SEO research and analysis
+- Complex multi-file operations
+
+OpenClaw (messaging/voice):
+- Quick questions from your phone
+- Voice interaction (Talk Mode, Voice Wake)
+- Always-on monitoring and alerts
+- Client/team communication bots
+- Hands-free interaction while mobile
+
+They work together:
+- aidevops manages the server OpenClaw runs on
+- OpenClaw can trigger aidevops workflows via messages
+- Both use the same AI models and can share workspace context
+```
 
 ### WordPress
 
@@ -494,6 +659,15 @@ curl -s -u "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" \
 # Augment
 auggie token print
 
+# OpenClaw
+openclaw doctor
+
+# Tailscale
+tailscale status
+
+# OrbStack
+orb status
+
 # All keys overview
 ~/.aidevops/agents/scripts/list-keys-helper.sh
 ```
@@ -536,8 +710,10 @@ For new users, suggest this order based on their interests:
 1. GitHub/GitLab CLI
 2. Hetzner Cloud or preferred hosting
 3. Cloudflare (DNS)
-4. Coolify or Vercel (deployment)
-5. SonarCloud + Codacy (code quality)
+4. Tailscale (secure mesh networking)
+5. Coolify or Vercel (deployment)
+6. OrbStack (containers)
+7. SonarCloud + Codacy (code quality)
 
 ### SEO Professional
 
@@ -559,16 +735,20 @@ For new users, suggest this order based on their interests:
 2. OpenAI + Anthropic
 3. Augment Context Engine
 4. Hetzner + Cloudflare
-5. All code quality tools
-6. DataForSEO + Serper
-7. OpenClaw (mobile AI access)
+5. Tailscale (mesh networking)
+6. OrbStack (containers)
+7. All code quality tools
+8. DataForSEO + Serper
+9. OpenClaw (mobile AI access)
 
 ### Mobile-First / Always-On
 
-1. OpenClaw (`openclaw onboard --install-daemon`)
+1. OpenClaw (follow guided setup above)
 2. OpenAI or Anthropic API key
-3. Connect WhatsApp or Telegram channel
-4. Optional: Voice Wake for hands-free
+3. Tailscale (if using remote VPS)
+4. Connect WhatsApp or Telegram channel
+5. Run `openclaw security audit --fix`
+6. Optional: Voice Wake for hands-free
 
 ## Troubleshooting
 
