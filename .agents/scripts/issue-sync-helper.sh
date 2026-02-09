@@ -656,7 +656,7 @@ compose_issue_body() {
         while IFS= read -r subtask_line; do
             # Convert TODO.md checkbox format to GitHub checkbox
             local gh_line
-            gh_line=$(echo "$subtask_line" | sed -E 's/^[[:space:]]+//' | sed -E 's/^- \[x\]/- [x]/' | sed -E 's/^- \[ \]/- [ ]/' | sed -E 's/^- \[-\]/- [x] ~~/' )
+            gh_line=$(echo "$subtask_line" | sed -E 's/^[[:space:]]+//' | sed -E 's/^- \[x\]/- [x]/' | sed -E 's/^- \[ \]/- [ ]/' | sed -E 's/^- \[-\] (.*)/- [x] ~~\1~~/' )
             # Extract subtask notes if inline
             body="$body"$'\n'"$gh_line"
         done <<< "$subtasks"
