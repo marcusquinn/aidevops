@@ -100,6 +100,7 @@ verify_gh_cli() {
 
 # Parse a single task line from TODO.md
 # Returns structured data as key=value pairs
+# Handles both top-level tasks and indented subtasks
 parse_task_line() {
     local line="$1"
 
@@ -115,15 +116,18 @@ parse_task_line() {
     local task_id
     task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 
-    # Extract description (between task ID and first #tag or ~estimate or →)
+    # Extract description (between task ID and first metadata field)
+    # Strip leading whitespace + checkbox + task ID, then strip trailing metadata
     local description
-    description=$(echo "$line" | sed -E 's/^\s*- \[.\] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ (#[a-z]|~[0-9]|→ |logged:|started:|completed:|ref:|actual:|blocked-by:).*//' || echo "")
+    description=$(echo "$line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)* //' \
+        | sed -E 's/ (#[a-z]|~[0-9]|→ |logged:|started:|completed:|ref:|actual:|blocked-by:|blocks:|assignee:|verified:).*//' \
+        || echo "")
 
     # Extract tags
     local tags
     tags=$(echo "$line" | grep -oE '#[a-z][a-z0-9-]*' | tr '\n' ',' | sed 's/,$//' || echo "")
 
-    # Extract estimate
+    # Extract estimate (with optional breakdown)
     local estimate
     estimate=$(echo "$line" | grep -oE '~[0-9]+[hmd](\s*\(ai:[^)]+\))?' | head -1 || echo "")
 
@@ -139,6 +143,34 @@ parse_task_line() {
     local logged
     logged=$(echo "$line" | grep -oE 'logged:[0-9-]+' | sed 's/logged://' || echo "")
 
+    # Extract assignee
+    local assignee
+    assignee=$(echo "$line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/assignee://' || echo "")
+
+    # Extract started timestamp
+    local started
+    started=$(echo "$line" | grep -oE 'started:[0-9T:Z-]+' | head -1 | sed 's/started://' || echo "")
+
+    # Extract completed date
+    local completed
+    completed=$(echo "$line" | grep -oE 'completed:[0-9-]+' | head -1 | sed 's/completed://' || echo "")
+
+    # Extract actual time
+    local actual
+    actual=$(echo "$line" | grep -oE 'actual:[0-9.]+[hmd]' | head -1 | sed 's/actual://' || echo "")
+
+    # Extract blocked-by dependencies
+    local blocked_by
+    blocked_by=$(echo "$line" | grep -oE 'blocked-by:[A-Za-z0-9.,]+' | head -1 | sed 's/blocked-by://' || echo "")
+
+    # Extract blocks (downstream dependencies)
+    local blocks
+    blocks=$(echo "$line" | grep -oE 'blocks:[A-Za-z0-9.,]+' | head -1 | sed 's/blocks://' || echo "")
+
+    # Extract verified date
+    local verified
+    verified=$(echo "$line" | grep -oE 'verified:[0-9-]+' | head -1 | sed 's/verified://' || echo "")
+
     echo "task_id=$task_id"
     echo "status=$status"
     echo "description=$description"
@@ -147,6 +179,13 @@ parse_task_line() {
     echo "plan_link=$plan_link"
     echo "gh_ref=$gh_ref"
     echo "logged=$logged"
+    echo "assignee=$assignee"
+    echo "started=$started"
+    echo "completed=$completed"
+    echo "actual=$actual"
+    echo "blocked_by=$blocked_by"
+    echo "blocks=$blocks"
+    echo "verified=$verified"
     return 0
 }
 
@@ -211,7 +250,7 @@ extract_subtasks() {
 # Extract Notes from a task block
 extract_notes() {
     local block="$1"
-    echo "$block" | grep -E '^\s+- Notes:' | sed 's/^\s*- Notes: //' || true
+    echo "$block" | grep -E '^\s+- Notes:' | sed 's/^[[:space:]]*- Notes: //' || true
     return 0
 }
 
@@ -543,28 +582,70 @@ compose_issue_body() {
 
     # Extract fields from parsed output
     local description tags estimate plan_link status logged
+    local assignee started completed actual blocked_by blocks verified
     description=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
     tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
     estimate=$(echo "$parsed" | grep '^estimate=' | cut -d= -f2-)
     plan_link=$(echo "$parsed" | grep '^plan_link=' | cut -d= -f2-)
     status=$(echo "$parsed" | grep '^status=' | cut -d= -f2-)
     logged=$(echo "$parsed" | grep '^logged=' | cut -d= -f2-)
+    assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
+    started=$(echo "$parsed" | grep '^started=' | cut -d= -f2-)
+    completed=$(echo "$parsed" | grep '^completed=' | cut -d= -f2-)
+    actual=$(echo "$parsed" | grep '^actual=' | cut -d= -f2-)
+    blocked_by=$(echo "$parsed" | grep '^blocked_by=' | cut -d= -f2-)
+    blocks=$(echo "$parsed" | grep '^blocks=' | cut -d= -f2-)
+    verified=$(echo "$parsed" | grep '^verified=' | cut -d= -f2-)
 
     # Start building the body
     local body=""
 
-    # Task metadata
+    # Task metadata header line
     body="**Task ID:** \`$task_id\`"
+    if [[ -n "$status" ]]; then
+        body="$body | **Status:** $status"
+    fi
     if [[ -n "$estimate" ]]; then
         body="$body | **Estimate:** \`$estimate\`"
     fi
-    if [[ -n "$logged" ]]; then
-        body="$body | **Logged:** $logged"
+    if [[ -n "$actual" ]]; then
+        body="$body | **Actual:** \`$actual\`"
     fi
+
+    # Second metadata line: dates and assignment
+    local meta_line2=""
+    if [[ -n "$assignee" ]]; then
+        meta_line2="**Assignee:** @$assignee"
+    fi
+    if [[ -n "$logged" ]]; then
+        meta_line2="${meta_line2:+$meta_line2 | }**Logged:** $logged"
+    fi
+    if [[ -n "$started" ]]; then
+        meta_line2="${meta_line2:+$meta_line2 | }**Started:** $started"
+    fi
+    if [[ -n "$completed" ]]; then
+        meta_line2="${meta_line2:+$meta_line2 | }**Completed:** $completed"
+    fi
+    if [[ -n "$verified" ]]; then
+        meta_line2="${meta_line2:+$meta_line2 | }**Verified:** $verified"
+    fi
+    if [[ -n "$meta_line2" ]]; then
+        body="$body"$'\n'"$meta_line2"
+    fi
+
+    # Tags
     if [[ -n "$tags" ]]; then
         local formatted_tags
         formatted_tags=$(echo "$tags" | sed 's/,/ /g' | sed 's/#//g' | sed 's/[^ ]*/`&`/g')
         body="$body"$'\n'"**Tags:** $formatted_tags"
+    fi
+
+    # Dependencies
+    if [[ -n "$blocked_by" ]]; then
+        body="$body"$'\n'"**Blocked by:** \`$blocked_by\`"
+    fi
+    if [[ -n "$blocks" ]]; then
+        body="$body"$'\n'"**Blocks:** \`$blocks\`"
     fi
 
     # Subtasks
@@ -575,7 +656,7 @@ compose_issue_body() {
         while IFS= read -r subtask_line; do
             # Convert TODO.md checkbox format to GitHub checkbox
             local gh_line
-            gh_line=$(echo "$subtask_line" | sed -E 's/^\s+//' | sed -E 's/^- \[x\]/- [x]/' | sed -E 's/^- \[ \]/- [ ]/' | sed -E 's/^- \[-\]/- [x] ~~/' )
+            gh_line=$(echo "$subtask_line" | sed -E 's/^[[:space:]]+//' | sed -E 's/^- \[x\]/- [x]/' | sed -E 's/^- \[ \]/- [ ]/' | sed -E 's/^- \[-\] (.*)/- [x] ~~\1~~/' )
             # Extract subtask notes if inline
             body="$body"$'\n'"$gh_line"
         done <<< "$subtasks"
@@ -721,6 +802,8 @@ cmd_push() {
         description=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
         local tags
         tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
+        local assignee
+        assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
 
         local title="${task_id}: ${description}"
         local labels
@@ -735,6 +818,9 @@ cmd_push() {
             if [[ -n "$labels" ]]; then
                 print_info "  Labels: $labels"
             fi
+            if [[ -n "$assignee" ]]; then
+                print_info "  Assignee: $assignee"
+            fi
             created=$((created + 1))
             continue
         fi
@@ -746,6 +832,10 @@ cmd_push() {
             gh_args+=("--label" "${labels},status:available")
         else
             gh_args+=("--label" "status:available")
+        fi
+        # Assign to the task's assignee if set
+        if [[ -n "$assignee" ]]; then
+            gh_args+=("--assignee" "$assignee")
         fi
 
         local issue_url
