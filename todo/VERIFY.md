@@ -180,4 +180,14 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: rg "Normalize grep BRE" .agents/scripts/verify-run-helper.sh
   check: rg "shellcheck -x -S warning" .agents/scripts/verify-run-helper.sh
 
+- [x] v029 t134 SOPS + gocryptfs encryption stack | PR #718 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/scripts/sops-helper.sh, .agents/scripts/gocryptfs-helper.sh, .agents/tools/credentials/encryption-stack.md, .agents/tools/credentials/sops.md, .agents/tools/credentials/gocryptfs.md
+  check: file-exists .agents/scripts/sops-helper.sh
+  check: file-exists .agents/scripts/gocryptfs-helper.sh
+  check: file-exists .agents/tools/credentials/encryption-stack.md
+  check: rg "age|GPG" .agents/tools/credentials/sops.md
+  check: rg "FUSE|AES-256" .agents/tools/credentials/gocryptfs.md
+  check: shellcheck .agents/scripts/sops-helper.sh
+  check: shellcheck .agents/scripts/gocryptfs-helper.sh
+
 <!-- VERIFY-QUEUE-END -->
