@@ -77,7 +77,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
   - [x] t020.3 Tag to GitHub label mapping + push/enrich commands #feature ~30m assignee:marcusquinn started:2026-02-09T20:06:06Z completed:2026-02-09
   - [x] t020.4 Pull command (GH to TODO.md) #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:36Z completed:2026-02-09
-  - [ ] t020.5 Close + status commands #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:44Z
+  - [x] t020.5 Close + status commands #feature ~30m assignee:marcusquinn started:2026-02-09T21:03:44Z completed:2026-02-09
   - [x] t020.6 Wire supervisor delegation to issue-sync-helper.sh #refactor ~15m assignee:marcusquinn started:2026-02-09T21:13:17Z completed:2026-02-09
 - [x] t194 Daily model registry refresh — detect new/changed model IDs from OpenCode providers #feature #supervisor #model-routing ~2h (ai:1.5h test:30m) ref:GH#798 assignee:marcusquinn started:2026-02-09T20:46:06Z logged:2026-02-09 completed:2026-02-09
   - Notes: On session start or daily cron, run `opencode models` and compare against hardcoded IDs in supervisor-helper.sh and fallback-chain-config.json.txt. Flag mismatches (new models, deprecated IDs). Also fix model-availability-helper.sh to use `opencode models <provider>` instead of direct API key probing (which fails because OpenCode manages keys internally). Related: PR #796 fixed stale model IDs and openrouter fallback.
