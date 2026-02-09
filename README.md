@@ -92,10 +92,10 @@ The result: AI agents that work *with* your development process, not around it.
 
 ### Agent Structure
 
-- Primary agents (Build+, SEO, Marketing, etc.) with @plan-plus subagent for planning-only mode
-- 765+ subagent markdown files organized by domain
-- 172 helper scripts in `.agents/scripts/`
-- 28 slash commands for common workflows
+- 13 primary agents (Build+, SEO, Marketing, etc.) with @plan-plus for planning-only mode
+- 735+ subagent markdown files organized by domain
+- 194 helper scripts in `.agents/scripts/`
+- 39 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -453,7 +453,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 172 helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 194 helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -1406,7 +1406,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 15 primary agents, 765+ subagents, and 172 helper scripts.
+This installs the complete framework: 13 primary agents, 735+ subagents, and 194 helper scripts.
 
 ### Importing External Skills
 
@@ -1472,29 +1472,29 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Ordered as they appear in OpenCode Tab selector and other AI assistants (15 total):
+Primary agents as registered in `subagent-index.toon` (13 total). MCPs are loaded on-demand per subagent, not per primary agent:
 
-| Name | File | Purpose | MCPs Enabled |
-|------|------|---------|--------------|
-| @plan-plus | `plan-plus.md` | Planning-only subagent (Build+ handles planning by default) | context7, augment, repomix |
-| Build+ | `build-plus.md` | Enhanced Build with context tools | context7, augment, repomix |
-| Build-Agent | `build-agent.md` | Design and improve AI agents | context7, augment, repomix |
-| Build-MCP | `build-mcp.md` | Build MCP servers with TS+Bun+ElysiaJS | context7, augment, repomix |
-| Accounts | `accounts.md` | Financial operations | quickfile, augment |
-| AI-DevOps | `aidevops.md` | Framework operations, meta-agents, setup | context7, augment, repomix |
-| Content | `content.md` | Content creation, humanise AI text | augment |
-| Health | `health.md` | Health and wellness guidance | augment |
-| Legal | `legal.md` | Legal compliance and documentation | augment |
-| Marketing | `marketing.md` | Marketing strategy and automation | augment |
-| Research | `research.md` | Research and analysis tasks | context7, augment |
-| Sales | `sales.md` | Sales operations and CRM | augment |
-| SEO | `seo.md` | SEO optimization, Search Console, keyword research | gsc, ahrefs, serper, context7, augment |
-| Video | `video.md` | AI video generation, prompt engineering, programmatic video | augment |
-| WordPress | `wordpress.md` | WordPress ecosystem (dev, admin, MainWP, LocalWP) | localwp, context7, augment |
+| Name | File | Purpose | Model Tier |
+|------|------|---------|------------|
+| Plan+ | `plan-plus.md` | Read-only planning with semantic codebase search | sonnet |
+| Build+ | `build-plus.md` | Enhanced Build with context tools (default agent) | sonnet |
+| AI-DevOps | `aidevops.md` | Framework operations and meta-agents | sonnet |
+| SEO | `seo.md` | SEO optimization and analysis | sonnet |
+| Content | `content.md` | Content creation workflows | sonnet |
+| Research | `research.md` | Research and analysis tasks | flash |
+| Marketing | `marketing.md` | Marketing strategy and email campaigns | sonnet |
+| Sales | `sales.md` | Sales operations and CRM pipeline | sonnet |
+| Legal | `legal.md` | Legal compliance | sonnet |
+| Accounts | `accounts.md` | Financial operations | sonnet |
+| Health | `health.md` | Health and wellness | sonnet |
+| Social-Media | `social-media.md` | Social media management | sonnet |
+| Video | `video.md` | AI video generation and prompt engineering | sonnet |
+
+**Specialist subagents** (Build-Agent, Build-MCP, WordPress, etc.) live under `tools/` and are invoked via @mention when domain expertise is needed. See `subagent-index.toon` for the full listing.
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 765+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 735+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -2128,8 +2128,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 15 primary agents
-│   ├── scripts/                   # 172 helper scripts
+│   ├── *.md                       # 13 primary agents
+│   ├── scripts/                   # 194 helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
