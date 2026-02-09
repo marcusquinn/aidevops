@@ -4828,56 +4828,38 @@ echo "  aidevops uninstall    - Remove aidevops"
     
     # Offer to launch onboarding for new users (only if not running inside OpenCode and not non-interactive)
     if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && command -v opencode &>/dev/null; then
-        # Check if OpenCode has any auth configured before offering to launch
-        local auth_file="$HOME/.local/share/opencode/auth.json"
-        local has_auth=false
-        if [[ -f "$auth_file" ]] && [[ -s "$auth_file" ]]; then
-            # Check for at least one provider with a non-empty value
-            if jq -e 'to_entries | map(select(.value != null and .value != "")) | length > 0' "$auth_file" &>/dev/null; then
-                has_auth=true
-            fi
-        fi
-        
-        if [[ "$has_auth" == "false" ]]; then
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Ready to configure your services?"
+        echo ""
+        echo "Launch OpenCode with the onboarding wizard to:"
+        echo "  - See which services are already configured"
+        echo "  - Get personalized recommendations based on your work"
+        echo "  - Set up API keys and credentials interactively"
+        echo ""
+        read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
+        if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
             echo ""
-            echo "OpenCode needs authentication before it can run the onboarding wizard."
-            echo ""
-            echo "Run this command to authenticate:"
-            echo "  opencode auth login"
-            echo ""
-            echo "Then run /onboarding inside OpenCode to configure your services."
-        else
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo ""
-            echo "Ready to configure your services?"
-            echo ""
-            echo "Launch OpenCode with the onboarding wizard to:"
-            echo "  - See which services are already configured"
-            echo "  - Get personalized recommendations based on your work"
-            echo "  - Set up API keys and credentials interactively"
-            echo ""
-            read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
-            if [[ "$launch_onboarding" =~ ^[Yy]?$ || "$launch_onboarding" == "Y" ]]; then
-                echo ""
-                echo "Starting OpenCode with Onboarding agent..."
-                # Detect available auth provider and select appropriate model
-                # Prefer Anthropic (Claude) > Google (Gemini) > OpenCode Zen > OpenAI
-                local onboarding_model=""
+            echo "Starting OpenCode with Onboarding agent..."
+            # Detect available auth provider and select appropriate model
+            # Prefer Anthropic (Claude) > Google (Gemini)
+            local onboarding_model=""
+            local auth_file="$HOME/.local/share/opencode/auth.json"
+            if [[ -f "$auth_file" ]]; then
                 if jq -e '.anthropic' "$auth_file" &>/dev/null; then
                     onboarding_model="anthropic/claude-sonnet-4-5"
                 elif jq -e '.google' "$auth_file" &>/dev/null; then
                     onboarding_model="google/gemini-2.5-flash"
                 fi
-                local opencode_args=("--agent" "Onboarding" "--prompt" "/onboarding")
-                if [[ -n "$onboarding_model" ]]; then
-                    opencode_args+=("--model" "$onboarding_model")
-                fi
-                opencode "${opencode_args[@]}"
-            else
-                echo ""
-                echo "You can run /onboarding anytime in OpenCode to configure services."
             fi
+            local opencode_args=("--agent" "Onboarding" "--prompt" "/onboarding")
+            if [[ -n "$onboarding_model" ]]; then
+                opencode_args+=("--model" "$onboarding_model")
+            fi
+            opencode "${opencode_args[@]}"
+        else
+            echo ""
+            echo "You can run /onboarding anytime in OpenCode to configure services."
         fi
     fi
     
