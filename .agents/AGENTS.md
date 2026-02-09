@@ -318,7 +318,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting) |
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
 | Model routing | `tools/context/model-routing.md`, `model-registry-helper.sh`, `fallback-chain-helper.sh`, `model-availability-helper.sh` |
-| Model comparison | `tools/ai-assistants/compare-models.md`, `tools/ai-assistants/response-scoring.md`, `aidevops/claude-flow-comparison.md` |
+| Model comparison | `tools/ai-assistants/compare-models.md`, `tools/ai-assistants/response-scoring.md`, `/compare-models`, `/compare-models-free`, `/score-responses` |
 | Pattern tracking | `memory/README.md` "Pattern Tracking", `pattern-tracker-helper.sh`, `scripts/commands/patterns.md` |
 | Self-improvement | `aidevops/self-improving-agents.md`, `self-improve-helper.sh` (analyze → refine → test → pr) |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |

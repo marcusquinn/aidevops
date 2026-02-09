@@ -95,7 +95,7 @@ The result: AI agents that work *with* your development process, not around it.
 - 11 primary agents (Build+, SEO, Marketing, etc.) with specialist @subagents on demand
 - 735+ subagent markdown files organized by domain
 - 194 helper scripts in `.agents/scripts/`
-- 39 slash commands for common workflows
+- 53 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -465,6 +465,8 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
 | **Pattern Tracking** | Learn what works/fails | `pattern-tracker-helper.sh`, `/patterns` command |
 | **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 5-tier guidance, `/route` command |
+| **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
+| **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |
 
 **Key insight**: Context is a finite resource with diminishing returns. aidevops treats every token as precious - loading only what's needed, when it's needed.
 
@@ -1709,6 +1711,15 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/preflight-loop` | Run preflight checks iteratively until all pass |
 | `/runners` | Batch dispatch tasks to parallel agents (task IDs, PR URLs, or descriptions) |
 | `/log-issue-aidevops` | Report issues with aidevops (gathers diagnostics, checks duplicates, creates GitHub issue) |
+
+**AI Model Comparison**:
+
+| Command | Purpose |
+|---------|---------|
+| `/compare-models` | Compare AI models by pricing, context, capabilities (with live web data) |
+| `/compare-models-free` | Compare AI models using offline embedded data only (no web fetches) |
+| `/score-responses` | Score and compare actual model responses with structured criteria |
+| `/route` | Suggest optimal model tier for a task description |
 
 ### Ralph Loop - Iterative AI Development
 
