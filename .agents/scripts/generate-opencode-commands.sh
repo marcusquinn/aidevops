@@ -1017,43 +1017,7 @@ cat > "$OPENCODE_COMMAND_DIR/onboarding.md" << 'EOF'
 description: Interactive onboarding wizard - discover services, configure integrations
 ---
 
-Read ~/.aidevops/agents/aidevops/onboarding.md and follow its instructions.
-
-This is the recommended starting point for new aidevops users.
-
-**Workflow:**
-
-1. **Welcome**: Ask if user wants an explanation of aidevops capabilities
-
-2. **Understand needs**: Ask what kind of work they do:
-   - Web development (WordPress, React, Node.js)
-   - DevOps & infrastructure management
-   - SEO & content marketing
-   - Multiple client/site management
-   - Something else
-
-3. **Show status**: Run the status check and display results:
-   ```bash
-   ~/.aidevops/agents/scripts/onboarding-helper.sh status
-   ```
-
-4. **Personalized recommendations**: Based on their work type:
-   ```bash
-   ~/.aidevops/agents/scripts/onboarding-helper.sh recommend [type]
-   ```
-
-5. **Guide setup**: For each service they want to configure:
-   - Explain what it does
-   - Provide signup/API key link
-   - Show the setup command
-   - Verify it works
-
-6. **Next steps**: Suggest trying a simple task to verify everything works
-
-**Quick status check only:**
-```bash
-~/.aidevops/agents/scripts/onboarding-helper.sh status
-```
+Read ~/.aidevops/agents/aidevops/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
 
 Arguments: $ARGUMENTS
 EOF
