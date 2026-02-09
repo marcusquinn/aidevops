@@ -14,7 +14,8 @@
 # Check directives supported:
 #   file-exists <path>                       Test file exists
 #   rg "pattern" <path>                      Ripgrep pattern match (count matches)
-#   ShellCheck <path>                        Run ShellCheck on script
+#                                            Note: \| in patterns auto-normalized to | (grep→rg compat)
+#   ShellCheck <path>                        Run ShellCheck -x -S warning on script
 #   bash <path>                              Run test script, capture summary
 #
 # Output:
@@ -149,6 +150,9 @@ execute_check() {
     # rg "pattern" <path>
     if [[ "$directive" =~ ^rg\ (.+) ]]; then
         local rg_args="${BASH_REMATCH[1]}"
+        # Normalize grep BRE \| to rg ERE | inside quoted patterns
+        # Many VERIFY.md entries use \| (grep syntax) but rg uses | for alternation
+        rg_args="${rg_args//\\|/|}"
         output=$(eval "rg -c $rg_args" 2>&1) && exit_code=0 || exit_code=$?
         if [[ $exit_code -eq 0 ]]; then
             local match_count
@@ -164,7 +168,9 @@ execute_check() {
     # ShellCheck <path>
     if [[ "$directive" =~ ^shellcheck\ (.+) ]]; then
         local sc_path="${BASH_REMATCH[1]}"
-        output=$(shellcheck "$project_root/$sc_path" 2>&1) && exit_code=0 || exit_code=$?
+        # Use -x to follow sourced files (shared-constants.sh etc.) and
+        # -S warning to ignore info-level SC1091/SC2329
+        output=$(shellcheck -x -S warning "$project_root/$sc_path" 2>&1) && exit_code=0 || exit_code=$?
         if [[ $exit_code -eq 0 ]]; then
             RESULT_SUMMARY="0 issues"
             return 0
