@@ -101,10 +101,46 @@ set -euo pipefail
 # Without this, gh, opencode, node, etc. are unreachable from cron-triggered pulses
 # No HOMEBREW_PREFIX guard: the idempotent ":$PATH:" check prevents duplicates,
 # and cron may have HOMEBREW_PREFIX set without all tool paths present
-for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+for _p in /usr/sbin /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/.cargo/bin"; do
     [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
 done
 unset _p
+
+# Resolve GH_TOKEN for cron environments where macOS keyring is inaccessible.
+# Priority: existing GH_TOKEN env > `gh auth token` > cached token > gopass > credentials.sh
+# When `gh auth token` succeeds (interactive), cache it for cron to use later.
+_gh_token_cache="$HOME/.aidevops/.agent-workspace/supervisor/.gh-token-cache"
+if [[ -z "${GH_TOKEN:-}" ]]; then
+    # Try gh auth token (works interactively, fails in cron without keyring)
+    GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+    if [[ -n "$GH_TOKEN" ]]; then
+        # Cache for cron (600 permissions — owner-only read/write)
+        mkdir -p "$(dirname "$_gh_token_cache")"
+        printf '%s' "$GH_TOKEN" > "$_gh_token_cache" 2>/dev/null || true
+        chmod 600 "$_gh_token_cache" 2>/dev/null || true
+    fi
+    if [[ -z "$GH_TOKEN" && -f "$_gh_token_cache" ]]; then
+        # Read from cache (written by a previous interactive session)
+        GH_TOKEN=$(cat "$_gh_token_cache" 2>/dev/null || echo "")
+    fi
+    if [[ -z "$GH_TOKEN" ]]; then
+        # Try gopass (encrypted secret store)
+        GH_TOKEN=$(gopass show -o github/token 2>/dev/null || echo "")
+    fi
+    if [[ -z "$GH_TOKEN" ]]; then
+        # Try credentials.sh (plaintext fallback)
+        _local_creds="$HOME/.config/aidevops/credentials.sh"
+        if [[ -f "$_local_creds" ]]; then
+            # Source only GH_TOKEN/GITHUB_TOKEN, don't pollute env with everything
+            GH_TOKEN=$(grep -E '^(export )?(GH_TOKEN|GITHUB_TOKEN)=' "$_local_creds" 2>/dev/null | head -1 | sed -E 's/^(export )?(GH_TOKEN|GITHUB_TOKEN)=//' | tr -d '"'"'" || echo "")
+        fi
+        unset _local_creds
+    fi
+    if [[ -n "$GH_TOKEN" ]]; then
+        export GH_TOKEN
+    fi
+fi
+unset _gh_token_cache
 
 # Configuration - resolve relative to this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -2168,10 +2204,15 @@ get_aidevops_identity() {
     fi
 
     # Try GitHub username (cached for the session to avoid repeated API calls)
+    # Validate: must be a simple alphanumeric string (not JSON error like {"message":"..."})
     if [[ -z "${_CACHED_GH_USERNAME:-}" ]]; then
-        _CACHED_GH_USERNAME=$(gh api user --jq '.login' 2>/dev/null || echo "")
+        local gh_user=""
+        gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+        if [[ -n "$gh_user" && "$gh_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            _CACHED_GH_USERNAME="$gh_user"
+        fi
     fi
-    if [[ -n "$_CACHED_GH_USERNAME" ]]; then
+    if [[ -n "${_CACHED_GH_USERNAME:-}" ]]; then
         echo "$_CACHED_GH_USERNAME"
         return 0
     fi
@@ -2249,6 +2290,12 @@ cmd_claim() {
 
     local identity
     identity=$(get_aidevops_identity)
+
+    # Validate identity is safe for sed interpolation (no newlines, pipes, or JSON)
+    if [[ -z "$identity" || "$identity" == *$'\n'* || "$identity" == *"{"* ]]; then
+        log_error "Invalid identity for claim: '${identity:0:40}...' — check gh auth or set AIDEVOPS_IDENTITY"
+        return 1
+    fi
 
     # Check current assignee in TODO.md
     local current_assignee
