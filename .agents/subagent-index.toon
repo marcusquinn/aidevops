@@ -45,7 +45,7 @@ tools/document/,Document extraction - conversion structured data extraction and 
 tools/ocr/,OCR and text extraction - local document processing via Ollama,glm-ocr
 tools/video/,Video creation and downloading - programmatic generation and YouTube downloads,remotion|higgsfield|yt-dlp|video-prompt-design
 tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
-tools/voice/,Voice AI - TTS/STT model catalog voice bridge and Pipecat pipeline for talking to AI agents,voice-models|speech-to-speech|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
+tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline and cloud voice agents,voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
