@@ -755,6 +755,8 @@ _record_model_availability() {
 
 # Resolve the best available model for a given tier.
 # Checks primary model first, falls back to secondary if primary is unavailable.
+# If both fail, delegates to fallback-chain-helper.sh for extended chain resolution
+# including gateway providers (OpenRouter, Cloudflare AI Gateway).
 # Output: provider/model_id on stdout
 # Returns: 0 if a model was resolved, 1 if no model available for this tier
 resolve_tier() {
@@ -789,7 +791,56 @@ resolve_tier() {
         fi
     fi
 
-    [[ "$quiet" != "true" ]] && print_error "No available model for tier: $tier (tried $primary, $fallback)"
+    # Extended fallback: delegate to fallback-chain-helper.sh (t132.4)
+    # This walks the full configured chain including gateway providers
+    local chain_helper="${SCRIPT_DIR}/fallback-chain-helper.sh"
+    if [[ -x "$chain_helper" ]]; then
+        [[ "$quiet" != "true" ]] && print_info "Primary/fallback exhausted, trying extended fallback chain..."
+        local chain_resolved
+        chain_resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
+        if [[ -n "$chain_resolved" ]]; then
+            echo "$chain_resolved"
+            [[ "$quiet" != "true" ]] && print_warning "Resolved $tier -> $chain_resolved (via fallback chain)"
+            return 0
+        fi
+    fi
+
+    [[ "$quiet" != "true" ]] && print_error "No available model for tier: $tier (tried $primary, $fallback, and extended chain)"
+    return 1
+}
+
+# Resolve a model using the full fallback chain (t132.4).
+# Unlike resolve_tier which tries primary/fallback first, this goes directly
+# to the fallback chain configuration for maximum flexibility.
+# Supports per-agent overrides via --agent flag.
+resolve_tier_chain() {
+    local tier="$1"
+    local force="${2:-false}"
+    local quiet="${3:-false}"
+    local agent_file="${4:-}"
+
+    local chain_helper="${SCRIPT_DIR}/fallback-chain-helper.sh"
+    if [[ ! -x "$chain_helper" ]]; then
+        [[ "$quiet" != "true" ]] && print_warning "fallback-chain-helper.sh not found, falling back to resolve_tier"
+        resolve_tier "$tier" "$force" "$quiet"
+        return $?
+    fi
+
+    local -a chain_args=("resolve" "$tier")
+    [[ "$quiet" == "true" ]] && chain_args+=("--quiet")
+    [[ "$force" == "true" ]] && chain_args+=("--force")
+    [[ -n "$agent_file" ]] && chain_args+=("--agent" "$agent_file")
+
+    local resolved
+    resolved=$("$chain_helper" "${chain_args[@]}" 2>/dev/null) || true
+
+    if [[ -n "$resolved" ]]; then
+        echo "$resolved"
+        [[ "$quiet" != "true" ]] && print_success "Resolved $tier -> $resolved (via fallback chain)"
+        return 0
+    fi
+
+    [[ "$quiet" != "true" ]] && print_error "No available model for tier: $tier (fallback chain exhausted)"
     return 1
 }
 
@@ -1141,6 +1192,55 @@ cmd_invalidate() {
     return 0
 }
 
+# Resolve using the full fallback chain (t132.4).
+# Delegates to fallback-chain-helper.sh for extended chain resolution
+# including gateway providers and per-agent overrides.
+cmd_resolve_chain() {
+    local tier="${1:-}"
+    local force=false
+    local quiet=false
+    local json_flag=false
+    local agent_file=""
+    shift || true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force) force=true; shift ;;
+            --quiet) quiet=true; shift ;;
+            --json) json_flag=true; shift ;;
+            --agent) agent_file="${2:-}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ -z "$tier" ]]; then
+        print_error "Usage: model-availability-helper.sh resolve-chain <tier> [--agent file]"
+        print_info "Available tiers: haiku flash sonnet pro opus health eval coding"
+        return 1
+    fi
+
+    local resolved
+    resolved=$(resolve_tier_chain "$tier" "$force" "$quiet" "$agent_file")
+    local exit_code=$?
+
+    if [[ "$json_flag" == "true" ]]; then
+        if [[ $exit_code -eq 0 ]]; then
+            local provider model_id
+            provider="${resolved%%/*}"
+            model_id="${resolved#*/}"
+            echo "{\"tier\":\"$tier\",\"provider\":\"$provider\",\"model\":\"$model_id\",\"full_id\":\"$resolved\",\"status\":\"available\",\"method\":\"chain\"}"
+        else
+            echo "{\"tier\":\"$tier\",\"status\":\"exhausted\",\"method\":\"chain\"}"
+        fi
+    else
+        if [[ $exit_code -eq 0 ]]; then
+            echo "$resolved"
+        fi
+    fi
+
+    return "$exit_code"
+}
+
 cmd_help() {
     echo ""
     echo "Model Availability Helper - Probe before dispatch"
@@ -1153,7 +1253,8 @@ cmd_help() {
     echo "  probe [provider] [--all]     Probe providers (default: only those with keys)"
     echo "  status                       Show cached availability status"
     echo "  rate-limits                  Show rate limit data from cache"
-    echo "  resolve <tier>               Resolve best available model for tier (with fallback)"
+    echo "  resolve <tier>               Resolve best available model for tier (primary + fallback)"
+    echo "  resolve-chain <tier>         Resolve via full fallback chain (t132.4, includes gateways)"
     echo "  invalidate [provider]        Clear cache (all or specific provider)"
     echo "  help                         Show this help"
     echo ""
@@ -1162,6 +1263,7 @@ cmd_help() {
     echo "  --quiet       Suppress informational output"
     echo "  --force       Bypass cache and probe live"
     echo "  --ttl N       Override cache TTL in seconds"
+    echo "  --agent FILE  Per-agent fallback chain override (resolve-chain only)"
     echo ""
     echo "Tiers:"
     echo "  haiku   - Cheapest (triage, classification)"
@@ -1179,6 +1281,8 @@ cmd_help() {
     echo "  model-availability-helper.sh check sonnet"
     echo "  model-availability-helper.sh probe --all"
     echo "  model-availability-helper.sh resolve opus --json"
+    echo "  model-availability-helper.sh resolve-chain coding --json"
+    echo "  model-availability-helper.sh resolve-chain sonnet --agent models/sonnet.md"
     echo "  model-availability-helper.sh status"
     echo "  model-availability-helper.sh rate-limits --json"
     echo "  model-availability-helper.sh invalidate anthropic"
@@ -1189,6 +1293,9 @@ cmd_help() {
     echo ""
     echo "  # Resolve model with fallback for a tier:"
     echo "  MODEL=\$(model-availability-helper.sh resolve coding --quiet)"
+    echo ""
+    echo "  # Resolve via full fallback chain (includes gateway providers):"
+    echo "  MODEL=\$(model-availability-helper.sh resolve-chain coding --quiet)"
     echo ""
     echo "Exit codes:"
     echo "  0 - Available"
@@ -1230,6 +1337,9 @@ main() {
             ;;
         resolve)
             cmd_resolve "$@"
+            ;;
+        resolve-chain|resolve_chain)
+            cmd_resolve_chain "$@"
             ;;
         invalidate|clear|flush)
             cmd_invalidate "$@"

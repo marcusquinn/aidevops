@@ -1,0 +1,112 @@
+{
+  "_comment": "Fallback Chain Configuration - Global defaults for model fallback chains",
+  "_docs": "See .agents/tools/ai-assistants/fallback-chains.md for full documentation",
+
+  "chains": {
+    "_comment": "Per-tier fallback chains. Models tried in order. Formats: provider/model, openrouter/provider/model, gateway/cf/provider/model",
+
+    "haiku": [
+      "anthropic/claude-3-5-haiku-20241022",
+      "google/gemini-2.5-flash",
+      "openrouter/anthropic/claude-3-5-haiku-20241022"
+    ],
+    "flash": [
+      "google/gemini-2.5-flash",
+      "openai/gpt-4.1-mini",
+      "openrouter/google/gemini-2.5-flash"
+    ],
+    "sonnet": [
+      "anthropic/claude-sonnet-4-20250514",
+      "openai/gpt-4.1",
+      "google/gemini-2.5-pro",
+      "openrouter/anthropic/claude-sonnet-4-20250514"
+    ],
+    "pro": [
+      "google/gemini-2.5-pro",
+      "anthropic/claude-sonnet-4-20250514",
+      "openrouter/google/gemini-2.5-pro"
+    ],
+    "opus": [
+      "anthropic/claude-opus-4-6",
+      "openai/o3",
+      "openrouter/anthropic/claude-opus-4-6"
+    ],
+    "coding": [
+      "anthropic/claude-opus-4-6",
+      "openai/o3",
+      "anthropic/claude-sonnet-4-20250514",
+      "openrouter/anthropic/claude-opus-4-6"
+    ],
+    "eval": [
+      "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-flash",
+      "openrouter/anthropic/claude-sonnet-4-5"
+    ],
+    "health": [
+      "anthropic/claude-sonnet-4-5",
+      "google/gemini-2.5-flash"
+    ],
+
+    "default": [
+      "anthropic/claude-sonnet-4-20250514",
+      "openai/gpt-4.1",
+      "google/gemini-2.5-pro",
+      "openrouter/anthropic/claude-sonnet-4-20250514"
+    ]
+  },
+
+  "triggers": {
+    "_comment": "Trigger configuration. Each trigger type can be enabled/disabled with custom cooldown.",
+
+    "api_error": {
+      "enabled": true,
+      "cooldown_seconds": 300,
+      "description": "Provider returned 5xx or connection failure"
+    },
+    "timeout": {
+      "enabled": true,
+      "cooldown_seconds": 180,
+      "description": "Request exceeded timeout threshold"
+    },
+    "rate_limit": {
+      "enabled": true,
+      "cooldown_seconds": 60,
+      "description": "Provider returned 429 (rate limited)"
+    },
+    "auth_error": {
+      "enabled": true,
+      "cooldown_seconds": 3600,
+      "description": "Provider returned 401/403 (key invalid or expired)"
+    },
+    "overloaded": {
+      "enabled": true,
+      "cooldown_seconds": 120,
+      "description": "Provider returned 529 (overloaded)"
+    }
+  },
+
+  "gateways": {
+    "_comment": "Gateway provider configuration for provider-level fallback routing",
+
+    "openrouter": {
+      "enabled": true,
+      "endpoint": "https://openrouter.ai/api/v1",
+      "key_env_var": "OPENROUTER_API_KEY",
+      "description": "OpenRouter - multi-provider gateway with unified API"
+    },
+    "cloudflare": {
+      "enabled": false,
+      "account_id": "YOUR_CF_ACCOUNT_ID_HERE",
+      "gateway_id": "YOUR_CF_GATEWAY_ID_HERE",
+      "key_env_var": "CF_AIG_TOKEN",
+      "description": "Cloudflare AI Gateway - caching, rate limiting, analytics"
+    }
+  },
+
+  "settings": {
+    "max_chain_depth": 5,
+    "default_cooldown_seconds": 300,
+    "probe_timeout_seconds": 10,
+    "log_retention_days": 30
+  }
+}

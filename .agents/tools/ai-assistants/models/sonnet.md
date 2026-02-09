@@ -4,6 +4,11 @@ mode: subagent
 model: anthropic/claude-sonnet-4-20250514
 model-tier: sonnet
 model-fallback: openai/gpt-4.1
+fallback-chain:
+  - anthropic/claude-sonnet-4-20250514
+  - openai/gpt-4.1
+  - google/gemini-2.5-pro
+  - openrouter/anthropic/claude-sonnet-4-20250514
 tools:
   read: true
   write: true

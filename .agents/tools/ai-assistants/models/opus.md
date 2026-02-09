@@ -4,6 +4,11 @@ mode: subagent
 model: anthropic/claude-opus-4-20250514
 model-tier: opus
 model-fallback: openai/o3
+fallback-chain:
+  - anthropic/claude-opus-4-6
+  - openai/o3
+  - anthropic/claude-sonnet-4-20250514
+  - openrouter/anthropic/claude-opus-4-6
 tools:
   read: true
   write: true
