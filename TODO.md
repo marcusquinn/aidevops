@@ -270,7 +270,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint).
 - [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) ref:GH#496 logged:2026-02-07
   - [x] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none ref:GH#728 completed:2026-02-09 pr:#755
-  - [ ] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1 ref:GH#729
+  - [x] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1 ref:GH#729 completed:2026-02-09 pr:#759
   - [ ] t136.3 Extend setup.sh to deploy plugins ~2h blocked-by:t136.2 ref:GH#730
   - [ ] t136.4 Create plugin template ~1h blocked-by:t136.2 ref:GH#731
   - [ ] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4 ref:GH#732
