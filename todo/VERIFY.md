@@ -156,4 +156,11 @@ fail `[!]`. Failed verifications reopen the original task in TODO.md.
   check: rg "Task claiming" .agents/AGENTS.md
   check: rg "Task Claiming via TODO.md" tests/test-supervisor-state-machine.sh
 
+- [x] v026 t080 Cloud voice agents and S2S models | PR #713 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/tools/voice/cloud-voice-agents.md, .agents/tools/voice/voice-ai-models.md
+  check: file-exists .agents/tools/voice/cloud-voice-agents.md
+  check: rg "GPT-4o Realtime" .agents/tools/voice/cloud-voice-agents.md
+  check: rg "MiniCPM-o" .agents/tools/voice/cloud-voice-agents.md
+  check: rg "Nemotron" .agents/tools/voice/cloud-voice-agents.md
+
 <!-- VERIFY-QUEUE-END -->
