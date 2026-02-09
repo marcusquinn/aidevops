@@ -116,6 +116,19 @@ claiming Docker image versions don't exist, flagging correct file paths as wrong
 suggesting fixes that break working code. Always verify factual claims against runtime,
 documentation, or project conventions before acting on them.
 
+# Context Compaction Survival
+# When summarizing this conversation for context compaction, ALWAYS preserve:
+# 1. Current task ID(s) and their states (e.g., "working on t187.2, t187.1 done")
+# 2. Active batch ID (if any) and its concurrency/status
+# 3. Active worktree path and branch name
+# 4. Open PR numbers and their states
+# 5. The next 3 action items in priority order
+# 6. Any blocking issues or decisions pending user input
+# 7. Key file paths being modified in this session
+# This operational state is MORE important than conversation history details.
+# Without it, the agent can operate the framework but doesn't know what to work on.
+# If a checkpoint file exists, reference: ~/.aidevops/.agent-workspace/tmp/session-checkpoint.md
+
 # Model-Specific Reinforcements
 These apply to all models but reinforce behaviours some need more than others:
 - NEVER end your turn without completing the task. Keep working until fully resolved.
