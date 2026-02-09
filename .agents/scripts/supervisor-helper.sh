@@ -2620,7 +2620,8 @@ resolve_ai_cli() {
 
 #######################################
 # Resolve the best available model for a given task tier
-# Priority: Anthropic SOTA via opencode (only supported CLI)
+# Uses model-availability-helper.sh for availability-aware resolution
+# with automatic fallback to cross-provider alternatives.
 #
 # Tiers:
 #   coding  - Best SOTA model for code tasks (default)
@@ -2637,14 +2638,25 @@ resolve_model() {
         return 0
     fi
 
+    # Try model-availability-helper.sh for availability-aware resolution (t132.3)
+    local availability_helper="${SCRIPT_DIR}/model-availability-helper.sh"
+    if [[ -x "$availability_helper" ]]; then
+        local resolved
+        resolved=$("$availability_helper" resolve "$tier" --quiet 2>/dev/null) || true
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+        # Fallback: availability helper couldn't resolve, use static defaults
+        log_verbose "model-availability-helper.sh could not resolve tier '$tier', using static default"
+    fi
+
+    # Static fallback (no availability helper or resolution failed)
     case "$tier" in
         coding)
-            # Best Anthropic model - primary for all code tasks
             echo "anthropic/claude-opus-4-6"
             ;;
         eval|health)
-            # Fast + cheap for evaluation and health probes
-            # Note: OpenCode requires full model IDs (e.g., claude-sonnet-4-5, not claude-sonnet-4)
             echo "anthropic/claude-sonnet-4-5"
             ;;
     esac
@@ -2653,8 +2665,10 @@ resolve_model() {
 }
 
 #######################################
-# Pre-dispatch model health check
-# Sends a trivial prompt to verify the model/provider is responding.
+# Pre-dispatch model health check (t132.3)
+# Two-tier probe strategy:
+#   1. Fast path: model-availability-helper.sh (direct HTTP, ~1-2s, cached)
+#   2. Slow path: Full AI CLI probe (spawns session, ~8-15s)
 # Returns 0 if healthy, 1 if unhealthy. Timeout: 15 seconds.
 # Result is cached for 5 minutes to avoid repeated probes.
 #######################################
@@ -2669,13 +2683,47 @@ check_model_health() {
         return 0
     fi
 
-    # Cache key: cli + model, stored as a file with timestamp
+    # Fast path: use model-availability-helper.sh for lightweight HTTP probe (t132.3)
+    # This checks the provider's /models endpoint (~1-2s) instead of spawning
+    # a full AI CLI session (~8-15s). Falls through to slow path on failure.
+    local availability_helper="${SCRIPT_DIR}/model-availability-helper.sh"
+    if [[ -x "$availability_helper" ]]; then
+        local provider_name=""
+        if [[ -n "$model" && "$model" == *"/"* ]]; then
+            provider_name="${model%%/*}"
+        else
+            provider_name="anthropic"  # Default provider
+        fi
+
+        local avail_exit=0
+        "$availability_helper" check "$provider_name" --quiet 2>/dev/null || avail_exit=$?
+
+        case "$avail_exit" in
+            0)
+                _PULSE_HEALTH_VERIFIED="true"
+                log_info "Model health: OK via availability helper (fast path)"
+                return 0
+                ;;
+            2)
+                log_warn "Model health check: rate limited (via availability helper)"
+                return 1
+                ;;
+            3)
+                log_warn "Model health check: API key invalid (via availability helper)"
+                return 1
+                ;;
+            *)
+                log_verbose "Availability helper returned $avail_exit, falling through to CLI probe"
+                ;;
+        esac
+    fi
+
+    # Slow path: file-based cache check (legacy, kept for environments without the helper)
     local cache_dir="$SUPERVISOR_DIR/health"
     mkdir -p "$cache_dir"
     local cache_key="${ai_cli}-${model//\//_}"
     local cache_file="$cache_dir/${cache_key}"
 
-    # Check cache (valid for 300 seconds / 5 minutes)
     if [[ -f "$cache_file" ]]; then
         local cached_at
         cached_at=$(cat "$cache_file")
@@ -2689,7 +2737,7 @@ check_model_health() {
         fi
     fi
 
-    # Resolve timeout command (macOS lacks coreutils timeout)
+    # Slow path: spawn AI CLI for a trivial prompt
     local timeout_cmd=""
     if command -v gtimeout &>/dev/null; then
         timeout_cmd="gtimeout"
@@ -2697,7 +2745,6 @@ check_model_health() {
         timeout_cmd="timeout"
     fi
 
-    # Send a trivial prompt
     local probe_result=""
     local probe_exit=1
 
@@ -2711,7 +2758,6 @@ check_model_health() {
             probe_result=$("$timeout_cmd" 15 "${probe_cmd[@]}" 2>&1)
             probe_exit=$?
         else
-            # Fallback: background process with manual kill after 15s
             local probe_pid probe_tmpfile
             probe_tmpfile=$(mktemp)
             ("${probe_cmd[@]}" > "$probe_tmpfile" 2>&1) &
@@ -2724,7 +2770,7 @@ check_model_health() {
             if kill -0 "$probe_pid" 2>/dev/null; then
                 kill "$probe_pid" 2>/dev/null || true
                 wait "$probe_pid" 2>/dev/null || true
-                probe_exit=124  # Simulate timeout exit code
+                probe_exit=124
             else
                 wait "$probe_pid" 2>/dev/null || true
                 probe_exit=$?
@@ -2764,21 +2810,16 @@ check_model_health() {
     fi
 
     # Check for known failure patterns
-    # NOTE: Patterns must not match inside JSON fields (e.g. timestamps contain digits
-    # like "1770503..." which falsely matched bare "503"). Use word boundaries or
-    # anchored patterns. The probe returns JSON lines from opencode run --format json.
     if echo "$probe_result" | grep -qiE 'endpoints failed|Quota protection|over[_ -]?usage|quota reset|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable' 2>/dev/null; then
         log_warn "Model health check FAILED: provider error detected"
         return 1
     fi
 
-    # Timeout (exit 124) = unhealthy
     if [[ "$probe_exit" -eq 124 ]]; then
         log_warn "Model health check FAILED: timeout (15s)"
         return 1
     fi
 
-    # Empty response with non-zero exit = unhealthy
     if [[ -z "$probe_result" && "$probe_exit" -ne 0 ]]; then
         log_warn "Model health check FAILED: empty response (exit $probe_exit)"
         return 1

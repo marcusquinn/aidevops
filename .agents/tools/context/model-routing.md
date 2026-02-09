@@ -180,6 +180,32 @@ Interactive commands: `/compare-models` (with live web fetch), `/compare-models-
 
 The model registry (`model-registry-helper.sh`) maintains a SQLite database tracking all known models across providers. It syncs from subagent frontmatter, embedded pricing data, and live provider APIs. Use `model-registry-helper.sh status` to check registry health and `model-registry-helper.sh check` to verify configured models are available.
 
+## Model Availability (Pre-Dispatch)
+
+The model availability checker (`model-availability-helper.sh`) provides lightweight, cached health probes for use before dispatch. Unlike the model registry (which tracks what models exist), the availability checker tests whether providers are currently responding and API keys are valid.
+
+```bash
+# Check if a provider is healthy (fast: direct HTTP, ~1-2s, cached 5min)
+model-availability-helper.sh check anthropic
+
+# Check a specific model
+model-availability-helper.sh check anthropic/claude-sonnet-4-20250514
+
+# Resolve best available model for a tier (with automatic fallback)
+model-availability-helper.sh resolve opus
+
+# Probe all configured providers
+model-availability-helper.sh probe
+
+# View cached status and rate limits
+model-availability-helper.sh status
+model-availability-helper.sh rate-limits
+```
+
+The supervisor uses this automatically during dispatch (t132.3). The availability helper is ~4-8x faster than the previous CLI-based health probe because it calls provider `/models` endpoints directly via HTTP instead of spawning a full AI CLI session.
+
+Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=API-key-invalid.
+
 <!-- AI-CONTEXT-END -->
 
 ## Decision Flowchart
