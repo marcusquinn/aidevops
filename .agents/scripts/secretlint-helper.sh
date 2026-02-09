@@ -19,7 +19,7 @@ set -euo pipefail
 #   help        - Show this help message
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 1.1.0
 # License: MIT
 # Reference: https://github.com/secretlint/secretlint
 
@@ -30,6 +30,48 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly SECRETLINT_CONFIG_FILE=".secretlintrc.json"
 readonly SECRETLINT_IGNORE_FILE=".secretlintignore"
 readonly DEFAULT_GLOB_PATTERN="**/*"
+
+# =============================================================================
+# Git Worktree Support
+# =============================================================================
+# In a git worktree, .git is a file (not a directory) and node_modules lives
+# in the main repo root, not the worktree. These helpers resolve the correct
+# paths for install, scan, and hook operations.
+
+# Detect if running inside a git worktree (linked worktree, not the main one)
+is_git_worktree() {
+    local git_dir git_common_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+    git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+    # In a linked worktree, git-dir differs from git-common-dir
+    [[ "$git_dir" != "$git_common_dir" ]]
+    return $?
+}
+
+# Get the main repo root (where package.json and node_modules live)
+# In a worktree this resolves to the main repo; otherwise returns CWD toplevel
+get_repo_root() {
+    local git_common_dir
+    git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+        pwd
+        return 0
+    }
+    # git-common-dir returns the .git directory of the main repo
+    # Its parent is the repo root
+    local repo_root
+    repo_root=$(cd "$git_common_dir/.." && pwd) || {
+        pwd
+        return 0
+    }
+    echo "$repo_root"
+    return 0
+}
+
+# Get the real .git directory path (works in both regular repos and worktrees)
+get_git_dir() {
+    git rev-parse --git-dir 2>/dev/null || echo ".git"
+    return 0
+}
 
 # Print functions
 print_header() {
@@ -45,6 +87,7 @@ print_secret() {
 }
 
 # Check if Secretlint is installed
+# Searches: global PATH, CWD node_modules, main repo node_modules (worktree)
 check_secretlint_installed() {
     if command -v secretlint &> /dev/null; then
         local version
@@ -57,6 +100,15 @@ check_secretlint_installed() {
         print_success "Secretlint installed (local): v$version"
         return 0
     else
+        # Check main repo node_modules (handles git worktrees)
+        local repo_root
+        repo_root=$(get_repo_root)
+        if [[ "$repo_root" != "$(pwd)" ]] && [[ -f "$repo_root/node_modules/.bin/secretlint" ]]; then
+            local version
+            version=$("$repo_root/node_modules/.bin/secretlint" --version 2>/dev/null || echo "unknown")
+            print_success "Secretlint installed (main repo): v$version"
+            return 0
+        fi
         print_warning "Secretlint not found"
         return 1
     fi
@@ -64,30 +116,44 @@ check_secretlint_installed() {
 
 # Check if required rule presets are installed
 # Returns: 0=all rules installed, 1=missing rules, 2=no config
+# Checks CWD, main repo (worktree), and global installations
 check_rules_installed() {
     local config_file="${1:-$SECRETLINT_CONFIG_FILE}"
-    
+
     if [[ ! -f "$config_file" ]]; then
         return 2
     fi
-    
+
+    local repo_root
+    repo_root=$(get_repo_root)
+
+    # Helper: check if a package is installed locally, in main repo, or globally
+    _is_npm_pkg_installed() {
+        local pkg="$1"
+        npm list "$pkg" &>/dev/null && return 0
+        # Check main repo node_modules when in a worktree
+        if [[ "$repo_root" != "$(pwd)" ]]; then
+            npm list --prefix "$repo_root" "$pkg" &>/dev/null && return 0
+        fi
+        npm list -g "$pkg" &>/dev/null && return 0
+        return 1
+    }
+
     # Extract rule IDs from config
     local missing_rules=()
-    
+
     # Check for preset-recommend (most common)
     if grep -q "secretlint-rule-preset-recommend" "$config_file" \
-        && ! npm list @secretlint/secretlint-rule-preset-recommend &>/dev/null \
-        && ! npm list -g @secretlint/secretlint-rule-preset-recommend &>/dev/null; then
+        && ! _is_npm_pkg_installed "@secretlint/secretlint-rule-preset-recommend"; then
         missing_rules+=("@secretlint/secretlint-rule-preset-recommend")
     fi
-    
+
     # Check for pattern rule
     if grep -q "secretlint-rule-pattern" "$config_file" \
-        && ! npm list @secretlint/secretlint-rule-pattern &>/dev/null \
-        && ! npm list -g @secretlint/secretlint-rule-pattern &>/dev/null; then
+        && ! _is_npm_pkg_installed "@secretlint/secretlint-rule-pattern"; then
         missing_rules+=("@secretlint/secretlint-rule-pattern")
     fi
-    
+
     if [[ ${#missing_rules[@]} -gt 0 ]]; then
         print_error "Missing required secretlint rules:"
         for rule in "${missing_rules[@]}"; do
@@ -96,7 +162,7 @@ check_rules_installed() {
         print_info "Install with: npm install --save-dev ${missing_rules[*]}"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -130,57 +196,72 @@ check_docker_available() {
     fi
 }
 
-# Get secretlint command (global or local)
+# Get secretlint command (global, local, main repo, or npx fallback)
 get_secretlint_cmd() {
     if command -v secretlint &> /dev/null; then
         echo "secretlint"
     elif [[ -f "node_modules/.bin/secretlint" ]]; then
         echo "./node_modules/.bin/secretlint"
     else
-        echo "npx secretlint"
+        # Check main repo node_modules (handles git worktrees)
+        local repo_root
+        repo_root=$(get_repo_root)
+        if [[ "$repo_root" != "$(pwd)" ]] && [[ -f "$repo_root/node_modules/.bin/secretlint" ]]; then
+            echo "$repo_root/node_modules/.bin/secretlint"
+        else
+            echo "npx secretlint"
+        fi
     fi
     return 0
 }
 
 # Install Secretlint and recommended rules
+# In a worktree, installs to the main repo root (where package.json lives)
 install_secretlint() {
     local install_type="${1:-local}"
-    
+
     print_header "Installing Secretlint"
-    
+
     # Check for Node.js
     if ! command -v node &> /dev/null; then
         print_error "Node.js is required. Please install Node.js 20+ first."
         print_info "Alternatively, use Docker: $0 docker scan"
         return 1
     fi
-    
+
     local node_version
     node_version=$(node -v | sed 's/v//' | cut -d. -f1)
     if [[ $node_version -lt 18 ]]; then
         print_warning "Node.js 20+ recommended. Current version: $(node -v)"
     fi
-    
+
     case "$install_type" in
         "global")
             print_info "Installing Secretlint globally..."
             npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
             ;;
         "local"|*)
-            print_info "Installing Secretlint locally..."
-            npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
+            local repo_root
+            repo_root=$(get_repo_root)
+            if [[ "$repo_root" != "$(pwd)" ]] && [[ -f "$repo_root/package.json" ]]; then
+                print_info "Worktree detected. Installing in main repo: $repo_root"
+                npm install --prefix "$repo_root" --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
+            else
+                print_info "Installing Secretlint locally..."
+                npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
+            fi
             ;;
     esac
-    
+
     if [[ $? -eq 0 ]]; then
         print_success "Secretlint installed successfully"
-        
+
         # Initialize if config doesn't exist
         if [[ ! -f "$SECRETLINT_CONFIG_FILE" ]]; then
             print_info "Initializing configuration..."
             init_secretlint_config
         fi
-        
+
         return 0
     else
         print_error "Installation failed"
@@ -189,14 +270,22 @@ install_secretlint() {
 }
 
 # Install additional rules
+# In a worktree, installs to the main repo root
 install_additional_rules() {
     local rules="${1:-pattern}"
-    
+
     print_header "Installing Additional Secretlint Rules"
-    
+
     local npm_cmd="npm install --save-dev"
     if command -v secretlint &> /dev/null; then
         npm_cmd="npm install -g"
+    else
+        # In a worktree, install to the main repo
+        local repo_root
+        repo_root=$(get_repo_root)
+        if [[ "$repo_root" != "$(pwd)" ]] && [[ -f "$repo_root/package.json" ]]; then
+            npm_cmd="npm install --prefix $repo_root --save-dev"
+        fi
     fi
     
     case "$rules" in
@@ -413,8 +502,8 @@ EOF
 run_secretlint_scan() {
     local target="${1:-$DEFAULT_GLOB_PATTERN}"
     local format="${2:-stylish}"
-    local output_file="$3"
-    local extra_args="$4"
+    local output_file="${3:-}"
+    local extra_args="${4:-}"
     
     print_header "Running Secretlint Scan"
     
@@ -499,7 +588,7 @@ run_quick_scan() {
 # Run scan via Docker
 run_docker_scan() {
     local target="${1:-$DEFAULT_GLOB_PATTERN}"
-    local extra_args="$2"
+    local extra_args="${2:-}"
     
     print_header "Running Secretlint via Docker"
     
@@ -579,13 +668,23 @@ mask_secrets() {
 show_status() {
     print_header "Secretlint Status"
     echo ""
-    
+
+    # Show worktree info if applicable
+    if is_git_worktree; then
+        local repo_root
+        repo_root=$(get_repo_root)
+        print_info "Git worktree detected"
+        print_info "Main repo: $repo_root"
+        print_info "Worktree: $(pwd)"
+        echo ""
+    fi
+
     # Check installation
     print_info "Installation:"
     check_secretlint_installed
     check_docker_available
     echo ""
-    
+
     # Check Node.js
     print_info "Node.js:"
     if command -v node &> /dev/null; then
@@ -657,13 +756,27 @@ show_status() {
 generate_sarif() {
     local target="${1:-$DEFAULT_GLOB_PATTERN}"
     local output_file="${2:-secretlint-results.sarif}"
-    
+
     print_header "Generating SARIF Output"
-    
-    # Check if SARIF formatter is installed
-    if ! npm list @secretlint/secretlint-formatter-sarif &>/dev/null; then
+
+    local repo_root
+    repo_root=$(get_repo_root)
+
+    # Check if SARIF formatter is installed (CWD, main repo, or global)
+    local sarif_installed=false
+    if npm list @secretlint/secretlint-formatter-sarif &>/dev/null; then
+        sarif_installed=true
+    elif [[ "$repo_root" != "$(pwd)" ]] && npm list --prefix "$repo_root" @secretlint/secretlint-formatter-sarif &>/dev/null; then
+        sarif_installed=true
+    fi
+
+    if [[ "$sarif_installed" != "true" ]]; then
         print_info "Installing SARIF formatter..."
-        npm install --save-dev @secretlint/secretlint-formatter-sarif
+        if [[ "$repo_root" != "$(pwd)" ]] && [[ -f "$repo_root/package.json" ]]; then
+            npm install --prefix "$repo_root" --save-dev @secretlint/secretlint-formatter-sarif
+        else
+            npm install --save-dev @secretlint/secretlint-formatter-sarif
+        fi
     fi
     
     local cmd
@@ -681,17 +794,22 @@ generate_sarif() {
 }
 
 # Pre-commit hook setup
+# Works in both regular repos (.git is a directory) and worktrees (.git is a file)
 setup_precommit_hook() {
     print_header "Setting Up Pre-commit Hook"
-    
-    local hook_file=".git/hooks/pre-commit"
-    local hook_dir=".git/hooks"
-    
-    if [[ ! -d ".git" ]]; then
+
+    # Use git rev-parse to find the real hooks directory (works in worktrees)
+    local git_dir
+    git_dir=$(get_git_dir)
+
+    if [[ -z "$git_dir" ]] || ! git rev-parse --git-dir &>/dev/null; then
         print_error "Not a git repository"
         return 1
     fi
-    
+
+    local hook_dir="$git_dir/hooks"
+    local hook_file="$hook_dir/pre-commit"
+
     mkdir -p "$hook_dir"
     
     # Check if hook already exists
