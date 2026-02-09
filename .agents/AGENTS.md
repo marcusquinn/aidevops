@@ -281,6 +281,8 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Encryption | `tools/credentials/encryption-stack.md` (decision tree), `tools/credentials/sops.md`, `tools/credentials/gocryptfs.md`, `tools/credentials/gopass.md` |
 | Security | `tools/security/tirith.md` (terminal guard), `tools/security/shannon.md` (pentesting) |
 | Cloud GPU | `tools/infrastructure/cloud-gpu.md` |
+| Model routing | `tools/context/model-routing.md`, `model-registry-helper.sh`, `fallback-chain-helper.sh`, `model-availability-helper.sh` |
+| Model comparison | `tools/ai-assistants/compare-models.md`, `tools/ai-assistants/response-scoring.md`, `aidevops/claude-flow-comparison.md` |
 | Parallel agents | `tools/ai-assistants/headless-dispatch.md`, `tools/ai-assistants/runners/` |
 | Orchestration | `supervisor-helper.sh` (batch dispatch, cron pulse, self-healing), `/runners-check` (quick queue status) |
 | MCP dev | `tools/build-mcp/build-mcp.md` |
