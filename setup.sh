@@ -2575,9 +2575,11 @@ deploy_aidevops_agents() {
     if [[ "$CLEAN_MODE" == "true" ]]; then
         # Build list of directories to preserve: custom, draft, plus plugin namespaces
         local -a preserved_dirs=("custom" "draft")
-        for pns in "${plugin_namespaces[@]}"; do
-            preserved_dirs+=("$pns")
-        done
+        if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+            for pns in "${plugin_namespaces[@]}"; do
+                preserved_dirs+=("$pns")
+            done
+        fi
         print_info "Clean mode: removing stale files from $target_dir (preserving ${preserved_dirs[*]})"
         local tmp_preserve
         tmp_preserve="$(mktemp -d)"
@@ -2617,18 +2619,22 @@ deploy_aidevops_agents() {
     local deploy_ok=false
     if command -v rsync &>/dev/null; then
         local -a rsync_excludes=("--exclude=loop-state/" "--exclude=custom/" "--exclude=draft/")
-        for pns in "${plugin_namespaces[@]}"; do
-            rsync_excludes+=("--exclude=${pns}/")
-        done
+        if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+            for pns in "${plugin_namespaces[@]}"; do
+                rsync_excludes+=("--exclude=${pns}/")
+            done
+        fi
         if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
             deploy_ok=true
         fi
     else
         # Fallback: use tar with exclusions to match rsync behavior
         local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
-        for pns in "${plugin_namespaces[@]}"; do
-            tar_excludes+=("--exclude=$pns")
-        done
+        if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+            for pns in "${plugin_namespaces[@]}"; do
+                tar_excludes+=("--exclude=$pns")
+            done
+        fi
         if (cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) | (cd "$target_dir" && tar xf -); then
             deploy_ok=true
         fi
