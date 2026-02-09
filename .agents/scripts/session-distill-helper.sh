@@ -268,7 +268,53 @@ auto_distill() {
     store_learnings
     echo ""
     
-    log_success "Session distillation complete"
+    emit_checkpoint
+    echo ""
+    
+    log_success "Session distillation complete (learnings + operational state)"
+    return 0
+}
+
+#######################################
+# Emit operational state checkpoint
+# Captures what tasks are running, PRs pending, etc.
+# Complements learnings (what we learned) with state (where we are)
+#######################################
+emit_checkpoint() {
+    init_session_dir
+    
+    log_info "Capturing operational state..."
+    
+    local checkpoint_helper="$SCRIPT_DIR/session-checkpoint-helper.sh"
+    
+    if [[ -x "$checkpoint_helper" ]]; then
+        # Generate continuation prompt (captures git, supervisor, PR, TODO state)
+        local continuation_output
+        continuation_output="$(bash "$checkpoint_helper" continuation 2>/dev/null || echo "Checkpoint helper unavailable")"
+        
+        # Save to session dir for inclusion in distill output
+        local checkpoint_file="$SESSION_DIR/operational-state.md"
+        echo "$continuation_output" > "$checkpoint_file"
+        
+        log_success "Operational state saved to $checkpoint_file"
+        echo "$continuation_output"
+    else
+        log_warn "session-checkpoint-helper.sh not found at $checkpoint_helper"
+        
+        # Fallback: gather minimal state directly
+        local branch
+        branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+        local open_prs
+        open_prs=$(gh pr list --state open --json number,title --jq '.[] | "#\(.number) \(.title)"' 2>/dev/null || echo "none")
+        
+        cat <<FALLBACK_EOF
+## Operational State (fallback)
+
+**Branch**: $branch
+**Open PRs**: $open_prs
+**Uncommitted**: $(git status --short 2>/dev/null || echo "unknown")
+FALLBACK_EOF
+    fi
     return 0
 }
 
@@ -327,14 +373,16 @@ Usage:
   session-distill-helper.sh analyze     Analyze current session context
   session-distill-helper.sh extract     Extract and format learnings
   session-distill-helper.sh store       Store extracted learnings to memory
-  session-distill-helper.sh auto        Full pipeline: analyze → extract → store
+  session-distill-helper.sh checkpoint  Capture operational state (tasks, PRs, git)
+  session-distill-helper.sh auto        Full pipeline: analyze → extract → store → checkpoint
   session-distill-helper.sh prompt      Generate reflection prompt for AI
   session-distill-helper.sh help        Show this help
 
 The distillation process:
-  1. analyze  - Gathers git history, TODO.md changes, session patterns
-  2. extract  - Identifies valuable learnings from patterns
-  3. store    - Saves learnings to memory via memory-helper.sh
+  1. analyze    - Gathers git history, TODO.md changes, session patterns
+  2. extract    - Identifies valuable learnings from patterns
+  3. store      - Saves learnings to memory via memory-helper.sh
+  4. checkpoint - Captures operational state for session continuity
 
 Learning types detected:
   - ERROR_FIX: Bug fixes and error resolutions
@@ -345,11 +393,15 @@ Learning types detected:
 Integration:
   - Called by /session-review at end of sessions
   - Works with memory-helper.sh for persistent storage
+  - Works with session-checkpoint-helper.sh for operational state
   - Supports both automatic and AI-assisted distillation
 
 Examples:
-  # Full automatic distillation
+  # Full automatic distillation (learnings + operational state)
   session-distill-helper.sh auto
+
+  # Just capture operational state
+  session-distill-helper.sh checkpoint
 
   # Generate prompt for AI-assisted reflection
   session-distill-helper.sh prompt
@@ -377,6 +429,9 @@ main() {
             ;;
         store)
             store_learnings
+            ;;
+        checkpoint)
+            emit_checkpoint
             ;;
         auto)
             auto_distill

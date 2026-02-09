@@ -291,7 +291,30 @@ This ensures the agent always has current state even if context was compacted be
 
 ### Continuation Prompt Generation
 
-If a session must be resumed manually (new conversation), the checkpoint file at `~/.aidevops/.agent-workspace/tmp/session-checkpoint.md` contains enough state to generate a continuation prompt. The user can paste it or the agent can read it on startup.
+Generate a structured continuation prompt that captures all operational state:
+
+```bash
+# Generate and display continuation prompt (for pasting into new session):
+session-checkpoint-helper.sh continuation
+
+# Auto-save checkpoint with state auto-detection (no manual flags):
+session-checkpoint-helper.sh auto-save --task "t135.9" --note "Completed X"
+
+# Include operational state in session distillation:
+session-distill-helper.sh auto    # Now includes checkpoint step
+session-distill-helper.sh checkpoint  # Just the operational state
+```
+
+The continuation prompt gathers state from multiple sources:
+
+- **Git**: branch, uncommitted changes, recent commits, worktrees
+- **GitHub**: open PRs for the repo
+- **Supervisor**: active batch state
+- **TODO.md**: in-progress tasks
+- **Checkpoint file**: last saved context note
+- **Memory**: recent session memories
+
+This is the single highest-impact factor for session continuity. AGENTS.md provides the "how" (conventions, tools), but the continuation prompt provides the "where we are" (task states, batch IDs, next steps).
 
 ## Related
 

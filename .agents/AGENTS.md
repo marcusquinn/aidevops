@@ -206,6 +206,22 @@ Run `/session-review` before ending. Suggest new sessions after PR merge, domain
 
 **Full docs**: `workflows/session-manager.md`
 
+## Context Compaction Resilience
+
+When context is compacted (long sessions, autonomous loops), operational state is lost unless persisted to disk. Use `/checkpoint` to save and restore session state.
+
+**Commands**:
+
+- `/checkpoint` or `session-checkpoint-helper.sh save --task <id> --next <ids>` — save current state
+- `session-checkpoint-helper.sh load` — reload state after compaction
+- `session-checkpoint-helper.sh continuation` — generate a full continuation prompt for new sessions
+
+**When to checkpoint**: After each task completion, before large operations, after PR creation/merge.
+
+**Compaction survival rule**: When summarizing this conversation for compaction, ALWAYS preserve: current task IDs and states, active batch ID, worktree path, open PR numbers, and the next 3 action items. This operational state is more important than conversation history details.
+
+**Full docs**: `workflows/session-manager.md` "Compaction Resilience" section
+
 ## Agents & Subagents
 
 See `subagent-index.toon` for complete listing of agents, subagents, workflows, and scripts.
