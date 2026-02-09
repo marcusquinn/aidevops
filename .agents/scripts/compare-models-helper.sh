@@ -14,6 +14,7 @@
 #   context       Show context window comparison
 #   capabilities  Show capability matrix
 #   providers     List supported providers
+#   discover      Detect available providers and models from local config
 #   help          Show this help
 #
 # Author: AI DevOps Framework
@@ -482,6 +483,7 @@ cmd_help() {
     echo "  context       Show context window comparison"
     echo "  capabilities  Show capability matrix"
     echo "  providers     List supported providers and their models"
+    echo "  discover      Detect available providers from local config"
     echo "  help          Show this help"
     echo ""
     echo "Examples:"
@@ -490,9 +492,372 @@ cmd_help() {
     echo "  compare-models-helper.sh recommend \"code review\""
     echo "  compare-models-helper.sh pricing"
     echo "  compare-models-helper.sh capabilities"
+    echo "  compare-models-helper.sh discover"
+    echo "  compare-models-helper.sh discover --probe"
+    echo "  compare-models-helper.sh discover --list-models"
+    echo "  compare-models-helper.sh discover --json"
+    echo ""
+    echo "Discover options:"
+    echo "  --probe        Verify API keys by calling provider endpoints"
+    echo "  --list-models  List live models from each verified provider"
+    echo "  --json         Output discovery results as JSON"
     echo ""
     echo "Data is embedded in this script. Last updated: 2025-02-08."
     echo "For live pricing, use /compare-models (with web fetch)."
+    return 0
+}
+
+# =============================================================================
+# Provider API Key Detection
+# =============================================================================
+# Maps provider names to their environment variable names.
+# NEVER prints actual key values — only checks existence.
+
+readonly PROVIDER_ENV_KEYS="Anthropic|ANTHROPIC_API_KEY
+OpenAI|OPENAI_API_KEY
+Google|GOOGLE_API_KEY,GEMINI_API_KEY
+OpenRouter|OPENROUTER_API_KEY
+Groq|GROQ_API_KEY
+DeepSeek|DEEPSEEK_API_KEY
+Together|TOGETHER_API_KEY
+Fireworks|FIREWORKS_API_KEY"
+
+# Check if a provider API key is available from any source
+# Returns 0 if found, 1 if not. Sets FOUND_SOURCE to the source name.
+# Usage: check_provider_key "ANTHROPIC_API_KEY"
+check_provider_key() {
+    local key_name="$1"
+    FOUND_SOURCE=""
+
+    # 1. Check environment variable
+    if [[ -n "${!key_name:-}" ]]; then
+        FOUND_SOURCE="env"
+        return 0
+    fi
+
+    # 2. Check gopass (encrypted secrets)
+    if command -v gopass &>/dev/null; then
+        if gopass ls "aidevops/${key_name}" &>/dev/null 2>&1; then
+            FOUND_SOURCE="gopass"
+            return 0
+        fi
+    fi
+
+    # 3. Check credentials.sh (plaintext fallback)
+    local creds_file="${HOME}/.config/aidevops/credentials.sh"
+    if [[ -f "$creds_file" ]]; then
+        if grep -q "^export ${key_name}=" "$creds_file" 2>/dev/null || \
+           grep -q "^${key_name}=" "$creds_file" 2>/dev/null; then
+            FOUND_SOURCE="credentials.sh"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Probe a provider API to verify the key works
+# Returns 0 if API responds successfully, 1 otherwise
+# Usage: probe_provider "Anthropic" "ANTHROPIC_API_KEY"
+probe_provider() {
+    local provider="$1"
+    local key_name="$2"
+
+    # Get the key value from the appropriate source
+    local key_value=""
+    if [[ -n "${!key_name:-}" ]]; then
+        key_value="${!key_name}"
+    elif command -v gopass &>/dev/null && gopass ls "aidevops/${key_name}" &>/dev/null 2>&1; then
+        key_value=$(gopass show "aidevops/${key_name}" 2>/dev/null) || return 1
+    else
+        return 1
+    fi
+
+    [[ -z "$key_value" ]] && return 1
+
+    local http_code=""
+    case "$provider" in
+        Anthropic)
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "x-api-key: ${key_value}" \
+                -H "anthropic-version: 2023-06-01" \
+                "https://api.anthropic.com/v1/models" 2>/dev/null) || return 1
+            ;;
+        OpenAI)
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer ${key_value}" \
+                "https://api.openai.com/v1/models" 2>/dev/null) || return 1
+            ;;
+        Google)
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                "https://generativelanguage.googleapis.com/v1beta/models?key=${key_value}" 2>/dev/null) || return 1
+            ;;
+        OpenRouter)
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer ${key_value}" \
+                "https://openrouter.ai/api/v1/models" 2>/dev/null) || return 1
+            ;;
+        Groq)
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer ${key_value}" \
+                "https://api.groq.com/openai/v1/models" 2>/dev/null) || return 1
+            ;;
+        DeepSeek)
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer ${key_value}" \
+                "https://api.deepseek.com/v1/models" 2>/dev/null) || return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [[ "$http_code" == "200" ]] && return 0
+    return 1
+}
+
+# List models available from a provider API
+# Outputs model IDs, one per line
+# Usage: list_provider_models "Anthropic" "ANTHROPIC_API_KEY"
+list_provider_models() {
+    local provider="$1"
+    local key_name="$2"
+
+    local key_value=""
+    if [[ -n "${!key_name:-}" ]]; then
+        key_value="${!key_name}"
+    elif command -v gopass &>/dev/null && gopass ls "aidevops/${key_name}" &>/dev/null 2>&1; then
+        key_value=$(gopass show "aidevops/${key_name}" 2>/dev/null) || return 1
+    else
+        return 1
+    fi
+
+    [[ -z "$key_value" ]] && return 1
+
+    case "$provider" in
+        Anthropic)
+            curl -s -H "x-api-key: ${key_value}" \
+                -H "anthropic-version: 2023-06-01" \
+                "https://api.anthropic.com/v1/models" 2>/dev/null | \
+                jq -r '.data[].id // empty' 2>/dev/null | sort
+            ;;
+        OpenAI)
+            curl -s -H "Authorization: Bearer ${key_value}" \
+                "https://api.openai.com/v1/models" 2>/dev/null | \
+                jq -r '.data[].id // empty' 2>/dev/null | sort
+            ;;
+        Google)
+            curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=${key_value}" 2>/dev/null | \
+                jq -r '.models[].name // empty' 2>/dev/null | sed 's|^models/||' | sort
+            ;;
+        OpenRouter)
+            curl -s -H "Authorization: Bearer ${key_value}" \
+                "https://openrouter.ai/api/v1/models" 2>/dev/null | \
+                jq -r '.data[].id // empty' 2>/dev/null | sort
+            ;;
+        Groq)
+            curl -s -H "Authorization: Bearer ${key_value}" \
+                "https://api.groq.com/openai/v1/models" 2>/dev/null | \
+                jq -r '.data[].id // empty' 2>/dev/null | sort
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+cmd_discover() {
+    local probe_flag=false
+    local list_flag=false
+    local json_flag=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --probe) probe_flag=true; shift ;;
+            --list-models) list_flag=true; probe_flag=true; shift ;;
+            --json) json_flag=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    echo ""
+    echo "Model Provider Discovery"
+    echo "========================"
+    echo ""
+
+    local total_providers=0
+    local available_providers=0
+    local available_models=0
+    local json_entries=()
+
+    while IFS= read -r line; do
+        local provider key_names
+        provider=$(echo "$line" | cut -d'|' -f1)
+        key_names=$(echo "$line" | cut -d'|' -f2)
+
+        total_providers=$((total_providers + 1))
+        local found=false
+        local source=""
+        local active_key=""
+
+        # Check each possible key name for this provider
+        IFS=',' read -ra keys <<< "$key_names"
+        for key_name in "${keys[@]}"; do
+            if check_provider_key "$key_name"; then
+                found=true
+                source="$FOUND_SOURCE"
+                active_key="$key_name"
+                break
+            fi
+        done
+
+        if [[ "$found" == "true" ]]; then
+            available_providers=$((available_providers + 1))
+            local status="configured"
+            local status_icon="Y"
+
+            # Optionally probe the API
+            if [[ "$probe_flag" == "true" ]]; then
+                if probe_provider "$provider" "$active_key"; then
+                    status="verified"
+                    status_icon="V"
+                else
+                    status="key-invalid"
+                    status_icon="!"
+                fi
+            fi
+
+            # Count models from embedded database for this provider
+            local model_count
+            model_count=$(echo "$MODEL_DATA" | grep -c "|${provider}|" || true)
+            available_models=$((available_models + model_count))
+
+            if [[ "$json_flag" == "true" ]]; then
+                json_entries+=("{\"provider\":\"${provider}\",\"status\":\"${status}\",\"source\":\"${source}\",\"models\":${model_count}}")
+            else
+                printf "  %s %-12s  %-12s  (source: %s, %d tracked models)\n" \
+                    "$status_icon" "$provider" "$status" "$source" "$model_count"
+            fi
+
+            # Optionally list live models from API
+            if [[ "$list_flag" == "true" && "$status" == "verified" ]]; then
+                local live_models
+                live_models=$(list_provider_models "$provider" "$active_key" 2>/dev/null)
+                if [[ -n "$live_models" ]]; then
+                    local live_count
+                    live_count=$(echo "$live_models" | wc -l | tr -d ' ')
+                    echo "    Live models ($live_count):"
+                    echo "$live_models" | head -20 | while IFS= read -r m; do
+                        echo "      - $m"
+                    done
+                    local remaining=$((live_count - 20))
+                    if [[ "$remaining" -gt 0 ]]; then
+                        echo "      ... and $remaining more"
+                    fi
+                fi
+            fi
+        else
+            if [[ "$json_flag" == "true" ]]; then
+                json_entries+=("{\"provider\":\"${provider}\",\"status\":\"not-configured\",\"source\":null,\"models\":0}")
+            else
+                printf "  - %-12s  not configured\n" "$provider"
+            fi
+        fi
+    done <<< "$PROVIDER_ENV_KEYS"
+
+    if [[ "$json_flag" == "true" ]]; then
+        echo "[$(IFS=,; echo "${json_entries[*]}")]"
+    else
+        echo ""
+        echo "Summary: $available_providers/$total_providers providers configured, $available_models tracked models available"
+        echo ""
+
+        if [[ "$probe_flag" != "true" ]]; then
+            echo "Tip: Use --probe to verify API keys are valid"
+            echo "     Use --list-models to enumerate live models from each provider"
+        fi
+
+        # Show models grouped by availability
+        echo ""
+        echo "Available Models (from configured providers):"
+        echo ""
+        printf "  %-22s %-10s %-8s %-12s %-12s %-7s\n" \
+            "Model" "Provider" "Context" "Input/1M" "Output/1M" "Tier"
+        printf "  %-22s %-10s %-8s %-12s %-12s %-7s\n" \
+            "-----" "--------" "-------" "--------" "---------" "----"
+
+        echo "$MODEL_DATA" | while IFS= read -r model_line; do
+            local model_provider
+            model_provider=$(get_field "$model_line" 2)
+
+            # Check if this provider is available
+            local provider_available=false
+            while IFS= read -r pline; do
+                local pname pkeys
+                pname=$(echo "$pline" | cut -d'|' -f1)
+                pkeys=$(echo "$pline" | cut -d'|' -f2)
+                if [[ "$pname" == "$model_provider" ]]; then
+                    IFS=',' read -ra pkey_arr <<< "$pkeys"
+                    for pk in "${pkey_arr[@]}"; do
+                        if check_provider_key "$pk"; then
+                            provider_available=true
+                            break
+                        fi
+                    done
+                    break
+                fi
+            done <<< "$PROVIDER_ENV_KEYS"
+
+            if [[ "$provider_available" == "true" ]]; then
+                local mid mctx minput moutput mtier
+                mid=$(get_field "$model_line" 1)
+                mctx=$(get_field "$model_line" 4)
+                minput=$(get_field "$model_line" 5)
+                moutput=$(get_field "$model_line" 6)
+                mtier=$(get_field "$model_line" 7)
+                local ctx_fmt
+                ctx_fmt=$(format_context "$mctx")
+                printf "  %-22s %-10s %-8s %-12s %-12s %-7s\n" \
+                    "$mid" "$model_provider" "$ctx_fmt" "\$$minput" "\$$moutput" "$mtier"
+            fi
+        done
+
+        echo ""
+        echo "Unavailable Models (provider not configured):"
+        echo ""
+
+        local has_unavailable=false
+        echo "$MODEL_DATA" | while IFS= read -r model_line; do
+            local model_provider
+            model_provider=$(get_field "$model_line" 2)
+
+            local provider_available=false
+            while IFS= read -r pline; do
+                local pname pkeys
+                pname=$(echo "$pline" | cut -d'|' -f1)
+                pkeys=$(echo "$pline" | cut -d'|' -f2)
+                if [[ "$pname" == "$model_provider" ]]; then
+                    IFS=',' read -ra pkey_arr <<< "$pkeys"
+                    for pk in "${pkey_arr[@]}"; do
+                        if check_provider_key "$pk"; then
+                            provider_available=true
+                            break
+                        fi
+                    done
+                    break
+                fi
+            done <<< "$PROVIDER_ENV_KEYS"
+
+            if [[ "$provider_available" != "true" ]]; then
+                local mid
+                mid=$(get_field "$model_line" 1)
+                echo "  - $mid ($model_provider)"
+            fi
+        done
+    fi
+
+    echo ""
     return 0
 }
 
@@ -525,6 +890,9 @@ main() {
             ;;
         providers)
             cmd_providers
+            ;;
+        discover)
+            cmd_discover "$@"
             ;;
         help|--help|-h)
             cmd_help
