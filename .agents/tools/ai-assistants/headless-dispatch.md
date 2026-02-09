@@ -527,6 +527,35 @@ The supervisor uses worker exit behavior to drive the self-improvement loop:
 
 This framework reduces wasted retries by giving workers clear criteria for when to attempt vs when to bail. Over time, task descriptions improve because the supervisor learns which ambiguities cause exits.
 
+## Worker Efficiency Protocol
+
+Workers are injected with an efficiency protocol via the supervisor dispatch prompt. This protocol maximises output per token by requiring structured internal task management.
+
+### Key Practices
+
+1. **TodoWrite decomposition** — Workers must break their task into 3-7 subtasks using the TodoWrite tool at session start. This provides a progress breadcrumb trail that survives context compaction.
+
+2. **Checkpoint after each subtask** — Workers call `session-checkpoint-helper.sh save` after completing each subtask. If the session restarts or compacts, the worker can resume from the last checkpoint instead of restarting from scratch.
+
+3. **Parallel sub-work** — For independent subtasks (e.g., tests + docs), workers can use the Task tool to spawn sub-agents. This is faster than sequential execution when subtasks don't modify the same files.
+
+4. **Fail fast** — Workers verify assumptions before writing code: read target files, check dependencies exist, confirm the task isn't already done. This prevents wasting an entire session on a false premise.
+
+5. **Token minimisation** — Read file ranges (not entire files), write concise commit messages, and exit with BLOCKED after one failed retry instead of burning tokens on repeated attempts.
+
+### Why This Matters
+
+| Without protocol | With protocol |
+|-----------------|---------------|
+| Context compacts → worker restarts from zero | Checkpoint + TodoWrite → resume from last subtask |
+| Complex task done linearly → 1 failure = full restart | Subtask tracking → only redo the failed subtask |
+| No internal structure → steps skipped or repeated | Explicit subtask list → nothing missed |
+| All work sequential → slower | Independent subtasks parallelised via Task tool |
+
+### Token Cost
+
+The protocol adds ~200-300 tokens per session (TodoWrite calls + checkpoint commands). A single avoided restart saves 10,000-50,000 tokens. The ROI is 30-150x on any task that would otherwise need a retry.
+
 ## CI/CD Integration
 
 ### GitHub Actions
