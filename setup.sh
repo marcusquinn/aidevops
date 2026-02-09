@@ -1130,8 +1130,7 @@ bootstrap_repo() {
         if [[ -d "$INSTALL_DIR/.git" ]]; then
             print_info "Existing installation found - updating..."
             cd "$INSTALL_DIR" || exit 1
-            git pull --ff-only
-            if [[ $? -ne 0 ]]; then
+            if ! git pull --ff-only; then
                 print_warning "Git pull failed - trying reset to origin/main"
                 git fetch origin
                 git reset --hard origin/main
@@ -1142,8 +1141,7 @@ bootstrap_repo() {
                 print_warning "Directory exists but is not a git repo - backing up"
                 mv "$INSTALL_DIR" "$INSTALL_DIR.backup.$(date +%Y%m%d_%H%M%S)"
             fi
-            git clone "$REPO_URL" "$INSTALL_DIR"
-            if [[ $? -ne 0 ]]; then
+            if ! git clone "$REPO_URL" "$INSTALL_DIR"; then
                 print_error "Failed to clone repository"
                 exit 1
             fi
@@ -2465,9 +2463,7 @@ deploy_ai_templates() {
 
     if [[ -f "templates/deploy-templates.sh" ]]; then
         print_info "Running template deployment script..."
-        bash templates/deploy-templates.sh
-
-        if [[ $? -eq 0 ]]; then
+        if bash templates/deploy-templates.sh; then
             print_success "AI assistant templates deployed successfully"
         else
             print_warning "Template deployment encountered issues (non-critical)"
@@ -2580,14 +2576,19 @@ deploy_aidevops_agents() {
     # - custom/ (user's private agents, never overwritten)
     # - draft/ (user's experimental agents, never overwritten)
     # Use rsync for selective exclusion
+    local deploy_ok=false
     if command -v rsync &>/dev/null; then
-        rsync -a --exclude='loop-state/' --exclude='custom/' --exclude='draft/' "$source_dir/" "$target_dir/"
+        if rsync -a --exclude='loop-state/' --exclude='custom/' --exclude='draft/' "$source_dir/" "$target_dir/"; then
+            deploy_ok=true
+        fi
     else
         # Fallback: use tar with exclusions to match rsync behavior
-        (cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) | (cd "$target_dir" && tar xf -)
+        if (cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) | (cd "$target_dir" && tar xf -); then
+            deploy_ok=true
+        fi
     fi
     
-    if [[ $? -eq 0 ]]; then
+    if [[ "$deploy_ok" == "true" ]]; then
         print_success "Deployed agents to $target_dir"
         
         # Set permissions on scripts
@@ -3102,12 +3103,14 @@ setup_python_env() {
     fi
 
     # Create Python virtual environment
-    if [[ ! -d "python-env/dspy-env" ]]; then
+    if [[ ! -d "python-env/dspy-env" ]] || [[ ! -f "python-env/dspy-env/bin/activate" ]]; then
         print_info "Creating Python virtual environment for DSPy..."
         mkdir -p python-env
-        python3 -m venv python-env/dspy-env
-
-        if [[ $? -eq 0 ]]; then
+        # Remove corrupted venv if directory exists but activate script is missing
+        if [[ -d "python-env/dspy-env" ]] && [[ ! -f "python-env/dspy-env/bin/activate" ]]; then
+            rm -rf python-env/dspy-env
+        fi
+        if python3 -m venv python-env/dspy-env; then
             print_success "Python virtual environment created"
         else
             print_warning "Failed to create Python virtual environment - DSPy setup skipped"
@@ -3120,7 +3123,12 @@ setup_python_env() {
     # Install DSPy dependencies
     print_info "Installing DSPy dependencies..."
     # shellcheck source=/dev/null
-    source python-env/dspy-env/bin/activate
+    if [[ -f "python-env/dspy-env/bin/activate" ]]; then
+        source python-env/dspy-env/bin/activate
+    else
+        print_warning "Python venv activate script not found - DSPy setup skipped"
+        return
+    fi
     pip install --upgrade pip > /dev/null 2>&1
     
     if run_with_spinner "Installing DSPy dependencies" pip install -r requirements.txt; then
@@ -3812,6 +3820,18 @@ setup_nodejs() {
         local node_version
         node_version=$(node --version 2>/dev/null || echo "unknown")
         print_success "Node.js already installed: $node_version"
+        # Distro nodejs package may not include npm — install it if missing
+        if ! command -v npm >/dev/null 2>&1; then
+            print_info "npm not found (distro nodejs package may omit it) — installing..."
+            local pkg_manager
+            pkg_manager=$(detect_package_manager)
+            case "$pkg_manager" in
+                apt) sudo apt-get install -y npm 2>/dev/null || print_warning "Failed to install npm via apt" ;;
+                dnf|yum) sudo "$pkg_manager" install -y npm 2>/dev/null || print_warning "Failed to install npm via $pkg_manager" ;;
+                brew) brew install npm 2>/dev/null || print_warning "Failed to install npm via brew" ;;
+                *) print_warning "Cannot auto-install npm — install manually" ;;
+            esac
+        fi
         return 0
     fi
     
@@ -3944,9 +3964,18 @@ setup_opencode_cli() {
     echo "  It provides an AI-powered terminal interface for development tasks."
     echo ""
     
-    read -r -p "Install OpenCode via $installer? [Y/n]: " install_oc
+    local install_oc="Y"
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        read -r -p "Install OpenCode via $installer? [Y/n]: " install_oc || install_oc="Y"
+    fi
     if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
-        if run_with_spinner "Installing OpenCode" "$installer" install -g "$install_pkg"; then
+        # npm global installs need sudo on Linux (apt-installed npm writes to /usr/local/lib)
+        # bun global installs go to ~/.bun/bin and don't need sudo
+        local install_cmd=("$installer" install -g "$install_pkg")
+        if [[ "$installer" == "npm" ]] && [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
+            install_cmd=(sudo npm install -g "$install_pkg")
+        fi
+        if run_with_spinner "Installing OpenCode" "${install_cmd[@]}"; then
             print_success "OpenCode installed"
             
             # Offer authentication
@@ -3956,7 +3985,7 @@ setup_opencode_cli() {
             echo ""
         else
             print_warning "OpenCode installation failed"
-            print_info "Try manually: $installer install -g $install_pkg"
+            print_info "Try manually: ${install_cmd[*]}"
         fi
     else
         print_info "Skipped OpenCode installation"
