@@ -6099,6 +6099,20 @@ cmd_pulse() {
         "$audit_script" run --quiet 2>>"$SUPERVISOR_LOG" || true
     fi
 
+    # Phase 10: CodeRabbit daily pulse (t166.1)
+    # Triggers a full codebase review via CodeRabbit CLI or GitHub API.
+    # The pulse script self-throttles (24h cooldown), so calling every pulse is safe.
+    local coderabbit_pulse_script="${SCRIPT_DIR}/coderabbit-pulse-helper.sh"
+    if [[ -x "$coderabbit_pulse_script" ]]; then
+        log_verbose "  Phase 10: CodeRabbit daily pulse"
+        local pulse_repo=""
+        pulse_repo=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks LIMIT 1;" 2>/dev/null || echo "")
+        if [[ -z "$pulse_repo" ]]; then
+            pulse_repo="$(pwd)"
+        fi
+        bash "$coderabbit_pulse_script" run --repo "$pulse_repo" --quiet 2>>"$SUPERVISOR_LOG" || true
+    fi
+
     # Release pulse dispatch lock (t159)
     release_pulse_lock
     # Reset trap to avoid interfering with other commands in the same process
