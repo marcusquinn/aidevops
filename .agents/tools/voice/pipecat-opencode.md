@@ -448,6 +448,7 @@ For production deployment:
 
 ## See Also
 
+- `tools/voice/cloud-voice-agents.md` - Cloud voice agents (GPT-4o Realtime, MiniCPM-o, NVIDIA Nemotron)
 - `tools/voice/speech-to-speech.md` - HuggingFace S2S pipeline (alternative approach)
 - `scripts/voice-helper.sh` - Simple voice bridge (existing, terminal-based)
 - `scripts/voice-bridge.py` - Voice bridge Python implementation

@@ -16,6 +16,7 @@ tools:
 - **TTS details**: `tools/voice/voice-models.md` (implemented engines, integration)
 - **STT details**: `tools/voice/transcription.md` (transcription workflows, cloud APIs)
 - **S2S pipeline**: `tools/voice/speech-to-speech.md` (full voice pipeline setup)
+- **Cloud voice agents**: `tools/voice/cloud-voice-agents.md` (GPT-4o Realtime, MiniCPM-o, Nemotron)
 - **Offline tool**: `tools/voice/buzz.md` (Buzz GUI/CLI for Whisper)
 
 **When to use**: Choosing between voice AI models for a project. For implementation details, follow the cross-references above.
@@ -31,9 +32,10 @@ tools:
 | ElevenLabs | ~300ms | Best | Yes | 29 | $5-330/mo |
 | OpenAI TTS | ~400ms | Great | No | 57 | $15/1M chars |
 | Cartesia Sonic 3 | ~90ms | Great | Yes (10s ref) | 17 | $8-66/mo |
+| NVIDIA Magpie TTS | ~200ms | Great | Yes (zero-shot) | 17+ | NIM API (free tier) |
 | Google Cloud TTS | ~200ms | Good | No (custom) | 50+ | $4-16/1M chars |
 
-**Pick**: ElevenLabs for quality/cloning, Cartesia Sonic 3 for lowest latency, Google for language breadth.
+**Pick**: ElevenLabs for quality/cloning, Cartesia Sonic 3 for lowest latency, NVIDIA Magpie for enterprise/self-hosted, Google for language breadth.
 
 ### Local Models
 
@@ -57,10 +59,11 @@ Also implemented in the voice bridge: **EdgeTTS** (free, 300+ voices), **macOS S
 |----------|-------|----------|-----------|------|
 | Groq | Whisper Large v3 Turbo | 9.6 | No (batch) | Free tier |
 | ElevenLabs | Scribe v2 | 9.9 | No | Per minute |
+| NVIDIA Riva | Parakeet CTC/RNNT | 9.4-9.6 | Yes (streaming) | NIM API (free tier) |
 | Deepgram | Nova-2 / Nova-3 | 9.5-9.6 | Yes | Per minute |
 | Soniox | stt-async-v3 | 9.6 | Yes | Per minute |
 
-**Pick**: Groq for free/fast batch, ElevenLabs Scribe for accuracy, Deepgram for real-time streaming.
+**Pick**: Groq for free/fast batch, ElevenLabs Scribe for accuracy, NVIDIA Parakeet for enterprise/self-hosted, Deepgram for real-time streaming.
 
 ### Local Models
 
@@ -81,16 +84,35 @@ Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, A
 
 ## S2S (Speech-to-Speech)
 
+### Native S2S Models
+
 End-to-end models that process speech directly without text intermediary:
 
 | Model | Type | Latency | Availability | Notes |
 |-------|------|---------|--------------|-------|
-| GPT-4o Realtime | Cloud API | ~300ms | OpenAI API | Voice mode, emotion-aware |
+| GPT-4o Realtime | Cloud API | ~300ms | OpenAI API (GA) | Voice mode, emotion-aware, function calling, SIP telephony |
 | Gemini 2.0 Live | Cloud API | ~350ms | Google API | Multimodal, streaming |
-| MiniCPM-o 4.5 | Open weights | ~500ms | Local (8GB+) | 9B params, Apache-2.0 |
+| MiniCPM-o 2.6 | Open weights | ~500ms | Local (8GB+) | 8B params, Apache-2.0, vision+speech+streaming |
+| AWS Nova Sonic | Cloud API | ~600ms | AWS API | AWS ecosystem, 7 languages |
 | Ultravox | Open weights | ~400ms | Local (6GB+) | Audio-text multimodal |
 
-**Pick**: GPT-4o Realtime for production cloud, MiniCPM-o 4.5 for local/private. For cascaded S2S (VAD+STT+LLM+TTS), see `speech-to-speech.md`.
+### Composable S2S Pipelines (NVIDIA Nemotron Speech)
+
+Enterprise-grade cascaded pipelines using NVIDIA Riva NIM microservices:
+
+| Component | Model | Role | Languages | NIM Available |
+|-----------|-------|------|-----------|---------------|
+| ASR | Parakeet TDT 0.6B v2 | Speech-to-text | English | HF (research) |
+| ASR | Parakeet CTC 1.1B | Speech-to-text | English | Yes |
+| ASR | Parakeet RNNT 1.1B | Speech-to-text | 25 languages | Yes |
+| TTS | Magpie TTS Multilingual | Text-to-speech | 17+ languages | Yes |
+| TTS | Magpie TTS Zero-Shot | Voice cloning TTS | English+ | API |
+| Enhancement | StudioVoice | Noise removal | Any | Yes |
+| Translation | Riva Translate | NMT | 36 languages | Yes |
+
+Compose as: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `cloud-voice-agents.md` for deployment patterns.
+
+**Pick**: GPT-4o Realtime for production cloud (lowest latency, GA), MiniCPM-o 2.6 for self-hosted/private (Apache-2.0, multimodal), NVIDIA Riva for enterprise on-prem (composable, 25+ languages). For cascaded S2S (VAD+STT+LLM+TTS), see `speech-to-speech.md`.
 
 ## Model Selection Guide
 
@@ -99,10 +121,11 @@ End-to-end models that process speech directly without text intermediary:
 | Priority | TTS | STT | S2S |
 |----------|-----|-----|-----|
 | **Quality** | ElevenLabs / Qwen3-TTS 1.7B | ElevenLabs Scribe / Large v3 | GPT-4o Realtime |
-| **Speed** | Cartesia Sonic 3 / EdgeTTS | Groq / Parakeet V3 | Cascaded pipeline |
-| **Cost** | EdgeTTS (free) / Piper | Local Whisper ($0) / Groq free | MiniCPM-o 4.5 (local) |
-| **Privacy** | Piper / Qwen3-TTS | faster-whisper / whisper.cpp | MiniCPM-o 4.5 |
-| **Voice clone** | ElevenLabs / Qwen3-TTS | N/A | N/A |
+| **Speed** | Cartesia Sonic 3 / EdgeTTS | Groq / Parakeet V3 | GPT-4o Realtime / Cascaded |
+| **Cost** | EdgeTTS (free) / Piper | Local Whisper ($0) / Groq free | MiniCPM-o 2.6 (local) |
+| **Privacy** | Piper / Qwen3-TTS | faster-whisper / whisper.cpp | MiniCPM-o 2.6 |
+| **Enterprise** | NVIDIA Magpie / ElevenLabs | NVIDIA Parakeet / Scribe | NVIDIA Riva pipeline |
+| **Voice clone** | ElevenLabs / Qwen3-TTS | N/A | MiniCPM-o 2.6 |
 
 ### Decision Flow
 
@@ -119,8 +142,9 @@ Need voice AI?
 │   ├── Need free? → Groq free tier (cloud) or any local model
 │   └── Default → Whisper Large v3 Turbo (local)
 └── Conversational (S2S)
-    ├── Cloud OK? → GPT-4o Realtime
-    ├── Local/private? → MiniCPM-o 4.5 or cascaded pipeline
+    ├── Cloud OK? → GPT-4o Realtime (see cloud-voice-agents.md)
+    ├── Enterprise/on-prem? → NVIDIA Riva (Parakeet + LLM + Magpie)
+    ├── Local/private? → MiniCPM-o 2.6 or cascaded pipeline
     └── Default → speech-to-speech.md cascaded pipeline
 ```
 
@@ -131,7 +155,7 @@ Need voice AI?
 | STT only (Whisper Turbo) | 5GB | 8GB |
 | TTS only (Qwen3-TTS 0.6B) | 2GB | 4GB |
 | TTS only (Bark) | 6GB | 8GB |
-| S2S (MiniCPM-o 4.5) | 8GB | 16GB |
+| S2S (MiniCPM-o 2.6) | 8GB | 16GB |
 | Full cascaded pipeline | 4GB | 12GB |
 | CPU-only (Piper + whisper.cpp) | 0 | 8GB RAM |
 
@@ -139,8 +163,10 @@ Apple Silicon: MPS acceleration works for most PyTorch models. Use `whisper-mlx`
 
 ## Related
 
+- `tools/voice/cloud-voice-agents.md` - Cloud voice agent deployment (GPT-4o Realtime, MiniCPM-o, Nemotron)
 - `tools/voice/voice-models.md` - TTS engines implemented in voice bridge
 - `tools/voice/transcription.md` - STT workflows, cloud API examples
 - `tools/voice/speech-to-speech.md` - Full cascaded voice pipeline
+- `tools/voice/pipecat-opencode.md` - Pipecat real-time voice pipeline
 - `tools/voice/buzz.md` - Buzz offline transcription tool
 - `voice-helper.sh` - CLI for voice operations

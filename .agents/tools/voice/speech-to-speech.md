@@ -318,6 +318,9 @@ The full S2S pipeline above is for advanced use cases (custom LLMs, server/clien
 
 ## See Also
 
+- `tools/voice/cloud-voice-agents.md` - Cloud voice agents (GPT-4o Realtime, MiniCPM-o, NVIDIA Nemotron Speech)
+- `tools/voice/voice-ai-models.md` - Complete model comparison (TTS, STT, S2S)
+- `tools/voice/pipecat-opencode.md` - Pipecat real-time voice pipeline
 - `tools/infrastructure/cloud-gpu.md` - Cloud GPU deployment guide (provider comparison, setup, cost optimization)
 - `services/communications/twilio.md` - Phone integration
 - `tools/video/remotion.md` - Video narration
