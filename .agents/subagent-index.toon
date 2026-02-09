@@ -49,7 +49,7 @@ tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline 
 tools/data-extraction/,Data extraction - scraping business data,outscraper
 tools/deployment/,Deployment automation - self-hosted PaaS and orchestration,coolify|coolify-cli|vercel|cloudron-app-packaging|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
-tools/credentials/,Secret management - API keys and vaults,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys
+tools/credentials/,Secret management - API keys vaults and encryption stack,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys|sops|gocryptfs|encryption-stack
 tools/security/,Security tools - terminal guards privacy filtering and scanning,tirith|shannon|cdn-origin-ip|privacy-filter
 tools/task-management/,Task tracking - dependency graphs,beads
 tools/terminal/,Terminal integration - tab titles,terminal-title
@@ -81,7 +81,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[49]{name,purpose}:
+<!--TOON:scripts[51]{name,purpose}:
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
 verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md
@@ -132,4 +132,6 @@ voice-helper.sh,Voice bridge - talk to AI agents via speech (talk devices voices
 voice-bridge.py,Voice bridge Python script (VAD STT LLM TTS with session handback)
 seo-content-analyzer.py,SEO content analysis (readability keywords intent quality scoring)
 compare-models-helper.sh,AI model capability comparison (list compare recommend pricing context capabilities providers)
+sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
+gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 -->
