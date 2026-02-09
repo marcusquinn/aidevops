@@ -61,7 +61,7 @@ If yes, provide a brief overview:
 ```text
 aidevops gives your AI assistant superpowers for DevOps and infrastructure management.
 
-**Recommended tool:** You should be running this in [Claude Code](https://Claude.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for Claude Code first. If you're using a different tool, most features will still work, but Claude Code provides the best experience.
+**Recommended tool:** You should be running this in [OpenCode](https://opencode.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. OpenCode supports multiple AI providers (Zen, Anthropic, OpenAI, and more) so you can use whichever model you prefer.
 
 **Capabilities:**
 
