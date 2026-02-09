@@ -139,21 +139,21 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: After PR merge and TODO update, remind to check issue sync. Or auto-run close as part of postflight.
   - Notes: Root cause discovered 2026-02-08: 12 GitHub issues were open for completed tasks because ref:GH# values in TODO.md didn't match actual issue numbers (issues recreated with new numbers by push command). The GHA workflow runs close on push but uses ref:GH# for lookup, missing the mismatched issues. Also fixed: task ID grep truncation bug (t131 matching t131.vision) in PR #668.
 - [x] t168 /compare-models and /compare-models-free commands for model capability comparison #feature #tools #multi-model ~4h (ai:3h test:30m read:30m) ref:GH#626 assignee:marcusquinn started:2026-02-08T20:42:38Z logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #660 merged
-  - [ ] t168.1 Build model discovery - enumerate available models from OpenCode config and provider APIs ~1h blocked-by:none
+  - [ ] t168.1 Build model discovery - enumerate available models from OpenCode config and provider APIs ~1h blocked-by:none ref:GH#721
     - Notes: Parse opencode.json and provider configs to list available models. Categorise as free vs paid. For /compare-models, prompt user to select 2+ models from any provider. For /compare-models-free, auto-select all free-tier models. Use model-routing.md tiers as reference. Need to handle provider auth (some models need API keys, free models may not).
-  - [ ] t168.2 Implement task dispatch to each selected model via Task tool subagents ~1.5h blocked-by:t168.1
+  - [ ] t168.2 Implement task dispatch to each selected model via Task tool subagents ~1.5h blocked-by:t168.1 ref:GH#722
     - Notes: For each model, dispatch the user's test task as a subagent call (Task tool with model-specific subagent). Run in-session via parallel Task tool calls where possible. For long-running comparisons (large tasks, many models), support fallback to headless dispatch via supervisor with results collected via mailbox. Each model gets identical prompt + context. Capture: response text, token count, latency, any errors. The main session model orchestrates but does NOT participate in the comparison itself.
-  - [ ] t168.3 Build comparison and scoring framework ~1h blocked-by:t168.2
+  - [ ] t168.3 Build comparison and scoring framework ~1h blocked-by:t168.2 ref:GH#723
     - Notes: Main session model evaluates all responses side-by-side. Criteria: correctness, completeness, code quality (if code task), clarity, adherence to instructions. Output structured comparison table (model, score, strengths, weaknesses, latency, tokens). Support both text tasks and code tasks. Store results in memory for cross-session model selection insights.
-  - [ ] t168.4 Wire up /compare-models and /compare-models-free slash commands ~30m blocked-by:t168.3
+  - [ ] t168.4 Wire up /compare-models and /compare-models-free slash commands ~30m blocked-by:t168.3 ref:GH#724
     - Notes: Add to workflows/ or scripts/ as command handlers. /compare-models prompts for model selection then task. /compare-models-free skips selection, uses all free models. Both output comparison table. Consider adding --task flag for non-interactive use. Add to AGENTS.md command reference.
   - Notes: Single-session workflow: user invokes command, selects models (or auto-selects free), provides task, subagents execute in parallel, main model compares results. For long-running tasks (>2min per model), fall back to headless dispatch with supervisor collecting results. Builds on t132 (model routing) infrastructure. Key constraint: the evaluating model should not be one of the compared models to avoid bias. Free models vary by provider - OpenRouter, Google (Gemini Flash), Anthropic (Haiku via free tier), Groq, etc.
 - [x] t166 Daily CodeRabbit full codebase review pulse for self-improving aidevops #quality #automation #self-improvement ~3h (ai:2h test:30m read:30m) ref:GH#624 assignee:marcusquinn logged:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #657 merged
-  - [ ] t166.1 Add cron/supervisor daily pulse that triggers CodeRabbit full repo review via gh API ~1h blocked-by:none
+  - [ ] t166.1 Add cron/supervisor daily pulse that triggers CodeRabbit full repo review via gh API ~1h blocked-by:none ref:GH#725
     - Notes: Use `gh api` or CodeRabbit CLI to trigger a full codebase review (not just PR diff). Schedule as daily cron job or supervisor pulse phase. CodeRabbit supports `@coderabbitai full review` comment on a tracking PR, or API-triggered reviews. Investigate best trigger mechanism.
-  - [ ] t166.2 Monitor and collect CodeRabbit review feedback into structured format ~1h blocked-by:t166.1
+  - [ ] t166.2 Monitor and collect CodeRabbit review feedback into structured format ~1h blocked-by:t166.1 ref:GH#726
     - Notes: Poll for review completion, extract comments/suggestions into structured data (SQLite or TOON). Categorise by severity (critical/major/minor/nitpick), file, and type (bug/security/performance/style). Filter out false positives using bot-review verification rules.
-  - [ ] t166.3 Auto-create tasks from valid CodeRabbit findings and dispatch workers ~1h blocked-by:t166.2
+  - [ ] t166.3 Auto-create tasks from valid CodeRabbit findings and dispatch workers ~1h blocked-by:t166.2 ref:GH#727
     - Notes: For verified findings above threshold severity, auto-create TODO.md tasks with ref to CodeRabbit comment. Dispatch via supervisor batch for autonomous fixing. Human review gate for critical/architectural changes. Track which findings were acted on vs dismissed (feedback loop for future filtering).
   - Notes: Self-improving loop: CodeRabbit reviews entire codebase daily, findings become tasks, workers fix them, next review validates fixes. Builds on t163 (completion guards) and t128 (supervisor). Consider rate limits and API costs. Could also integrate other review bots (Codacy, SonarCloud) as additional signal sources. **t167 research confirms Gemini CLI as viable additional signal source** -- add subtask for gemini-cli integration alongside CodeRabbit. Gemini CLI is free (1000 req/day), local, and avoids PR-only limitation of GitHub bot.
 - [x] t167 Investigate Gemini Code Assist for full codebase review in daily pulse #quality #automation #research ~30m (ai:20m read:10m) ref:GH#625 assignee:marcusquinn logged:2026-02-08 started:2026-02-08 completed:2026-02-08 verified:2026-02-08 PR #650 merged
@@ -269,11 +269,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t137 Deploy opencode-config-agents.md template via setup.sh #setup #deploy #templates ~30m (ai:20m test:10m) logged:2026-02-07 completed:2026-02-07
   - Notes: templates/opencode-config-agents.md exists but setup.sh doesn't deploy it to ~/.config/opencode/AGENTS.md. Add deploy step to setup.sh that copies template to config dir (create dir if needed). Consider whether setup.sh should manage the full content or just the initial reference line. Related: PR #419 (runtime context hint).
 - [ ] t136 Plugin System for Private Extension Repos #plan #architecture #plugins → [todo/PLANS.md#2026-02-07-plugin-system-for-private-extension-repos] ~1d (ai:6h test:3h read:3h) ref:GH#496 logged:2026-02-07
-  - [ ] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none
-  - [ ] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1
-  - [ ] t136.3 Extend setup.sh to deploy plugins ~2h blocked-by:t136.2
-  - [ ] t136.4 Create plugin template ~1h blocked-by:t136.2
-  - [ ] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4
+  - [ ] t136.1 Add plugin support to .aidevops.json schema ~1h blocked-by:none ref:GH#728
+  - [ ] t136.2 Add plugins.json config and CLI commands ~2h blocked-by:t136.1 ref:GH#729
+  - [ ] t136.3 Extend setup.sh to deploy plugins ~2h blocked-by:t136.2 ref:GH#730
+  - [ ] t136.4 Create plugin template ~1h blocked-by:t136.2 ref:GH#731
+  - [ ] t136.5 Scaffold aidevops-pro and aidevops-anon repos ~2h blocked-by:t136.3,t136.4 ref:GH#732
   - Notes: Namespaced plugin architecture (pro.md + pro/) to avoid clashes. Plugin AGENTS.md points to main framework. Minimal CI (local linting only) for private repos. aidevops update deploys main + all plugins. Open questions: license (MIT vs proprietary), Gitea Actions availability, plugin deploy order, subagent index strategy.
 - [x] t135 Codebase Quality Hardening (Opus 4.6 review findings) #plan #quality #hardening → [todo/PLANS.md#2026-02-07-codebase-quality-hardening] ~3d (ai:1.5d test:1d read:0.5d) ref:GH#545 logged:2026-02-07 completed:2026-02-08 verified:2026-02-08
   - [x] t135.1 P0-A: Add set -euo pipefail to 61 scripts missing strict mode ~4h blocked-by:none completed:2026-02-08
@@ -344,22 +344,22 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: check_system_load() at line 197, calculate_adaptive_concurrency() at line 310, resource stats in pulse Phase 5 summary, max_load_factor column in batches table with migration.
     - Notes: Discovered during batch-20260207 run: 3 concurrent workers spawned 51 opencode + 149 node processes, load avg hit 116 on 10-core machine. Supervisor has model health checks and orphan cleanup but no system resource awareness. Each opencode worker spawns ~15-20 sub-processes (MCP servers, LSPs). Need: load average monitoring, process count per worker, adaptive concurrency (pause dispatch when overloaded, resume when load drops).
   - Notes: From Claude Opus 4.6 codebase review (2026-02-07). Review corrected: 100/170 scripts already have set -e (not 2 as initially reported). 29/170 use shared-constants.sh. 95 scripts have blanket 20+ rule ShellCheck disable. 12 fix scripts have 0 references and only exist from the .agent->.agents rename commit. All subtasks designed for /runners dispatch. IMPORTANT: Review recommendation #10 (organize scripts by domain subdirectories) was REJECTED - scripts are cross-domain and flat namespace with naming convention is the intentional design. Recommendation #13 (remove dead fix scripts) changed to ARCHIVE non-destructively. Every subtask requires reading existing code to understand intent before changes.
-- [x] t132 Cross-Provider Model Routing with Fallbacks #plan #orchestration #multi-model → [todo/PLANS.md#2026-02-06-cross-provider-model-routing-with-fallbacks] ~1.5d (ai:8h test:4h read:2h) ref:GH#497 logged:2026-02-06 completed:2026-02-09
-  - [ ] t132.1 Define model-specific subagents in opencode.json ~2h blocked-by:none
+- [ ] t132 Cross-Provider Model Routing with Fallbacks #plan #orchestration #multi-model → [todo/PLANS.md#2026-02-06-cross-provider-model-routing-with-fallbacks] ~1.5d (ai:8h test:4h read:2h) ref:GH#497 logged:2026-02-06
+  - [ ] t132.1 Define model-specific subagents in opencode.json ~2h blocked-by:none ref:GH#733
     - Notes: OpenCode supports per-agent model selection natively -- the Task tool doesn't accept a model param, but each subagent definition can specify its own model. Create subagents like gemini-reviewer (google/gemini-3-pro-preview), gemini-analyst (google/gemini-3-flash-preview), gpt-reviewer (openai/gpt-4.1), etc. Map existing model-routing.md tiers (haiku/flash/sonnet/pro/opus) to concrete agent definitions. Primary agent selects model by choosing which subagent to invoke.
-  - [ ] t132.2 Provider/model registry with periodic sync ~2h blocked-by:none
+  - [ ] t132.2 Provider/model registry with periodic sync ~2h blocked-by:none ref:GH#734
     - Notes: OpenCode provider/model names change (new models released, old ones deprecated, naming conventions shift). Create model-registry-helper.sh that: 1) Scrapes available models from OpenCode config / Models.dev / provider APIs, 2) Compares against our configured models in opencode.json and model-routing.md, 3) Flags deprecated/renamed/unavailable models, 4) Suggests new models worth adding. Run periodically (cron or manual) and on `aidevops update`. Store registry in SQLite alongside memory/mail DBs.
-  - [ ] t132.3 Model availability checker (probe before dispatch) ~2h blocked-by:t132.2
+  - [ ] t132.3 Model availability checker (probe before dispatch) ~2h blocked-by:t132.2 ref:GH#735
     - Notes: Script or function that tests if a model is reachable and responding before dispatching work. Check API key validity, rate limits, model availability. Support: Anthropic (Claude), Google (Gemini), OpenAI, local (Ollama). Return latency estimate. Cache results with short TTL to avoid repeated probes.
-  - [ ] t132.4 Fallback chain configuration (per-agent and global defaults) ~2h blocked-by:t132.3
+  - [ ] t132.4 Fallback chain configuration (per-agent and global defaults) ~2h blocked-by:t132.3 ref:GH#736
     - Notes: Define fallback chains like: gemini-3-pro → gemini-2.5-pro → claude-sonnet-4 → claude-haiku. Configurable per subagent via frontmatter `fallback:` field, per runner via config, and global default in shared-constants.sh. Triggers: API error, timeout, rate limit, empty/malformed response. OpenCode doesn't have built-in fallback -- use gateway providers (OpenRouter allow_fallbacks, Vercel AI Gateway order) for provider-level fallback, and supervisor-helper.sh for task-level retry with different subagent.
-  - [ ] t132.5 Supervisor model resolution from subagent frontmatter ~2h blocked-by:t132.4
+  - [ ] t132.5 Supervisor model resolution from subagent frontmatter ~2h blocked-by:t132.4 ref:GH#737
     - Notes: supervisor-helper.sh reads `model:` from subagent YAML frontmatter and maps tier names to the corresponding subagent definition in opencode.json. Uses availability checker before dispatch. Falls back through chain on failure by re-dispatching to a different model-specific subagent.
-  - [ ] t132.6 Quality gate with model escalation ~3h blocked-by:t132.5
+  - [ ] t132.6 Quality gate with model escalation ~3h blocked-by:t132.5 ref:GH#738
     - Notes: After task completion, evaluate output quality. If unsatisfactory (heuristic or AI eval), re-dispatch to next tier up via a higher-tier subagent. Criteria: empty output, error patterns, user-defined quality checks, token-to-substance ratio. Max escalation depth configurable.
-  - [ ] t132.7 Runner and cron-helper multi-provider support ~2h blocked-by:t132.4
+  - [ ] t132.7 Runner and cron-helper multi-provider support ~2h blocked-by:t132.4 ref:GH#739
     - Notes: Extend runner-helper.sh and cron-helper.sh --model flag to accept tier names (not just provider/model strings). Add --provider flag. Support Gemini CLI, OpenCode server, Claude CLI as dispatch backends. Auto-detect available backends.
-  - [ ] t132.8 Cross-model review workflow (second-opinion pattern) ~2h blocked-by:t132.7
+  - [ ] t132.8 Cross-model review workflow (second-opinion pattern) ~2h blocked-by:t132.7 ref:GH#740
     - Notes: Dispatch same review task to multiple models (e.g., Claude + Gemini), collect results, merge/diff findings. Use case: code review, security audit, architecture review. Configurable via `review-models:` in task metadata.
   - Notes: OpenCode already supports per-agent model selection (each agent definition can have its own `model:` field across 75+ providers). The Task tool selects a model by invoking a subagent that has that model configured -- not via a model parameter on the call itself. Currently model-routing.md exists as design doc and all 195 subagents have model: frontmatter, but no corresponding agent definitions in opencode.json enforce it. Runner --model only works with single hardcoded provider. No fallback on failure, no availability checking, no quality-based escalation. Provider/model names are a moving target and need periodic reconciliation. This blocks use cases like "get a Gemini review of the codebase from within a Claude session."
 - [x] t131 gopass Integration & Credentials Rename #plan #security #credentials → [todo/PLANS.md#2026-02-06-gopass-integration--credentials-rename] ~2d (ai:1d test:4h read:4h) logged:2026-02-06 ref:todo/tasks/prd-gopass-credentials.md completed:2026-02-08 verified:2026-02-08
@@ -417,7 +417,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [x] t068.5 Agent Registry & Worker Mailbox Awareness ~3h blocked-by:t068.4 completed:2026-01-24
   - [x] t068.6 Stateless Coordinator (coordinator-helper.sh) ~4h blocked-by:t068.4,t068.5 completed:2026-01-24
   - [x] t068.7 Model Routing (subagent YAML frontmatter) ~2h blocked-by:t068.3 completed:2026-01-24
-  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5
+  - [ ] t068.8 TUI Dashboard (extend bdui or new Ink app) ~1h blocked-by:t068.4,t068.5 ref:GH#499
 - [x] t009 Claude Code Destructive Command Hooks #plan → [todo/PLANS.md#claude-code-destructive-command-hooks] ~30m (ai:15m test:10m read:5m) ref:GH#500 logged:2025-12-21 completed:2026-02-08 verified:2026-02-08 PR #562 merged
 - [ ] t008 aidevops-opencode Plugin #plan → [todo/PLANS.md#aidevops-opencode-plugin] ~1.5h (ai:45m test:30m read:15m) ref:GH#501 logged:2025-12-21
 - [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) logged:2025-12-20 completed:2026-01-25
@@ -651,13 +651,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t120 Review @thymikee post for aidevops inclusion #research #tools ~5m (ai:4m read:1m) ref:GH#529 assignee:marcusquinn started:2026-02-08T20:55:16Z logged:2026-02-05 ref:https://x.com/thymikee/status/2018786174152970422 completed:2026-02-08 verified:2026-02-08 PR #665 merged
   - Notes: Added agent-device subagent (tools/mobile/agent-device.md) for AI-driven iOS/Android device automation CLI by @thymikee/Callstack. Token-efficient ref-based element targeting, cross-platform, pure CLI (no MCP required). Updated AGENTS.md and subagent-index.toon.
 - [ ] t102 Claude-Flow Inspirations - Selective Feature Adoption #plan → [todo/PLANS.md#2026-01-31-claude-flow-inspirations---selective-feature-adoption] ~4h (ai:2.5h test:1h read:30m) ref:GH#530 logged:2026-01-31
-  - [ ] t102.1 Cost-Aware Model Routing ~30m blocked-by:none
+  - [ ] t102.1 Cost-Aware Model Routing ~30m blocked-by:none ref:GH#741
     - Notes: Create tools/context/model-routing.md with tier guidance (simple→haiku, code→sonnet, architecture→opus). Add model: field to subagent YAML frontmatter. Create /route command for model suggestions.
-  - [ ] t102.2 Semantic Memory with Embeddings ~2h blocked-by:none
+  - [ ] t102.2 Semantic Memory with Embeddings ~2h blocked-by:none ref:GH#742
     - Notes: Add optional HNSW vector index using all-MiniLM-L6-v2 via ONNX (~90MB). Create memory-embeddings-helper.sh. Extend memory-helper.sh with --semantic flag. Keep FTS5 as default, embeddings opt-in.
-  - [ ] t102.3 Success Pattern Tracking ~1h blocked-by:t102.2
+  - [ ] t102.3 Success Pattern Tracking ~1h blocked-by:t102.2 ref:GH#743
     - Notes: Add SUCCESS_PATTERN and FAILURE_PATTERN memory types. Auto-tag with task type, model, outcome. Create pattern-tracker-helper.sh and /patterns command.
-  - [ ] t102.4 Documentation & Integration ~30m blocked-by:t102.1,t102.2,t102.3
+  - [ ] t102.4 Documentation & Integration ~30m blocked-by:t102.1,t102.2,t102.3 ref:GH#744
     - Notes: Create aidevops/claude-flow-comparison.md. Update memory/README.md, AGENTS.md, subagent-index.toon.
 
 - [x] t078 Add Lumen subagent for AI-powered git diffs and commit generation #tools #git #code-review ~10m (ai:8m read:2m) ref:GH#531 logged:2026-01-23 ref:https://github.com/jnsahaj/lumen completed:2026-02-08 verified:2026-02-08 PR #602 merged
@@ -699,13 +699,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t137 Test Matrix bot end-to-end with matrix.marcusquinn.com #testing #matrix #agents ~30m (ai:20m test:10m) logged:2026-02-07 related:t109.4 completed:2026-02-07
   - Notes: Homeserver: matrix.marcusquinn.com, client: SchildiChat (local). Node 23 + OpenCode 1.1.53 confirmed. Steps: create bot user on Synapse, get access token, run matrix-dispatch-helper.sh setup, create a test runner, start OpenCode server, map a room, test from SchildiChat with !ai prefix.
 - [x] t134 SOPS + gocryptfs encryption stack #tools #security #encryption ~4h (ai:3h test:45m read:15m) ref:GH#541 assignee:marcusquinn started:2026-02-09T03:02:42Z logged:2026-02-06 related:t131 completed:2026-02-09
-  - [ ] t134.1 Add SOPS subagent with age backend (encrypt project config files in repos) ~1.5h blocked-by:none
+  - [ ] t134.1 Add SOPS subagent with age backend (encrypt project config files in repos) ~1.5h blocked-by:none ref:GH#745
     - Notes: SOPS (20.7k stars, CNCF sandbox, Mozilla-origin) encrypts values in YAML/JSON/ENV files while keeping structure visible in diffs/PRs. Use age as default backend (simpler than GPG for new users, gopass GPG keys also supported). Create subagent at tools/credentials/sops.md covering: install (brew install sops age), init per-project (.sops.yaml), encrypt/decrypt workflow, key rotation, integration with aidevops secret run for subprocess injection. Reference: https://github.com/getsops/sops
-  - [ ] t134.2 Add gocryptfs subagent (encrypted local project folders) ~1.5h blocked-by:none
+  - [ ] t134.2 Add gocryptfs subagent (encrypted local project folders) ~1.5h blocked-by:none ref:GH#746
     - Notes: gocryptfs (4.3k stars, active, EncFS successor) provides encrypted overlay filesystem -- mount/unmount encrypted folders as normal directories. No disk images to manage. Create subagent at tools/credentials/gocryptfs.md covering: install (brew install gocryptfs), init encrypted folder, mount/unmount workflow, FIDO2 support, use cases (client data, backups, credential vaults). Reference: https://github.com/rfjakob/gocryptfs
-  - [ ] t134.3 Update aidevops init with optional SOPS setup ~45m blocked-by:t134.1
+  - [ ] t134.3 Update aidevops init with optional SOPS setup ~45m blocked-by:t134.1 ref:GH#747
     - Notes: Add `aidevops init sops` feature flag. Creates .sops.yaml with age key, adds patterns for common secret files (*.secret.yaml, configs/*.enc.json). Add to features list. Non-breaking -- only activates when explicitly requested.
-  - [ ] t134.4 Document full encryption stack in credentials docs ~30m blocked-by:t134.1,t134.2
+  - [ ] t134.4 Document full encryption stack in credentials docs ~30m blocked-by:t134.1,t134.2 ref:GH#748
     - Notes: Update gopass.md and api-key-setup.md with encryption stack overview: gopass (secret values), SOPS (config files in repos), gocryptfs (local folders). Decision record: chose SOPS over git-crypt (value-level encryption, CNCF backing, key rotation) and gocryptfs over VeraCrypt (no disk images to manage, CLI-native, overlay filesystem).
 - [x] t191 Fix secretlint-helper.sh install and scan in git worktrees #bugfix #tools #secretlint ~1h (ai:40m test:15m read:5m) ref:GH#711 assignee:marcusquinn started:2026-02-09T02:53:00Z logged:2026-02-09 completed:2026-02-09
   - Notes: secretlint-helper.sh install puts packages in main repo node_modules/, but scan runs in CWD. In worktrees, node_modules/ doesn't exist so check_rules_installed() always fails. Fix: resolve main worktree path via `git worktree list --porcelain | head -1`, use `npm list --prefix <main_path>` as fallback, and make install worktree-aware (install to main repo or symlink).
