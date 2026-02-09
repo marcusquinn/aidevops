@@ -88,7 +88,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
   - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
   - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z
-    - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal
+    - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
   - [ ] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h assignee:marcusquinn started:2026-02-09T18:51:23Z
   - [x] t135.9 Add trap cleanup for temp files #quality #shell ~1h assignee:marcusquinn started:2026-02-09T18:55:45Z completed:2026-02-09
   - [ ] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z
