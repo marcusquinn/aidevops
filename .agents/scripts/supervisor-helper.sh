@@ -81,6 +81,12 @@
 #   resolve_task_model() orchestrates: resolve_model_from_frontmatter() + resolve_model()
 #   Integrates with: fallback-chain-helper.sh (t132.4), model-availability-helper.sh (t132.3)
 #
+# Quality gate with model escalation (t132.6):
+#   Post-completion quality checks: log size, error patterns, file changes, syntax errors
+#   Escalation chain: haiku -> sonnet -> opus, flash -> pro
+#   Configurable: max_escalation per task (default 2), skip_quality_gate per batch
+#   run_quality_gate() -> check_output_quality() -> get_next_tier() -> re-queue with higher model
+#
 # Database: ~/.aidevops/.agent-workspace/supervisor/supervisor.db
 #
 # Integration:
@@ -177,6 +183,7 @@ readonly -a VALID_TRANSITIONS=(
     "running:failed"
     "running:cancelled"
     "evaluating:complete"
+    "evaluating:queued"
     "evaluating:retrying"
     "evaluating:blocked"
     "evaluating:failed"
@@ -1022,6 +1029,25 @@ MIGRATE_T180
         log_success "Database schema migrated for post-merge verification states"
     fi
 
+    # Migrate: add escalation_depth and max_escalation columns to tasks (t132.6)
+    local has_escalation_depth
+    has_escalation_depth=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='escalation_depth';" 2>/dev/null || echo "0")
+    if [[ "$has_escalation_depth" -eq 0 ]]; then
+        log_info "Migrating tasks table: adding escalation columns (t132.6)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN escalation_depth INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        db "$SUPERVISOR_DB" "ALTER TABLE tasks ADD COLUMN max_escalation INTEGER NOT NULL DEFAULT 2;" 2>/dev/null || true
+        log_success "Added escalation_depth and max_escalation columns to tasks"
+    fi
+
+    # Migrate: add skip_quality_gate column to batches (t132.6)
+    local has_skip_quality_gate
+    has_skip_quality_gate=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM pragma_table_info('batches') WHERE name='skip_quality_gate';" 2>/dev/null || echo "0")
+    if [[ "$has_skip_quality_gate" -eq 0 ]]; then
+        log_info "Migrating batches table: adding skip_quality_gate column (t132.6)..."
+        db "$SUPERVISOR_DB" "ALTER TABLE batches ADD COLUMN skip_quality_gate INTEGER NOT NULL DEFAULT 0;" 2>/dev/null || true
+        log_success "Added skip_quality_gate column to batches"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -1061,6 +1087,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     issue_url       TEXT,
     diagnostic_of   TEXT,
     triage_result   TEXT,
+    escalation_depth INTEGER NOT NULL DEFAULT 0,
+    max_escalation  INTEGER NOT NULL DEFAULT 2,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     started_at      TEXT,
     completed_at    TEXT,
@@ -1081,6 +1109,7 @@ CREATE TABLE IF NOT EXISTS batches (
     release_on_complete INTEGER NOT NULL DEFAULT 0,
     release_type    TEXT NOT NULL DEFAULT 'patch'
                     CHECK(release_type IN ('major','minor','patch')),
+    skip_quality_gate INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK(status IN ('active','paused','complete','cancelled')),
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -1273,7 +1302,7 @@ cmd_add() {
 #######################################
 cmd_batch() {
     local name="" concurrency=4 max_concurrency=0 tasks="" max_load_factor=2
-    local release_on_complete=0 release_type="patch"
+    local release_on_complete=0 release_type="patch" skip_quality_gate=0
 
     # First positional arg is batch name
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -1289,12 +1318,13 @@ cmd_batch() {
             --max-load) [[ $# -lt 2 ]] && { log_error "--max-load requires a value"; return 1; }; max_load_factor="$2"; shift 2 ;;
             --release-on-complete) release_on_complete=1; shift ;;
             --release-type) [[ $# -lt 2 ]] && { log_error "--release-type requires a value"; return 1; }; release_type="$2"; shift 2 ;;
+            --skip-quality-gate) skip_quality_gate=1; shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac
     done
 
     if [[ -z "$name" ]]; then
-        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major]"
+        log_error "Usage: supervisor-helper.sh batch <name> [--concurrency N] [--max-concurrency N] [--tasks \"t001,t002\"] [--release-on-complete] [--release-type patch|minor|major] [--skip-quality-gate]"
         return 1
     fi
 
@@ -1316,8 +1346,8 @@ cmd_batch() {
     escaped_release_type=$(sql_escape "$release_type")
 
     db "$SUPERVISOR_DB" "
-        INSERT INTO batches (id, name, concurrency, max_concurrency, max_load_factor, release_on_complete, release_type)
-        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type');
+        INSERT INTO batches (id, name, concurrency, max_concurrency, max_load_factor, release_on_complete, release_type, skip_quality_gate)
+        VALUES ('$escaped_id', '$escaped_name', $concurrency, $max_concurrency, $max_load_factor, $release_on_complete, '$escaped_release_type', $skip_quality_gate);
     "
 
     local release_info=""
@@ -1330,7 +1360,11 @@ cmd_batch() {
     else
         max_conc_info=", max: auto"
     fi
-    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency${max_conc_info}, max-load: $max_load_factor${release_info})"
+    local quality_gate_info=""
+    if [[ "$skip_quality_gate" -eq 1 ]]; then
+        quality_gate_info=", quality-gate: skipped"
+    fi
+    log_success "Created batch: $name (id: $batch_id, concurrency: $concurrency${max_conc_info}, max-load: $max_load_factor${release_info}${quality_gate_info})"
 
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
@@ -2861,6 +2895,250 @@ resolve_task_model() {
     resolved=$(resolve_model "coding" "$ai_cli")
     log_info "Model for $task_id: $resolved (default coding tier)"
     echo "$resolved"
+    return 0
+}
+
+#######################################
+# Get the next higher-tier model for escalation (t132.6)
+# Maps current model to the next tier in the escalation chain:
+#   haiku -> sonnet -> opus (Anthropic)
+#   flash -> pro (Google)
+# Returns the next tier name, or empty string if already at max tier.
+#######################################
+get_next_tier() {
+    local current_model="$1"
+
+    # Normalize: extract the tier from a full model string
+    local tier=""
+    case "$current_model" in
+        *haiku*) tier="haiku" ;;
+        *sonnet*) tier="sonnet" ;;
+        *opus*) tier="opus" ;;
+        *flash*) tier="flash" ;;
+        *pro*) tier="pro" ;;
+        *grok*) tier="grok" ;;
+        *) tier="" ;;
+    esac
+
+    # Escalation chains
+    case "$tier" in
+        haiku) echo "sonnet" ;;
+        sonnet) echo "opus" ;;
+        opus) echo "" ;;  # Already at max Anthropic tier
+        flash) echo "pro" ;;
+        pro) echo "" ;;    # Already at max Google tier
+        grok) echo "" ;;   # No escalation path for Grok
+        *)
+            # Unknown model — try escalating to opus as a safe default
+            if [[ "$current_model" != *"opus"* ]]; then
+                echo "opus"
+            else
+                echo ""
+            fi
+            ;;
+    esac
+
+    return 0
+}
+
+#######################################
+# Check output quality of a completed worker (t132.6)
+# Heuristic quality checks on worker output to decide if escalation is needed.
+# Returns: "pass" if quality is acceptable, "fail:<reason>" if not.
+#
+# Checks performed:
+#   1. Empty/trivial output (log too small)
+#   2. Error patterns in log (panics, crashes, unhandled exceptions)
+#   3. No substantive file changes (git diff empty)
+#   4. ShellCheck violations for .sh files (if applicable)
+#   5. Very low token-to-substance ratio
+#######################################
+check_output_quality() {
+    local task_id="$1"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_row
+    task_row=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT log_file, worktree, branch, repo, pr_url
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_row" ]]; then
+        echo "pass"  # Can't check, assume OK
+        return 0
+    fi
+
+    local tlog tworktree tbranch trepo tpr_url
+    IFS='|' read -r tlog tworktree tbranch trepo tpr_url <<< "$task_row"
+
+    # Check 1: Log file size — very small logs suggest trivial/empty output
+    if [[ -n "$tlog" && -f "$tlog" ]]; then
+        local log_size
+        log_size=$(wc -c < "$tlog" 2>/dev/null | tr -d ' ')
+        # Less than 2KB of log output is suspicious for a coding task
+        if [[ "$log_size" -lt 2048 ]]; then
+            # But check if it's a legitimate small task (e.g., docs-only)
+            local has_pr_signal
+            has_pr_signal=$(grep -c 'WORKER_PR_CREATED\|WORKER_COMPLETE\|PR_URL' "$tlog" 2>/dev/null || echo "0")
+            if [[ "$has_pr_signal" -eq 0 ]]; then
+                echo "fail:trivial_output_${log_size}b"
+                return 0
+            fi
+        fi
+
+        # Check 2: Error patterns in log
+        local error_count
+        error_count=$(grep -ciE 'panic|fatal|unhandled.*exception|segfault|SIGKILL|out of memory|OOM' "$tlog" 2>/dev/null || echo "0")
+        if [[ "$error_count" -gt 2 ]]; then
+            echo "fail:error_patterns_${error_count}"
+            return 0
+        fi
+
+        # Check 3: Token-to-substance ratio
+        # If the log is very large (>500KB) but has no PR or meaningful output markers,
+        # the worker may have been spinning without producing results
+        if [[ "$log_size" -gt 512000 ]]; then
+            local substance_markers
+            substance_markers=$(grep -ciE 'WORKER_COMPLETE|WORKER_PR_CREATED|PR_URL|commit|merged|created file|wrote file' "$tlog" 2>/dev/null || echo "0")
+            if [[ "$substance_markers" -lt 3 ]]; then
+                echo "fail:low_substance_ratio_${log_size}b_${substance_markers}markers"
+                return 0
+            fi
+        fi
+    fi
+
+    # Check 4: If we have a worktree/branch, check for substantive changes
+    if [[ -n "$tworktree" && -d "$tworktree" ]]; then
+        local diff_stat
+        diff_stat=$(git -C "$tworktree" diff --stat "main..HEAD" 2>/dev/null || echo "")
+        if [[ -z "$diff_stat" ]]; then
+            # No changes at all on the branch
+            echo "fail:no_file_changes"
+            return 0
+        fi
+
+        # Check 5: ShellCheck for .sh files (quick heuristic)
+        local changed_sh_files
+        changed_sh_files=$(git -C "$tworktree" diff --name-only "main..HEAD" 2>/dev/null | grep '\.sh$' || true)
+        if [[ -n "$changed_sh_files" ]]; then
+            local shellcheck_errors=0
+            while IFS= read -r sh_file; do
+                [[ -z "$sh_file" ]] && continue
+                local full_path="${tworktree}/${sh_file}"
+                [[ -f "$full_path" ]] || continue
+                local sc_count
+                sc_count=$(bash -n "$full_path" 2>&1 | wc -l | tr -d ' ')
+                shellcheck_errors=$((shellcheck_errors + sc_count))
+            done <<< "$changed_sh_files"
+            if [[ "$shellcheck_errors" -gt 5 ]]; then
+                echo "fail:syntax_errors_${shellcheck_errors}"
+                return 0
+            fi
+        fi
+    fi
+
+    # Check 6: If PR was created, verify it has substantive content
+    if [[ -n "$tpr_url" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
+        # PR exists — that's a strong positive signal
+        echo "pass"
+        return 0
+    fi
+
+    # All checks passed
+    echo "pass"
+    return 0
+}
+
+#######################################
+# Run quality gate and escalate if needed (t132.6)
+# Called after evaluate_worker() returns "complete".
+# Returns: "pass" if quality OK or escalation not possible,
+#          "escalate:<new_model>" if re-dispatch needed.
+#######################################
+run_quality_gate() {
+    local task_id="$1"
+    local batch_id="${2:-}"
+
+    ensure_db
+
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+
+    # Check if quality gate is skipped for this batch
+    if [[ -n "$batch_id" ]]; then
+        local skip_gate
+        skip_gate=$(db "$SUPERVISOR_DB" "SELECT skip_quality_gate FROM batches WHERE id = '$(sql_escape "$batch_id")';" 2>/dev/null || echo "0")
+        if [[ "$skip_gate" -eq 1 ]]; then
+            log_info "Quality gate skipped for batch $batch_id"
+            echo "pass"
+            return 0
+        fi
+    fi
+
+    # Check escalation depth
+    local task_escalation
+    task_escalation=$(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT escalation_depth, max_escalation, model
+        FROM tasks WHERE id = '$escaped_id';
+    ")
+
+    if [[ -z "$task_escalation" ]]; then
+        echo "pass"
+        return 0
+    fi
+
+    local current_depth max_depth current_model
+    IFS='|' read -r current_depth max_depth current_model <<< "$task_escalation"
+
+    # Already at max escalation depth
+    if [[ "$current_depth" -ge "$max_depth" ]]; then
+        log_info "Quality gate: $task_id at max escalation depth ($current_depth/$max_depth), accepting result"
+        echo "pass"
+        return 0
+    fi
+
+    # Run quality checks
+    local quality_result
+    quality_result=$(check_output_quality "$task_id")
+
+    if [[ "$quality_result" == "pass" ]]; then
+        log_info "Quality gate: $task_id passed quality checks"
+        echo "pass"
+        return 0
+    fi
+
+    # Quality failed — try to escalate
+    local fail_reason="${quality_result#fail:}"
+    local next_tier
+    next_tier=$(get_next_tier "$current_model")
+
+    if [[ -z "$next_tier" ]]; then
+        log_warn "Quality gate: $task_id failed ($fail_reason) but no higher tier available from $current_model"
+        echo "pass"
+        return 0
+    fi
+
+    # Resolve the next tier to a full model string
+    local ai_cli
+    ai_cli=$(resolve_ai_cli 2>/dev/null || echo "opencode")
+    local next_model
+    next_model=$(resolve_model "$next_tier" "$ai_cli")
+
+    log_warn "Quality gate: $task_id failed ($fail_reason), escalating from $current_model to $next_model (depth $((current_depth + 1))/$max_depth)"
+
+    # Update escalation depth and model, then transition to queued via state machine
+    db "$SUPERVISOR_DB" "
+        UPDATE tasks SET
+            escalation_depth = $((current_depth + 1)),
+            model = '$(sql_escape "$next_model")'
+        WHERE id = '$escaped_id';
+    "
+    cmd_transition "$task_id" "queued" --error "Quality gate escalation: $fail_reason" 2>/dev/null || true
+
+    echo "escalate:${next_model}"
     return 0
 }
 
@@ -5908,6 +6186,22 @@ cmd_pulse() {
 
             case "$outcome_type" in
                 complete)
+                    # Quality gate check before accepting completion (t132.6)
+                    local gate_result
+                    gate_result=$(run_quality_gate "$tid" "${batch_id:-}" 2>>"$SUPERVISOR_LOG") || gate_result="pass"
+                    local gate_type="${gate_result%%:*}"
+
+                    if [[ "$gate_type" == "escalate" ]]; then
+                        local escalated_model="${gate_result#escalate:}"
+                        log_warn "  $tid: ESCALATING to $escalated_model (quality gate failed)"
+                        # run_quality_gate already set status=queued and updated model
+                        # Clean up worker process tree before re-dispatch (t128.7)
+                        cleanup_worker_processes "$tid"
+                        store_failure_pattern "$tid" "escalated" "Quality gate -> $escalated_model" "$tid_desc" 2>>"$SUPERVISOR_LOG" || true
+                        send_task_notification "$tid" "escalated" "Re-queued with $escalated_model" 2>>"$SUPERVISOR_LOG" || true
+                        continue
+                    fi
+
                     log_success "  $tid: COMPLETE ($outcome_detail)"
                     cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     completed_count=$((completed_count + 1))
