@@ -243,4 +243,11 @@ counts as auditable evidence. Use `verify-run-helper.sh log [vNNN]` to view proo
   check: bash -n .agents/scripts/response-scoring-helper.sh
   check: file-exists tests/test-response-scoring.sh
 
+- [x] v039 t166.3 Auto-create tasks from CodeRabbit findings | PR #778 | merged:2026-02-09 verified:2026-02-09
+  files: .agents/scripts/coderabbit-task-creator-helper.sh, .agents/scripts/review-pulse-helper.sh, .agents/tools/code-review/coderabbit.md
+  check: file-exists .agents/scripts/coderabbit-task-creator-helper.sh
+  check: shellcheck .agents/scripts/coderabbit-task-creator-helper.sh
+  check: bash -n .agents/scripts/coderabbit-task-creator-helper.sh
+  check: rg "false.positive\|filter" .agents/scripts/coderabbit-task-creator-helper.sh
+
 <!-- VERIFY-QUEUE-END -->
