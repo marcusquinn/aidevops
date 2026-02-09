@@ -166,6 +166,8 @@ worktree-helper.sh add feature/x  # Fallback
 
 **Branch types**: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
+**Worktree ownership** (CRITICAL): NEVER remove a worktree unless (a) you created it in this session, (b) it belongs to a task in your active batch, AND the task is deployed/complete, or (c) the user explicitly asks. Worktrees may belong to parallel sessions — removing them destroys another agent's working directory mid-work. When cleaning up, only touch worktrees for tasks you personally merged. Use `git worktree list` to see all worktrees but do NOT assume unrecognized ones are safe to remove.
+
 **Safety hooks** (Claude Code only): Destructive commands (`git reset --hard`, `rm -rf`, etc.) are blocked by a PreToolUse hook. Run `install-hooks.sh --test` to verify. See `workflows/git-workflow.md` "Destructive Command Safety Hooks" section.
 
 **Full docs**: `workflows/git-workflow.md`, `tools/git/worktrunk.md`
