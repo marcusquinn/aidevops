@@ -16,6 +16,8 @@ tools:
 
 Browser-based automation for Higgsfield AI using Playwright. This subagent drives the Higgsfield web UI to generate images, videos, lipsync, and effects using **subscription credits** (which are only available through the UI, not the API).
 
+**Automation Coverage**: Image generation (10/10 models), Video creation (2/4 workflows), Cinema Studio, Motion Control, Edit/Inpaint (5 models), Upscale, Lipsync (11 models), Apps (38 via generic handler), Asset Library, Pipeline with Remotion post-production, Seed Bracketing.
+
 ## When to Use
 
 Use this subagent instead of the API subagent (`higgsfield.md`) when:
@@ -46,6 +48,21 @@ Use this subagent instead of the API subagent (`higgsfield.md`) when:
 # Use an app/effect
 ~/.aidevops/agents/scripts/higgsfield-helper.sh app face-swap --image-file photo.jpg
 
+# Cinema Studio (cinematic image/video with camera+lens presets)
+~/.aidevops/agents/scripts/higgsfield-helper.sh cinema-studio "Epic landscape" --tab image --camera "Dolly Zoom"
+
+# Motion Control (animate character with motion reference video)
+~/.aidevops/agents/scripts/higgsfield-helper.sh motion-control --video-file dance.mp4 --image-file character.jpg
+
+# Edit/Inpaint (5 models: soul_inpaint, banana_placement, canvas, multi, nano_banana_pro_inpaint)
+~/.aidevops/agents/scripts/higgsfield-helper.sh edit "Replace background with beach" --image-file photo.jpg -m soul_inpaint
+
+# Upscale (AI upscale image or video)
+~/.aidevops/agents/scripts/higgsfield-helper.sh upscale --image-file low-res.jpg
+
+# Asset Library (browse, filter, download)
+~/.aidevops/agents/scripts/higgsfield-helper.sh manage-assets --asset-action list --filter video
+
 # Check credits and unlimited models
 ~/.aidevops/agents/scripts/higgsfield-helper.sh credits
 
@@ -57,7 +74,7 @@ Use this subagent instead of the API subagent (`higgsfield.md`) when:
 
 ```text
 higgsfield-helper.sh (shell wrapper)
-  └── higgsfield/playwright-automator.mjs (Playwright automation, ~3400 lines)
+  └── higgsfield/playwright-automator.mjs (Playwright automation, ~3900 lines)
         ├── Persistent auth state (~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json)
         ├── Site discovery cache (~/.aidevops/.agent-workspace/work/higgsfield/routes-cache.json)
         ├── Credentials from ~/.config/aidevops/credentials.sh
@@ -147,7 +164,7 @@ higgsfield-helper.sh lipsync "Breaking news today..." --image-file anchor.jpg --
 
 ### Apps and Effects
 
-Higgsfield has 86+ apps for one-click content creation:
+Higgsfield has 38+ apps for one-click content creation (visible on /apps page):
 
 ```bash
 # Face swap
@@ -163,7 +180,100 @@ higgsfield-helper.sh app comic-book --image-file photo.jpg
 higgsfield-helper.sh app sketch-to-real --image-file sketch.jpg
 ```
 
-**Popular apps**: face-swap, 3d-render, comic-book, transitions, recast, skin-enhancer, angles, relight, shots, zooms, poster, sketch-to-real, renaissance, mugshot, character-swap, outfit-swap, click-to-ad, plushies, sticker-matchcut
+**Popular apps**: face-swap, 3d-render, comic-book, transitions, recast, skin-enhancer, angles, relight, shots, zooms, poster, sketch-to-real, renaissance, mugshot, character-swap, outfit-swap, link-to-video-ad, plushies, sticker-matchcut, surrounded-by-animals
+
+### Cinema Studio
+
+Professional cinematic image/video with camera and lens simulation presets.
+
+```bash
+# Cinematic image with camera preset
+higgsfield-helper.sh cinema-studio "Epic mountain landscape at golden hour" --tab image --camera "Dolly Zoom"
+
+# Cinematic video
+higgsfield-helper.sh cinema-studio "Dramatic reveal of ancient temple" --duration 10 --lens "Anamorphic"
+
+# With quality and aspect
+higgsfield-helper.sh cinema-studio "Product hero shot" --tab image --quality 4K --aspect 16:9
+```
+
+Controls: Image/Video tab, camera presets (Dolly Zoom, Tracking, etc.), lens presets (Anamorphic, etc.), quality (1K/2K/4K), aspect ratio, batch count. Cost: 20 credits (has free generations).
+
+### Motion Control
+
+Animate a character image using a motion reference video.
+
+```bash
+# Upload dance video as motion reference + character image
+higgsfield-helper.sh motion-control --video-file dance.mp4 --image-file character.jpg
+
+# With prompt guidance
+higgsfield-helper.sh motion-control --motion-ref walk.mp4 --image-file person.jpg -p "Walking through park"
+
+# Unlimited mode (Kling)
+higgsfield-helper.sh motion-control --video-file ref.mp4 --image-file face.jpg --unlimited
+```
+
+Accepts `--video-file` or `--motion-ref` for the reference video (3-30s), `--image-file` for the character. Cost: UNLIMITED with Kling.
+
+### Edit/Inpaint
+
+Upload an image and edit/inpaint specific regions with 5 available models.
+
+```bash
+# Soul Inpaint (default)
+higgsfield-helper.sh edit "Replace background with tropical beach" --image-file photo.jpg
+
+# Product placement (Banana Placement model)
+higgsfield-helper.sh edit "Place product on marble table" --image-file product.jpg -m banana_placement
+
+# Multi-reference (two images)
+higgsfield-helper.sh edit "Combine styles" --image-file base.jpg --image-file2 reference.jpg -m multi
+
+# Canvas model
+higgsfield-helper.sh edit "Extend the scene" --image-file photo.jpg -m canvas
+```
+
+Models: `soul_inpaint` (default), `nano_banana_pro_inpaint`, `banana_placement`, `canvas`, `multi`. The `--image-file2` flag provides a second reference image for multi-reference and product placement models.
+
+### Upscale
+
+AI upscale an image or video to higher resolution.
+
+```bash
+# Upscale an image
+higgsfield-helper.sh upscale --image-file low-res.jpg
+
+# Upscale a video
+higgsfield-helper.sh upscale --video-file clip.mp4
+
+# Custom output
+higgsfield-helper.sh upscale --image-file photo.jpg --output ~/Projects/hires/
+```
+
+### Asset Library
+
+Browse, filter, and download from the Higgsfield asset library.
+
+```bash
+# List all assets
+higgsfield-helper.sh manage-assets --asset-action list
+
+# List filtered by type
+higgsfield-helper.sh manage-assets --asset-action list --filter video
+higgsfield-helper.sh manage-assets --asset-action list --filter lipsync
+
+# Download latest asset
+higgsfield-helper.sh manage-assets --asset-action download-latest --filter image
+
+# Download specific asset by index
+higgsfield-helper.sh manage-assets --asset-action download --asset-index 3
+
+# Bulk download (up to N assets)
+higgsfield-helper.sh manage-assets --asset-action download-all --limit 20
+```
+
+Filters: `image`, `video`, `lipsync`, `upscaled`, `liked`. Actions: `list`, `download`, `download-latest`, `download-all`.
 
 ### Account Management
 
@@ -221,6 +331,7 @@ higgsfield-helper.sh download --model video # videos from History
 
 | Model | Resolution | Duration | Cost |
 |-------|-----------|----------|------|
+| Wan 2.5 Fast | varies | varies | varies |
 | Kling 2.6 Lipsync | 1080p | 10s | varies |
 | Google Veo 3 | 720p | 8s | varies |
 | Veo 3 Fast | 720p | 8s | varies |
@@ -460,6 +571,17 @@ Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.j
 --character-image  Character face image for pipeline
 --dialogue         Dialogue text for lipsync in pipeline
 --scenes           Number of scenes to generate
+--video-file       Path to video file (motion reference for motion-control)
+--motion-ref       Alias for --video-file (motion reference video)
+--image-file2      Second image file (multi-reference edit, product placement)
+--camera           Camera preset for cinema-studio (e.g., "Dolly Zoom")
+--lens             Lens preset for cinema-studio (e.g., "Anamorphic")
+--tab              Tab selection: "image" or "video" (cinema-studio)
+--filter           Asset filter: image, video, lipsync, upscaled, liked
+--asset-action     Asset action: list, download, download-latest, download-all
+--asset-type       Asset type filter for manage-assets
+--asset-index      Index of specific asset to download (0-based)
+--limit            Max number of assets to download
 ```
 
 ## Prompt Engineering Tips
