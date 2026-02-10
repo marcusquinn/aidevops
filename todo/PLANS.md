@@ -143,6 +143,154 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 - **2026-02-10**: Decided to enhance existing `email-health-check` rather than create a separate agent for content-level checks. The health check already covers DNS/auth; adding subject line analysis, HTML weight, unsubscribe headers, and URL validation keeps all pre-send validation in one place.
 - **2026-02-10**: EOA API credentials stored via `aidevops secret set EOA_API_KEY` and `aidevops secret set EOA_API_PASSWORD`. Never in config files or conversation.
 
+### [2026-02-10] Accessibility & Contrast Testing
+
+**Status:** Planning
+**Estimate:** ~14h (ai:9h test:3.5h read:1.5h)
+**TODO:** t215
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p028,Accessibility & Contrast Testing,planning,0,5,,accessibility|testing|wcag|contrast|wave|axe-core|lighthouse,14h,9h,3.5h,1.5h,2026-02-10T00:00Z,
+-->
+
+#### Purpose
+
+Add comprehensive accessibility and colour contrast testing to aidevops, covering both websites and email HTML. Inspired by WebAIM's tools (Contrast Checker, WAVE, WCAG 2.2 checklist), implemented as a multi-tool approach: free axe-core for automated WCAG rule checking, free WebAIM Contrast Checker API for individual colour pair validation, paid WAVE API for comprehensive analysis with element selectors, and Lighthouse accessibility category (already installed) for scoring. Also adds email-specific accessibility checks to the existing email agents (t214).
+
+#### Context
+
+**Problem:** aidevops has no dedicated accessibility testing capability. Lighthouse (via pagespeed-helper.sh) includes an accessibility category but it's buried in the overall report and never surfaced as first-class output. There's no contrast checking, no axe-core integration, no WAVE integration, and no WCAG compliance reporting. Email agents (existing and planned t214) have no accessibility validation beyond basic alt text presence.
+
+**WebAIM tools mapped to implementation:**
+
+| WebAIM Tool | Our Implementation | Cost |
+|-------------|-------------------|------|
+| Contrast Checker | WebAIM API (fcolor/bcolor params, returns ratio + AA/AAA pass/fail) | Free, no key |
+| Link Contrast Checker | WebAIM API + 3:1 ratio check for links distinguished by colour alone | Free, no key |
+| WAVE | WAVE API (wave.webaim.org/api/) — reporttype 1-4, returns errors/contrast/alerts/features/structure/ARIA with XPath/CSS selectors | Paid ($0.025-0.04/credit, 100 free) |
+| WCAG 2.2 Checklist | axe-core rules mapped to WCAG success criteria, compliance report generator | Free (axe-core OSS) |
+
+**WCAG 2.2 coverage by tool:**
+
+| WCAG Principle | axe-core | WAVE | Lighthouse | Manual Review |
+|----------------|----------|------|------------|---------------|
+| 1. Perceivable (alt text, contrast, adaptable, distinguishable) | Strong | Strong | Partial | Captions, audio descriptions |
+| 2. Operable (keyboard, timing, seizures, navigation) | Partial | Partial | Partial | Keyboard testing, timing |
+| 3. Understandable (readable, predictable, input assistance) | Partial | Partial | Minimal | Language, error prevention |
+| 4. Robust (compatible, parsing, name/role/value) | Strong | Strong | Partial | AT compatibility |
+
+**Contrast ratio thresholds (WCAG 2.1):**
+
+| Criterion | Level | Normal Text | Large Text | UI Components |
+|-----------|-------|-------------|------------|---------------|
+| SC 1.4.3 Contrast (Minimum) | AA | 4.5:1 | 3:1 | — |
+| SC 1.4.6 Contrast (Enhanced) | AAA | 7:1 | 4.5:1 | — |
+| SC 1.4.11 Non-text Contrast | AA | — | — | 3:1 |
+
+Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
+
+**Existing tools that touch accessibility:**
+
+| Tool | What it does | Gap |
+|------|-------------|-----|
+| `pagespeed-helper.sh` | Runs Lighthouse (includes a11y category) | A11y buried in report, no dedicated command, no WCAG mapping |
+| `axe-cli.md` | iOS Simulator automation tool | NOT axe-core web accessibility — naming collision only |
+| `playwright-emulation.md` | 100+ device presets, forced-colors/high-contrast mode | No a11y scanning, just visual emulation |
+| `email-health-check-helper.sh` | DNS/auth/blacklist validation | No content-level a11y checks |
+
+**New agent location:** `services/accessibility/accessibility-audit.md` — new directory under services, parallel to `services/email/`, `services/hosting/`, etc.
+
+**Accessibility testing lifecycle in aidevops after this plan:**
+
+```text
+1. Quick check:     lighthouse-a11y (pagespeed-helper.sh accessibility command)
+2. Automated scan:  axe-core via Playwright (comprehensive WCAG 2.2 A/AA rules)
+3. Contrast audit:  Playwright computed style extraction + WebAIM API validation
+4. Deep analysis:   WAVE API (errors, contrast, alerts, features, structure, ARIA)
+5. Email a11y:      email-health-check + email-design-test accessibility commands
+6. Compliance:      WCAG report generator (pass/fail per success criterion)
+```
+
+**Tool installation:**
+
+- axe-core: `npm install -g @axe-core/cli` or inject `axe-core` via Playwright `page.evaluate()`
+- WebAIM Contrast Checker API: no installation, HTTP GET with colour params
+- WAVE API: key via `aidevops secret set WAVE_API_KEY`, HTTP GET
+- Lighthouse: already installed via pagespeed-helper.sh
+
+**WebAIM Contrast Checker API details:**
+
+- URL: `https://webaim.org/resources/contrastchecker/?fcolor=0000FF&bcolor=FFFFFF&api`
+- Response: `{"ratio":"8.59","AA":"pass","AALarge":"pass","AAA":"pass","AAALarge":"pass"}`
+- No auth required, no rate limit documented (be respectful)
+- Hex colours without # prefix
+
+**WAVE API details:**
+
+- URL: `https://wave.webaim.org/api/request?key=KEY&url=URL&reporttype=2`
+- Report types: 1 (stats only, 1 credit), 2 (stats + items with selectors, 1 credit), 3 (annotated page source, 2 credits), 4 (full, 3 credits)
+- Response categories: error, contrast, alert, feature, structure, aria
+- Each item: id (rule code like "alt_missing"), description, count, selectors (XPath + CSS)
+- New accounts: 100 free credits
+- Pricing: $0.04/credit (100), $0.035/credit (1000), $0.025/credit (10000+)
+
+#### Phases
+
+**Phase 1: Accessibility audit agent + helper script (t215.1, t215.2) ~6h**
+
+- Create `services/accessibility/accessibility-audit.md` subagent with tool decision tree
+- Create `scripts/accessibility-audit-helper.sh` CLI
+- axe-core integration: inject via Playwright `page.evaluate()` for URL or local HTML file scanning
+- WebAIM Contrast Checker API integration for individual colour pair validation
+- WCAG compliance report generator (pass/fail per success criterion, grouped by principle)
+- Output formats: JSON, Markdown, HTML
+
+**Phase 2: Playwright contrast extraction (t215.3) ~2.5h**
+
+- Traverse all visible DOM elements via `page.evaluate()`
+- Extract computed `color`, `backgroundColor` (walk ancestors for transparent), `fontSize`, `fontWeight`
+- Calculate contrast ratio per WCAG formula: `(L1 + 0.05) / (L2 + 0.05)` where L = relative luminance
+- Determine large text threshold (>= 18pt or >= 14pt bold)
+- Check against AA (4.5:1 normal, 3:1 large) and AAA (7:1 normal, 4.5:1 large)
+- Check non-text contrast (SC 1.4.11) for UI components at 3:1
+- Handle edge cases: gradients (sample multiple points), background images (flag manual review), opacity, CSS filters
+- Cross-validate sample pairs against WebAIM API for accuracy
+- Output: element selector, actual colours, computed ratio, threshold, pass/fail, WCAG criterion
+
+**Phase 3: WAVE API integration (t215.4) ~1.5h**
+
+- Submit URL to WAVE API with reporttype 2 (stats + items with selectors)
+- Parse response categories: error, contrast, alert, feature, structure, aria
+- Map WAVE rule IDs to WCAG 2.2 success criteria
+- Cache results to avoid burning credits on repeated scans of same URL
+- Credit usage tracking and warnings
+- Integrate into accessibility-audit-helper.sh `wave` command
+
+**Phase 4: Lighthouse + email accessibility (t215.5, t215.6) ~2.5h**
+
+- Enhance pagespeed-helper.sh: add `accessibility` command running `--only-categories=accessibility`
+- Surface individual Lighthouse a11y audits with element selectors and fix guidance
+- Add `--wcag-level` flag to filter by WCAG level
+- Email accessibility checks in email-health-check-helper.sh: lang attribute, table role=presentation, alt text quality, semantic headings, inline style contrast, link text quality, font size minimum
+- Email accessibility checks in email-design-test-helper.sh: axe-core on rendered HTML, contrast overlay on screenshots
+
+**Phase 5: Cross-references + integration (t215.7) ~30m**
+
+- Add Accessibility row to AGENTS.md progressive disclosure table
+- Update subagent-index.toon with new accessibility entries
+- Cross-reference from pagespeed.md, email-health-check.md, email-design-test.md
+- Add accessibility to content/distribution/email.md pre-send checklist
+- Update marketing.md with accessibility audit capability
+
+#### Decision Log
+
+- **2026-02-10**: Chose multi-tool approach (axe-core + WebAIM API + WAVE API + Lighthouse) over single-tool. Rationale: axe-core is the de facto standard but misses some issues WAVE catches (and vice versa). WebAIM Contrast Checker API is free and authoritative for individual colour pairs. Lighthouse is already installed. Using all four gives the most comprehensive coverage with minimal additional cost.
+- **2026-02-10**: Located agent at `services/accessibility/` (new directory) rather than under `tools/` or `services/testing/`. Rationale: accessibility is a cross-cutting concern like email or hosting — it deserves its own service directory. The helper script pattern (`accessibility-audit-helper.sh`) matches existing conventions.
+- **2026-02-10**: Chose Playwright `page.evaluate()` for contrast extraction over headless browser screenshots + image analysis. Rationale: computed styles give exact colour values and element selectors; image analysis would require OCR and colour sampling with lower accuracy and no element mapping.
+- **2026-02-10**: Decided to enhance existing `pagespeed-helper.sh` rather than duplicate Lighthouse functionality. Lighthouse already runs axe-core internally (subset of rules) — we surface those results and supplement with full axe-core + WAVE for comprehensive coverage.
+- **2026-02-10**: WAVE API credentials stored via `aidevops secret set WAVE_API_KEY`. Never in config files or conversation. Credit tracking built into helper script to avoid unexpected costs.
+- **2026-02-10**: Email accessibility checks split between email-health-check (static HTML analysis — lang, tables, alt, headings, inline styles) and email-design-test (rendered analysis — axe-core scan, contrast overlay on screenshots). This matches the existing split: health-check = pre-send validation, design-test = visual rendering verification.
+
 ### [2026-02-09] Content Creation Agent Architecture
 
 **Status:** Planning
