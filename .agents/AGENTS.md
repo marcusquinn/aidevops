@@ -306,7 +306,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Domain | Read |
 |--------|------|
 | Planning | `workflows/plans.md`, `tools/task-management/beads.md` |
-| Accessibility | `tools/accessibility/accessibility.md`, `accessibility-helper.sh` |
+| Accessibility | `services/accessibility/accessibility-audit.md`, `tools/accessibility/accessibility.md`, `accessibility-helper.sh` |
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `tools/git/conflict-resolution.md`, `tools/git/lumen.md` |
 | Releases | `workflows/release.md`, `workflows/version-bump.md` |

@@ -476,7 +476,8 @@ After each campaign:
 | High unsubscribes | Review frequency, improve targeting |
 | Bounces | Clean list, validate emails |
 | Spam complaints | Better consent, relevant content |
-| Template rendering | Test across email clients |
+| Template rendering | Use `services/email/email-testing.md` for cross-client testing |
+| Accessibility issues | Use `services/accessibility/accessibility-audit.md` for WCAG compliance |
 
 ### Getting Help
 

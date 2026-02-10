@@ -215,6 +215,7 @@ For visual rendering tests across real email clients:
 ## Related
 
 - `services/email/email-design-test.md` - Local Playwright rendering + Email on Acid API integration
+- `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
 - `services/email/email-health-check.md` - DNS authentication checks
 - `services/email/ses.md` - Amazon SES integration
 - `content/distribution/email.md` - Email content strategy

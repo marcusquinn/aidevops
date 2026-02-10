@@ -462,6 +462,7 @@ email-health-check-helper.sh precheck example.com newsletter.html
 
 ## Related
 
+- `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
 - `services/email/email-testing.md` - Design rendering and delivery testing
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management

@@ -255,6 +255,12 @@ Tag subscribers based on:
 - `marketing.md` - Marketing orchestrator with FluentCRM integration
 - `services/crm/fluentcrm.md` - CRM operations and automation
 
+**Email Services**:
+
+- `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
+- `services/email/email-health-check.md` - DNS authentication and deliverability
+- `services/email/email-testing.md` - Design rendering and delivery testing
+
 **Distribution Channels**:
 
 - `content/distribution/youtube/` - Long-form YouTube content
