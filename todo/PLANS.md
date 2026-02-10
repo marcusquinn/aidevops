@@ -24,11 +24,11 @@ Each plan includes:
 ### [2026-02-10] Email Testing Suite
 
 **Status:** Planning
-**Estimate:** ~12h (ai:8h test:3h read:1h)
+**Estimate:** ~2h (ai:1.5h test:25m read:5m)
 **TODO:** t214
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p027,Email Testing Suite,planning,0,4,,email|testing|services|playwright|eoa,12h,8h,3h,1h,2026-02-10T00:00Z,
+p027,Email Testing Suite,planning,0,4,,email|testing|services|playwright|eoa,2h,1.5h,25m,5m,2026-02-10T00:00Z,
 -->
 
 #### Purpose
@@ -102,7 +102,7 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 
 #### Phases
 
-**Phase 1: Email Design Test agent + helper script (t214.1, t214.2) ~5h**
+**Phase 1: Email Design Test agent + helper script (t214.1, t214.2) ~35m**
 
 - Create `services/email/email-design-test.md` subagent
 - Create `scripts/email-design-test-helper.sh` CLI
@@ -110,7 +110,7 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 - API tier: EOA v5 integration (create test, poll, download screenshots, client list management)
 - Desktop tier: Apple Mail via AppleScript (macOS only)
 
-**Phase 2: Email Delivery Test agent + helper script (t214.3, t214.4) ~3.5h**
+**Phase 2: Email Delivery Test agent + helper script (t214.3, t214.4) ~35m**
 
 - Create `services/email/email-delivery-test.md` subagent
 - Create `scripts/email-delivery-test-helper.sh` CLI
@@ -118,7 +118,7 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 - mail-tester.com automation via Playwright
 - Seed list management
 
-**Phase 3: Email Health Check enhancements (t214.5) ~1.5h**
+**Phase 3: Email Health Check enhancements (t214.5) ~15m**
 
 - Subject line analysis (length, spam triggers, personalization tokens)
 - HTML weight/size check + image-to-text ratio
@@ -129,7 +129,7 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 - Domain age check for sender domain
 - Update email-health-check-helper.sh with new commands
 
-**Phase 4: Cross-references + integration (t214.6) ~30m**
+**Phase 4: Cross-references + integration (t214.6) ~10m**
 
 - Update AGENTS.md progressive disclosure table
 - Update subagent-index.toon
@@ -146,11 +146,11 @@ Add comprehensive email testing capabilities to aidevops, covering both visual r
 ### [2026-02-10] Accessibility & Contrast Testing
 
 **Status:** Planning
-**Estimate:** ~14h (ai:9h test:3.5h read:1.5h)
+**Estimate:** ~2.5h (ai:2h test:25m read:5m)
 **TODO:** t215
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
-p028,Accessibility & Contrast Testing,planning,0,5,,accessibility|testing|wcag|contrast|wave|axe-core|lighthouse,14h,9h,3.5h,1.5h,2026-02-10T00:00Z,
+p028,Accessibility & Contrast Testing,planning,0,5,,accessibility|testing|wcag|contrast|wave|axe-core|lighthouse,2.5h,2h,25m,5m,2026-02-10T00:00Z,
 -->
 
 #### Purpose
@@ -236,7 +236,7 @@ Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 
 #### Phases
 
-**Phase 1: Accessibility audit agent + helper script (t215.1, t215.2) ~6h**
+**Phase 1: Accessibility audit agent + helper script (t215.1, t215.2) ~40m**
 
 - Create `services/accessibility/accessibility-audit.md` subagent with tool decision tree
 - Create `scripts/accessibility-audit-helper.sh` CLI
@@ -245,7 +245,7 @@ Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 - WCAG compliance report generator (pass/fail per success criterion, grouped by principle)
 - Output formats: JSON, Markdown, HTML
 
-**Phase 2: Playwright contrast extraction (t215.3) ~2.5h**
+**Phase 2: Playwright contrast extraction (t215.3) ~20m**
 
 - Traverse all visible DOM elements via `page.evaluate()`
 - Extract computed `color`, `backgroundColor` (walk ancestors for transparent), `fontSize`, `fontWeight`
@@ -257,7 +257,7 @@ Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 - Cross-validate sample pairs against WebAIM API for accuracy
 - Output: element selector, actual colours, computed ratio, threshold, pass/fail, WCAG criterion
 
-**Phase 3: WAVE API integration (t215.4) ~1.5h**
+**Phase 3: WAVE API integration (t215.4) ~15m**
 
 - Submit URL to WAVE API with reporttype 2 (stats + items with selectors)
 - Parse response categories: error, contrast, alert, feature, structure, aria
@@ -266,7 +266,7 @@ Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 - Credit usage tracking and warnings
 - Integrate into accessibility-audit-helper.sh `wave` command
 
-**Phase 4: Lighthouse + email accessibility (t215.5, t215.6) ~2.5h**
+**Phase 4: Lighthouse + email accessibility (t215.5, t215.6) ~30m**
 
 - Enhance pagespeed-helper.sh: add `accessibility` command running `--only-categories=accessibility`
 - Surface individual Lighthouse a11y audits with element selectors and fix guidance
@@ -274,7 +274,7 @@ Large text = >= 18pt (24px) or >= 14pt (18.66px) bold.
 - Email accessibility checks in email-health-check-helper.sh: lang attribute, table role=presentation, alt text quality, semantic headings, inline style contrast, link text quality, font size minimum
 - Email accessibility checks in email-design-test-helper.sh: axe-core on rendered HTML, contrast overlay on screenshots
 
-**Phase 5: Cross-references + integration (t215.7) ~30m**
+**Phase 5: Cross-references + integration (t215.7) ~10m**
 
 - Add Accessibility row to AGENTS.md progressive disclosure table
 - Update subagent-index.toon with new accessibility entries
