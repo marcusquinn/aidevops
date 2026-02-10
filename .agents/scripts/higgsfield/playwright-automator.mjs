@@ -18,10 +18,134 @@ const ROUTES_CACHE = join(STATE_DIR, 'routes-cache.json');
 const DISCOVERY_TIMESTAMP = join(STATE_DIR, 'last-discovery.txt');
 const DOWNLOAD_DIR = join(homedir(), 'Downloads');
 const DISCOVERY_MAX_AGE_HOURS = 24;
+const CREDITS_CACHE_FILE = join(STATE_DIR, 'credits-cache.json');
+const CREDITS_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
+// Credit cost estimates per operation type (approximate, varies by model/settings)
+const CREDIT_COSTS = {
+  image: 2,           // 1-2 credits per image
+  video: 20,          // 10-40 credits depending on duration/model
+  lipsync: 10,        // 5-20 credits depending on model
+  upscale: 2,         // 1-4 credits depending on scale factor
+  edit: 2,            // 1-3 credits for inpaint/edit
+  app: 5,             // 2-10 credits for apps (varies widely)
+  'cinema-studio': 20,
+  'motion-control': 20,
+  'mixed-media': 10,
+  'motion-preset': 10,
+  'video-edit': 15,
+  storyboard: 10,
+  'vibe-motion': 5,
+  influencer: 5,
+  character: 2,
+  feature: 5,
+  chain: 5,           // depends on target action
+  'seed-bracket': 10, // multiple images
+  pipeline: 60,       // multi-step: images + videos + lipsync
+};
+
+// Commands that don't consume credits (read-only / navigation)
+const FREE_COMMANDS = new Set([
+  'login', 'discover', 'credits', 'screenshot', 'download',
+  'assets', 'manage-assets', 'asset',
+]);
 
 // Ensure state directory exists
 if (!existsSync(STATE_DIR)) {
   mkdirSync(STATE_DIR, { recursive: true });
+}
+
+// --- Retry wrapper with exponential backoff ---
+async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 'operation' } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const msg = error.message || String(error);
+
+      // Don't retry on non-transient errors
+      if (msg.includes('unsupported content') || msg.includes('content policy') ||
+          msg.includes('No assets found') || msg.includes('not found') ||
+          msg.includes('CREDIT_GUARD')) {
+        throw error;
+      }
+
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`[retry] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${msg}`);
+        console.log(`[retry] Waiting ${delay / 1000}s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// --- Credit guard: check available credits before expensive operations ---
+function getCachedCredits() {
+  try {
+    if (existsSync(CREDITS_CACHE_FILE)) {
+      const cache = JSON.parse(readFileSync(CREDITS_CACHE_FILE, 'utf-8'));
+      const age = Date.now() - (cache.timestamp || 0);
+      if (age < CREDITS_CACHE_MAX_AGE_MS) {
+        return cache;
+      }
+    }
+  } catch { /* ignore corrupt cache */ }
+  return null;
+}
+
+function saveCreditCache(creditInfo) {
+  try {
+    writeFileSync(CREDITS_CACHE_FILE, JSON.stringify({
+      ...creditInfo,
+      timestamp: Date.now(),
+    }));
+  } catch { /* ignore write errors */ }
+}
+
+function estimateCreditCost(command, options = {}) {
+  let cost = CREDIT_COSTS[command] || 5;
+
+  // Adjust for known cost multipliers
+  if (command === 'image' && options.batch) cost *= parseInt(options.batch, 10) || 1;
+  if (command === 'video' && options.duration) {
+    const dur = parseInt(options.duration, 10);
+    if (dur >= 10) cost = 30;
+    if (dur >= 15) cost = 40;
+  }
+  if (command === 'seed-bracket' && options.seedRange) {
+    const parts = options.seedRange.split(/[-,]/);
+    cost = Math.max(parts.length, 2) * 2;
+  }
+
+  return cost;
+}
+
+function checkCreditGuard(command, options = {}) {
+  if (FREE_COMMANDS.has(command)) return; // no cost
+  if (options.dryRun) return; // dry run doesn't generate
+
+  const cached = getCachedCredits();
+  if (!cached) return; // no cache = can't check, proceed optimistically
+
+  const remaining = parseInt(cached.remaining, 10);
+  if (isNaN(remaining)) return;
+
+  const estimated = estimateCreditCost(command, options);
+
+  if (remaining < estimated) {
+    throw new Error(
+      `CREDIT_GUARD: Insufficient credits. Need ~${estimated}, have ${remaining}. ` +
+      `Run 'credits' to refresh, or use --force to override.`
+    );
+  }
+
+  if (remaining < estimated * 3) {
+    console.log(`[credits] Warning: Low credits. ~${estimated} needed, ${remaining} remaining.`);
+  }
 }
 
 // Load credentials from credentials.sh
@@ -129,6 +253,12 @@ function parseArgs() {
       options.feature = args[++i];
     } else if (args[i] === '--subtype') {
       options.subtype = args[++i];
+    } else if (args[i] === '--force') {
+      options.force = true;
+    } else if (args[i] === '--dry-run') {
+      options.dryRun = true;
+    } else if (args[i] === '--no-retry') {
+      options.noRetry = true;
     }
   }
 
@@ -2499,6 +2629,9 @@ async function checkCredits(options = {}) {
     if (creditInfo.totalPages > 1) {
       console.log(`\nWARNING: Still showing page ${creditInfo.currentPage} of ${creditInfo.totalPages} - some models may be missing`);
     }
+
+    // Cache credit info for credit guard checks
+    saveCreditCache(creditInfo);
 
     await page.screenshot({ path: join(STATE_DIR, 'subscription.png'), fullPage: true });
     await context.storageState({ path: STATE_FILE });
@@ -4985,6 +5118,9 @@ Options:
   --chain-action     Asset chain action: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
   --feature          Feature page slug: fashion-factory, ugc-factory, photodump-studio, camera-controls, effects
   --subtype          Vibe Motion sub-type: infographics, text-animation, posters, presentation, from-scratch
+  --force            Override credit guard (proceed even with low credits)
+  --dry-run          Navigate and configure but don't click Generate
+  --no-retry         Disable automatic retry on failure
 
 Examples:
   node playwright-automator.mjs login --headed
@@ -5023,6 +5159,23 @@ Examples:
     await ensureDiscovery(options);
   }
 
+  // Credit guard: check available credits before expensive operations
+  if (!options.force) {
+    try {
+      checkCreditGuard(command, options);
+    } catch (e) {
+      if (e.message.includes('CREDIT_GUARD')) {
+        console.error(e.message);
+        process.exit(1);
+      }
+      // Non-credit errors: proceed
+    }
+  }
+
+  // Retry configuration: generation commands get retry, read-only commands don't
+  // Use --no-retry to disable
+  const retryOpts = { maxRetries: options.noRetry ? 0 : 2, baseDelay: 3000, label: command };
+
   switch (command) {
     case 'login':
       await login(options);
@@ -5031,22 +5184,22 @@ Examples:
       await runDiscovery(options);
       break;
     case 'image':
-      await generateImage(options);
+      await withRetry(() => generateImage(options), retryOpts);
       break;
     case 'video':
-      await generateVideo(options);
+      await withRetry(() => generateVideo(options), { ...retryOpts, maxRetries: 1 });
       break;
     case 'lipsync':
-      await generateLipsync(options);
+      await withRetry(() => generateLipsync(options), { ...retryOpts, maxRetries: 1 });
       break;
     case 'pipeline':
-      await pipeline(options);
+      await pipeline(options); // pipeline has its own internal retry per scene
       break;
     case 'seed-bracket':
-      await seedBracket(options);
+      await seedBracket(options); // bracket has its own loop
       break;
     case 'app':
-      await useApp(options);
+      await withRetry(() => useApp(options), retryOpts);
       break;
     case 'assets':
       await listAssets(options);
@@ -5085,17 +5238,17 @@ Examples:
     }
     case 'cinema':
     case 'cinema-studio':
-      await cinemaStudio(options);
+      await withRetry(() => cinemaStudio(options), { ...retryOpts, maxRetries: 1 });
       break;
     case 'motion-control':
-      await motionControl(options);
+      await withRetry(() => motionControl(options), { ...retryOpts, maxRetries: 1 });
       break;
     case 'edit':
     case 'inpaint':
-      await editImage(options);
+      await withRetry(() => editImage(options), retryOpts);
       break;
     case 'upscale':
-      await upscale(options);
+      await withRetry(() => upscale(options), retryOpts);
       break;
     case 'asset':
     case 'manage-assets':
@@ -5104,33 +5257,33 @@ Examples:
     case 'chain':
     case 'asset-chain':
     case 'open-in':
-      await assetChain(options);
+      await withRetry(() => assetChain(options), retryOpts);
       break;
     case 'mixed-media':
     case 'mixed-media-preset':
-      await mixedMediaPreset(options);
+      await withRetry(() => mixedMediaPreset(options), retryOpts);
       break;
     case 'motion-preset':
     case 'vfx-preset':
-      await motionPreset(options);
+      await withRetry(() => motionPreset(options), retryOpts);
       break;
     case 'video-edit':
     case 'edit-video':
-      await editVideo(options);
+      await withRetry(() => editVideo(options), { ...retryOpts, maxRetries: 1 });
       break;
     case 'storyboard':
-      await storyboard(options);
+      await withRetry(() => storyboard(options), retryOpts);
       break;
     case 'vibe-motion':
     case 'vibe':
-      await vibeMotion(options);
+      await withRetry(() => vibeMotion(options), retryOpts);
       break;
     case 'influencer':
     case 'ai-influencer':
-      await aiInfluencer(options);
+      await withRetry(() => aiInfluencer(options), retryOpts);
       break;
     case 'character':
-      await createCharacter(options);
+      await withRetry(() => createCharacter(options), retryOpts);
       break;
     case 'feature':
     case 'fashion-factory':
@@ -5139,7 +5292,7 @@ Examples:
     case 'camera-controls':
     case 'effects':
       if (command !== 'feature') options.feature = command;
-      await featurePage(options);
+      await withRetry(() => featurePage(options), retryOpts);
       break;
     default:
       console.error(`Unknown command: ${command}`);
