@@ -10,9 +10,9 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 ```markdown
 - [ ] t001 Task description @owner #tag ~4h (ai:2h test:1h read:30m) ref:GH#544 logged:2025-01-15
-  - [ ] t001.1 Subtask ~2h blocked-by:t002
-    - [ ] t001.1.1 Sub-subtask ~1h
-  - [ ] t001.2 Another subtask ~1h blocks:t003
+  - [ ] t001.1 Subtask ~2h blocked-by:t002 ref:GH#851
+    - [ ] t001.1.1 Sub-subtask ~1h ref:GH#852
+  - [ ] t001.2 Another subtask ~1h blocks:t003 ref:GH#853
 - [x] t002 Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
 - [-] t003 Declined task
 ```
@@ -61,27 +61,27 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 ## Backlog
 
 - [ ] t199 Content Creation Agent Architecture — multi-media multi-channel production pipeline #plan #content #architecture #multimedia → [todo/PLANS.md#2026-02-09-content-creation-agent-architecture] ~8h (ai:5h test:2h read:1h) ref:GH#819 logged:2026-02-09
-  - [ ] t199.1 Create content/research.md — audience research, niche validation, competitor analysis ~1h assignee:marcusquinn started:2026-02-09T23:31:46Z
+  - [ ] t199.1 Create content/research.md — audience research, niche validation, competitor analysis ~1h assignee:marcusquinn started:2026-02-09T23:31:46Z ref:GH#854
     - Notes: MUST INCLUDE: (1) 11-Dimension Reddit Research Framework with full Perplexity mega-prompt template (sentiment, UX, competitors, pricing, use cases, support, performance, updates, power user tips, red flags, decision summary). (2) 30-Minute Expert Method (Reddit scraping -> NotebookLM -> audience insights). (3) Niche Viability Formula: Demand + Buying Intent + Low Competition with Whop/Google Trends validation. (4) Creator Brain Clone pattern (bulk transcript ingestion as competitive intel -- references t201). (5) Gemini 3 video reverse-engineering (feed competitor videos, extract reproducible prompts). (6) Pain point extraction methodology (exact audience language, failed solutions, purchase triggers from Reddit/forums). (7) Cross-platform research (TikTok/X/IG/Reddit for format migration signals). BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.2 Create content/story.md — narrative design, hooks, angles, frameworks ~1h assignee:marcusquinn started:2026-02-10T00:02:27Z pr:#849
+  - [ ] t199.2 Create content/story.md — narrative design, hooks, angles, frameworks ~1h assignee:marcusquinn started:2026-02-10T00:02:27Z pr:#849 ref:GH#855
     - Notes: COMPLETE - All 8 required elements implemented: (1) 7 hook formulas with 6-12 word constraint, (2) 4-Part Script Framework, (3) Before/During/After transformation arc, (4) 7-step Campaign Audit Process, (5) Pain vs Aspiration angle selection, (6) Pattern interrupt principles, (7) Storytelling frameworks (AIDA, Three-Act, Hero's Journey, Problem-Solution-Result, Listicle), (8) "Proven first, original second" with 3% twist rule. Includes 3 complete examples (YouTube, TikTok/Shorts, Blog), multi-angle testing strategy, and integration with content pipeline. Markdown linting passed. 489 lines, 17KB. Clean-slate retry - previous worktree was stale. BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.3 Create content/production/writing.md — scripts, copy, captions ~30m assignee:marcusquinn started:2026-02-10T00:07:12Z
+  - [ ] t199.3 Create content/production/writing.md — scripts, copy, captions ~30m assignee:marcusquinn started:2026-02-10T00:07:12Z ref:GH#856
     - Notes: MUST INCLUDE: (1) Long-form script structure (scene-by-scene with B-roll directions). (2) Short-form script structure (hook-first, 60s constraint). (3) Blog post SEO structure (references seo/). (4) Social media copy patterns per platform (X thread, LinkedIn article, Reddit native). (5) Caption/subtitle optimization. (6) Dialogue pacing rules (8-second chunks for AI video, more words = faster delivery). BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [x] t199.4 Create content/production/image.md — AI image gen, thumbnails, style libraries ~45m assignee:marcusquinn started:2026-02-10T01:33:00Z completed:2026-02-10 pr:#850
+  - [x] t199.4 Create content/production/image.md — AI image gen, thumbnails, style libraries ~45m assignee:marcusquinn started:2026-02-10T01:33:00Z completed:2026-02-10 pr:#850 ref:GH#857
     - Notes: ✅ COMPLETE - 772 lines, 13 JSON templates, all required content verified. Includes: (1) Nanobanana Pro JSON prompt schema (4 template variants: editorial, environmental, magazine cover, street photography) with full JSON structure. (2) Style Library System (save working JSON as named templates, reuse with subject/concept swap, categorize by aesthetic). (3) Annotated Frame-to-Video workflow (generate image -> annotate with arrows/labels/motion indicators -> feed to video model). (4) Shotdeck reference library workflow (find cinematic reference -> Gemini reverse-engineer composition/lighting/color -> prompt). (5) Tool routing: Nanobanana Pro for structured JSON, Midjourney for objects/environments (--ar 16:9 --style raw), Freepik for character-driven scenes, Seedream 4 for 4K refinement, Ideogram for face swap. (6) Thumbnail factory pattern (style template + topic concept = consistent thumbnails at scale). (7) Hex color code precision, camera settings in prompts, texture descriptions.
-  - [ ] t199.5 Create content/production/video.md — Sora 2, Veo 3.1, Higgsfield, seed bracketing ~45m assignee:marcusquinn started:2026-02-10T00:13:11Z
+  - [ ] t199.5 Create content/production/video.md — Sora 2, Veo 3.1, Higgsfield, seed bracketing ~45m assignee:marcusquinn started:2026-02-10T00:13:11Z ref:GH#858
     - Notes: MUST INCLUDE: (1) Sora 2 Pro 6-Section Master Template (header with 7-param style definition, shot-by-shot breakdown with cinematography 5-point spec, timestamped actions at 0.5s intervals, dialogue with delivery style, background sound, technical specs footer). (2) Veo 3.1 Ingredients-to-Video workflow (upload face/product as ingredients, NOT frame-to-video which produces grainy yellow output). (3) Model routing decision tree: Sora 2 for UGC/authentic/<10k production value, Veo 3.1 for cinematic/character-consistent/>100k production value. (4) Seed bracketing method (test seeds 1000-1010, score on composition/quality/style, pick winners, iterate -- references t202). (5) Content-type seed ranges: people 1000-1999, action 2000-2999, landscape 3000-3999, product 4000-4999, YouTube 2000-3000. (6) 8K Camera Model prompting (append RED Komodo 6K / ARRI Alexa LF / Sony Venice 8K). (7) VEO prompting framework (technical specs + subject + action + context + camera movement + composition + lighting + audio, no subtitles). (8) 2-Track production (objects/environments via Midjourney->VEO vs characters via Freepik->Seedream->VEO). (9) Content Type Presets (UGC 9:16 1-3s cuts, Commercial 2-5s, Cinematic 4-10s, Documentary 5-15s). (10) Post-production: Topaz upscale 1.25-1.75x max, add film grain, 60fps for action only. (11) Shot type reference (ECU/CU/MCU/MS/MWS/WS/EWS, camera movements, angles). (12) References tools/video/higgsfield.md, tools/video/video-prompt-design.md, t200 Veo Meta Framework. BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.6 Create content/production/audio.md — voice pipeline, sound design, emotional cues ~30m assignee:marcusquinn started:2026-02-10T00:16:54Z
+  - [ ] t199.6 Create content/production/audio.md — voice pipeline, sound design, emotional cues ~30m assignee:marcusquinn started:2026-02-10T00:16:54Z ref:GH#859
     - Notes: MUST INCLUDE: (1) Voice pipeline: CapCut AI voice cleanup FIRST (normalize accents/artifacts), THEN ElevenLabs transformation (never direct from AI output -- references t204). (2) Emotional block cues (per-word emotion tagging for natural AI speech delivery). (3) 4-layer audio design (dialogue, ambient noise, SFX, music). (4) LUFS levels for different content types (dialogue -15, ambient -25). (5) Platform audio rules: UGC = all diegetic, commercial = mixed diegetic + score. (6) Voice cloning workflow for consistent channel narration. (7) References tools/voice/speech-to-speech.md, voice-helper.sh. BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.7 Create content/production/characters.md — facial engineering, character bibles, personas ~30m assignee:marcusquinn started:2026-02-10T00:17:44Z
+  - [ ] t199.7 Create content/production/characters.md — facial engineering, character bibles, personas ~30m assignee:marcusquinn started:2026-02-10T00:17:44Z ref:GH#860
     - Notes: MUST INCLUDE: (1) Facial Engineering Framework (exhaustive facial analysis prompt covering bone structure, skin texture, eye details, hair, expressions -- enables consistency across 100+ outputs). (2) Character Bible template (face, personality, speaking style, wardrobe, backstory, catchphrases). (3) Character Context Profile (personality traits, communication style, expertise areas, emotional range). (4) Sora 2 Cameos (generate on white BG, create character, reuse across videos). (5) Veo 3.1 Ingredients (upload face as ingredient for cross-scene consistency). (6) Nanobanana character JSON (save subject details as reusable template). (7) Brand identity consistency (color palette, lighting, post-processing as constants across all outputs). (8) "Model recency arbitrage" -- always use latest-gen model, older outputs get recognized as AI faster. BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.8 Create content/distribution/ reference agents (youtube, short-form, social, blog, email, podcast) ~45m assignee:marcusquinn started:2026-02-10T00:31:31Z
+  - [ ] t199.8 Create content/distribution/ reference agents (youtube, short-form, social, blog, email, podcast) ~45m assignee:marcusquinn started:2026-02-10T00:31:31Z ref:GH#861
     - Notes: MIGRATION: Move .agents/youtube.md and .agents/youtube/ from root into content/distribution/youtube/ — YouTube is a distribution channel, not a main agent. Root .agents/ is reserved for main domain agents only. MUST INCLUDE: (1) youtube.md reference -> migrated youtube/ subagents. (2) short-form.md: TikTok/Reels/Shorts formatting (9:16, 1-3s cuts, hook-first), platform-specific pacing, trending sound pairing. (3) social.md reference -> existing tools/social-media/ + platform-native tone adaptation (X concise, LinkedIn professional, Reddit community-native). (4) blog.md reference -> existing seo/ for SEO writing. (5) email.md: newsletter structure, sequence design. (6) podcast.md: audio-first distribution, show notes generation. (7) Monetization routing: affiliates first (market research), then info products ($5-27 cold traffic), then upsell. Q4 seasonality for buying intent. (8) Update all cross-references (AGENTS.md, subagent-index.toon, youtube-helper.sh) to new paths after migration. BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.9 Create content/optimization.md — A/B testing, variant generation, analytics loops ~30m assignee:marcusquinn started:2026-02-10T00:36:22Z
+  - [ ] t199.9 Create content/optimization.md — A/B testing, variant generation, analytics loops ~30m assignee:marcusquinn started:2026-02-10T00:36:22Z ref:GH#862
     - Notes: MUST INCLUDE: (1) A/B testing discipline: 10 variants minimum, 250-sample rule before judging, below 2% = kill, above 2% = scale, above 3% = go aggressive. (2) Hook variant generation (5-10 per topic before committing). (3) Seed bracketing as optimization (references t202). (4) Slide/scene-level retention analysis (which specific moments retain vs cause drop-off). (5) "Proven first, original second" iteration strategy. (6) Rapid Testing Framework (B-roll + voice clone + script variants for fastest iteration). (7) Platform-specific metrics (YouTube: CTR, retention, watch time; TikTok: completion rate, shares; Blog: time on page, scroll depth). (8) Content calendar with posting cadence recommendations. (9) Analytics feedback loop (what worked -> inform next research cycle). BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.10 Rewrite content.md orchestrator + update subagent-index.toon + AGENTS.md ~45m assignee:marcusquinn started:2026-02-10T00:36:49Z
+  - [ ] t199.10 Rewrite content.md orchestrator + update subagent-index.toon + AGENTS.md ~45m assignee:marcusquinn started:2026-02-10T00:36:49Z ref:GH#863
     - Notes: content.md becomes the multi-media multi-channel orchestrator. Must describe: the diamond pipeline (Research -> Story -> fan-out to Production media -> fan-out to Distribution channels), the multi-media multiplier (one story -> 10+ outputs), how to invoke each sublayer. Update subagent-index.toon with all new content/ entries. Update AGENTS.md progressive disclosure table with Content row. BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t199.11 Verify cross-references, ShellCheck, create PR ~30m assignee:marcusquinn started:2026-02-10T00:37:14Z
+  - [ ] t199.11 Verify cross-references, ShellCheck, create PR ~30m assignee:marcusquinn started:2026-02-10T00:37:14Z ref:GH#864
 - [x] t200 Evaluate and import Veo 3 Meta Framework as aidevops skill #feature #content #video ~30m (ai:20m test:10m) ref:GH#821 logged:2026-02-09 blocked-by:t199 related:t199.5 completed:2026-02-09
   - Notes: github.com/snubroot/Veo-3-Meta-Framework referenced in 5+ content creation guides as the standard prompt engineering framework for Veo 3/3.1. Clone, evaluate structure, import via `aidevops skill add` if suitable. Would live alongside tools/video/video-prompt-design.md and be referenced by content/production/video.md.
 - [x] t201 Transcript corpus ingestion for channel competitive intel #feature #content #youtube ~2h (ai:1.5h test:30m) ref:GH#822 logged:2026-02-09 blocked-by:t199 related:t199.1 completed:2026-02-09
@@ -101,17 +101,17 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t209 YouTube slash commands — /youtube setup, /youtube research, /youtube script #feature #youtube #commands ~1h (ai:45m test:15m) ref:GH#832 logged:2026-02-09 blocked-by:t199
   - Notes: Interactive commands for YouTube workflow: (1) /youtube setup — store channel handle + competitors + niche in memory, configure API credentials. (2) /youtube research @competitor — run channel-intel + topic-research pipeline, store results in memory. (3) /youtube script "topic" — generate full script using script-writer.md frameworks with research context. Add to .agents/scripts/commands/. References youtube.md, youtube-helper.sh.
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
-  - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z
+  - [ ] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z ref:GH#865
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z
+  - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z ref:GH#866
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z
+  - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z ref:GH#867
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Re-prompt dispatch failed: clean_exit_no_signal
-  - [ ] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h assignee:marcusquinn started:2026-02-09T18:51:23Z
+  - [ ] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h assignee:marcusquinn started:2026-02-09T18:51:23Z ref:GH#868
   - [x] t135.9 Add trap cleanup for temp files #quality #shell ~1h assignee:marcusquinn started:2026-02-09T18:55:45Z completed:2026-02-09
-  - [ ] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z
-  - [ ] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h
-  - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m
+  - [ ] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z ref:GH#869
+  - [ ] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h ref:GH#870
+  - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871
 - [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
   - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
@@ -303,11 +303,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t147 Retroactive triage: 50 unresolved review threads across 11 merged PRs #quality #review ~4h actual:3h (ai:3h) logged:2026-02-07 ref:GH#438 completed:2026-02-07
   - [x] t147.1 Triage PR #435 (4 threads, 2 high/critical) - fix $SUPERVISOR_DB bug ~30m blocked-by:none completed:2026-02-07
   - [x] t147.2 Triage PR #392 (6 threads, 4 high/critical) - stderr suppression ~45m blocked-by:none completed:2026-02-07
-  - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07
-  - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07
-  - [x] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none completed:2026-02-07
+  - [x] t147.3 Triage PR #410 (9 threads, 3 high/critical) - VirusTotal error handling ~45m blocked-by:none started:2026-02-07 completed:2026-02-07 ref:GH#444
+  - [x] t147.4 Triage PR #391 (1 thread, 1 critical) - schema-validator set -e ~15m blocked-by:none completed:2026-02-07 ref:GH#452
+  - [x] t147.5 Triage PR #406 (3 threads, 1 high) - sed -i portability, attribution ~30m blocked-by:none completed:2026-02-07 ref:GH#453
     - Notes: Threads resolved on GitHub. sed -i fix tracked separately in t145.
-  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07
+  - [x] t147.6 Triage PR #403 (12 threads, 1 high) - voice AI unimplemented commands ~30m blocked-by:none completed:2026-02-07 ref:GH#454
   - [x] t147.7 Triage remaining PRs #418,#413,#412,#399,#394 (17 threads, 0 high) ~30m blocked-by:none completed:2026-02-07
   - Notes: All 50 review threads across 11 PRs resolved. Valid bugs fixed in code, false positives dismissed with evidence. sed -i portability tracked in t145.
 - [x] t151 fix: supervisor PR URL detection and adaptive concurrency #bugfix #supervisor ~1h actual:30m (ai:30m) logged:2026-02-07 started:2026-02-07 completed:2026-02-07 ref:GH#461,GH#454
@@ -362,16 +362,16 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.2.4 Remove blanket disable line from each script completed:2026-02-08
     - [x] t135.2.5 Verify zero violations with linters-local.sh completed:2026-02-08
     - Notes: PR #492 merged. Replaced 23-rule blanket disable with targeted per-file disables (avg 3-5 rules). 4 scripts now completely clean. 471 violations categorized, all suppressed with targeted rules.
-  - [x] t135.3 P0-C: Add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers ~2h blocked-by:none completed:2026-02-07
+  - [x] t135.3 P0-C: Add SQLite WAL mode + busy_timeout to supervisor, memory, mail helpers ~2h blocked-by:none completed:2026-02-07 ref:GH#865
     - [x] t135.3.1 Understand current DB init patterns in all 3 helpers ~30m completed:2026-02-07
     - [x] t135.3.2 Add PRAGMA journal_mode=WAL and busy_timeout=5000 to DB init ~30m blocked-by:t135.3.1 completed:2026-02-07
     - [x] t135.3.3 Test concurrent access scenarios ~1h blocked-by:t135.3.2 completed:2026-02-07
     - Notes: All 3 helpers (supervisor, memory, mail) have WAL mode + busy_timeout=5000 in both init_db() and per-connection db() wrapper. Migration path ensures existing DBs get upgraded.
-  - [x] t135.4 P1-A: Fix 2 corrupted JSON config files ~1h blocked-by:none completed:2026-02-07
+  - [x] t135.4 P1-A: Fix 2 corrupted JSON config files ~1h blocked-by:none completed:2026-02-07 ref:GH#866
     - Notes: Already fixed. Both configs/pandoc-config.json.txt and configs/mcp-templates/chrome-devtools.json validate clean with python3 json.load().
-  - [x] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none completed:2026-02-07
+  - [x] t135.5 P1-B: Remove tracked artifacts that should be gitignored ~30m blocked-by:none completed:2026-02-07 ref:GH#867
     - Notes: Already resolved. Neither .scannerwork/ nor .playwright-cli/ are tracked in git (git ls-files --error-unmatch confirms).
-  - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07
+  - [x] t135.6 P1-C: Fix CI workflow code-quality.yml issues ~1h blocked-by:none completed:2026-02-07 ref:GH#868
     - [x] t135.6.1 Fix .agent typo to .agents on line 31 ~5m completed:2026-02-07
     - [x] t135.6.2 Fix references to non-existent .agents/spec and docs/ ~10m completed:2026-02-07
     - [x] t135.6.3 Add enforcement steps (shellcheck, json validation) that fail the build ~45m completed:2026-02-07
@@ -390,12 +390,12 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - Notes: 33 scripts use mktemp, 31 without trap. Critical scripts (secret-helper, version-manager) fixed in PR #436.
     - [x] t135.9.2 Add trap cleanup patterns, respecting existing cleanup logic ~45m blocked-by:t135.9.1 completed:2026-02-07
       - Notes: PR #485 merged. Added trap RETURN guards after mktemp calls across 14 scripts (20 files, 29 sites).
-  - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07
+  - [x] t135.10 P2-D: Fix package.json main field (non-existent index.js) ~15m blocked-by:none completed:2026-02-07 ref:GH#869
   - [x] t135.11 P2-E: Fix Homebrew formula (frozen v2.52.1, PLACEHOLDER_SHA256) ~2h blocked-by:none completed:2026-02-08
     - [x] t135.11.1 Understand release workflow and where formula auto-updates ~30m completed:2026-02-08
     - [x] t135.11.2 Add formula version/SHA update to version-manager.sh ~1.5h blocked-by:t135.11.1 completed:2026-02-08
     - Notes: CI publish-packages.yml already updates the tap repo (marcusquinn/homebrew-tap) with correct SHA256 on each release. Added formula URL version update to update_version_in_files() in version-manager.sh and formula version check to validate-version-consistency.sh. Updated local formula from v2.52.1/PLACEHOLDER to v2.105.6. PR #495 merged.
-  - [x] t135.12 P3-A: Archive fix scripts safely (12 scripts, 0 refs, completed purpose) ~1h blocked-by:none completed:2026-02-07
+  - [x] t135.12 P3-A: Archive fix scripts safely (12 scripts, 0 refs, completed purpose) ~1h blocked-by:none completed:2026-02-07 ref:GH#870
     - Notes: PR #436. Moved 11 fix-*.sh + add-missing-returns.sh to .agents/scripts/_archive/ with README.
     - [x] t135.12.1 Read each script, document purpose and what it fixed (preserve knowledge) ~30m completed:2026-02-07
     - [x] t135.12.2 Create .agents/scripts/_archive/ with README explaining completed one-time scripts ~10m blocked-by:t135.12.1 completed:2026-02-07
@@ -408,7 +408,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
     - [x] t135.13.3 Add unit tests for supervisor-helper.sh state machine ~1.5h blocked-by:t135.13.1 completed:2026-02-08
     - [x] t135.13.4 Add unit tests for memory-helper.sh and mail-helper.sh ~1.5h blocked-by:t135.13.1 completed:2026-02-08
     - Notes: All test suites already exist: test-smoke-help.sh (100 help tests, 273 total), test-supervisor-state-machine.sh (53 tests), test-memory-mail.sh (37 tests), test-batch-quality-hardening.sh (56 tests). Total: 419 tests, all passing.
-  - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07
+  - [x] t135.14 P3-C: Standardize shebangs to #!/usr/bin/env bash ~30m blocked-by:none completed:2026-02-07 ref:GH#871
   - [x] t135.15 P1-D: Add system resource monitoring to supervisor pulse (CPU load, process count, adaptive concurrency) ~2h blocked-by:none completed:2026-02-07
     - [x] t135.15.1 Add check_system_load() to supervisor-helper.sh (load avg, process count, memory pressure) ~30m completed:2026-02-07
     - [x] t135.15.2 Add adaptive concurrency throttling to pulse cycle (reduce workers when load > cores*2) ~45m blocked-by:t135.15.1 completed:2026-02-07
