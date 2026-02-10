@@ -267,6 +267,7 @@ Options (pass after command):
   --headless         Run without browser window (default)
   --model, -m        Model: soul, nano_banana, seedream, kling-2.6, etc.
   --output, -o       Output directory
+  --project          Project name for organized output dirs ({output}/{project}/{type}/)
   --image-file       Image file for upload
   --timeout          Timeout in milliseconds
   --effect           App/effect slug
@@ -276,12 +277,15 @@ Options (pass after command):
   --character-image  Character face image for pipeline
   --dialogue         Dialogue text for lipsync
   --unlimited        Prefer unlimited models only
+  --no-sidecar       Disable JSON sidecar metadata files
+  --no-dedup         Disable SHA-256 duplicate detection
 
 Examples:
   higgsfield-helper.sh setup
   higgsfield-helper.sh login
   higgsfield-helper.sh image "A cyberpunk city at night, neon lights, rain"
   higgsfield-helper.sh image "Portrait of a woman" --model nano_banana
+  higgsfield-helper.sh image "Portrait" --project my-video --output ~/Projects/
   higgsfield-helper.sh video "Camera pans across mountain landscape"
   higgsfield-helper.sh video "Person walks forward" --image-file photo.jpg
   higgsfield-helper.sh lipsync "Hello world!" --image-file face.jpg

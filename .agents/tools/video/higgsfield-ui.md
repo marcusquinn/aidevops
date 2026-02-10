@@ -78,7 +78,10 @@ higgsfield-helper.sh (shell wrapper)
         ├── Persistent auth state (~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json)
         ├── Site discovery cache (~/.aidevops/.agent-workspace/work/higgsfield/routes-cache.json)
         ├── Credentials from ~/.config/aidevops/credentials.sh
-        └── Downloads to ~/Downloads/ (descriptive filenames: hf_{model}_{quality}_{prompt}_{ts}.ext)
+        ├── Downloads to ~/Downloads/ (descriptive filenames: hf_{model}_{quality}_{prompt}_{ts}.ext)
+        ├── JSON sidecar metadata (.json alongside each download)
+        ├── SHA-256 dedup index (.dedup-index.json per output dir)
+        └── Project dirs via --project (organized by type: images/, videos/, etc.)
 ```
 
 **Why Playwright direct?** Fastest browser automation (0.9s form fill), full API control, headless/headed modes, persistent auth via `storageState`. No wrapper overhead.
@@ -546,7 +549,43 @@ Use `--unlimited` flag to restrict to unlimited models only.
 
 **Unlimited model routing**: Models with "365" subscriptions use dedicated feature pages (e.g., `/nano-banana-pro`, `/seedream-4-5`) that have an "Unlimited" toggle switch. The automator automatically navigates to these pages and enables the switch. Standard `/image/` routes cost credits even for subscribed models.
 
-## Download Filenames
+## Output Organization
+
+### Project Directories
+
+Use `--project` to organize outputs into structured directories:
+
+```bash
+# Without --project: files go to ~/Downloads/ (flat)
+higgsfield-helper.sh image "A sunset" --output ~/Downloads/
+
+# With --project: files go to ~/Downloads/my-video/images/
+higgsfield-helper.sh image "A sunset" --output ~/Downloads/ --project my-video
+```
+
+Directory structure with `--project`:
+
+```text
+{output}/{project}/
+├── images/          # Image generations
+├── videos/          # Video generations
+├── lipsync/         # Lipsync outputs
+├── edits/           # Edit/inpaint results
+├── upscaled/        # Upscaled media
+├── cinema/          # Cinema Studio outputs
+├── storyboards/     # Storyboard panels
+├── characters/      # Character/influencer outputs
+├── apps/            # App/effect results
+├── chained/         # Asset chain outputs
+├── mixed-media/     # Mixed media preset results
+├── motion-presets/  # Motion/VFX preset results
+├── features/        # Feature page outputs
+├── seed-brackets/   # Seed bracketing results
+├── pipeline/        # Pipeline outputs
+└── misc/            # Other downloads
+```
+
+### Descriptive Filenames
 
 All downloads use descriptive filenames:
 
@@ -557,6 +596,43 @@ hf_{model}_{quality}_{preset}_{prompt-slug}_{timestamp}_{index}.{ext}
 Example: `hf_higgsfield-soul_2k_sunset-beach_a-serene-mountain-landscape_20260209193400_1.png`
 
 Metadata is extracted from the Asset showcase dialog before downloading.
+
+### JSON Sidecar Metadata
+
+Every downloaded file gets a companion `.json` sidecar with full metadata:
+
+```bash
+ls ~/Downloads/my-video/images/
+# hf_soul_2k_a-serene-mountain-landscape_20260210120000_1.png
+# hf_soul_2k_a-serene-mountain-landscape_20260210120000_1.png.json
+```
+
+Sidecar contents:
+
+```json
+{
+  "source": "higgsfield-ui-automator",
+  "version": "1.0",
+  "timestamp": "2026-02-10T12:00:00.000Z",
+  "file": "hf_soul_2k_a-serene-mountain-landscape_20260210120000_1.png",
+  "command": "image",
+  "type": "image",
+  "model": "Higgsfield Soul",
+  "quality": "2k",
+  "preset": "General",
+  "promptSnippet": "A serene mountain landscape at golden hour, photorealistic",
+  "fileSize": 2456789,
+  "fileSizeHuman": "2.3MB"
+}
+```
+
+Disable with `--no-sidecar`.
+
+### Deduplication
+
+SHA-256 hash-based deduplication prevents downloading the same file twice. A `.dedup-index.json` file in each output directory tracks file hashes. Duplicate downloads are automatically skipped.
+
+Disable with `--no-dedup`.
 
 ## Production Pipeline
 
@@ -743,6 +819,9 @@ Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.j
 --chain-action     Asset chain action: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
 --feature          Feature page slug: fashion-factory, ugc-factory, photodump-studio, camera-controls, effects
 --subtype          Vibe Motion sub-type: infographics, text-animation, posters, presentation, from-scratch
+--project          Project name for organized output dirs ({output}/{project}/{type}/)
+--no-sidecar       Disable JSON sidecar metadata files
+--no-dedup         Disable SHA-256 duplicate detection
 ```
 
 ## Prompt Engineering Tips
