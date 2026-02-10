@@ -6315,6 +6315,7 @@ async function batchLipsync(options = {}) {
   }
 
   return batchState;
+}
 
 // Main CLI handler
 async function main() {
