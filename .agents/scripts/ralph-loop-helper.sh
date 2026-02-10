@@ -234,8 +234,11 @@ run_v2_loop() {
 
     local iteration=1
     output_file="$(mktemp)"
+    local output_sizes_file
+    output_sizes_file="$(mktemp)"
     _save_cleanup_scope; trap '_run_cleanups' RETURN
     push_cleanup "rm -f '${output_file}'"
+    push_cleanup "rm -f '${output_sizes_file}'"
 
     while [[ $iteration -le $max_iterations ]]; do
         print_step "=== Iteration $iteration/$max_iterations ==="
@@ -309,6 +312,15 @@ To complete, output: <promise>$completion_promise</promise> (ONLY when TRUE)"
             
             print_success "Ralph loop completed successfully after $iteration iterations"
             return 0
+        fi
+
+        # Context-remaining guard (t247.1): detect approaching context
+        # exhaustion and proactively signal + push before silent exit.
+        if type loop_context_guard &>/dev/null; then
+            if loop_context_guard "$output_file" "$iteration" "$max_iterations" "$output_sizes_file"; then
+                print_success "Context guard: work preserved, signal emitted"
+                return 0
+            fi
         fi
 
         # Track attempt and check for blocking

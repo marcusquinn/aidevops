@@ -39,6 +39,16 @@ readonly LOOP_STATE_FILE="${LOOP_STATE_DIR}/loop-state.json"
 readonly LOOP_RECEIPTS_DIR="${LOOP_STATE_DIR}/receipts"
 readonly LOOP_REANCHOR_FILE="${LOOP_STATE_DIR}/re-anchor.md"
 
+# Context-remaining guard thresholds (t247.1)
+# Iteration-based: trigger guard when iteration >= max * threshold
+readonly LOOP_CONTEXT_ITER_THRESHOLD="${LOOP_CONTEXT_ITER_THRESHOLD:-80}"
+# Output shrinkage: trigger when output drops below this % of rolling average
+readonly LOOP_CONTEXT_SHRINK_THRESHOLD="${LOOP_CONTEXT_SHRINK_THRESHOLD:-20}"
+# Minimum iterations before shrinkage detection activates (need baseline)
+readonly LOOP_CONTEXT_SHRINK_MIN_ITERS="${LOOP_CONTEXT_SHRINK_MIN_ITERS:-3}"
+# Minimum output bytes to consider an iteration "productive"
+readonly LOOP_CONTEXT_MIN_OUTPUT_BYTES="${LOOP_CONTEXT_MIN_OUTPUT_BYTES:-100}"
+
 # Legacy state directory (for backward compatibility during migration)
 # shellcheck disable=SC2034  # Exported for use by sourcing scripts
 readonly LOOP_LEGACY_STATE_DIR=".claude"
@@ -472,6 +482,12 @@ ${latest_receipt:-"First iteration - no previous receipt"}
 
 **IMPORTANT:** Re-read this context before proceeding. Do NOT rely on conversation history.
 Focus on ONE task per iteration. When the overall task is complete, output: <promise>$(loop_get_state ".completion_promise")</promise>
+
+**CONTEXT GUARD:** If you sense your context window is running low (e.g., you are losing
+track of earlier instructions, your responses are getting shorter, or you feel you cannot
+complete the next step), IMMEDIATELY: (1) \`git add -A && git commit -m "wip: context low"\`,
+(2) \`git push\`, (3) output: <promise>$(loop_get_state ".completion_promise")</promise>.
+Do NOT attempt complex work when context is low — preserve what you have.
 EOF
     
     cat "$LOOP_REANCHOR_FILE"
@@ -702,6 +718,207 @@ loop_block_task() {
 }
 
 # =============================================================================
+# Context-Remaining Guard (t247.1)
+# =============================================================================
+# Detects when an AI tool session is approaching context exhaustion and
+# proactively emits FULL_LOOP_COMPLETE + pushes uncommitted work. This
+# prevents the "clean_exit_no_signal" retry pattern where workers exhaust
+# their context window and exit gracefully without signaling completion.
+#
+# Detection heuristics (any one triggers the guard):
+# 1. Iteration threshold: iteration >= max_iterations * 80%
+# 2. Output shrinkage: output size drops below 20% of rolling average
+# 3. Explicit signals: tool output contains context exhaustion markers
+# 4. Empty output: tool produced no meaningful output (< 100 bytes)
+
+# Check tool output for context exhaustion indicators
+# Arguments:
+#   $1 - output_file (path to captured tool output)
+#   $2 - iteration (current iteration number)
+#   $3 - max_iterations
+#   $4 - output_sizes_file (path to file tracking output sizes per iteration)
+# Returns: 0 if context exhaustion detected, 1 if not
+# Output: Reason string to stdout if exhaustion detected
+loop_check_context_exhaustion() {
+    local output_file="$1"
+    local iteration="$2"
+    local max_iterations="$3"
+    local output_sizes_file="$4"
+
+    local output_size=0
+    if [[ -f "$output_file" ]]; then
+        output_size=$(wc -c < "$output_file" 2>/dev/null | tr -d ' ')
+    fi
+
+    # Track output size for rolling average
+    echo "$output_size" >> "$output_sizes_file"
+
+    # Heuristic 1: Iteration threshold (approaching max iterations)
+    local iter_threshold
+    iter_threshold=$(( (max_iterations * LOOP_CONTEXT_ITER_THRESHOLD) / 100 ))
+    if [[ "$iteration" -ge "$iter_threshold" ]]; then
+        echo "iteration_threshold:${iteration}/${max_iterations}"
+        return 0
+    fi
+
+    # Heuristic 2: Explicit context exhaustion markers in output
+    # These are strings that AI tools emit when hitting context limits
+    if [[ -f "$output_file" ]]; then
+        if grep -qiE \
+            'context.*(window|limit|length).*(exceed|reach|exhaust|full)|token.*(limit|budget).*(exceed|reach)|maximum.*context.*length|conversation.*too.*long|context.*truncat|running.*out.*of.*(context|tokens)' \
+            "$output_file" 2>/dev/null; then
+            echo "explicit_context_signal"
+            return 0
+        fi
+    fi
+
+    # Heuristic 3: Empty or near-empty output (tool couldn't produce work)
+    if [[ "$output_size" -lt "$LOOP_CONTEXT_MIN_OUTPUT_BYTES" ]]; then
+        # Only trigger after first iteration (first might legitimately be short)
+        if [[ "$iteration" -gt 1 ]]; then
+            echo "empty_output:${output_size}bytes"
+            return 0
+        fi
+    fi
+
+    # Heuristic 4: Output shrinkage (dramatic drop from rolling average)
+    if [[ "$iteration" -ge "$LOOP_CONTEXT_SHRINK_MIN_ITERS" ]]; then
+        local total_size=0
+        local count=0
+        while IFS= read -r size; do
+            total_size=$((total_size + size))
+            count=$((count + 1))
+        done < "$output_sizes_file"
+
+        if [[ "$count" -gt 1 ]]; then
+            # Exclude current iteration from average (compare against prior)
+            local prior_total=$((total_size - output_size))
+            local prior_count=$((count - 1))
+            local avg_size=$((prior_total / prior_count))
+
+            if [[ "$avg_size" -gt 0 ]]; then
+                local shrink_pct=$(( (output_size * 100) / avg_size ))
+                if [[ "$shrink_pct" -lt "$LOOP_CONTEXT_SHRINK_THRESHOLD" ]]; then
+                    echo "output_shrinkage:${shrink_pct}%_of_avg(${avg_size}bytes)"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+# Emergency push: commit and push any uncommitted work before exit
+# Called when context exhaustion is detected to preserve work.
+# Arguments: none
+# Returns: 0 on success, 1 on failure (non-fatal)
+loop_emergency_push() {
+    local branch
+    branch=$(git branch --show-current 2>/dev/null || echo "")
+
+    if [[ -z "$branch" ]]; then
+        loop_log_warn "Context guard: not in a git repo, skipping emergency push"
+        return 1
+    fi
+
+    # Check for uncommitted changes
+    if git diff --quiet HEAD 2>/dev/null && git diff --cached --quiet HEAD 2>/dev/null; then
+        # No uncommitted changes — just push existing commits
+        if git log --oneline "origin/${branch}..HEAD" 2>/dev/null | grep -q .; then
+            loop_log_info "Context guard: pushing unpushed commits on $branch"
+            git push origin "$branch" 2>/dev/null || {
+                loop_log_warn "Context guard: push failed, trying with --force-with-lease"
+                git push --force-with-lease origin "$branch" 2>/dev/null || true
+            }
+        fi
+        return 0
+    fi
+
+    # Stage and commit uncommitted work
+    loop_log_info "Context guard: committing uncommitted work before exit"
+    git add -A 2>/dev/null || true
+
+    local task_id
+    task_id=$(loop_get_state ".task_id" 2>/dev/null || echo "unknown")
+    git commit -m "wip: emergency commit before context exhaustion ($task_id)" \
+        --no-verify 2>/dev/null || {
+        loop_log_warn "Context guard: commit failed"
+        return 1
+    }
+
+    # Push
+    loop_log_info "Context guard: pushing to $branch"
+    git push origin "$branch" 2>/dev/null || {
+        git push -u origin "$branch" 2>/dev/null || {
+            loop_log_warn "Context guard: push failed, trying with --force-with-lease"
+            git push --force-with-lease origin "$branch" 2>/dev/null || true
+        }
+    }
+
+    return 0
+}
+
+# Emit completion signal to stdout (captured in worker log for supervisor)
+# Arguments:
+#   $1 - reason (why the guard triggered)
+# Returns: 0
+loop_emit_completion_signal() {
+    local reason="$1"
+
+    loop_log_warn "Context guard triggered: $reason"
+    loop_log_info "Emitting FULL_LOOP_COMPLETE signal to prevent clean_exit_no_signal retry"
+
+    # This is the signal the supervisor's extract_log_metadata() looks for
+    echo "<promise>FULL_LOOP_COMPLETE</promise>"
+
+    return 0
+}
+
+# Full context guard: check, push, and signal in one call
+# Designed to be called after each iteration in the loop runner.
+# Arguments:
+#   $1 - output_file
+#   $2 - iteration
+#   $3 - max_iterations
+#   $4 - output_sizes_file
+# Returns: 0 if guard triggered (caller should exit), 1 if safe to continue
+loop_context_guard() {
+    local output_file="$1"
+    local iteration="$2"
+    local max_iterations="$3"
+    local output_sizes_file="$4"
+
+    local reason
+    reason=$(loop_check_context_exhaustion "$output_file" "$iteration" "$max_iterations" "$output_sizes_file") || return 1
+
+    # Guard triggered — save work and signal
+    loop_log_warn "=== CONTEXT GUARD ACTIVATED (t247.1) ==="
+    loop_log_warn "Reason: $reason"
+
+    # Create receipt documenting the guard activation
+    if type loop_create_receipt &>/dev/null; then
+        loop_create_receipt "task" "context_guard" \
+            "{\"reason\": \"$reason\", \"iteration\": $iteration, \"max_iterations\": $max_iterations}"
+    fi
+
+    # Store in memory for pattern tracking
+    if type loop_store_memory &>/dev/null; then
+        loop_store_memory "CODEBASE_PATTERN" \
+            "Context guard triggered at iteration $iteration/$max_iterations: $reason" \
+            "context_guard,reliability"
+    fi
+
+    # Emergency push to preserve work
+    loop_emergency_push
+
+    # Emit the signal
+    loop_emit_completion_signal "$reason"
+
+    return 0
+}
+
+# =============================================================================
 # External Loop Runner
 # =============================================================================
 
@@ -739,7 +956,9 @@ loop_run_external() {
     local iteration=1
     local output_file
     output_file=$(mktemp)
-    trap 'rm -f "$output_file"' EXIT
+    local output_sizes_file
+    output_sizes_file=$(mktemp)
+    trap 'rm -f "$output_file" "$output_sizes_file"' EXIT
     
     while [[ $iteration -le $max_iterations ]]; do
         loop_log_step "=== Iteration $iteration/$max_iterations ==="
@@ -799,6 +1018,14 @@ loop_run_external() {
                 fi
             fi
             
+            return 0
+        fi
+        
+        # Context-remaining guard (t247.1): detect approaching context
+        # exhaustion and proactively signal + push before the tool exits
+        # silently. This prevents the clean_exit_no_signal retry pattern.
+        if loop_context_guard "$output_file" "$iteration" "$max_iterations" "$output_sizes_file"; then
+            loop_log_success "Context guard: work preserved, signal emitted"
             return 0
         fi
         
