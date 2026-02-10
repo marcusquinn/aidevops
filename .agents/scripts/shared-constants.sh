@@ -748,32 +748,70 @@ is_worktree_owned_by_others() {
     return 0
 }
 
-# Prune stale registry entries (dead PIDs, missing directories)
+# Prune stale registry entries (dead PIDs, missing directories, corrupted paths)
+# (t197) Enhanced to handle:
+#   - Dead PIDs with missing directories
+#   - Paths with ANSI escape codes (corrupted entries)
+#   - Test artifacts in /tmp or /var/folders
 prune_worktree_registry() {
     [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
 
+    local pruned_count=0
+    
+    # First, delete entries with ANSI escape codes (corrupted entries)
+    # These often have newlines and break normal parsing
+    local ansi_count
+    ansi_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        DELETE FROM worktree_owners 
+        WHERE worktree_path LIKE '%'||char(27)||'%' 
+           OR worktree_path LIKE '%[0;%'
+           OR worktree_path LIKE '%[1m%';
+        SELECT changes();
+    " 2>/dev/null || echo "0")
+    pruned_count=$((pruned_count + ansi_count))
+    [[ -n "${VERBOSE:-}" && "$ansi_count" -gt 0 ]] && echo "  Pruned $ansi_count entries with ANSI escape codes"
+    
+    # Next, delete test artifacts in temp directories
+    local temp_count
+    temp_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        DELETE FROM worktree_owners 
+        WHERE worktree_path LIKE '/tmp/%' 
+           OR worktree_path LIKE '/var/folders/%';
+        SELECT changes();
+    " 2>/dev/null || echo "0")
+    pruned_count=$((pruned_count + temp_count))
+    [[ -n "${VERBOSE:-}" && "$temp_count" -gt 0 ]] && echo "  Pruned $temp_count test artifacts in temp directories"
+
+    # Now process remaining entries for dead PIDs and missing directories
     local entries
     entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
         SELECT worktree_path, owner_pid FROM worktree_owners;
     " 2>/dev/null || echo "")
 
-    [[ -z "$entries" ]] && return 0
+    if [[ -n "$entries" ]]; then
+        while IFS='|' read -r wt_path owner_pid; do
+            local should_prune=false
+            local prune_reason=""
 
-    while IFS='|' read -r wt_path owner_pid; do
-        local should_prune=false
+            # Directory no longer exists
+            if [[ ! -d "$wt_path" ]]; then
+                should_prune=true
+                prune_reason="directory missing"
+            # Owner process is dead (only prune if directory also missing)
+            elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null && [[ ! -d "$wt_path" ]]; then
+                should_prune=true
+                prune_reason="dead PID and directory missing"
+            fi
 
-        # Directory no longer exists
-        if [[ ! -d "$wt_path" ]]; then
-            should_prune=true
-        # Owner process is dead
-        elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-            should_prune=true
-        fi
-
-        if [[ "$should_prune" == "true" ]]; then
-            unregister_worktree "$wt_path"
-        fi
-    done <<< "$entries"
+            if [[ "$should_prune" == "true" ]]; then
+                unregister_worktree "$wt_path"
+                ((pruned_count++))
+                [[ -n "${VERBOSE:-}" ]] && echo "  Pruned: $wt_path ($prune_reason)"
+            fi
+        done <<< "$entries"
+    fi
+    
+    [[ -n "${VERBOSE:-}" ]] && echo "Pruned $pruned_count entries total"
     return 0
 }
 
