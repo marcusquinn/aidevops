@@ -8385,12 +8385,36 @@ cmd_pr_lifecycle() {
             # Populate VERIFY.md queue for post-merge verification (t180.2)
             populate_verify_queue "$task_id" "$tpr" "$trepo" 2>>"$SUPERVISOR_LOG" || log_warn "Verify queue population issue for $task_id (non-blocking)"
 
-            # Final transition
-            cmd_transition "$task_id" "deployed" || log_warn "Failed to transition $task_id to deployed"
-
-            # Notify (best-effort, suppress errors)
-            send_task_notification "$task_id" "deployed" "PR merged, deployed, worktree cleaned" 2>>"$SUPERVISOR_LOG" || true
-            store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
+            # t248: Final transition with retry logic (3 attempts: 0s, 1s, 3s)
+            local deploy_retry_count=0
+            local deploy_max_retries=3
+            local deploy_succeeded=false
+            local deploy_error=""
+            
+            while [[ "$deploy_retry_count" -lt "$deploy_max_retries" ]]; do
+                if [[ "$deploy_retry_count" -gt 0 ]]; then
+                    local deploy_backoff=$((2 ** (deploy_retry_count - 1)))
+                    log_info "  Transition retry $deploy_retry_count/$deploy_max_retries after ${deploy_backoff}s backoff..."
+                    sleep "$deploy_backoff"
+                fi
+                
+                if deploy_error=$(cmd_transition "$task_id" "deployed" 2>&1); then
+                    deploy_succeeded=true
+                    break
+                fi
+                
+                deploy_retry_count=$((deploy_retry_count + 1))
+                log_warn "  Transition attempt $deploy_retry_count failed: $deploy_error"
+            done
+            
+            if [[ "$deploy_succeeded" == "true" ]]; then
+                # Notify (best-effort, suppress errors)
+                send_task_notification "$task_id" "deployed" "PR merged, deployed, worktree cleaned" 2>>"$SUPERVISOR_LOG" || true
+                store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
+            else
+                log_error "Failed to transition $task_id to deployed after $deploy_max_retries attempts: $deploy_error"
+                # Task will remain in 'deploying' and Phase 4b will retry on next pulse
+            fi
         else
             log_info "[dry-run] Would deploy and clean up for $task_id"
         fi
@@ -8401,7 +8425,7 @@ cmd_pr_lifecycle() {
         stage_timings="${stage_timings}deploying:$((stage_end - stage_start))s,"
     fi
 
-    # Step 4b: Auto-recover stuck deploying state (t222)
+    # Step 4b: Auto-recover stuck deploying state (t222, t248)
     # If a task is already in 'deploying' (from a prior pulse where the deploy
     # succeeded but the transition to 'deployed' failed), re-attempt the
     # transition and housekeeping steps. The deploy itself already completed
@@ -8410,7 +8434,7 @@ cmd_pr_lifecycle() {
         local stage_start
         stage_start=$(date +%s)
 
-        log_warn "Task $task_id stuck in deploying state — attempting auto-recovery (t222)"
+        log_warn "Task $task_id stuck in deploying state — attempting auto-recovery (t222, t248)"
 
         if [[ "$dry_run" == "false" ]]; then
             # Re-run housekeeping that may have been skipped when the prior
@@ -8419,20 +8443,42 @@ cmd_pr_lifecycle() {
             update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || log_warn "TODO.md update issue for $task_id during recovery (non-blocking)"
             populate_verify_queue "$task_id" "$tpr" "$trepo" 2>>"$SUPERVISOR_LOG" || log_warn "Verify queue population issue for $task_id during recovery (non-blocking)"
 
-            # Attempt the transition that previously failed
-            if cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG"; then
-                log_success "Auto-recovered $task_id: deploying -> deployed (t222)"
-                send_task_notification "$task_id" "deployed" "Auto-recovered from stuck deploying state" 2>>"$SUPERVISOR_LOG" || true
+            # t248: Retry transition with exponential backoff (3 attempts: 0s, 1s, 3s)
+            local retry_count=0
+            local max_retries=3
+            local retry_succeeded=false
+            local transition_error=""
+            
+            while [[ "$retry_count" -lt "$max_retries" ]]; do
+                if [[ "$retry_count" -gt 0 ]]; then
+                    local backoff_delay=$((2 ** (retry_count - 1)))
+                    log_info "  Retry $retry_count/$max_retries after ${backoff_delay}s backoff..."
+                    sleep "$backoff_delay"
+                fi
+                
+                # Capture transition error output for debugging
+                if transition_error=$(cmd_transition "$task_id" "deployed" 2>&1); then
+                    retry_succeeded=true
+                    break
+                fi
+                
+                retry_count=$((retry_count + 1))
+                log_warn "  Transition attempt $retry_count failed: $transition_error"
+            done
+            
+            if [[ "$retry_succeeded" == "true" ]]; then
+                log_success "Auto-recovered $task_id: deploying -> deployed (t222, t248, attempts: $retry_count)"
+                send_task_notification "$task_id" "deployed" "Auto-recovered from stuck deploying state (attempts: $retry_count)" 2>>"$SUPERVISOR_LOG" || true
                 store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
                 write_proof_log --task "$task_id" --event "auto_recover" --stage "deploying" \
-                    --decision "deploying->deployed" --evidence "stuck_state_recovery" \
-                    --maker "pr_lifecycle:t222" 2>/dev/null || true
+                    --decision "deploying->deployed" --evidence "stuck_state_recovery,retries:$retry_count" \
+                    --maker "pr_lifecycle:t222:t248" 2>/dev/null || true
             else
-                log_error "Auto-recovery failed for $task_id — transition to deployed rejected"
-                # If the transition itself is invalid, something is deeply wrong.
+                log_error "Auto-recovery failed for $task_id after $max_retries attempts — last error: $transition_error"
+                # If the transition itself is invalid after retries, something is deeply wrong.
                 # Transition to failed so the task doesn't stay stuck forever.
-                cmd_transition "$task_id" "failed" --error "Auto-recovery failed: deploying->deployed transition rejected (t222)" 2>>"$SUPERVISOR_LOG" || true
-                send_task_notification "$task_id" "failed" "Stuck in deploying, auto-recovery failed" 2>>"$SUPERVISOR_LOG" || true
+                cmd_transition "$task_id" "failed" --error "Auto-recovery failed after $max_retries attempts: $transition_error (t222, t248)" 2>>"$SUPERVISOR_LOG" || true
+                send_task_notification "$task_id" "failed" "Stuck in deploying, auto-recovery failed after $max_retries attempts" 2>>"$SUPERVISOR_LOG" || true
             fi
         else
             log_info "[dry-run] Would auto-recover $task_id from deploying to deployed"
@@ -9048,13 +9094,14 @@ cmd_pulse() {
         done <<< "$stale_diags"
     fi
 
-    # Phase 4d: Auto-recover stuck deploying tasks (t222)
+    # Phase 4d: Auto-recover stuck deploying tasks (t222, t248)
     # Tasks can get stuck in 'deploying' if the deploy succeeds but the
     # transition to 'deployed' fails (e.g., DB write error, process killed
     # mid-transition). Detect tasks in 'deploying' state for longer than
     # the deploy timeout and auto-recover them via process_post_pr_lifecycle
     # (which now handles the deploying state in Step 4b of cmd_pr_lifecycle).
-    local deploying_timeout_seconds="${SUPERVISOR_DEPLOY_TIMEOUT:-600}"  # 10 min default
+    # t248: Reduced from 600s (10min) to 120s (2min) for faster recovery
+    local deploying_timeout_seconds="${SUPERVISOR_DEPLOY_TIMEOUT:-120}"  # 2 min default
     local stuck_deploying
     stuck_deploying=$(db "$SUPERVISOR_DB" "
         SELECT id, updated_at FROM tasks
