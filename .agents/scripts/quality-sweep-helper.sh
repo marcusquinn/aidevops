@@ -6,7 +6,7 @@
 # t245: Parent task — unified quality debt pipeline
 # t245.1: SonarCloud API integration
 # t245.2: Codacy API integration
-# t245.3: Finding-to-task pipeline (future)
+# t245.3: Finding-to-task pipeline (finding-to-task-helper.sh)
 # t245.4: Daily GitHub Action (future)
 #
 # Usage:
@@ -1213,6 +1213,7 @@ show_help() {
     echo ""
     echo "Cross-source:"
     echo "  dedup        Show findings that appear in multiple sources (same file+line+type)"
+    echo "  triage       Finding-to-task pipeline (t245.3 — delegates to finding-to-task-helper.sh)"
     echo ""
     echo "Commands (per source):"
     echo "  fetch        Fetch findings from the source API"
@@ -1230,6 +1231,7 @@ show_help() {
     echo "  quality-sweep-helper.sh codacy fetch --org myorg --repo myrepo"
     echo "  quality-sweep-helper.sh codacy summary"
     echo "  quality-sweep-helper.sh dedup --format json"
+    echo "  quality-sweep-helper.sh triage create --dry-run --by file"
     echo ""
     return 0
 }
@@ -1252,8 +1254,17 @@ main() {
         dedup)
             cmd_dedup "$@"
             ;;
+        triage)
+            # Delegate to finding-to-task-helper.sh (t245.3)
+            local triage_script="${SCRIPT_DIR}/finding-to-task-helper.sh"
+            if [[ ! -x "$triage_script" ]]; then
+                print_error "finding-to-task-helper.sh not found at $triage_script"
+                return 1
+            fi
+            "$triage_script" "$@"
+            ;;
         codefactor|coderabbit)
-            print_warning "Source '$source' is not yet implemented. See TODO.md for t245.3+."
+            print_warning "Source '$source' is not yet implemented."
             return 0
             ;;
         help|--help|-h)
