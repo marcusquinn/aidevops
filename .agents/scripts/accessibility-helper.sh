@@ -146,7 +146,7 @@ run_wave_audit() {
     local report_file="${A11Y_REPORTS_DIR}/wave_${timestamp}.json"
 
     local encoded_url
-    encoded_url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$url', safe=''))" 2>/dev/null || echo "$url")
+    encoded_url=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$url" 2>/dev/null || echo "$url")
 
     local api_url="${WAVE_API_ENDPOINT}?key=${WAVE_API_KEY}&url=${encoded_url}&reporttype=${report_type}&viewportwidth=${viewport_width}&format=json"
 
