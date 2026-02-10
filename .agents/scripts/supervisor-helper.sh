@@ -3633,11 +3633,15 @@ run_quality_gate() {
 }
 
 #######################################
-# Pre-dispatch model health check (t132.3)
+# Pre-dispatch model health check (t132.3, t233)
 # Two-tier probe strategy:
 #   1. Fast path: model-availability-helper.sh (direct HTTP, ~1-2s, cached)
 #   2. Slow path: Full AI CLI probe (spawns session, ~8-15s)
-# Returns 0 if healthy, 1 if unhealthy. Timeout: 15 seconds.
+# Exit codes (t233 — propagated from model-availability-helper.sh):
+#   0 = healthy
+#   1 = unavailable (provider down, generic error)
+#   2 = rate limited (defer dispatch, retry soon)
+#   3 = API key invalid/missing (block, don't retry)
 # Result is cached for 5 minutes to avoid repeated probes.
 #######################################
 check_model_health() {
@@ -3674,12 +3678,16 @@ check_model_health() {
                 return 0
                 ;;
             2)
-                log_warn "Model health check: rate limited (via availability helper)"
-                return 1
+                # t233: propagate rate-limit exit code so callers can defer dispatch
+                # without burning retries (previously collapsed to exit 1)
+                log_warn "Model health check: rate limited (via availability helper) — deferring dispatch"
+                return 2
                 ;;
             3)
-                log_warn "Model health check: API key invalid (via availability helper)"
-                return 1
+                # t233: propagate invalid-key exit code so callers can block dispatch
+                # (previously collapsed to exit 1)
+                log_warn "Model health check: API key invalid/missing (via availability helper) — blocking dispatch"
+                return 3
                 ;;
             *)
                 # When using OpenCode, the availability helper may fail because OpenCode
@@ -3789,9 +3797,17 @@ check_model_health() {
         fi
     fi
 
-    # Check for known failure patterns
-    if echo "$probe_result" | grep -qiE 'endpoints failed|Quota protection|over[_ -]?usage|quota reset|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable|CreditsError|Insufficient balance' 2>/dev/null; then
-        log_warn "Model health check FAILED: provider error detected"
+    # Check for known failure patterns (t233: distinguish quota/rate-limit from generic failures)
+    if echo "$probe_result" | grep -qiE 'CreditsError|Insufficient balance' 2>/dev/null; then
+        log_warn "Model health check FAILED: billing/credits exhausted (slow path)"
+        return 3  # t233: credits = invalid key equivalent (won't resolve without human action)
+    fi
+    if echo "$probe_result" | grep -qiE 'Quota protection|over[_ -]?usage|quota reset|429|too many requests|rate.limit' 2>/dev/null; then
+        log_warn "Model health check FAILED: quota/rate limited (slow path)"
+        return 2  # t233: rate-limited = defer dispatch, retry soon
+    fi
+    if echo "$probe_result" | grep -qiE 'endpoints failed|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable' 2>/dev/null; then
+        log_warn "Model health check FAILED: provider error detected (slow path)"
         return 1
     fi
 
@@ -4583,14 +4599,34 @@ cmd_dispatch() {
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
 
-    # Pre-dispatch model health check - use cheap health-tier model to verify
-    # the provider is responding before creating worktrees and burning retries
-    local health_model
+    # Pre-dispatch model availability check (t233 — replaces simple health check)
+    # Calls model-availability-helper.sh check before spawning workers.
+    # Distinct exit codes prevent wasted dispatch attempts:
+    #   exit 0 = healthy, proceed
+    #   exit 1 = provider unavailable, defer dispatch
+    #   exit 2 = rate limited, defer dispatch (retry next pulse)
+    #   exit 3 = API key invalid/credits exhausted, block dispatch
+    # Previously: 9 wasted failures from ambiguous_ai_unavailable + backend_quota_error
+    # because the health check collapsed all failures to a single exit code.
+    local health_model health_exit=0
     health_model=$(resolve_model "health" "$ai_cli")
-    if ! check_model_health "$ai_cli" "$health_model"; then
-        log_error "Provider health check failed for $task_id ($health_model via $ai_cli)"
-        log_error "Provider may be down or quota exhausted. Skipping dispatch."
-        return 3  # Return 3 = provider unavailable (distinct from concurrency limit 2)
+    check_model_health "$ai_cli" "$health_model" || health_exit=$?
+    if [[ "$health_exit" -ne 0 ]]; then
+        case "$health_exit" in
+            2)
+                log_warn "Provider rate-limited for $task_id ($health_model via $ai_cli) — deferring dispatch to next pulse"
+                return 3  # Return 3 = provider unavailable (distinct from concurrency limit 2)
+                ;;
+            3)
+                log_error "API key invalid/credits exhausted for $task_id ($health_model via $ai_cli) — blocking dispatch"
+                log_error "Human action required: check API key or billing. Task will not auto-retry."
+                return 3
+                ;;
+            *)
+                log_error "Provider unavailable for $task_id ($health_model via $ai_cli) — deferring dispatch"
+                return 3
+                ;;
+        esac
     fi
 
     # Pre-dispatch GitHub auth check — verify the worker can push before
@@ -4675,6 +4711,27 @@ cmd_dispatch() {
     # Resolve model via frontmatter + fallback chain (t132.5)
     local resolved_model
     resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
+
+    # Secondary availability check: verify the resolved model's provider (t233)
+    # The initial health check uses the "health" tier (typically anthropic).
+    # If the resolved model uses a different provider (e.g., google/gemini for pro tier),
+    # we need to verify that provider too. Skip if same provider or if using OpenCode
+    # (which manages routing internally).
+    if [[ "$ai_cli" != "opencode" && -n "$resolved_model" && "$resolved_model" == *"/"* ]]; then
+        local resolved_provider="${resolved_model%%/*}"
+        local health_provider="${health_model%%/*}"
+        if [[ "$resolved_provider" != "$health_provider" ]]; then
+            local availability_helper="${SCRIPT_DIR}/model-availability-helper.sh"
+            if [[ -x "$availability_helper" ]]; then
+                local resolved_avail_exit=0
+                "$availability_helper" check "$resolved_provider" --quiet 2>/dev/null || resolved_avail_exit=$?
+                if [[ "$resolved_avail_exit" -ne 0 ]]; then
+                    log_warn "Resolved model provider '$resolved_provider' unavailable (exit $resolved_avail_exit) for $task_id — deferring dispatch"
+                    return 3
+                fi
+            fi
+        fi
+    fi
 
     log_info "Dispatching $task_id via $ai_cli ($dispatch_mode mode)"
     log_info "Worktree: $worktree_path"
@@ -5622,14 +5679,24 @@ cmd_reprompt() {
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
 
-    # Pre-reprompt health check: avoid wasting retry attempts on dead backends
-    # (t153-pre-diag-1: retries 1+2 failed instantly with backend endpoint
-    # errors because reprompt skipped the health check that cmd_dispatch
-    # performs)
-    local health_model
+    # Pre-reprompt availability check (t233 — distinct exit codes from check_model_health)
+    # Avoids wasting retry attempts on dead/rate-limited backends.
+    # (t153-pre-diag-1: retries 1+2 failed instantly with backend endpoint errors)
+    local health_model health_exit=0
     health_model=$(resolve_model "health" "$ai_cli")
-    if ! check_model_health "$ai_cli" "$health_model"; then
-        log_error "Provider health check failed for $task_id re-prompt ($health_model via $ai_cli) — deferring retry"
+    check_model_health "$ai_cli" "$health_model" || health_exit=$?
+    if [[ "$health_exit" -ne 0 ]]; then
+        case "$health_exit" in
+            2)
+                log_warn "Provider rate-limited for $task_id re-prompt ($health_model via $ai_cli) — deferring to next pulse"
+                ;;
+            3)
+                log_error "API key invalid/credits exhausted for $task_id re-prompt ($health_model via $ai_cli)"
+                ;;
+            *)
+                log_error "Provider unavailable for $task_id re-prompt ($health_model via $ai_cli) — deferring retry"
+                ;;
+        esac
         # Task is already in 'retrying' state with counter incremented.
         # Do NOT transition again (would double-increment). Return 75 (EX_TEMPFAIL)
         # so the pulse cycle can distinguish transient backend failures from real
@@ -6113,6 +6180,21 @@ Instructions:
 
     local ai_cli
     ai_cli=$(resolve_ai_cli) || return 1
+
+    # Pre-dispatch availability check for review-fix workers (t233)
+    # Previously missing — review-fix workers were spawned without any health check,
+    # wasting compute when the provider was down or rate-limited.
+    local health_model health_exit=0
+    health_model=$(resolve_model "health" "$ai_cli")
+    check_model_health "$ai_cli" "$health_model" || health_exit=$?
+    if [[ "$health_exit" -ne 0 ]]; then
+        case "$health_exit" in
+            2) log_warn "Provider rate-limited for $task_id review-fix — deferring to next pulse" ;;
+            3) log_error "API key invalid/credits exhausted for $task_id review-fix" ;;
+            *) log_error "Provider unavailable for $task_id review-fix — deferring" ;;
+        esac
+        return 1
+    fi
 
     # Set up log file
     local log_dir="$SUPERVISOR_DIR/logs"
