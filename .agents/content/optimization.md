@@ -579,7 +579,7 @@ Cycle 3:
 
 - `analytics-helper.sh`: Pull analytics from all platforms, generate performance report
 - `variant-generator-helper.sh`: Generate 10 variants of a given piece of content
-- `seed-bracketing-helper.sh`: Automate seed testing for AI video generation (see t202)
+- `seed-bracket-helper.sh`: Automate seed testing for AI video generation (generate, score, report)
 - `thumbnail-factory-helper.sh`: Generate thumbnail variants using style library (see t207)
 
 ## Next Steps
