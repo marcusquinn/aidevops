@@ -1355,6 +1355,7 @@ async function generateImage(options = {}) {
     // This handles fast generations where queue resolves before first poll
     let peakQueue = Math.max(queueBefore, detectedQueueCount);
     let retryAttempted = false;
+    let reloadAttempted = false;
     let btnWasDisabled = false; // Track if Generate button was ever disabled/changed
 
     while (Date.now() - startTime < timeout) {
@@ -1429,7 +1430,7 @@ async function generateImage(options = {}) {
 
       // Completion condition 4: After 60s with no queue/button activity,
       // reload the page and check if new images appeared at the top
-      if (!retryAttempted && parseInt(elapsed, 10) >= 60 &&
+      if (!reloadAttempted && parseInt(elapsed, 10) >= 60 &&
           peakQueue === queueBefore && !btnWasDisabled) {
         console.log('No queue or button activity after 60s - reloading to check for new images...');
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -1442,7 +1443,7 @@ async function generateImage(options = {}) {
           generationComplete = true;
           break;
         }
-        retryAttempted = true;
+        reloadAttempted = true;
       }
     }
 
