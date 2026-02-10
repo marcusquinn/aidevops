@@ -18,14 +18,14 @@ tools:
 
 ## Quick Reference
 
-- **Helper**: `.agents/scripts/accessibility-helper.sh` (Lighthouse, pa11y, Playwright contrast, email, contrast calc)
+- **Helper**: `.agents/scripts/accessibility-helper.sh` (Lighthouse, pa11y, Playwright contrast, WAVE API, email, contrast calc)
 - **Audit Helper**: `.agents/scripts/accessibility-audit-helper.sh` (axe-core, WAVE API, WebAIM contrast, Lighthouse)
-- **Commands**: `audit [url]` | `lighthouse [url]` | `pa11y [url]` | `playwright-contrast [url]` | `email [file]` | `contrast [fg] [bg]` | `bulk [file]`
+- **Commands**: `audit [url]` | `lighthouse [url]` | `pa11y [url]` | `playwright-contrast [url]` | `wave [url]` | `email [file]` | `contrast [fg] [bg]` | `bulk [file]`
 - **Audit Commands**: `audit [url]` | `axe [url]` | `wave [url]` | `contrast [fg] [bg]` | `compare [url]` | `status`
 - **Install**: `npm install -g lighthouse pa11y @axe-core/cli` and `npm install playwright && npx playwright install chromium` or `accessibility-audit-helper.sh install-deps`
 - **Standards**: WCAG 2.1 Level A, AA (default), AAA
 - **Reports**: `~/.aidevops/reports/accessibility/` and `~/.aidevops/reports/accessibility-audit/`
-- **Tools**: Lighthouse (accessibility category), pa11y (WCAG runner), Playwright contrast extraction, axe-core (standalone axe scanner), WAVE API (visual evaluator), WebAIM contrast API, built-in contrast calculator, email HTML checker
+- **Tools**: Lighthouse (accessibility category), pa11y (WCAG runner), Playwright contrast extraction, WAVE API (comprehensive analysis), axe-core (standalone axe scanner), WebAIM contrast API, built-in contrast calculator, email HTML checker
 
 <!-- AI-CONTEXT-END -->
 
@@ -40,6 +40,7 @@ Comprehensive WCAG compliance testing for websites and HTML emails. Two helper s
 | **Lighthouse** | Accessibility score + audit failures | ~15s | Broad (axe-core engine) |
 | **pa11y** | WCAG-specific violation reporting | ~10s | Deep (HTML_CodeSniffer) |
 | **Playwright contrast** | Computed style analysis for all visible elements | ~5-15s | Every text element on page |
+| **WAVE API** | Comprehensive accessibility analysis | ~2-5s | Deep (WAVE engine, CSS/JS-rendered) |
 | **Email checker** | HTML email accessibility (static analysis) | <1s | Email-specific rules |
 | **Contrast calculator** | WCAG contrast ratio for color pairs | Instant | AA + AAA levels |
 
@@ -115,6 +116,51 @@ Standards-based testing with HTML_CodeSniffer:
 ```
 
 Reports categorise issues as errors (must fix), warnings (should fix), and notices (advisory).
+
+### WAVE API Analysis
+
+Comprehensive accessibility analysis using the WAVE engine. Evaluates pages after CSS and JavaScript rendering for accurate results. Requires an API key (register at https://wave.webaim.org/api/register).
+
+```bash
+# Basic WAVE audit (report type 2 — item details, 2 credits)
+.agents/scripts/accessibility-helper.sh wave https://example.com
+
+# Detailed with XPath locations (report type 3, 3 credits)
+.agents/scripts/accessibility-helper.sh wave https://example.com 3
+
+# Detailed with CSS selectors (report type 4, 3 credits)
+.agents/scripts/accessibility-helper.sh wave https://example.com 4
+
+# Mobile viewport (375px)
+.agents/scripts/accessibility-helper.sh wave-mobile https://example.com
+
+# Look up a specific WAVE item
+.agents/scripts/accessibility-helper.sh wave-docs alt_missing
+
+# Check remaining API credits
+.agents/scripts/accessibility-helper.sh wave-credits
+```
+
+**Report types:**
+
+| Type | Cost | Data |
+|------|------|------|
+| 1 | 1 credit | Category counts only (errors, alerts, features, etc.) |
+| 2 | 2 credits | Category counts + item details (default) |
+| 3 | 3 credits | All above + XPath locations + contrast data |
+| 4 | 3 credits | All above + CSS selector locations + contrast data |
+
+**API key setup:**
+
+```bash
+# Encrypted (recommended)
+aidevops secret set wave-api-key
+
+# Or environment variable
+export WAVE_API_KEY="your-key-here"
+```
+
+WAVE categories: errors (must fix), contrast errors, alerts (should review), features (positive), structural elements, ARIA usage.
 
 ### Email HTML Accessibility
 
@@ -294,6 +340,7 @@ Check which engines are installed and configured:
 
 | Tool | Integration |
 |------|-------------|
+| **WAVE API** | Comprehensive analysis with CSS/JS rendering, contrast data, XPath/CSS selectors |
 | **PageSpeed** | `pagespeed-helper.sh` includes Lighthouse accessibility score |
 | **Playwright** | Contrast extraction for all visible elements (`playwright-contrast` command) + dynamic SPA testing |
 | **Chrome DevTools MCP** | Real-time accessibility tree inspection |
@@ -305,7 +352,7 @@ Check which engines are installed and configured:
 |----------|---------|-------------|
 | `A11Y_WCAG_LEVEL` | `WCAG2AA` | Default WCAG standard for pa11y |
 | `AUDIT_WCAG_LEVEL` | `WCAG2AA` | Default WCAG level for audit helper |
-| `WAVE_API_KEY` | (none) | WAVE API key for `wave` command |
+| `WAVE_API_KEY` | — | WAVE API key (or use `aidevops secret set wave-api-key`) |
 
 ## Report Storage
 
@@ -314,6 +361,7 @@ Reports from `accessibility-helper.sh` are saved to `~/.aidevops/reports/accessi
 - `lighthouse_a11y_YYYYMMDD_HHMMSS.json` — Lighthouse accessibility audit
 - `pa11y_YYYYMMDD_HHMMSS.json` — pa11y WCAG violations
 - `playwright_contrast_YYYYMMDD_HHMMSS.{json,md,txt}` — Playwright contrast extraction
+- `wave_YYYYMMDD_HHMMSS.json` — WAVE API analysis results
 - `email_a11y_YYYYMMDD_HHMMSS.txt` — Email HTML check results
 
 Reports from `accessibility-audit-helper.sh` are saved to `~/.aidevops/reports/accessibility-audit/`:
