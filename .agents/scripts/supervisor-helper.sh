@@ -4299,6 +4299,7 @@ create_task_worktree() {
 #######################################
 # Clean up a worktree for a completed/failed task
 # Checks ownership registry (t189) before removal
+# t240: Added runtime file cleanup, explicit rm fallback, and verification
 #######################################
 cleanup_task_worktree() {
     local worktree_path="$1"
@@ -4318,9 +4319,16 @@ cleanup_task_worktree() {
         return 0
     fi
 
-    # Try wt prune first
+    # t240: Clean up aidevops runtime files before removal to prevent
+    # "contains untracked files" errors (matches worktree-helper.sh cmd_remove)
+    rm -rf "$worktree_path/.agents/loop-state" 2>/dev/null || true
+    rm -rf "$worktree_path/.agents/tmp" 2>/dev/null || true
+    rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
+    rmdir "$worktree_path/.agents" 2>/dev/null || true
+
+    # Try wt remove first (worktrunk CLI)
     if command -v wt &>/dev/null; then
-        if wt remove -C "$repo" "$worktree_path" 2>>"$SUPERVISOR_LOG"; then
+        if wt remove "$worktree_path" 2>>"$SUPERVISOR_LOG"; then
             unregister_worktree "$worktree_path"
             return 0
         fi
@@ -4328,7 +4336,18 @@ cleanup_task_worktree() {
 
     # Fallback: git worktree remove
     git -C "$repo" worktree remove "$worktree_path" --force 2>>"$SUPERVISOR_LOG" || true
-    # Unregister regardless of removal success (directory may be partially cleaned)
+
+    # t240: Verify removal succeeded — if directory persists, force-remove it
+    # This handles edge cases where git worktree remove fails silently
+    # (e.g., corrupted .git file, stale lock, or remaining untracked files)
+    if [[ -d "$worktree_path" ]]; then
+        log_warn "Worktree directory persists after git removal: $worktree_path — force-removing (t240)"
+        rm -rf "$worktree_path" 2>>"$SUPERVISOR_LOG" || true
+        # Also prune the stale worktree reference from git
+        git -C "$repo" worktree prune 2>>"$SUPERVISOR_LOG" || true
+    fi
+
+    # Unregister regardless of removal success
     unregister_worktree "$worktree_path"
     return 0
 }
@@ -7556,6 +7575,7 @@ run_deploy_for_task() {
 #######################################
 # Clean up worktree after successful merge
 # Returns to main repo, pulls, removes worktree
+# t240: Added verification logging and DB cleanup for missing worktrees
 #######################################
 cleanup_after_merge() {
     local task_id="$1"
@@ -7581,7 +7601,21 @@ cleanup_after_merge() {
         log_info "Cleaning up worktree for $task_id: $tworktree"
         cleanup_task_worktree "$tworktree" "$trepo"
 
+        # t240: Verify cleanup succeeded
+        if [[ -d "$tworktree" ]]; then
+            log_warn "Worktree cleanup incomplete for $task_id: $tworktree still exists (t240)"
+        else
+            log_info "Worktree removed successfully for $task_id: $tworktree"
+        fi
+
         # Clear worktree field in DB
+        db "$SUPERVISOR_DB" "
+            UPDATE tasks SET worktree = NULL WHERE id = '$escaped_id';
+        "
+    elif [[ -n "$tworktree" && ! -d "$tworktree" ]]; then
+        # t240: Worktree path in DB but directory already gone — clean up DB + registry
+        log_info "Worktree already removed for $task_id: $tworktree (cleaning DB reference)"
+        unregister_worktree "$tworktree"
         db "$SUPERVISOR_DB" "
             UPDATE tasks SET worktree = NULL WHERE id = '$escaped_id';
         "
@@ -7592,6 +7626,11 @@ cleanup_after_merge() {
         git -C "$trepo" push origin --delete "$tbranch" 2>>"$SUPERVISOR_LOG" || true
         git -C "$trepo" branch -d "$tbranch" 2>>"$SUPERVISOR_LOG" || true
         log_info "Cleaned up branch: $tbranch"
+
+        # t240: Clear branch field in DB after cleanup
+        db "$SUPERVISOR_DB" "
+            UPDATE tasks SET branch = NULL WHERE id = '$escaped_id';
+        "
     fi
 
     # Prune worktrees
@@ -7732,6 +7771,8 @@ cmd_pr_lifecycle() {
             else
                 log_warn "No PR for $task_id - skipping post-PR lifecycle"
                 if [[ "$dry_run" == "false" ]]; then
+                    # t240: Clean up worktree even for no-PR tasks (previously skipped)
+                    cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || log_warn "Worktree cleanup issue for $task_id (no-PR path, non-blocking)"
                     cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG" || true
                 fi
                 return 0
@@ -8205,10 +8246,12 @@ process_post_pr_lifecycle() {
     while IFS='|' read -r tid tstatus tpr; do
         # Skip tasks without PRs that are already complete
         if [[ "$tstatus" == "complete" && ( -z "$tpr" || "$tpr" == "no_pr" || "$tpr" == "task_only" ) ]]; then
+            # t240: Clean up worktree even for no-PR tasks before marking deployed
+            cleanup_after_merge "$tid" 2>>"$SUPERVISOR_LOG" || log_warn "Worktree cleanup issue for $tid (no-PR batch path, non-blocking)"
             # No PR - transition directly to deployed
             cmd_transition "$tid" "deployed" 2>>"$SUPERVISOR_LOG" || true
             deployed_count=$((deployed_count + 1))
-            log_info "  $tid: no PR, marked deployed"
+            log_info "  $tid: no PR, marked deployed (worktree cleaned)"
             continue
         fi
 
