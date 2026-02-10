@@ -428,6 +428,120 @@ check_responsive() {
     return 0
 }
 
+# Check email accessibility (delegates to accessibility-helper.sh)
+check_accessibility() {
+    local html_file="$1"
+
+    print_header "Email Accessibility Check (WCAG 2.1)"
+
+    if [[ ! -f "$html_file" ]]; then
+        print_error "HTML file not found: $html_file"
+        return 1
+    fi
+
+    local a11y_helper="${SCRIPT_DIR}/accessibility-helper.sh"
+    if [[ -x "$a11y_helper" ]]; then
+        "$a11y_helper" email "$html_file"
+        return $?
+    fi
+
+    # Fallback: inline accessibility checks if helper is not available
+    print_warning "accessibility-helper.sh not found — running basic checks"
+
+    local issues=0
+    local warnings=0
+
+    # Check: images without alt text (WCAG 1.1.1)
+    local total_imgs
+    total_imgs=$(grep -ciE '<img ' "$html_file" 2>/dev/null || true)
+    total_imgs="${total_imgs:-0}"
+    local imgs_with_alt
+    imgs_with_alt=$(grep -ciE '<img [^>]*alt=' "$html_file" 2>/dev/null || true)
+    imgs_with_alt="${imgs_with_alt:-0}"
+    local imgs_missing_alt=$((total_imgs - imgs_with_alt))
+
+    if [[ "$imgs_missing_alt" -gt 0 ]]; then
+        print_error "$imgs_missing_alt image(s) missing alt attribute (WCAG 1.1.1)"
+        issues=$((issues + imgs_missing_alt))
+    else
+        print_success "All images have alt attributes ($total_imgs images)"
+    fi
+
+    # Check: language attribute on html tag (WCAG 3.1.1)
+    if grep -qiE '<html[^>]*lang=' "$html_file" 2>/dev/null; then
+        print_success "HTML lang attribute present"
+    else
+        print_error "Missing lang attribute on <html> tag (WCAG 3.1.1)"
+        issues=$((issues + 1))
+    fi
+
+    # Check: layout tables without role="presentation" (WCAG 1.3.1)
+    local tables
+    tables=$(grep -ciE '<table' "$html_file" 2>/dev/null || true)
+    tables="${tables:-0}"
+    local tables_with_role
+    tables_with_role=$(grep -ciE '<table[^>]*role=' "$html_file" 2>/dev/null || true)
+    tables_with_role="${tables_with_role:-0}"
+    if [[ "$tables" -gt 0 && "$tables_with_role" -eq 0 ]]; then
+        print_warning "$tables table(s) without role attribute — use role=\"presentation\" for layout tables (WCAG 1.3.1)"
+        warnings=$((warnings + 1))
+    elif [[ "$tables" -gt 0 ]]; then
+        print_success "Tables have role attributes ($tables_with_role/$tables)"
+    fi
+
+    # Check: small font sizes (WCAG 1.4.4)
+    local small_fonts
+    small_fonts=$(grep -ciE 'font-size:\s*(([0-9]|1[0-3])px)' "$html_file" 2>/dev/null || true)
+    small_fonts="${small_fonts:-0}"
+    if [[ "$small_fonts" -gt 0 ]]; then
+        print_warning "$small_fonts instance(s) of font-size below 14px (WCAG 1.4.4)"
+        warnings=$((warnings + 1))
+    else
+        print_success "No excessively small font sizes detected"
+    fi
+
+    # Check: generic link text (WCAG 2.4.4)
+    local generic_links
+    generic_links=$(grep -ciE '<a [^>]*>[[:space:]]*(click here|here|read more|learn more|more)[[:space:]]*</a>' "$html_file" 2>/dev/null || true)
+    generic_links="${generic_links:-0}"
+    if [[ "$generic_links" -gt 0 ]]; then
+        print_warning "$generic_links link(s) with generic text like 'click here' (WCAG 2.4.4)"
+        warnings=$((warnings + 1))
+    else
+        print_success "No generic link text detected"
+    fi
+
+    # Check: heading structure (WCAG 1.3.1)
+    local headings
+    headings=$(grep -ciE '<h[1-6]' "$html_file" 2>/dev/null || true)
+    headings="${headings:-0}"
+    if [[ "$headings" -eq 0 ]]; then
+        print_warning "No heading elements found (WCAG 1.3.1)"
+        warnings=$((warnings + 1))
+    else
+        print_success "$headings heading element(s) found"
+    fi
+
+    # Check: colour-only indicators (WCAG 1.4.1)
+    local color_only
+    color_only=$(grep -ciE 'color:\s*(red|green)' "$html_file" 2>/dev/null || true)
+    color_only="${color_only:-0}"
+    if [[ "$color_only" -gt 0 ]]; then
+        print_warning "$color_only instance(s) of red/green colour usage — avoid colour as sole indicator (WCAG 1.4.1)"
+        warnings=$((warnings + 1))
+    fi
+
+    # Summary
+    print_header "Accessibility Summary"
+    echo "  Errors:   $issues"
+    echo "  Warnings: $warnings"
+
+    if [[ "$issues" -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 # Run full design rendering test suite
 test_design() {
     local html_file="$1"
@@ -442,6 +556,8 @@ test_design() {
     check_dark_mode "$html_file" || true
     echo ""
     check_responsive "$html_file" || true
+    echo ""
+    check_accessibility "$html_file" || true
 
     print_header "Client Compatibility Summary"
     echo ""
@@ -1045,11 +1161,12 @@ show_help() {
     echo "$USAGE_COMMAND_OPTIONS"
     echo ""
     echo "Design Rendering Commands:"
-    echo "  test-design [html-file]       Full design rendering test suite"
+    echo "  test-design [html-file]       Full design rendering test suite (includes accessibility)"
     echo "  validate-html [html-file]     Validate HTML email structure"
     echo "  check-css [html-file]         Check CSS compatibility across clients"
     echo "  check-dark-mode [html-file]   Check dark mode compatibility"
     echo "  check-responsive [html-file]  Check responsive design"
+    echo "  check-accessibility [html]    Check email accessibility (WCAG 2.1)"
     echo "  generate-test-email [file]    Generate a test email template"
     echo ""
     echo "Delivery Testing Commands:"
@@ -1066,6 +1183,7 @@ show_help() {
     echo "  $0 test-design newsletter.html"
     echo "  $0 validate-html campaign.html"
     echo "  $0 check-dark-mode template.html"
+    echo "  $0 check-accessibility newsletter.html"
     echo "  $0 test-smtp smtp.gmail.com 587"
     echo "  $0 test-smtp-domain example.com"
     echo "  $0 analyze-headers headers.txt"
@@ -1076,6 +1194,10 @@ show_help() {
     echo "Dependencies:"
     echo "  Required: curl, dig, openssl"
     echo "  Optional: html-validate (npm), mjml (npm)"
+    echo ""
+    echo "Related:"
+    echo "  accessibility-helper.sh       WCAG accessibility auditing (web + email)"
+    echo "  email-health-check-helper.sh  DNS authentication and deliverability"
 
     return 0
 }
@@ -1121,6 +1243,13 @@ main() {
                 exit 1
             fi
             check_responsive "$arg1"
+            ;;
+        "check-accessibility"|"accessibility"|"a11y")
+            if [[ -z "$arg1" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_accessibility "$arg1"
             ;;
         "generate-test-email"|"generate")
             generate_test_email "$arg1"

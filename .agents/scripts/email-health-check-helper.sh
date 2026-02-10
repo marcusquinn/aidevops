@@ -1227,8 +1227,38 @@ check_full() {
     print_info "For MX diagnostics: https://mxtoolbox.com/SuperTool.aspx?action=mx:$domain"
     print_info "For design rendering tests: email-test-suite-helper.sh test-design <html-file>"
     print_info "For inbox placement analysis: email-test-suite-helper.sh check-placement $domain"
+    print_info "For email accessibility audit: $0 accessibility <html-file>"
     
     return 0
+}
+
+# Email accessibility check (delegates to accessibility-helper.sh)
+check_email_accessibility() {
+    local html_file="$1"
+
+    print_header "Email Accessibility Check"
+
+    if [[ ! -f "$html_file" ]]; then
+        print_error "HTML file not found: $html_file"
+        return 1
+    fi
+
+    local a11y_helper="${SCRIPT_DIR}/accessibility-helper.sh"
+    if [[ -x "$a11y_helper" ]]; then
+        "$a11y_helper" email "$html_file"
+        local exit_code=$?
+
+        print_header "Accessibility Next Steps"
+        print_info "For contrast ratio checks: accessibility-helper.sh contrast '#fg' '#bg'"
+        print_info "For design rendering tests: email-test-suite-helper.sh test-design $html_file"
+        print_info "For full web accessibility audit: accessibility-helper.sh audit <url>"
+
+        return $exit_code
+    else
+        print_error "accessibility-helper.sh not found at: $a11y_helper"
+        print_info "Run email accessibility checks manually with: accessibility-helper.sh email $html_file"
+        return 1
+    fi
 }
 
 # Guide for mail-tester.com
@@ -1286,6 +1316,7 @@ show_help() {
     echo ""
     echo "Combined Commands:"
     echo "  precheck [domain] [file]    Full precheck: infrastructure + content"
+    echo "  accessibility [html-file]   Check email HTML accessibility (WCAG 2.1)"
     echo ""
     echo "Other:"
     echo "  mail-tester                 Guide for using mail-tester.com"
@@ -1297,6 +1328,7 @@ show_help() {
     echo "  $0 precheck example.com newsletter.html # Combined check"
     echo "  $0 spf example.com"
     echo "  $0 dkim example.com google"
+    echo "  $0 accessibility newsletter.html"
     echo "  $0 check-subject newsletter.html"
     echo "  $0 check-links campaign.html"
     echo ""
@@ -1324,6 +1356,7 @@ show_help() {
     echo ""
     echo "Related:"
     echo "  email-test-suite-helper.sh  Design rendering and delivery testing"
+    echo "  accessibility-helper.sh     WCAG accessibility auditing (web + email)"
     
     return 0
 }
@@ -1473,6 +1506,15 @@ main() {
                 exit 1
             fi
             check_precheck "$arg2" "$arg3"
+            ;;
+        # Accessibility
+        "accessibility"|"a11y")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                echo "$HELP_USAGE_INFO"
+                exit 1
+            fi
+            check_email_accessibility "$arg2"
             ;;
         # Other
         "mail-tester"|"mailtester")

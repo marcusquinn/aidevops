@@ -50,6 +50,9 @@ email-health-check-helper.sh check-accessibility newsletter.html
 email-health-check-helper.sh check-links newsletter.html
 email-health-check-helper.sh check-images newsletter.html
 email-health-check-helper.sh check-spam-words newsletter.html
+
+# Email accessibility audit (WCAG 2.1)
+email-health-check-helper.sh accessibility newsletter.html
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -460,6 +463,26 @@ email-health-check-helper.sh precheck example.com newsletter.html
 # Combined:      20/25 (80%) - Grade: B
 ```
 
+## Email Accessibility
+
+The health check includes an `accessibility` command for auditing HTML email templates against WCAG 2.1 AA (email-applicable subset):
+
+```bash
+email-health-check-helper.sh accessibility newsletter.html
+```
+
+This delegates to `accessibility-helper.sh email` and checks:
+
+- Images without `alt` attributes (WCAG 1.1.1)
+- Missing `lang` attribute on `<html>` (WCAG 3.1.1)
+- Layout tables without `role="presentation"` (WCAG 1.3.1)
+- Small font sizes below 14px (WCAG 1.4.4)
+- Generic link text like "click here" (WCAG 2.4.4)
+- Heading structure (WCAG 1.3.1)
+- Colour-only information indicators (WCAG 1.4.1)
+
+For contrast ratio checks, use: `accessibility-helper.sh contrast '#fg' '#bg'`
+
 ## Related
 
 - `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
@@ -467,4 +490,6 @@ email-health-check-helper.sh precheck example.com newsletter.html
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management
 - `content/distribution/email.md` - Email content strategy and best practices
+- `tools/accessibility/accessibility.md` - WCAG accessibility reference
+- `services/accessibility/accessibility-audit.md` - Full accessibility audit service
 - `tools/browser/browser-automation.md` - For mail-tester automation

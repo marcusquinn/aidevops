@@ -63,8 +63,9 @@ Actions:
 
 | Command | Purpose |
 |---------|---------|
-| `/email-test-suite newsletter.html` | Design rendering tests |
+| `/email-test-suite newsletter.html` | Design rendering tests (includes accessibility) |
 | `/email-test-suite example.com` | Inbox placement analysis |
+| `/email-test-suite accessibility newsletter.html` | Email accessibility check only |
 | `/email-test-suite smtp mail.example.com 587` | SMTP connectivity test |
 | `/email-test-suite headers headers.txt` | Header analysis |
 | `/email-test-suite generate` | Generate test email template |
@@ -82,6 +83,11 @@ AI: Running design rendering tests on newsletter.html...
     Dark Mode: 2 warnings (hardcoded colors)
     Responsive: OK
 
+    Accessibility:
+    - PASS: All images have alt text
+    - WARN: 2 tables without role="presentation"
+    - PASS: lang attribute present
+
     Top Issues:
     1. Flexbox layout will break in Outlook
     2. Missing color-scheme meta for dark mode
@@ -91,6 +97,7 @@ AI: Running design rendering tests on newsletter.html...
     1. Replace flexbox with table-based layout
     2. Add dark mode meta tags and media queries
     3. Remove CSS animations or use as progressive enhancement
+    4. Add role="presentation" to layout tables
 ```
 
 **Inbox placement check:**
@@ -121,3 +128,4 @@ AI: Checking inbox placement factors for example.com...
 - `services/email/email-testing.md` - Full documentation
 - `services/email/email-health-check.md` - DNS authentication checks
 - `services/email/ses.md` - Amazon SES integration
+- `tools/accessibility/accessibility.md` - WCAG accessibility reference

@@ -26,10 +26,11 @@ tools:
 **Quick commands:**
 
 ```bash
-# Design rendering tests
+# Design rendering tests (includes accessibility)
 email-test-suite-helper.sh test-design newsletter.html
 email-test-suite-helper.sh check-dark-mode template.html
 email-test-suite-helper.sh check-responsive campaign.html
+email-test-suite-helper.sh check-accessibility newsletter.html
 
 # Delivery testing
 email-test-suite-helper.sh test-smtp smtp.gmail.com 587
@@ -57,6 +58,7 @@ Validate that HTML emails render correctly across email clients:
 - **CSS Compatibility** - Detects unsupported CSS (flexbox, grid, position, float, animations) that break in Outlook/Gmail/Yahoo
 - **Dark Mode** - color-scheme meta, prefers-color-scheme queries, hardcoded colors, transparent PNGs
 - **Responsive Design** - Viewport meta, fixed widths, media queries, MSO conditionals, font sizes, touch targets
+- **Accessibility** - WCAG 2.1 AA checks: alt text, lang attribute, table roles, font sizes, link text, headings, colour usage
 
 ### 2. Delivery Testing
 
@@ -73,7 +75,7 @@ Validate email delivery infrastructure:
 ### Design Rendering
 
 ```bash
-# Full design test suite (all checks)
+# Full design test suite (all checks including accessibility)
 email-test-suite-helper.sh test-design newsletter.html
 
 # Individual checks
@@ -81,6 +83,7 @@ email-test-suite-helper.sh validate-html newsletter.html
 email-test-suite-helper.sh check-css newsletter.html
 email-test-suite-helper.sh check-dark-mode newsletter.html
 email-test-suite-helper.sh check-responsive newsletter.html
+email-test-suite-helper.sh check-accessibility newsletter.html
 
 # Generate a test email template
 email-test-suite-helper.sh generate-test-email test.html
@@ -188,7 +191,7 @@ The email test suite complements `email-health-check-helper.sh`:
 # 1. Check DNS authentication
 email-health-check-helper.sh check example.com
 
-# 2. Test design rendering
+# 2. Test design rendering (includes accessibility)
 email-test-suite-helper.sh test-design newsletter.html
 
 # 3. Check delivery infrastructure
@@ -196,6 +199,9 @@ email-test-suite-helper.sh check-placement example.com
 
 # 4. Test SMTP connectivity
 email-test-suite-helper.sh test-smtp-domain example.com
+
+# 5. Standalone accessibility audit (if needed)
+email-health-check-helper.sh accessibility newsletter.html
 ```
 
 ## External Testing Services
@@ -219,4 +225,6 @@ For visual rendering tests across real email clients:
 - `services/email/email-health-check.md` - DNS authentication checks
 - `services/email/ses.md` - Amazon SES integration
 - `content/distribution/email.md` - Email content strategy
+- `tools/accessibility/accessibility.md` - WCAG accessibility reference
+- `services/accessibility/accessibility-audit.md` - Full accessibility audit service
 - `tools/browser/browser-automation.md` - For automated rendering tests
