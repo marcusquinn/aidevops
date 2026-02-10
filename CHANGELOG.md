@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add auto-update polling daemon - cron-based GitHub release checking every 10 min (t231) (#955)
+- add retry logic, credit guard, and cost estimation for Higgsfield (t236.1) (#962)
+- add ShellCheck pre-push gate to worker prompt (t234) (#961)
+- add proof-log coverage for all pr_url mutations (t235) (#960)
+- add pre-dispatch model availability check with distinct exit codes (t233) (#959)
+- centralize PR-to-task linking with single source of truth link_pr_to_task (t232) (#957)
+
+### Fixed
+
+- add missing local declarations in cmd_transition to prevent cross-contamination (#967)
+
 ## [2.109.0] - 2026-02-10
 
 ### Added
