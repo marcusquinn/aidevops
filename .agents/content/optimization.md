@@ -390,6 +390,17 @@ Actions:
 
 **Purpose**: Use analytics feedback to inform next cycle's topic selection and production priorities.
 
+**Helper**: `content-calendar-helper.sh` — SQLite-backed calendar with cadence tracking, gap analysis, and lifecycle management. See `tools/content/content-calendar.md` for full documentation.
+
+**Weekly review workflow**:
+
+```bash
+content-calendar-helper.sh cadence --weeks 1    # How did last week go?
+content-calendar-helper.sh gaps --days 7        # What's missing next week?
+content-calendar-helper.sh due --days 7         # What's coming up?
+content-calendar-helper.sh stats                # Overall health check
+```
+
 **Workflow**:
 
 1. **Weekly review**: Analyze performance of all published content from past 7 days
@@ -577,6 +588,7 @@ Cycle 3:
 
 **Automation scripts**:
 
+- `content-calendar-helper.sh`: Content calendar, cadence tracking, gap analysis, lifecycle management (see t208)
 - `analytics-helper.sh`: Pull analytics from all platforms, generate performance report
 - `variant-generator-helper.sh`: Generate 10 variants of a given piece of content
 - `seed-bracketing-helper.sh`: Automate seed testing for AI video generation (see t202)
