@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- inject mandatory read instruction into subagent stubs so rules are loaded during Task tool dispatch (t249) (#1014)
+
 ## [2.110.0] - 2026-02-10
 
 ### Added
