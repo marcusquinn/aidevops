@@ -297,6 +297,7 @@ lighthouse https://example.com \
 - **[WCAG 2.1 Guidelines](https://www.w3.org/TR/WCAG21/)**
 - **[WordPress Performance Guide](https://wordpress.org/support/article/optimization/)**
 - `tools/accessibility/accessibility.md` — Dedicated accessibility subagent (pa11y, contrast, email)
+- `services/accessibility/accessibility-audit.md` — Lighthouse accessibility category is included in performance audits
 
 ## MCP Integration
 
