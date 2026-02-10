@@ -86,7 +86,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[63]{name,purpose}:
+<!--TOON:scripts[64]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -106,6 +106,7 @@ watercrawl-helper.sh,WaterCrawl cloud API for web crawling and search
 domain-research-helper.sh,DNS intelligence (rDNS subdomains CNAMEs)
 toon-helper.sh,TOON format conversion
 sonarcloud-cli.sh,SonarCloud analysis
+quality-sweep-helper.sh,Unified quality debt sweep (SonarCloud Codacy CodeFactor findings)
 secretlint-helper.sh,Secret detection
 security-helper.sh,Security analysis (OSV Ferret history full-scan)
 beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
