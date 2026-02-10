@@ -520,6 +520,616 @@ check_reverse_dns() {
     return 0
 }
 
+# =============================================================================
+# Content-Level Checks (v3) - Inspired by EOA Campaign Precheck
+# These validate HTML email content quality before sending
+# =============================================================================
+
+# Validate that a file exists and is readable HTML
+validate_html_file() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        print_error "File not found: $file"
+        return 1
+    fi
+    if [[ ! -r "$file" ]]; then
+        print_error "File not readable: $file"
+        return 1
+    fi
+    return 0
+}
+
+# Content score tracking (separate from infrastructure score)
+CONTENT_SCORE=0
+CONTENT_MAX=0
+
+add_content_score() {
+    local points="$1"
+    local max_points="$2"
+    CONTENT_SCORE=$((CONTENT_SCORE + points))
+    CONTENT_MAX=$((CONTENT_MAX + max_points))
+    return 0
+}
+
+# Check subject line quality
+check_subject() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Subject Line Check"
+
+    local subject=""
+    # Extract from <title> tag (common pattern in HTML emails)
+    subject=$(sed -n 's/.*<[tT][iI][tT][lL][eE]>\([^<]*\).*/\1/p' "$file" 2>/dev/null | head -1 || true)
+    # Fallback: look for subject in meta tag
+    if [[ -z "$subject" ]]; then
+        subject=$(sed -n 's/.*name="subject"[[:space:]]*content="\([^"]*\)".*/\1/Ip' "$file" 2>/dev/null | head -1 || true)
+    fi
+
+    if [[ -z "$subject" ]]; then
+        print_warning "No subject line found (<title> tag or meta name=\"subject\")"
+        print_info "Add a <title> tag to your HTML email for subject line analysis"
+        add_content_score 0 2
+        return 1
+    fi
+
+    print_info "Subject: $subject"
+    local subject_len=${#subject}
+    local score=2
+
+    # Length check
+    if [[ "$subject_len" -le 50 ]]; then
+        print_success "Length: $subject_len chars (good, under 50)"
+    elif [[ "$subject_len" -le 80 ]]; then
+        print_warning "Length: $subject_len chars (may truncate on mobile, aim for under 50)"
+        score=$((score - 1))
+    else
+        print_error "Length: $subject_len chars (will truncate on most clients, max 80)"
+        score=$((score - 2))
+    fi
+
+    # ALL CAPS check
+    local upper_count
+    upper_count=$(echo "$subject" | grep -o '[A-Z]' | wc -l | tr -d ' ')
+    local alpha_count
+    alpha_count=$(echo "$subject" | grep -o '[a-zA-Z]' | wc -l | tr -d ' ')
+    if [[ "$alpha_count" -gt 0 ]]; then
+        local upper_pct=$(( (upper_count * 100) / alpha_count ))
+        if [[ "$upper_pct" -gt 50 ]]; then
+            print_warning "ALL CAPS: ${upper_pct}% uppercase (spam filter trigger)"
+            score=$((score > 0 ? score - 1 : 0))
+        fi
+    fi
+
+    # Excessive punctuation
+    local excl_count
+    excl_count=$(echo "$subject" | grep -o '!' | wc -l | tr -d ' ')
+    local quest_count
+    quest_count=$(echo "$subject" | grep -o '?' | wc -l | tr -d ' ')
+    if [[ "$excl_count" -gt 1 ]]; then
+        print_warning "Excessive exclamation marks: $excl_count (use at most 1)"
+        score=$((score > 0 ? score - 1 : 0))
+    fi
+    if [[ "$quest_count" -gt 1 ]]; then
+        print_warning "Excessive question marks: $quest_count (use at most 1)"
+    fi
+
+    # Spam trigger words in subject
+    local spam_words="free act now limited time click here buy now order now no obligation risk free winner congratulations urgent cash guarantee"
+    local subject_lower
+    subject_lower=$(echo "$subject" | tr '[:upper:]' '[:lower:]')
+    local spam_found=false
+    for word in $spam_words; do
+        if [[ "$subject_lower" == *"$word"* ]]; then
+            print_warning "Spam trigger word in subject: '$word'"
+            spam_found=true
+        fi
+    done
+    if [[ "$spam_found" == true ]]; then
+        score=$((score > 0 ? score - 1 : 0))
+    fi
+
+    add_content_score "$score" 2
+    return 0
+}
+
+# Check preheader/preview text
+check_preheader() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Preheader Text Check"
+
+    local preheader=""
+    # Look for common preheader patterns
+    # Pattern 1: hidden div/span with preheader class
+    preheader=$(sed -n 's/.*class="[^"]*preheader[^"]*"[^>]*>\([^<]*\).*/\1/Ip' "$file" 2>/dev/null | head -1 || true)
+    # Pattern 2: hidden preview text span
+    if [[ -z "$preheader" ]]; then
+        preheader=$(sed -n 's/.*class="[^"]*preview[^"]*"[^>]*>\([^<]*\).*/\1/Ip' "$file" 2>/dev/null | head -1 || true)
+    fi
+    # Pattern 3: meta description
+    if [[ -z "$preheader" ]]; then
+        preheader=$(sed -n 's/.*name="description"[[:space:]]*content="\([^"]*\)".*/\1/Ip' "$file" 2>/dev/null | head -1 || true)
+    fi
+
+    if [[ -z "$preheader" ]]; then
+        print_warning "No preheader/preview text found"
+        print_info "Add a hidden preheader element: <span class=\"preheader\">Preview text here</span>"
+        print_info "Without a preheader, email clients show the first visible text"
+        add_content_score 0 1
+        return 1
+    fi
+
+    print_info "Preheader: $preheader"
+    local preheader_len=${#preheader}
+    local score=1
+
+    # Length check
+    if [[ "$preheader_len" -ge 40 && "$preheader_len" -le 130 ]]; then
+        print_success "Length: $preheader_len chars (optimal range: 40-130)"
+    elif [[ "$preheader_len" -lt 40 ]]; then
+        print_warning "Length: $preheader_len chars (too short, aim for 40-130)"
+        score=0
+    else
+        print_warning "Length: $preheader_len chars (may truncate, aim for 40-130)"
+    fi
+
+    # Check for placeholder text
+    local preheader_lower
+    preheader_lower=$(echo "$preheader" | tr '[:upper:]' '[:lower:]')
+    local placeholders="view in browser email not displaying view this email having trouble viewing"
+    for phrase in "view in browser" "email not displaying" "view this email" "having trouble viewing"; do
+        if [[ "$preheader_lower" == *"$phrase"* ]]; then
+            print_warning "Default/placeholder preheader text detected: '$phrase'"
+            score=0
+        fi
+    done
+
+    add_content_score "$score" 1
+    return 0
+}
+
+# Check email accessibility
+check_accessibility() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Accessibility Check"
+
+    local score=2
+    local issues=0
+    local content
+    content=$(cat "$file")
+
+    # Check lang attribute
+    if echo "$content" | grep -qi '<html[^>]*lang='; then
+        print_success "Language attribute found on <html> tag"
+    else
+        print_warning "Missing lang attribute on <html> tag (e.g., <html lang=\"en\">)"
+        issues=$((issues + 1))
+    fi
+
+    # Check image alt text
+    local img_count
+    img_count=$(echo "$content" | grep -ioc '<img[[:space:]]' || echo "0")
+    local img_with_alt
+    img_with_alt=$(echo "$content" | grep -ioc '<img[^>]*alt=' || echo "0")
+    local img_no_alt=$((img_count - img_with_alt))
+    if [[ "$img_no_alt" -lt 0 ]]; then
+        img_no_alt=0
+    fi
+
+    if [[ "$img_count" -eq 0 ]]; then
+        print_info "No images found in email"
+    elif [[ "$img_no_alt" -eq 0 ]]; then
+        print_success "All $img_count images have alt attributes"
+    else
+        print_warning "$img_no_alt of $img_count images missing alt attribute"
+        issues=$((issues + 1))
+    fi
+
+    # Check for layout table roles
+    local table_count
+    table_count=$(echo "$content" | grep -ioc '<table[[:space:]]' || echo "0")
+    local table_with_role
+    table_with_role=$(echo "$content" | grep -ioc '<table[^>]*role=' || echo "0")
+
+    if [[ "$table_count" -gt 0 ]]; then
+        if [[ "$table_with_role" -eq "$table_count" ]]; then
+            print_success "All $table_count tables have role attributes"
+        else
+            local missing=$((table_count - table_with_role))
+            print_warning "$missing of $table_count tables missing role attribute (use role=\"presentation\" for layout tables)"
+            issues=$((issues + 1))
+        fi
+    fi
+
+    # Check for generic link text
+    local generic_links
+    generic_links=$(echo "$content" | grep -Eio '<a[^>]*>[^<]*(click here|read more|learn more)[^<]*</a>' | wc -l | tr -d ' ')
+    if [[ "$generic_links" -gt 0 ]]; then
+        print_warning "$generic_links links with generic text (\"click here\", \"read more\") - use descriptive link text"
+        issues=$((issues + 1))
+    fi
+
+    # Check for small font sizes
+    local small_fonts
+    small_fonts=$(echo "$content" | grep -Eio 'font-size:[[:space:]]*[0-9]+px' | sed 's/[^0-9]//g' | while read -r size; do
+        if [[ "$size" -lt 14 ]]; then
+            echo "$size"
+        fi
+    done | wc -l | tr -d ' ')
+    if [[ "$small_fonts" -gt 0 ]]; then
+        print_warning "$small_fonts instances of font-size below 14px (readability concern)"
+        issues=$((issues + 1))
+    fi
+
+    # Score based on issues
+    if [[ "$issues" -eq 0 ]]; then
+        print_success "No accessibility issues found"
+    elif [[ "$issues" -le 2 ]]; then
+        score=1
+    else
+        score=0
+    fi
+
+    add_content_score "$score" 2
+    return 0
+}
+
+# Check links in email
+check_links() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Link Validation"
+
+    local score=2
+    local content
+    content=$(cat "$file")
+
+    # Count total links
+    local link_count
+    link_count=$(echo "$content" | grep -ioc '<a[^>]*href=' || echo "0")
+    print_info "Total links found: $link_count"
+
+    # Check for empty hrefs
+    local empty_hrefs
+    empty_hrefs=$(echo "$content" | grep -Eio 'href=["'"'"'][[:space:]]*["'"'"']' | wc -l | tr -d ' ')
+    if [[ "$empty_hrefs" -gt 0 ]]; then
+        print_error "$empty_hrefs links with empty href"
+        score=$((score - 1))
+    fi
+
+    # Check for placeholder links
+    local placeholder_links
+    placeholder_links=$(echo "$content" | grep -Eio 'href=["'"'"'](#|javascript:|https?://example\.com)["'"'"']' | wc -l | tr -d ' ')
+    if [[ "$placeholder_links" -gt 0 ]]; then
+        print_warning "$placeholder_links placeholder links detected (#, javascript:, example.com)"
+        score=$((score > 0 ? score - 1 : 0))
+    fi
+
+    # Check for unsubscribe link (CAN-SPAM requirement)
+    local unsub_links
+    unsub_links=$(echo "$content" | grep -Eio '(unsubscribe|opt.out|manage.preferences|email.preferences)' | wc -l | tr -d ' ')
+    if [[ "$unsub_links" -gt 0 ]]; then
+        print_success "Unsubscribe/opt-out link found"
+    else
+        print_error "No unsubscribe link found (CAN-SPAM requirement)"
+        score=$((score > 0 ? score - 1 : 0))
+    fi
+
+    # Check link count (too many triggers spam filters)
+    if [[ "$link_count" -gt 20 ]]; then
+        print_warning "High link count: $link_count (over 20 may trigger spam filters)"
+    fi
+
+    # Report UTM parameters
+    local utm_links
+    utm_links=$(echo "$content" | grep -ioc 'utm_' || echo "0")
+    if [[ "$utm_links" -gt 0 ]]; then
+        print_info "UTM tracking parameters found in $utm_links locations"
+    fi
+
+    add_content_score "$score" 2
+    return 0
+}
+
+# Check images in email
+check_images() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Image Validation"
+
+    local score=2
+    local content
+    content=$(cat "$file")
+
+    # Count images
+    local img_count
+    img_count=$(echo "$content" | grep -ioc '<img[[:space:]]' || echo "0")
+
+    if [[ "$img_count" -eq 0 ]]; then
+        print_info "No images found in email"
+        add_content_score 2 2
+        return 0
+    fi
+
+    print_info "Total images found: $img_count"
+
+    # Check for missing alt text (total images minus images with alt)
+    local img_with_alt
+    img_with_alt=$(echo "$content" | grep -ioc '<img[^>]*alt=' || echo "0")
+    local img_no_alt=$((img_count - img_with_alt))
+    if [[ "$img_no_alt" -lt 0 ]]; then
+        img_no_alt=0
+    fi
+    if [[ "$img_no_alt" -gt 0 ]]; then
+        print_warning "$img_no_alt images missing alt attribute"
+        score=$((score - 1))
+    fi
+
+    # Check for missing dimensions (total images minus images with width/height)
+    local img_with_width
+    img_with_width=$(echo "$content" | grep -ioc '<img[^>]*width=' || echo "0")
+    local img_with_height
+    img_with_height=$(echo "$content" | grep -ioc '<img[^>]*height=' || echo "0")
+    local img_no_width=$((img_count - img_with_width))
+    local img_no_height=$((img_count - img_with_height))
+    if [[ "$img_no_width" -lt 0 ]]; then
+        img_no_width=0
+    fi
+    if [[ "$img_no_height" -lt 0 ]]; then
+        img_no_height=0
+    fi
+    if [[ "$img_no_width" -gt 0 || "$img_no_height" -gt 0 ]]; then
+        print_warning "Images missing dimensions: $img_no_width without width, $img_no_height without height"
+        print_info "Missing dimensions cause layout shift when images load"
+    fi
+
+    # Count external images
+    local external_imgs
+    external_imgs=$(echo "$content" | grep -Eio 'src=["'"'"']https?://' | wc -l | tr -d ' ')
+    print_info "External images: $external_imgs of $img_count"
+
+    # Estimate image-to-text ratio (rough heuristic)
+    local text_length
+    # Strip all HTML tags and count remaining text
+    text_length=$(echo "$content" | sed 's/<[^>]*>//g' | tr -s '[:space:]' | wc -c | tr -d ' ')
+    local total_length
+    total_length=$(echo "$content" | wc -c | tr -d ' ')
+
+    if [[ "$total_length" -gt 0 ]]; then
+        local text_pct=$(( (text_length * 100) / total_length ))
+        if [[ "$text_pct" -lt 40 ]]; then
+            print_warning "Low text-to-HTML ratio: ${text_pct}% (image-heavy emails may trigger spam filters)"
+            score=$((score > 0 ? score - 1 : 0))
+        else
+            print_info "Text-to-HTML ratio: ${text_pct}%"
+        fi
+    fi
+
+    # Check file size (Gmail clips at 102KB)
+    local file_size
+    file_size=$(wc -c < "$file" | tr -d ' ')
+    local file_size_kb=$(( file_size / 1024 ))
+    if [[ "$file_size_kb" -gt 102 ]]; then
+        print_error "Email HTML is ${file_size_kb}KB (Gmail clips emails over 102KB)"
+        score=$((score > 0 ? score - 1 : 0))
+    elif [[ "$file_size_kb" -gt 80 ]]; then
+        print_warning "Email HTML is ${file_size_kb}KB (approaching Gmail's 102KB clip limit)"
+    else
+        print_success "Email HTML size: ${file_size_kb}KB (under Gmail's 102KB limit)"
+    fi
+
+    add_content_score "$score" 2
+    return 0
+}
+
+# Check for spam trigger words in email body
+check_spam_words() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Spam Word Scan"
+
+    local content
+    # Strip HTML tags for text analysis
+    content=$(sed 's/<[^>]*>//g' "$file" | tr '[:upper:]' '[:lower:]')
+
+    local score=1
+    local high_risk_count=0
+    local medium_risk_count=0
+
+    # High-risk spam words (commonly trigger filters)
+    local high_risk_words
+    high_risk_words="act now limited time buy now order now no obligation risk free winner congratulations urgent cash guarantee double your earn money no cost"
+
+    for phrase in "act now" "limited time" "buy now" "order now" "no obligation" "risk free" "winner" "congratulations" "urgent" "cash" "guarantee" "double your" "earn money" "no cost"; do
+        local count
+        count=$(echo "$content" | grep -io "$phrase" | wc -l | tr -d ' ')
+        if [[ "$count" -gt 0 ]]; then
+            print_warning "High-risk spam phrase: '$phrase' (found $count times)"
+            high_risk_count=$((high_risk_count + count))
+        fi
+    done
+
+    # Medium-risk words
+    for phrase in "dear friend" "once in a lifetime" "as seen on" "special promotion" "100% free" "click below" "apply now" "no questions asked"; do
+        local count
+        count=$(echo "$content" | grep -io "$phrase" | wc -l | tr -d ' ')
+        if [[ "$count" -gt 0 ]]; then
+            print_info "Medium-risk spam phrase: '$phrase' (found $count times)"
+            medium_risk_count=$((medium_risk_count + count))
+        fi
+    done
+
+    if [[ "$high_risk_count" -eq 0 && "$medium_risk_count" -eq 0 ]]; then
+        print_success "No spam trigger words detected"
+    else
+        print_info "High-risk phrases: $high_risk_count, Medium-risk phrases: $medium_risk_count"
+        if [[ "$high_risk_count" -gt 3 ]]; then
+            score=0
+        fi
+    fi
+
+    add_content_score "$score" 1
+    return 0
+}
+
+# Run all content checks on an HTML email file
+check_content() {
+    local file="$1"
+    validate_html_file "$file" || return 1
+
+    print_header "Content Precheck for $file"
+    echo ""
+
+    # Reset content score
+    CONTENT_SCORE=0
+    CONTENT_MAX=0
+
+    check_subject "$file" || true
+    check_preheader "$file" || true
+    check_accessibility "$file" || true
+    check_links "$file" || true
+    check_images "$file" || true
+    check_spam_words "$file" || true
+
+    # Print content score summary
+    print_content_score_summary "$file"
+
+    return 0
+}
+
+# Print content score summary
+print_content_score_summary() {
+    local file="$1"
+
+    print_header "Content Score for $file"
+    echo ""
+
+    if [[ "$CONTENT_MAX" -eq 0 ]]; then
+        print_warning "No content checks were scored"
+        return 0
+    fi
+
+    local percentage=$(( (CONTENT_SCORE * 100) / CONTENT_MAX ))
+    local grade
+
+    if [[ "$percentage" -ge 90 ]]; then
+        grade="A"
+    elif [[ "$percentage" -ge 80 ]]; then
+        grade="B"
+    elif [[ "$percentage" -ge 70 ]]; then
+        grade="C"
+    elif [[ "$percentage" -ge 60 ]]; then
+        grade="D"
+    else
+        grade="F"
+    fi
+
+    echo "  Score: $CONTENT_SCORE / $CONTENT_MAX ($percentage%)"
+    echo "  Grade: $grade"
+    echo ""
+
+    case "$grade" in
+        "A")
+            print_success "Excellent content quality - ready to send"
+            ;;
+        "B")
+            print_success "Good content quality - minor improvements possible"
+            ;;
+        "C")
+            print_warning "Fair content quality - review flagged issues before sending"
+            ;;
+        "D")
+            print_warning "Poor content quality - significant issues need attention"
+            ;;
+        "F")
+            print_error "Critical content issues - do not send without fixing"
+            ;;
+    esac
+
+    echo ""
+    print_info "Score breakdown: Subject(2) + Preheader(1) + Accessibility(2)"
+    print_info "  + Links(2) + Images(2) + Spam Words(1) = 10 max"
+
+    return 0
+}
+
+# Combined precheck: infrastructure + content
+check_precheck() {
+    local domain="$1"
+    local file="$2"
+
+    if [[ -z "$domain" ]]; then
+        print_error "Domain required for precheck"
+        return 1
+    fi
+    if [[ -z "$file" ]]; then
+        print_error "HTML file required for precheck"
+        print_info "Usage: $0 precheck <domain> <html-file>"
+        return 1
+    fi
+
+    print_header "Full Email Precheck: $domain + $file"
+    echo ""
+
+    # Run infrastructure checks
+    check_full "$domain"
+
+    local infra_score="$HEALTH_SCORE"
+    local infra_max="$HEALTH_MAX"
+
+    # Run content checks
+    echo ""
+    check_content "$file"
+
+    # Print combined summary
+    print_header "Combined Precheck Summary"
+    echo ""
+
+    local combined_score=$((infra_score + CONTENT_SCORE))
+    local combined_max=$((infra_max + CONTENT_MAX))
+
+    if [[ "$combined_max" -eq 0 ]]; then
+        print_warning "No checks were scored"
+        return 0
+    fi
+
+    local infra_pct=0
+    if [[ "$infra_max" -gt 0 ]]; then
+        infra_pct=$(( (infra_score * 100) / infra_max ))
+    fi
+    local content_pct=0
+    if [[ "$CONTENT_MAX" -gt 0 ]]; then
+        content_pct=$(( (CONTENT_SCORE * 100) / CONTENT_MAX ))
+    fi
+    local combined_pct=$(( (combined_score * 100) / combined_max ))
+
+    local combined_grade
+    if [[ "$combined_pct" -ge 90 ]]; then
+        combined_grade="A"
+    elif [[ "$combined_pct" -ge 80 ]]; then
+        combined_grade="B"
+    elif [[ "$combined_pct" -ge 70 ]]; then
+        combined_grade="C"
+    elif [[ "$combined_pct" -ge 60 ]]; then
+        combined_grade="D"
+    else
+        combined_grade="F"
+    fi
+
+    echo "  Infrastructure: $infra_score/$infra_max ($infra_pct%)"
+    echo "  Content:        $CONTENT_SCORE/$CONTENT_MAX ($content_pct%)"
+    echo "  Combined:       $combined_score/$combined_max ($combined_pct%) - Grade: $combined_grade"
+
+    return 0
+}
+
 # Print health score summary
 print_score_summary() {
     local domain="$1"
@@ -652,8 +1262,8 @@ show_help() {
     echo "Email Health Check Helper Script"
     echo "$USAGE_COMMAND_OPTIONS"
     echo ""
-    echo "Commands:"
-    echo "  check [domain]              Full health check with score (all checks below)"
+    echo "Infrastructure Commands (domain checks):"
+    echo "  check [domain]              Full infrastructure health check with score"
     echo "  spf [domain]                Check SPF record only"
     echo "  dkim [domain] [selector]    Check DKIM record (optional: specific selector)"
     echo "  dmarc [domain]              Check DMARC record only"
@@ -664,24 +1274,45 @@ show_help() {
     echo "  tls-rpt [domain]            Check TLS-RPT (TLS failure reporting)"
     echo "  dane [domain]               Check DANE/TLSA records"
     echo "  reverse-dns [domain]        Check reverse DNS for mail server"
+    echo ""
+    echo "Content Commands (HTML email file checks):"
+    echo "  content-check [file]        Full content precheck with score (all below)"
+    echo "  check-subject [file]        Check subject line quality"
+    echo "  check-preheader [file]      Check preheader/preview text"
+    echo "  check-accessibility [file]  Check email accessibility (alt text, lang, roles)"
+    echo "  check-links [file]          Validate links (empty, placeholder, unsubscribe)"
+    echo "  check-images [file]         Validate images (alt, dimensions, size, ratio)"
+    echo "  check-spam-words [file]     Scan for spam trigger words"
+    echo ""
+    echo "Combined Commands:"
+    echo "  precheck [domain] [file]    Full precheck: infrastructure + content"
+    echo ""
+    echo "Other:"
     echo "  mail-tester                 Guide for using mail-tester.com"
     echo "  help                        $HELP_SHOW_MESSAGE"
     echo ""
     echo "Examples:"
-    echo "  $0 check example.com"
+    echo "  $0 check example.com                    # Infrastructure check"
+    echo "  $0 content-check newsletter.html        # Content check"
+    echo "  $0 precheck example.com newsletter.html # Combined check"
     echo "  $0 spf example.com"
     echo "  $0 dkim example.com google"
-    echo "  $0 dmarc example.com"
-    echo "  $0 bimi example.com"
-    echo "  $0 mta-sts example.com"
+    echo "  $0 check-subject newsletter.html"
+    echo "  $0 check-links campaign.html"
     echo ""
-    echo "Health Score (out of 15):"
+    echo "Infrastructure Score (out of 15):"
     echo "  SPF(2) + DKIM(2) + DMARC(3) + MX(1) + Blacklist(2)"
     echo "  + BIMI(1) + MTA-STS(1) + TLS-RPT(1) + DANE(1) + rDNS(1)"
+    echo ""
+    echo "Content Score (out of 10):"
+    echo "  Subject(2) + Preheader(1) + Accessibility(2)"
+    echo "  + Links(2) + Images(2) + Spam Words(1)"
+    echo ""
+    echo "Combined Score (out of 25):"
     echo "  Grade: A(90%+) B(80%+) C(70%+) D(60%+) F(<60%)"
     echo ""
     echo "Dependencies:"
-    echo "  Required: dig (usually pre-installed)"
+    echo "  Required: dig (usually pre-installed), sed, grep"
     echo "  Optional: checkdmarc (pip install checkdmarc), curl (for MTA-STS)"
     echo ""
     echo "Common DKIM selectors by provider:"
@@ -700,88 +1331,150 @@ show_help() {
 # Main function
 main() {
     local command="${1:-help}"
-    local domain="${2:-}"
-    local selector="${3:-}"
+    local arg2="${2:-}"
+    local arg3="${3:-}"
     
     case "$command" in
+        # Infrastructure commands
         "check"|"full")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 echo "$HELP_USAGE_INFO"
                 exit 1
             fi
-            check_full "$domain"
+            check_full "$arg2"
             ;;
         "spf")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_spf "$domain"
+            check_spf "$arg2"
             ;;
         "dkim")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_dkim "$domain" "$selector"
+            check_dkim "$arg2" "$arg3"
             ;;
         "dmarc")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_dmarc "$domain"
+            check_dmarc "$arg2"
             ;;
         "mx")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_mx "$domain"
+            check_mx "$arg2"
             ;;
         "blacklist"|"bl")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_blacklist "$domain"
+            check_blacklist "$arg2"
             ;;
         "bimi")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_bimi "$domain"
+            check_bimi "$arg2"
             ;;
         "mta-sts"|"mtasts")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_mta_sts "$domain"
+            check_mta_sts "$arg2"
             ;;
         "tls-rpt"|"tlsrpt")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_tls_rpt "$domain"
+            check_tls_rpt "$arg2"
             ;;
         "dane"|"tlsa")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_dane "$domain"
+            check_dane "$arg2"
             ;;
         "reverse-dns"|"rdns"|"ptr")
-            if [[ -z "$domain" ]]; then
+            if [[ -z "$arg2" ]]; then
                 print_error "Domain required"
                 exit 1
             fi
-            check_reverse_dns "$domain"
+            check_reverse_dns "$arg2"
             ;;
+        # Content commands
+        "content-check"|"content")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                echo "Usage: $0 content-check <html-file>"
+                exit 1
+            fi
+            check_content "$arg2"
+            ;;
+        "check-subject")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_subject "$arg2"
+            ;;
+        "check-preheader")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_preheader "$arg2"
+            ;;
+        "check-accessibility"|"check-a11y")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_accessibility "$arg2"
+            ;;
+        "check-links")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_links "$arg2"
+            ;;
+        "check-images"|"check-imgs")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_images "$arg2"
+            ;;
+        "check-spam-words"|"check-spam")
+            if [[ -z "$arg2" ]]; then
+                print_error "HTML file required"
+                exit 1
+            fi
+            check_spam_words "$arg2"
+            ;;
+        # Combined commands
+        "precheck")
+            if [[ -z "$arg2" ]]; then
+                print_error "Domain and HTML file required"
+                echo "Usage: $0 precheck <domain> <html-file>"
+                exit 1
+            fi
+            check_precheck "$arg2" "$arg3"
+            ;;
+        # Other
         "mail-tester"|"mailtester")
             mail_tester_guide
             ;;
@@ -789,9 +1482,11 @@ main() {
             show_help
             ;;
         *)
-            # Assume first arg is domain if it looks like one
-            if [[ "$command" == *"."* ]]; then
+            # Assume first arg is domain if it looks like one (contains dot, no file extension)
+            if [[ "$command" == *"."* && ! -f "$command" ]]; then
                 check_full "$command"
+            elif [[ -f "$command" ]]; then
+                check_content "$command"
             else
                 print_error "Unknown command: $command"
                 echo "$HELP_USAGE_INFO"
