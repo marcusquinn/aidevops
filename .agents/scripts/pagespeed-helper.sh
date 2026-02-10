@@ -247,6 +247,100 @@ parse_lighthouse_json() {
     print_metric "PWA: $(format_score "$pwa")"
     echo
 
+    # Surface accessibility detail as first-class output
+    parse_accessibility_results "$report_file"
+
+    return 0
+}
+
+# Parse Lighthouse accessibility results as first-class output
+parse_accessibility_results() {
+    local report_file="$1"
+
+    print_header "Accessibility Audit Detail"
+
+    # Extract accessibility score
+    local a11y_score
+    a11y_score=$(jq -r '.categories.accessibility.score // "N/A"' "$report_file")
+
+    if [[ "$a11y_score" == "N/A" || "$a11y_score" == "null" ]]; then
+        print_warning "No accessibility data found in report"
+        return 0
+    fi
+
+    print_metric "Accessibility Score: $(format_score "$a11y_score")"
+    echo
+
+    # Extract failed accessibility audits (score < 1 and not null, not informative)
+    local failed_audits
+    failed_audits=$(jq -r '
+        [.categories.accessibility.auditRefs[]?.id] as $a11y_ids |
+        [.audits | to_entries[] |
+            select(.key as $k | $a11y_ids | index($k)) |
+            select(.value.score != null and .value.score < 1 and .value.scoreDisplayMode != "informative") |
+            {
+                id: .key,
+                title: .value.title,
+                description: (.value.description | split(". ")[0]),
+                score: .value.score
+            }
+        ] | sort_by(.score)
+    ' "$report_file")
+
+    local failed_count
+    failed_count=$(echo "$failed_audits" | jq 'length' || echo "0")
+
+    if [[ "$failed_count" -gt 0 ]]; then
+        print_header "Failed Accessibility Audits ($failed_count)"
+        echo "$failed_audits" | jq -r '.[] | "  FAIL \(.title) (score: \(.score // 0))\n       \(.description)"'
+        echo
+    else
+        print_success "All accessibility audits passed"
+    fi
+
+    # Count passing audits
+    local passing_count
+    passing_count=$(jq -r '
+        [.categories.accessibility.auditRefs[]?.id] as $a11y_ids |
+        [.audits | to_entries[] |
+            select(.key as $k | $a11y_ids | index($k)) |
+            select(.value.score == 1)
+        ] | length
+    ' "$report_file" || echo "0")
+
+    print_info "Passing audits: $passing_count | Failed: $failed_count"
+
+    return 0
+}
+
+# Run Lighthouse accessibility-focused audit
+run_accessibility_audit() {
+    local url="$1"
+
+    print_header "Running Lighthouse Accessibility Audit"
+    print_info "URL: $url"
+
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    local report_file="$REPORTS_DIR/lighthouse_a11y_${timestamp}.json"
+
+    print_info "Running accessibility-focused Lighthouse audit..."
+
+    # Run Lighthouse with accessibility category only for speed
+    if lighthouse "$url" \
+        --only-categories=accessibility \
+        --output=json \
+        --output-path="$report_file" \
+        --chrome-flags="--headless --no-sandbox" \
+        --quiet; then
+
+        print_success "Accessibility report saved: $report_file"
+        parse_accessibility_results "$report_file"
+    else
+        print_error "Lighthouse accessibility audit failed"
+        return 1
+    fi
+
     return 0
 }
 
@@ -375,6 +469,15 @@ main() {
             check_prerequisites
             run_lighthouse_audit "$account_name" "${3:-html}"
             ;;
+        "accessibility"|"a11y")
+            if [[ -z "${2:-}" ]]; then
+                print_error "Please provide a URL for accessibility audit"
+                print_info "Usage: $0 accessibility <url>"
+                exit 1
+            fi
+            check_prerequisites
+            run_accessibility_audit "$account_name"
+            ;;
         "wordpress"|"wp")
             if [[ -z "${2:-}" ]]; then
                 print_error "Please provide a WordPress URL to analyze"
@@ -412,6 +515,7 @@ main() {
             echo "Commands:"
             echo "  audit <url>              - Run PageSpeed Insights for desktop & mobile"
             echo "  lighthouse <url> [fmt]   - Run Lighthouse audit (html/json/csv)"
+            echo "  accessibility <url>      - Lighthouse accessibility score + failed audits"
             echo "  wordpress <url>          - WordPress-specific performance analysis"
             echo "  bulk <urls-file>         - Audit multiple URLs from file"
             echo "  report <report.json>     - Generate actionable report from JSON"
@@ -424,6 +528,7 @@ main() {
             echo "Examples:"
             echo "  $0 audit https://example.com"
             echo "  $0 lighthouse https://example.com json"
+            echo "  $0 accessibility https://example.com"
             echo "  $0 wordpress https://myblog.com"
             echo "  $0 bulk websites.txt"
             echo ""
@@ -434,5 +539,3 @@ main() {
 }
 
 main "$@"
-
-return 0

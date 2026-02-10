@@ -19,23 +19,26 @@ tools:
 ## Quick Reference
 
 - **Helper**: `.agents/scripts/pagespeed-helper.sh`
-- **Commands**: `audit [url]` | `lighthouse [url] [format]` | `wordpress [url]` | `bulk [file]` | `report [json]`
+- **Commands**: `audit [url]` | `lighthouse [url] [format]` | `accessibility [url]` | `wordpress [url]` | `bulk [file]` | `report [json]`
 - **Install**: `brew install lighthouse jq bc` or `.agents/scripts/pagespeed-helper.sh install-deps`
 - **API Key**: Optional but recommended - https://console.cloud.google.com/ → Enable PageSpeed Insights API
 - **Core Web Vitals**: FCP (<1.8s), LCP (<2.5s), CLS (<0.1), FID (<100ms)
+- **Accessibility**: Lighthouse accessibility score + failed audits (WCAG-mapped) — use `accessibility [url]`
 - **Reports**: `~/.ai-devops/reports/pagespeed/`
 - **Rate Limits**: 25 req/100s (no key), 25,000/day (with key)
 - **WordPress**: Plugin audits, image optimization, caching recommendations
+- **Deep a11y testing**: See `tools/accessibility/accessibility.md` for pa11y, contrast calculator, email checks
 <!-- AI-CONTEXT-END -->
 
 Comprehensive website performance auditing and optimization guidance for AI-assisted DevOps.
 
 ## Overview
 
-This integration provides your AI assistant with powerful website performance auditing capabilities using:
+This integration provides your AI assistant with powerful website performance and accessibility auditing capabilities using:
 
 - **Google PageSpeed Insights API**: Real-time performance metrics and optimization suggestions
 - **Lighthouse CLI**: Comprehensive auditing for performance, accessibility, SEO, and best practices
+- **Lighthouse Accessibility**: First-class accessibility scoring with failed audit extraction and WCAG mapping
 - **WordPress-specific analysis**: Tailored recommendations for WordPress websites
 - **Bulk auditing**: Analyze multiple websites efficiently
 - **MCP Integration**: Real-time performance data access for AI assistants
@@ -174,6 +177,55 @@ actionable recommendations focusing on Core Web Vitals and user experience.
 - **Speed Index**: How quickly content is visually displayed
 - **Total Blocking Time**: Time when main thread is blocked
 
+## Lighthouse Accessibility Output
+
+Lighthouse accessibility is surfaced as first-class output alongside performance. Every `lighthouse` and `accessibility` command extracts the accessibility score, failed audits, and WCAG-mapped issues.
+
+### Accessibility Audit
+
+```bash
+# Dedicated accessibility audit (extracts score + failed audits from Lighthouse)
+./.agents/scripts/pagespeed-helper.sh accessibility https://example.com
+
+# Lighthouse JSON also includes accessibility detail automatically
+./.agents/scripts/pagespeed-helper.sh lighthouse https://example.com json
+```
+
+### Output Format
+
+The accessibility output includes:
+
+- **Accessibility score** (0-100%) with color-coded pass/fail
+- **Failed audits** grouped by WCAG category:
+  - Contrast (WCAG 1.4.3 / 1.4.6)
+  - ARIA attributes (WCAG 4.1.2)
+  - Labels and names (WCAG 1.1.1, 1.3.1, 2.4.6)
+  - Keyboard and focus (WCAG 2.1.1, 2.4.7)
+  - Structure and semantics (WCAG 1.3.1, 2.4.1)
+- **Passing audit count** for quick health check
+
+### Interpreting Scores
+
+| Score | Rating | Action |
+|-------|--------|--------|
+| 90-100 | Good | Minor issues only, address at next opportunity |
+| 50-89 | Needs improvement | Fix failed audits before next release |
+| 0-49 | Poor | Critical accessibility barriers — fix immediately |
+
+### Relationship to Dedicated Accessibility Testing
+
+This integration provides Lighthouse-based accessibility scoring as part of performance workflows. For deeper testing, use the dedicated accessibility subagent:
+
+| Need | Tool |
+|------|------|
+| Quick score + top failures | `pagespeed-helper.sh accessibility [url]` |
+| WCAG-specific violation report | `accessibility-helper.sh pa11y [url]` |
+| Contrast ratio checking | `accessibility-helper.sh contrast [fg] [bg]` |
+| Email HTML accessibility | `accessibility-helper.sh email [file]` |
+| Full audit (Lighthouse + pa11y) | `accessibility-helper.sh audit [url]` |
+
+See `tools/accessibility/accessibility.md` for the full accessibility subagent.
+
 ## WordPress-Specific Optimizations
 
 ### **Common Issues & Solutions**
@@ -242,7 +294,9 @@ lighthouse https://example.com \
 - **[Google PageSpeed Insights](https://pagespeed.web.dev/)**
 - **[Lighthouse Documentation](https://developers.google.com/web/tools/lighthouse)**
 - **[Core Web Vitals](https://web.dev/vitals/)**
+- **[WCAG 2.1 Guidelines](https://www.w3.org/TR/WCAG21/)**
 - **[WordPress Performance Guide](https://wordpress.org/support/article/optimization/)**
+- `tools/accessibility/accessibility.md` — Dedicated accessibility subagent (pa11y, contrast, email)
 
 ## MCP Integration
 
@@ -252,9 +306,10 @@ The PageSpeed MCP server provides real-time access to performance data for AI as
 {
   "pagespeed_audit": "Audit website performance",
   "lighthouse_analysis": "Comprehensive website analysis",
+  "accessibility_audit": "Lighthouse accessibility score and failed audits",
   "performance_metrics": "Get Core Web Vitals",
   "optimization_recommendations": "Get actionable improvements"
 }
 ```
 
-This enables AI assistants to provide immediate, data-driven performance optimization guidance.
+This enables AI assistants to provide immediate, data-driven performance and accessibility guidance.
