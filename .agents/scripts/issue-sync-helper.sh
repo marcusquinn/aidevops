@@ -1186,6 +1186,41 @@ task_has_completion_evidence() {
     return 1
 }
 
+# Find the closing/merged PR for a completed task (t220)
+# Outputs "number|url" on stdout if found, empty string if not.
+# Searches: task line notes, then GitHub merged PRs by title.
+# Used by cmd_close() to include an auditable PR reference when closing issues.
+find_closing_pr() {
+    local task_line="$1"
+    local task_id="$2"
+    local repo_slug="$3"
+
+    # Check 1: Extract PR number from task line notes (e.g., "PR #123 merged")
+    local inline_pr
+    inline_pr=$(echo "$task_line" | grep -oiE 'PR #[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "")
+    if [[ -n "$inline_pr" ]]; then
+        echo "${inline_pr}|https://github.com/${repo_slug}/pull/${inline_pr}"
+        return 0
+    fi
+
+    # Check 2: Search GitHub for a merged PR with this task ID in the title
+    if command -v gh &>/dev/null && [[ -n "$repo_slug" ]]; then
+        local pr_json
+        pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$task_id in:title" --limit 1 --json number,url 2>/dev/null || echo "[]")
+        local pr_number
+        pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
+        local pr_url
+        pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty' 2>/dev/null || echo "")
+        if [[ -n "$pr_number" && "$pr_number" != "null" ]]; then
+            echo "${pr_number}|${pr_url}"
+            return 0
+        fi
+    fi
+
+    echo ""
+    return 1
+}
+
 # Close: close GitHub issue when TODO.md task is completed
 # Guard (t163): requires merged PR or verified: field before closing
 # Fallback (t179.1): search by task ID in issue title when ref:GH# doesn't match
@@ -1282,14 +1317,14 @@ cmd_close() {
         fi
 
         # Guard: verify task has completion evidence (merged PR or verified: field)
-        if [[ "$FORCE_CLOSE" != "true" ]]; then
-            # Check the full task block (task line + all subtasks/notes)
-            local task_with_notes
-            task_with_notes=$(extract_task_block "$task_id" "$todo_file")
-            if [[ -z "$task_with_notes" ]]; then
-                task_with_notes="$task_line"
-            fi
+        # Also find the closing PR for the auditable close comment (t220)
+        local task_with_notes
+        task_with_notes=$(extract_task_block "$task_id" "$todo_file")
+        if [[ -z "$task_with_notes" ]]; then
+            task_with_notes="$task_line"
+        fi
 
+        if [[ "$FORCE_CLOSE" != "true" ]]; then
             if ! task_has_completion_evidence "$task_with_notes" "$task_id" "$repo_slug"; then
                 print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field found"
                 log_verbose "  To force close: FORCE_CLOSE=true issue-sync-helper.sh close $task_id"
@@ -1297,6 +1332,29 @@ cmd_close() {
                 skipped=$((skipped + 1))
                 continue
             fi
+        fi
+
+        # Find the closing PR for an auditable reference in the close comment (t220)
+        local closing_pr_info closing_pr_number closing_pr_url
+        closing_pr_info=$(find_closing_pr "$task_with_notes" "$task_id" "$repo_slug" 2>/dev/null || echo "")
+        closing_pr_number=""
+        closing_pr_url=""
+        if [[ -n "$closing_pr_info" ]]; then
+            closing_pr_number="${closing_pr_info%%|*}"
+            closing_pr_url="${closing_pr_info#*|}"
+        fi
+
+        # Build close comment with PR reference for auditability (t220)
+        local close_comment="Completed. Task $task_id marked done in TODO.md."
+        if [[ -n "$closing_pr_number" ]]; then
+            close_comment="Completed via PR #${closing_pr_number}. Task $task_id marked done in TODO.md."
+            if [[ -n "$closing_pr_url" ]]; then
+                close_comment="Completed via [PR #${closing_pr_number}](${closing_pr_url}). Task $task_id marked done in TODO.md."
+            fi
+        elif echo "$task_with_notes" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+            local verified_date
+            verified_date=$(echo "$task_with_notes" | grep -oE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/verified://')
+            close_comment="Completed (verified: $verified_date). Task $task_id marked done in TODO.md."
         fi
 
         # Check if issue is already closed
@@ -1309,11 +1367,14 @@ cmd_close() {
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_info "[DRY-RUN] Would close #$issue_number ($task_id)"
+            if [[ -n "$closing_pr_number" ]]; then
+                print_info "  Closing PR: #$closing_pr_number"
+            fi
             closed=$((closed + 1))
             continue
         fi
 
-        if gh issue close "$issue_number" --repo "$repo_slug" --comment "Completed. Task $task_id marked done in TODO.md." 2>/dev/null; then
+        if gh issue close "$issue_number" --repo "$repo_slug" --comment "$close_comment" 2>/dev/null; then
             # Update status label to status:done (t212)
             gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
             gh issue edit "$issue_number" --repo "$repo_slug" \
