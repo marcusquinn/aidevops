@@ -5796,6 +5796,445 @@ async function runSelfTests() {
   }
 }
 
+
+// --- Batch Operations with Concurrency Control ---
+
+// Load a batch manifest from a JSON file.
+// Manifest format:
+// {
+//   "jobs": [
+//     { "prompt": "...", "model": "soul", "aspect": "16:9", ... },
+//     { "prompt": "...", "imageFile": "/path/to/img.jpg", ... }
+//   ],
+//   "defaults": { "model": "soul", "aspect": "9:16" }
+// }
+// Or a simple array of prompts: ["prompt 1", "prompt 2", ...]
+function loadBatchManifest(filePath) {
+  if (!existsSync(filePath)) {
+    throw new Error(`Batch manifest not found: ${filePath}`);
+  }
+  const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+
+  // Simple array of strings → convert to job objects
+  if (Array.isArray(raw)) {
+    return { jobs: raw.map(item => typeof item === 'string' ? { prompt: item } : item), defaults: {} };
+  }
+
+  // Object with jobs array
+  if (raw.jobs && Array.isArray(raw.jobs)) {
+    return { jobs: raw.jobs, defaults: raw.defaults || {} };
+  }
+
+  throw new Error('Invalid manifest format. Expected { "jobs": [...] } or ["prompt1", "prompt2", ...]');
+}
+
+// Save batch progress state for resume capability
+function saveBatchState(outputDir, state) {
+  writeFileSync(join(outputDir, 'batch-state.json'), JSON.stringify(state, null, 2));
+}
+
+function loadBatchState(outputDir) {
+  const stateFile = join(outputDir, 'batch-state.json');
+  if (existsSync(stateFile)) {
+    return JSON.parse(readFileSync(stateFile, 'utf-8'));
+  }
+  return null;
+}
+
+// Generic concurrency limiter — runs async tasks with a max concurrency limit.
+// Each task is a function returning a Promise.
+// Returns results in the same order as the input tasks.
+async function runWithConcurrency(tasks, concurrency) {
+  const results = new Array(tasks.length).fill(null);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const idx = nextIndex++;
+      try {
+        results[idx] = await tasks[idx]();
+      } catch (error) {
+        results[idx] = { success: false, error: error.message, index: idx };
+      }
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < Math.min(concurrency, tasks.length); i++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  return results;
+}
+
+// Batch Image Generation
+// Processes multiple image prompts with concurrency control.
+// Concurrency for images means running N sequential browser sessions in parallel.
+// Default concurrency: 2 (Higgsfield can handle 2-3 concurrent image generations).
+async function batchImage(options = {}) {
+  const manifestPath = options.batchFile;
+  if (!manifestPath) {
+    console.error('ERROR: --batch-file is required for batch-image');
+    console.error('Usage: batch-image --batch-file manifest.json [--concurrency 2] [--output dir]');
+    process.exit(1);
+  }
+
+  const { jobs, defaults } = loadBatchManifest(manifestPath);
+  const concurrency = options.concurrency || 2;
+  const outputDir = options.output || join(DOWNLOAD_DIR, `batch-image-${Date.now()}`);
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+  console.log(`\n=== Batch Image Generation ===`);
+  console.log(`Jobs: ${jobs.length}`);
+  console.log(`Concurrency: ${concurrency}`);
+  console.log(`Output: ${outputDir}`);
+  console.log(`Defaults: ${JSON.stringify(defaults)}`);
+
+  // Check for resume state
+  let completedIndices = new Set();
+  if (options.resume) {
+    const prevState = loadBatchState(outputDir);
+    if (prevState?.completed) {
+      completedIndices = new Set(prevState.completed);
+      console.log(`Resuming: ${completedIndices.size}/${jobs.length} already completed`);
+    }
+  }
+
+  const startTime = Date.now();
+  const batchState = {
+    type: 'batch-image',
+    total: jobs.length,
+    concurrency,
+    completed: [...completedIndices],
+    failed: [],
+    results: [],
+    startTime: new Date().toISOString(),
+  };
+
+  // Create tasks for each job
+  const tasks = jobs.map((job, index) => async () => {
+    if (completedIndices.has(index)) {
+      console.log(`[${index + 1}/${jobs.length}] Skipping (already completed)`);
+      return { success: true, skipped: true, index };
+    }
+
+    const jobOptions = {
+      ...options,
+      ...defaults,
+      ...job,
+      output: outputDir,
+      // Don't pass batch-file to individual jobs
+      batchFile: undefined,
+    };
+
+    console.log(`[${index + 1}/${jobs.length}] Generating: "${(job.prompt || '').substring(0, 60)}..." (model: ${jobOptions.model || 'soul'})`);
+
+    try {
+      const result = await withRetry(
+        () => generateImage(jobOptions),
+        { maxRetries: 1, baseDelay: 5000, label: `batch-image[${index}]` }
+      );
+
+      batchState.completed.push(index);
+      saveBatchState(outputDir, batchState);
+      console.log(`[${index + 1}/${jobs.length}] Complete`);
+      return { success: true, index, ...result };
+    } catch (error) {
+      batchState.failed.push({ index, error: error.message });
+      saveBatchState(outputDir, batchState);
+      console.error(`[${index + 1}/${jobs.length}] Failed: ${error.message}`);
+      return { success: false, index, error: error.message };
+    }
+  });
+
+  // Run with concurrency control
+  const results = await runWithConcurrency(tasks, concurrency);
+
+  // Summary
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+  const succeeded = results.filter(r => r?.success).length;
+  const failed = results.filter(r => r && !r.success).length;
+
+  batchState.elapsed = `${elapsed}s`;
+  batchState.results = results.map(r => ({ success: r?.success, index: r?.index }));
+  saveBatchState(outputDir, batchState);
+
+  console.log(`\n=== Batch Image Complete ===`);
+  console.log(`Duration: ${elapsed}s`);
+  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobs.length} total`);
+  console.log(`Output: ${outputDir}`);
+
+  if (failed > 0) {
+    console.log(`\nFailed jobs:`);
+    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
+    console.log(`\nTo retry failed jobs: add --resume flag`);
+  }
+
+  return batchState;
+}
+
+// Batch Video Generation
+// Uses the parallel submission pattern from pipeline():
+// 1. Submit all video jobs sequentially in one browser session (fast, ~30s each)
+// 2. Poll History tab for all prompts simultaneously
+// 3. Download all completed videos via API interception
+// Concurrency here controls how many browser sessions run in parallel for submission.
+// For video, the bottleneck is generation time (4-10 min), not submission.
+// So we submit all jobs first, then poll for all results together.
+async function batchVideo(options = {}) {
+  const manifestPath = options.batchFile;
+  if (!manifestPath) {
+    console.error('ERROR: --batch-file is required for batch-video');
+    console.error('Usage: batch-video --batch-file manifest.json [--concurrency 3] [--output dir]');
+    process.exit(1);
+  }
+
+  const { jobs, defaults } = loadBatchManifest(manifestPath);
+  const concurrency = options.concurrency || 3; // How many to submit before polling
+  const outputDir = options.output || join(DOWNLOAD_DIR, `batch-video-${Date.now()}`);
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+  console.log(`\n=== Batch Video Generation ===`);
+  console.log(`Jobs: ${jobs.length}`);
+  console.log(`Concurrency (submit batch size): ${concurrency}`);
+  console.log(`Output: ${outputDir}`);
+
+  // Check for resume state
+  let completedIndices = new Set();
+  if (options.resume) {
+    const prevState = loadBatchState(outputDir);
+    if (prevState?.completed) {
+      completedIndices = new Set(prevState.completed);
+      console.log(`Resuming: ${completedIndices.size}/${jobs.length} already completed`);
+    }
+  }
+
+  const startTime = Date.now();
+  const batchState = {
+    type: 'batch-video',
+    total: jobs.length,
+    concurrency,
+    completed: [...completedIndices],
+    failed: [],
+    results: [],
+    startTime: new Date().toISOString(),
+  };
+
+  // Filter out already-completed jobs
+  const pendingJobs = jobs
+    .map((job, index) => ({ job, index }))
+    .filter(({ index }) => !completedIndices.has(index));
+
+  if (pendingJobs.length === 0) {
+    console.log('All jobs already completed!');
+    return batchState;
+  }
+
+  // Process in batches of `concurrency` — submit a batch, poll for results, repeat
+  for (let batchStart = 0; batchStart < pendingJobs.length; batchStart += concurrency) {
+    const batch = pendingJobs.slice(batchStart, batchStart + concurrency);
+    const batchNum = Math.floor(batchStart / concurrency) + 1;
+    const totalBatches = Math.ceil(pendingJobs.length / concurrency);
+
+    console.log(`\n--- Batch ${batchNum}/${totalBatches}: submitting ${batch.length} video job(s) ---`);
+
+    const { browser, context, page } = await launchBrowser(options);
+
+    try {
+      // Phase 1: Submit all jobs in this batch
+      const submittedJobs = [];
+      for (const { job, index } of batch) {
+        const jobOptions = { ...defaults, ...job };
+        const model = jobOptions.model || 'kling-2.6';
+
+        console.log(`  Submitting [${index + 1}/${jobs.length}]: "${(job.prompt || '').substring(0, 50)}..." (model: ${model})`);
+
+        const promptPrefix = await submitVideoJobOnPage(page, {
+          prompt: jobOptions.prompt || '',
+          imageFile: jobOptions.imageFile,
+          model,
+          duration: String(jobOptions.duration || 5),
+        });
+
+        if (promptPrefix) {
+          submittedJobs.push({
+            sceneIndex: index,
+            promptPrefix,
+            model,
+          });
+        } else {
+          batchState.failed.push({ index, error: 'Failed to submit job' });
+        }
+      }
+
+      // Phase 2: Poll for all submitted jobs
+      if (submittedJobs.length > 0) {
+        console.log(`\n  Polling for ${submittedJobs.length} video(s)...`);
+        const timeout = options.timeout || 600000;
+        const videoResults = await pollAndDownloadVideos(page, submittedJobs, outputDir, timeout);
+
+        for (const { index } of batch) {
+          if (videoResults.has(index)) {
+            batchState.completed.push(index);
+            console.log(`  [${index + 1}/${jobs.length}] Downloaded: ${videoResults.get(index)}`);
+          } else if (!batchState.failed.some(f => f.index === index)) {
+            batchState.failed.push({ index, error: 'Generation timed out or download failed' });
+          }
+        }
+      }
+
+      saveBatchState(outputDir, batchState);
+      await context.storageState({ path: STATE_FILE });
+    } catch (error) {
+      console.error(`Batch ${batchNum} error: ${error.message}`);
+      for (const { index } of batch) {
+        if (!batchState.completed.includes(index) && !batchState.failed.some(f => f.index === index)) {
+          batchState.failed.push({ index, error: error.message });
+        }
+      }
+      saveBatchState(outputDir, batchState);
+    }
+
+    try { await browser.close(); } catch {}
+  }
+
+  // Summary
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+  batchState.elapsed = `${elapsed}s`;
+  batchState.results = jobs.map((_, i) => ({
+    index: i,
+    success: batchState.completed.includes(i),
+  }));
+  saveBatchState(outputDir, batchState);
+
+  const succeeded = batchState.completed.length;
+  const failed = batchState.failed.length;
+
+  console.log(`\n=== Batch Video Complete ===`);
+  console.log(`Duration: ${elapsed}s`);
+  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobs.length} total`);
+  console.log(`Output: ${outputDir}`);
+
+  if (failed > 0) {
+    console.log(`\nFailed jobs:`);
+    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
+    console.log(`\nTo retry failed jobs: add --resume flag`);
+  }
+
+  return batchState;
+}
+
+// Batch Lipsync Generation
+// Processes multiple lipsync jobs with concurrency control.
+// Each job needs: text (prompt), imageFile (character face).
+// Concurrency: sequential browser sessions (lipsync is slower, default 1).
+async function batchLipsync(options = {}) {
+  const manifestPath = options.batchFile;
+  if (!manifestPath) {
+    console.error('ERROR: --batch-file is required for batch-lipsync');
+    console.error('Usage: batch-lipsync --batch-file manifest.json [--concurrency 1] [--output dir]');
+    process.exit(1);
+  }
+
+  const { jobs, defaults } = loadBatchManifest(manifestPath);
+  const concurrency = options.concurrency || 1; // Lipsync is slow, default sequential
+  const outputDir = options.output || join(DOWNLOAD_DIR, `batch-lipsync-${Date.now()}`);
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+  console.log(`\n=== Batch Lipsync Generation ===`);
+  console.log(`Jobs: ${jobs.length}`);
+  console.log(`Concurrency: ${concurrency}`);
+  console.log(`Output: ${outputDir}`);
+
+  // Check for resume state
+  let completedIndices = new Set();
+  if (options.resume) {
+    const prevState = loadBatchState(outputDir);
+    if (prevState?.completed) {
+      completedIndices = new Set(prevState.completed);
+      console.log(`Resuming: ${completedIndices.size}/${jobs.length} already completed`);
+    }
+  }
+
+  const startTime = Date.now();
+  const batchState = {
+    type: 'batch-lipsync',
+    total: jobs.length,
+    concurrency,
+    completed: [...completedIndices],
+    failed: [],
+    results: [],
+    startTime: new Date().toISOString(),
+  };
+
+  // Create tasks for each job
+  const tasks = jobs.map((job, index) => async () => {
+    if (completedIndices.has(index)) {
+      console.log(`[${index + 1}/${jobs.length}] Skipping (already completed)`);
+      return { success: true, skipped: true, index };
+    }
+
+    const jobOptions = {
+      ...options,
+      ...defaults,
+      ...job,
+      output: outputDir,
+      batchFile: undefined,
+    };
+
+    if (!jobOptions.imageFile) {
+      const msg = `Job ${index + 1} missing imageFile (character face required for lipsync)`;
+      console.error(`[${index + 1}/${jobs.length}] ${msg}`);
+      batchState.failed.push({ index, error: msg });
+      saveBatchState(outputDir, batchState);
+      return { success: false, index, error: msg };
+    }
+
+    console.log(`[${index + 1}/${jobs.length}] Generating lipsync: "${(job.prompt || '').substring(0, 60)}..."`);
+
+    try {
+      const result = await withRetry(
+        () => generateLipsync(jobOptions),
+        { maxRetries: 1, baseDelay: 5000, label: `batch-lipsync[${index}]` }
+      );
+
+      batchState.completed.push(index);
+      saveBatchState(outputDir, batchState);
+      console.log(`[${index + 1}/${jobs.length}] Complete`);
+      return { success: true, index, ...result };
+    } catch (error) {
+      batchState.failed.push({ index, error: error.message });
+      saveBatchState(outputDir, batchState);
+      console.error(`[${index + 1}/${jobs.length}] Failed: ${error.message}`);
+      return { success: false, index, error: error.message };
+    }
+  });
+
+  // Run with concurrency control
+  const results = await runWithConcurrency(tasks, concurrency);
+
+  // Summary
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+  const succeeded = results.filter(r => r?.success).length;
+  const failed = results.filter(r => r && !r.success).length;
+
+  batchState.elapsed = `${elapsed}s`;
+  batchState.results = results.map(r => ({ success: r?.success, index: r?.index }));
+  saveBatchState(outputDir, batchState);
+
+  console.log(`\n=== Batch Lipsync Complete ===`);
+  console.log(`Duration: ${elapsed}s`);
+  console.log(`Results: ${succeeded} succeeded, ${failed} failed, ${jobs.length} total`);
+  console.log(`Output: ${outputDir}`);
+
+  if (failed > 0) {
+    console.log(`\nFailed jobs:`);
+    batchState.failed.forEach(f => console.log(`  [${f.index + 1}] ${f.error}`));
+    console.log(`\nTo retry failed jobs: add --resume flag`);
+  }
+
+  return batchState;
+
 // Main CLI handler
 async function main() {
   const { command, options } = parseArgs();

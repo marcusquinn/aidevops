@@ -225,6 +225,66 @@ cmd_download() {
     return $?
 }
 
+# Batch image generation
+cmd_batch_image() {
+    local batch_file="${1:-}"
+    shift 2>/dev/null || true
+
+    if [[ -z "${batch_file}" ]]; then
+        print_error "Batch manifest file is required"
+        print_info "Usage: higgsfield-helper.sh batch-image manifest.json [--concurrency 2] [options]"
+        return 1
+    fi
+
+    if [[ ! -f "${batch_file}" ]]; then
+        print_error "Batch manifest not found: ${batch_file}"
+        return 1
+    fi
+
+    print_info "Batch image generation from: ${batch_file}"
+    run_automator batch-image --batch-file "${batch_file}" "$@"
+}
+
+# Batch video generation
+cmd_batch_video() {
+    local batch_file="${1:-}"
+    shift 2>/dev/null || true
+
+    if [[ -z "${batch_file}" ]]; then
+        print_error "Batch manifest file is required"
+        print_info "Usage: higgsfield-helper.sh batch-video manifest.json [--concurrency 3] [options]"
+        return 1
+    fi
+
+    if [[ ! -f "${batch_file}" ]]; then
+        print_error "Batch manifest not found: ${batch_file}"
+        return 1
+    fi
+
+    print_info "Batch video generation from: ${batch_file}"
+    run_automator batch-video --batch-file "${batch_file}" "$@"
+}
+
+# Batch lipsync generation
+cmd_batch_lipsync() {
+    local batch_file="${1:-}"
+    shift 2>/dev/null || true
+
+    if [[ -z "${batch_file}" ]]; then
+        print_error "Batch manifest file is required"
+        print_info "Usage: higgsfield-helper.sh batch-lipsync manifest.json [--concurrency 1] [options]"
+        return 1
+    fi
+
+    if [[ ! -f "${batch_file}" ]]; then
+        print_error "Batch manifest not found: ${batch_file}"
+        return 1
+    fi
+
+    print_info "Batch lipsync generation from: ${batch_file}"
+    run_automator batch-lipsync --batch-file "${batch_file}" "$@"
+}
+
 # Check auth status
 cmd_status() {
     if [[ -f "${STATE_FILE}" ]]; then
@@ -269,6 +329,9 @@ Commands:
   image <prompt>     Generate image from text prompt
   video <prompt>     Generate video (text or image-to-video)
   lipsync <text>     Generate lipsync video (image + text)
+  batch-image <file> Batch image generation from JSON manifest
+  batch-video <file> Batch video generation from JSON manifest
+  batch-lipsync <file> Batch lipsync generation from JSON manifest
   pipeline           Full production: image -> video -> lipsync -> assembly
   seed-bracket       Test seed range to find best seeds for a prompt
   app <effect>       Use a Higgsfield app/effect
@@ -296,6 +359,8 @@ Options (pass after command):
   --unlimited        Prefer unlimited models only
   --no-sidecar       Disable JSON sidecar metadata files
   --no-dedup         Disable SHA-256 duplicate detection
+  --concurrency, -C  Max concurrent jobs for batch operations (default varies)
+  --resume           Resume a previous batch run (skip completed jobs)
 
 Examples:
   higgsfield-helper.sh setup
@@ -311,6 +376,14 @@ Examples:
   higgsfield-helper.sh seed-bracket "Elegant woman, golden hour" --seed-range 1000-1010
   higgsfield-helper.sh app face-swap --image-file face.jpg
   higgsfield-helper.sh credits
+  higgsfield-helper.sh batch-image prompts.json --concurrency 2 -o ./output
+  higgsfield-helper.sh batch-video videos.json --concurrency 3 -o ./output
+  higgsfield-helper.sh batch-lipsync lipsync.json -o ./output
+  higgsfield-helper.sh batch-image prompts.json --resume -o ./output
+
+Batch manifest format (JSON):
+  Simple: ["prompt 1", "prompt 2", "prompt 3"]
+  Full:   { "jobs": [{"prompt":"...","model":"soul"}], "defaults": {"aspect":"16:9"} }
 
 Available Apps/Effects:
   face-swap, 3d-render, comic-book, transitions, recast,
@@ -334,6 +407,9 @@ main() {
         image)      cmd_image "$@" ;;
         video)      cmd_video "$@" ;;
         lipsync)    cmd_lipsync "$@" ;;
+        batch-image)  cmd_batch_image "$@" ;;
+        batch-video)  cmd_batch_video "$@" ;;
+        batch-lipsync) cmd_batch_lipsync "$@" ;;
         pipeline)   cmd_pipeline "$@" ;;
         seed-bracket) cmd_seed_bracket "$@" ;;
         app)        cmd_app "$@" ;;
