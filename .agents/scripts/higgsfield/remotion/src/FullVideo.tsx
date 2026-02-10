@@ -29,9 +29,15 @@ export const FullVideo: React.FC<BriefProps> = ({
   const { fps } = useVideoConfig();
   const useTransitions = transitionStyle !== "none" && sceneVideos.length > 1;
 
-  // Find caption for a given scene index
+  // Find caption for a given scene index.
+  // Captions whose scene index exceeds the available scenes are clamped to the
+  // last scene so they still render instead of being silently dropped.
+  const lastSceneIndex = Math.max(0, sceneVideos.length - 1);
   const getCaptionForScene = (sceneIndex: number): CaptionEntry | undefined => {
-    return captions?.find((c) => c.scene === sceneIndex);
+    return captions?.find((c) => {
+      const clampedScene = Math.min(c.scene, lastSceneIndex);
+      return clampedScene === sceneIndex;
+    });
   };
 
   if (useTransitions) {

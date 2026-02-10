@@ -64,11 +64,15 @@ function renderVideo(opts) {
   const fps = 30;
   const rawCaptions = brief.captions || [];
   const scenes = brief.scenes || [];
+  const lastSceneIndex = Math.max(0, scenes.length - 1);
   const normalizedCaptions = rawCaptions.map((cap) => {
-    if (typeof cap.scene === "number") return cap; // Already in correct format
+    if (typeof cap.scene === "number") {
+      // Clamp to last scene so out-of-range indices don't silently drop captions
+      return { ...cap, scene: Math.min(cap.scene, lastSceneIndex) };
+    }
     // Derive scene index from startFrame
     let frameOffset = 0;
-    let sceneIdx = 0;
+    let sceneIdx = scenes.length - 1; // Default to last scene (fallback for beyond-end frames)
     for (let s = 0; s < scenes.length; s++) {
       const sceneDur = (scenes[s].duration || 5) * fps;
       if ((cap.startFrame || 0) >= frameOffset && (cap.startFrame || 0) < frameOffset + sceneDur) {
