@@ -3789,6 +3789,67 @@ check_model_health() {
 }
 
 #######################################
+# Generate a worker-specific MCP config with heavy indexers disabled (t221)
+#
+# Workers inherit the global ~/.config/opencode/opencode.json which may have
+# osgrep enabled. osgrep indexes the entire codebase on startup, consuming
+# ~4 CPU cores per worker. With 3-4 concurrent workers, that's 12-16 cores
+# wasted on indexing that workers don't need (they have rg/grep/read tools).
+#
+# This function copies the user's config to a per-worker temp directory and
+# disables osgrep (and augment-context-engine, another heavy indexer).
+# The caller sets XDG_CONFIG_HOME to redirect OpenCode to this config.
+#
+# Args: $1 = task_id (used for directory naming)
+# Outputs: XDG_CONFIG_HOME path on stdout
+# Returns: 0 on success, 1 on failure (caller should proceed without override)
+#######################################
+generate_worker_mcp_config() {
+    local task_id="$1"
+
+    local user_config="$HOME/.config/opencode/opencode.json"
+    if [[ ! -f "$user_config" ]]; then
+        log_warn "No opencode.json found at $user_config — skipping worker MCP override"
+        return 1
+    fi
+
+    # Create per-worker config directory under supervisor's pids dir
+    local worker_config_dir="${SUPERVISOR_DIR}/pids/${task_id}-config/opencode"
+    mkdir -p "$worker_config_dir"
+
+    # Copy and modify: disable heavy indexing MCPs
+    # osgrep: local semantic search, spawns indexer (~4 CPU cores)
+    # augment-context-engine: another semantic indexer
+    if command -v jq &>/dev/null; then
+        jq '
+            # Disable heavy indexing MCP servers for workers
+            .mcp["osgrep"].enabled = false |
+            .mcp["augment-context-engine"].enabled = false |
+            # Also disable their tools to avoid tool-not-found errors
+            .tools["osgrep_*"] = false |
+            .tools["augment-context-engine_*"] = false
+        ' "$user_config" > "$worker_config_dir/opencode.json" 2>/dev/null
+    else
+        # Fallback: copy as-is if jq unavailable (workers still get osgrep but
+        # this is a best-effort optimisation, not a hard requirement)
+        log_warn "jq not available — cannot generate worker MCP config"
+        return 1
+    fi
+
+    # Validate the generated config is valid JSON
+    if ! jq empty "$worker_config_dir/opencode.json" 2>/dev/null; then
+        log_warn "Generated worker config is invalid JSON — removing"
+        rm -f "$worker_config_dir/opencode.json"
+        return 1
+    fi
+
+    # Return the parent of the opencode/ dir (XDG_CONFIG_HOME points to the
+    # directory that *contains* the opencode/ subdirectory)
+    echo "${SUPERVISOR_DIR}/pids/${task_id}-config"
+    return 0
+}
+
+#######################################
 # Build the dispatch command for a task
 # Outputs the command array elements, one per line
 # $5 (optional): memory context to inject into the prompt
@@ -4523,6 +4584,11 @@ cmd_dispatch() {
     # This ensures headless mode even if the AI doesn't parse --headless from the prompt
     local headless_env="FULL_LOOP_HEADLESS=true"
 
+    # Generate worker-specific MCP config with heavy indexers disabled (t221)
+    # Saves ~4 CPU cores per worker by preventing osgrep from indexing
+    local worker_xdg_config=""
+    worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
+
     # Write dispatch script to a temp file to avoid bash -c quoting issues
     # with multi-line prompts (newlines in printf '%q' break bash -c strings)
     local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-dispatch.sh"
@@ -4532,6 +4598,10 @@ cmd_dispatch() {
         echo "echo 'WORKER_STARTED task_id=${task_id} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "cd '${worktree_path}' || { echo 'WORKER_FAILED: cd to worktree failed: ${worktree_path}'; exit 1; }"
         echo "export ${headless_env}"
+        # Redirect worker to use MCP config with heavy indexers disabled (t221)
+        if [[ -n "$worker_xdg_config" ]]; then
+            echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+        fi
         # Write each cmd_part as a properly quoted array element
         printf 'exec '
         printf '%q ' "${cmd_parts[@]}"
@@ -5554,12 +5624,20 @@ Task description: ${tdesc:-$task_id}"
     # Ensure PID directory exists
     mkdir -p "$SUPERVISOR_DIR/pids"
 
+    # Generate worker-specific MCP config with heavy indexers disabled (t221)
+    local worker_xdg_config=""
+    worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
+
     # Write dispatch script with startup sentinel (t183)
     local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt.sh"
     {
         echo '#!/usr/bin/env bash'
         echo "echo 'WORKER_STARTED task_id=${task_id} retry=${tretries} pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
+        # Redirect worker to use MCP config with heavy indexers disabled (t221)
+        if [[ -n "$worker_xdg_config" ]]; then
+            echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+        fi
         printf 'exec '
         printf '%q ' "${cmd_parts[@]}"
         printf '\n'
@@ -5945,12 +6023,20 @@ Instructions:
 
     mkdir -p "$SUPERVISOR_DIR/pids"
 
+    # Generate worker-specific MCP config with heavy indexers disabled (t221)
+    local worker_xdg_config=""
+    worker_xdg_config=$(generate_worker_mcp_config "$task_id" 2>/dev/null) || true
+
     # Write dispatch script with startup sentinel (t183)
     local dispatch_script="${SUPERVISOR_DIR}/pids/${task_id}-review-fix.sh"
     {
         echo '#!/usr/bin/env bash'
         echo "echo 'WORKER_STARTED task_id=${task_id} type=review-fix pid=\$\$ timestamp='\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "cd '${work_dir}' || { echo 'WORKER_FAILED: cd to work_dir failed: ${work_dir}'; exit 1; }"
+        # Redirect worker to use MCP config with heavy indexers disabled (t221)
+        if [[ -n "$worker_xdg_config" ]]; then
+            echo "export XDG_CONFIG_HOME='${worker_xdg_config}'"
+        fi
         printf 'exec '
         printf '%q ' "${cmd_parts[@]}"
         printf '\n'
