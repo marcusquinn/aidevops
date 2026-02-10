@@ -1547,12 +1547,14 @@ setup_shell_compatibility() {
     
     for src_file in "${bash_files[@]}"; do
         local n
-        n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" 2>/dev/null || echo "0")
-        total_exports=$((total_exports + n))
-        n=$(grep -cE '^\s*alias\s+' "$src_file" 2>/dev/null || echo "0")
-        total_aliases=$((total_aliases + n))
-        n=$(grep -cE 'PATH.*=' "$src_file" 2>/dev/null || echo "0")
-        total_paths=$((total_paths + n))
+        # grep -c outputs "0" on no match (exit 1); "|| true" prevents exit
+        # without appending a second "0" line (which breaks arithmetic)
+        n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" 2>/dev/null) || true
+        total_exports=$((total_exports + ${n:-0}))
+        n=$(grep -cE '^\s*alias\s+' "$src_file" 2>/dev/null) || true
+        total_aliases=$((total_aliases + ${n:-0}))
+        n=$(grep -cE 'PATH.*=' "$src_file" 2>/dev/null) || true
+        total_paths=$((total_paths + ${n:-0}))
     done
     
     if [[ $total_exports -eq 0 && $total_aliases -eq 0 && $total_paths -eq 0 ]]; then
