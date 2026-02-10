@@ -3646,10 +3646,35 @@ After completing each subtask, run:
 This persists your progress to disk. If context compacts or the session restarts,
 your checkpoint survives and you can resume from where you left off instead of restarting.
 
-**3. Parallel sub-work with Task tool**
-If your subtasks include independent work (e.g., writing tests while docs are separate),
-use the Task tool to spawn a sub-agent for the independent piece. This is faster than
-doing everything sequentially. Only parallelise when the subtasks don't modify the same files.
+**3. Parallel sub-work with Task tool (MANDATORY when applicable)**
+After creating your TodoWrite subtasks, check: do any two subtasks modify DIFFERENT files?
+If yes, you MUST spawn the independent subtask via the Task tool — do NOT execute sequentially.
+
+**Decision heuristic**: If your TodoWrite has 3+ subtasks and any two don't modify the same
+files, spawn the independent one via Task tool. Common parallelisable pairs:
+- Writing tests (test files) while implementing the feature (source files)
+- Updating docs/subagent-index while writing the main script
+- Creating a new helper script while updating an existing one that won't import it yet
+
+**Worked example** — task: 'add retry logic to API client + tests + docs':
+\`\`\`
+# TodoWrite subtasks:
+# 1. Implement retry logic in src/client.ts        (modifies: src/client.ts)
+# 2. Write unit tests in tests/client.test.ts      (modifies: tests/client.test.ts)
+# 3. Update API docs in docs/client.md             (modifies: docs/client.md)
+
+# Subtask 1 modifies different files from subtasks 2 and 3.
+# After completing subtask 1, spawn subtasks 2 and 3 in PARALLEL via Task tool:
+
+# In your main session: work on subtask 1 (implement retry logic)
+# Then spawn TWO Task tool calls simultaneously:
+#   Task(description='Write retry tests', prompt='Write unit tests for retry logic in tests/client.test.ts...')
+#   Task(description='Update API docs', prompt='Update docs/client.md to document retry behaviour...')
+# Wait for both to complete, then verify and commit.
+\`\`\`
+
+**Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
+subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
 
 **4. Fail fast, not late**
 Before writing any code, verify your assumptions:
@@ -4519,6 +4544,14 @@ extract_log_metadata() {
         fi
     fi
     echo "task_obsolete=$task_obsolete"
+
+    # Task tool parallelism tracking (t217): detect whether the worker used the
+    # Task tool (mcp_task) to spawn sub-agents for parallel work. This is a
+    # heuristic quality signal — workers that parallelise independent subtasks
+    # are more efficient. Logged for pattern tracking and supervisor dashboards.
+    local task_tool_count=0
+    task_tool_count=$(grep -c 'mcp_task\|"tool_name":"task"\|"name":"task"' "$log_file" 2>/dev/null || echo 0)
+    echo "task_tool_count=$task_tool_count"
 
     # Exit code
     local exit_line
@@ -8804,11 +8837,23 @@ store_success_pattern() {
         content="$content [retries:$retries]"
     fi
 
+    # Task tool parallelism tracking (t217): check if worker used Task tool
+    # for sub-agent parallelism. Logged as a quality signal for pattern analysis.
+    local log_file task_tool_count=0
+    log_file=$(db "$SUPERVISOR_DB" "SELECT log_file FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    if [[ -n "$log_file" && -f "$log_file" ]]; then
+        task_tool_count=$(grep -c 'mcp_task\|"tool_name":"task"\|"name":"task"' "$log_file" 2>/dev/null || echo 0)
+    fi
+    if [[ "$task_tool_count" -gt 0 ]]; then
+        content="$content [task_tool:$task_tool_count]"
+    fi
+
     # Build tags with model and duration info for pattern-tracker queries
     local tags="supervisor,pattern,$task_id,complete"
     [[ -n "$model_tier" ]] && tags="$tags,model:$model_tier"
     [[ -n "$duration_secs" ]] && tags="$tags,duration:$duration_secs"
     [[ "$retries" -gt 0 ]] && tags="$tags,retries:$retries"
+    [[ "$task_tool_count" -gt 0 ]] && tags="$tags,task_tool:$task_tool_count"
 
     "$MEMORY_HELPER" store \
         --auto \
