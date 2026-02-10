@@ -715,50 +715,49 @@ async function configureImageOptions(page, options) {
   }
 
   // Set batch size if specified (1-4 images)
-  // The UI uses a minus/count/plus pattern: [—] 4/4 [+]
-  // The count display shows "N/4" where N is the current batch size.
-  // We click the minus button to decrease or plus button to increase.
+  // The UI uses a Decrement/Increment button pattern with ARIA labels:
+  //   button "Decrement 4/4 Increment" containing:
+  //     button "Decrement" (SVG icon, no text)
+  //     text "N/4"
+  //     button "Increment" (SVG icon, no text, disabled at max)
   if (options.batch && options.batch >= 1 && options.batch <= 4) {
     console.log(`Setting batch size: ${options.batch}`);
 
     // Read the current batch count from the "N/4" display
     const currentBatch = await page.evaluate(() => {
-      // Look for text matching "N/4" pattern near the Generate button area
       const allText = document.body.innerText;
       const batchMatch = allText.match(/(\d)\/4/);
-      return batchMatch ? parseInt(batchMatch[1], 10) : 4; // Default 4 if not found
+      return batchMatch ? parseInt(batchMatch[1], 10) : 4;
     });
     console.log(`Current batch size: ${currentBatch}, target: ${options.batch}`);
 
     if (currentBatch !== options.batch) {
-      // Find the minus and plus buttons near the batch counter.
-      // They are small buttons containing "—" (em dash) or "+" text,
-      // or SVG icons, near the "N/4" display.
       const diff = options.batch - currentBatch;
 
       if (diff < 0) {
-        // Need to decrease: click minus button |diff| times
-        const minusBtn = page.locator('button:has-text("—"), button:has-text("−"), button:has-text("-")').first();
-        if (await minusBtn.count() > 0) {
+        // Need to decrease: click Decrement button |diff| times
+        // Use exact:true to match aria-label="Decrement" (not the outer wrapper)
+        const decrementBtn = page.getByRole('button', { name: 'Decrement', exact: true });
+        if (await decrementBtn.count() > 0) {
           for (let clicks = 0; clicks < Math.abs(diff); clicks++) {
-            await minusBtn.click({ force: true });
+            await decrementBtn.click({ force: true });
             await page.waitForTimeout(200);
           }
-          console.log(`Clicked minus ${Math.abs(diff)} time(s) to set batch to ${options.batch}`);
+          console.log(`Clicked Decrement ${Math.abs(diff)} time(s) to set batch to ${options.batch}`);
         } else {
-          console.log('Could not find minus button for batch size');
+          console.log('Could not find Decrement button for batch size');
         }
       } else {
-        // Need to increase: click plus button diff times
-        const plusBtn = page.locator('button:has-text("+")').first();
-        if (await plusBtn.count() > 0) {
+        // Need to increase: click Increment button diff times
+        const incrementBtn = page.getByRole('button', { name: 'Increment', exact: true });
+        if (await incrementBtn.count() > 0) {
           for (let clicks = 0; clicks < diff; clicks++) {
-            await plusBtn.click({ force: true });
+            await incrementBtn.click({ force: true });
             await page.waitForTimeout(200);
           }
-          console.log(`Clicked plus ${diff} time(s) to set batch to ${options.batch}`);
+          console.log(`Clicked Increment ${diff} time(s) to set batch to ${options.batch}`);
         } else {
-          console.log('Could not find plus button for batch size');
+          console.log('Could not find Increment button for batch size');
         }
       }
 
@@ -1100,9 +1099,14 @@ async function generateImage(options = {}) {
 }
 
 // Download a video from the History tab on /create/video or /lipsync-studio
-// History items are <li> elements containing <video> with CDN preview URLs.
-// Primary strategy: click figure to open Asset showcase dialog, then click Download
-// for full-quality video. Fallback: extract <video src> (lower quality CDN preview).
+// The <video src> in History list items is a shared CDN motion template URL (same for all items).
+// The actual full-quality video URLs are in the API response from fnf.higgsfield.ai/project.
+//
+// Strategy 1 (PRIMARY): Intercept the fnf.higgsfield.ai/project API response,
+//   extract job_sets[0].jobs[0].results.raw.url (CloudFront URL, full 1080p).
+// Strategy 2 (FALLBACK): Navigate to the page fresh to trigger the API call,
+//   then extract the URL from the intercepted response.
+// Strategy 3 (LAST RESORT): Extract <video src> from the list item (motion template, low quality).
 async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
   const downloaded = [];
 
@@ -1130,12 +1134,9 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
       const firstItem = document.querySelector('main li');
       if (!firstItem) return null;
 
-      // Get prompt text
       const textbox = firstItem.querySelector('[role="textbox"], textarea');
       const promptText = textbox?.textContent?.trim() || '';
 
-      // Get model name — find the button that contains a model icon <img> or
-      // matches known model name patterns. Exclude action buttons.
       const actionWords = /^(cancel|rerun|retry|download|delete|remove|share|copy|edit)$/i;
       const buttons = [...firstItem.querySelectorAll('button')];
       let modelText = '';
@@ -1161,67 +1162,86 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
       return { promptText, modelText };
     });
 
-    // Strategy 1 (PRIMARY): Click the figure to open Asset showcase dialog,
-    // then use the Download button for full-quality video.
-    // The <video src> in History list items is only a CDN preview (e.g. 600x800).
-    console.log('Opening Asset showcase dialog for full-quality download...');
-    const firstFigure = page.locator('main li figure').first();
-    if (await firstFigure.count() > 0) {
-      await firstFigure.click({ force: true });
-      await page.waitForTimeout(2000);
+    const combinedMeta = {
+      ...metadata,
+      model: videoInfo?.modelText || metadata.model,
+      promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
+    };
 
-      const dialog = page.locator('[role="dialog"]');
-      if (await dialog.count() > 0) {
-        const dialogMeta = await extractDialogMetadata(page);
-        const combinedMeta = {
-          ...metadata,
-          ...dialogMeta,
-          model: dialogMeta?.model || videoInfo?.modelText || metadata.model,
-          promptSnippet: dialogMeta?.promptSnippet || videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
-        };
+    // Strategy 1 (PRIMARY): Intercept the project API to get the full-quality CloudFront URL.
+    // The API at fnf.higgsfield.ai/project returns job data with results.raw.url containing
+    // the actual video at d8j0ntlcm91z4.cloudfront.net (1920x1080 full quality).
+    // The <video src> in the DOM is just a shared motion template URL (same for all items).
+    console.log('Extracting full-quality video URL from API data...');
 
-        const dlBtn = page.locator('[role="dialog"] button:has-text("Download")');
-        if (await dlBtn.count() > 0) {
-          const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-          await dlBtn.first().click({ force: true });
-          const download = await downloadPromise;
-          if (download) {
-            const origFilename = download.suggestedFilename() || `higgsfield-video-${Date.now()}.mp4`;
-            const descriptiveName = buildDescriptiveFilename(combinedMeta, origFilename, 0);
-            const savePath = join(outputDir, descriptiveName);
-            await download.saveAs(savePath);
-            console.log(`Downloaded full-quality video via dialog: ${savePath}`);
-            downloaded.push(savePath);
-          } else {
-            console.log('Download event did not fire from dialog button');
-          }
-        } else {
-          console.log('No Download button found in dialog');
-        }
-
-        // Close dialog
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(500);
-        await page.evaluate(() => {
-          document.querySelectorAll('[role="dialog"]').forEach(d => {
-            const overlay = d.closest('.react-aria-ModalOverlay') || d.parentElement;
-            if (overlay) overlay.remove();
-            else d.remove();
-          });
-          document.body.style.overflow = '';
-          document.body.style.pointerEvents = '';
-        });
-      } else {
-        console.log('Dialog did not open after clicking figure');
+    // Set up API interception and reload the page to trigger the API call
+    let projectApiData = null;
+    const apiHandler = async (response) => {
+      const url = response.url();
+      if (url.includes('fnf.higgsfield.ai/project')) {
+        try { projectApiData = await response.json(); } catch {}
       }
-    } else {
-      console.log('No figure element found in first history item');
+    };
+    page.on('response', apiHandler);
+
+    // Reload the video page to trigger the API call
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(6000);
+    page.off('response', apiHandler);
+
+    if (projectApiData?.job_sets?.length > 0) {
+      // Ensure output directory exists
+      if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+      // Find the newest completed job with a video result
+      for (const jobSet of projectApiData.job_sets) {
+        for (const job of (jobSet.jobs || [])) {
+          if (job.status === 'completed' && job.results?.raw?.url) {
+            const videoUrl = job.results.raw.url;
+            // Only use CloudFront URLs (the actual generated videos)
+            if (videoUrl.includes('cloudfront.net')) {
+              const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
+              const savePath = join(outputDir, filename);
+              try {
+                const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
+                const httpCode = curlResult.trim();
+                if (httpCode === '200' && existsSync(savePath)) {
+                  const fileSize = statSync(savePath).size;
+                  if (fileSize > 10000) { // Sanity check: real videos are >10KB
+                    console.log(`Downloaded full-quality video (${(fileSize / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
+                    downloaded.push(savePath);
+                  } else {
+                    console.log(`CloudFront returned ${httpCode} but file too small (${fileSize}B), skipping: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
+                  }
+                } else {
+                  console.log(`CloudFront HTTP ${httpCode} for: ${videoUrl.substring(videoUrl.lastIndexOf('/') + 1)}`);
+                }
+              } catch (curlErr) {
+                console.log(`CloudFront download error: ${curlErr.stderr || curlErr.message}`);
+              }
+              break; // Only download the newest video
+            }
+          }
+        }
+        if (downloaded.length > 0) break;
+      }
+    }
+
+    if (downloaded.length === 0) {
+      console.log('API interception did not yield a video URL');
     }
 
     // Strategy 2 (FALLBACK): Extract <video src> from the list item directly.
-    // This gives a CDN preview URL (lower quality) but is better than nothing.
+    // This gives the motion template URL (shared across all items, lower quality).
     if (downloaded.length === 0) {
-      console.log('Dialog download failed, falling back to CDN preview URL...');
+      console.log('Falling back to CDN video src (motion template quality)...');
+
+      // Re-click History tab after reload
+      if (await historyTab.count() > 0) {
+        await historyTab.click({ force: true });
+        await page.waitForTimeout(2000);
+      }
+
       const videoSrc = await page.evaluate(() => {
         const firstItem = document.querySelector('main li');
         const video = firstItem?.querySelector('video');
@@ -1229,16 +1249,11 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
       });
 
       if (videoSrc) {
-        const combinedMeta = {
-          ...metadata,
-          model: videoInfo?.modelText || metadata.model,
-          promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
-        };
         const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
         const savePath = join(outputDir, filename);
         try {
           execSync(`curl -sL -o "${savePath}" "${videoSrc}"`, { timeout: 120000 });
-          console.log(`Downloaded video (CDN preview quality): ${savePath}`);
+          console.log(`Downloaded video (CDN fallback): ${savePath}`);
           downloaded.push(savePath);
         } catch (curlErr) {
           console.log(`CDN video download failed: ${curlErr.message}`);
@@ -1299,9 +1314,14 @@ async function generateVideo(options = {}) {
         }
       }
 
-      // Step 2: Click the "Upload image or generate it" button and handle file chooser
+      // Step 2: Upload the start frame image via file chooser.
+      // The page has a button "Upload image or generate it" that triggers a file chooser.
+      // Also try clicking the "Start frame" area directly as a fallback.
+      let uploaded = false;
+
+      // Strategy A: Click the "Upload image" button
       const uploadBtn = page.getByRole('button', { name: /Upload image/ });
-      if (await uploadBtn.count() > 0) {
+      if (!uploaded && await uploadBtn.count() > 0) {
         try {
           const [fileChooser] = await Promise.all([
             page.waitForEvent('filechooser', { timeout: 10000 }),
@@ -1309,22 +1329,60 @@ async function generateVideo(options = {}) {
           ]);
           await fileChooser.setFiles(options.imageFile);
           await page.waitForTimeout(3000);
-          console.log('Start frame uploaded successfully');
+          uploaded = true;
+          console.log('Start frame uploaded via Upload button');
         } catch (uploadErr) {
-          console.log(`Start frame upload failed: ${uploadErr.message}`);
+          console.log(`Upload button approach failed: ${uploadErr.message}`);
         }
-      } else {
-        // Fallback: try clicking the start frame area directly
+      }
+
+      // Strategy B: Click the "Start frame" text/area directly
+      if (!uploaded) {
+        const startFrameBtn = page.locator('text=Start frame').first();
+        if (await startFrameBtn.count() > 0) {
+          try {
+            const [fileChooser] = await Promise.all([
+              page.waitForEvent('filechooser', { timeout: 10000 }),
+              startFrameBtn.click({ force: true }),
+            ]);
+            await fileChooser.setFiles(options.imageFile);
+            await page.waitForTimeout(3000);
+            uploaded = true;
+            console.log('Start frame uploaded via Start frame area');
+          } catch (err) {
+            console.log(`Start frame area click failed: ${err.message}`);
+          }
+        }
+      }
+
+      // Strategy C: Use drag-and-drop via page.setInputFiles on any hidden file input
+      if (!uploaded) {
+        const fileInput = page.locator('input[type="file"]');
+        if (await fileInput.count() > 0) {
+          try {
+            await fileInput.first().setInputFiles(options.imageFile);
+            await page.waitForTimeout(3000);
+            uploaded = true;
+            console.log('Start frame uploaded via hidden file input');
+          } catch (err) {
+            console.log(`Hidden file input failed: ${err.message}`);
+          }
+        }
+      }
+
+      // Strategy D: Click coordinates of the Start frame box (from screenshot: ~97, 310)
+      if (!uploaded) {
         try {
           const [fileChooser] = await Promise.all([
             page.waitForEvent('filechooser', { timeout: 5000 }),
-            page.mouse.click(160, 200),
+            page.mouse.click(97, 310),
           ]);
           await fileChooser.setFiles(options.imageFile);
           await page.waitForTimeout(3000);
-          console.log('Start frame uploaded via area click');
+          uploaded = true;
+          console.log('Start frame uploaded via coordinate click');
         } catch {
-          console.log('WARNING: Could not upload start frame image');
+          console.log('WARNING: Could not upload start frame image (all strategies failed)');
         }
       }
     } else {
@@ -1338,28 +1396,106 @@ async function generateVideo(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'video-after-upload.png'), fullPage: false });
 
     // Select model if specified (click model selector, find matching option)
+    // Model name mapping: CLI names (lowercase, hyphenated) -> UI dropdown button text patterns
+    // The Model dropdown shows options like "Kling 2.6 1080p 5s-10s" as button text.
+    // We match by the model name prefix to handle varying resolution/duration suffixes.
     if (options.model) {
-      console.log(`Selecting model: ${options.model}`);
-      // The model selector is typically a dropdown/button group
-      const modelSelector = page.locator('button:has-text("Model"), [class*="model-select"]');
-      if (await modelSelector.count() > 0) {
-        await modelSelector.first().click({ force: true });
-        await page.waitForTimeout(1000);
+      const modelNameMap = {
+        'kling-3.0': 'Kling 3.0',
+        'kling-2.6': 'Kling 2.6',
+        'kling-2.5': 'Kling 2.5',
+        'kling-2.1': 'Kling 2.1',
+        'kling-motion': 'Kling Motion Control',
+        'seedance': 'Seedance',
+        'grok': 'Grok Imagine',
+        'minimax': 'Minimax Hailuo',
+        'wan-2.1': 'Wan 2.1',
+        'sora': 'Sora',
+        'veo': 'Veo',
+        'veo-3': 'Veo 3',
+      };
+      const uiModelName = modelNameMap[options.model] || options.model;
+      console.log(`Selecting model: ${options.model} (UI: "${uiModelName}")`);
 
-        // Find the model option matching the requested model
-        const modelOption = page.locator(`[role="option"]:has-text("${options.model}"), button:has-text("${options.model}")`);
-        if (await modelOption.count() > 0) {
-          await modelOption.first().click({ force: true });
-          await page.waitForTimeout(500);
-          console.log(`Selected model: ${options.model}`);
+      // ARIA: button "Model" with paragraph showing current model name
+      const modelSelector = page.getByRole('button', { name: 'Model' });
+      if (await modelSelector.count() > 0) {
+        // Check if the desired model is already selected
+        const currentModel = await modelSelector.textContent().catch(() => '');
+        if (currentModel.includes(uiModelName)) {
+          console.log(`Model already set to ${uiModelName}`);
         } else {
-          console.log(`Model "${options.model}" not found in selector, using default`);
+          await modelSelector.click({ force: true });
+          await page.waitForTimeout(1500);
+
+          // The dropdown is a popover with "Featured models" and "All models" sections.
+          // Each option is a button with text like "Kling 2.61080p5s-10s" (no spaces).
+          // CRITICAL: button:has-text("Kling 2.6") also matches History items on the right.
+          // We must find the dropdown option by position (x < 800) to avoid History matches.
+          let selected = false;
+
+          // Strategy: find all buttons matching the model name, pick the one in the
+          // dropdown area (x < 800, center of page) not the History sidebar (x > 1000).
+          const matchingBtns = await page.evaluate((modelName) => {
+            return [...document.querySelectorAll('button')]
+              .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
+              .map(b => {
+                const r = b.getBoundingClientRect();
+                return { x: r.x, y: r.y, w: r.width, h: r.height, text: b.textContent?.trim()?.substring(0, 60) };
+              })
+              .filter(b => b.x < 800 && b.x > 100); // Dropdown area only
+          }, uiModelName);
+
+          if (matchingBtns.length > 0) {
+            const btn = matchingBtns[0];
+            await page.mouse.click(btn.x + btn.w / 2, btn.y + btn.h / 2);
+            await page.waitForTimeout(1500);
+            selected = true;
+            console.log(`Selected model from dropdown: ${btn.text}`);
+          }
+
+          if (!selected) {
+            // Fallback: use the search box in the dropdown to filter, then click by position
+            const searchBox = page.locator('input[placeholder*="Search"]');
+            if (await searchBox.count() > 0) {
+              await searchBox.fill(uiModelName);
+              await page.waitForTimeout(1000);
+              const filtered = await page.evaluate((modelName) => {
+                return [...document.querySelectorAll('button')]
+                  .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
+                  .map(b => {
+                    const r = b.getBoundingClientRect();
+                    return { x: r.x, y: r.y, w: r.width, h: r.height };
+                  })
+                  .filter(b => b.x < 800 && b.x > 100);
+              }, uiModelName);
+              if (filtered.length > 0) {
+                await page.mouse.click(filtered[0].x + filtered[0].w / 2, filtered[0].y + filtered[0].h / 2);
+                await page.waitForTimeout(1500);
+                selected = true;
+                console.log(`Selected model via search: ${uiModelName}`);
+              }
+            }
+          }
+
+          if (!selected) {
+            await page.keyboard.press('Escape');
+            console.log(`Model "${uiModelName}" not found in dropdown, using default`);
+          }
         }
+      }
+
+      // Verify the model was actually selected
+      const verifyModel = page.getByRole('button', { name: 'Model' });
+      if (await verifyModel.count() > 0) {
+        const finalModel = await verifyModel.textContent().catch(() => '');
+        console.log(`Model now set to: ${finalModel?.replace('Model', '').trim()}`);
       }
     }
 
     // Enable "Unlimited mode" switch if available (saves credits on supported models)
-    const unlimitedSwitch = page.locator('[role="switch"][aria-label="Unlimited mode"], switch[name="Unlimited mode"]');
+    // ARIA: switch "Unlimited mode" — use getByRole for reliable matching
+    const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
     if (await unlimitedSwitch.count() > 0) {
       const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
       if (!isChecked) {
@@ -1413,25 +1549,23 @@ async function generateVideo(options = {}) {
     }
 
     // Count existing History items BEFORE generating (to detect new ones)
-    // Also record the newest item's video src to avoid dedup issues
-    // (items 0 and 1 can share the same cached video src)
+    // Also snapshot the newest item's prompt text for dedup (CDN URLs can be reused)
     const historyTab = page.locator('[role="tab"]:has-text("History")');
     let existingHistoryCount = 0;
-    let existingNewestVideoSrc = '';
+    let existingNewestPrompt = '';
     if (await historyTab.count() > 0) {
       await historyTab.click({ force: true });
       await page.waitForTimeout(1500);
-      // Count list items in History (more reliable than img alt matching)
       existingHistoryCount = await page.locator('main li').count();
-      // Record the newest item's video src for dedup comparison later
-      existingNewestVideoSrc = await page.evaluate(() => {
+      // Record the newest item's prompt text for dedup comparison
+      existingNewestPrompt = await page.evaluate(() => {
         const firstItem = document.querySelector('main li');
-        const video = firstItem?.querySelector('video');
-        return video?.src || video?.querySelector('source')?.src || '';
+        const textbox = firstItem?.querySelector('[role="textbox"], textarea');
+        return textbox?.textContent?.trim()?.substring(0, 100) || '';
       });
       console.log(`Existing History items: ${existingHistoryCount}`);
-      if (existingNewestVideoSrc) {
-        console.log(`Existing newest video src: ${existingNewestVideoSrc.substring(0, 80)}...`);
+      if (existingNewestPrompt) {
+        console.log(`Existing newest prompt: "${existingNewestPrompt.substring(0, 60)}..."`);
       }
 
       // Switch back to the generation tab to click Generate
@@ -1473,29 +1607,39 @@ async function generateVideo(options = {}) {
       await page.waitForTimeout(pollInterval);
       await dismissAllModals(page);
 
-      // Check if the newest list item has a completed video (with src URL)
-      // A new item appears immediately as "In queue" but only gets a <video src> when done
-      // Also verify the video src differs from the pre-existing newest item (dedup)
-      const state = await page.evaluate(({ prevCount, prevSrc }) => {
+      // Detection strategy: completed videos in History show as <img> thumbnails
+      // inside <figure>, NOT as <video> elements. Processing items show "In queue",
+      // "Processing", or "Cancel" text. We detect completion by:
+      // 1. Item count increased (new item appeared)
+      // 2. Newest item is NOT processing (no queue/cancel text)
+      // 3. Newest item has a thumbnail <img> in its <figure>
+      const state = await page.evaluate(({ prevCount }) => {
         const items = document.querySelectorAll('main li');
         const currentCount = items.length;
-        // Check if the first (newest) item has a video with a src
         const firstItem = items[0];
-        const video = firstItem?.querySelector('video');
-        const videoSrc = video?.src || video?.querySelector('source')?.src || '';
-        const hasCompletedVideo = videoSrc.includes('.mp4') || videoSrc.includes('cdn.');
-        // Verify this is a genuinely new video, not a cached duplicate of the previous newest
-        const isNewVideo = !prevSrc || videoSrc !== prevSrc;
-        // Check for processing indicators in the first item
-        const itemText = firstItem?.textContent || '';
+        if (!firstItem) return { currentCount, isComplete: false, isProcessing: false };
+
+        const itemText = firstItem.textContent || '';
         const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
-        return { currentCount, hasCompletedVideo, isProcessing, isNewVideo, videoSrc: videoSrc.substring(0, 80) };
-      }, { prevCount: existingHistoryCount, prevSrc: existingNewestVideoSrc });
+
+        // Completed items have an <img> thumbnail in their <figure>
+        const figure = firstItem.querySelector('figure');
+        const hasThumbnail = figure?.querySelector('img') !== null;
+        // Also check for <video> (some items show video preview when done)
+        const hasVideo = figure?.querySelector('video') !== null;
+        const hasMedia = hasThumbnail || hasVideo;
+
+        // Get prompt text from the newest item for logging
+        const textbox = firstItem.querySelector('[role="textbox"], textarea');
+        const promptText = textbox?.textContent?.trim()?.substring(0, 60) || '';
+
+        return { currentCount, isProcessing, hasMedia, promptText, isComplete: !isProcessing && hasMedia && currentCount > prevCount };
+      }, { prevCount: existingHistoryCount });
 
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
 
-      if (state.currentCount > existingHistoryCount && state.hasCompletedVideo && !state.isProcessing && state.isNewVideo) {
-        console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, video ready)`);
+      if (state.isComplete) {
+        console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, prompt: "${state.promptText}...")`);
         generationComplete = true;
         break;
       }
@@ -1503,10 +1647,10 @@ async function generateVideo(options = {}) {
       // Log progress
       if (state.isProcessing) {
         console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
-      } else if (state.hasCompletedVideo && !state.isNewVideo) {
-        console.log(`  ${elapsedSec}s: video present but same src as previous (waiting for new)...`);
+      } else if (state.currentCount <= existingHistoryCount) {
+        console.log(`  ${elapsedSec}s: waiting for new item (${state.currentCount} items)...`);
       } else {
-        console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items, video=${state.hasCompletedVideo})...`);
+        console.log(`  ${elapsedSec}s: item appeared, waiting for completion (media=${state.hasMedia})...`);
       }
     }
 
