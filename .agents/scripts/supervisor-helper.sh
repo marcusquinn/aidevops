@@ -463,7 +463,9 @@ check_system_load() {
     local load_ratio=0
     if [[ "$(uname)" == "Darwin" ]]; then
         local cpu_idle_pct
-        cpu_idle_pct=$(top -l 1 -n 0 -s 0 2>/dev/null | awk '/CPU usage/ {gsub(/%/,""); for(i=1;i<=NF;i++) if($(i+1)=="idle") print int($i)}')
+        # Use -l 2 and take the LAST sample: top's first sample is cumulative
+        # since boot, the second is the actual current interval delta.
+        cpu_idle_pct=$(top -l 2 -n 0 -s 1 2>/dev/null | awk '/CPU usage/ {gsub(/%/,""); for(i=1;i<=NF;i++) if($(i+1)=="idle") idle=int($i)} END {print idle}')
         if [[ -n "$cpu_idle_pct" && "$cpu_idle_pct" -ge 0 ]]; then
             load_ratio=$((100 - cpu_idle_pct))
         else
