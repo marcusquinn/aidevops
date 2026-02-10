@@ -412,13 +412,18 @@ get_cpu_cores() {
 # Outputs key=value pairs:
 #   load_1m, load_5m, load_15m  - Load averages
 #   cpu_cores                    - Logical CPU count
-#   load_ratio                   - load_1m / cpu_cores (x100 for integer math)
+#   load_ratio                   - Actual CPU usage percentage (0-100)
+#                                  On macOS: from `top` (100 - idle%), accurate
+#                                  On Linux: from /proc/stat or load average fallback
+#                                  NOTE: Previously used load_avg/cores which is
+#                                  misleading on macOS — load average includes I/O
+#                                  wait and uninterruptible sleep, not just CPU.
 #   process_count                - Total system processes
 #   supervisor_process_count     - Processes spawned by supervisor workers
 #   memory_pressure              - low|medium|high (macOS) or free MB (Linux)
-#   overloaded                   - true|false (load_1m > cores * max_load_factor)
+#   overloaded                   - true|false (cpu_usage > threshold)
 #
-# $1 (optional): max load factor (default: 2, meaning load > cores*2 = overloaded)
+# $1 (optional): max load factor (default: 2, used for Linux fallback only)
 #######################################
 check_system_load() {
     local max_load_factor="${1:-2}"
@@ -427,7 +432,7 @@ check_system_load() {
     cpu_cores=$(get_cpu_cores)
     echo "cpu_cores=$cpu_cores"
 
-    # Load averages (cross-platform)
+    # Load averages (cross-platform, kept for logging/display)
     local load_1m="0" load_5m="0" load_15m="0"
     if [[ "$(uname)" == "Darwin" ]]; then
         local load_str
@@ -450,9 +455,25 @@ check_system_load() {
     echo "load_5m=$load_5m"
     echo "load_15m=$load_15m"
 
-    # Load ratio (x100 for integer comparison: 200 = load is 2x cores)
+    # Actual CPU usage (the PRIMARY metric for throttling decisions)
+    # On macOS, load average is misleading — it includes processes in
+    # uninterruptible sleep (I/O wait, Backblaze, Spotlight, etc.),
+    # so load avg of 150 on 10 cores can coexist with 35% idle CPU.
+    # Use `top -l 1` to get real CPU idle percentage instead.
     local load_ratio=0
-    if [[ "$cpu_cores" -gt 0 ]]; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local cpu_idle_pct
+        cpu_idle_pct=$(top -l 1 -n 0 -s 0 2>/dev/null | awk '/CPU usage/ {gsub(/%/,""); for(i=1;i<=NF;i++) if($(i+1)=="idle") print int($i)}')
+        if [[ -n "$cpu_idle_pct" && "$cpu_idle_pct" -ge 0 ]]; then
+            load_ratio=$((100 - cpu_idle_pct))
+        else
+            # Fallback to load average if top fails
+            if [[ "$cpu_cores" -gt 0 ]]; then
+                load_ratio=$(awk "BEGIN {printf \"%d\", ($load_1m / $cpu_cores) * 100}")
+            fi
+        fi
+    elif [[ "$cpu_cores" -gt 0 ]]; then
+        # Linux: use load average ratio (load avg includes only runnable processes)
         load_ratio=$(awk "BEGIN {printf \"%d\", ($load_1m / $cpu_cores) * 100}")
     fi
     echo "load_ratio=$load_ratio"
@@ -507,12 +528,22 @@ check_system_load() {
         echo "memory_pressure=${mem_available_mb}MB"
     fi
 
-    # Overloaded check: load_1m > cores * max_load_factor
-    local threshold=$((cpu_cores * max_load_factor * 100))
-    if [[ "$load_ratio" -gt "$threshold" ]]; then
-        echo "overloaded=true"
+    # Overloaded check: CPU usage > 85% (real saturation)
+    # On macOS load_ratio is now actual CPU% (0-100), not load_avg/cores*100
+    # On Linux load_ratio is still load_avg/cores*100 (threshold adjusted)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if [[ "$load_ratio" -gt 85 ]]; then
+            echo "overloaded=true"
+        else
+            echo "overloaded=false"
+        fi
     else
-        echo "overloaded=false"
+        local threshold=$((cpu_cores * max_load_factor * 100))
+        if [[ "$load_ratio" -gt "$threshold" ]]; then
+            echo "overloaded=true"
+        else
+            echo "overloaded=false"
+        fi
     fi
 
     return 0
@@ -522,17 +553,20 @@ check_system_load() {
 # Calculate adaptive concurrency based on system load (t135.15.2)
 # Returns the recommended concurrency limit on stdout
 #
-# Strategy (bidirectional scaling):
-#   - If load < 50% of cores: scale UP (base * 2, capped at max_concurrency)
-#   - If load 50-100% of cores: use base concurrency (no change)
-#   - If load > cores but < cores*factor: reduce by 50%
-#   - If load > cores*factor: reduce to minimum floor
-#   - If memory pressure is high: reduce to minimum floor
+# Strategy (bidirectional scaling, using actual CPU usage):
+#   On macOS, load_ratio = actual CPU usage % (0-100) from `top`.
+#   On Linux, load_ratio = load_avg / cores * 100 (traditional).
+#
+#   - CPU < 40%:  scale UP (base * 2, capped at max_concurrency)
+#   - CPU 40-70%: use base concurrency (no change)
+#   - CPU 70-85%: reduce by 50%
+#   - CPU > 85%:  reduce to minimum floor
+#   - Memory pressure high: reduce to minimum floor
 #   - Minimum floor is 1 (allows at least 1 worker always)
 #   - Maximum cap defaults to cpu_cores (prevents runaway scaling)
 #
 # $1: base concurrency (from batch or global default)
-# $2: max load factor (default: 2)
+# $2: max load factor (default: 2, Linux fallback only)
 # $3: max concurrency cap (default: cpu_cores, hard upper limit)
 #######################################
 calculate_adaptive_concurrency() {
@@ -565,16 +599,16 @@ calculate_adaptive_concurrency() {
     fi
 
     if [[ "$overloaded" == "true" ]]; then
-        # Severely overloaded: minimum floor
+        # Severely overloaded (CPU > 85%): minimum floor
         effective_concurrency="$min_concurrency"
-    elif [[ "$load_ratio" -gt 100 ]]; then
-        # Moderately loaded (load > cores but < cores*factor): halve concurrency
+    elif [[ "$load_ratio" -gt 70 ]]; then
+        # Heavy load (CPU 70-85%): halve concurrency
         effective_concurrency=$(( (base_concurrency + 1) / 2 ))
-    elif [[ "$load_ratio" -lt 50 ]]; then
-        # Light load (< 50% of cores): scale up to double base
+    elif [[ "$load_ratio" -lt 40 ]]; then
+        # Light load (CPU < 40%): scale up to double base
         effective_concurrency=$((base_concurrency * 2))
     fi
-    # else: load 50-100% of cores — use base_concurrency as-is
+    # else: CPU 40-70% — use base_concurrency as-is
 
     # Enforce minimum floor
     if [[ "$effective_concurrency" -lt "$min_concurrency" ]]; then
@@ -6918,7 +6952,7 @@ cmd_pulse() {
         fi
         echo ""
         log_info "System resources:"
-        echo -e "  ${BLUE}[SUPERVISOR]${NC}   Load:     ${load_color}${sys_load_1m}${NC} / ${sys_load_5m} (${sys_cpu_cores} cores, ratio: ${sys_load_ratio}%)"
+        echo -e "  ${BLUE}[SUPERVISOR]${NC}   CPU:      ${load_color}${sys_load_ratio}%${NC} used (${sys_cpu_cores} cores, load avg: ${sys_load_1m}/${sys_load_5m})"
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Memory:   ${mem_color}${sys_memory}${NC}"
         echo -e "  ${BLUE}[SUPERVISOR]${NC}   Procs:    ${sys_proc_count} total, ${sys_supervisor_procs} supervisor"
         # Show adaptive concurrency for the active batch
