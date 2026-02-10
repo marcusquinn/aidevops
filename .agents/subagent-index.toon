@@ -61,7 +61,7 @@ tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gp
 services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers,hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale
-services/email/,Email services - transactional email deliverability and testing,ses|email-health-check|email-testing|email-delivery-test
+services/email/,Email services - transactional email deliverability and testing,ses|email-health-check|email-testing|email-delivery-test|email-design-test
 services/communications/,Communications - SMS voice and Matrix bot dispatch,twilio|telfon|matrix-bot
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
