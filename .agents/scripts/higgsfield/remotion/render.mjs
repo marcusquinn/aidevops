@@ -5,8 +5,8 @@
 //   node render.mjs --still --text "Title" --aspect 9:16 --output title.png
 
 import { execSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { readFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -32,33 +32,74 @@ function renderVideo(opts) {
   }
 
   const brief = JSON.parse(readFileSync(briefPath, "utf-8"));
-  const videos = opts.videos ? opts.videos.split(",").map((v) => resolve(v.trim())) : [];
+  const videoPaths = opts.videos ? opts.videos.split(",").map((v) => resolve(v.trim())) : [];
   const output = opts.output ? resolve(opts.output) : resolve("output.mp4");
 
   // Validate videos exist
-  for (const v of videos) {
+  for (const v of videoPaths) {
     if (!existsSync(v)) {
       console.error(`Video not found: ${v}`);
       process.exit(1);
     }
   }
 
+  // Copy videos into Remotion's public/ directory so staticFile() can resolve them.
+  // staticFile() only accepts filenames (not absolute paths), so we copy each video
+  // to public/ with a deterministic name and pass only the filename in props.
+  const publicDir = join(__dirname, "public");
+  if (!existsSync(publicDir)) {
+    mkdirSync(publicDir, { recursive: true });
+  }
+  const sceneVideoFilenames = videoPaths.map((absPath, i) => {
+    const filename = `scene-${i}.mp4`;
+    const dest = join(publicDir, filename);
+    copyFileSync(absPath, dest);
+    console.log(`  Copied ${basename(absPath)} -> public/${filename}`);
+    return filename;
+  });
+
+  // Normalize captions: the brief may use startFrame/endFrame format,
+  // but FullVideo.tsx expects { scene, text, position, style }.
+  // Map startFrame to scene index based on scene durations.
+  const fps = 30;
+  const rawCaptions = brief.captions || [];
+  const scenes = brief.scenes || [];
+  const normalizedCaptions = rawCaptions.map((cap) => {
+    if (typeof cap.scene === "number") return cap; // Already in correct format
+    // Derive scene index from startFrame
+    let frameOffset = 0;
+    let sceneIdx = 0;
+    for (let s = 0; s < scenes.length; s++) {
+      const sceneDur = (scenes[s].duration || 5) * fps;
+      if ((cap.startFrame || 0) >= frameOffset && (cap.startFrame || 0) < frameOffset + sceneDur) {
+        sceneIdx = s;
+        break;
+      }
+      frameOffset += sceneDur;
+    }
+    return {
+      scene: sceneIdx,
+      text: cap.text || "",
+      position: cap.position || "bottom",
+      style: cap.style || "bold-white",
+    };
+  });
+
   // Build props for Remotion
   const props = {
     title: brief.title || "Untitled",
-    scenes: brief.scenes || [],
+    scenes,
     aspect: brief.aspect || "9:16",
-    captions: brief.captions || [],
-    sceneVideos: videos,
+    captions: normalizedCaptions,
+    sceneVideos: sceneVideoFilenames,
     transitionStyle: brief.transitionStyle || opts.transition || "fade",
     transitionDuration: parseInt(opts["transition-duration"] || "15", 10),
     musicPath: brief.music ? resolve(brief.music) : undefined,
   };
 
   // Calculate duration
-  const fps = 30;
   const totalSceneDuration = props.scenes.reduce((sum, s) => sum + (s.duration || 5), 0);
-  const transitionOverlap = Math.max(0, (videos.length - 1)) * props.transitionDuration;
+  const transitionOverlap = Math.max(0, (sceneVideoFilenames.length - 1)) * props.transitionDuration;
   const totalFrames = totalSceneDuration * fps - transitionOverlap;
 
   // Aspect dimensions
@@ -89,7 +130,7 @@ function renderVideo(opts) {
     "--log=verbose",
   ].join(" ");
 
-  console.log(`Rendering ${videos.length} scenes -> ${output}`);
+  console.log(`Rendering ${sceneVideoFilenames.length} scenes -> ${output}`);
   console.log(`  Aspect: ${props.aspect} (${width}x${height})`);
   console.log(`  Duration: ${totalSceneDuration}s (${totalFrames} frames @ ${fps}fps)`);
   console.log(`  Transitions: ${props.transitionStyle} (${props.transitionDuration}f)`);

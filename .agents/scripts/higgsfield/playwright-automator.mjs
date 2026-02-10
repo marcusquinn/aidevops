@@ -1345,6 +1345,9 @@ async function generateImage(options = {}) {
     // the queue to drop back to the pre-existing level (or zero).
     // Also detect completion by image count increase (handles fast generations
     // where the queue phase is missed entirely).
+    // Also detect via Generate button re-enabling (handles feature pages like
+    // /nano-banana-pro where "In queue" text doesn't appear and image counts
+    // fluctuate due to lazy-loading gallery).
     console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
     const pollInterval = 5000;
     let generationComplete = false;
@@ -1352,6 +1355,7 @@ async function generateImage(options = {}) {
     // This handles fast generations where queue resolves before first poll
     let peakQueue = Math.max(queueBefore, detectedQueueCount);
     let retryAttempted = false;
+    let btnWasDisabled = false; // Track if Generate button was ever disabled/changed
 
     while (Date.now() - startTime < timeout) {
       await page.waitForTimeout(pollInterval);
@@ -1359,13 +1363,27 @@ async function generateImage(options = {}) {
       const state = await page.evaluate(() => {
         const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
         const images = document.querySelectorAll('img[alt="image generation"]').length;
-        return { queueItems, images };
+        // Check Generate button state — on feature pages, the button text/state
+        // changes during generation (e.g., shows spinner, becomes disabled, or
+        // text changes from "Unlimited2" to something else)
+        const genBtns = [...document.querySelectorAll('button')].filter(b =>
+          b.textContent.includes('Generate') || b.textContent.includes('Unlimited')
+        );
+        const genBtn = genBtns[genBtns.length - 1]; // Last matching button
+        const btnDisabled = genBtn ? (genBtn.disabled || genBtn.getAttribute('aria-disabled') === 'true') : false;
+        const btnText = genBtn ? genBtn.textContent.trim() : '';
+        // Check for loading spinners or processing indicators near the generate area
+        const hasSpinner = document.querySelector('main svg[class*="animate"]') !== null ||
+                          document.querySelector('main [class*="spinner"]') !== null ||
+                          document.querySelector('main [class*="loading"]') !== null;
+        return { queueItems, images, btnDisabled, btnText, hasSpinner };
       });
 
       if (state.queueItems > peakQueue) peakQueue = state.queueItems;
+      if (state.btnDisabled || state.hasSpinner) btnWasDisabled = true;
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue})`);
+      console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue}) btn=${state.btnDisabled ? 'disabled' : 'enabled'}`);
 
       // Completion condition 1: queue was seen elevated and has now dropped back
       if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
@@ -1382,9 +1400,21 @@ async function generateImage(options = {}) {
         break;
       }
 
+      // Completion condition 3: Generate button was disabled/spinner and is now re-enabled
+      // This handles feature pages (/nano-banana-pro, /seedream-4-5) where queue text
+      // doesn't appear and image counts are unreliable due to lazy-loading gallery
+      if (btnWasDisabled && !state.btnDisabled && !state.hasSpinner) {
+        console.log(`Generation complete (button re-enabled)! ${state.images} images on page (${elapsed}s)`);
+        generationComplete = true;
+        // Wait a moment for images to render after button re-enables
+        await page.waitForTimeout(3000);
+        break;
+      }
+
       // Safety: if nothing has changed after 30s and no retry yet, try clicking Generate again
       if (!retryAttempted && parseInt(elapsed, 10) >= 30 &&
-          state.queueItems === queueBefore && state.images === existingImageCount && peakQueue === queueBefore) {
+          state.queueItems === queueBefore && state.images <= existingImageCount &&
+          peakQueue === queueBefore && !btnWasDisabled) {
         console.log('No activity detected after 30s - retrying Generate click...');
         await dismissAllModals(page);
         const retryBtn = page.locator('button:has-text("Generate")');
@@ -1393,6 +1423,24 @@ async function generateImage(options = {}) {
           await page.waitForTimeout(300);
           await retryBtn.last().click({ force: true });
           console.log('Retried Generate click (30s safety)');
+        }
+        retryAttempted = true;
+      }
+
+      // Completion condition 4: After 60s with no queue/button activity,
+      // reload the page and check if new images appeared at the top
+      if (!retryAttempted && parseInt(elapsed, 10) >= 60 &&
+          peakQueue === queueBefore && !btnWasDisabled) {
+        console.log('No queue or button activity after 60s - reloading to check for new images...');
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(5000);
+        const freshCount = await page.evaluate(() =>
+          document.querySelectorAll('img[alt="image generation"]').length
+        );
+        if (freshCount > existingImageCount) {
+          console.log(`Generation complete (post-reload)! ${freshCount} images, ${freshCount - existingImageCount} new (${elapsed}s)`);
+          generationComplete = true;
+          break;
         }
         retryAttempted = true;
       }
@@ -3338,16 +3386,21 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
         // downloaded for multiple scenes (each jobSet matches exactly one scene).
         const matchedJobSetIds = new Set();
 
+        // Pre-filter to only completed jobSets with downloadable videos
+        const completedJobSets = projectApiData.job_sets.filter(js =>
+          (js.jobs || []).some(j => j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net'))
+        );
+
+        // Strategy 1: Prompt-based matching (works for most models)
         for (const job of submittedJobs) {
           if (results.has(job.sceneIndex)) continue;
 
-          // Find the best matching jobSet for this specific job
           let bestMatch = null;
           let bestScore = 0;
 
-          for (const jobSet of projectApiData.job_sets) {
+          for (const jobSet of completedJobSets) {
             const jobSetId = jobSet.id || jobSet.prompt;
-            if (matchedJobSetIds.has(jobSetId)) continue; // Already claimed by another scene
+            if (matchedJobSetIds.has(jobSetId)) continue;
 
             const jobPrompt = jobSet.prompt || '';
             const submittedPrompt = job.promptPrefix || '';
@@ -3360,26 +3413,53 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
               else break;
             }
 
-            // Require at least 20 chars of exact prefix match
             if (score >= 20 && score > bestScore) {
-              // Also verify this jobSet has a completed video
-              const hasVideo = (jobSet.jobs || []).some(
-                j => j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')
-              );
-              if (hasVideo) {
-                bestMatch = jobSet;
-                bestScore = score;
-              }
+              bestMatch = jobSet;
+              bestScore = score;
             }
           }
 
+          if (bestMatch) {
+            const bestId = bestMatch.id || bestMatch.prompt;
+            matchedJobSetIds.add(bestId);
+            job._matchedJobSet = bestMatch;
+            job._matchMethod = 'prompt';
+          }
+        }
+
+        // Strategy 2: Order-based fallback for models with empty prompts (e.g. Seedance).
+        // The API returns job_sets newest-first. Our submittedJobs are in scene order
+        // (oldest submission first). So we reverse-match: the Nth unmatched submitted
+        // job corresponds to the Nth-from-last unmatched completed jobSet.
+        const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
+        if (unmatchedJobs.length > 0) {
+          const unmatchedJobSets = completedJobSets.filter(js => {
+            const jsId = js.id || js.prompt;
+            return !matchedJobSetIds.has(jsId);
+          });
+
+          // API returns newest first; submitted jobs are in chronological order.
+          // Reverse the unmatched jobSets so index 0 = oldest = first submitted.
+          const reversedJobSets = [...unmatchedJobSets].reverse();
+
+          for (let i = 0; i < unmatchedJobs.length && i < reversedJobSets.length; i++) {
+            const job = unmatchedJobs[i];
+            const jobSet = reversedJobSets[i];
+            const jsId = jobSet.id || jobSet.prompt;
+            matchedJobSetIds.add(jsId);
+            job._matchedJobSet = jobSet;
+            job._matchMethod = 'order';
+            console.log(`  Scene ${job.sceneIndex + 1}: order-based match (empty prompt fallback)`);
+          }
+        }
+
+        for (const job of submittedJobs) {
+          if (results.has(job.sceneIndex)) continue;
+          const bestMatch = job._matchedJobSet;
           if (!bestMatch) continue;
+          delete job._matchedJobSet;
 
-          // Claim this jobSet so no other scene can use it
-          const bestId = bestMatch.id || bestMatch.prompt;
-          matchedJobSetIds.add(bestId);
-
-          // Download the completed video
+          // Download the completed video (jobSet already claimed above)
           for (const j of (bestMatch.jobs || [])) {
             if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
               const videoUrl = j.results.raw.url;
@@ -3397,8 +3477,9 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
                     sceneIndex: job.sceneIndex, strategy: 'api-interception',
                     cloudFrontUrl: videoUrl, matchScore: bestScore,
                   });
+                  const matchMethod = job._matchMethod || 'prompt';
                   console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
-                  console.log(`    Matched prompt (${bestScore} chars): "${bestMatch.prompt?.substring(0, 60)}..."`);
+                  console.log(`    Match method: ${matchMethod}, prompt: "${(bestMatch.prompt || '(empty)').substring(0, 60)}"`);
                   results.set(job.sceneIndex, savePath);
                 }
               } catch {}
