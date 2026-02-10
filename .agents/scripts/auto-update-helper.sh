@@ -486,6 +486,7 @@ LOGS:
     ~/.aidevops/logs/auto-update.log
 
 EOF
+    return 0
 }
 
 #######################################
@@ -504,6 +505,7 @@ main() {
         help|--help|-h) cmd_help ;;
         *) print_error "Unknown command: $command"; cmd_help; return 1 ;;
     esac
+    return 0
 }
 
 main "$@"

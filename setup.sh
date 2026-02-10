@@ -5104,7 +5104,7 @@ main() {
     
     # Enable auto-update if not already enabled
     local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
-    if [[ -x "$auto_update_script" ]]; then
+    if [[ -x "$auto_update_script" ]] && [[ "${AIDEVOPS_AUTO_UPDATE:-true}" != "false" ]]; then
         if ! crontab -l 2>/dev/null | grep -q "aidevops-auto-update"; then
             if [[ "$NON_INTERACTIVE" == "true" ]]; then
                 # Non-interactive: enable silently
