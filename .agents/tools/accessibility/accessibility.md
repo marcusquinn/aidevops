@@ -18,18 +18,22 @@ tools:
 
 ## Quick Reference
 
-- **Helper**: `.agents/scripts/accessibility-helper.sh`
+- **Helper**: `.agents/scripts/accessibility-helper.sh` (Lighthouse, pa11y, email, contrast calc)
+- **Audit Helper**: `.agents/scripts/accessibility-audit-helper.sh` (axe-core, WAVE API, WebAIM contrast, Lighthouse)
 - **Commands**: `audit [url]` | `lighthouse [url]` | `pa11y [url]` | `email [file]` | `contrast [fg] [bg]` | `bulk [file]`
-- **Install**: `npm install -g lighthouse pa11y` or `.agents/scripts/accessibility-helper.sh install-deps`
+- **Audit Commands**: `audit [url]` | `axe [url]` | `wave [url]` | `contrast [fg] [bg]` | `compare [url]` | `status`
+- **Install**: `npm install -g lighthouse pa11y @axe-core/cli` or `accessibility-audit-helper.sh install-deps`
 - **Standards**: WCAG 2.1 Level A, AA (default), AAA
-- **Reports**: `~/.aidevops/reports/accessibility/`
-- **Tools**: Lighthouse (accessibility category), pa11y (WCAG runner), built-in contrast calculator, email HTML checker
+- **Reports**: `~/.aidevops/reports/accessibility/` and `~/.aidevops/reports/accessibility-audit/`
+- **Tools**: Lighthouse (accessibility category), pa11y (WCAG runner), axe-core (standalone axe scanner), WAVE API (visual evaluator), WebAIM contrast API, built-in contrast calculator, email HTML checker
 
 <!-- AI-CONTEXT-END -->
 
 ## Overview
 
-Comprehensive WCAG compliance testing for websites and HTML emails. Combines multiple tools into a single workflow:
+Comprehensive WCAG compliance testing for websites and HTML emails. Two helper scripts provide complementary coverage:
+
+### accessibility-helper.sh (original)
 
 | Tool | Purpose | Speed | Depth |
 |------|---------|-------|-------|
@@ -38,16 +42,32 @@ Comprehensive WCAG compliance testing for websites and HTML emails. Combines mul
 | **Email checker** | HTML email accessibility (static analysis) | <1s | Email-specific rules |
 | **Contrast calculator** | WCAG contrast ratio for color pairs | Instant | AA + AAA levels |
 
+### accessibility-audit-helper.sh (extended)
+
+| Tool | Purpose | Speed | Depth |
+|------|---------|-------|-------|
+| **@axe-core/cli** | Standalone axe accessibility scanner | ~10s | Deep (axe-core direct) |
+| **WAVE API** | WebAIM visual accessibility evaluator | ~5s | Broad (errors, alerts, contrast, ARIA) |
+| **WebAIM Contrast API** | Programmatic colour contrast checks | Instant | AA + AAA levels |
+| **Lighthouse** | Accessibility score + audit failures | ~15s | Broad (axe-core engine) |
+
 ## Setup
 
 ```bash
-# Install all dependencies
+# Install all dependencies (original helper)
 .agents/scripts/accessibility-helper.sh install-deps
 
+# Install all dependencies (audit helper)
+.agents/scripts/accessibility-audit-helper.sh install-deps
+
 # Or install individually
-npm install -g lighthouse   # Required
-npm install -g pa11y        # Recommended (WCAG-specific testing)
-brew install jq             # Required (JSON parsing)
+npm install -g lighthouse       # Required
+npm install -g pa11y            # Recommended (WCAG-specific testing)
+npm install -g @axe-core/cli    # Required for axe command
+brew install jq                 # Required (JSON parsing)
+
+# WAVE API key (optional, for wave command)
+export WAVE_API_KEY=<your-key>  # Get at https://wave.webaim.org/api/
 ```
 
 ## Usage
@@ -188,6 +208,50 @@ HTML emails have unique constraints because email clients strip most CSS and Jav
 7. **Logical reading order** — table-based layouts must read correctly when linearised
 8. **Preheader text** — provide meaningful preview text for screen readers
 
+## Audit Helper Usage
+
+### axe-core Standalone Audit
+
+```bash
+# Default tags: wcag2a, wcag2aa, best-practice
+.agents/scripts/accessibility-audit-helper.sh axe https://example.com
+
+# Custom tags
+.agents/scripts/accessibility-audit-helper.sh axe https://example.com wcag2aa,wcag21aa
+```
+
+### WAVE API Audit
+
+Requires `WAVE_API_KEY` environment variable:
+
+```bash
+.agents/scripts/accessibility-audit-helper.sh wave https://example.com
+```
+
+### WebAIM Contrast Checker API
+
+Programmatic contrast check via WebAIM's API (no key required):
+
+```bash
+.agents/scripts/accessibility-audit-helper.sh contrast '#333333' '#ffffff'
+```
+
+### Multi-Engine Comparison
+
+Run all available engines against a single URL and compare results:
+
+```bash
+.agents/scripts/accessibility-audit-helper.sh compare https://example.com
+```
+
+### Tool Status
+
+Check which engines are installed and configured:
+
+```bash
+.agents/scripts/accessibility-audit-helper.sh status
+```
+
 ## Integration with Other Tools
 
 | Tool | Integration |
@@ -202,14 +266,24 @@ HTML emails have unique constraints because email clients strip most CSS and Jav
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `A11Y_WCAG_LEVEL` | `WCAG2AA` | Default WCAG standard for pa11y |
+| `AUDIT_WCAG_LEVEL` | `WCAG2AA` | Default WCAG level for audit helper |
+| `WAVE_API_KEY` | (none) | WAVE API key for `wave` command |
 
 ## Report Storage
 
-All reports are saved to `~/.aidevops/reports/accessibility/`:
+Reports from `accessibility-helper.sh` are saved to `~/.aidevops/reports/accessibility/`:
 
 - `lighthouse_a11y_YYYYMMDD_HHMMSS.json` — Lighthouse accessibility audit
 - `pa11y_YYYYMMDD_HHMMSS.json` — pa11y WCAG violations
 - `email_a11y_YYYYMMDD_HHMMSS.txt` — Email HTML check results
+
+Reports from `accessibility-audit-helper.sh` are saved to `~/.aidevops/reports/accessibility-audit/`:
+
+- `axe_YYYYMMDD_HHMMSS.json` — axe-core standalone audit
+- `wave_YYYYMMDD_HHMMSS.json` — WAVE API report
+- `webaim_contrast_YYYYMMDD_HHMMSS.json` — WebAIM contrast check
+- `lighthouse_a11y_YYYYMMDD_HHMMSS.json` — Lighthouse accessibility audit
+- `comparison_YYYYMMDD_HHMMSS.txt` — Multi-engine comparison
 
 ## Related
 
