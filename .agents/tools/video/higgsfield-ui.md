@@ -57,7 +57,7 @@ Use this subagent instead of the API subagent (`higgsfield.md`) when:
 
 ```text
 higgsfield-helper.sh (shell wrapper)
-  └── higgsfield/playwright-automator.mjs (Playwright automation, ~2000 lines)
+  └── higgsfield/playwright-automator.mjs (Playwright automation, ~3400 lines)
         ├── Persistent auth state (~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json)
         ├── Site discovery cache (~/.aidevops/.agent-workspace/work/higgsfield/routes-cache.json)
         ├── Credentials from ~/.config/aidevops/credentials.sh

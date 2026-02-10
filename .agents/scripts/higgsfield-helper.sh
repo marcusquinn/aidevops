@@ -36,26 +36,30 @@ check_deps() {
         missing=1
     fi
 
-    if ! node -e "require('playwright')" 2>/dev/null && ! bun -e "import 'playwright'" 2>/dev/null; then
+    # Check for playwright in the higgsfield directory (where package.json lives)
+    if ! (cd "${HIGGSFIELD_DIR}" && node -e "require('playwright')" 2>/dev/null) && \
+       ! (cd "${HIGGSFIELD_DIR}" && bun -e "import 'playwright'" 2>/dev/null); then
         print_warning "Playwright not found, installing..."
         if command -v bun &>/dev/null; then
-            bun install playwright 2>/dev/null || npm install playwright 2>/dev/null
+            (cd "${HIGGSFIELD_DIR}" && bun install playwright 2>/dev/null) || \
+            (cd "${HIGGSFIELD_DIR}" && npm install playwright 2>/dev/null)
         else
-            npm install playwright 2>/dev/null
+            (cd "${HIGGSFIELD_DIR}" && npm install playwright 2>/dev/null)
         fi
     fi
 
     return "${missing}"
 }
 
-# Run the automator script
+# Run the automator script (from HIGGSFIELD_DIR for correct module resolution)
 run_automator() {
     local runner="node"
     if command -v bun &>/dev/null; then
         runner="bun"
     fi
 
-    "${runner}" "${AUTOMATOR}" "$@"
+    (cd "${HIGGSFIELD_DIR}" && "${runner}" "${AUTOMATOR}" "$@")
+    return $?
 }
 
 # Setup - install dependencies and create directories
@@ -64,15 +68,15 @@ setup() {
 
     mkdir -p "${STATE_DIR}"
 
-    # Check for playwright
-    if ! node -e "require('playwright')" 2>/dev/null; then
+    # Check for playwright (in HIGGSFIELD_DIR where package.json lives)
+    if ! (cd "${HIGGSFIELD_DIR}" && node -e "require('playwright')" 2>/dev/null); then
         print_info "Installing Playwright..."
         if command -v bun &>/dev/null; then
-            bun install playwright
+            (cd "${HIGGSFIELD_DIR}" && bun install playwright)
         else
-            npm install playwright
+            (cd "${HIGGSFIELD_DIR}" && npm install playwright)
         fi
-        npx playwright install chromium 2>/dev/null || true
+        (cd "${HIGGSFIELD_DIR}" && npx playwright install chromium 2>/dev/null) || true
     fi
 
     # Check credentials
@@ -97,6 +101,7 @@ setup() {
 cmd_login() {
     print_info "Logging into Higgsfield UI..."
     run_automator login --headed "$@"
+    return $?
 }
 
 # Generate image
@@ -149,12 +154,14 @@ cmd_app() {
 cmd_assets() {
     print_info "Listing recent assets..."
     run_automator assets "$@"
+    return $?
 }
 
 # Check credits
 cmd_credits() {
     print_info "Checking account credits..."
     run_automator credits "$@"
+    return $?
 }
 
 # Take screenshot
@@ -163,6 +170,7 @@ cmd_screenshot() {
     shift 2>/dev/null || true
 
     run_automator screenshot --prompt "${url}" "$@"
+    return $?
 }
 
 # Generate lipsync
@@ -214,6 +222,7 @@ cmd_seed_bracket() {
 cmd_download() {
     print_info "Downloading latest generation..."
     run_automator download "$@"
+    return $?
 }
 
 # Check auth status
@@ -227,6 +236,7 @@ cmd_status() {
     else
         print_warning "No auth state found. Run: higgsfield-helper.sh login"
     fi
+    return 0
 }
 
 # Show help
