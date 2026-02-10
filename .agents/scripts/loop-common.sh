@@ -407,6 +407,7 @@ loop_generate_reanchor() {
 - Report status via exit code, log output, and PR creation only.
 - Put task notes in commit messages or PR body, never in TODO.md.
 - Work ONLY on the assigned task described above. Do not pick tasks from TODO.md.
+- **ShellCheck before push (t234)**: Before every \`git push\`, if any committed .sh files changed, run \`shellcheck -x -S warning\` on them. Fix violations before pushing. Skip if shellcheck is not installed.
 "
     fi
 
