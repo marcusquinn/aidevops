@@ -5347,6 +5347,9 @@ Options:
   --chain-action     Asset chain action: animate, inpaint, upscale, relight, angles, shots, ai-stylist, skin-enhancer, multishot
   --feature          Feature page slug: fashion-factory, ugc-factory, photodump-studio, camera-controls, effects
   --subtype          Vibe Motion sub-type: infographics, text-animation, posters, presentation, from-scratch
+  --project          Project name for organized output dirs (creates {output}/{project}/{type}/)
+  --no-sidecar       Disable JSON sidecar metadata files
+  --no-dedup         Disable SHA-256 duplicate detection
   --force            Override credit guard (proceed even with low credits)
   --dry-run          Navigate and configure but don't click Generate
   --no-retry         Disable automatic retry on failure
