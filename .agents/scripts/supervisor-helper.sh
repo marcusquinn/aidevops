@@ -1693,6 +1693,7 @@ cmd_batch() {
 #######################################
 cmd_transition() {
     local task_id="" new_state="" error_msg=""
+    local session_id="" worktree="" branch="" log_file="" pr_url=""
 
     # Positional args
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
