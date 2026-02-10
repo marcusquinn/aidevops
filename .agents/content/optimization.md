@@ -94,9 +94,26 @@ Generate 5-10 hook variants per topic before committing to production. Test acro
 **Thumbnail testing**:
 
 - Generate 5-10 thumbnail variants using style library templates (see `content/production/image.md`)
+- Use `thumbnail-helper.sh` for automated variant generation, scoring, and A/B test setup
 - Test via YouTube's built-in A/B testing or manual rotation
-- Score on: text readability, face prominence, contrast, emotion
+- Score on: text readability, face prominence, contrast, emotion (automated via scoring rubric)
 - Winning thumbnail style becomes template for next 10 videos
+
+**Automated thumbnail pipeline** (via `thumbnail-helper.sh`):
+
+```bash
+# Generate 10 thumbnail variants
+thumbnail-helper.sh generate "Your Video Topic" --count 10 --template high-contrast-face
+
+# Score all variants (interactive rubric)
+thumbnail-helper.sh batch-score ~/.cache/aidevops/thumbnails/[output_dir]/
+
+# Upload passing thumbnails for A/B testing
+thumbnail-helper.sh ab-test VIDEO_ID ~/.cache/aidevops/thumbnails/[output_dir]/
+
+# Analyze performance after 1000+ impressions
+thumbnail-helper.sh analyze VIDEO_ID
+```
 
 ### Test Execution
 

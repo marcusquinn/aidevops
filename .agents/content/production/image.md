@@ -317,7 +317,29 @@ The **Style Library** is a collection of saved JSON templates that maintain bran
 
 The **Thumbnail Factory** is a production system for generating 5-10 thumbnail variants per video/article at scale using style library templates.
 
-### Workflow
+### Automated Workflow (via `thumbnail-helper.sh`)
+
+The `thumbnail-helper.sh` script automates the entire thumbnail A/B testing pipeline:
+
+```bash
+# 1. Generate 10 thumbnail variants with a specific template
+thumbnail-helper.sh generate "Your Video Topic" --count 10 --template high-contrast-face
+
+# 2. Download generated images from Higgsfield UI to the output directory
+
+# 3. Score all variants using the rubric below
+thumbnail-helper.sh batch-score ~/.cache/aidevops/thumbnails/[output_dir]/
+
+# 4. Upload passing thumbnails (score >= 7.5) for A/B testing
+thumbnail-helper.sh ab-test VIDEO_ID ~/.cache/aidevops/thumbnails/[output_dir]/
+
+# 5. Analyze performance after 1000+ impressions
+thumbnail-helper.sh analyze VIDEO_ID
+```
+
+**Available templates**: `high-contrast-face`, `text-heavy`, `before-after`, `curiosity-gap`, `product-showcase`, `cinematic`, `minimalist`, `action-packed`
+
+### Manual Workflow
 
 1. **Script/outline complete** → Extract 3-5 key visual moments
 2. **Select style template** → Use proven thumbnail template from style library
