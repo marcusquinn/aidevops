@@ -393,7 +393,7 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 
 **Text-to-image**: `soul`, `soul-reference`, `soul-character`, `popcorn`, `popcorn-manual`, `seedream` (v4), `reve`
 
-**Image-to-video**: `dop-standard`, `dop-lite`, `dop-turbo`, `dop-*-flf` (first-last-frame variants), `kling-3.0`, `kling-2.6`, `kling-2.1`, `kling-2.1-master`, `seedance`, `seedance-lite`
+**Image-to-video**: `dop-standard`, `dop-lite`, `dop-turbo`, `dop-standard-flf`, `dop-lite-flf`, `dop-turbo-flf`, `kling-3.0`, `kling-2.6`, `kling-2.1`, `kling-2.1-master`, `seedance`, `seedance-lite`
 
 **Image edit**: `seedream-edit`
 
