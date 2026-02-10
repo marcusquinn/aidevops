@@ -112,15 +112,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t135 Code Quality Hardening #plan #quality #shell → [todo/PLANS.md#2026-02-07-code-quality-hardening] ~2d (ai:1d test:0.5d) ref:GH#495 logged:2026-02-07
   - [x] t135.3 SQLite WAL mode + busy_timeout #quality #database ~2h assignee:marcusquinn started:2026-02-09T18:32:20Z ref:GH#865 completed:2026-02-10
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z ref:GH#866
+  - [x] t135.4 Fix corrupted JSON configs #bugfix #config ~1h assignee:marcusquinn started:2026-02-09T18:33:04Z ref:GH#866 completed:2026-02-07 pr:#423
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal
-  - [ ] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z ref:GH#867
+  - [x] t135.5 Remove tracked artifacts from git #chore #git ~30m assignee:marcusquinn started:2026-02-09T18:33:16Z ref:GH#867 completed:2026-02-07 pr:#422
     - Notes: BLOCKED by supervisor: Max retries exceeded: clean_exit_no_signal BLOCKED: Max retries exceeded: clean_exit_no_signal BLOCKED: Re-prompt dispatch failed: clean_exit_no_signal
-  - [ ] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h assignee:marcusquinn started:2026-02-09T18:51:23Z ref:GH#868
+  - [x] t135.6 Fix CI code-quality.yml typos and paths #bugfix #ci ~1h assignee:marcusquinn started:2026-02-09T18:51:23Z ref:GH#868 completed:2026-02-07 pr:#432
   - [x] t135.9 Add trap cleanup for temp files #quality #shell ~1h assignee:marcusquinn started:2026-02-09T18:55:45Z completed:2026-02-09
-  - [ ] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z ref:GH#869
+  - [x] t135.10 Fix package.json main field #bugfix #config ~15m assignee:marcusquinn started:2026-02-09T19:12:28Z ref:GH#869 completed:2026-02-07 pr:#424
   - [x] t135.12 Archive unreferenced fix scripts #chore #cleanup ~1h ref:GH#870 assignee:marcusquinn started:2026-02-10T13:18:06Z completed:2026-02-10
-  - [ ] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871 assignee:marcusquinn started:2026-02-10T13:19:24Z
+  - [x] t135.14 Standardize shebangs to env bash #chore #shell ~30m ref:GH#871 assignee:marcusquinn started:2026-02-10T13:19:24Z completed:2026-02-07 pr:#428
 - [ ] t020 Issue Sync Enrichment #plan #github #automation → [todo/PLANS.md#2026-02-08-issue-sync-enrichment] ~4h (ai:3h test:1h) logged:2026-02-08
   - [x] t020.1 Build core TODO.md parser + rich issue body composer #feature ~45m assignee:marcusquinn started:2026-02-09T20:05:10Z completed:2026-02-09
   - [x] t020.2 PLANS.md section extraction + todo/tasks/ lookup #feature ~30m assignee:marcusquinn started:2026-02-09T20:05:25Z completed:2026-02-09
