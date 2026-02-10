@@ -975,6 +975,7 @@ async function generateImage(options = {}) {
 
     // Phase 1: Wait for new "In queue" items to confirm generation started
     console.log('Waiting for generation to start...');
+    let detectedQueueCount = queueBefore;
     try {
       await page.waitForFunction(
         (prevQueueCount) => {
@@ -983,10 +984,10 @@ async function generateImage(options = {}) {
         queueBefore,
         { timeout: 15000, polling: 1000 }
       );
-      const newQueueCount = await page.evaluate(() =>
+      detectedQueueCount = await page.evaluate(() =>
         (document.body.innerText.match(/In queue/g) || []).length
       );
-      console.log(`Generation started! ${newQueueCount} item(s) in queue`);
+      console.log(`Generation started! ${detectedQueueCount} item(s) in queue`);
     } catch {
       // Generation may have started and already completed, or the queue text differs
       console.log('Queue detection timed out - generation may have started differently');
@@ -1000,7 +1001,9 @@ async function generateImage(options = {}) {
     console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
     const pollInterval = 5000;
     let generationComplete = false;
-    let peakQueue = queueBefore;
+    // Initialize peakQueue from Phase 1 detection (not just queueBefore)
+    // This handles fast generations where queue resolves before first poll
+    let peakQueue = Math.max(queueBefore, detectedQueueCount);
     let retryAttempted = false;
 
     while (Date.now() - startTime < timeout) {
@@ -1076,9 +1079,14 @@ async function generateImage(options = {}) {
       if (newImageIndices.length > 0) {
         await downloadSpecificImages(page, outputDir, newImageIndices);
       } else if (generationComplete) {
-        // All images are new (page was refreshed during generation)
-        console.log('All images appear new, downloading all...');
-        await downloadLatestResult(page, outputDir, true);
+        // Count-based detection failed (page may have refreshed during generation).
+        // Use batch size as a cap: download at most N images from the top of the grid.
+        const batchSize = options.batch || 4;
+        const downloadCount = Math.min(batchSize, currentImageCount);
+        console.log(`Count-based detection missed new images. Downloading top ${downloadCount} (batch=${batchSize})...`);
+        const fallbackIndices = [];
+        for (let i = 0; i < downloadCount; i++) fallbackIndices.push(i);
+        await downloadSpecificImages(page, outputDir, fallbackIndices);
       } else {
         console.log('No new images detected. Generation may still be in progress.');
         console.log('Try: node playwright-automator.mjs download');
@@ -1092,8 +1100,8 @@ async function generateImage(options = {}) {
 
   } catch (error) {
     console.error('Error during image generation:', error.message);
-    await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true });
-    await browser.close();
+    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
 }
@@ -1602,18 +1610,23 @@ async function generateVideo(options = {}) {
 
     let generationComplete = false;
     const pollInterval = 10000; // Check every 10 seconds
+    let lastRefreshTime = Date.now();
+    let wasProcessing = false; // Track if we ever saw a processing state
+
+    // The submitted prompt (first 60 chars) for matching against History items
+    const submittedPromptPrefix = prompt.substring(0, 60);
 
     while (Date.now() - startTime < timeout) {
       await page.waitForTimeout(pollInterval);
       await dismissAllModals(page);
 
-      // Detection strategy: completed videos in History show as <img> thumbnails
-      // inside <figure>, NOT as <video> elements. Processing items show "In queue",
-      // "Processing", or "Cancel" text. We detect completion by:
-      // 1. Item count increased (new item appeared)
-      // 2. Newest item is NOT processing (no queue/cancel text)
-      // 3. Newest item has a thumbnail <img> in its <figure>
-      const state = await page.evaluate(({ prevCount }) => {
+      // Detection strategy for video completion:
+      // The History tab has a FIXED display limit (~12 items). New items push old ones
+      // out, so item count may NOT increase. Instead we detect completion by:
+      // 1. The newest item's prompt matches our submitted prompt
+      // 2. The newest item is NOT processing (no "In queue"/"Processing"/"Cancel" text)
+      // 3. OR: item count increased (works when History wasn't full)
+      const state = await page.evaluate(({ prevCount, prevPrompt, ourPrompt }) => {
         const items = document.querySelectorAll('main li');
         const currentCount = items.length;
         const firstItem = items[0];
@@ -1622,35 +1635,57 @@ async function generateVideo(options = {}) {
         const itemText = firstItem.textContent || '';
         const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
 
-        // Completed items have an <img> thumbnail in their <figure>
-        const figure = firstItem.querySelector('figure');
-        const hasThumbnail = figure?.querySelector('img') !== null;
-        // Also check for <video> (some items show video preview when done)
-        const hasVideo = figure?.querySelector('video') !== null;
-        const hasMedia = hasThumbnail || hasVideo;
-
-        // Get prompt text from the newest item for logging
+        // Get prompt text from the newest item
         const textbox = firstItem.querySelector('[role="textbox"], textarea');
-        const promptText = textbox?.textContent?.trim()?.substring(0, 60) || '';
+        const promptText = textbox?.textContent?.trim() || '';
+        const promptPrefix = promptText.substring(0, 60);
 
-        return { currentCount, isProcessing, hasMedia, promptText, isComplete: !isProcessing && hasMedia && currentCount > prevCount };
-      }, { prevCount: existingHistoryCount });
+        // Check if newest item matches our submitted prompt
+        const matchesOurPrompt = ourPrompt && promptPrefix.includes(ourPrompt.substring(0, 40));
+        // Check if newest item is different from what was there before
+        const isNewItem = prevPrompt && promptPrefix !== prevPrompt.substring(0, 60);
+        // Count-based detection (works when History wasn't full)
+        const countIncreased = currentCount > prevCount;
+
+        // Complete if: (prompt matches OR new item appeared OR count increased) AND not processing
+        const isComplete = !isProcessing && (matchesOurPrompt || isNewItem || countIncreased);
+
+        return { currentCount, isProcessing, promptText: promptPrefix, matchesOurPrompt, isNewItem, countIncreased, isComplete };
+      }, { prevCount: existingHistoryCount, prevPrompt: existingNewestPrompt, ourPrompt: submittedPromptPrefix });
 
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
 
       if (state.isComplete) {
-        console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, prompt: "${state.promptText}...")`);
+        const reason = state.matchesOurPrompt ? 'prompt match' : state.isNewItem ? 'new item' : 'count increase';
+        console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, ${reason}, prompt: "${state.promptText}...")`);
         generationComplete = true;
         break;
       }
 
       // Log progress
       if (state.isProcessing) {
+        wasProcessing = true;
         console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
-      } else if (state.currentCount <= existingHistoryCount) {
-        console.log(`  ${elapsedSec}s: waiting for new item (${state.currentCount} items)...`);
+      } else if (wasProcessing && !state.matchesOurPrompt && !state.isNewItem) {
+        // Was processing but now stopped, and no matching item found yet
+        // Try refreshing the History tab — the completed item may need a refresh to appear
+        if (Date.now() - lastRefreshTime > 30000) {
+          console.log(`  ${elapsedSec}s: processing ended, refreshing History...`);
+          const settingsTab = page.locator('[role="tab"]:has-text("Settings")');
+          if (await settingsTab.count() > 0) {
+            await settingsTab.click({ force: true });
+            await page.waitForTimeout(1000);
+          }
+          if (await historyTab.count() > 0) {
+            await historyTab.click({ force: true });
+            await page.waitForTimeout(2000);
+          }
+          lastRefreshTime = Date.now();
+        } else {
+          console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items)...`);
+        }
       } else {
-        console.log(`  ${elapsedSec}s: item appeared, waiting for completion (media=${state.hasMedia})...`);
+        console.log(`  ${elapsedSec}s: waiting (${state.currentCount} items, prompt: "${state.promptText?.substring(0, 40)}...")...`);
       }
     }
 
@@ -1682,8 +1717,8 @@ async function generateVideo(options = {}) {
 
   } catch (error) {
     console.error('Error during video generation:', error.message);
-    await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true });
-    await browser.close();
+    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
 }
@@ -1835,8 +1870,8 @@ async function generateLipsync(options = {}) {
 
   } catch (error) {
     console.error('Error during lipsync generation:', error.message);
-    await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true });
-    await browser.close();
+    try { await page.screenshot({ path: join(STATE_DIR, 'error.png'), fullPage: true }); } catch {}
+    try { await browser.close(); } catch {}
     return { success: false, error: error.message };
   }
 }
