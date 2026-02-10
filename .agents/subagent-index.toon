@@ -86,9 +86,10 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[62]{name,purpose}:
+<!--TOON:scripts[63]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
+auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
 list-keys-helper.sh,List all API keys with storage locations
 list-verify-helper.sh,List verification queue entries with filtering (pending passed failed)
 verify-run-helper.sh,Execute verification checks with proof logging to verify-proof-log.md

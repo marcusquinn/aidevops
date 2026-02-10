@@ -339,7 +339,21 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 
 ## Getting Started
 
-**CLI**: `aidevops [init|update|status|repos|skill|detect|features|uninstall]`. See `/onboarding` for setup wizard.
+**CLI**: `aidevops [init|update|auto-update|status|repos|skill|detect|features|uninstall]`. See `/onboarding` for setup wizard.
+
+## Auto-Update
+
+Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aidevops update` when a new version is available. Safe to run while AI sessions are active.
+
+**CLI**: `aidevops auto-update [enable|disable|status|check|logs]`
+
+**Enable**: `aidevops auto-update enable` (also offered during `setup.sh`)
+
+**Disable**: `aidevops auto-update disable`
+
+**Env override**: `AIDEVOPS_AUTO_UPDATE=false` disables even if cron is installed.
+
+**Logs**: `~/.aidevops/logs/auto-update.log`
 
 ## Bot Reviewer Feedback
 

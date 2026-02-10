@@ -2550,6 +2550,7 @@ cmd_help() {
     echo "  status             Check installation status of all components"
     echo "  update             Update aidevops to the latest version (alias: upgrade)"
     echo "  upgrade            Alias for update"
+    echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
     echo "  update-tools       Check for outdated tools (--update to auto-update)"
     echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
     echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -2579,6 +2580,12 @@ cmd_help() {
     echo "  aidevops secret init         # Initialize gopass encrypted store"
     echo "  aidevops secret import       # Import from credentials.sh to gopass"
     echo "  aidevops secret status       # Show backend status"
+    echo ""
+    echo "Auto-Update:"
+    echo "  aidevops auto-update enable  # Poll for updates every 10 min"
+    echo "  aidevops auto-update disable # Stop auto-updating"
+    echo "  aidevops auto-update status  # Show auto-update state"
+    echo "  aidevops auto-update check   # One-shot check and update now"
     echo ""
     echo "Plugins:"
     echo "  aidevops plugin add <url>    # Install a plugin from git repo"
@@ -2660,6 +2667,19 @@ main() {
             ;;
         update|upgrade|u)
             cmd_update
+            ;;
+        auto-update|autoupdate)
+            shift
+            local auto_update_helper="$AGENTS_DIR/scripts/auto-update-helper.sh"
+            if [[ ! -f "$auto_update_helper" ]]; then
+                auto_update_helper="$INSTALL_DIR/.agents/scripts/auto-update-helper.sh"
+            fi
+            if [[ -f "$auto_update_helper" ]]; then
+                bash "$auto_update_helper" "$@"
+            else
+                print_error "auto-update-helper.sh not found. Run: aidevops update"
+                exit 1
+            fi
             ;;
         update-tools|tools)
             shift
