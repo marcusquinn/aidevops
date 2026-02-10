@@ -7126,7 +7126,8 @@ scan_orphaned_prs() {
     # Find tasks that might have orphaned PRs:
     # - Status indicates work was done but no PR linked
     # - pr_url is NULL, empty, 'no_pr', 'task_only', or 'task_obsolete'
-    local where_clause="status IN ('failed', 'blocked', 'retrying', 'complete', 'running', 'evaluating')
+    # - Includes terminal states (deployed, merged, verified) to catch manually merged PRs (t260)
+    local where_clause="status IN ('failed', 'blocked', 'retrying', 'complete', 'running', 'evaluating', 'deployed', 'merged', 'verified')
         AND (pr_url IS NULL OR pr_url = '' OR pr_url = 'no_pr' OR pr_url = 'task_only' OR pr_url = 'task_obsolete')"
     if [[ -n "$batch_id" ]]; then
         where_clause="$where_clause AND id IN (SELECT task_id FROM batch_tasks WHERE batch_id = '$(sql_escape "$batch_id")')"
@@ -11803,6 +11804,13 @@ cmd_reconcile_todo() {
                 log_warn "[dry-run] $tid: deployed in DB but open in TODO.md"
             else
                 log_info "Reconciling $tid..."
+                
+                # t260: Attempt PR discovery if pr_url is missing before calling update_todo_on_complete
+                if [[ -z "$tpr_url" || "$tpr_url" == "no_pr" || "$tpr_url" == "task_only" || "$tpr_url" == "task_obsolete" ]]; then
+                    log_verbose "  $tid: Attempting PR discovery before reconciliation"
+                    link_pr_to_task "$tid" --caller "reconcile_todo" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+                fi
+                
                 if update_todo_on_complete "$tid"; then
                     updated_count=$((updated_count + 1))
                 else
