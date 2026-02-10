@@ -18,5 +18,9 @@ and git history (patterns may be useful for future bulk fixes).
 | fix-sc2155-simple.sh | Fix SC2155 (declare and assign separately) | ShellCheck compliance |
 | fix-shellcheck-critical.sh | Fix critical ShellCheck issues | ShellCheck compliance |
 | fix-string-literals.sh | String literals fix | .agent->.agents rename |
+| comprehensive-quality-fix.sh | Comprehensive quality fixes (returns, SC2155, strings) | Quality hardening |
+| efficient-return-fix.sh | Efficient bulk return statement fixer | Quality hardening |
+| find-missing-returns.sh | Find functions missing explicit returns | Quality hardening |
+| mass-fix-returns.sh | Mass add return statements to functions | Quality hardening |
 
-All scripts have 0 references in the active codebase as of 2026-02-07.
+All scripts have 0 references in the active codebase as of 2026-02-10.
