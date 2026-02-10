@@ -2012,23 +2012,378 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}, options 
 //   1. Upload start frame image (--image-file) + prompt
 //   2. Direct navigation to /create/video with prompt only (some models support text-to-video)
 // Results appear in the History tab, not as inline <video> elements.
+// --- Video generation helpers (extracted from generateVideo for clarity) ---
+
+// CLI model slug to UI dropdown display name mapping for video models.
+const VIDEO_MODEL_NAME_MAP = {
+  'kling-3.0': 'Kling 3.0',
+  'kling-2.6': 'Kling 2.6',
+  'kling-2.5': 'Kling 2.5',
+  'kling-2.1': 'Kling 2.1',
+  'kling-motion': 'Kling Motion Control',
+  'seedance': 'Seedance',
+  'grok': 'Grok Imagine',
+  'minimax': 'Minimax Hailuo',
+  'wan-2.1': 'Wan 2.1',
+  'sora': 'Sora',
+  'veo': 'Veo',
+  'veo-3': 'Veo 3',
+};
+
+// Select the best video model, preferring unlimited when available.
+function selectVideoModel(options) {
+  let model = options.model || 'kling-2.6';
+  if (!options.model && options.preferUnlimited !== false) {
+    const unlimited = getUnlimitedModelForCommand('video');
+    if (unlimited) {
+      model = unlimited.slug;
+      console.log(`[unlimited] Auto-selected unlimited video model: ${unlimited.name} (${unlimited.slug})`);
+    }
+  } else if (options.model && isUnlimitedModel(options.model, 'video')) {
+    console.log(`[unlimited] Model "${options.model}" is unlimited (no credit cost)`);
+  }
+  return model;
+}
+
+// Upload a start frame image to the video creation page.
+// Tries 4 strategies in order: Upload button, Start frame area, hidden file input, coordinate click.
+// Returns true if upload succeeded.
+async function uploadStartFrame(page, imageFile) {
+  console.log(`Uploading start frame: ${imageFile}`);
+
+  // Remove existing start frame if present
+  const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
+  if (await existingFrame.count() > 0) {
+    const smallButtons = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('main button')];
+      return btns
+        .filter(b => {
+          const r = b.getBoundingClientRect();
+          return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300;
+        })
+        .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
+    });
+    if (smallButtons.length > 0) {
+      await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
+      await page.waitForTimeout(1500);
+      console.log('Removed existing start frame');
+    }
+  }
+
+  // Strategy A: Click the "Upload image" button
+  const uploadBtn = page.getByRole('button', { name: /Upload image/ });
+  if (await uploadBtn.count() > 0) {
+    try {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 10000 }),
+        uploadBtn.click({ force: true }),
+      ]);
+      await fileChooser.setFiles(imageFile);
+      await page.waitForTimeout(3000);
+      console.log('Start frame uploaded via Upload button');
+      return true;
+    } catch (uploadErr) {
+      console.log(`Upload button approach failed: ${uploadErr.message}`);
+    }
+  }
+
+  // Strategy B: Click the "Start frame" text/area directly
+  const startFrameBtn = page.locator('text=Start frame').first();
+  if (await startFrameBtn.count() > 0) {
+    try {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 10000 }),
+        startFrameBtn.click({ force: true }),
+      ]);
+      await fileChooser.setFiles(imageFile);
+      await page.waitForTimeout(3000);
+      console.log('Start frame uploaded via Start frame area');
+      return true;
+    } catch (err) {
+      console.log(`Start frame area click failed: ${err.message}`);
+    }
+  }
+
+  // Strategy C: Use hidden file input
+  const fileInput = page.locator('input[type="file"]');
+  if (await fileInput.count() > 0) {
+    try {
+      await fileInput.first().setInputFiles(imageFile);
+      await page.waitForTimeout(3000);
+      console.log('Start frame uploaded via hidden file input');
+      return true;
+    } catch (err) {
+      console.log(`Hidden file input failed: ${err.message}`);
+    }
+  }
+
+  // Strategy D: Click coordinates of the Start frame box
+  try {
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 5000 }),
+      page.mouse.click(97, 310),
+    ]);
+    await fileChooser.setFiles(imageFile);
+    await page.waitForTimeout(3000);
+    console.log('Start frame uploaded via coordinate click');
+    return true;
+  } catch {
+    console.log('WARNING: Could not upload start frame image (all strategies failed)');
+    return false;
+  }
+}
+
+// Select a video model from the UI dropdown.
+// The dropdown shows options like "Kling 2.6 1080p 5s-10s" — we match by name prefix.
+async function selectVideoModelFromDropdown(page, model) {
+  const uiModelName = VIDEO_MODEL_NAME_MAP[model] || model;
+  console.log(`Selecting model: ${model} (UI: "${uiModelName}")`);
+
+  const modelSelector = page.getByRole('button', { name: 'Model' });
+  if (await modelSelector.count() === 0) return;
+
+  // Check if already selected
+  const currentModel = await modelSelector.textContent().catch(() => '');
+  if (currentModel.includes(uiModelName)) {
+    console.log(`Model already set to ${uiModelName}`);
+    return;
+  }
+
+  await modelSelector.click({ force: true });
+  await page.waitForTimeout(1500);
+
+  // Find buttons in the dropdown area (x < 800) to avoid History sidebar matches
+  let selected = false;
+  const matchingBtns = await page.evaluate((modelName) => {
+    return [...document.querySelectorAll('button')]
+      .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
+      .map(b => {
+        const r = b.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height, text: b.textContent?.trim()?.substring(0, 60) };
+      })
+      .filter(b => b.x < 800 && b.x > 100);
+  }, uiModelName);
+
+  if (matchingBtns.length > 0) {
+    const btn = matchingBtns[0];
+    await page.mouse.click(btn.x + btn.w / 2, btn.y + btn.h / 2);
+    await page.waitForTimeout(1500);
+    selected = true;
+    console.log(`Selected model from dropdown: ${btn.text}`);
+  }
+
+  // Fallback: use search box
+  if (!selected) {
+    const searchBox = page.locator('input[placeholder*="Search"]');
+    if (await searchBox.count() > 0) {
+      await searchBox.fill(uiModelName);
+      await page.waitForTimeout(1000);
+      const filtered = await page.evaluate((modelName) => {
+        return [...document.querySelectorAll('button')]
+          .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
+          .map(b => {
+            const r = b.getBoundingClientRect();
+            return { x: r.x, y: r.y, w: r.width, h: r.height };
+          })
+          .filter(b => b.x < 800 && b.x > 100);
+      }, uiModelName);
+      if (filtered.length > 0) {
+        await page.mouse.click(filtered[0].x + filtered[0].w / 2, filtered[0].y + filtered[0].h / 2);
+        await page.waitForTimeout(1500);
+        selected = true;
+        console.log(`Selected model via search: ${uiModelName}`);
+      }
+    }
+  }
+
+  if (!selected) {
+    await page.keyboard.press('Escape');
+    console.log(`Model "${uiModelName}" not found in dropdown, using default`);
+  }
+
+  // Verify selection
+  const verifyModel = page.getByRole('button', { name: 'Model' });
+  if (await verifyModel.count() > 0) {
+    const finalModel = await verifyModel.textContent().catch(() => '');
+    console.log(`Model now set to: ${finalModel?.replace('Model', '').trim()}`);
+  }
+}
+
+// Enable the "Unlimited mode" switch on the video creation page.
+async function enableVideoUnlimitedMode(page) {
+  const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
+  if (await unlimitedSwitch.count() === 0) {
+    console.log('No Unlimited mode switch found on this page');
+    return;
+  }
+  const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
+  if (isChecked) {
+    console.log('Unlimited mode already enabled');
+    return;
+  }
+  await unlimitedSwitch.click({ force: true });
+  await page.waitForTimeout(500);
+  const nowChecked = await unlimitedSwitch.isChecked().catch(() => false);
+  console.log(nowChecked ? 'Enabled Unlimited mode' : 'WARNING: Could not enable Unlimited mode');
+}
+
+// Fill the video prompt using 3 strategies: ARIA textbox, textarea/input, contenteditable.
+async function fillVideoPrompt(page, prompt) {
+  // Strategy 1: ARIA textbox named "Prompt"
+  const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
+  if (await promptByRole.count() > 0) {
+    await promptByRole.click({ force: true });
+    await page.waitForTimeout(300);
+    await promptByRole.fill(prompt, { force: true });
+    console.log(`Entered prompt via ARIA textbox: "${prompt.substring(0, 60)}..."`);
+    return true;
+  }
+  // Strategy 2: textarea or input with placeholder
+  const promptInput = page.locator('textarea, input[placeholder*="Describe" i], input[placeholder*="prompt" i]');
+  if (await promptInput.count() > 0) {
+    await promptInput.first().click({ force: true });
+    await page.waitForTimeout(300);
+    await promptInput.first().fill(prompt, { force: true });
+    console.log(`Entered prompt via textarea: "${prompt.substring(0, 60)}..."`);
+    return true;
+  }
+  // Strategy 3: contenteditable div
+  const editable = page.locator('[contenteditable="true"], [role="textbox"]');
+  if (await editable.count() > 0) {
+    await editable.first().click({ force: true });
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Meta+a');
+    await page.keyboard.type(prompt);
+    console.log(`Entered prompt via contenteditable: "${prompt.substring(0, 60)}..."`);
+    return true;
+  }
+  console.log('WARNING: Could not find prompt input field');
+  return false;
+}
+
+// Capture the current History tab state before generating (item count + newest prompt).
+// Returns { count, newestPrompt, historyTab } for comparison after generation.
+async function captureVideoHistoryState(page) {
+  const historyTab = page.locator('[role="tab"]:has-text("History")');
+  let count = 0;
+  let newestPrompt = '';
+
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(1500);
+    count = await page.locator('main li').count();
+    newestPrompt = await page.evaluate(() => {
+      const firstItem = document.querySelector('main li');
+      const textbox = firstItem?.querySelector('[role="textbox"], textarea');
+      return textbox?.textContent?.trim()?.substring(0, 100) || '';
+    });
+    console.log(`Existing History items: ${count}`);
+    if (newestPrompt) {
+      console.log(`Existing newest prompt: "${newestPrompt.substring(0, 60)}..."`);
+    }
+
+    // Switch back to the generation tab
+    const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:has-text("Generate")');
+    if (await createTab.count() > 0) {
+      await createTab.first().click({ force: true });
+      await page.waitForTimeout(1000);
+    }
+  }
+
+  return { count, newestPrompt, historyTab };
+}
+
+// Poll the History tab until a new completed video appears or timeout.
+// Detection: prompt match, new item, or count increase — AND not processing.
+// Returns true if generation completed within the timeout.
+async function waitForVideoGeneration(page, historyState, prompt, options = {}) {
+  const timeout = options.timeout || 600000;
+  const startTime = Date.now();
+  const pollInterval = 10000;
+  const { count: existingCount, newestPrompt: existingNewestPrompt, historyTab } = historyState;
+  const submittedPromptPrefix = prompt.substring(0, 60);
+
+  console.log(`Waiting up to ${timeout / 1000}s for video generation...`);
+
+  // Switch to History tab to monitor
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(1000);
+  }
+
+  let lastRefreshTime = Date.now();
+  let wasProcessing = false;
+
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(pollInterval);
+    await dismissAllModals(page);
+
+    const state = await page.evaluate(({ prevCount, prevPrompt, ourPrompt }) => {
+      const items = document.querySelectorAll('main li');
+      const currentCount = items.length;
+      const firstItem = items[0];
+      if (!firstItem) return { currentCount, isComplete: false, isProcessing: false };
+
+      const itemText = firstItem.textContent || '';
+      const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
+
+      const textbox = firstItem.querySelector('[role="textbox"], textarea');
+      const promptText = textbox?.textContent?.trim() || '';
+      const promptPrefix = promptText.substring(0, 60);
+
+      const matchesOurPrompt = ourPrompt && promptPrefix.includes(ourPrompt.substring(0, 40));
+      const isNewItem = prevPrompt && promptPrefix !== prevPrompt.substring(0, 60);
+      const countIncreased = currentCount > prevCount;
+      const isComplete = !isProcessing && (matchesOurPrompt || isNewItem || countIncreased);
+
+      return { currentCount, isProcessing, promptText: promptPrefix, matchesOurPrompt, isNewItem, countIncreased, isComplete };
+    }, { prevCount: existingCount, prevPrompt: existingNewestPrompt, ourPrompt: submittedPromptPrefix });
+
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
+
+    if (state.isComplete) {
+      const reason = state.matchesOurPrompt ? 'prompt match' : state.isNewItem ? 'new item' : 'count increase';
+      console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, ${reason}, prompt: "${state.promptText}...")`);
+      return true;
+    }
+
+    if (state.isProcessing) {
+      wasProcessing = true;
+      console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
+    } else if (wasProcessing && !state.matchesOurPrompt && !state.isNewItem) {
+      if (Date.now() - lastRefreshTime > 30000) {
+        console.log(`  ${elapsedSec}s: processing ended, refreshing History...`);
+        const settingsTab = page.locator('[role="tab"]:has-text("Settings")');
+        if (await settingsTab.count() > 0) {
+          await settingsTab.click({ force: true });
+          await page.waitForTimeout(1000);
+        }
+        if (await historyTab.count() > 0) {
+          await historyTab.click({ force: true });
+          await page.waitForTimeout(2000);
+        }
+        lastRefreshTime = Date.now();
+      } else {
+        console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items)...`);
+      }
+    } else {
+      console.log(`  ${elapsedSec}s: waiting (${state.currentCount} items, prompt: "${state.promptText?.substring(0, 40)}...")...`);
+    }
+  }
+
+  console.log('Timeout waiting for video generation. The video may still be processing.');
+  console.log('Check back later with: node playwright-automator.mjs download --model video');
+  return false;
+}
+
+// --- End video generation helpers ---
+
 async function generateVideo(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const prompt = options.prompt || 'Camera slowly pans across a beautiful landscape as clouds drift overhead';
-
-    // Auto-select unlimited video model if no explicit model specified
-    let model = options.model || 'kling-2.6';
-    if (!options.model && options.preferUnlimited !== false) {
-      const unlimited = getUnlimitedModelForCommand('video');
-      if (unlimited) {
-        model = unlimited.slug;
-        console.log(`[unlimited] Auto-selected unlimited video model: ${unlimited.name} (${unlimited.slug})`);
-      }
-    } else if (options.model && isUnlimitedModel(options.model, 'video')) {
-      console.log(`[unlimited] Model "${options.model}" is unlimited (no credit cost)`);
-    }
+    const model = selectVideoModel(options);
 
     // Navigate to video creation page
     console.log('Navigating to video creation page...');
@@ -2037,295 +2392,26 @@ async function generateVideo(options = {}) {
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'video-page.png'), fullPage: false });
 
-    // Upload start frame image if provided
+    // Upload start frame if provided
     if (options.imageFile) {
-      console.log(`Uploading start frame: ${options.imageFile}`);
-
-      // Step 1: If there's an existing start frame, remove it first
-      // The existing frame shows as button "Uploaded image" with a small X button nearby
-      const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
-      if (await existingFrame.count() > 0) {
-        // The X/remove button is a small 20x20 button below the start frame area
-        // Find it by looking for a small button near the uploaded image
-        const smallButtons = await page.evaluate(() => {
-          const btns = [...document.querySelectorAll('main button')];
-          return btns
-            .filter(b => {
-              const r = b.getBoundingClientRect();
-              return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300;
-            })
-            .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
-        });
-        if (smallButtons.length > 0) {
-          await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
-          await page.waitForTimeout(1500);
-          console.log('Removed existing start frame');
-        }
-      }
-
-      // Step 2: Upload the start frame image via file chooser.
-      // The page has a button "Upload image or generate it" that triggers a file chooser.
-      // Also try clicking the "Start frame" area directly as a fallback.
-      let uploaded = false;
-
-      // Strategy A: Click the "Upload image" button
-      const uploadBtn = page.getByRole('button', { name: /Upload image/ });
-      if (!uploaded && await uploadBtn.count() > 0) {
-        try {
-          const [fileChooser] = await Promise.all([
-            page.waitForEvent('filechooser', { timeout: 10000 }),
-            uploadBtn.click({ force: true }),
-          ]);
-          await fileChooser.setFiles(options.imageFile);
-          await page.waitForTimeout(3000);
-          uploaded = true;
-          console.log('Start frame uploaded via Upload button');
-        } catch (uploadErr) {
-          console.log(`Upload button approach failed: ${uploadErr.message}`);
-        }
-      }
-
-      // Strategy B: Click the "Start frame" text/area directly
-      if (!uploaded) {
-        const startFrameBtn = page.locator('text=Start frame').first();
-        if (await startFrameBtn.count() > 0) {
-          try {
-            const [fileChooser] = await Promise.all([
-              page.waitForEvent('filechooser', { timeout: 10000 }),
-              startFrameBtn.click({ force: true }),
-            ]);
-            await fileChooser.setFiles(options.imageFile);
-            await page.waitForTimeout(3000);
-            uploaded = true;
-            console.log('Start frame uploaded via Start frame area');
-          } catch (err) {
-            console.log(`Start frame area click failed: ${err.message}`);
-          }
-        }
-      }
-
-      // Strategy C: Use drag-and-drop via page.setInputFiles on any hidden file input
-      if (!uploaded) {
-        const fileInput = page.locator('input[type="file"]');
-        if (await fileInput.count() > 0) {
-          try {
-            await fileInput.first().setInputFiles(options.imageFile);
-            await page.waitForTimeout(3000);
-            uploaded = true;
-            console.log('Start frame uploaded via hidden file input');
-          } catch (err) {
-            console.log(`Hidden file input failed: ${err.message}`);
-          }
-        }
-      }
-
-      // Strategy D: Click coordinates of the Start frame box (from screenshot: ~97, 310)
-      if (!uploaded) {
-        try {
-          const [fileChooser] = await Promise.all([
-            page.waitForEvent('filechooser', { timeout: 5000 }),
-            page.mouse.click(97, 310),
-          ]);
-          await fileChooser.setFiles(options.imageFile);
-          await page.waitForTimeout(3000);
-          uploaded = true;
-          console.log('Start frame uploaded via coordinate click');
-        } catch {
-          console.log('WARNING: Could not upload start frame image (all strategies failed)');
-        }
-      }
+      await uploadStartFrame(page, options.imageFile);
     } else {
       console.log('No start frame image provided. Some models support text-to-video.');
       console.log('For best results, provide --image-file with a start frame.');
     }
 
-    // Wait for page to stabilize after upload and dismiss any new modals
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'video-after-upload.png'), fullPage: false });
 
-    // Select model (click model selector, find matching option)
-    // Model name mapping: CLI names (lowercase, hyphenated) -> UI dropdown button text patterns
-    // The Model dropdown shows options like "Kling 2.6 1080p 5s-10s" as button text.
-    // We match by the model name prefix to handle varying resolution/duration suffixes.
-    {
-      const modelNameMap = {
-        'kling-3.0': 'Kling 3.0',
-        'kling-2.6': 'Kling 2.6',
-        'kling-2.5': 'Kling 2.5',
-        'kling-2.1': 'Kling 2.1',
-        'kling-motion': 'Kling Motion Control',
-        'seedance': 'Seedance',
-        'grok': 'Grok Imagine',
-        'minimax': 'Minimax Hailuo',
-        'wan-2.1': 'Wan 2.1',
-        'sora': 'Sora',
-        'veo': 'Veo',
-        'veo-3': 'Veo 3',
-      };
-      const uiModelName = modelNameMap[model] || model;
-      console.log(`Selecting model: ${model} (UI: "${uiModelName}")`);
+    await selectVideoModelFromDropdown(page, model);
+    await enableVideoUnlimitedMode(page);
+    await fillVideoPrompt(page, prompt);
 
-      // ARIA: button "Model" with paragraph showing current model name
-      const modelSelector = page.getByRole('button', { name: 'Model' });
-      if (await modelSelector.count() > 0) {
-        // Check if the desired model is already selected
-        const currentModel = await modelSelector.textContent().catch(() => '');
-        if (currentModel.includes(uiModelName)) {
-          console.log(`Model already set to ${uiModelName}`);
-        } else {
-          await modelSelector.click({ force: true });
-          await page.waitForTimeout(1500);
+    // Capture History state before generating
+    const historyState = await captureVideoHistoryState(page);
 
-          // The dropdown is a popover with "Featured models" and "All models" sections.
-          // Each option is a button with text like "Kling 2.61080p5s-10s" (no spaces).
-          // CRITICAL: button:has-text("Kling 2.6") also matches History items on the right.
-          // We must find the dropdown option by position (x < 800) to avoid History matches.
-          let selected = false;
-
-          // Strategy: find all buttons matching the model name, pick the one in the
-          // dropdown area (x < 800, center of page) not the History sidebar (x > 1000).
-          const matchingBtns = await page.evaluate((modelName) => {
-            return [...document.querySelectorAll('button')]
-              .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
-              .map(b => {
-                const r = b.getBoundingClientRect();
-                return { x: r.x, y: r.y, w: r.width, h: r.height, text: b.textContent?.trim()?.substring(0, 60) };
-              })
-              .filter(b => b.x < 800 && b.x > 100); // Dropdown area only
-          }, uiModelName);
-
-          if (matchingBtns.length > 0) {
-            const btn = matchingBtns[0];
-            await page.mouse.click(btn.x + btn.w / 2, btn.y + btn.h / 2);
-            await page.waitForTimeout(1500);
-            selected = true;
-            console.log(`Selected model from dropdown: ${btn.text}`);
-          }
-
-          if (!selected) {
-            // Fallback: use the search box in the dropdown to filter, then click by position
-            const searchBox = page.locator('input[placeholder*="Search"]');
-            if (await searchBox.count() > 0) {
-              await searchBox.fill(uiModelName);
-              await page.waitForTimeout(1000);
-              const filtered = await page.evaluate((modelName) => {
-                return [...document.querySelectorAll('button')]
-                  .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
-                  .map(b => {
-                    const r = b.getBoundingClientRect();
-                    return { x: r.x, y: r.y, w: r.width, h: r.height };
-                  })
-                  .filter(b => b.x < 800 && b.x > 100);
-              }, uiModelName);
-              if (filtered.length > 0) {
-                await page.mouse.click(filtered[0].x + filtered[0].w / 2, filtered[0].y + filtered[0].h / 2);
-                await page.waitForTimeout(1500);
-                selected = true;
-                console.log(`Selected model via search: ${uiModelName}`);
-              }
-            }
-          }
-
-          if (!selected) {
-            await page.keyboard.press('Escape');
-            console.log(`Model "${uiModelName}" not found in dropdown, using default`);
-          }
-        }
-      }
-
-      // Verify the model was actually selected
-      const verifyModel = page.getByRole('button', { name: 'Model' });
-      if (await verifyModel.count() > 0) {
-        const finalModel = await verifyModel.textContent().catch(() => '');
-        console.log(`Model now set to: ${finalModel?.replace('Model', '').trim()}`);
-      }
-    }
-
-    // Enable "Unlimited mode" switch if available (saves credits on supported models)
-    // ARIA: switch "Unlimited mode" — use getByRole for reliable matching
-    const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
-    if (await unlimitedSwitch.count() > 0) {
-      const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
-      if (!isChecked) {
-        await unlimitedSwitch.click({ force: true });
-        await page.waitForTimeout(500);
-        const nowChecked = await unlimitedSwitch.isChecked().catch(() => false);
-        console.log(nowChecked ? 'Enabled Unlimited mode' : 'WARNING: Could not enable Unlimited mode');
-      } else {
-        console.log('Unlimited mode already enabled');
-      }
-    } else {
-      console.log('No Unlimited mode switch found on this page');
-    }
-
-    // Fill the prompt - try multiple selectors
-    let promptFilled = false;
-    // Strategy 1: ARIA textbox named "Prompt"
-    const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
-    if (await promptByRole.count() > 0) {
-      await promptByRole.click({ force: true });
-      await page.waitForTimeout(300);
-      await promptByRole.fill(prompt, { force: true });
-      promptFilled = true;
-      console.log(`Entered prompt via ARIA textbox: "${prompt.substring(0, 60)}..."`);
-    }
-    // Strategy 2: textarea or input with placeholder
-    if (!promptFilled) {
-      const promptInput = page.locator('textarea, input[placeholder*="Describe" i], input[placeholder*="prompt" i]');
-      if (await promptInput.count() > 0) {
-        await promptInput.first().click({ force: true });
-        await page.waitForTimeout(300);
-        await promptInput.first().fill(prompt, { force: true });
-        promptFilled = true;
-        console.log(`Entered prompt via textarea: "${prompt.substring(0, 60)}..."`);
-      }
-    }
-    // Strategy 3: contenteditable div
-    if (!promptFilled) {
-      const editable = page.locator('[contenteditable="true"], [role="textbox"]');
-      if (await editable.count() > 0) {
-        await editable.first().click({ force: true });
-        await page.waitForTimeout(300);
-        await page.keyboard.press('Meta+a');
-        await page.keyboard.type(prompt);
-        promptFilled = true;
-        console.log(`Entered prompt via contenteditable: "${prompt.substring(0, 60)}..."`);
-      }
-    }
-    if (!promptFilled) {
-      console.log('WARNING: Could not find prompt input field');
-    }
-
-    // Count existing History items BEFORE generating (to detect new ones)
-    // Also snapshot the newest item's prompt text for dedup (CDN URLs can be reused)
-    const historyTab = page.locator('[role="tab"]:has-text("History")');
-    let existingHistoryCount = 0;
-    let existingNewestPrompt = '';
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(1500);
-      existingHistoryCount = await page.locator('main li').count();
-      // Record the newest item's prompt text for dedup comparison
-      existingNewestPrompt = await page.evaluate(() => {
-        const firstItem = document.querySelector('main li');
-        const textbox = firstItem?.querySelector('[role="textbox"], textarea');
-        return textbox?.textContent?.trim()?.substring(0, 100) || '';
-      });
-      console.log(`Existing History items: ${existingHistoryCount}`);
-      if (existingNewestPrompt) {
-        console.log(`Existing newest prompt: "${existingNewestPrompt.substring(0, 60)}..."`);
-      }
-
-      // Switch back to the generation tab to click Generate
-      const createTab = page.locator('[role="tab"]:has-text("Create"), [role="tab"]:has-text("Generate")');
-      if (await createTab.count() > 0) {
-        await createTab.first().click({ force: true });
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    // Dry-run mode: stop before clicking Generate
+    // Dry-run mode
     if (options.dryRun) {
       console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
       await page.screenshot({ path: join(STATE_DIR, 'dry-run-configured.png'), fullPage: false });
@@ -2334,7 +2420,7 @@ async function generateVideo(options = {}) {
       return { success: true, dryRun: true };
     }
 
-    // Click generate button
+    // Click Generate
     const generateBtn = page.locator('button:has-text("Generate")');
     if (await generateBtn.count() > 0) {
       await generateBtn.last().click({ force: true });
@@ -2347,102 +2433,7 @@ async function generateVideo(options = {}) {
     await page.waitForTimeout(3000);
     await page.screenshot({ path: join(STATE_DIR, 'video-generate-clicked.png'), fullPage: false });
 
-    // Wait for video generation by polling the History tab for new list items
-    const timeout = options.timeout || 600000; // 10 minutes default (videos can take 5-10 min)
-    console.log(`Waiting up to ${timeout / 1000}s for video generation...`);
-    const startTime = Date.now();
-
-    // Switch to History tab to monitor progress
-    if (await historyTab.count() > 0) {
-      await historyTab.click({ force: true });
-      await page.waitForTimeout(1000);
-    }
-
-    let generationComplete = false;
-    const pollInterval = 10000; // Check every 10 seconds
-    let lastRefreshTime = Date.now();
-    let wasProcessing = false; // Track if we ever saw a processing state
-
-    // The submitted prompt (first 60 chars) for matching against History items
-    const submittedPromptPrefix = prompt.substring(0, 60);
-
-    while (Date.now() - startTime < timeout) {
-      await page.waitForTimeout(pollInterval);
-      await dismissAllModals(page);
-
-      // Detection strategy for video completion:
-      // The History tab has a FIXED display limit (~12 items). New items push old ones
-      // out, so item count may NOT increase. Instead we detect completion by:
-      // 1. The newest item's prompt matches our submitted prompt
-      // 2. The newest item is NOT processing (no "In queue"/"Processing"/"Cancel" text)
-      // 3. OR: item count increased (works when History wasn't full)
-      const state = await page.evaluate(({ prevCount, prevPrompt, ourPrompt }) => {
-        const items = document.querySelectorAll('main li');
-        const currentCount = items.length;
-        const firstItem = items[0];
-        if (!firstItem) return { currentCount, isComplete: false, isProcessing: false };
-
-        const itemText = firstItem.textContent || '';
-        const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
-
-        // Get prompt text from the newest item
-        const textbox = firstItem.querySelector('[role="textbox"], textarea');
-        const promptText = textbox?.textContent?.trim() || '';
-        const promptPrefix = promptText.substring(0, 60);
-
-        // Check if newest item matches our submitted prompt
-        const matchesOurPrompt = ourPrompt && promptPrefix.includes(ourPrompt.substring(0, 40));
-        // Check if newest item is different from what was there before
-        const isNewItem = prevPrompt && promptPrefix !== prevPrompt.substring(0, 60);
-        // Count-based detection (works when History wasn't full)
-        const countIncreased = currentCount > prevCount;
-
-        // Complete if: (prompt matches OR new item appeared OR count increased) AND not processing
-        const isComplete = !isProcessing && (matchesOurPrompt || isNewItem || countIncreased);
-
-        return { currentCount, isProcessing, promptText: promptPrefix, matchesOurPrompt, isNewItem, countIncreased, isComplete };
-      }, { prevCount: existingHistoryCount, prevPrompt: existingNewestPrompt, ourPrompt: submittedPromptPrefix });
-
-      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
-
-      if (state.isComplete) {
-        const reason = state.matchesOurPrompt ? 'prompt match' : state.isNewItem ? 'new item' : 'count increase';
-        console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, ${reason}, prompt: "${state.promptText}...")`);
-        generationComplete = true;
-        break;
-      }
-
-      // Log progress
-      if (state.isProcessing) {
-        wasProcessing = true;
-        console.log(`  ${elapsedSec}s: processing (${state.currentCount} items)...`);
-      } else if (wasProcessing && !state.matchesOurPrompt && !state.isNewItem) {
-        // Was processing but now stopped, and no matching item found yet
-        // Try refreshing the History tab — the completed item may need a refresh to appear
-        if (Date.now() - lastRefreshTime > 30000) {
-          console.log(`  ${elapsedSec}s: processing ended, refreshing History...`);
-          const settingsTab = page.locator('[role="tab"]:has-text("Settings")');
-          if (await settingsTab.count() > 0) {
-            await settingsTab.click({ force: true });
-            await page.waitForTimeout(1000);
-          }
-          if (await historyTab.count() > 0) {
-            await historyTab.click({ force: true });
-            await page.waitForTimeout(2000);
-          }
-          lastRefreshTime = Date.now();
-        } else {
-          console.log(`  ${elapsedSec}s: waiting for result (${state.currentCount} items)...`);
-        }
-      } else {
-        console.log(`  ${elapsedSec}s: waiting (${state.currentCount} items, prompt: "${state.promptText?.substring(0, 40)}...")...`);
-      }
-    }
-
-    if (!generationComplete) {
-      console.log('Timeout waiting for video generation. The video may still be processing.');
-      console.log('Check back later with: node playwright-automator.mjs download --model video');
-    }
+    const generationComplete = await waitForVideoGeneration(page, historyState, prompt, options);
 
     await page.waitForTimeout(2000);
     await dismissAllModals(page);
