@@ -749,17 +749,14 @@ cmd_push() {
     if [[ -n "$target_task" ]]; then
         tasks=("$target_task")
     else
-        # Find all open tasks without GH refs (top-level only, not subtasks)
+        # Find all open tasks without GH refs (top-level and subtasks)
         while IFS= read -r line; do
             local tid
             tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
             if [[ -n "$tid" ]] && ! echo "$line" | grep -qE 'ref:GH#[0-9]+'; then
-                # Skip subtasks (indented with more than 0 spaces before the dash)
-                if echo "$line" | grep -qE '^- \['; then
-                    tasks+=("$tid")
-                fi
+                tasks+=("$tid")
             fi
-        done < <(grep -E '^- \[ \] t[0-9]+' "$todo_file" || true)
+        done < <(grep -E '^\s*- \[ \] t[0-9]+' "$todo_file" || true)
     fi
 
     if [[ ${#tasks[@]} -eq 0 ]]; then
@@ -788,9 +785,9 @@ cmd_push() {
             continue
         fi
 
-        # Parse task for title and labels
+        # Parse task for title and labels (match both top-level and indented subtasks)
         local task_line
-        task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
         if [[ -z "$task_line" ]]; then
             print_warning "Task $task_id not found in TODO.md"
             continue
@@ -880,7 +877,7 @@ cmd_enrich() {
             if [[ -n "$tid" ]]; then
                 tasks+=("$tid")
             fi
-        done < <(grep -E '^- \[ \] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
+        done < <(grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
     fi
 
     if [[ ${#tasks[@]} -eq 0 ]]; then
@@ -892,9 +889,9 @@ cmd_enrich() {
 
     local enriched=0
     for task_id in "${tasks[@]}"; do
-        # Find the issue number
+        # Find the issue number (match both top-level and indented subtasks)
         local task_line
-        task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
         local issue_number
         issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
@@ -964,13 +961,13 @@ cmd_pull() {
             continue
         fi
 
-        # Check if TODO.md already has this ref
-        if grep -qE "^- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
+        # Check if TODO.md already has this ref (match both top-level and indented subtasks)
+        if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
             continue
         fi
 
-        # Check if task exists in TODO.md (any checkbox state)
-        if ! grep -qE "^- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
+        # Check if task exists in TODO.md (any checkbox state, any indent level)
+        if ! grep -qE "^\s*- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
             # Orphan: GH issue exists but no TODO.md entry
             print_warning "ORPHAN: GH#$issue_number ($task_id: $issue_title) — no TODO.md entry"
             orphan_open=$((orphan_open + 1))
@@ -1006,11 +1003,11 @@ cmd_pull() {
             continue
         fi
 
-        if grep -qE "^- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
+        if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
             continue
         fi
 
-        if ! grep -qE "^- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
+        if ! grep -qE "^\s*- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
             log_verbose "ORPHAN (closed): GH#$issue_number ($task_id) — no TODO.md entry"
             orphan_closed=$((orphan_closed + 1))
             continue
@@ -1043,14 +1040,14 @@ cmd_pull() {
             continue
         fi
 
-        # Check if task exists in TODO.md
-        if ! grep -qE "^- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
+        # Check if task exists in TODO.md (any indent level)
+        if ! grep -qE "^\s*- \[.\] ${task_id} " "$todo_file" 2>/dev/null; then
             continue
         fi
 
         # Check if TODO.md already has an assignee: on this task
         local task_line_content
-        task_line_content=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        task_line_content=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
         local existing_assignee
         existing_assignee=$(echo "$task_line_content" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || echo "")
 
@@ -1068,7 +1065,7 @@ cmd_pull() {
 
         # Add assignee:login before logged: or at end of line
         local line_num
-        line_num=$(grep -nE "^- \[.\] ${task_id} " "$todo_file" | head -1 | cut -d: -f1)
+        line_num=$(grep -nE "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 | cut -d: -f1)
         if [[ -n "$line_num" ]]; then
             local current_line
             current_line=$(sed -n "${line_num}p" "$todo_file")
@@ -1116,8 +1113,8 @@ fix_gh_ref_in_todo() {
         return 0
     fi
 
-    # Replace the old ref with the new one
-    sed_inplace -E "s/^(- \[.\] ${task_id} .*)ref:GH#${old_number}/\1ref:GH#${new_number}/" "$todo_file"
+    # Replace the old ref with the new one (handle indented subtasks)
+    sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)ref:GH#${old_number}/\1ref:GH#${new_number}/" "$todo_file"
     log_verbose "Fixed ref:GH#$old_number -> ref:GH#$new_number for $task_id"
     return 0
 }
@@ -1128,23 +1125,23 @@ add_gh_ref_to_todo() {
     local issue_number="$2"
     local todo_file="$3"
 
-    # Check if ref already exists
-    if grep -qE "^- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
+    # Check if ref already exists (match both top-level and indented subtasks)
+    if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#${issue_number}" "$todo_file" 2>/dev/null; then
         return 0
     fi
 
     # Check if any GH ref exists (might be different number)
-    if grep -qE "^- \[.\] ${task_id} .*ref:GH#" "$todo_file" 2>/dev/null; then
+    if grep -qE "^\s*- \[.\] ${task_id} .*ref:GH#" "$todo_file" 2>/dev/null; then
         log_verbose "$task_id already has a GH ref, skipping"
         return 0
     fi
 
-    # Add ref before logged: or at end of line
-    if grep -qE "^- \[.\] ${task_id} .*logged:" "$todo_file" 2>/dev/null; then
-        sed_inplace -E "s/^(- \[.\] ${task_id} .*)( logged:)/\1 ref:GH#${issue_number}\2/" "$todo_file"
+    # Add ref before logged: or at end of line (handle indented subtasks)
+    if grep -qE "^\s*- \[.\] ${task_id} .*logged:" "$todo_file" 2>/dev/null; then
+        sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)( logged:)/\1 ref:GH#${issue_number}\2/" "$todo_file"
     else
         # Append at end of line
-        sed_inplace -E "s/^(- \[.\] ${task_id} .*)/\1 ref:GH#${issue_number}/" "$todo_file"
+        sed_inplace -E "s/^([[:space:]]*- \[.\] ${task_id} .*)/\1 ref:GH#${issue_number}/" "$todo_file"
     fi
 
     log_verbose "Added ref:GH#$issue_number to $task_id"
@@ -1205,7 +1202,7 @@ cmd_close() {
             if [[ -n "$tid" ]]; then
                 tasks+=("$tid")
             fi
-        done < <(grep -E '^- \[x\] t[0-9]+' "$todo_file" || true)
+        done < <(grep -E '^\s*- \[x\] t[0-9]+' "$todo_file" || true)
     fi
 
     if [[ ${#tasks[@]} -eq 0 ]]; then
@@ -1218,7 +1215,7 @@ cmd_close() {
     local ref_fixed=0
     for task_id in "${tasks[@]}"; do
         local task_line
-        task_line=$(grep -E "^- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+        task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
         local issue_number
         issue_number=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 
@@ -1332,13 +1329,13 @@ cmd_status() {
 
     print_info "Checking sync status for $repo_slug..."
 
-    # Count tasks in TODO.md
+    # Count tasks in TODO.md (include both top-level and indented subtasks)
     local total_open
-    total_open=$(grep -cE '^- \[ \] t[0-9]+' "$todo_file" || echo "0")
+    total_open=$(grep -cE '^\s*- \[ \] t[0-9]+' "$todo_file" || echo "0")
     local total_completed
-    total_completed=$(grep -cE '^- \[x\] t[0-9]+' "$todo_file" || echo "0")
+    total_completed=$(grep -cE '^\s*- \[x\] t[0-9]+' "$todo_file" || echo "0")
     local with_ref
-    with_ref=$(grep -cE '^- \[ \] t[0-9]+.*ref:GH#' "$todo_file" || echo "0")
+    with_ref=$(grep -cE '^\s*- \[ \] t[0-9]+.*ref:GH#' "$todo_file" || echo "0")
     local without_ref
     without_ref=$((total_open - with_ref))
 
@@ -1361,7 +1358,7 @@ cmd_status() {
                 print_warning "DRIFT: $line"
             fi
         fi
-    done < <(grep -E '^- \[x\] t[0-9]+.*ref:GH#' "$todo_file" || true)
+    done < <(grep -E '^\s*- \[x\] t[0-9]+.*ref:GH#' "$todo_file" || true)
 
     echo ""
     echo "=== Sync Status ==="
@@ -1444,7 +1441,7 @@ cmd_reconcile() {
         elif [[ -z "$correct_number" || "$correct_number" == "null" ]]; then
             print_warning "$tid: no matching issue found on GitHub (ref:GH#$gh_ref is stale)"
         fi
-    done < <(grep -E '^- \[.\] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
+    done < <(grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' "$todo_file" || true)
 
     # Phase 2: Find open issues for completed tasks (including those without ref:GH#)
     local open_issues_json
@@ -1462,14 +1459,14 @@ cmd_reconcile() {
             continue
         fi
 
-        # Check if task is completed in TODO.md
-        if grep -qE "^- \[x\] ${issue_tid} " "$todo_file" 2>/dev/null; then
+        # Check if task is completed in TODO.md (any indent level)
+        if grep -qE "^\s*- \[x\] ${issue_tid} " "$todo_file" 2>/dev/null; then
             print_warning "STALE: GH#$issue_number ($issue_tid) is open but task is completed"
             stale_closed=$((stale_closed + 1))
         fi
 
-        # Check if task exists at all in TODO.md
-        if ! grep -qE "^- \[.\] ${issue_tid} " "$todo_file" 2>/dev/null; then
+        # Check if task exists at all in TODO.md (any indent level)
+        if ! grep -qE "^\s*- \[.\] ${issue_tid} " "$todo_file" 2>/dev/null; then
             log_verbose "ORPHAN: GH#$issue_number ($issue_tid) has no matching TODO.md entry"
             orphan_issues=$((orphan_issues + 1))
         fi
