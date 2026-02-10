@@ -4106,6 +4106,11 @@ create_task_worktree() {
                     # Reset worktree contents to match main (fresh code, same branch)
                     if git -C "$worktree_path" fetch origin main &>/dev/null && \
                        git -C "$worktree_path" reset --hard origin/main &>/dev/null; then
+                        # Force-push the reset so remote branch matches local.
+                        # This lets the worker's normal `git push` work without --force.
+                        # --force-with-lease is safer than --force (rejects if someone else pushed).
+                        git -C "$worktree_path" push --force-with-lease origin "$branch_name" &>/dev/null || \
+                            log_warn "Force-push after reset failed — worker may need --force on first push" >&2
                         log_info "Worktree $worktree_path reset to origin/main on branch $branch_name" >&2
                         echo "$worktree_path"
                         return 0
@@ -4120,6 +4125,9 @@ create_task_worktree() {
                         # Reset to main for fresh code
                         if git -C "$worktree_path" fetch origin main &>/dev/null && \
                            git -C "$worktree_path" reset --hard origin/main &>/dev/null; then
+                            # Force-push the reset so remote branch matches local
+                            git -C "$worktree_path" push --force-with-lease origin "$branch_name" &>/dev/null || \
+                                log_warn "Force-push after reset failed — worker may need --force on first push" >&2
                             register_worktree "$worktree_path" "$branch_name" --task "$task_id"
                             log_info "Created worktree on existing branch $branch_name, reset to origin/main" >&2
                             echo "$worktree_path"
