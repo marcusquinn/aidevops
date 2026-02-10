@@ -1412,158 +1412,366 @@ async function configureImageOptions(page, options) {
   }
 }
 
+// --- Image generation helpers (extracted from generateImage for clarity) ---
+
+// Map of image model slugs to their URL paths on the Higgsfield UI.
+// Models with "365" unlimited subscriptions use feature pages (e.g. /nano-banana-pro)
+// which have an "Unlimited" toggle switch. Standard /image/ routes cost credits.
+const IMAGE_MODEL_URL_MAP = {
+  'soul': '/image/soul',
+  'nano_banana': '/image/nano_banana',
+  'nano-banana': '/image/nano_banana',
+  'nano_banana_pro': '/nano-banana-pro',
+  'nano-banana-pro': '/nano-banana-pro',
+  'seedream': '/image/seedream',
+  'seedream-4': '/image/seedream',
+  'seedream-4.5': '/seedream-4-5',
+  'seedream-4-5': '/seedream-4-5',
+  'wan2': '/image/wan2',
+  'wan': '/image/wan2',
+  'gpt': '/image/gpt',
+  'gpt-image': '/image/gpt',
+  'kontext': '/image/kontext',
+  'flux-kontext': '/image/kontext',
+  'flux': '/image/flux',
+  'flux-pro': '/image/flux',
+};
+
+// Select the best image model, preferring unlimited when available.
+function selectImageModel(options) {
+  let model = options.model || 'soul';
+  if (!options.model && options.preferUnlimited !== false) {
+    const unlimited = getUnlimitedModelForCommand('image');
+    if (unlimited) {
+      model = unlimited.slug;
+      console.log(`[unlimited] Auto-selected unlimited image model: ${unlimited.name} (${unlimited.slug})`);
+    }
+  } else if (options.model && isUnlimitedModel(options.model, 'image')) {
+    console.log(`[unlimited] Model "${options.model}" is unlimited (no credit cost)`);
+  }
+  return model;
+}
+
+// Fill the prompt textarea, with JS fallback if Playwright locator fails.
+// Returns true on success, false if no input field was found.
+async function fillPromptInput(page, prompt) {
+  const promptInput = page.locator('textarea, [contenteditable="true"], input[placeholder*="prompt" i], input[placeholder*="describe" i], input[placeholder*="Describe" i], input[placeholder*="Upload" i]');
+  const promptCount = await promptInput.count();
+  console.log(`Found ${promptCount} prompt input(s)`);
+
+  if (promptCount > 0) {
+    await promptInput.first().click({ force: true });
+    await page.waitForTimeout(300);
+    await promptInput.first().fill('', { force: true });
+    await promptInput.first().fill(prompt, { force: true });
+    console.log(`Entered prompt: "${prompt}"`);
+    await page.waitForTimeout(500);
+    return true;
+  }
+
+  // Fallback: fill via JS
+  const filled = await page.evaluate((p) => {
+    const inputs = document.querySelectorAll('textarea, input[type="text"]');
+    for (const input of inputs) {
+      if (input.offsetParent !== null) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, 'value'
+        )?.set || Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype, 'value'
+        )?.set;
+        if (nativeSetter) nativeSetter.call(input, p);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+    }
+    return false;
+  }, prompt);
+
+  if (filled) {
+    console.log('Entered prompt via JS fallback');
+    return true;
+  }
+  console.error('Could not find prompt input field');
+  return false;
+}
+
+// Enable the "Unlimited mode" toggle on feature pages (e.g. /nano-banana-pro, /seedream-4-5).
+async function enableUnlimitedMode(page) {
+  const unlimitedSwitch = page.getByRole('switch');
+  if (await unlimitedSwitch.count() === 0) return;
+
+  const hasUnlimitedLabel = await page.evaluate(() => document.body.innerText.includes('Unlimited'));
+  if (!hasUnlimitedLabel) return;
+
+  const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
+  if (isChecked) {
+    console.log('Unlimited mode already enabled (image)');
+    return;
+  }
+
+  const switchParent = page.locator('button:has(switch), *:has(> switch)').first();
+  if (await switchParent.count() > 0) {
+    await switchParent.click({ force: true });
+  } else {
+    await unlimitedSwitch.click({ force: true });
+  }
+  await page.waitForTimeout(500);
+  const nowChecked = await unlimitedSwitch.isChecked().catch(() => false);
+  console.log(nowChecked ? 'Enabled Unlimited mode (image)' : 'WARNING: Could not enable Unlimited mode');
+}
+
+// Click the Generate button and verify the click registered.
+// Returns true if generation appears to have started.
+async function clickAndVerifyGenerate(page, queueBefore, existingImageCount) {
+  const generateBtn = page.locator('button:has-text("Generate"), button[type="submit"]');
+  const genCount = await generateBtn.count();
+  console.log(`Found ${genCount} generate button(s)`);
+
+  const btnTextBefore = genCount > 0
+    ? await generateBtn.last().textContent().catch(() => '')
+    : '';
+
+  if (genCount > 0) {
+    await generateBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(300);
+    await generateBtn.last().click({ force: true });
+    console.log(`Clicked generate button (force). Button text was: "${btnTextBefore?.trim()}"`);
+  } else {
+    await page.evaluate(() => {
+      const btn = document.querySelector('button[type="submit"]') ||
+                  [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Generate'));
+      if (btn) btn.click();
+    });
+    console.log('Clicked generate button via JS');
+  }
+
+  // Verify the click registered by checking for state changes
+  await page.waitForTimeout(3000);
+  const postClickState = await page.evaluate(({ prevQueue, prevImages }) => {
+    const queueNow = (document.body.innerText.match(/In queue/g) || []).length;
+    const imagesNow = document.querySelectorAll('img[alt="image generation"]').length;
+    const hasGeneratingIndicator = document.body.innerText.includes('Generating') ||
+      document.body.innerText.includes('Processing') ||
+      document.querySelectorAll('[class*="spinner"], [class*="loading"], [class*="progress"]').length > 0;
+    const genBtns = [...document.querySelectorAll('button')].filter(b => b.textContent?.includes('Generate'));
+    const btnDisabled = genBtns.some(b => b.disabled || b.getAttribute('aria-disabled') === 'true');
+    const btnTextNow = genBtns.map(b => b.textContent?.trim()).join(', ');
+    return { queueNow, imagesNow, hasGeneratingIndicator, btnDisabled, btnTextNow };
+  }, { prevQueue: queueBefore, prevImages: existingImageCount });
+
+  const clickRegistered = postClickState.queueNow > queueBefore ||
+    postClickState.imagesNow > existingImageCount ||
+    postClickState.hasGeneratingIndicator ||
+    postClickState.btnDisabled;
+
+  if (!clickRegistered) {
+    console.log(`Generate click may not have registered (queue=${postClickState.queueNow}, images=${postClickState.imagesNow}, btn="${postClickState.btnTextNow}"). Retrying...`);
+    await dismissAllModals(page);
+    if (genCount > 0) {
+      await generateBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+      await page.waitForTimeout(500);
+      await generateBtn.last().click({ force: true });
+      console.log('Retried Generate click');
+    }
+    await page.waitForTimeout(3000);
+    return false;
+  }
+
+  console.log(`Generate click confirmed (queue=${postClickState.queueNow}, indicator=${postClickState.hasGeneratingIndicator}, disabled=${postClickState.btnDisabled})`);
+  return true;
+}
+
+// Poll the page until image generation completes or times out.
+// Detects completion via: queue drain, image count increase, button re-enable, or page reload.
+// Returns true if generation completed within the timeout.
+async function waitForImageGeneration(page, existingImageCount, queueBefore, options = {}) {
+  const timeout = options.timeout || 300000;
+  const startTime = Date.now();
+  const pollInterval = 5000;
+
+  // Phase 1: Wait for new "In queue" items to confirm generation started
+  console.log('Waiting for generation to start...');
+  let detectedQueueCount = queueBefore;
+  try {
+    await page.waitForFunction(
+      (prevQueueCount) => (document.body.innerText.match(/In queue/g) || []).length > prevQueueCount,
+      queueBefore,
+      { timeout: 15000, polling: 1000 }
+    );
+    detectedQueueCount = await page.evaluate(() =>
+      (document.body.innerText.match(/In queue/g) || []).length
+    );
+    console.log(`Generation started! ${detectedQueueCount} item(s) in queue`);
+  } catch {
+    console.log('Queue detection timed out - generation may have started differently');
+  }
+
+  // Phase 2: Poll until queue items resolve to images
+  console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
+  let peakQueue = Math.max(queueBefore, detectedQueueCount);
+  let retryAttempted = false;
+  let reloadAttempted = false;
+  let btnWasDisabled = false;
+
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(pollInterval);
+
+    const state = await page.evaluate(() => {
+      const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
+      const images = document.querySelectorAll('img[alt="image generation"]').length;
+      const genBtns = [...document.querySelectorAll('button')].filter(b =>
+        b.textContent.includes('Generate') || b.textContent.includes('Unlimited')
+      );
+      const genBtn = genBtns[genBtns.length - 1];
+      const btnDisabled = genBtn ? (genBtn.disabled || genBtn.getAttribute('aria-disabled') === 'true') : false;
+      const btnText = genBtn ? genBtn.textContent.trim() : '';
+      const hasSpinner = document.querySelector('main svg[class*="animate"]') !== null ||
+                        document.querySelector('main [class*="spinner"]') !== null ||
+                        document.querySelector('main [class*="loading"]') !== null;
+      return { queueItems, images, btnDisabled, btnText, hasSpinner };
+    });
+
+    if (state.queueItems > peakQueue) peakQueue = state.queueItems;
+    if (state.btnDisabled || state.hasSpinner) btnWasDisabled = true;
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue}) btn=${state.btnDisabled ? 'disabled' : 'enabled'}`);
+
+    // Condition 1: queue was elevated and has now dropped back
+    if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
+      console.log(`Generation complete! ${state.images} images on page (${elapsed}s)`);
+      return true;
+    }
+
+    // Condition 2: image count increased with no queue activity
+    if (state.images > existingImageCount && state.queueItems === 0 && peakQueue === queueBefore) {
+      console.log(`Generation complete (fast)! ${state.images} images on page, ${state.images - existingImageCount} new (${elapsed}s)`);
+      return true;
+    }
+
+    // Condition 3: Generate button was disabled/spinner and is now re-enabled
+    if (btnWasDisabled && !state.btnDisabled && !state.hasSpinner) {
+      console.log(`Generation complete (button re-enabled)! ${state.images} images on page (${elapsed}s)`);
+      await page.waitForTimeout(3000);
+      return true;
+    }
+
+    // Safety: retry Generate click after 30s of no activity
+    if (!retryAttempted && parseInt(elapsed, 10) >= 30 &&
+        state.queueItems === queueBefore && state.images <= existingImageCount &&
+        peakQueue === queueBefore && !btnWasDisabled) {
+      console.log('No activity detected after 30s - retrying Generate click...');
+      await dismissAllModals(page);
+      const retryBtn = page.locator('button:has-text("Generate")');
+      if (await retryBtn.count() > 0) {
+        await retryBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+        await page.waitForTimeout(300);
+        await retryBtn.last().click({ force: true });
+        console.log('Retried Generate click (30s safety)');
+      }
+      retryAttempted = true;
+    }
+
+    // Condition 4: reload after 60s of no queue/button activity
+    if (!reloadAttempted && parseInt(elapsed, 10) >= 60 &&
+        peakQueue === queueBefore && !btnWasDisabled) {
+      console.log('No queue or button activity after 60s - reloading to check for new images...');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(5000);
+      const freshCount = await page.evaluate(() =>
+        document.querySelectorAll('img[alt="image generation"]').length
+      );
+      if (freshCount > existingImageCount) {
+        console.log(`Generation complete (post-reload)! ${freshCount} images, ${freshCount - existingImageCount} new (${elapsed}s)`);
+        return true;
+      }
+      reloadAttempted = true;
+    }
+  }
+
+  console.log('Timeout waiting for generation. Some items may still be processing.');
+  return false;
+}
+
+// Download newly generated images by comparing current count to pre-generation count.
+// New images appear at the TOP of the grid.
+async function downloadNewImages(page, options, existingImageCount, generationComplete) {
+  if (options.wait === false) return;
+
+  const currentImageCount = await page.evaluate(() =>
+    document.querySelectorAll('img[alt="image generation"]').length
+  );
+  const newCount = currentImageCount - existingImageCount;
+  const newImageIndices = [];
+  for (let i = 0; i < newCount; i++) newImageIndices.push(i);
+  console.log(`New images: ${newImageIndices.length} of ${currentImageCount} total (indices: ${newImageIndices.join(', ')})`);
+
+  const baseOutput = options.output || DOWNLOAD_DIR;
+  const outputDir = resolveOutputDir(baseOutput, options, 'images');
+
+  if (newImageIndices.length > 0) {
+    await downloadSpecificImages(page, outputDir, newImageIndices, options);
+  } else if (generationComplete) {
+    const batchSize = options.batch || 4;
+    const downloadCount = Math.min(batchSize, currentImageCount);
+    console.log(`Count-based detection missed new images. Downloading top ${downloadCount} (batch=${batchSize})...`);
+    const fallbackIndices = [];
+    for (let i = 0; i < downloadCount; i++) fallbackIndices.push(i);
+    await downloadSpecificImages(page, outputDir, fallbackIndices, options);
+  } else {
+    console.log('No new images detected. Generation may still be in progress.');
+    console.log('Try: node playwright-automator.mjs download');
+  }
+}
+
+// --- End image generation helpers ---
+
 // Generate image via UI
 async function generateImage(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const prompt = options.prompt || 'A serene mountain landscape at golden hour, photorealistic, 8k';
+    const model = selectImageModel(options);
 
-    // Auto-select unlimited model if no explicit model specified and prefer-unlimited is not disabled
-    let model = options.model || 'soul';
-    if (!options.model && options.preferUnlimited !== false) {
-      const unlimited = getUnlimitedModelForCommand('image');
-      if (unlimited) {
-        model = unlimited.slug;
-        console.log(`[unlimited] Auto-selected unlimited image model: ${unlimited.name} (${unlimited.slug})`);
-      }
-    } else if (options.model && isUnlimitedModel(options.model, 'image')) {
-      console.log(`[unlimited] Model "${options.model}" is unlimited (no credit cost)`);
-    }
-
-    // Navigate to image creation page - map model names to URL slugs.
-    // Models with "365" unlimited subscriptions use feature pages (e.g. /nano-banana-pro)
-    // which have an "Unlimited" toggle switch. Standard /image/ routes cost credits.
-    const modelUrlMap = {
-      'soul': '/image/soul',
-      'nano_banana': '/image/nano_banana',
-      'nano-banana': '/image/nano_banana',
-      'nano_banana_pro': '/nano-banana-pro',       // Unlimited feature page (has Unlimited switch)
-      'nano-banana-pro': '/nano-banana-pro',        // Unlimited feature page
-      'seedream': '/image/seedream',
-      'seedream-4': '/image/seedream',
-      'seedream-4.5': '/seedream-4-5',              // Unlimited feature page (has Unlimited switch)
-      'seedream-4-5': '/seedream-4-5',              // Unlimited feature page
-      'wan2': '/image/wan2',
-      'wan': '/image/wan2',
-      'gpt': '/image/gpt',
-      'gpt-image': '/image/gpt',
-      'kontext': '/image/kontext',
-      'flux-kontext': '/image/kontext',
-      'flux': '/image/flux',
-      'flux-pro': '/image/flux',
-    };
-    const modelPath = modelUrlMap[model] || `/image/${model}`;
+    // Navigate to image creation page
+    const modelPath = IMAGE_MODEL_URL_MAP[model] || `/image/${model}`;
     const imageUrl = `${BASE_URL}${modelPath}`;
-
     console.log(`Navigating to ${imageUrl}...`);
     await page.goto(imageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    // Dismiss any promo modals
     await dismissAllModals(page);
-
-    // Take screenshot to see current state
     await page.screenshot({ path: join(STATE_DIR, 'image-page.png'), fullPage: false });
 
-    // Wait for the page content to fully load (dismiss loading overlays)
+    // Wait for page content to fully load and remove loading overlays
     await page.waitForTimeout(2000);
-    // Remove any loading overlays that intercept pointer events
     await page.evaluate(() => {
-      // Remove full-screen loading overlays inside main
       document.querySelectorAll('main .size-full.flex.items-center.justify-center').forEach(el => {
         if (el.children.length <= 1) el.remove();
       });
     });
 
-    // Find and fill the prompt textarea using force to bypass overlays
-    const promptInput = page.locator('textarea, [contenteditable="true"], input[placeholder*="prompt" i], input[placeholder*="describe" i], input[placeholder*="Describe" i], input[placeholder*="Upload" i]');
-    const promptCount = await promptInput.count();
-    console.log(`Found ${promptCount} prompt input(s)`);
-
-    if (promptCount > 0) {
-      // Use force click to bypass any remaining overlays
-      await promptInput.first().click({ force: true });
-      await page.waitForTimeout(300);
-      await promptInput.first().fill('', { force: true });
-      await promptInput.first().fill(prompt, { force: true });
-      console.log(`Entered prompt: "${prompt}"`);
-      await page.waitForTimeout(500);
-    } else {
-      // Fallback: fill via JS
-      const filled = await page.evaluate((p) => {
-        const inputs = document.querySelectorAll('textarea, input[type="text"]');
-        for (const input of inputs) {
-          if (input.offsetParent !== null) {
-            const nativeSetter = Object.getOwnPropertyDescriptor(
-              window.HTMLInputElement.prototype, 'value'
-            )?.set || Object.getOwnPropertyDescriptor(
-              window.HTMLTextAreaElement.prototype, 'value'
-            )?.set;
-            if (nativeSetter) nativeSetter.call(input, p);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-          }
-        }
-        return false;
-      }, prompt);
-
-      if (!filled) {
-        console.error('Could not find prompt input field');
-        await page.screenshot({ path: join(STATE_DIR, 'no-prompt-field.png'), fullPage: true });
-        await browser.close();
-        return null;
-      }
-      console.log('Entered prompt via JS fallback');
+    // Fill prompt
+    const promptFilled = await fillPromptInput(page, prompt);
+    if (!promptFilled) {
+      await page.screenshot({ path: join(STATE_DIR, 'no-prompt-field.png'), fullPage: true });
+      await browser.close();
+      return null;
     }
 
-    // Configure generation options (aspect ratio, quality, enhance, batch, preset)
     await configureImageOptions(page, options);
+    await enableUnlimitedMode(page);
 
-    // Enable "Unlimited mode" switch if available (saves credits on subscription models).
-    // Feature pages like /nano-banana-pro and /seedream-4-5 have this toggle.
-    const unlimitedSwitch = page.getByRole('switch');
-    if (await unlimitedSwitch.count() > 0) {
-      // Check if there's an "Unlimited" label near the switch
-      const hasUnlimitedLabel = await page.evaluate(() => {
-        return document.body.innerText.includes('Unlimited');
-      });
-      if (hasUnlimitedLabel) {
-        const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
-        if (!isChecked) {
-          // Click the button containing the switch (the switch itself may not be directly clickable)
-          const switchParent = page.locator('button:has(switch), *:has(> switch)').first();
-          if (await switchParent.count() > 0) {
-            await switchParent.click({ force: true });
-          } else {
-            await unlimitedSwitch.click({ force: true });
-          }
-          await page.waitForTimeout(500);
-          const nowChecked = await unlimitedSwitch.isChecked().catch(() => false);
-          console.log(nowChecked ? 'Enabled Unlimited mode (image)' : 'WARNING: Could not enable Unlimited mode');
-        } else {
-          console.log('Unlimited mode already enabled (image)');
-        }
-      }
-    }
-
-    // Count existing images before generating (to identify new ones later).
-    // NOTE: We count rather than snapshot src URLs because the page replaces
-    // all content during generation — old images are removed and re-rendered
-    // with new CDN wrapper URLs, making src comparison unreliable.
-    // New images always appear at the TOP of the grid, so after generation
-    // the new images are at indices 0..(newTotal - oldCount - 1).
-    const existingImageCount = await page.evaluate(() => {
-      return document.querySelectorAll('img[alt="image generation"]').length;
-    });
-    console.log(`Existing images on page: ${existingImageCount}`);
-
-    // Count "In queue" items before generating
-    const queueBefore = await page.evaluate(() => {
-      return (document.body.innerText.match(/In queue/g) || []).length;
-    });
-    console.log(`Items already in queue: ${queueBefore}`);
+    // Capture pre-generation state
+    const existingImageCount = await page.evaluate(() =>
+      document.querySelectorAll('img[alt="image generation"]').length
+    );
+    const queueBefore = await page.evaluate(() =>
+      (document.body.innerText.match(/In queue/g) || []).length
+    );
+    console.log(`Existing images: ${existingImageCount}, queue: ${queueBefore}`);
 
     // Dry-run mode: stop before clicking Generate
     if (options.dryRun) {
@@ -1574,246 +1782,15 @@ async function generateImage(options = {}) {
       return { success: true, dryRun: true };
     }
 
-    // Click generate button - use force to bypass overlays
-    // Capture button text before clicking to verify the click registered
-    const generateBtn = page.locator('button:has-text("Generate"), button[type="submit"]');
-    const genCount = await generateBtn.count();
-    console.log(`Found ${genCount} generate button(s)`);
-
-    const btnTextBefore = genCount > 0
-      ? await generateBtn.last().textContent().catch(() => '')
-      : '';
-
-    if (genCount > 0) {
-      // Scroll the button into view first to ensure it's clickable
-      await generateBtn.last().scrollIntoViewIfNeeded().catch(() => {});
-      await page.waitForTimeout(300);
-      await generateBtn.last().click({ force: true });
-      console.log(`Clicked generate button (force). Button text was: "${btnTextBefore?.trim()}"`);
-    } else {
-      await page.evaluate(() => {
-        const btn = document.querySelector('button[type="submit"]') ||
-                    [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Generate'));
-        if (btn) btn.click();
-      });
-      console.log('Clicked generate button via JS');
-    }
-
-    // Verify the Generate click registered by checking for state changes:
-    // - Button text changed (e.g. "Generate" -> "Generating..." or disabled)
-    // - New queue items appeared
-    // - Image count changed
-    // If nothing changed after 10s, retry the click.
-    await page.waitForTimeout(3000);
-    const postClickState = await page.evaluate(({ prevQueue, prevImages }) => {
-      const queueNow = (document.body.innerText.match(/In queue/g) || []).length;
-      const imagesNow = document.querySelectorAll('img[alt="image generation"]').length;
-      // Check for any "generating" or "processing" indicators
-      const hasGeneratingIndicator = document.body.innerText.includes('Generating') ||
-        document.body.innerText.includes('Processing') ||
-        document.querySelectorAll('[class*="spinner"], [class*="loading"], [class*="progress"]').length > 0;
-      // Check if Generate button is now disabled
-      const genBtns = [...document.querySelectorAll('button')].filter(b => b.textContent?.includes('Generate'));
-      const btnDisabled = genBtns.some(b => b.disabled || b.getAttribute('aria-disabled') === 'true');
-      const btnTextNow = genBtns.map(b => b.textContent?.trim()).join(', ');
-      return { queueNow, imagesNow, hasGeneratingIndicator, btnDisabled, btnTextNow };
-    }, { prevQueue: queueBefore, prevImages: existingImageCount });
-
-    const clickRegistered = postClickState.queueNow > queueBefore ||
-      postClickState.imagesNow > existingImageCount ||
-      postClickState.hasGeneratingIndicator ||
-      postClickState.btnDisabled;
-
-    if (!clickRegistered) {
-      console.log(`Generate click may not have registered (queue=${postClickState.queueNow}, images=${postClickState.imagesNow}, btn="${postClickState.btnTextNow}"). Retrying...`);
-      await dismissAllModals(page);
-      // Retry: scroll to button, wait, click again
-      if (genCount > 0) {
-        await generateBtn.last().scrollIntoViewIfNeeded().catch(() => {});
-        await page.waitForTimeout(500);
-        await generateBtn.last().click({ force: true });
-        console.log('Retried Generate click');
-      }
-      await page.waitForTimeout(3000);
-    } else {
-      console.log(`Generate click confirmed (queue=${postClickState.queueNow}, indicator=${postClickState.hasGeneratingIndicator}, disabled=${postClickState.btnDisabled})`);
-    }
-
-    // Wait for generation: the page adds "In queue" placeholders at the top,
-    // then replaces them with img[alt="image generation"] when done.
-    // Strategy: wait for new queue items to appear, then wait for them to resolve.
-    const timeout = options.timeout || 300000; // 5 min default (images can take 2+ min)
-    const startTime = Date.now();
-
-    // Phase 1: Wait for new "In queue" items to confirm generation started
-    console.log('Waiting for generation to start...');
-    let detectedQueueCount = queueBefore;
-    try {
-      await page.waitForFunction(
-        (prevQueueCount) => {
-          return (document.body.innerText.match(/In queue/g) || []).length > prevQueueCount;
-        },
-        queueBefore,
-        { timeout: 15000, polling: 1000 }
-      );
-      detectedQueueCount = await page.evaluate(() =>
-        (document.body.innerText.match(/In queue/g) || []).length
-      );
-      console.log(`Generation started! ${detectedQueueCount} item(s) in queue`);
-    } catch {
-      // Generation may have started and already completed, or the queue text differs
-      console.log('Queue detection timed out - generation may have started differently');
-    }
-
-    // Phase 2: Poll until our queue items resolve to images.
-    // Track the peak queue count (our items + any pre-existing), then wait for
-    // the queue to drop back to the pre-existing level (or zero).
-    // Also detect completion by image count increase (handles fast generations
-    // where the queue phase is missed entirely).
-    // Also detect via Generate button re-enabling (handles feature pages like
-    // /nano-banana-pro where "In queue" text doesn't appear and image counts
-    // fluctuate due to lazy-loading gallery).
-    console.log(`Waiting up to ${timeout / 1000}s for generation to complete...`);
-    const pollInterval = 5000;
-    let generationComplete = false;
-    // Initialize peakQueue from Phase 1 detection (not just queueBefore)
-    // This handles fast generations where queue resolves before first poll
-    let peakQueue = Math.max(queueBefore, detectedQueueCount);
-    let retryAttempted = false;
-    let reloadAttempted = false;
-    let btnWasDisabled = false; // Track if Generate button was ever disabled/changed
-
-    while (Date.now() - startTime < timeout) {
-      await page.waitForTimeout(pollInterval);
-
-      const state = await page.evaluate(() => {
-        const queueItems = (document.body.innerText.match(/In queue/g) || []).length;
-        const images = document.querySelectorAll('img[alt="image generation"]').length;
-        // Check Generate button state — on feature pages, the button text/state
-        // changes during generation (e.g., shows spinner, becomes disabled, or
-        // text changes from "Unlimited2" to something else)
-        const genBtns = [...document.querySelectorAll('button')].filter(b =>
-          b.textContent.includes('Generate') || b.textContent.includes('Unlimited')
-        );
-        const genBtn = genBtns[genBtns.length - 1]; // Last matching button
-        const btnDisabled = genBtn ? (genBtn.disabled || genBtn.getAttribute('aria-disabled') === 'true') : false;
-        const btnText = genBtn ? genBtn.textContent.trim() : '';
-        // Check for loading spinners or processing indicators near the generate area
-        const hasSpinner = document.querySelector('main svg[class*="animate"]') !== null ||
-                          document.querySelector('main [class*="spinner"]') !== null ||
-                          document.querySelector('main [class*="loading"]') !== null;
-        return { queueItems, images, btnDisabled, btnText, hasSpinner };
-      });
-
-      if (state.queueItems > peakQueue) peakQueue = state.queueItems;
-      if (state.btnDisabled || state.hasSpinner) btnWasDisabled = true;
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue}) btn=${state.btnDisabled ? 'disabled' : 'enabled'}`);
-
-      // Completion condition 1: queue was seen elevated and has now dropped back
-      if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
-        console.log(`Generation complete! ${state.images} images on page (${elapsed}s)`);
-        generationComplete = true;
-        break;
-      }
-
-      // Completion condition 2: image count increased and no queue items
-      // (handles fast generations where queue phase was missed)
-      if (state.images > existingImageCount && state.queueItems === 0 && peakQueue === queueBefore) {
-        console.log(`Generation complete (fast)! ${state.images} images on page, ${state.images - existingImageCount} new (${elapsed}s)`);
-        generationComplete = true;
-        break;
-      }
-
-      // Completion condition 3: Generate button was disabled/spinner and is now re-enabled
-      // This handles feature pages (/nano-banana-pro, /seedream-4-5) where queue text
-      // doesn't appear and image counts are unreliable due to lazy-loading gallery
-      if (btnWasDisabled && !state.btnDisabled && !state.hasSpinner) {
-        console.log(`Generation complete (button re-enabled)! ${state.images} images on page (${elapsed}s)`);
-        generationComplete = true;
-        // Wait a moment for images to render after button re-enables
-        await page.waitForTimeout(3000);
-        break;
-      }
-
-      // Safety: if nothing has changed after 30s and no retry yet, try clicking Generate again
-      if (!retryAttempted && parseInt(elapsed, 10) >= 30 &&
-          state.queueItems === queueBefore && state.images <= existingImageCount &&
-          peakQueue === queueBefore && !btnWasDisabled) {
-        console.log('No activity detected after 30s - retrying Generate click...');
-        await dismissAllModals(page);
-        const retryBtn = page.locator('button:has-text("Generate")');
-        if (await retryBtn.count() > 0) {
-          await retryBtn.last().scrollIntoViewIfNeeded().catch(() => {});
-          await page.waitForTimeout(300);
-          await retryBtn.last().click({ force: true });
-          console.log('Retried Generate click (30s safety)');
-        }
-        retryAttempted = true;
-      }
-
-      // Completion condition 4: After 60s with no queue/button activity,
-      // reload the page and check if new images appeared at the top
-      if (!reloadAttempted && parseInt(elapsed, 10) >= 60 &&
-          peakQueue === queueBefore && !btnWasDisabled) {
-        console.log('No queue or button activity after 60s - reloading to check for new images...');
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(5000);
-        const freshCount = await page.evaluate(() =>
-          document.querySelectorAll('img[alt="image generation"]').length
-        );
-        if (freshCount > existingImageCount) {
-          console.log(`Generation complete (post-reload)! ${freshCount} images, ${freshCount - existingImageCount} new (${elapsed}s)`);
-          generationComplete = true;
-          break;
-        }
-        reloadAttempted = true;
-      }
-    }
-
-    if (!generationComplete) {
-      console.log('Timeout waiting for generation. Some items may still be processing.');
-    }
+    await clickAndVerifyGenerate(page, queueBefore, existingImageCount);
+    const generationComplete = await waitForImageGeneration(page, existingImageCount, queueBefore, options);
 
     // Allow images to fully load
     await page.waitForTimeout(3000);
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'generation-result.png'), fullPage: false });
 
-    // Identify new images by count difference.
-    // New images appear at the TOP of the grid, so they occupy indices
-    // 0..(currentTotal - existingImageCount - 1).
-    const currentImageCount = await page.evaluate(() => {
-      return document.querySelectorAll('img[alt="image generation"]').length;
-    });
-    const newCount = currentImageCount - existingImageCount;
-    const newImageIndices = [];
-    for (let i = 0; i < newCount; i++) {
-      newImageIndices.push(i);
-    }
-    console.log(`New images: ${newImageIndices.length} of ${currentImageCount} total (indices: ${newImageIndices.join(', ')})`);
-
-    // Download only the new results
-    if (options.wait !== false) {
-      const baseOutput = options.output || DOWNLOAD_DIR;
-      const outputDir = resolveOutputDir(baseOutput, options, 'images');
-      if (newImageIndices.length > 0) {
-        await downloadSpecificImages(page, outputDir, newImageIndices, options);
-      } else if (generationComplete) {
-        // Count-based detection failed (page may have refreshed during generation).
-        // Use batch size as a cap: download at most N images from the top of the grid.
-        const batchSize = options.batch || 4;
-        const downloadCount = Math.min(batchSize, currentImageCount);
-        console.log(`Count-based detection missed new images. Downloading top ${downloadCount} (batch=${batchSize})...`);
-        const fallbackIndices = [];
-        for (let i = 0; i < downloadCount; i++) fallbackIndices.push(i);
-        await downloadSpecificImages(page, outputDir, fallbackIndices, options);
-      } else {
-        console.log('No new images detected. Generation may still be in progress.');
-        console.log('Try: node playwright-automator.mjs download');
-      }
-    }
+    await downloadNewImages(page, options, existingImageCount, generationComplete);
 
     console.log('Image generation complete');
     await context.storageState({ path: STATE_FILE });
