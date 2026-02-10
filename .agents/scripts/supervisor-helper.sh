@@ -7222,6 +7222,49 @@ cmd_pr_lifecycle() {
         stage_timings="${stage_timings}deploying:$((stage_end - stage_start))s,"
     fi
 
+    # Step 4b: Auto-recover stuck deploying state (t222)
+    # If a task is already in 'deploying' (from a prior pulse where the deploy
+    # succeeded but the transition to 'deployed' failed), re-attempt the
+    # transition and housekeeping steps. The deploy itself already completed
+    # successfully — only the state transition was lost.
+    if [[ "$tstatus" == "deploying" ]]; then
+        local stage_start
+        stage_start=$(date +%s)
+
+        log_warn "Task $task_id stuck in deploying state — attempting auto-recovery (t222)"
+
+        if [[ "$dry_run" == "false" ]]; then
+            # Re-run housekeeping that may have been skipped when the prior
+            # transition failed (all non-blocking, best-effort)
+            cleanup_after_merge "$task_id" 2>>"$SUPERVISOR_LOG" || log_warn "Worktree cleanup issue for $task_id during recovery (non-blocking)"
+            update_todo_on_complete "$task_id" 2>>"$SUPERVISOR_LOG" || log_warn "TODO.md update issue for $task_id during recovery (non-blocking)"
+            populate_verify_queue "$task_id" "$tpr" "$trepo" 2>>"$SUPERVISOR_LOG" || log_warn "Verify queue population issue for $task_id during recovery (non-blocking)"
+
+            # Attempt the transition that previously failed
+            if cmd_transition "$task_id" "deployed" 2>>"$SUPERVISOR_LOG"; then
+                log_success "Auto-recovered $task_id: deploying -> deployed (t222)"
+                send_task_notification "$task_id" "deployed" "Auto-recovered from stuck deploying state" 2>>"$SUPERVISOR_LOG" || true
+                store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
+                write_proof_log --task "$task_id" --event "auto_recover" --stage "deploying" \
+                    --decision "deploying->deployed" --evidence "stuck_state_recovery" \
+                    --maker "pr_lifecycle:t222" 2>/dev/null || true
+            else
+                log_error "Auto-recovery failed for $task_id — transition to deployed rejected"
+                # If the transition itself is invalid, something is deeply wrong.
+                # Transition to failed so the task doesn't stay stuck forever.
+                cmd_transition "$task_id" "failed" --error "Auto-recovery failed: deploying->deployed transition rejected (t222)" 2>>"$SUPERVISOR_LOG" || true
+                send_task_notification "$task_id" "failed" "Stuck in deploying, auto-recovery failed" 2>>"$SUPERVISOR_LOG" || true
+            fi
+        else
+            log_info "[dry-run] Would auto-recover $task_id from deploying to deployed"
+        fi
+
+        # t222: Record recovery timing
+        local stage_end
+        stage_end=$(date +%s)
+        stage_timings="${stage_timings}deploying_recovery:$((stage_end - stage_start))s,"
+    fi
+
     # t219: Record total lifecycle timing and log to proof-log
     local lifecycle_end_time
     lifecycle_end_time=$(date +%s)
@@ -7772,6 +7815,33 @@ cmd_pulse() {
             log_info "  Cancelling stale diagnostic $diag_id (parent $parent_id is $parent_status)"
             cmd_transition "$diag_id" "cancelled" --error "Parent task $parent_id already $parent_status" 2>>"$SUPERVISOR_LOG" || true
         done <<< "$stale_diags"
+    fi
+
+    # Phase 4d: Auto-recover stuck deploying tasks (t222)
+    # Tasks can get stuck in 'deploying' if the deploy succeeds but the
+    # transition to 'deployed' fails (e.g., DB write error, process killed
+    # mid-transition). Detect tasks in 'deploying' state for longer than
+    # the deploy timeout and auto-recover them via process_post_pr_lifecycle
+    # (which now handles the deploying state in Step 4b of cmd_pr_lifecycle).
+    local deploying_timeout_seconds="${SUPERVISOR_DEPLOY_TIMEOUT:-600}"  # 10 min default
+    local stuck_deploying
+    stuck_deploying=$(db "$SUPERVISOR_DB" "
+        SELECT id, updated_at FROM tasks
+        WHERE status = 'deploying'
+        AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${deploying_timeout_seconds} seconds');
+    " 2>/dev/null || echo "")
+
+    if [[ -n "$stuck_deploying" ]]; then
+        while IFS='|' read -r stuck_id stuck_updated; do
+            [[ -n "$stuck_id" ]] || continue
+            log_warn "  Stuck deploying: $stuck_id (last updated: ${stuck_updated:-unknown}, timeout: ${deploying_timeout_seconds}s) — triggering recovery (t222)"
+            # process_post_pr_lifecycle will pick this up and run cmd_pr_lifecycle
+            # which now handles the deploying state in Step 4b
+            cmd_pr_lifecycle "$stuck_id" 2>>"$SUPERVISOR_LOG" || {
+                log_error "  Recovery failed for stuck deploying task $stuck_id — forcing to deployed"
+                cmd_transition "$stuck_id" "deployed" --error "Force-recovered from stuck deploying (t222)" 2>>"$SUPERVISOR_LOG" || true
+            }
+        done <<< "$stuck_deploying"
     fi
 
     # Phase 5: Summary
