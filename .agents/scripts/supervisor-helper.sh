@@ -4771,7 +4771,7 @@ evaluate_worker() {
     task_branch=$(sqlite3 "$SUPERVISOR_DB" "SELECT branch FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
     repo_slug_detect=""
     if [[ -n "$task_repo" ]]; then
-        repo_slug_detect=$(git -C "$task_repo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+        repo_slug_detect=$(detect_repo_slug "$task_repo" 2>/dev/null || echo "")
     fi
 
     # Validate DB-seeded PR URL belongs to this task (t195): a previous pulse
@@ -5751,7 +5751,7 @@ check_pr_status() {
         task_repo_check=$(sqlite3 "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
         if [[ -n "$task_repo_check" ]]; then
             local repo_slug_check
-            repo_slug_check=$(git -C "$task_repo_check" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+            repo_slug_check=$(detect_repo_slug "$task_repo_check" 2>/dev/null || echo "")
             if [[ -n "$repo_slug_check" ]]; then
                 local found_pr_url=""
                 # Try DB branch first (actual worktree branch name)
@@ -5957,7 +5957,7 @@ scan_orphaned_prs() {
         [[ -n "$repo_path" && -d "$repo_path" ]] || continue
 
         local repo_slug
-        repo_slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+        repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
         if [[ -z "$repo_slug" ]]; then
             log_verbose "  Phase 6: Cannot determine repo slug for $repo_path — skipping"
             continue
@@ -6402,7 +6402,7 @@ cmd_pr_lifecycle() {
             local found_pr=""
             if [[ -n "$trepo" ]]; then
                 local repo_slug_lifecycle
-                repo_slug_lifecycle=$(git -C "$trepo" remote get-url origin 2>/dev/null | grep -oE '[^/:]+/[^/.]+' | tail -1 || echo "")
+                repo_slug_lifecycle=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
                 if [[ -n "$repo_slug_lifecycle" ]]; then
                     found_pr=$(gh pr list --repo "$repo_slug_lifecycle" --head "feature/${task_id}" --json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
                 fi
