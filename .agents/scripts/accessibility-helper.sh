@@ -620,6 +620,103 @@ bulk_audit() {
 }
 
 # ============================================================================
+# Playwright Contrast Extraction
+# ============================================================================
+
+check_playwright() {
+    if ! command -v npx &> /dev/null; then
+        print_error "npx not found (required for Playwright)"
+        print_info "Install Node.js: https://nodejs.org/"
+        return 1
+    fi
+    if ! npx --no-install playwright --version &> /dev/null 2>&1; then
+        print_warning "Playwright not installed"
+        print_info "Install: npm install playwright && npx playwright install chromium"
+        return 1
+    fi
+    return 0
+}
+
+run_playwright_contrast() {
+    local url="$1"
+    local format="${2:-summary}"
+    local level="${3:-AA}"
+
+    check_playwright || return 1
+
+    print_info "Running Playwright contrast extraction..."
+    print_info "URL: $url"
+    print_info "Format: $format"
+    print_info "Level: WCAG $level"
+
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    local report_file="${A11Y_REPORTS_DIR}/playwright_contrast_${timestamp}"
+    local script_path="${SCRIPT_DIR}/accessibility/playwright-contrast.mjs"
+
+    if [[ ! -f "$script_path" ]]; then
+        print_error "Playwright contrast script not found: $script_path"
+        return 1
+    fi
+
+    local script_dir
+    script_dir="$(dirname "$script_path")"
+    local exit_code=0
+
+    # Install dependencies if node_modules is missing
+    if [[ ! -d "${script_dir}/node_modules" ]]; then
+        print_info "Installing Playwright dependencies..."
+        if ! (cd "$script_dir" && npm install --silent 2>/dev/null); then
+            print_error "Failed to install Playwright dependencies"
+            return 1
+        fi
+    fi
+
+    # Run from the script directory so node resolves local node_modules
+    case "$format" in
+        "json")
+            report_file="${report_file}.json"
+            if (cd "$script_dir" && node playwright-contrast.mjs "$url" --format json --level "$level") > "$report_file" 2>&1; then
+                exit_code=0
+            else
+                exit_code=$?
+            fi
+            ;;
+        "markdown"|"md")
+            report_file="${report_file}.md"
+            if (cd "$script_dir" && node playwright-contrast.mjs "$url" --format markdown --level "$level") > "$report_file" 2>&1; then
+                exit_code=0
+            else
+                exit_code=$?
+            fi
+            ;;
+        "summary"|*)
+            report_file="${report_file}.txt"
+            if (cd "$script_dir" && node playwright-contrast.mjs "$url" --format summary --level "$level") 2>&1 | tee "$report_file"; then
+                exit_code=0
+            else
+                exit_code=${PIPESTATUS[0]}
+            fi
+            ;;
+    esac
+
+    if [[ "$exit_code" -eq 2 ]]; then
+        print_error "Playwright contrast extraction failed"
+        return 1
+    fi
+
+    print_info "Report saved: $report_file"
+
+    if [[ "$exit_code" -eq 1 ]]; then
+        print_warning "Contrast failures detected at WCAG $level"
+    else
+        print_success "All elements pass WCAG $level contrast requirements"
+    fi
+
+    return "$exit_code"
+}
+
+# ============================================================================
 # Utility
 # ============================================================================
 
@@ -680,6 +777,14 @@ main() {
             fi
             check_contrast "$account_name" "$3"
             ;;
+        "playwright-contrast"|"pw-contrast"|"extract-contrast")
+            if [[ -z "$account_name" ]]; then
+                print_error "Please provide a URL"
+                print_info "Usage: $0 playwright-contrast <url> [json|markdown|summary] [AA|AAA]"
+                return 1
+            fi
+            run_playwright_contrast "$account_name" "${3:-summary}" "${4:-AA}"
+            ;;
         "bulk")
             if [[ -z "$account_name" ]]; then
                 print_error "Please provide a file containing URLs"
@@ -701,6 +806,10 @@ main() {
             echo "  pa11y <url> [standard]         pa11y WCAG compliance test"
             echo "  email <file.html>              Check HTML email accessibility"
             echo "  contrast <fg-hex> <bg-hex>     Calculate WCAG contrast ratio"
+            echo "  playwright-contrast <url> [fmt] [level]"
+            echo "                                 Extract contrast from all visible elements via Playwright"
+            echo "                                 Formats: json, markdown, summary (default)"
+            echo "                                 Levels: AA (default), AAA"
             echo "  bulk <urls-file>               Audit multiple URLs from file"
             echo "  install-deps                   Install required dependencies"
             echo "  help                           Show this help"
@@ -717,6 +826,7 @@ main() {
             echo "  $0 pa11y https://example.com WCAG2AAA"
             echo "  $0 email ./newsletter.html"
             echo "  $0 contrast '#333333' '#ffffff'"
+            echo "  $0 playwright-contrast https://example.com json AAA"
             echo "  $0 bulk websites.txt"
             echo ""
             echo "Reports saved to: $A11Y_REPORTS_DIR"
