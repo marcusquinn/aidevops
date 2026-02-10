@@ -1,0 +1,211 @@
+name: Auto-Deploy Agents
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.agents/scripts/**'
+      - '.agents/**/*.md'
+      - '.agents/**/*.sh'
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Deploy target: scripts-only or full'
+        required: true
+        default: 'scripts-only'
+        type: choice
+        options:
+          - scripts-only
+          - full
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: Detect Changed Agent Files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    outputs:
+      scripts_changed: ${{ steps.changes.outputs.scripts_changed }}
+      agents_changed: ${{ steps.changes.outputs.agents_changed }}
+      changed_files: ${{ steps.changes.outputs.changed_files }}
+      changed_count: ${{ steps.changes.outputs.changed_count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed files
+        id: changes
+        run: |
+          # Get changed files between HEAD~1 and HEAD
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- '.agents/' 2>/dev/null || echo "")
+
+          if [[ -z "$CHANGED" ]]; then
+            echo "No agent files changed"
+            echo "scripts_changed=false" >> "$GITHUB_OUTPUT"
+            echo "agents_changed=false" >> "$GITHUB_OUTPUT"
+            echo "changed_files=" >> "$GITHUB_OUTPUT"
+            echo "changed_count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED_COUNT=$(echo "$CHANGED" | wc -l | tr -d ' ')
+          echo "changed_count=$CHANGED_COUNT" >> "$GITHUB_OUTPUT"
+
+          # Check if scripts specifically changed
+          SCRIPTS_CHANGED=$(echo "$CHANGED" | grep -c '^\.agents/scripts/' || echo "0")
+          if [[ "$SCRIPTS_CHANGED" -gt 0 ]]; then
+            echo "scripts_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Check if any agent files changed
+          AGENTS_CHANGED=$(echo "$CHANGED" | grep -c '^\.agents/' || echo "0")
+          if [[ "$AGENTS_CHANGED" -gt 0 ]]; then
+            echo "agents_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agents_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Store changed files list (truncated for output)
+          echo "changed_files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED" | head -50 >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          echo "Detected $CHANGED_COUNT changed agent files ($SCRIPTS_CHANGED scripts)"
+
+  notify-deploy:
+    name: Create Deployment Record
+    needs: detect-changes
+    if: needs.detect-changes.outputs.agents_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Create deployment summary
+        env:
+          SCRIPTS_CHANGED: ${{ needs.detect-changes.outputs.scripts_changed }}
+          CHANGED_COUNT: ${{ needs.detect-changes.outputs.changed_count }}
+          CHANGED_FILES: ${{ needs.detect-changes.outputs.changed_files }}
+        run: |
+          echo "## Agent Auto-Deploy Triggered" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Author:** ${{ github.event.head_commit.author.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Message:** ${{ github.event.head_commit.message }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Changed Files ($CHANGED_COUNT)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$CHANGED_FILES" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Deploy Instructions" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$SCRIPTS_CHANGED" == "true" ]]; then
+            echo "Scripts were modified. Local machines with aidevops installed" >> "$GITHUB_STEP_SUMMARY"
+            echo "will auto-deploy on next:" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Supervisor pulse** (cron, every 2 minutes)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **\`aidevops update\`** (manual)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **\`setup.sh --non-interactive\`** (manual)" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "For immediate deployment:" >> "$GITHUB_STEP_SUMMARY"
+            echo '```bash' >> "$GITHUB_STEP_SUMMARY"
+            echo "~/.aidevops/agents/scripts/deploy-agents-on-merge.sh" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Agent documentation changed (no scripts). Deploy on next" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`aidevops update\` or \`setup.sh --non-interactive\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "*Generated by Auto-Deploy Agents workflow*" >> "$GITHUB_STEP_SUMMARY"
+
+  validate-scripts:
+    name: Validate Changed Scripts
+    needs: detect-changes
+    if: needs.detect-changes.outputs.scripts_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: ShellCheck changed scripts
+        env:
+          CHANGED_FILES: ${{ needs.detect-changes.outputs.changed_files }}
+        run: |
+          echo "## ShellCheck Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          SCRIPTS=$(echo "$CHANGED_FILES" | grep '\.sh$' || echo "")
+          if [[ -z "$SCRIPTS" ]]; then
+            echo "No shell scripts in changed files" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          FAILED=0
+          PASSED=0
+          while IFS= read -r script; do
+            [[ -z "$script" ]] && continue
+            [[ ! -f "$script" ]] && continue
+
+            if shellcheck -x "$script" 2>/dev/null; then
+              PASSED=$((PASSED + 1))
+            else
+              FAILED=$((FAILED + 1))
+              echo "::warning file=$script::ShellCheck found issues"
+            fi
+          done <<< "$SCRIPTS"
+
+          echo "**Passed:** $PASSED | **Failed:** $FAILED" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$FAILED" -gt 0 ]]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::$FAILED script(s) have ShellCheck issues"
+          fi
+
+      - name: Syntax check changed scripts
+        env:
+          CHANGED_FILES: ${{ needs.detect-changes.outputs.changed_files }}
+        run: |
+          SCRIPTS=$(echo "$CHANGED_FILES" | grep '\.sh$' || echo "")
+          if [[ -z "$SCRIPTS" ]]; then
+            exit 0
+          fi
+
+          FAILED=0
+          while IFS= read -r script; do
+            [[ -z "$script" ]] && continue
+            [[ ! -f "$script" ]] && continue
+
+            if ! bash -n "$script" 2>/dev/null; then
+              echo "::error file=$script::Syntax error in $script"
+              FAILED=$((FAILED + 1))
+            fi
+          done <<< "$SCRIPTS"
+
+          if [[ "$FAILED" -gt 0 ]]; then
+            echo "::error::$FAILED script(s) have syntax errors"
+            exit 1
+          fi
