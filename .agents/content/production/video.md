@@ -715,10 +715,28 @@ seed-bracket-helper.sh status
 seed-bracket-helper.sh score 4005 8 9 7 8 9
 seed-bracket-helper.sh report
 
-# Video generation via Higgsfield
-higgsfield-helper.sh generate --model veo-3.1 --prompt "prompt.txt" --ingredient "char_id"
+# Unified video generation CLI (Sora 2, Veo 3.1, Nanobanana Pro)
+video-gen-helper.sh generate sora "A cat reading a book" sora-2-pro 8 1280x720
+video-gen-helper.sh generate veo "Cinematic mountain sunset" veo-3.1-generate-001 16:9
+video-gen-helper.sh generate nanobanana "Cat walks through garden" https://example.com/cat.jpg dop-turbo
 
-# Batch upscaling
+# Image generation (Nanobanana Pro / Soul model)
+video-gen-helper.sh image "Product on desk, studio lighting" 1696x960 1080p
+
+# Character creation for consistency
+video-gen-helper.sh character /path/to/face.jpg
+
+# Seed bracketing automation
+video-gen-helper.sh bracket "Product demo" https://example.com/product.jpg 4000 4010 dop-turbo
+
+# Check status and download
+video-gen-helper.sh status sora vid_abc123
+video-gen-helper.sh download sora vid_abc123 ./output
+
+# Show all available models
+video-gen-helper.sh models
+
+# Batch upscaling (planned)
 topaz-upscale-helper.sh --input ./raw/ --output ./upscaled/ --scale 1.5
 ```
 
