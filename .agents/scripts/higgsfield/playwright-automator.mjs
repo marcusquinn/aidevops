@@ -438,95 +438,108 @@ function resolveApiModelId(slug, commandType) {
   return null;
 }
 
-// Generate an image via the Higgsfield Cloud API.
-// Returns { outputPath, sidecar } or throws on failure.
-async function apiGenerateImage(options = {}) {
-  const creds = loadApiCredentials();
-  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
-
-  // Resolve model
-  const modelSlug = options.model || 'soul';
-  const modelId = resolveApiModelId(modelSlug, 'image');
-  if (!modelId) throw new Error(`No API model mapping for slug '${modelSlug}'. Available: ${Object.keys(API_MODEL_MAP).filter(k => !k.includes('dop') && !k.includes('kling') && !k.includes('seedance')).join(', ')}`);
-
-  const prompt = options.prompt;
-  if (!prompt) throw new Error('--prompt is required for image generation');
-
-  // Build request body
-  const body = { prompt };
-  if (options.aspect) body.aspect_ratio = options.aspect;
-  if (options.quality) body.resolution = options.quality;
-  if (options.seed !== undefined) body.seed = options.seed;
-
-  console.log(`[api] Generating image via API: model=${modelId}`);
-  console.log(`[api] Prompt: "${prompt.substring(0, 80)}${prompt.length > 80 ? '...' : ''}"`);
-
+// Submit an API generation request, poll for completion, return result.
+// Shared by apiGenerateImage and apiGenerateVideo to reduce complexity.
+async function apiSubmitAndPoll(modelId, body, creds, options = {}) {
   if (options.dryRun) {
     console.log('[api] DRY RUN — would submit:', JSON.stringify(body, null, 2));
     return { dryRun: true };
   }
-
-  // Submit
   const submitResp = await apiRequest('POST', `/${modelId}`, {
-    body,
-    apiKey: creds.apiKey,
-    apiSecret: creds.apiSecret,
+    body, apiKey: creds.apiKey, apiSecret: creds.apiSecret,
   });
   console.log(`[api] Request queued: ${submitResp.request_id}`);
-
-  // Poll for completion
   const result = await apiPollStatus(submitResp.request_id, creds);
   console.log(''); // Clear the status line
+  return { ...result, requestId: submitResp.request_id };
+}
 
-  // Download result image(s)
+// Download API result images and write sidecar metadata.
+async function apiDownloadImages(result, { modelSlug, modelId, options, sidecarExtra = {} }) {
   const baseOutput = options.output || DOWNLOAD_DIR;
   const outputDir = resolveOutputDir(baseOutput, options, 'images');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
   const downloads = [];
 
-  if (result.images && result.images.length > 0) {
-    for (let i = 0; i < result.images.length; i++) {
-      const imgUrl = result.images[i].url;
-      const suffix = result.images.length > 1 ? `_${i + 1}` : '';
-      const filename = `hf_api_${modelSlug}_${timestamp}${suffix}.png`;
-      const outputPath = join(outputDir, filename);
-
-      const size = await apiDownloadFile(imgUrl, outputPath);
-      console.log(`[api] Downloaded: ${outputPath} (${(size / 1024).toFixed(0)}KB)`);
-
-      // Write sidecar metadata
-      writeJsonSidecar(outputPath, {
-        source: 'higgsfield-cloud-api',
-        model: modelId,
-        modelSlug,
-        prompt,
-        aspectRatio: options.aspect || 'default',
-        resolution: options.quality || 'default',
-        seed: options.seed,
-        requestId: submitResp.request_id,
-        imageUrl: imgUrl,
-      }, options);
-
-      downloads.push(outputPath);
-    }
+  for (let i = 0; i < (result.images || []).length; i++) {
+    const imgUrl = result.images[i].url;
+    const suffix = result.images.length > 1 ? `_${i + 1}` : '';
+    const filename = `hf_api_${modelSlug}_${timestamp}${suffix}.png`;
+    const outputPath = join(outputDir, filename);
+    const size = await apiDownloadFile(imgUrl, outputPath);
+    console.log(`[api] Downloaded: ${outputPath} (${(size / 1024).toFixed(0)}KB)`);
+    writeJsonSidecar(outputPath, {
+      source: 'higgsfield-cloud-api', model: modelId, modelSlug,
+      requestId: result.requestId, imageUrl: imgUrl, ...sidecarExtra,
+    }, options);
+    downloads.push(outputPath);
   }
+  return downloads;
+}
 
+// Download API result video and write sidecar metadata.
+async function apiDownloadVideo(result, { modelSlug, modelId, options, sidecarExtra = {} }) {
+  if (!result.video?.url) throw new Error('API returned completed status but no video URL');
+  const baseOutput = options.output || DOWNLOAD_DIR;
+  const outputDir = resolveOutputDir(baseOutput, options, 'videos');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+  const filename = `hf_api_${modelSlug}_${timestamp}.mp4`;
+  const outputPath = join(outputDir, filename);
+  const size = await apiDownloadFile(result.video.url, outputPath);
+  console.log(`[api] Downloaded: ${outputPath} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+  writeJsonSidecar(outputPath, {
+    source: 'higgsfield-cloud-api', model: modelId, modelSlug,
+    requestId: result.requestId, videoUrl: result.video.url, ...sidecarExtra,
+  }, options);
+  return outputPath;
+}
+
+// Validate and return API credentials, throwing if missing.
+function requireApiCredentials() {
+  const creds = loadApiCredentials();
+  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
+  return creds;
+}
+
+// Log a truncated prompt for API operations.
+function logApiPrompt(prompt) {
+  if (prompt) console.log(`[api] Prompt: "${prompt.substring(0, 80)}${prompt.length > 80 ? '...' : ''}"`);
+}
+
+// Generate an image via the Higgsfield Cloud API.
+async function apiGenerateImage(options = {}) {
+  const creds = requireApiCredentials();
+  const modelSlug = options.model || 'soul';
+  const modelId = resolveApiModelId(modelSlug, 'image');
+  if (!modelId) throw new Error(`No API model mapping for slug '${modelSlug}'. Available: ${Object.keys(API_MODEL_MAP).filter(k => !k.includes('dop') && !k.includes('kling') && !k.includes('seedance')).join(', ')}`);
+  if (!options.prompt) throw new Error('--prompt is required for image generation');
+
+  const body = { prompt: options.prompt };
+  if (options.aspect) body.aspect_ratio = options.aspect;
+  if (options.quality) body.resolution = options.quality;
+  if (options.seed !== undefined) body.seed = options.seed;
+
+  console.log(`[api] Generating image via API: model=${modelId}`);
+  logApiPrompt(options.prompt);
+
+  const result = await apiSubmitAndPoll(modelId, body, creds, options);
+  if (result.dryRun) return result;
+
+  const downloads = await apiDownloadImages(result, {
+    modelSlug, modelId, options,
+    sidecarExtra: { prompt: options.prompt, aspectRatio: options.aspect || 'default', resolution: options.quality || 'default', seed: options.seed },
+  });
   console.log(`[api] Image generation complete: ${downloads.length} file(s)`);
-  return { outputPaths: downloads, requestId: submitResp.request_id };
+  return { outputPaths: downloads, requestId: result.requestId };
 }
 
 // Generate a video via the Higgsfield Cloud API (image-to-video).
-// Requires --image-file or --image-url for the source image.
 async function apiGenerateVideo(options = {}) {
-  const creds = loadApiCredentials();
-  if (!creds) throw new Error('API credentials not configured (HF_API_KEY/HF_API_SECRET in credentials.sh)');
-
-  // Resolve model — default to dop-standard for video
+  const creds = requireApiCredentials();
   const modelSlug = options.model || 'dop-standard';
   const modelId = resolveApiModelId(modelSlug, 'video');
   if (!modelId) throw new Error(`No API model mapping for video slug '${modelSlug}'. Available: ${Object.keys(API_MODEL_MAP).filter(k => k.includes('dop') || k.includes('kling') || k.includes('seedance')).join(', ')}`);
 
-  // Need an image source for image-to-video
   let imageUrl = options.imageUrl;
   if (!imageUrl && options.imageFile) {
     console.log(`[api] Uploading source image: ${options.imageFile}`);
@@ -534,61 +547,23 @@ async function apiGenerateVideo(options = {}) {
   }
   if (!imageUrl) throw new Error('--image-file or --image-url is required for API video generation');
 
-  // Build request body
   const body = { image_url: imageUrl };
   if (options.prompt) body.prompt = options.prompt;
   if (options.duration) body.duration = parseInt(options.duration, 10);
   if (options.aspect) body.aspect_ratio = options.aspect;
 
   console.log(`[api] Generating video via API: model=${modelId}`);
-  if (options.prompt) console.log(`[api] Prompt: "${options.prompt.substring(0, 80)}${options.prompt.length > 80 ? '...' : ''}"`);
+  logApiPrompt(options.prompt);
 
-  if (options.dryRun) {
-    console.log('[api] DRY RUN — would submit:', JSON.stringify(body, null, 2));
-    return { dryRun: true };
-  }
+  const result = await apiSubmitAndPoll(modelId, body, creds, options);
+  if (result.dryRun) return result;
 
-  // Submit
-  const submitResp = await apiRequest('POST', `/${modelId}`, {
-    body,
-    apiKey: creds.apiKey,
-    apiSecret: creds.apiSecret,
+  const outputPath = await apiDownloadVideo(result, {
+    modelSlug, modelId, options,
+    sidecarExtra: { prompt: options.prompt, imageUrl, duration: options.duration, aspectRatio: options.aspect || 'default' },
   });
-  console.log(`[api] Request queued: ${submitResp.request_id}`);
-
-  // Poll for completion
-  const result = await apiPollStatus(submitResp.request_id, creds);
-  console.log(''); // Clear the status line
-
-  // Download result video
-  const baseOutput = options.output || DOWNLOAD_DIR;
-  const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-
-  if (result.video && result.video.url) {
-    const filename = `hf_api_${modelSlug}_${timestamp}.mp4`;
-    const outputPath = join(outputDir, filename);
-
-    const size = await apiDownloadFile(result.video.url, outputPath);
-    console.log(`[api] Downloaded: ${outputPath} (${(size / 1024 / 1024).toFixed(1)}MB)`);
-
-    writeJsonSidecar(outputPath, {
-      source: 'higgsfield-cloud-api',
-      model: modelId,
-      modelSlug,
-      prompt: options.prompt,
-      imageUrl,
-      duration: options.duration,
-      aspectRatio: options.aspect || 'default',
-      requestId: submitResp.request_id,
-      videoUrl: result.video.url,
-    }, options);
-
-    console.log(`[api] Video generation complete`);
-    return { outputPath, requestId: submitResp.request_id };
-  }
-
-  throw new Error('API returned completed status but no video URL');
+  console.log(`[api] Video generation complete`);
+  return { outputPath, requestId: result.requestId };
 }
 
 // Check API account status (credits, connectivity)
