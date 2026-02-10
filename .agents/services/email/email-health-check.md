@@ -323,8 +323,28 @@ open "https://mxtoolbox.com/SuperTool.aspx?action=mx:example.com"
 | DMARC reports | Weekly review |
 | DKIM key rotation | Annually |
 
+## Enhanced Checks (v2)
+
+The health check now includes additional checks beyond the core SPF/DKIM/DMARC/MX/blacklist:
+
+| Check | Purpose | Score |
+|-------|---------|-------|
+| **BIMI** | Brand logo display in inbox | 1 pt |
+| **MTA-STS** | TLS enforcement for inbound mail | 1 pt |
+| **TLS-RPT** | TLS failure reporting | 1 pt |
+| **DANE/TLSA** | Cryptographic TLS verification | 1 pt |
+| **Reverse DNS** | PTR record for mail server | 1 pt |
+
+**Full check** now produces a health score (out of 15) with letter grade:
+
+```bash
+email-health-check-helper.sh check example.com
+# Score: 12/15 (80%) - Grade: B
+```
+
 ## Related
 
+- `services/email/email-testing.md` - Design rendering and delivery testing
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management
 - `tools/browser/browser-automation.md` - For mail-tester automation

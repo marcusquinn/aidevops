@@ -60,7 +60,7 @@ tools/containers/,Container runtimes - Docker and Linux VMs on macOS,orbstack
 tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gpu
 services/hosting/,Hosting providers - DNS and cloud servers,hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale
-services/email/,Email services - transactional email and deliverability,ses|email-health-check
+services/email/,Email services - transactional email deliverability and testing,ses|email-health-check|email-testing
 services/communications/,Communications - SMS voice and Matrix bot dispatch,twilio|telfon|matrix-bot
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
@@ -119,7 +119,8 @@ pdf-helper.sh,PDF operations (info fields fill merge text)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
 document-extraction-helper.sh,Document extraction with PII redaction (extract batch pii-scan pii-redact convert install status schemas)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
-email-health-check-helper.sh,Email deliverability check (SPF DKIM DMARC MX blacklist)
+email-health-check-helper.sh,Email health check with scoring (SPF DKIM DMARC BIMI MTA-STS TLS-RPT DANE)
+email-test-suite-helper.sh,Email testing suite (design rendering delivery testing inbox placement)
 yt-dlp-helper.sh,YouTube video/audio download and local file conversion
 privacy-filter-helper.sh,Privacy filter for public PR contributions
 self-improve-helper.sh,Self-improving agent system (analyze refine test pr)
