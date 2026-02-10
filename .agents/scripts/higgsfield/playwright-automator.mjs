@@ -48,8 +48,93 @@ const CREDIT_COSTS = {
 // Commands that don't consume credits (read-only / navigation)
 const FREE_COMMANDS = new Set([
   'login', 'discover', 'credits', 'screenshot', 'download',
-  'assets', 'manage-assets', 'asset',
+  'assets', 'manage-assets', 'asset', 'test', 'self-test',
 ]);
+
+// Unlimited model mapping: subscription model name -> { slug, type, priority }
+// Priority determines preference order when multiple unlimited models are available.
+// Lower number = higher preference. Ranked by SOTA quality for product/commercial photography:
+//   - GPT Image: Best photorealism, text rendering, product shots (OpenAI GPT-4o)
+//   - Seedream 4.5: Excellent photorealism and fine detail (ByteDance latest)
+//   - FLUX.2 Pro: Strong photorealism, great commercial/product imagery (Black Forest Labs)
+//   - Flux Kontext: Context-aware editing, product placement (Black Forest Labs)
+//   - Reve: Good photorealism, newer model
+//   - Nano Banana Pro: Higgsfield premium, solid quality
+//   - Soul: Higgsfield flagship, reliable all-rounder
+//   - Kling O1 Image: Decent, primarily a video company's image offering
+//   - Seedream 4.0: Older generation, still capable
+//   - Nano Banana: Standard tier
+//   - Z Image: Less established
+//   - Popcorn: Stylized/creative, less suited for photorealistic product shots
+const UNLIMITED_MODELS = {
+  // Image models (type: 'image') — sorted by SOTA quality for product/commercial use
+  'GPT Image365 Unlimited':             { slug: 'gpt',           type: 'image',          priority: 1 },
+  'Seedream 4.5365 Unlimited':          { slug: 'seedream-4-5',  type: 'image',          priority: 2 },
+  'FLUX.2 Pro365 Unlimited':            { slug: 'flux',          type: 'image',          priority: 3 },
+  'Flux Kontext365 Unlimited':          { slug: 'kontext',       type: 'image',          priority: 4 },
+  'Reve365 Unlimited':                  { slug: 'reve',          type: 'image',          priority: 5 },
+  'Nano Banana Pro365 Unlimited':       { slug: 'nano-banana-pro', type: 'image',        priority: 6 },
+  'Higgsfield Soul365 Unlimited':       { slug: 'soul',          type: 'image',          priority: 7 },
+  'Kling O1 Image365 Unlimited':        { slug: 'kling_o1',      type: 'image',          priority: 8 },
+  'Seedream 4.0365 Unlimited':          { slug: 'seedream',      type: 'image',          priority: 9 },
+  'Nano Banana365 Unlimited':           { slug: 'nano_banana',   type: 'image',          priority: 10 },
+  'Z Image365 Unlimited':               { slug: 'z_image',       type: 'image',          priority: 11 },
+  'Higgsfield Popcorn365 Unlimited':    { slug: 'popcorn',       type: 'image',          priority: 12 },
+
+  // Video models (type: 'video') — Kling 2.6 is latest with best quality/speed balance
+  'Kling 2.6 Video Unlimited':          { slug: 'kling-2.6',     type: 'video',          priority: 1 },
+  'Kling O1 Video Unlimited':           { slug: 'kling-o1',      type: 'video',          priority: 2 },
+  'Kling 2.5 Turbo Unlimited':          { slug: 'kling-2.5',     type: 'video',          priority: 3 },
+
+  // Video edit models (type: 'video-edit')
+  'Kling O1 Video Edit Unlimited':      { slug: 'kling-o1',      type: 'video-edit',     priority: 1 },
+
+  // Motion control models (type: 'motion-control')
+  'Kling 2.6 Motion Control Unlimited': { slug: 'kling-2.6',     type: 'motion-control', priority: 1 },
+
+  // App models (type: 'app')
+  'Higgsfield Face Swap365 Unlimited':  { slug: 'face_swap',     type: 'app',            priority: 1 },
+};
+
+// Reverse lookup: CLI slug -> set of unlimited model names (for credit cost estimation)
+const UNLIMITED_SLUGS = new Map();
+for (const [name, info] of Object.entries(UNLIMITED_MODELS)) {
+  const key = `${info.type}:${info.slug}`;
+  if (!UNLIMITED_SLUGS.has(key)) UNLIMITED_SLUGS.set(key, []);
+  UNLIMITED_SLUGS.get(key).push(name);
+}
+
+// Get the best unlimited model for a given command type.
+// Returns { slug, name } or null if no unlimited model is available for that type.
+function getUnlimitedModelForCommand(commandType) {
+  const cache = getCachedCredits();
+  if (!cache || !cache.unlimitedModels || cache.unlimitedModels.length === 0) return null;
+
+  // Build set of active unlimited model names from cache
+  const activeNames = new Set(cache.unlimitedModels.map(m => m.model));
+
+  // Find all unlimited models matching the requested type that are active
+  const candidates = Object.entries(UNLIMITED_MODELS)
+    .filter(([name, info]) => info.type === commandType && activeNames.has(name))
+    .sort((a, b) => a[1].priority - b[1].priority);
+
+  if (candidates.length === 0) return null;
+
+  const [name, info] = candidates[0];
+  return { slug: info.slug, name, type: info.type };
+}
+
+// Check if a specific model slug is unlimited for a given command type
+function isUnlimitedModel(slug, commandType) {
+  const key = `${commandType}:${slug}`;
+  if (!UNLIMITED_SLUGS.has(key)) return false;
+
+  const cache = getCachedCredits();
+  if (!cache || !cache.unlimitedModels) return false;
+
+  const activeNames = new Set(cache.unlimitedModels.map(m => m.model));
+  return UNLIMITED_SLUGS.get(key).some(name => activeNames.has(name));
+}
 
 // Ensure state directory exists
 if (!existsSync(STATE_DIR)) {
@@ -108,6 +193,23 @@ function saveCreditCache(creditInfo) {
 }
 
 function estimateCreditCost(command, options = {}) {
+  // Check if the selected (or auto-selected) model is unlimited (zero credit cost)
+  const typeMap = {
+    image: 'image', video: 'video', lipsync: 'video',
+    'video-edit': 'video-edit', 'motion-control': 'motion-control',
+    'cinema-studio': 'video', cinema: 'video', app: 'app',
+    'seed-bracket': 'image',
+  };
+  const modelType = typeMap[command] || command;
+  const model = options.model;
+  if (model) {
+    if (isUnlimitedModel(model, modelType)) return 0;
+  } else if (options.preferUnlimited !== false) {
+    // No explicit model — check if auto-selection would pick an unlimited model
+    const unlimited = getUnlimitedModelForCommand(modelType);
+    if (unlimited) return 0;
+  }
+
   let cost = CREDIT_COSTS[command] || 5;
 
   // Adjust for known cost multipliers
@@ -132,10 +234,15 @@ function checkCreditGuard(command, options = {}) {
   const cached = getCachedCredits();
   if (!cached) return; // no cache = can't check, proceed optimistically
 
+  // Skip guard if using an unlimited model
+  const estimated = estimateCreditCost(command, options);
+  if (estimated === 0) {
+    console.log(`[credits] Using unlimited model — no credit cost`);
+    return;
+  }
+
   const remaining = parseInt(cached.remaining, 10);
   if (isNaN(remaining)) return;
-
-  const estimated = estimateCreditCost(command, options);
 
   if (remaining < estimated) {
     throw new Error(
@@ -266,6 +373,10 @@ function parseArgs() {
       options.dryRun = true;
     } else if (args[i] === '--no-retry') {
       options.noRetry = true;
+    } else if (args[i] === '--prefer-unlimited') {
+      options.preferUnlimited = true;
+    } else if (args[i] === '--no-prefer-unlimited') {
+      options.preferUnlimited = false;
     }
   }
 
@@ -982,7 +1093,18 @@ async function generateImage(options = {}) {
 
   try {
     const prompt = options.prompt || 'A serene mountain landscape at golden hour, photorealistic, 8k';
-    const model = options.model || 'soul';
+
+    // Auto-select unlimited model if no explicit model specified and prefer-unlimited is not disabled
+    let model = options.model || 'soul';
+    if (!options.model && options.preferUnlimited !== false) {
+      const unlimited = getUnlimitedModelForCommand('image');
+      if (unlimited) {
+        model = unlimited.slug;
+        console.log(`[unlimited] Auto-selected unlimited image model: ${unlimited.name} (${unlimited.slug})`);
+      }
+    } else if (options.model && isUnlimitedModel(options.model, 'image')) {
+      console.log(`[unlimited] Model "${options.model}" is unlimited (no credit cost)`);
+    }
 
     // Navigate to image creation page - map model names to URL slugs.
     // Models with "365" unlimited subscriptions use feature pages (e.g. /nano-banana-pro)
@@ -1544,7 +1666,18 @@ async function generateVideo(options = {}) {
 
   try {
     const prompt = options.prompt || 'Camera slowly pans across a beautiful landscape as clouds drift overhead';
-    const model = options.model || 'kling-2.6'; // Default to unlimited model
+
+    // Auto-select unlimited video model if no explicit model specified
+    let model = options.model || 'kling-2.6';
+    if (!options.model && options.preferUnlimited !== false) {
+      const unlimited = getUnlimitedModelForCommand('video');
+      if (unlimited) {
+        model = unlimited.slug;
+        console.log(`[unlimited] Auto-selected unlimited video model: ${unlimited.name} (${unlimited.slug})`);
+      }
+    } else if (options.model && isUnlimitedModel(options.model, 'video')) {
+      console.log(`[unlimited] Model "${options.model}" is unlimited (no credit cost)`);
+    }
 
     // Navigate to video creation page
     console.log('Navigating to video creation page...');
@@ -1660,11 +1793,11 @@ async function generateVideo(options = {}) {
     await dismissAllModals(page);
     await page.screenshot({ path: join(STATE_DIR, 'video-after-upload.png'), fullPage: false });
 
-    // Select model if specified (click model selector, find matching option)
+    // Select model (click model selector, find matching option)
     // Model name mapping: CLI names (lowercase, hyphenated) -> UI dropdown button text patterns
     // The Model dropdown shows options like "Kling 2.6 1080p 5s-10s" as button text.
     // We match by the model name prefix to handle varying resolution/duration suffixes.
-    if (options.model) {
+    {
       const modelNameMap = {
         'kling-3.0': 'Kling 3.0',
         'kling-2.6': 'Kling 2.6',
@@ -1679,8 +1812,8 @@ async function generateVideo(options = {}) {
         'veo': 'Veo',
         'veo-3': 'Veo 3',
       };
-      const uiModelName = modelNameMap[options.model] || options.model;
-      console.log(`Selecting model: ${options.model} (UI: "${uiModelName}")`);
+      const uiModelName = modelNameMap[model] || model;
+      console.log(`Selecting model: ${model} (UI: "${uiModelName}")`);
 
       // ARIA: button "Model" with paragraph showing current model name
       const modelSelector = page.getByRole('button', { name: 'Model' });
@@ -2881,7 +3014,7 @@ async function seedBracket(options = {}) {
   console.log(`Seed bracketing: testing ${seeds.length} seeds with prompt: "${prompt.substring(0, 60)}..."`);
   console.log(`Seeds: ${seeds.join(', ')}`);
 
-  const model = options.model || 'soul';
+  const model = options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul';
   const outputDir = options.output || join(DOWNLOAD_DIR, `seed-bracket-${Date.now()}`);
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
@@ -3365,8 +3498,8 @@ async function pipeline(options = {}) {
         duration: parseInt(options.duration, 10) || 5,
         dialogue: options.dialogue || null,
       }],
-      imageModel: options.model || 'soul',
-      videoModel: 'kling-2.6', // Default to unlimited
+      imageModel: options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul',
+      videoModel: (options.preferUnlimited !== false && getUnlimitedModelForCommand('video')?.slug) || 'kling-2.6',
       aspect: options.aspect || '9:16',
     };
   }
@@ -5481,6 +5614,188 @@ async function smokeTest(options = {}) {
   }
 }
 
+// --- Self-tests for unlimited model selection logic ---
+// Run with: node playwright-automator.mjs test
+async function runSelfTests() {
+  let passed = 0;
+  let failed = 0;
+
+  function assert(condition, name) {
+    if (condition) {
+      console.log(`  PASS: ${name}`);
+      passed++;
+    } else {
+      console.error(`  FAIL: ${name}`);
+      failed++;
+    }
+  }
+
+  // Save original cache and create a mock
+  const originalCache = existsSync(CREDITS_CACHE_FILE)
+    ? readFileSync(CREDITS_CACHE_FILE, 'utf-8')
+    : null;
+
+  console.log('\n=== Unlimited Model Selection Tests ===\n');
+
+  // Test 1: UNLIMITED_MODELS structure
+  console.log('--- UNLIMITED_MODELS mapping ---');
+  const imageModels = Object.entries(UNLIMITED_MODELS).filter(([, v]) => v.type === 'image');
+  const videoModels = Object.entries(UNLIMITED_MODELS).filter(([, v]) => v.type === 'video');
+  assert(imageModels.length === 12, `12 image models mapped (got ${imageModels.length})`);
+  assert(videoModels.length === 3, `3 video models mapped (got ${videoModels.length})`);
+
+  // Test 2: Priority ordering — SOTA quality ranking
+  console.log('\n--- SOTA quality priority ordering ---');
+  const imagePriorities = imageModels.sort((a, b) => a[1].priority - b[1].priority);
+  assert(imagePriorities[0][1].slug === 'gpt', 'GPT Image is priority 1 (best photorealism)');
+  assert(imagePriorities[1][1].slug === 'seedream-4-5', 'Seedream 4.5 is priority 2');
+  assert(imagePriorities[2][1].slug === 'flux', 'FLUX.2 Pro is priority 3');
+  assert(imagePriorities[3][1].slug === 'kontext', 'Flux Kontext is priority 4');
+  assert(imagePriorities[11][1].slug === 'popcorn', 'Popcorn is last (stylized, not photorealistic)');
+
+  const videoPriorities = videoModels.sort((a, b) => a[1].priority - b[1].priority);
+  assert(videoPriorities[0][1].slug === 'kling-2.6', 'Kling 2.6 is top video model');
+  assert(videoPriorities[1][1].slug === 'kling-o1', 'Kling O1 is second (higher quality than Turbo)');
+  assert(videoPriorities[2][1].slug === 'kling-2.5', 'Kling 2.5 Turbo is third (fast but lower quality)');
+
+  // Test 3: No duplicate priorities within a type
+  console.log('\n--- No duplicate priorities ---');
+  const types = ['image', 'video', 'video-edit', 'motion-control', 'app'];
+  for (const type of types) {
+    const models = Object.entries(UNLIMITED_MODELS).filter(([, v]) => v.type === type);
+    const priorities = models.map(([, v]) => v.priority);
+    const uniquePriorities = new Set(priorities);
+    assert(priorities.length === uniquePriorities.size, `No duplicate priorities in type '${type}'`);
+  }
+
+  // Test 4: Mock credit cache and test getUnlimitedModelForCommand
+  console.log('\n--- getUnlimitedModelForCommand with mock cache ---');
+  const mockCache = {
+    remaining: '5916',
+    total: '6000',
+    plan: 'Creator',
+    unlimitedModels: [
+      { model: 'GPT Image365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
+      { model: 'Higgsfield Soul365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
+      { model: 'Seedream 4.5365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
+      { model: 'FLUX.2 Pro365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
+      { model: 'Kling 2.6 Video Unlimited', starts: 'Jan 21, 2026', expires: 'Feb 20, 2026' },
+      { model: 'Kling O1 Video Unlimited', starts: 'Jan 21, 2026', expires: 'Feb 20, 2026' },
+      { model: 'Kling 2.5 Turbo Unlimited', starts: 'Jan 21, 2026', expires: 'Feb 20, 2026' },
+    ],
+    timestamp: Date.now(),
+  };
+  saveCreditCache(mockCache);
+
+  const bestImage = getUnlimitedModelForCommand('image');
+  assert(bestImage !== null, 'Returns a model for image type');
+  assert(bestImage.slug === 'gpt', `Best image model is GPT (got: ${bestImage?.slug})`);
+  assert(bestImage.name === 'GPT Image365 Unlimited', `Returns full model name`);
+
+  const bestVideo = getUnlimitedModelForCommand('video');
+  assert(bestVideo !== null, 'Returns a model for video type');
+  assert(bestVideo.slug === 'kling-2.6', `Best video model is Kling 2.6 (got: ${bestVideo?.slug})`);
+
+  // Test 5: getUnlimitedModelForCommand with partial cache (only some models active)
+  console.log('\n--- Partial cache (limited models) ---');
+  const partialCache = {
+    remaining: '100',
+    total: '6000',
+    plan: 'Creator',
+    unlimitedModels: [
+      { model: 'Higgsfield Soul365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
+      { model: 'Nano Banana365 Unlimited', starts: 'Auto-renewing', expires: 'Auto-renewing' },
+    ],
+    timestamp: Date.now(),
+  };
+  saveCreditCache(partialCache);
+
+  const partialBest = getUnlimitedModelForCommand('image');
+  assert(partialBest.slug === 'soul', `With only Soul+Nano active, Soul wins (priority 7 < 10) (got: ${partialBest?.slug})`);
+
+  const noVideo = getUnlimitedModelForCommand('video');
+  assert(noVideo === null, 'No video model when none are in cache');
+
+  // Test 6: getUnlimitedModelForCommand with empty cache
+  console.log('\n--- Empty/missing cache ---');
+  const emptyCache = { remaining: '0', total: '0', plan: 'Free', unlimitedModels: [], timestamp: Date.now() };
+  saveCreditCache(emptyCache);
+
+  const emptyResult = getUnlimitedModelForCommand('image');
+  assert(emptyResult === null, 'Returns null when no unlimited models in cache');
+
+  // Test 7: isUnlimitedModel
+  console.log('\n--- isUnlimitedModel ---');
+  saveCreditCache(mockCache); // Restore full mock
+  assert(isUnlimitedModel('gpt', 'image') === true, 'GPT is unlimited for image');
+  assert(isUnlimitedModel('kling-2.6', 'video') === true, 'Kling 2.6 is unlimited for video');
+  assert(isUnlimitedModel('soul', 'image') === true, 'Soul is unlimited for image');
+  assert(isUnlimitedModel('sora', 'video') === false, 'Sora is NOT unlimited');
+  assert(isUnlimitedModel('gpt', 'video') === false, 'GPT is NOT unlimited for video type');
+  assert(isUnlimitedModel('kling-2.6', 'image') === false, 'Kling 2.6 is NOT unlimited for image type');
+
+  // Test 8: estimateCreditCost with unlimited models
+  console.log('\n--- estimateCreditCost with unlimited models ---');
+  assert(estimateCreditCost('image', { model: 'gpt' }) === 0, 'GPT image costs 0 credits');
+  assert(estimateCreditCost('video', { model: 'kling-2.6' }) === 0, 'Kling 2.6 video costs 0 credits');
+  assert(estimateCreditCost('image', { model: 'sora' }) > 0, 'Non-unlimited model has credit cost');
+  assert(estimateCreditCost('image', {}) === 0, 'No model + prefer-unlimited default = 0 (auto-selects unlimited)');
+  assert(estimateCreditCost('image', { preferUnlimited: false }) > 0, 'prefer-unlimited=false has credit cost');
+  assert(estimateCreditCost('video', {}) === 0, 'Video with auto-select = 0 credits');
+
+  // Test 9: checkCreditGuard with unlimited models (should not throw)
+  console.log('\n--- checkCreditGuard with unlimited models ---');
+  const lowCreditCache = { ...mockCache, remaining: '1', timestamp: Date.now() };
+  saveCreditCache(lowCreditCache);
+  let guardPassed = false;
+  try {
+    checkCreditGuard('image', { model: 'gpt' });
+    guardPassed = true;
+  } catch { guardPassed = false; }
+  assert(guardPassed, 'Credit guard passes for unlimited model even with 1 credit');
+
+  let guardBlocked = false;
+  try {
+    checkCreditGuard('image', { model: 'sora', preferUnlimited: false });
+    guardBlocked = false;
+  } catch { guardBlocked = true; }
+  assert(guardBlocked, 'Credit guard blocks non-unlimited model with 1 credit');
+
+  // Test 10: UNLIMITED_SLUGS reverse lookup
+  console.log('\n--- UNLIMITED_SLUGS reverse lookup ---');
+  assert(UNLIMITED_SLUGS.has('image:gpt'), 'Reverse lookup has image:gpt');
+  assert(UNLIMITED_SLUGS.has('video:kling-2.6'), 'Reverse lookup has video:kling-2.6');
+  assert(!UNLIMITED_SLUGS.has('video:gpt'), 'No reverse lookup for video:gpt');
+  assert(UNLIMITED_SLUGS.get('image:gpt').includes('GPT Image365 Unlimited'), 'Reverse lookup maps to correct name');
+
+  // Test 11: CLI flag parsing
+  console.log('\n--- CLI flag parsing ---');
+  const origArgv = process.argv;
+  process.argv = ['node', 'test', 'image', '--prefer-unlimited'];
+  let parsed = parseArgs();
+  assert(parsed.options.preferUnlimited === true, '--prefer-unlimited sets true');
+
+  process.argv = ['node', 'test', 'image', '--no-prefer-unlimited'];
+  parsed = parseArgs();
+  assert(parsed.options.preferUnlimited === false, '--no-prefer-unlimited sets false');
+
+  process.argv = ['node', 'test', 'image'];
+  parsed = parseArgs();
+  assert(parsed.options.preferUnlimited === undefined, 'No flag leaves undefined (default behavior)');
+  process.argv = origArgv;
+
+  // Restore original cache
+  if (originalCache) {
+    writeFileSync(CREDITS_CACHE_FILE, originalCache);
+  }
+
+  // Summary
+  console.log(`\n=== Test Results: ${passed} passed, ${failed} failed ===\n`);
+  if (failed > 0) {
+    process.exit(1);
+  }
+}
+
 // Main CLI handler
 async function main() {
   const { command, options } = parseArgs();
@@ -5520,6 +5835,7 @@ Commands:
   credits            Check account credits/plan
   screenshot         Take screenshot of any page
   download           Download latest generation (use --model video for videos)
+  test               Run self-tests for unlimited model selection logic
 
 Options:
   --prompt, -p       Text prompt for generation
@@ -5568,6 +5884,8 @@ Options:
   --force            Override credit guard (proceed even with low credits)
   --dry-run          Navigate and configure but don't click Generate
   --no-retry         Disable automatic retry on failure
+  --prefer-unlimited Auto-select unlimited models when available (default: on)
+  --no-prefer-unlimited  Use default models even if unlimited alternatives exist
 
 Examples:
   node playwright-automator.mjs login --headed
@@ -5753,6 +6071,10 @@ Examples:
     case 'effects':
       if (command !== 'feature') options.feature = command;
       await withRetry(() => featurePage(options), retryOpts);
+      break;
+    case 'test':
+    case 'self-test':
+      await runSelfTests();
       break;
     default:
       console.error(`Unknown command: ${command}`);

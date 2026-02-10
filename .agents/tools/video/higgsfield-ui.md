@@ -537,17 +537,42 @@ When viewing any generated image, the "Open in" menu provides:
 
 ## Unlimited Models Strategy
 
-The account has 19 unlimited models (no credit cost). Always prefer these:
+The account has 19 unlimited models (no credit cost). The automator **auto-selects the best unlimited model** by default, ranked by SOTA quality for product/commercial photography.
 
-**Image (unlimited)**: Soul, Nano Banana, Nano Banana Pro, Seedream 4.0, GPT Image, Flux Kontext, FLUX.2 Pro, Kling O1 Image, Seedream 4.5, Reve, Z Image
+**Auto-selection** (default behavior): When no `--model` is specified, the automator checks the credits cache for active unlimited models and picks the highest-quality one. This is controlled by `--prefer-unlimited` (on by default). Use `--no-prefer-unlimited` to disable.
 
-**Video (unlimited)**: Kling 2.6, Kling 2.5 Turbo, Kling 2.6 Motion Control, Kling O1 Video, Kling O1 Video Edit
+**Image models** (ranked by SOTA quality for product shots):
 
-**Other (unlimited)**: Higgsfield Soul, Higgsfield Face Swap, Higgsfield Popcorn
+| Priority | Model | Slug | Strength |
+|----------|-------|------|----------|
+| 1 | GPT Image | `gpt` | Best photorealism, text rendering |
+| 2 | Seedream 4.5 | `seedream-4-5` | Excellent detail (ByteDance) |
+| 3 | FLUX.2 Pro | `flux` | Strong commercial imagery |
+| 4 | Flux Kontext | `kontext` | Context-aware editing |
+| 5 | Reve | `reve` | Good photorealism |
+| 6 | Nano Banana Pro | `nano-banana-pro` | Higgsfield premium |
+| 7 | Soul | `soul` | Reliable all-rounder |
+| 8 | Kling O1 Image | `kling_o1` | Decent quality |
+| 9 | Seedream 4.0 | `seedream` | Older generation |
+| 10 | Nano Banana | `nano_banana` | Standard tier |
+| 11 | Z Image | `z_image` | Less established |
+| 12 | Popcorn | `popcorn` | Stylized/creative |
 
-Use `--unlimited` flag to restrict to unlimited models only.
+**Video models** (ranked by quality):
+
+| Priority | Model | Slug | Strength |
+|----------|-------|------|----------|
+| 1 | Kling 2.6 | `kling-2.6` | Best quality/speed |
+| 2 | Kling O1 Video | `kling-o1` | Higher quality, slower |
+| 3 | Kling 2.5 Turbo | `kling-2.5` | Fast, lower quality |
+
+**Other unlimited**: Kling O1 Video Edit, Kling 2.6 Motion Control, Face Swap
+
+**Credit cost**: Unlimited models return 0 from the credit guard, so they never trigger low-credit warnings or blocks.
 
 **Unlimited model routing**: Models with "365" subscriptions use dedicated feature pages (e.g., `/nano-banana-pro`, `/seedream-4-5`) that have an "Unlimited" toggle switch. The automator automatically navigates to these pages and enables the switch. Standard `/image/` routes cost credits even for subscribed models.
+
+**Self-tests**: Run `node playwright-automator.mjs test` to verify unlimited model selection logic (44 tests).
 
 ## Output Organization
 
@@ -797,7 +822,9 @@ Results saved to `~/Downloads/seed-bracket-{timestamp}/` with `bracket-results.j
 --sound            Enable sound/audio for video
 --no-sound         Disable sound/audio
 --batch, -b        Number of images to generate (1-4)
---unlimited        Prefer unlimited models only
+--unlimited        Prefer unlimited models only (legacy)
+--prefer-unlimited Auto-select best unlimited model by SOTA quality (default: on)
+--no-prefer-unlimited  Use default models even if unlimited alternatives exist
 --preset, -s       Style preset name (e.g., "Sunset beach", "CCTV")
 --seed             Seed number for reproducible generation
 --seed-range       Seed range for bracketing (e.g., "1000-1010")
