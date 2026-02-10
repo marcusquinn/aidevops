@@ -800,15 +800,19 @@ async function generateImage(options = {}) {
     const prompt = options.prompt || 'A serene mountain landscape at golden hour, photorealistic, 8k';
     const model = options.model || 'soul';
 
-    // Navigate to image creation page - map model names to URL slugs
+    // Navigate to image creation page - map model names to URL slugs.
+    // Models with "365" unlimited subscriptions use feature pages (e.g. /nano-banana-pro)
+    // which have an "Unlimited" toggle switch. Standard /image/ routes cost credits.
     const modelUrlMap = {
       'soul': '/image/soul',
       'nano_banana': '/image/nano_banana',
       'nano-banana': '/image/nano_banana',
-      'nano_banana_pro': '/image/nano_banana_2',
-      'nano-banana-pro': '/image/nano_banana_2',
+      'nano_banana_pro': '/nano-banana-pro',       // Unlimited feature page (has Unlimited switch)
+      'nano-banana-pro': '/nano-banana-pro',        // Unlimited feature page
       'seedream': '/image/seedream',
       'seedream-4': '/image/seedream',
+      'seedream-4.5': '/seedream-4-5',              // Unlimited feature page (has Unlimited switch)
+      'seedream-4-5': '/seedream-4-5',              // Unlimited feature page
       'wan2': '/image/wan2',
       'wan': '/image/wan2',
       'gpt': '/image/gpt',
@@ -885,6 +889,33 @@ async function generateImage(options = {}) {
 
     // Configure generation options (aspect ratio, quality, enhance, batch, preset)
     await configureImageOptions(page, options);
+
+    // Enable "Unlimited mode" switch if available (saves credits on subscription models).
+    // Feature pages like /nano-banana-pro and /seedream-4-5 have this toggle.
+    const unlimitedSwitch = page.getByRole('switch');
+    if (await unlimitedSwitch.count() > 0) {
+      // Check if there's an "Unlimited" label near the switch
+      const hasUnlimitedLabel = await page.evaluate(() => {
+        return document.body.innerText.includes('Unlimited');
+      });
+      if (hasUnlimitedLabel) {
+        const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
+        if (!isChecked) {
+          // Click the button containing the switch (the switch itself may not be directly clickable)
+          const switchParent = page.locator('button:has(switch), *:has(> switch)').first();
+          if (await switchParent.count() > 0) {
+            await switchParent.click({ force: true });
+          } else {
+            await unlimitedSwitch.click({ force: true });
+          }
+          await page.waitForTimeout(500);
+          const nowChecked = await unlimitedSwitch.isChecked().catch(() => false);
+          console.log(nowChecked ? 'Enabled Unlimited mode (image)' : 'WARNING: Could not enable Unlimited mode');
+        } else {
+          console.log('Unlimited mode already enabled (image)');
+        }
+      }
+    }
 
     // Count existing images before generating (to identify new ones later).
     // NOTE: We count rather than snapshot src URLs because the page replaces
@@ -1197,6 +1228,25 @@ async function downloadVideoFromHistory(page, outputDir, metadata = {}) {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(6000);
     page.off('response', apiHandler);
+
+    // Fallback: Direct API fetch if interception missed the response
+    if (!projectApiData) {
+      try {
+        projectApiData = await page.evaluate(async () => {
+          const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' },
+          });
+          if (resp.ok) return await resp.json();
+          return null;
+        });
+        if (projectApiData?.job_sets?.length > 0) {
+          console.log(`Direct API fetch got ${projectApiData.job_sets.length} job set(s)`);
+        }
+      } catch (fetchErr) {
+        console.log(`Direct API fetch failed: ${fetchErr.message}`);
+      }
+    }
 
     if (projectApiData?.job_sets?.length > 0) {
       // Ensure output directory exists
@@ -2726,6 +2776,29 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
       }
 
       page.off('response', apiHandler);
+
+      // Fallback: Direct API fetch using the page's auth context.
+      // The API interception can miss responses if they arrive before the listener
+      // is attached or if the page caches the data. Fetching directly is more reliable.
+      if (!projectApiData) {
+        console.log(`  API interception missed. Trying direct fetch...`);
+        try {
+          projectApiData = await page.evaluate(async () => {
+            // The Higgsfield API endpoint for video history
+            const resp = await fetch('https://fnf.higgsfield.ai/project?job_set_type=image2video&limit=20&offset=0', {
+              credentials: 'include',
+              headers: { 'Accept': 'application/json' },
+            });
+            if (resp.ok) return await resp.json();
+            return null;
+          });
+          if (projectApiData?.job_sets?.length > 0) {
+            console.log(`  Direct fetch got ${projectApiData.job_sets.length} job set(s)`);
+          }
+        } catch (fetchErr) {
+          console.log(`  Direct fetch failed: ${fetchErr.message}`);
+        }
+      }
 
       if (!projectApiData) {
         console.log(`  WARNING: No API data captured. API interception may need updating.`);
