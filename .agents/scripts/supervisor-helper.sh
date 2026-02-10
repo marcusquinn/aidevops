@@ -6147,9 +6147,65 @@ Instructions:
 }
 
 #######################################
+# Dismiss bot reviews that are blocking PR merge (t226)
+# Only dismisses reviews from known bot accounts (coderabbitai, gemini-code-assist)
+# Returns: 0 if any reviews dismissed, 1 if none found or error
+#######################################
+dismiss_bot_reviews() {
+    local pr_number="$1"
+    local repo_slug="$2"
+    
+    if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+        log_warn "dismiss_bot_reviews: missing pr_number or repo_slug"
+        return 1
+    fi
+    
+    # Get all reviews for the PR
+    local reviews_json
+    reviews_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" 2>>"$SUPERVISOR_LOG" || echo "[]")
+    
+    if [[ -z "$reviews_json" || "$reviews_json" == "[]" ]]; then
+        log_debug "dismiss_bot_reviews: no reviews found for PR #${pr_number}"
+        return 1
+    fi
+    
+    # Find bot reviews with CHANGES_REQUESTED state
+    local bot_reviews
+    bot_reviews=$(echo "$reviews_json" | jq -r '.[] | select(.state == "CHANGES_REQUESTED" and (.user.login == "coderabbitai" or .user.login == "gemini-code-assist[bot]")) | .id' 2>/dev/null || echo "")
+    
+    if [[ -z "$bot_reviews" ]]; then
+        log_debug "dismiss_bot_reviews: no blocking bot reviews found for PR #${pr_number}"
+        return 1
+    fi
+    
+    local dismissed_count=0
+    while IFS= read -r review_id; do
+        if [[ -n "$review_id" ]]; then
+            log_info "Dismissing bot review #${review_id} on PR #${pr_number}"
+            if gh api -X PUT "repos/${repo_slug}/pulls/${pr_number}/reviews/${review_id}/dismissals" \
+                -f message="Auto-dismissed: bot review does not block autonomous pipeline" \
+                -f event="DISMISS" 2>>"$SUPERVISOR_LOG"; then
+                ((dismissed_count++))
+                log_success "Dismissed bot review #${review_id}"
+            else
+                log_warn "Failed to dismiss bot review #${review_id}"
+            fi
+        fi
+    done <<< "$bot_reviews"
+    
+    if [[ "$dismissed_count" -gt 0 ]]; then
+        log_success "Dismissed ${dismissed_count} bot review(s) on PR #${pr_number}"
+        return 0
+    fi
+    
+    return 1
+}
+
+#######################################
 # Check PR CI and review status for a task
 # Returns: ready_to_merge, unstable_sonarcloud, ci_pending, ci_failed, changes_requested, draft, no_pr
 # t227: unstable_sonarcloud = SonarCloud GH Action passed but external quality gate failed
+# t226: auto-dismiss bot reviews that block merge
 #######################################
 check_pr_status() {
     local task_id="$1"
@@ -6312,8 +6368,29 @@ check_pr_status() {
     review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
 
     if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
-        echo "changes_requested"
-        return 0
+        # t226: Try to auto-dismiss bot reviews before declaring changes_requested
+        log_info "PR #${pr_number} has CHANGES_REQUESTED — checking for bot reviews to dismiss"
+        if dismiss_bot_reviews "$pr_number" "$repo_slug"; then
+            # Re-fetch PR status after dismissal
+            log_info "Re-checking PR #${pr_number} status after dismissing bot reviews"
+            pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
+            review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+            
+            # If still CHANGES_REQUESTED after dismissal, there are human reviews blocking
+            if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+                log_warn "PR #${pr_number} still has CHANGES_REQUESTED after dismissing bot reviews (human reviews present)"
+                echo "changes_requested"
+                return 0
+            else
+                log_success "PR #${pr_number} unblocked after dismissing bot reviews"
+                # Fall through to ready_to_merge check
+            fi
+        else
+            # No bot reviews to dismiss, must be human reviews
+            log_info "PR #${pr_number} has CHANGES_REQUESTED from human reviewers (not auto-dismissing)"
+            echo "changes_requested"
+            return 0
+        fi
     fi
 
     # CI passed, no blocking reviews
