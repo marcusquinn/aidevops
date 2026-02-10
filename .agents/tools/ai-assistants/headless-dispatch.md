@@ -533,20 +533,27 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 
 ### Key Practices
 
-1. **TodoWrite decomposition** — Workers must break their task into 3-7 subtasks using the TodoWrite tool at session start. This provides a progress breadcrumb trail that survives context compaction.
+1. **TodoWrite decomposition** — Workers must break their task into 3-7 subtasks using the TodoWrite tool at session start. The LAST subtask must always be "Push and create PR". This provides a progress breadcrumb trail that survives context compaction.
 
-2. **Checkpoint after each subtask** — Workers call `session-checkpoint-helper.sh save` after completing each subtask. If the session restarts or compacts, the worker can resume from the last checkpoint instead of restarting from scratch.
+2. **Commit early, commit often** — After EACH implementation subtask, `git add -A && git commit` immediately. After the FIRST commit, `git push -u origin HEAD && gh pr create --draft`. This ensures work survives context exhaustion. The supervisor auto-promotes draft PRs to ready-for-review when the worker dies.
 
-3. **Parallel sub-work** — For independent subtasks (e.g., tests + docs), workers can use the Task tool to spawn sub-agents. This is faster than sequential execution when subtasks don't modify the same files.
+3. **Research offloading** — Spawn Task sub-agents for heavy codebase exploration (reading 500+ line files, understanding patterns across multiple files). Sub-agents get fresh context windows and return concise summaries, saving the parent worker's context for implementation.
 
-4. **Fail fast** — Workers verify assumptions before writing code: read target files, check dependencies exist, confirm the task isn't already done. This prevents wasting an entire session on a false premise.
+4. **Parallel sub-work** — For independent subtasks (e.g., tests + docs), workers can use the Task tool to spawn sub-agents. This is faster than sequential execution when subtasks don't modify the same files.
 
-5. **Token minimisation** — Read file ranges (not entire files), write concise commit messages, and exit with BLOCKED after one failed retry instead of burning tokens on repeated attempts.
+5. **Checkpoint after each subtask** — Workers call `session-checkpoint-helper.sh save` after completing each subtask. If the session restarts or compacts, the worker can resume from the last checkpoint instead of restarting from scratch.
+
+6. **Fail fast** — Workers verify assumptions before writing code: read target files, check dependencies exist, confirm the task isn't already done. This prevents wasting an entire session on a false premise.
+
+7. **Token minimisation** — Read file ranges (not entire files), write concise commit messages, and exit with BLOCKED after one failed retry instead of burning tokens on repeated attempts.
 
 ### Why This Matters
 
 | Without protocol | With protocol |
 |-----------------|---------------|
+| Context exhaustion → uncommitted work lost | Incremental commits → work survives on branch |
+| No PR until end → supervisor can't detect work | Draft PR after first commit → always detectable |
+| Reading large files burns context → no room for implementation | Research offloaded to sub-agents → context preserved |
 | Context compacts → worker restarts from zero | Checkpoint + TodoWrite → resume from last subtask |
 | Complex task done linearly → 1 failure = full restart | Subtask tracking → only redo the failed subtask |
 | No internal structure → steps skipped or repeated | Explicit subtask list → nothing missed |
@@ -554,7 +561,7 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 
 ### Token Cost
 
-The protocol adds ~200-300 tokens per session (TodoWrite calls + checkpoint commands). A single avoided restart saves 10,000-50,000 tokens. The ROI is 30-150x on any task that would otherwise need a retry.
+The protocol adds ~300-500 tokens per session (TodoWrite + commit + push + draft PR). A single avoided context-exhaustion failure saves 10,000-50,000 tokens. The ROI is 20-100x on any task that would otherwise need a retry.
 
 ## CI/CD Integration
 

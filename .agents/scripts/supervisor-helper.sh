@@ -3912,23 +3912,59 @@ Maximise your output per token. Follow these practices to avoid wasted work:
 
 **1. Decompose with TodoWrite (MANDATORY)**
 At the START of your session, use the TodoWrite tool to break your task into 3-7 subtasks.
+Your LAST subtask must ALWAYS be: 'Push branch and create PR via gh pr create'.
 Example for 'add retry logic to API client':
 - Research: read existing API client code and error handling patterns
 - Implement: add retry with exponential backoff to the HTTP client
 - Test: write unit tests for retry behaviour (success, max retries, backoff timing)
 - Integrate: update callers if the API surface changed
 - Verify: run linters, shellcheck, and existing tests
+- Deliver: push branch and create PR via gh pr create
 
 Mark each subtask in_progress when you start it and completed when done.
 Only have ONE subtask in_progress at a time.
 
-**2. Checkpoint after each subtask**
-After completing each subtask, run:
-\`session-checkpoint-helper.sh save --task <your-task-id> --next 'remaining subtask descriptions'\`
-This persists your progress to disk. If context compacts or the session restarts,
-your checkpoint survives and you can resume from where you left off instead of restarting.
+**2. Commit early, commit often (CRITICAL — prevents lost work)**
+After EACH implementation subtask, immediately:
+\`\`\`bash
+git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
+\`\`\`
+Do NOT wait until all subtasks are done. If your session ends unexpectedly (context
+exhaustion, crash, timeout), uncommitted work is LOST. Committed work survives.
 
-**3. Parallel sub-work with Task tool (MANDATORY when applicable)**
+After your FIRST commit, push and create a draft PR immediately:
+\`\`\`bash
+git push -u origin HEAD
+gh pr create --draft --title '<task-id>: <description>' --body 'WIP - incremental commits'
+\`\`\`
+Subsequent commits just need \`git push\`. The PR already exists.
+This ensures the supervisor can detect your PR even if you run out of context.
+
+When ALL implementation is done, mark the PR as ready for review:
+\`\`\`bash
+gh pr ready
+\`\`\`
+If you run out of context before this step, the supervisor will auto-promote
+your draft PR after detecting your session has ended.
+
+**3. Offload research to Task sub-agents (saves context for implementation)**
+Reading large files (500+ lines) consumes your context budget fast. Instead of reading
+entire files yourself, spawn a Task sub-agent with a focused question:
+\`\`\`
+Task(description='Find dispatch points', prompt='In .agents/scripts/supervisor-helper.sh,
+find all functions that dispatch workers. Return: function name, line number, and the
+key variables/patterns used. Do NOT return full code — just the summary.')
+\`\`\`
+The sub-agent gets its own fresh context window. You get a concise answer that costs
+~100 tokens instead of ~5000 tokens from reading the file directly.
+
+**When to offload**: Any time you would read >200 lines of a file you don't plan to edit,
+or when you need to understand a codebase pattern across multiple files.
+
+**When NOT to offload**: When you need to edit the file (you must read it yourself for
+the Edit tool to work), or when the answer is a simple grep/rg query.
+
+**4. Parallel sub-work with Task tool (MANDATORY when applicable)**
 After creating your TodoWrite subtasks, check: do any two subtasks modify DIFFERENT files?
 If yes, you MUST spawn the independent subtask via the Task tool — do NOT execute sequentially.
 
@@ -3944,27 +3980,26 @@ files, spawn the independent one via Task tool. Common parallelisable pairs:
 # 1. Implement retry logic in src/client.ts        (modifies: src/client.ts)
 # 2. Write unit tests in tests/client.test.ts      (modifies: tests/client.test.ts)
 # 3. Update API docs in docs/client.md             (modifies: docs/client.md)
+# 4. Push and create PR
 
 # Subtask 1 modifies different files from subtasks 2 and 3.
-# After completing subtask 1, spawn subtasks 2 and 3 in PARALLEL via Task tool:
-
-# In your main session: work on subtask 1 (implement retry logic)
+# After completing subtask 1, git add && git commit immediately.
 # Then spawn TWO Task tool calls simultaneously:
 #   Task(description='Write retry tests', prompt='Write unit tests for retry logic in tests/client.test.ts...')
 #   Task(description='Update API docs', prompt='Update docs/client.md to document retry behaviour...')
-# Wait for both to complete, then verify and commit.
+# Wait for both to complete, commit their work, then push + create PR.
 \`\`\`
 
 **Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
 subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
 
-**4. Fail fast, not late**
+**5. Fail fast, not late**
 Before writing any code, verify your assumptions:
 - Read the files you plan to modify (stale assumptions waste entire sessions)
 - Check that dependencies/imports you plan to use actually exist in the project
 - If the task seems already done, EXIT immediately with explanation — don't redo work
 
-**5. Minimise token waste**
+**6. Minimise token waste**
 - Don't read entire large files — use line ranges from search results
 - Don't output verbose explanations in commit messages — be concise
 - Don't retry failed approaches more than once — exit with BLOCKED instead"
@@ -7097,7 +7132,35 @@ cmd_pr_lifecycle() {
                 return 1
                 ;;
             draft)
-                log_info "PR is still a draft for $task_id"
+                # Auto-promote draft PRs when the worker is dead (t228)
+                # Workers create draft PRs early for incremental commits. If the
+                # worker ran out of context before running `gh pr ready`, the draft
+                # is as complete as it's going to get — promote it automatically.
+                local worker_pid_file="$SUPERVISOR_DIR/pids/${task_id}.pid"
+                local worker_alive=false
+                if [[ -f "$worker_pid_file" ]]; then
+                    local wpid
+                    wpid=$(cat "$worker_pid_file")
+                    if kill -0 "$wpid" 2>/dev/null; then
+                        worker_alive=true
+                    fi
+                fi
+
+                if [[ "$worker_alive" == "true" ]]; then
+                    log_info "PR is draft but worker still running for $task_id — waiting"
+                else
+                    log_info "PR is draft and worker is dead for $task_id — auto-promoting to ready"
+                    if [[ "$dry_run" == "false" ]]; then
+                        local pr_num_draft
+                        pr_num_draft=$(echo "$tpr" | grep -oE '[0-9]+$' || echo "")
+                        local repo_slug_draft
+                        repo_slug_draft=$(echo "$tpr" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||' || echo "")
+                        if [[ -n "$pr_num_draft" && -n "$repo_slug_draft" ]]; then
+                            gh pr ready "$pr_num_draft" --repo "$repo_slug_draft" 2>>"$SUPERVISOR_LOG" || true
+                            log_success "Auto-promoted draft PR #$pr_num_draft to ready for $task_id"
+                        fi
+                    fi
+                fi
                 # t219: Record timing even for early returns
                 local stage_end
                 stage_end=$(date +%s)
