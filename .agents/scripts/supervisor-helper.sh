@@ -2910,16 +2910,20 @@ resolve_model() {
     fi
 
     # Try model-availability-helper.sh for availability-aware resolution (t132.3)
+    # IMPORTANT: When using OpenCode CLI with Anthropic OAuth, the availability
+    # helper sees anthropic as "no-key" (no standalone ANTHROPIC_API_KEY) and
+    # resolves to opencode/* models that route through OpenCode's Zen proxy.
+    # Only accept anthropic/* results to enforce Anthropic-only routing.
     local availability_helper="${SCRIPT_DIR}/model-availability-helper.sh"
     if [[ -x "$availability_helper" ]]; then
         local resolved
         resolved=$("$availability_helper" resolve "$tier" --quiet 2>/dev/null) || true
-        if [[ -n "$resolved" ]]; then
+        if [[ -n "$resolved" && "$resolved" == anthropic/* ]]; then
             echo "$resolved"
             return 0
         fi
-        # Fallback: availability helper couldn't resolve, use static defaults
-        log_verbose "model-availability-helper.sh could not resolve tier '$tier', using static default"
+        # Fallback: availability helper returned non-anthropic or empty, use static defaults
+        log_verbose "model-availability-helper.sh resolved '$resolved' (non-anthropic or empty), using static default"
     fi
 
     # Static fallback: map tier names to concrete models (t132.5)
