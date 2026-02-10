@@ -26,6 +26,15 @@ model: sonnet
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before committing to a narrative angle or hook, work through:
+
+1. What is the theme — the universal truth this content explores?
+2. What is the single takeaway — what should the audience think, feel, or do differently?
+3. Does this tell a story — is there tension, transformation, and resolution?
+4. Who is the protagonist — the audience, a character, or the brand — and is that the right choice?
+
 ## 7 Hook Formulas
 
 Every piece of content starts with a hook. Use these formulas to generate variants:

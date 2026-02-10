@@ -54,6 +54,17 @@ eeat-score-helper.sh report ~/Downloads/example.com/_latest/eeat-scores.json
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before assessing or generating E-E-A-T content, work through:
+
+1. Are brand name, expert name, and credentials cited with verifiable sources?
+2. Are there quality backlinks from authoritative domains supporting the claims?
+3. Is NAP (name, address, phone) consistent across all mentions and structured data?
+4. What is the entity density — are key entities mentioned with appropriate frequency and semantic weight?
+5. Does this demonstrate first-hand experience, or just restate what already ranks?
+6. Would a domain expert cite this — or dismiss it as surface-level?
+
 ## Overview
 
 The E-E-A-T Score agent evaluates content quality using Google's E-E-A-T framework

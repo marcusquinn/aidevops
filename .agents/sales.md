@@ -77,6 +77,19 @@ subagents:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating sales strategy or prospect-facing output, work through:
+
+1. What is the hook — what gets attention in the first 5 seconds?
+2. What is the need — what problem does the prospect have, in their words?
+3. What is the desire — what outcome do they want, and how emotionally invested are they?
+4. What is the price positioning — how does cost relate to the value of the problem solved?
+5. Can they pay — budget, authority, and timing?
+6. What is the reason to buy now — what changes if they wait?
+7. How do we close — what is the specific next action?
+8. How do we consolidate — what happens after the sale to prevent buyer's remorse and generate referrals?
+
 ## CRM Integration
 
 ### FluentCRM Setup

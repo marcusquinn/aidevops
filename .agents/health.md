@@ -31,6 +31,16 @@ Always consult healthcare professionals for medical advice.
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating health-related output, work through:
+
+1. What does the peer-reviewed evidence say? Cite studies, not opinions.
+2. What is the mechanism of action — can it be explained physiologically?
+3. What biases could be influencing this conclusion — confirmation, survivorship, selection, funding?
+4. What would a controlled experiment look like to test this claim?
+5. What are the risks of acting on this vs doing nothing — and for whom?
+
 ## Health Workflows
 
 ### Developer Wellness

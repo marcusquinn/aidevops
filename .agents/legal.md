@@ -34,6 +34,16 @@ Always consult qualified legal professionals for binding advice.
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-flight Questions
+
+Before generating legal-adjacent output, work through:
+
+1. What does the actual law say — statute, regulation, case law? Cite it.
+2. What jurisdiction(s) apply, and where do they conflict or overlap?
+3. What are the consequences of getting this wrong — financial, criminal, reputational?
+4. What would a competent opposing counsel argue against this position?
+5. Is the proposed approach proportionate to the risk, or over/under-engineered?
+
 ## Legal Workflows
 
 ### Document Review
