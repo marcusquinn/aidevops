@@ -379,7 +379,7 @@ Traditional content creation is linear: research → write → publish. This pip
 5. **"Proven First, Original Second" Iteration Strategy**
 6. **Rapid Testing Framework** - B-roll + voice clone + script variants for fastest iteration
 7. **Platform-Specific Metrics** - YouTube: CTR, retention, watch time; TikTok: completion rate, shares; Blog: time on page, scroll depth
-8. **Content Calendar** - Posting cadence recommendations
+8. **Content Calendar & Cadence Engine** - SQLite-backed calendar with posting cadence tracking, gap analysis, and lifecycle management (`content-calendar-helper.sh`)
 9. **Analytics Feedback Loop** - What worked → inform next research cycle
 
 **Related Tasks**:
