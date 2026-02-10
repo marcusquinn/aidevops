@@ -318,6 +318,7 @@ Orchestration agents can create drafts in `draft/` for reusable parallel process
 | Video | `tools/video/video-prompt-design.md`, `tools/video/remotion.md`, `tools/video/higgsfield.md`, `tools/video/runway.md` |
 | YouTube | `content/distribution/youtube/` (migrated from root, see content.md) |
 | Vision | `tools/vision/overview.md` (decision tree, then `image-generation.md`, `image-understanding.md`, `image-editing.md`) |
+| AI generation | `services/ai-generation/wavespeed.md`, `wavespeed-helper.sh` (200+ models: image, video, audio, 3D) |
 | ComfyUI | `tools/ai-generation/comfy-cli.md`, `comfy-cli-helper.sh` |
 | Voice | `tools/voice/speech-to-speech.md`, `voice-helper.sh talk` (voice bridge) |
 | Email testing | `services/email/email-testing.md` (overview), `services/email/email-design-test.md`, `services/email/email-delivery-test.md`, `email-test-suite-helper.sh` |

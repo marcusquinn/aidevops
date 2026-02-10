@@ -22,7 +22,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[46]{folder,purpose,key_files}:
+<!--TOON:subagents[48]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
@@ -66,6 +66,7 @@ services/email/,Email services - transactional email deliverability and testing,
 services/communications/,Communications - SMS voice and Matrix bot dispatch,twilio|telfon|matrix-bot
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
+services/ai-generation/,AI generation API gateway - unified access to 200+ models (image video audio 3D),wavespeed
 services/monitoring/,Error monitoring and debugging,sentry|socket
 youtube/,YouTube competitor research - channel intel topic research script writing and optimization,channel-intel|topic-research|script-writer|optimizer|pipeline
 services/accounting/,Accounting integration - invoicing,quickfile
@@ -87,7 +88,7 @@ bug-fixing,workflows/bug-fixing.md,Bug fix workflow
 feature-development,workflows/feature-development.md,Feature development workflow
 -->
 
-<!--TOON:scripts[71]{name,purpose}:
+<!--TOON:scripts[72]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 accessibility-audit-helper.sh,Accessibility audit CLI wrapping axe-core WAVE API WebAIM contrast and Lighthouse a11y
 auto-update-helper.sh,Automatic update polling daemon (enable disable status check logs)
@@ -161,4 +162,5 @@ thumbnail-helper.sh,Thumbnail A/B testing pipeline (generate score batch-score u
 stale-pr-helper.sh,Stale PR detection and notification - scan for open PRs older than 24h not linked to active tasks (scan report help)
 comfy-cli-helper.sh,ComfyUI management via comfy-cli (status install setup launch node-install node-list model-download model-list snapshot-save snapshot-restore workflow-deps)
 runway-helper.sh,Runway API CLI for video image and audio generation (video image tts sts sfx dub isolate status wait cancel credits usage)
+wavespeed-helper.sh,WaveSpeed AI REST API client - unified generation for 200+ models (generate status models upload balance usage)
 -->
