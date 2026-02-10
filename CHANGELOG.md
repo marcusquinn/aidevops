@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.109.0] - 2026-02-10
+
+### Added
+
+- add YouTube slash commands - /youtube setup, /youtube research, /youtube script (#901)
+- add cross-shell compatibility step to setup.sh (#900)
+- add unified video-gen-helper.sh for Sora 2, Veo 3.1, and Nanobanana Pro APIs (t203) (#885)
+- add seed-bracket-helper.sh for AI video generation seed bracketing (t202) (#884)
+- add orphaned PR scanner to supervisor pulse (t210) (#882)
+- add retry with exponential backoff to PR validation (t211) (#881)
+- add distribution channel reference agents (t199.8) (#880)
+- create optimization.md - A/B testing, variant generation, analytics loops (#877)
+- add character production guide - facial engineering, character bibles, personas (t199.7) (#875)
+- add image production guide with Nanobanana JSON templates (#874)
+- create content/production/audio.md - voice pipeline, sound design, emotional cues (t199.6) (#873)
+- add content/production/video.md - AI video generation guide (t199.5) (#872)
+- add content/story.md - narrative design and storytelling frameworks (#849)
+- add production/writing.md - scripts, copy, captions (#846)
+- enhance worktree registry prune to clean corrupted entries (t197) (#847)
+- rewrite content.md as multi-media multi-channel orchestrator (#840)
+- enhance research.md with 7 advanced research frameworks (#842)
+- add research subagent for audience research, niche validation, competitor analysis (#836)
+
+### Changed
+
+- Documentation: mark t207 complete - thumbnail A/B testing pipeline
+- Performance: enable Anthropic prompt caching in setup (#838)
+
+### Fixed
+
+- issue-sync status labels — use claimed on assign, done on close (t212) (#883)
+- enforce anthropic-only model resolution, reject opencode/* proxy models (#878)
+- detect billing/credits errors and block immediately instead of retrying (#876)
+- resolve clean_exit_no_signal false retry loop (t198) (#834)
+- use actual CPU idle% for adaptive throttling on macOS (#835)
+- sync homebrew formula version and enable subtask GitHub Issues (#848)
+- prevent RETURN trap clobbering with cleanup stack (t196) (#827)
+
 ## [2.108.0] - 2026-02-09
 
 ### Added
