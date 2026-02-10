@@ -234,6 +234,159 @@ log_warn() { echo -e "${YELLOW}[SUPERVISOR]${NC} $*" >&2; }
 log_error() { echo -e "${RED}[SUPERVISOR]${NC} $*" >&2; }
 log_verbose() { [[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2 || true; }
 
+#######################################
+# Write a structured proof-log entry (t218)
+#
+# Records an immutable evidence record for task completion trust.
+# Each entry captures: what happened, what evidence was used, and
+# who/what made the decision. Used for audit trails, pipeline
+# latency analysis (t219), and trust verification.
+#
+# Arguments (all via flags for clarity):
+#   --task <id>           Task ID (required)
+#   --event <type>        Event type (required): evaluate, complete, retry,
+#                         blocked, failed, verify_pass, verify_fail,
+#                         pr_review, merge, deploy, quality_gate,
+#                         dispatch, escalate, self_heal
+#   --stage <name>        Pipeline stage: evaluate, pr_review, review_triage,
+#                         merging, deploying, verifying, etc.
+#   --decision <text>     Decision made (e.g., "complete:PR_URL", "retry:rate_limited")
+#   --evidence <text>     Evidence used (e.g., "exit_code=0, signal=FULL_LOOP_COMPLETE")
+#   --maker <text>        Decision maker (e.g., "heuristic:tier1", "ai_eval:sonnet",
+#                         "quality_gate", "human")
+#   --pr-url <url>        PR URL if relevant
+#   --duration <secs>     Duration of this stage in seconds
+#   --metadata <json>     Additional JSON metadata
+#
+# Returns 0 on success, 1 on missing required args, silently succeeds
+# if DB is unavailable (proof-logs are best-effort, never block pipeline).
+#######################################
+write_proof_log() {
+    local task_id="" event="" stage="" decision="" evidence=""
+    local maker="" pr_url="" duration="" metadata=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --task) task_id="${2:-}"; shift 2 ;;
+            --event) event="${2:-}"; shift 2 ;;
+            --stage) stage="${2:-}"; shift 2 ;;
+            --decision) decision="${2:-}"; shift 2 ;;
+            --evidence) evidence="${2:-}"; shift 2 ;;
+            --maker) maker="${2:-}"; shift 2 ;;
+            --pr-url) pr_url="${2:-}"; shift 2 ;;
+            --duration) duration="${2:-}"; shift 2 ;;
+            --metadata) metadata="${2:-}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    # Required fields
+    if [[ -z "$task_id" || -z "$event" ]]; then
+        return 1
+    fi
+
+    # Best-effort: don't block pipeline if DB is unavailable
+    if [[ ! -f "${SUPERVISOR_DB:-}" ]]; then
+        return 0
+    fi
+
+    # Escape all text fields for SQL safety
+    local e_task e_event e_stage e_decision e_evidence e_maker e_pr e_meta
+    e_task=$(sql_escape "$task_id")
+    e_event=$(sql_escape "$event")
+    e_stage=$(sql_escape "${stage:-}")
+    e_decision=$(sql_escape "${decision:-}")
+    e_evidence=$(sql_escape "${evidence:-}")
+    e_maker=$(sql_escape "${maker:-}")
+    e_pr=$(sql_escape "${pr_url:-}")
+    e_meta=$(sql_escape "${metadata:-}")
+
+    # Build INSERT with only non-empty optional fields
+    local cols="task_id, event"
+    local vals="'$e_task', '$e_event'"
+
+    if [[ -n "$stage" ]]; then
+        cols="$cols, stage"; vals="$vals, '$e_stage'"
+    fi
+    if [[ -n "$decision" ]]; then
+        cols="$cols, decision"; vals="$vals, '$e_decision'"
+    fi
+    if [[ -n "$evidence" ]]; then
+        cols="$cols, evidence"; vals="$vals, '$e_evidence'"
+    fi
+    if [[ -n "$maker" ]]; then
+        cols="$cols, decision_maker"; vals="$vals, '$e_maker'"
+    fi
+    if [[ -n "$pr_url" ]]; then
+        cols="$cols, pr_url"; vals="$vals, '$e_pr'"
+    fi
+    if [[ -n "$duration" ]]; then
+        cols="$cols, duration_secs"; vals="$vals, $duration"
+    fi
+    if [[ -n "$metadata" ]]; then
+        cols="$cols, metadata"; vals="$vals, '$e_meta'"
+    fi
+
+    db "$SUPERVISOR_DB" "INSERT INTO proof_logs ($cols) VALUES ($vals);" 2>/dev/null || true
+
+    log_verbose "proof-log: $task_id $event ${stage:+stage=$stage }${decision:+decision=$decision}"
+    return 0
+}
+
+#######################################
+# Calculate stage duration from the last proof-log entry for a task (t218)
+# Returns duration in seconds between the last logged event and now.
+# Used to measure pipeline stage latency for t219 analysis.
+#######################################
+_proof_log_stage_duration() {
+    local task_id="$1"
+    local stage="${2:-}"
+
+    if [[ ! -f "${SUPERVISOR_DB:-}" ]]; then
+        echo ""
+        return 0
+    fi
+
+    local e_task
+    e_task=$(sql_escape "$task_id")
+
+    local last_ts=""
+    if [[ -n "$stage" ]]; then
+        local e_stage
+        e_stage=$(sql_escape "$stage")
+        last_ts=$(db "$SUPERVISOR_DB" "
+            SELECT timestamp FROM proof_logs
+            WHERE task_id = '$e_task' AND stage = '$e_stage'
+            ORDER BY id DESC LIMIT 1;
+        " 2>/dev/null || echo "")
+    fi
+
+    # Fallback: last event for this task regardless of stage
+    if [[ -z "$last_ts" ]]; then
+        last_ts=$(db "$SUPERVISOR_DB" "
+            SELECT timestamp FROM proof_logs
+            WHERE task_id = '$e_task'
+            ORDER BY id DESC LIMIT 1;
+        " 2>/dev/null || echo "")
+    fi
+
+    if [[ -z "$last_ts" ]]; then
+        echo ""
+        return 0
+    fi
+
+    local last_epoch now_epoch
+    last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_ts" "+%s" 2>/dev/null || date -d "$last_ts" "+%s" 2>/dev/null || echo "")
+    now_epoch=$(date +%s)
+
+    if [[ -n "$last_epoch" && -n "$now_epoch" ]]; then
+        echo $((now_epoch - last_epoch))
+    else
+        echo ""
+    fi
+    return 0
+}
+
 # Check GitHub authentication in a way that works with GH_TOKEN env var.
 # gh auth status may fail in cron even when GH_TOKEN is valid (keyring issues).
 # This function checks GH_TOKEN first, then falls back to gh auth status.
@@ -1130,6 +1283,33 @@ MIGRATE_T180
         log_success "Added skip_quality_gate column to batches"
     fi
 
+    # Migrate: add proof_logs table if missing (t218)
+    local has_proof_logs
+    has_proof_logs=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='proof_logs';" 2>/dev/null || echo "0")
+    if [[ "$has_proof_logs" -eq 0 ]]; then
+        log_info "Migrating database: adding proof_logs table (t218)..."
+        db "$SUPERVISOR_DB" << 'MIGRATE_T218'
+CREATE TABLE IF NOT EXISTS proof_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT NOT NULL,
+    event           TEXT NOT NULL,
+    stage           TEXT,
+    decision        TEXT,
+    evidence        TEXT,
+    decision_maker  TEXT,
+    pr_url          TEXT,
+    duration_secs   INTEGER,
+    metadata        TEXT,
+    timestamp       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_proof_logs_task ON proof_logs(task_id);
+CREATE INDEX IF NOT EXISTS idx_proof_logs_event ON proof_logs(event);
+CREATE INDEX IF NOT EXISTS idx_proof_logs_timestamp ON proof_logs(timestamp);
+MIGRATE_T218
+        log_success "Added proof_logs table (t218)"
+    fi
+
     # Ensure WAL mode for existing databases created before t135.3
     local current_mode
     current_mode=$(db "$SUPERVISOR_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
@@ -1224,6 +1404,31 @@ CREATE TABLE IF NOT EXISTS state_log (
 
 CREATE INDEX IF NOT EXISTS idx_state_log_task ON state_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_state_log_timestamp ON state_log(timestamp);
+
+-- Proof-logs: structured audit trail for task completion trust (t218)
+-- Each row is an immutable evidence record capturing what happened, what
+-- evidence was used, and who/what made the decision. Enables:
+--   - Trust verification: "why was this task marked complete?"
+--   - Pipeline latency analysis: stage-level timing (t219 prep)
+--   - Audit export: JSON/CSV for compliance or retrospective
+CREATE TABLE IF NOT EXISTS proof_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT NOT NULL,
+    event           TEXT NOT NULL,
+    stage           TEXT,
+    decision        TEXT,
+    evidence        TEXT,
+    decision_maker  TEXT,
+    pr_url          TEXT,
+    duration_secs   INTEGER,
+    metadata        TEXT,
+    timestamp       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_proof_logs_task ON proof_logs(task_id);
+CREATE INDEX IF NOT EXISTS idx_proof_logs_event ON proof_logs(event);
+CREATE INDEX IF NOT EXISTS idx_proof_logs_timestamp ON proof_logs(timestamp);
 SQL
 
     log_success "Initialized supervisor database: $SUPERVISOR_DB"
@@ -1599,6 +1804,22 @@ cmd_transition() {
     if [[ -n "$error_msg" ]]; then
         log_info "Reason: $error_msg"
     fi
+
+    # Proof-log: record lifecycle stage transitions (t218)
+    # Only log transitions that represent significant pipeline stages
+    # (not every micro-transition, to keep proof-logs focused)
+    case "$new_state" in
+        dispatched|pr_review|review_triage|merging|merged|deploying|deployed|verifying|verified|verify_failed)
+            local _stage_duration
+            _stage_duration=$(_proof_log_stage_duration "$task_id" "$current_state")
+            write_proof_log --task "$task_id" --event "transition" --stage "$new_state" \
+                --decision "$current_state->$new_state" \
+                --evidence "${error_msg:+error=$error_msg}" \
+                --maker "cmd_transition" \
+                ${pr_url:+--pr-url "$pr_url"} \
+                ${_stage_duration:+--duration "$_stage_duration"} 2>/dev/null || true
+            ;;
+    esac
 
     # Auto-generate VERIFY.md entry when task reaches deployed (t180.4)
     if [[ "$new_state" == "deployed" ]]; then
@@ -6828,6 +7049,14 @@ cmd_pulse() {
             local outcome_type="${outcome%%:*}"
             local outcome_detail="${outcome#*:}"
 
+            # Proof-log: record evaluation outcome (t218)
+            local _eval_duration
+            _eval_duration=$(_proof_log_stage_duration "$tid" "evaluate")
+            write_proof_log --task "$tid" --event "evaluate" --stage "evaluate" \
+                --decision "$outcome" --evidence "skip_ai=$skip_ai" \
+                --maker "evaluate_worker" \
+                ${_eval_duration:+--duration "$_eval_duration"} 2>/dev/null || true
+
             case "$outcome_type" in
                 complete)
                     # Quality gate check before accepting completion (t132.6)
@@ -6838,6 +7067,11 @@ cmd_pulse() {
                     if [[ "$gate_type" == "escalate" ]]; then
                         local escalated_model="${gate_result#escalate:}"
                         log_warn "  $tid: ESCALATING to $escalated_model (quality gate failed)"
+                        # Proof-log: quality gate escalation (t218)
+                        write_proof_log --task "$tid" --event "escalate" --stage "quality_gate" \
+                            --decision "escalate:$escalated_model" \
+                            --evidence "gate_result=$gate_result" \
+                            --maker "quality_gate" 2>/dev/null || true
                         # run_quality_gate already set status=queued and updated model
                         # Clean up worker process tree before re-dispatch (t128.7)
                         cleanup_worker_processes "$tid"
@@ -6847,6 +7081,12 @@ cmd_pulse() {
                     fi
 
                     log_success "  $tid: COMPLETE ($outcome_detail)"
+                    # Proof-log: task completion (t218)
+                    write_proof_log --task "$tid" --event "complete" --stage "evaluate" \
+                        --decision "complete:$outcome_detail" \
+                        --evidence "gate=$gate_result" \
+                        --maker "pulse:phase1" \
+                        --pr-url "$outcome_detail" 2>/dev/null || true
                     cmd_transition "$tid" "complete" --pr-url "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     completed_count=$((completed_count + 1))
                     # Clean up worker process tree and PID file (t128.7)
@@ -6861,6 +7101,10 @@ cmd_pulse() {
                     ;;
                 retry)
                     log_warn "  $tid: RETRY ($outcome_detail)"
+                    # Proof-log: retry decision (t218)
+                    write_proof_log --task "$tid" --event "retry" --stage "evaluate" \
+                        --decision "retry:$outcome_detail" \
+                        --maker "pulse:phase1" 2>/dev/null || true
                     cmd_transition "$tid" "retrying" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Clean up worker process tree before re-prompt (t128.7)
                     cleanup_worker_processes "$tid"
@@ -6915,6 +7159,10 @@ cmd_pulse() {
                     ;;
                 blocked)
                     log_warn "  $tid: BLOCKED ($outcome_detail)"
+                    # Proof-log: blocked decision (t218)
+                    write_proof_log --task "$tid" --event "blocked" --stage "evaluate" \
+                        --decision "blocked:$outcome_detail" \
+                        --maker "pulse:phase1" 2>/dev/null || true
                     cmd_transition "$tid" "blocked" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     # Clean up worker process tree and PID file (t128.7)
                     cleanup_worker_processes "$tid"
@@ -6928,6 +7176,10 @@ cmd_pulse() {
                     ;;
                 failed)
                     log_error "  $tid: FAILED ($outcome_detail)"
+                    # Proof-log: failed decision (t218)
+                    write_proof_log --task "$tid" --event "failed" --stage "evaluate" \
+                        --decision "failed:$outcome_detail" \
+                        --maker "pulse:phase1" 2>/dev/null || true
                     cmd_transition "$tid" "failed" --error "$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
                     failed_count=$((failed_count + 1))
                     # Clean up worker process tree and PID file (t128.7)
@@ -7668,6 +7920,12 @@ verify_task_deliverables() {
 
     local file_count
     file_count=$(echo "$substantive_files" | wc -l | tr -d ' ')
+    # Proof-log: deliverable verification passed (t218)
+    write_proof_log --task "$task_id" --event "deliverable_verified" --stage "complete" \
+        --decision "verified:PR#$pr_number" \
+        --evidence "pr_state=$pr_state,file_count=$file_count,pr_number=$pr_number" \
+        --maker "verify_task_deliverables" \
+        --pr-url "$pr_url" 2>/dev/null || true
     log_info "Verified $task_id: PR #$pr_number merged with $file_count substantive file(s)"
     return 0
 }
@@ -7956,6 +8214,14 @@ run_verify_checks() {
 
     if [[ "$all_passed" == "true" ]]; then
         mark_verify_entry "$verify_file" "$task_id" "pass" "$today"
+        # Proof-log: verification passed (t218)
+        local _verify_duration
+        _verify_duration=$(_proof_log_stage_duration "$task_id" "verifying")
+        write_proof_log --task "$task_id" --event "verify_pass" --stage "verifying" \
+            --decision "verified" \
+            --evidence "checks=${#checks[@]},all_passed=true,verify_id=$verify_id" \
+            --maker "run_verify_checks" \
+            ${_verify_duration:+--duration "$_verify_duration"} 2>/dev/null || true
         log_success "All verification checks passed for $task_id ($verify_id)"
         return 0
     else
@@ -7963,6 +8229,14 @@ run_verify_checks() {
         failure_reason=$(printf '%s; ' "${failures[@]}")
         failure_reason="${failure_reason%; }"
         mark_verify_entry "$verify_file" "$task_id" "fail" "$today" "$failure_reason"
+        # Proof-log: verification failed (t218)
+        local _verify_duration
+        _verify_duration=$(_proof_log_stage_duration "$task_id" "verifying")
+        write_proof_log --task "$task_id" --event "verify_fail" --stage "verifying" \
+            --decision "verify_failed" \
+            --evidence "checks=${#checks[@]},failures=${#failures[@]},reason=${failure_reason:0:200}" \
+            --maker "run_verify_checks" \
+            ${_verify_duration:+--duration "$_verify_duration"} 2>/dev/null || true
         log_error "Verification failed for $task_id ($verify_id): $failure_reason"
         return 1
     fi
@@ -10494,6 +10768,229 @@ cmd_dashboard() {
 }
 
 #######################################
+# Command: proof-log — query and export proof-logs (t218)
+#
+# Usage:
+#   supervisor-helper.sh proof-log <task_id>              Show proof-log for a task
+#   supervisor-helper.sh proof-log <task_id> --json       Export as JSON
+#   supervisor-helper.sh proof-log <task_id> --timeline   Show stage timing timeline
+#   supervisor-helper.sh proof-log --recent [N]           Show N most recent entries (default 20)
+#   supervisor-helper.sh proof-log --stats                Show aggregate statistics
+#######################################
+cmd_proof_log() {
+    local task_id="" format="table" mode="task" limit_n=20
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) format="json"; shift ;;
+            --timeline) mode="timeline"; shift ;;
+            --recent) mode="recent"; shift ;;
+            --stats) mode="stats"; shift ;;
+            --limit) limit_n="${2:-20}"; shift 2 ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$task_id" ]]; then
+                    # Check if it's a number (for --recent N)
+                    if [[ "$mode" == "recent" && "$1" =~ ^[0-9]+$ ]]; then
+                        limit_n="$1"
+                    else
+                        task_id="$1"
+                    fi
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    ensure_db
+
+    # Check if proof_logs table exists
+    local has_table
+    has_table=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='proof_logs';" 2>/dev/null || echo "0")
+    if [[ "$has_table" -eq 0 ]]; then
+        log_warn "No proof_logs table found. Run a pulse cycle to initialize."
+        return 1
+    fi
+
+    case "$mode" in
+        stats)
+            echo "=== Proof-Log Statistics ==="
+            echo ""
+            local total_entries
+            total_entries=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM proof_logs;" 2>/dev/null || echo "0")
+            echo "Total entries: $total_entries"
+            echo ""
+            echo "Events by type:"
+            db -column -header "$SUPERVISOR_DB" "
+                SELECT event, count(*) as count
+                FROM proof_logs
+                GROUP BY event
+                ORDER BY count DESC;
+            " 2>/dev/null || true
+            echo ""
+            echo "Average stage durations (seconds):"
+            db -column -header "$SUPERVISOR_DB" "
+                SELECT stage, count(*) as samples,
+                       CAST(avg(duration_secs) AS INTEGER) as avg_secs,
+                       min(duration_secs) as min_secs,
+                       max(duration_secs) as max_secs
+                FROM proof_logs
+                WHERE duration_secs IS NOT NULL AND duration_secs > 0
+                GROUP BY stage
+                ORDER BY avg_secs DESC;
+            " 2>/dev/null || true
+            echo ""
+            echo "Tasks with most proof-log entries:"
+            db -column -header "$SUPERVISOR_DB" "
+                SELECT task_id, count(*) as entries,
+                       min(timestamp) as first_event,
+                       max(timestamp) as last_event
+                FROM proof_logs
+                GROUP BY task_id
+                ORDER BY entries DESC
+                LIMIT 10;
+            " 2>/dev/null || true
+            ;;
+
+        recent)
+            if [[ "$format" == "json" ]]; then
+                echo "["
+                local first=true
+                while IFS='|' read -r pid ptask pevent pstage pdecision pevidence pmaker ppr pdur pmeta pts; do
+                    [[ -z "$pid" ]] && continue
+                    if [[ "$first" != "true" ]]; then echo ","; fi
+                    first=false
+                    local _esc_evidence="${pevidence:-}"
+                    _esc_evidence="${_esc_evidence//\"/\\\"}"
+                    local _esc_meta="${pmeta:-}"
+                    _esc_meta="${_esc_meta//\"/\\\"}"
+                    printf '  {"id":%s,"task_id":"%s","event":"%s","stage":"%s","decision":"%s","evidence":"%s","decision_maker":"%s","pr_url":"%s","duration_secs":%s,"metadata":"%s","timestamp":"%s"}' \
+                        "$pid" "$ptask" "$pevent" "${pstage:-}" "${pdecision:-}" \
+                        "$_esc_evidence" \
+                        "${pmaker:-}" "${ppr:-}" "${pdur:-null}" \
+                        "$_esc_meta" "$pts"
+                done < <(db -separator '|' "$SUPERVISOR_DB" "
+                    SELECT id, task_id, event, stage, decision, evidence,
+                           decision_maker, pr_url, duration_secs, metadata, timestamp
+                    FROM proof_logs
+                    ORDER BY id DESC
+                    LIMIT $limit_n;
+                " 2>/dev/null)
+                echo ""
+                echo "]"
+            else
+                db -column -header "$SUPERVISOR_DB" "
+                    SELECT id, task_id, event, stage, decision, decision_maker, duration_secs, timestamp
+                    FROM proof_logs
+                    ORDER BY id DESC
+                    LIMIT $limit_n;
+                " 2>/dev/null || true
+            fi
+            ;;
+
+        timeline)
+            if [[ -z "$task_id" ]]; then
+                log_error "Usage: proof-log <task_id> --timeline"
+                return 1
+            fi
+            local escaped_id
+            escaped_id=$(sql_escape "$task_id")
+            echo "=== Pipeline Timeline: $task_id ==="
+            echo ""
+            local entry_count=0
+            while IFS='|' read -r pts pstage pevent pdecision pdur; do
+                [[ -z "$pts" ]] && continue
+                entry_count=$((entry_count + 1))
+                local duration_label=""
+                if [[ -n "$pdur" && "$pdur" != "" ]]; then
+                    duration_label=" (${pdur}s)"
+                fi
+                printf "  %s  %-18s  %-15s  %s%s\n" "$pts" "${pstage:-—}" "$pevent" "${pdecision:-}" "$duration_label"
+            done < <(db -separator '|' "$SUPERVISOR_DB" "
+                SELECT timestamp, stage, event, decision, duration_secs
+                FROM proof_logs
+                WHERE task_id = '$escaped_id'
+                ORDER BY id ASC;
+            " 2>/dev/null)
+            if [[ "$entry_count" -eq 0 ]]; then
+                echo "  No proof-log entries found for $task_id"
+            fi
+            echo ""
+            # Show total pipeline duration
+            local first_ts last_ts
+            first_ts=$(db "$SUPERVISOR_DB" "SELECT timestamp FROM proof_logs WHERE task_id = '$escaped_id' ORDER BY id ASC LIMIT 1;" 2>/dev/null || echo "")
+            last_ts=$(db "$SUPERVISOR_DB" "SELECT timestamp FROM proof_logs WHERE task_id = '$escaped_id' ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "")
+            if [[ -n "$first_ts" && -n "$last_ts" && "$first_ts" != "$last_ts" ]]; then
+                local first_epoch last_epoch
+                first_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$first_ts" "+%s" 2>/dev/null || date -d "$first_ts" "+%s" 2>/dev/null || echo "")
+                last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_ts" "+%s" 2>/dev/null || date -d "$last_ts" "+%s" 2>/dev/null || echo "")
+                if [[ -n "$first_epoch" && -n "$last_epoch" ]]; then
+                    local total_secs=$((last_epoch - first_epoch))
+                    local total_min=$((total_secs / 60))
+                    echo "  Total pipeline duration: ${total_min}m ${total_secs}s (${total_secs}s)"
+                fi
+            fi
+            ;;
+
+        task)
+            if [[ -z "$task_id" ]]; then
+                log_error "Usage: proof-log <task_id> [--json|--timeline]"
+                log_error "       proof-log --recent [N]"
+                log_error "       proof-log --stats"
+                return 1
+            fi
+            local escaped_id
+            escaped_id=$(sql_escape "$task_id")
+
+            if [[ "$format" == "json" ]]; then
+                echo "["
+                local first=true
+                while IFS='|' read -r pid pevent pstage pdecision pevidence pmaker ppr pdur pmeta pts; do
+                    [[ -z "$pid" ]] && continue
+                    if [[ "$first" != "true" ]]; then echo ","; fi
+                    first=false
+                    local _esc_evidence="${pevidence:-}"
+                    _esc_evidence="${_esc_evidence//\"/\\\"}"
+                    local _esc_meta="${pmeta:-}"
+                    _esc_meta="${_esc_meta//\"/\\\"}"
+                    printf '  {"id":%s,"event":"%s","stage":"%s","decision":"%s","evidence":"%s","decision_maker":"%s","pr_url":"%s","duration_secs":%s,"metadata":"%s","timestamp":"%s"}' \
+                        "$pid" "$pevent" "${pstage:-}" "${pdecision:-}" \
+                        "$_esc_evidence" \
+                        "${pmaker:-}" "${ppr:-}" "${pdur:-null}" \
+                        "$_esc_meta" "$pts"
+                done < <(db -separator '|' "$SUPERVISOR_DB" "
+                    SELECT id, event, stage, decision, evidence,
+                           decision_maker, pr_url, duration_secs, metadata, timestamp
+                    FROM proof_logs
+                    WHERE task_id = '$escaped_id'
+                    ORDER BY id ASC;
+                " 2>/dev/null)
+                echo ""
+                echo "]"
+            else
+                echo "=== Proof-Log: $task_id ==="
+                echo ""
+                db -column -header "$SUPERVISOR_DB" "
+                    SELECT id, event, stage, decision, decision_maker, duration_secs, timestamp
+                    FROM proof_logs
+                    WHERE task_id = '$escaped_id'
+                    ORDER BY id ASC;
+                " 2>/dev/null || true
+                echo ""
+                local entry_count
+                entry_count=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM proof_logs WHERE task_id = '$escaped_id';" 2>/dev/null || echo "0")
+                echo "Total entries: $entry_count"
+            fi
+            ;;
+    esac
+
+    return 0
+}
+
+#######################################
 # Show usage
 #######################################
 show_usage() {
@@ -10513,6 +11010,7 @@ Usage:
   supervisor-helper.sh scan-orphaned-prs [batch_id]   Scan for PRs workers created but supervisor missed (t210)
   supervisor-helper.sh pr-merge <task_id> [--dry-run]  Merge PR (squash)
   supervisor-helper.sh verify <task_id>               Run post-merge verification checks (t180)
+  supervisor-helper.sh proof-log <task_id> [options]  Query structured proof-logs (t218)
   supervisor-helper.sh self-heal <task_id>            Create diagnostic subtask for failed/blocked task
   supervisor-helper.sh worker-status <task_id>       Check worker process status
   supervisor-helper.sh cleanup [--dry-run]           Clean up completed worktrees
@@ -10659,6 +11157,7 @@ Integration:
   - Git: wt/worktree-helper.sh for isolation
   - TODO: auto-updates TODO.md on task completion/failure
   - GitHub: auto-creates issues on task add (t149)
+  - Proof-logs: structured audit trail for task completion trust (t218)
 
 TODO.md Auto-Update (t128.4):
   On task completion: marks [ ] -> [x], adds completed:YYYY-MM-DD, commits+pushes
@@ -10741,6 +11240,13 @@ Options for 'pr-merge':
 Options for 'verify':
   (no options)           Runs check: directives from VERIFY.md for the task
 
+Options for 'proof-log' (t218):
+  <task_id>              Show proof-log entries for a specific task
+  <task_id> --json       Export task proof-log as JSON
+  <task_id> --timeline   Show stage timing timeline with durations
+  --recent [N]           Show N most recent entries across all tasks (default 20)
+  --stats                Show aggregate statistics (event counts, avg durations)
+
 Options for 'auto-pickup':
   --repo <path>          Repository with TODO.md (default: current directory)
 
@@ -10820,6 +11326,7 @@ main() {
         scan-orphaned-prs) scan_orphaned_prs "$@" ;;
         pr-merge) cmd_pr_merge "$@" ;;
         verify) cmd_verify "$@" ;;
+        proof-log) cmd_proof_log "$@" ;;
         self-heal) cmd_self_heal "$@" ;;
         worker-status) cmd_worker_status "$@" ;;
         cleanup) cmd_cleanup "$@" ;;
