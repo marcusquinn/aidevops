@@ -4598,13 +4598,25 @@ validate_pr_belongs_to_task() {
         return 1
     fi
 
-    # Fetch PR title and head branch in a single API call
-    local pr_info
-    pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
-        --json title,headRefName 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+    # Fetch PR title and head branch with retry + exponential backoff (t211).
+    # GitHub API can fail transiently (rate limits, network blips, 502s).
+    # 3 attempts: immediate, then 2s, then 4s delay.
+    local pr_info="" attempt max_attempts=3 backoff=2
+    for (( attempt=1; attempt<=max_attempts; attempt++ )); do
+        pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
+            --json title,headRefName 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
+        if [[ -n "$pr_info" ]]; then
+            break
+        fi
+        if (( attempt < max_attempts )); then
+            log_warn "validate_pr_belongs_to_task: attempt $attempt/$max_attempts failed for PR #$pr_number — retrying in ${backoff}s"
+            sleep "$backoff"
+            backoff=$(( backoff * 2 ))
+        fi
+    done
 
     if [[ -z "$pr_info" ]]; then
-        log_warn "validate_pr_belongs_to_task: cannot fetch PR #$pr_number for $task_id"
+        log_warn "validate_pr_belongs_to_task: cannot fetch PR #$pr_number for $task_id after $max_attempts attempts"
         return 1
     fi
 
