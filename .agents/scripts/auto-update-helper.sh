@@ -243,16 +243,12 @@ cmd_check() {
     if [[ "$current" == "unknown" || "$remote" == "unknown" ]]; then
         log_warn "Could not determine versions (local=$current, remote=$remote)"
         update_state "check" "$current" "version_unknown"
-        release_lock
-        trap - EXIT
         return 0
     fi
 
     if [[ "$current" == "$remote" ]]; then
         log_info "Already up to date (v$current)"
         update_state "check" "$current" "up_to_date"
-        release_lock
-        trap - EXIT
         return 0
     fi
 
@@ -264,8 +260,6 @@ cmd_check() {
     if [[ ! -d "$INSTALL_DIR/.git" ]]; then
         log_error "Install directory is not a git repo: $INSTALL_DIR"
         update_state "update" "$remote" "no_git_repo"
-        release_lock
-        trap - EXIT
         return 1
     fi
 
@@ -273,16 +267,12 @@ cmd_check() {
     if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
         log_error "git fetch failed"
         update_state "update" "$remote" "fetch_failed"
-        release_lock
-        trap - EXIT
         return 1
     fi
 
     if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
         log_error "git pull --ff-only failed (local changes?)"
         update_state "update" "$remote" "pull_failed"
-        release_lock
-        trap - EXIT
         return 1
     fi
 
@@ -296,13 +286,9 @@ cmd_check() {
     else
         log_error "setup.sh failed (exit code: $?)"
         update_state "update" "$remote" "setup_failed"
-        release_lock
-        trap - EXIT
         return 1
     fi
 
-    release_lock
-    trap - EXIT
     return 0
 }
 

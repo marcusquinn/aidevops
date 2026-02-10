@@ -5103,7 +5103,7 @@ main() {
     print_success "🎉 Setup complete!"
     
     # Enable auto-update if not already enabled
-    local auto_update_script="$target_dir/scripts/auto-update-helper.sh"
+    local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
     if [[ -x "$auto_update_script" ]]; then
         if ! crontab -l 2>/dev/null | grep -q "aidevops-auto-update"; then
             if [[ "$NON_INTERACTIVE" == "true" ]]; then
