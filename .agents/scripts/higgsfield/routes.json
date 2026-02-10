@@ -177,6 +177,10 @@
     "wan_26": "/wan-2.6",
     "veo_31": "/veo3.1"
   },
+  "asset_chain_actions": [
+    "animate", "inpaint", "upscale", "relight", "angles",
+    "shots", "ai-stylist", "skin-enhancer", "multishot"
+  ],
   "lipsync_models": {
     "wan_25_fast": "Wan 2.5 Fast",
     "kling_26_lipsync": "Kling 2.6 Lipsync",
