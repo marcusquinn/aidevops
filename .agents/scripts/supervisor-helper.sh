@@ -9654,7 +9654,22 @@ verify_task_deliverables() {
     local substantive_files
     substantive_files=$(echo "$changed_files" | grep -vE '^(TODO\.md$|todo/|\.github/workflows/)' || true)
 
+    # For planning tasks (#plan, #audit, #chore, #docs), planning-only PRs are valid deliverables (t261)
     if [[ -z "$substantive_files" ]]; then
+        # Check if this is a planning task by looking for planning-related tags in TODO.md
+        local task_line
+        if [[ -n "$repo" ]] && [[ -f "$repo/TODO.md" ]]; then
+            task_line=$(grep -E "^\s*- \[.\] $task_id\b" "$repo/TODO.md" || true)
+            if [[ -n "$task_line" ]] && echo "$task_line" | grep -qE '#(plan|audit|chore|docs)\b'; then
+                log_info "Task $task_id is a planning task — accepting planning-only PR #$pr_number"
+                write_proof_log --task "$task_id" --event "deliverable_verified" --stage "complete" \
+                    --decision "verified:PR#$pr_number:planning-task" \
+                    --evidence "pr_state=$pr_state,planning_only=true,pr_number=$pr_number" \
+                    --maker "verify_task_deliverables" \
+                    --pr-url "$pr_url" 2>/dev/null || true
+                return 0
+            fi
+        fi
         log_warn "PR #$pr_number for $task_id has no substantive file changes (only planning/workflow files)"
         return 1
     fi
