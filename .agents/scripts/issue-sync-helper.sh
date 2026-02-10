@@ -822,13 +822,20 @@ cmd_push() {
             continue
         fi
 
-        # Create the issue with status:available label (t164)
+        # Create the issue with appropriate status label (t164, t212)
+        # If task already has an assignee, use status:claimed instead of status:available
+        local status_label="status:available"
+        if [[ -n "$assignee" ]]; then
+            status_label="status:claimed"
+            # Ensure status:claimed label exists
+            gh label create "status:claimed" --repo "$repo_slug" --color "D93F0B" --description "Task is claimed by a worker" --force 2>/dev/null || true
+        fi
         local gh_args=("issue" "create" "--repo" "$repo_slug" "--title" "$title")
         gh_args+=("--body" "$body")
         if [[ -n "$labels" ]]; then
-            gh_args+=("--label" "${labels},status:available")
+            gh_args+=("--label" "${labels},${status_label}")
         else
-            gh_args+=("--label" "status:available")
+            gh_args+=("--label" "$status_label")
         fi
         # Assign to the task's assignee if set
         if [[ -n "$assignee" ]]; then
@@ -1307,6 +1314,10 @@ cmd_close() {
         fi
 
         if gh issue close "$issue_number" --repo "$repo_slug" --comment "Completed. Task $task_id marked done in TODO.md." 2>/dev/null; then
+            # Update status label to status:done (t212)
+            gh label create "status:done" --repo "$repo_slug" --color "6F42C1" --description "Task is complete" --force 2>/dev/null || true
+            gh issue edit "$issue_number" --repo "$repo_slug" \
+                --add-label "status:done" --remove-label "status:available" --remove-label "status:claimed" --remove-label "status:in-review" 2>/dev/null || true
             print_success "Closed #$issue_number ($task_id)"
             closed=$((closed + 1))
         else
