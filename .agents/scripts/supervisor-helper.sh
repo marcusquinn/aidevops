@@ -4988,29 +4988,41 @@ cmd_dispatch() {
     # Previous approach used nohup bash -c with &>/dev/null which swallowed
     # errors when the dispatch script failed to start (e.g., opencode not found).
     # Now errors are appended to the log file for diagnosis.
-    # t253: Add process group isolation and cleanup handlers to prevent orphaned children
+    # t253: Add cleanup handlers to prevent orphaned children when wrapper exits
     local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-wrapper.sh"
     {
         echo '#!/usr/bin/env bash'
-        echo '# t253: Cleanup handler to kill all child processes when wrapper exits'
+        echo '# t253: Recursive cleanup to kill all descendant processes'
+        echo '_kill_descendants_recursive() {'
+        echo '  local parent_pid="$1"'
+        echo '  local children'
+        echo '  children=$(pgrep -P "$parent_pid" 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    for child in $children; do'
+        echo '      _kill_descendants_recursive "$child"'
+        echo '    done'
+        echo '  fi'
+        echo '  kill -TERM "$parent_pid" 2>/dev/null || true'
+        echo '}'
+        echo ''
         echo 'cleanup_children() {'
         echo '  local wrapper_pid=$$'
-        echo '  # Find all descendants (children, grandchildren, etc.)'
-        echo '  local descendants=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
-        echo '  if [[ -n "$descendants" ]]; then'
-        echo '    # Kill descendants recursively'
-        echo '    for child_pid in $descendants; do'
-        echo '      pkill -TERM -P "$child_pid" 2>/dev/null || true'
-        echo '      kill -TERM "$child_pid" 2>/dev/null || true'
+        echo '  local children'
+        echo '  children=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    # Recursively kill all descendants'
+        echo '    for child in $children; do'
+        echo '      _kill_descendants_recursive "$child"'
         echo '    done'
         echo '    sleep 0.5'
         echo '    # Force kill any survivors'
-        echo '    for child_pid in $descendants; do'
-        echo '      kill -9 "$child_pid" 2>/dev/null || true'
+        echo '    for child in $children; do'
+        echo '      pkill -9 -P "$child" 2>/dev/null || true'
+        echo '      kill -9 "$child" 2>/dev/null || true'
         echo '    done'
         echo '  fi'
         echo '}'
-        echo '# Register cleanup on EXIT, INT, TERM (but not KILL - cannot be trapped)'
+        echo '# Register cleanup on EXIT, INT, TERM (KILL cannot be trapped)'
         echo 'trap cleanup_children EXIT INT TERM'
         echo ''
         echo "'${dispatch_script}' >> '${log_file}' 2>&1"
@@ -5027,15 +5039,23 @@ cmd_dispatch() {
         log_info "Opening Tabby tab for $task_id..."
         printf '\e]1337;NewTab=%s\a' "'${wrapper_script}'" 2>/dev/null || true
         # Also start background process as fallback (Tabby may not support OSC 1337)
-        # t253: Use setsid to create new process group, preventing terminal signals from killing worker
+        # t253: Use setsid if available (Linux) for process group isolation
         # Use nohup + disown to survive parent (cron) exit
-        nohup setsid bash "${wrapper_script}" &>/dev/null &
+        if command -v setsid &>/dev/null; then
+            nohup setsid bash "${wrapper_script}" &>/dev/null &
+        else
+            nohup bash "${wrapper_script}" &>/dev/null &
+        fi
     else
         # Headless: background process
-        # t253: Use setsid to create new process group, preventing terminal signals from killing worker
+        # t253: Use setsid if available (Linux) for process group isolation
         # Use nohup + disown to survive parent (cron) exit — without this,
         # workers die after ~2 minutes when the cron pulse script exits
-        nohup setsid bash "${wrapper_script}" &>/dev/null &
+        if command -v setsid &>/dev/null; then
+            nohup setsid bash "${wrapper_script}" &>/dev/null &
+        else
+            nohup bash "${wrapper_script}" &>/dev/null &
+        fi
     fi
 
     local worker_pid=$!
@@ -6443,29 +6463,41 @@ Task description: ${tdesc:-$task_id}"
     chmod +x "$dispatch_script"
 
     # Wrapper script (t183): captures dispatch errors in log file
-    # t253: Add process group isolation and cleanup handlers to prevent orphaned children
+    # t253: Add cleanup handlers to prevent orphaned children when wrapper exits
     local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-reprompt-wrapper.sh"
     {
         echo '#!/usr/bin/env bash'
-        echo '# t253: Cleanup handler to kill all child processes when wrapper exits'
+        echo '# t253: Recursive cleanup to kill all descendant processes'
+        echo '_kill_descendants_recursive() {'
+        echo '  local parent_pid="$1"'
+        echo '  local children'
+        echo '  children=$(pgrep -P "$parent_pid" 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    for child in $children; do'
+        echo '      _kill_descendants_recursive "$child"'
+        echo '    done'
+        echo '  fi'
+        echo '  kill -TERM "$parent_pid" 2>/dev/null || true'
+        echo '}'
+        echo ''
         echo 'cleanup_children() {'
         echo '  local wrapper_pid=$$'
-        echo '  # Find all descendants (children, grandchildren, etc.)'
-        echo '  local descendants=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
-        echo '  if [[ -n "$descendants" ]]; then'
-        echo '    # Kill descendants recursively'
-        echo '    for child_pid in $descendants; do'
-        echo '      pkill -TERM -P "$child_pid" 2>/dev/null || true'
-        echo '      kill -TERM "$child_pid" 2>/dev/null || true'
+        echo '  local children'
+        echo '  children=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    # Recursively kill all descendants'
+        echo '    for child in $children; do'
+        echo '      _kill_descendants_recursive "$child"'
         echo '    done'
         echo '    sleep 0.5'
         echo '    # Force kill any survivors'
-        echo '    for child_pid in $descendants; do'
-        echo '      kill -9 "$child_pid" 2>/dev/null || true'
+        echo '    for child in $children; do'
+        echo '      pkill -9 -P "$child" 2>/dev/null || true'
+        echo '      kill -9 "$child" 2>/dev/null || true'
         echo '    done'
         echo '  fi'
         echo '}'
-        echo '# Register cleanup on EXIT, INT, TERM (but not KILL - cannot be trapped)'
+        echo '# Register cleanup on EXIT, INT, TERM (KILL cannot be trapped)'
         echo 'trap cleanup_children EXIT INT TERM'
         echo ''
         echo "'${dispatch_script}' >> '${new_log_file}' 2>&1"
@@ -6477,9 +6509,13 @@ Task description: ${tdesc:-$task_id}"
     } > "$wrapper_script"
     chmod +x "$wrapper_script"
 
-    # t253: Use setsid to create new process group, preventing terminal signals from killing worker
+    # t253: Use setsid if available (Linux) for process group isolation
     # Use nohup + disown to survive parent (cron) exit
-    nohup setsid bash "${wrapper_script}" &>/dev/null &
+    if command -v setsid &>/dev/null; then
+        nohup setsid bash "${wrapper_script}" &>/dev/null &
+    else
+        nohup bash "${wrapper_script}" &>/dev/null &
+    fi
     local worker_pid=$!
     disown "$worker_pid" 2>/dev/null || true
 
@@ -6886,29 +6922,41 @@ Instructions:
     chmod +x "$dispatch_script"
 
     # Wrapper script (t183): captures dispatch errors in log file
-    # t253: Add process group isolation and cleanup handlers to prevent orphaned children
+    # t253: Add cleanup handlers to prevent orphaned children when wrapper exits
     local wrapper_script="${SUPERVISOR_DIR}/pids/${task_id}-review-fix-wrapper.sh"
     {
         echo '#!/usr/bin/env bash'
-        echo '# t253: Cleanup handler to kill all child processes when wrapper exits'
+        echo '# t253: Recursive cleanup to kill all descendant processes'
+        echo '_kill_descendants_recursive() {'
+        echo '  local parent_pid="$1"'
+        echo '  local children'
+        echo '  children=$(pgrep -P "$parent_pid" 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    for child in $children; do'
+        echo '      _kill_descendants_recursive "$child"'
+        echo '    done'
+        echo '  fi'
+        echo '  kill -TERM "$parent_pid" 2>/dev/null || true'
+        echo '}'
+        echo ''
         echo 'cleanup_children() {'
         echo '  local wrapper_pid=$$'
-        echo '  # Find all descendants (children, grandchildren, etc.)'
-        echo '  local descendants=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
-        echo '  if [[ -n "$descendants" ]]; then'
-        echo '    # Kill descendants recursively'
-        echo '    for child_pid in $descendants; do'
-        echo '      pkill -TERM -P "$child_pid" 2>/dev/null || true'
-        echo '      kill -TERM "$child_pid" 2>/dev/null || true'
+        echo '  local children'
+        echo '  children=$(pgrep -P "$wrapper_pid" 2>/dev/null || true)'
+        echo '  if [[ -n "$children" ]]; then'
+        echo '    # Recursively kill all descendants'
+        echo '    for child in $children; do'
+        echo '      _kill_descendants_recursive "$child"'
         echo '    done'
         echo '    sleep 0.5'
         echo '    # Force kill any survivors'
-        echo '    for child_pid in $descendants; do'
-        echo '      kill -9 "$child_pid" 2>/dev/null || true'
+        echo '    for child in $children; do'
+        echo '      pkill -9 -P "$child" 2>/dev/null || true'
+        echo '      kill -9 "$child" 2>/dev/null || true'
         echo '    done'
         echo '  fi'
         echo '}'
-        echo '# Register cleanup on EXIT, INT, TERM (but not KILL - cannot be trapped)'
+        echo '# Register cleanup on EXIT, INT, TERM (KILL cannot be trapped)'
         echo 'trap cleanup_children EXIT INT TERM'
         echo ''
         echo "'${dispatch_script}' >> '${log_file}' 2>&1"
@@ -6920,8 +6968,12 @@ Instructions:
     } > "$wrapper_script"
     chmod +x "$wrapper_script"
 
-    # t253: Use setsid to create new process group, preventing terminal signals from killing worker
-    nohup setsid bash "${wrapper_script}" &>/dev/null &
+    # t253: Use setsid if available (Linux) for process group isolation
+    if command -v setsid &>/dev/null; then
+        nohup setsid bash "${wrapper_script}" &>/dev/null &
+    else
+        nohup bash "${wrapper_script}" &>/dev/null &
+    fi
     local worker_pid=$!
     disown "$worker_pid" 2>/dev/null || true
 
