@@ -1546,6 +1546,14 @@ cmd_add() {
         return 1
     fi
 
+    # Pre-add check: prevent re-queuing tasks that already have a merged PR (t224).
+    # This catches tasks completed outside the supervisor (fresh DB, DB reset, etc.)
+    # that would otherwise be re-added and re-dispatched, wasting compute.
+    if check_task_already_done "$task_id" "$repo"; then
+        log_warn "Task $task_id already completed (merged PR or [x] in TODO.md) — skipping add"
+        return 1
+    fi
+
     local escaped_id
     escaped_id=$(sql_escape "$task_id")
     local escaped_repo
@@ -2365,6 +2373,17 @@ cmd_reset() {
         return 1
     fi
 
+    # Pre-reset check: prevent re-queuing tasks that already have a merged PR (t224).
+    # Without this, a completed task can be reset -> queued -> dispatched, wasting
+    # an entire AI session on work that's already done and merged.
+    local task_repo
+    task_repo=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';")
+    if check_task_already_done "$task_id" "${task_repo:-.}"; then
+        log_warn "Task $task_id has a merged PR or is marked [x] in TODO.md — refusing reset"
+        log_warn "Use 'cancel' instead, or remove the merged PR reference to force reset"
+        return 1
+    fi
+
     db "$SUPERVISOR_DB" "
         UPDATE tasks SET
             status = 'queued',
@@ -2865,12 +2884,17 @@ check_task_already_done() {
     # Check 3: Does a merged PR exist for this task?
     # Only check if gh CLI is available and authenticated (cached check).
     # Use exact task ID in title search to prevent substring matches.
+    # IMPORTANT: gh pr list --repo requires OWNER/REPO slug, not a local path (t224).
     if command -v gh &>/dev/null && check_gh_auth 2>/dev/null; then
-        local pr_count=0
-        pr_count=$(gh pr list --repo "$project_root" --state merged --search "\"$task_id\" in:title" --limit 1 --json number --jq 'length' 2>/dev/null) || true
-        if [[ "$pr_count" -gt 0 ]]; then
-            log_info "Pre-dispatch check: $task_id has a merged PR on GitHub" >&2
-            return 0
+        local repo_slug=""
+        repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null) || true
+        if [[ -n "$repo_slug" ]]; then
+            local pr_count=0
+            pr_count=$(gh pr list --repo "$repo_slug" --state merged --search "\"$task_id\" in:title" --limit 1 --json number --jq 'length' 2>/dev/null) || true
+            if [[ "$pr_count" -gt 0 ]]; then
+                log_info "Pre-dispatch check: $task_id has a merged PR on GitHub" >&2
+                return 0
+            fi
         fi
     fi
 
@@ -10745,6 +10769,13 @@ cmd_auto_pickup() {
                 continue
             fi
 
+            # Pre-pickup check: skip tasks with merged PRs (t224).
+            # cmd_add also checks, but checking here provides better logging.
+            if check_task_already_done "$task_id" "$repo"; then
+                log_info "  $task_id: already completed (merged PR) — skipping auto-pickup"
+                continue
+            fi
+
             # Add to supervisor
             if cmd_add "$task_id" --repo "$repo" 2>/dev/null; then
                 picked_up=$((picked_up + 1))
@@ -10795,6 +10826,12 @@ cmd_auto_pickup() {
                     continue
                 fi
                 log_info "  $task_id: already tracked (status: $existing)"
+                continue
+            fi
+
+            # Pre-pickup check: skip tasks with merged PRs (t224).
+            if check_task_already_done "$task_id" "$repo"; then
+                log_info "  $task_id: already completed (merged PR) — skipping auto-pickup"
                 continue
             fi
 
