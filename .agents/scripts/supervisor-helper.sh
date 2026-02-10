@@ -3798,15 +3798,15 @@ check_model_health() {
     fi
 
     # Check for known failure patterns (t233: distinguish quota/rate-limit from generic failures)
-    if echo "$probe_result" | grep -qiE 'CreditsError|Insufficient balance' 2>/dev/null; then
+    if echo "$probe_result" | grep -qiE 'CreditsError|Insufficient balance'; then
         log_warn "Model health check FAILED: billing/credits exhausted (slow path)"
         return 3  # t233: credits = invalid key equivalent (won't resolve without human action)
     fi
-    if echo "$probe_result" | grep -qiE 'Quota protection|over[_ -]?usage|quota reset|429|too many requests|rate.limit' 2>/dev/null; then
+    if echo "$probe_result" | grep -qiE 'Quota protection|over[_ -]?usage|quota reset|429|too many requests|rate.limit'; then
         log_warn "Model health check FAILED: quota/rate limited (slow path)"
         return 2  # t233: rate-limited = defer dispatch, retry soon
     fi
-    if echo "$probe_result" | grep -qiE 'endpoints failed|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable' 2>/dev/null; then
+    if echo "$probe_result" | grep -qiE 'endpoints failed|"status":[[:space:]]*503|HTTP 503|503 Service|service unavailable'; then
         log_warn "Model health check FAILED: provider error detected (slow path)"
         return 1
     fi
@@ -4724,9 +4724,19 @@ cmd_dispatch() {
             local availability_helper="${SCRIPT_DIR}/model-availability-helper.sh"
             if [[ -x "$availability_helper" ]]; then
                 local resolved_avail_exit=0
-                "$availability_helper" check "$resolved_provider" --quiet 2>/dev/null || resolved_avail_exit=$?
+                "$availability_helper" check "$resolved_provider" --quiet || resolved_avail_exit=$?
                 if [[ "$resolved_avail_exit" -ne 0 ]]; then
-                    log_warn "Resolved model provider '$resolved_provider' unavailable (exit $resolved_avail_exit) for $task_id — deferring dispatch"
+                    case "$resolved_avail_exit" in
+                        2)
+                            log_warn "Resolved model provider '$resolved_provider' is rate-limited (exit $resolved_avail_exit) for $task_id — deferring dispatch"
+                            ;;
+                        3)
+                            log_error "Resolved model provider '$resolved_provider' has invalid key/credits (exit $resolved_avail_exit) for $task_id — blocking dispatch"
+                            ;;
+                        *)
+                            log_warn "Resolved model provider '$resolved_provider' unavailable (exit $resolved_avail_exit) for $task_id — deferring dispatch"
+                            ;;
+                    esac
                     return 3
                 fi
             fi
@@ -6189,9 +6199,15 @@ Instructions:
     check_model_health "$ai_cli" "$health_model" || health_exit=$?
     if [[ "$health_exit" -ne 0 ]]; then
         case "$health_exit" in
-            2) log_warn "Provider rate-limited for $task_id review-fix — deferring to next pulse" ;;
-            3) log_error "API key invalid/credits exhausted for $task_id review-fix" ;;
-            *) log_error "Provider unavailable for $task_id review-fix — deferring" ;;
+            2)
+                log_warn "Provider rate-limited for $task_id review-fix — deferring to next pulse"
+                ;;
+            3)
+                log_error "API key invalid/credits exhausted for $task_id review-fix"
+                ;;
+            *)
+                log_error "Provider unavailable for $task_id review-fix — deferring"
+                ;;
         esac
         return 1
     fi
