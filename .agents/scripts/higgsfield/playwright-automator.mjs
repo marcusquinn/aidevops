@@ -2366,7 +2366,7 @@ async function useApp(options = {}) {
     // Click generate/create
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked generate/apply button');
     }
 
@@ -3384,7 +3384,7 @@ async function cinemaStudio(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate in Cinema Studio');
     }
 
@@ -3475,7 +3475,7 @@ async function motionControl(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate in Motion Control');
     }
 
@@ -4202,7 +4202,7 @@ async function mixedMediaPreset(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate for mixed media preset');
     }
 
@@ -4325,7 +4325,7 @@ async function motionPreset(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Create")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate for motion preset');
     }
 
@@ -4407,7 +4407,7 @@ async function editVideo(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Apply"), button:has-text("Edit")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate for video edit');
     }
 
@@ -4500,7 +4500,7 @@ async function storyboard(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate for storyboard');
     }
 
@@ -4616,7 +4616,7 @@ async function vibeMotion(options = {}) {
     // Click Generate
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate for Vibe Motion');
     }
 
@@ -4692,7 +4692,7 @@ async function aiInfluencer(options = {}) {
     // Click Generate/Create
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Build")');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate for AI Influencer');
     }
 
@@ -4875,7 +4875,7 @@ async function featurePage(options = {}) {
     // Click Generate/Create/Apply
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
     if (await generateBtn.count() > 0) {
-      await generateBtn.first().click();
+      await generateBtn.first().click({ force: true });
       console.log('Clicked Generate');
     }
 
