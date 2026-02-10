@@ -1,0 +1,25 @@
+{
+  "name": "higgsfield-postproduction",
+  "version": "1.0.0",
+  "description": "Remotion post-production pipeline for Higgsfield video assembly",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts FullVideo",
+    "render:still": "remotion still src/index.ts SceneGraphic"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4",
+    "@remotion/google-fonts": "^4",
+    "@remotion/media": "^4",
+    "@remotion/transitions": "^4",
+    "@remotion/captions": "^4",
+    "react": "^19",
+    "react-dom": "^19",
+    "remotion": "^4"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "typescript": "^5"
+  }
+}

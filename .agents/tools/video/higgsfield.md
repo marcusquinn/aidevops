@@ -374,7 +374,17 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 
 ## Related
 
+- **`tools/video/higgsfield-ui.md`** - UI automation subagent (uses subscription credits via browser, no API key needed)
 - [Higgsfield Docs](https://docs.higgsfield.ai/)
 - [Higgsfield Dashboard](https://cloud.higgsfield.ai)
 - `tools/video/remotion.md` - Programmatic video editing
-- `tools/browser/stagehand.md` - Browser automation for assets
+
+## API vs UI
+
+| Feature | API (`higgsfield.md`) | UI (`higgsfield-ui.md`) |
+|---------|----------------------|------------------------|
+| Auth | API key + secret | Email/password login |
+| Credits | Pay-per-use API credits | Subscription credits (included in plan) |
+| Models | Soul, DOP, Kling, Seedance | Soul, Nano Banana, Seedream + 86 apps |
+| Speed | Direct API calls | Browser automation (~60s per generation) |
+| Best for | Programmatic pipelines | Using subscription credits, accessing UI-only features |
