@@ -1493,6 +1493,229 @@ setup_oh_my_zsh() {
     return 0
 }
 
+# Ensure shell compatibility when switching between bash and zsh
+# Best practice: create a shared profile sourced by both shells, so users
+# don't lose PATH entries, aliases, exports, or tool integrations when
+# switching their default shell. This is especially important on macOS
+# where the system default changed from bash to zsh in Catalina, and many
+# users have years of bash customizations they don't want to lose.
+setup_shell_compatibility() {
+    print_info "Setting up cross-shell compatibility..."
+    
+    local shared_profile="$HOME/.shell_common"
+    local zsh_rc="$HOME/.zshrc"
+    
+    # If shared profile already exists, we've already set this up
+    if [[ -f "$shared_profile" ]]; then
+        print_success "Cross-shell compatibility already configured ($shared_profile)"
+        return 0
+    fi
+    
+    # Need both bash and zsh to be relevant
+    if ! command -v zsh >/dev/null 2>&1; then
+        print_info "zsh not installed - cross-shell setup not needed"
+        return 0
+    fi
+    if ! command -v bash >/dev/null 2>&1; then
+        print_info "bash not installed - cross-shell setup not needed"
+        return 0
+    fi
+    
+    # Collect all bash config files that exist
+    # macOS: .bash_profile (login) + .bashrc (interactive, often sourced by .bash_profile)
+    # Linux: .bashrc (primary) + .bash_profile (login, often sources .bashrc)
+    # We check all of them on both platforms since tools write to either
+    local -a bash_files=()
+    [[ -f "$HOME/.bash_profile" ]] && bash_files+=("$HOME/.bash_profile")
+    [[ -f "$HOME/.bashrc" ]] && bash_files+=("$HOME/.bashrc")
+    [[ -f "$HOME/.profile" ]] && bash_files+=("$HOME/.profile")
+    
+    if [[ ${#bash_files[@]} -eq 0 ]]; then
+        print_info "No bash config files found - skipping cross-shell setup"
+        return 0
+    fi
+    
+    if [[ ! -f "$zsh_rc" ]]; then
+        print_info "No .zshrc found - skipping cross-shell setup"
+        return 0
+    fi
+    
+    # Count customizations across all bash config files
+    local total_exports=0
+    local total_aliases=0
+    local total_paths=0
+    
+    for src_file in "${bash_files[@]}"; do
+        local n
+        n=$(grep -cE '^\s*export\s+[A-Z]' "$src_file" 2>/dev/null || echo "0")
+        total_exports=$((total_exports + n))
+        n=$(grep -cE '^\s*alias\s+' "$src_file" 2>/dev/null || echo "0")
+        total_aliases=$((total_aliases + n))
+        n=$(grep -cE 'PATH.*=' "$src_file" 2>/dev/null || echo "0")
+        total_paths=$((total_paths + n))
+    done
+    
+    if [[ $total_exports -eq 0 && $total_aliases -eq 0 && $total_paths -eq 0 ]]; then
+        print_info "No bash customizations detected - skipping cross-shell setup"
+        return 0
+    fi
+    
+    print_info "Detected bash customizations across ${#bash_files[@]} file(s):"
+    echo "  Exports: $total_exports, Aliases: $total_aliases, PATH entries: $total_paths"
+    echo ""
+    print_info "Best practice: create a shared profile (~/.shell_common) sourced by"
+    print_info "both bash and zsh, so your customizations work in either shell."
+    echo ""
+    
+    local setup_compat="Y"
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        read -r -p "Create shared shell profile for cross-shell compatibility? [Y/n]: " setup_compat
+    fi
+    
+    if [[ ! "$setup_compat" =~ ^[Yy]?$ ]]; then
+        print_info "Skipped cross-shell compatibility setup"
+        print_info "Set up later by creating ~/.shell_common and sourcing it from both shells"
+        return 0
+    fi
+    
+    # Extract portable customizations from bash config into shared profile
+    # We extract: exports, PATH modifications, aliases, eval statements, source commands
+    # We skip: bash-specific syntax (shopt, PROMPT_COMMAND, PS1, completion, bind, etc.)
+    # We deduplicate lines that appear in multiple files (e.g. .bash_profile sources .bashrc)
+    print_info "Creating shared profile: $shared_profile"
+    
+    {
+        echo "# Shared shell profile - sourced by both bash and zsh"
+        echo "# Created by aidevops setup to preserve customizations across shell switches"
+        echo "# Edit this file for settings you want in BOTH bash and zsh"
+        echo "# Shell-specific settings go in ~/.bashrc or ~/.zshrc"
+        echo ""
+    } > "$shared_profile"
+    
+    # Track lines we've already written to avoid duplicates
+    # (common on Linux where .bash_profile sources .bashrc)
+    local -a seen_lines=()
+    local extracted=0
+    
+    for src_file in "${bash_files[@]}"; do
+        local src_basename
+        src_basename=$(basename "$src_file")
+        local added_header=false
+        
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip empty lines
+            [[ -z "$line" ]] && continue
+            # Skip pure comment lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            
+            # Skip bash-specific settings that don't work in zsh
+            case "$line" in
+                *shopt*) continue ;;
+                *PROMPT_COMMAND*) continue ;;
+                *PS1=*) continue ;;
+                *PS2=*) continue ;;
+                *bash_completion*) continue ;;
+                *"complete "*) continue ;;
+                *"bind "*) continue ;;
+                *HISTCONTROL*) continue ;;
+                *HISTFILESIZE*) continue ;;
+                *HISTSIZE*) continue ;;
+                *"source /etc/bash"*) continue ;;
+                *". /etc/bash"*) continue ;;
+                *"source /etc/profile"*) continue ;;
+                *". /etc/profile"*) continue ;;
+                # Skip lines that source .bashrc from .bash_profile (circular)
+                *".bashrc"*) continue ;;
+                # Skip lines that source .shell_common (we'll add this ourselves)
+                *"shell_common"*) continue ;;
+            esac
+            
+            # Match portable lines: exports, aliases, PATH, eval, source/dot-source
+            local is_portable=false
+            case "$line" in
+                export\ [A-Z]*|export\ PATH*) is_portable=true ;;
+                alias\ *) is_portable=true ;;
+                eval\ *) is_portable=true ;;
+                *PATH=*) is_portable=true ;;
+            esac
+            # Also match 'source' and '. ' commands (tool integrations like nvm, rvm, pyenv)
+            if [[ "$is_portable" == "false" ]]; then
+                case "$line" in
+                    source\ *|.\ /*|.\ \$*|.\ \~*) is_portable=true ;;
+                esac
+            fi
+            
+            if [[ "$is_portable" == "true" ]]; then
+                # Deduplicate: skip if we've already seen this exact line
+                local is_dup=false
+                local seen
+                for seen in "${seen_lines[@]}"; do
+                    if [[ "$seen" == "$line" ]]; then
+                        is_dup=true
+                        break
+                    fi
+                done
+                if [[ "$is_dup" == "true" ]]; then
+                    continue
+                fi
+                
+                if [[ "$added_header" == "false" ]]; then
+                    echo "" >> "$shared_profile"
+                    echo "# From $src_basename" >> "$shared_profile"
+                    added_header=true
+                fi
+                echo "$line" >> "$shared_profile"
+                seen_lines+=("$line")
+                ((extracted++)) || true
+            fi
+        done < "$src_file"
+    done
+    
+    if [[ $extracted -eq 0 ]]; then
+        rm -f "$shared_profile"
+        print_info "No portable customizations found to extract"
+        return 0
+    fi
+    
+    chmod 644 "$shared_profile"
+    print_success "Extracted $extracted unique customization(s) to $shared_profile"
+    
+    # Add sourcing to .zshrc if not already present
+    if ! grep -q 'shell_common' "$zsh_rc" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Cross-shell compatibility (added by aidevops setup)"
+            echo "# Sources shared profile so bash customizations work in zsh too"
+            # shellcheck disable=SC2016
+            echo '[ -f "$HOME/.shell_common" ] && . "$HOME/.shell_common"'
+        } >> "$zsh_rc"
+        print_success "Added shared profile sourcing to .zshrc"
+    fi
+    
+    # Add sourcing to bash config files if not already present
+    for src_file in "${bash_files[@]}"; do
+        if ! grep -q 'shell_common' "$src_file" 2>/dev/null; then
+            {
+                echo ""
+                echo "# Cross-shell compatibility (added by aidevops setup)"
+                echo "# Shared profile - edit ~/.shell_common for settings in both shells"
+                # shellcheck disable=SC2016
+                echo '[ -f "$HOME/.shell_common" ] && . "$HOME/.shell_common"'
+            } >> "$src_file"
+            print_success "Added shared profile sourcing to $(basename "$src_file")"
+        fi
+    done
+    
+    echo ""
+    print_success "Cross-shell compatibility configured"
+    print_info "Your customizations are now in: $shared_profile"
+    print_info "Both bash and zsh will source this file automatically."
+    print_info "Edit ~/.shell_common for settings you want in both shells."
+    print_info "Use ~/.bashrc or ~/.zshrc for shell-specific settings only."
+    
+    return 0
+}
+
 # Check for optional dependencies
 check_optional_deps() {
     print_info "Checking optional dependencies..."
@@ -4818,6 +5041,7 @@ main() {
         
         # Shell environment setup (early, so later tools benefit from zsh/Oh My Zsh)
         confirm_step "Setup Oh My Zsh (optional, enhances zsh)" && setup_oh_my_zsh
+        confirm_step "Setup cross-shell compatibility (preserve bash config in zsh)" && setup_shell_compatibility
         
         # OrbStack (macOS only - offer VM option early)
         confirm_step "Setup OrbStack (lightweight Linux VMs on macOS)" && setup_orbstack_vm
