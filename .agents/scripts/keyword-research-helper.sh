@@ -195,6 +195,7 @@ prompt_locale() {
     echo "  7) Spain/Spanish"
     echo "  8) Custom (enter location code)"
     echo ""
+    local choice custom_code
     read -p "Select option [1]: " choice
     
     case "${choice:-1}" in
@@ -1181,8 +1182,10 @@ do_keyword_research() {
     local results="[]"
     
     # Split keywords by comma and process each
+    local -a keyword_array
     IFS=',' read -ra keyword_array <<< "$keywords"
     
+    local keyword
     for keyword in "${keyword_array[@]}"; do
         keyword=$(echo "$keyword" | xargs)  # Trim whitespace
         print_info "Researching: $keyword"
@@ -1382,6 +1385,7 @@ do_extended_research() {
             }]' 2>/dev/null || echo "[]")
             ;;
         "gap")
+            local -a domains
             IFS=',' read -ra domains <<< "$target"
             local your_domain="${domains[0]}"
             local competitor_domain="${domains[1]}"
@@ -1403,9 +1407,11 @@ do_extended_research() {
             ;;
         *)
             # Standard keyword research with SERP analysis
+            local -a keyword_array
             IFS=',' read -ra keyword_array <<< "$keywords"
             
             # For quick mode, just use keyword suggestions directly
+            local keyword
             if [[ "$quick_mode" == "true" ]]; then
                 for keyword in "${keyword_array[@]}"; do
                     keyword=$(echo "$keyword" | xargs)
@@ -1532,6 +1538,7 @@ apply_filters() {
     local result="$json_data"
     
     # Parse filters (format: min-volume:1000,max-difficulty:40,intent:commercial,contains:term,excludes:term)
+    local -a filter_array
     IFS=',' read -ra filter_array <<< "$filters"
     
     for filter in "${filter_array[@]}"; do
@@ -1784,6 +1791,7 @@ main() {
         "set-config")
             local new_locale
             new_locale=$(prompt_locale)
+            local new_provider new_limit
             read -p "Default provider [dataforseo/serper/both] ($DEFAULT_PROVIDER): " new_provider
             new_provider="${new_provider:-$DEFAULT_PROVIDER}"
             read -p "Default limit ($DEFAULT_LIMIT): " new_limit

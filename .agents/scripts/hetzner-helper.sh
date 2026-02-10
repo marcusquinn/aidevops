@@ -91,6 +91,7 @@ connect_server() {
         exit 1
     fi
     
+    local ip name project
     read -r ip name project <<< "$server_info"
     print_info "Connecting to $name ($ip) in project $project..."
     ssh "root@$ip"
@@ -115,6 +116,7 @@ exec_on_server() {
         exit 1
     fi
     
+    local ip name project
     read -r ip name project <<< "$server_info"
     print_info "Executing '$command' on $name..."
     ssh "root@$ip" "$command"

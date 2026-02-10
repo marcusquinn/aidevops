@@ -147,6 +147,7 @@ parse_github_url() {
     fi
     
     # Split by /
+    local -a parts
     IFS='/' read -ra parts <<< "$input"
     
     if [[ ${#parts[@]} -ge 2 ]]; then
@@ -718,7 +719,7 @@ cmd_add() {
     fi
     
     # Parse GitHub URL
-    local parsed
+    local parsed owner repo subpath
     parsed=$(parse_github_url "$url")
     IFS='|' read -r owner repo subpath <<< "$parsed"
     
@@ -856,6 +857,7 @@ cmd_add() {
             echo ""
             read -rp "Choose option [1-3]: " choice
             
+            local new_name
             case "$choice" in
                 1)
                     log_info "Replacing existing..."
@@ -1035,6 +1037,7 @@ cmd_add_clawdhub() {
             echo ""
             read -rp "Choose option [1-3]: " choice
             
+            local new_name
             case "$choice" in
                 1) log_info "Replacing existing..." ;;
                 2)
@@ -1183,6 +1186,7 @@ cmd_check_updates() {
     
     local updates_available=false
     
+    local name url commit owner repo subpath
     while IFS='|' read -r name url commit; do
         # Extract owner/repo from URL
         local parsed

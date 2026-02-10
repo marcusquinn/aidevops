@@ -313,6 +313,7 @@ cmd_convoy() {
 
     log_info "Creating convoy: $name"
 
+    local -a task_array
     IFS=',' read -ra task_array <<< "$tasks"
     for task_id in "${task_array[@]}"; do
         local task_desc

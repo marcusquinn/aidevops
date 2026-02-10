@@ -259,6 +259,7 @@ check_category() {
         echo -e "${BOLD}${CYAN}=== $cat_name Tools ===${NC}"
     fi
     
+    local category name cmd ver_flag pkg update_cmd
     for tool_spec in "${tools[@]}"; do
         IFS='|' read -r category name cmd ver_flag pkg update_cmd <<< "$tool_spec"
         check_tool "$category" "$name" "$cmd" "$ver_flag" "$pkg" "$update_cmd"

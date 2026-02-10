@@ -295,6 +295,7 @@ resolve_api_key() {
     fi
 
     # Check each possible env var name
+    local -a var_names
     IFS=',' read -ra var_names <<< "$key_vars"
     for var_name in "${var_names[@]}"; do
         # Source 1: Environment variable
@@ -348,6 +349,7 @@ _get_key_value() {
         return 1
     fi
 
+    local -a var_names
     IFS=',' read -ra var_names <<< "$key_vars"
 
     # Try env vars first (may have been populated by resolve_api_key)

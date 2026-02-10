@@ -1662,6 +1662,7 @@ cmd_batch() {
     # Add tasks to batch if provided
     if [[ -n "$tasks" ]]; then
         local position=0
+        local -a task_array
         IFS=',' read -ra task_array <<< "$tasks"
         for task_id in "${task_array[@]}"; do
             task_id=$(echo "$task_id" | tr -d ' ')
@@ -2204,7 +2205,7 @@ cmd_status() {
     ")
 
     if [[ -n "$batch_row" ]]; then
-        local brelease_flag brelease_type
+        local bid bname bconc bstatus bcreated brelease_flag brelease_type
         IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type <<< "$batch_row"
         local bmax_conc
         bmax_conc=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "0")

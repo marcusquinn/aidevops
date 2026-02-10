@@ -339,7 +339,7 @@ cmd_remove() {
     if is_worktree_owned_by_others "$path_to_remove"; then
         local owner_info
         owner_info=$(check_worktree_owner "$path_to_remove")
-        local owner_pid owner_session owner_batch owner_task
+        local owner_pid owner_session owner_batch owner_task _
         IFS='|' read -r owner_pid owner_session owner_batch owner_task _ <<< "$owner_info"
         echo -e "${RED}Error: Worktree is owned by another active session${NC}"
         echo -e "  Owner PID:     $owner_pid"

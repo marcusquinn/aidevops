@@ -510,6 +510,7 @@ DeepSeek|DEEPSEEK_API_KEY"
         key_names=$(echo "$pline" | cut -d'|' -f2)
 
         local key_value=""
+        local -a keys
         IFS=',' read -ra keys <<< "$key_names"
         for key_name in "${keys[@]}"; do
             if [[ -n "${!key_name:-}" ]]; then
