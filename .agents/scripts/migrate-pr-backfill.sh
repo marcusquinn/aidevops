@@ -56,7 +56,8 @@ log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >> "$MIGRATION_LOG"; echo "
 log_verbose() { [[ "$VERBOSE" == "true" ]] && log "  $*" || true; }
 
 db() {
-    sqlite3 -cmd ".timeout 5000" "$@"
+    # 15s busy timeout (higher than supervisor's 5s) to handle concurrent pulse locks
+    sqlite3 -cmd ".timeout 15000" "$@"
 }
 
 sql_escape() {
@@ -353,10 +354,11 @@ main() {
                 linked="true"
                 break
             else
-                if db "$SUPERVISOR_DB" "
+                local db_err
+                if db_err=$(db "$SUPERVISOR_DB" "
                     UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")'
                     WHERE id = '$(sql_escape "$task_id")';
-                " 2>/dev/null; then
+                " 2>&1); then
                     log "LINKED $task_id -> $validated_url"
                     write_proof_log "$task_id" "pr_backfill" \
                         "linked" \
@@ -365,7 +367,7 @@ main() {
                     linked="true"
                     break
                 else
-                    log "ERROR: Failed to update DB for $task_id"
+                    log "ERROR: Failed to update DB for $task_id: $db_err"
                     ((errors++)) || true
                     linked="error"
                     break
