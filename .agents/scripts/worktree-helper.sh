@@ -611,9 +611,29 @@ cmd_registry() {
             done <<< "$entries"
             ;;
         prune)
+            shift  # Remove 'prune' from args
+            local verbose=""
+            if [[ "${1:-}" == "-v" ]] || [[ "${1:-}" == "--verbose" ]]; then
+                verbose="true"
+                export VERBOSE="true"
+            fi
+            
+            [[ ! -f "$WORKTREE_REGISTRY_DB" ]] && { echo "No registry entries to prune"; return 0; }
+            
+            # Count before pruning
+            local before_count
+            before_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners;" 2>/dev/null || echo "0")
+            
             echo -e "${BLUE}Pruning stale registry entries...${NC}"
+            [[ -n "$verbose" ]] && echo ""
             prune_worktree_registry
-            echo -e "${GREEN}Done${NC}"
+            
+            # Count after pruning
+            local after_count
+            after_count=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners;" 2>/dev/null || echo "0")
+            local pruned=$((before_count - after_count))
+            
+            echo -e "${GREEN}Done: pruned $pruned of $before_count entries ($after_count remaining)${NC}"
             ;;
         *)
             echo "Usage: worktree-helper.sh registry [list|prune]"
@@ -651,7 +671,12 @@ COMMANDS
   clean                  Remove worktrees for merged branches
                          Skips worktrees owned by other active sessions (t189)
   
-  registry [list|prune]  View or prune the ownership registry (t189)
+  registry [list|prune]  View or prune the ownership registry (t189, t197)
+                         list: Show all registered worktrees with ownership info
+                         prune [-v|--verbose]: Clean dead/corrupted entries:
+                           - Dead PIDs with missing directories
+                           - Paths with ANSI escape codes
+                           - Test artifacts in /tmp or /var/folders
   
   help                   Show this help
 
