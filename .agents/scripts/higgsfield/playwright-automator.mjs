@@ -3240,6 +3240,12 @@ async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 6
                 const httpCode = curlResult.trim();
                 if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
                   const fileSize = statSync(savePath).size;
+                  // Write JSON sidecar for pipeline scene video
+                  writeJsonSidecar(savePath, {
+                    command: 'pipeline', type: 'video', ...meta,
+                    sceneIndex: job.sceneIndex, strategy: 'api-interception',
+                    cloudFrontUrl: videoUrl, matchScore: bestScore,
+                  });
                   console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
                   console.log(`    Matched prompt (${bestScore} chars): "${bestMatch.prompt?.substring(0, 60)}..."`);
                   results.set(job.sceneIndex, savePath);
@@ -3731,7 +3737,9 @@ async function cinemaStudio(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'cinema-studio-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'cinema');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -3830,7 +3838,9 @@ async function motionControl(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'motion-control-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
+      await downloadVideoFromHistory(page, outputDir, {}, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -3910,7 +3920,9 @@ async function editImage(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `edit-${model}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'edits');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -3968,7 +3980,9 @@ async function upscale(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'upscale-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'upscaled');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -4033,7 +4047,9 @@ async function manageAssets(options = {}) {
         await page.screenshot({ path: join(STATE_DIR, 'asset-detail.png'), fullPage: false });
 
         // Try to download via the asset detail view
-        await downloadLatestResult(page, options.output || DOWNLOAD_DIR, false);
+        const baseOutput = options.output || DOWNLOAD_DIR;
+        const dlDir = resolveOutputDir(baseOutput, options, 'misc');
+        await downloadLatestResult(page, dlDir, false, options);
         console.log('Asset downloaded');
       }
     }
@@ -4041,7 +4057,8 @@ async function manageAssets(options = {}) {
     if (action === 'download-all') {
       // Download multiple assets
       const maxDownloads = options.limit || 10;
-      const outputDir = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const dlDir = resolveOutputDir(baseOutput, options, 'misc');
       console.log(`Downloading up to ${maxDownloads} assets...`);
 
       for (let i = 0; i < Math.min(maxDownloads, assetCount); i++) {
@@ -4049,7 +4066,7 @@ async function manageAssets(options = {}) {
         if (await assetImg.isVisible({ timeout: 2000 }).catch(() => false)) {
           await assetImg.click();
           await page.waitForTimeout(2000);
-          await downloadLatestResult(page, outputDir, false);
+          await downloadLatestResult(page, dlDir, false, options);
           await page.keyboard.press('Escape');
           await page.waitForTimeout(500);
           console.log(`Downloaded asset ${i + 1}/${maxDownloads}`);
@@ -4242,7 +4259,7 @@ async function assetChain(options = {}) {
 
       // Download the asset from the dialog first
       const outputDir = options.output || DOWNLOAD_DIR;
-      const downloadedFiles = await downloadLatestResult(page, outputDir, false);
+      const downloadedFiles = await downloadLatestResult(page, outputDir, false, options);
       const downloadedFile = Array.isArray(downloadedFiles) ? downloadedFiles[0] : downloadedFiles;
 
       // Close dialog
@@ -4387,13 +4404,14 @@ async function assetChain(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `asset-chain-${action}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      const outputDir = options.output || DOWNLOAD_DIR;
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'chained');
       const isVideoAction = ['animate'].includes(action);
       if (isVideoAction) {
-        await downloadVideoFromHistory(page, outputDir);
+        await downloadVideoFromHistory(page, outputDir, {}, options);
       } else {
         // Try standard download first
-        const downloaded = await downloadLatestResult(page, outputDir, true);
+        const downloaded = await downloadLatestResult(page, outputDir, true, options);
         const hasDownloaded = Array.isArray(downloaded) ? downloaded.length > 0 : !!downloaded;
 
         // If standard download failed, try the download icon button (upscale/edit pages use icon buttons)
@@ -4549,7 +4567,9 @@ async function mixedMediaPreset(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `mixed-media-${presetKey}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'mixed-media');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -4672,7 +4692,9 @@ async function motionPreset(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'motion-preset-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'motion-presets');
+      await downloadVideoFromHistory(page, outputDir, {}, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -4762,7 +4784,9 @@ async function editVideo(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'video-edit-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
+      await downloadVideoFromHistory(page, outputDir, {}, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -4847,7 +4871,9 @@ async function storyboard(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'storyboard-result.png'), fullPage: true });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'storyboards');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -4963,7 +4989,9 @@ async function vibeMotion(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'vibe-motion-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadVideoFromHistory(page, options.output || DOWNLOAD_DIR);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
+      await downloadVideoFromHistory(page, outputDir, {}, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -5038,7 +5066,9 @@ async function aiInfluencer(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'ai-influencer-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'characters');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -5109,7 +5139,9 @@ async function createCharacter(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, 'character-result.png'), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'characters');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -5221,7 +5253,9 @@ async function featurePage(options = {}) {
     await page.screenshot({ path: join(STATE_DIR, `feature-${featureKey}-result.png`), fullPage: false });
 
     if (options.wait !== false) {
-      await downloadLatestResult(page, options.output || DOWNLOAD_DIR, true);
+      const baseOutput = options.output || DOWNLOAD_DIR;
+      const outputDir = resolveOutputDir(baseOutput, options, 'features');
+      await downloadLatestResult(page, outputDir, true, options);
     }
 
     await context.storageState({ path: STATE_FILE });
@@ -5416,7 +5450,9 @@ Examples:
         await dlPage.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await dlPage.waitForTimeout(5000);
         await dismissAllModals(dlPage);
-        await downloadVideoFromHistory(dlPage, options.output || DOWNLOAD_DIR);
+        const baseOutput = options.output || DOWNLOAD_DIR;
+        const dlDir = resolveOutputDir(baseOutput, options, 'videos');
+        await downloadVideoFromHistory(dlPage, dlDir, {}, options);
       } else {
         // Download latest image from image page
         const dlUrl = `${BASE_URL}/image/${dlModel}`;
@@ -5424,7 +5460,9 @@ Examples:
         await dlPage.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await dlPage.waitForTimeout(5000);
         await dismissAllModals(dlPage);
-        await downloadLatestResult(dlPage, options.output || DOWNLOAD_DIR, true);
+        const baseOutput = options.output || DOWNLOAD_DIR;
+        const dlDir = resolveOutputDir(baseOutput, options, 'images');
+        await downloadLatestResult(dlPage, dlDir, true, options);
       }
 
       await dlCtx.storageState({ path: STATE_FILE });
