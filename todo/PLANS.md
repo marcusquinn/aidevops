@@ -21,6 +21,128 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-02-10] Email Testing Suite
+
+**Status:** Planning
+**Estimate:** ~12h (ai:8h test:3h read:1h)
+**TODO:** t214
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
+p027,Email Testing Suite,planning,0,4,,email|testing|services|playwright|eoa,12h,8h,3h,1h,2026-02-10T00:00Z,
+-->
+
+#### Purpose
+
+Add comprehensive email testing capabilities to aidevops, covering both visual rendering (design) and deliverability (spam filters, inbox placement). Inspired by Email on Acid's feature set, implemented as a hybrid: free local testing via Playwright + paid authoritative testing via EOA's v5 REST API. Also enhance the existing email-health-check with content-level pre-send checks that EOA's Campaign Precheck covers but we currently lack.
+
+#### Context
+
+**Problem:** aidevops has email infrastructure validation (SPF/DKIM/DMARC via email-health-check) and sending (SES), but zero coverage for "does this email HTML render correctly across clients" or "will this email pass spam filters." The marketing.md agent mentions "test across email clients" as a troubleshooting step but provides no tooling.
+
+**Email on Acid capabilities mapped to implementation tiers:**
+
+| EOA Feature | Our Implementation | Tier |
+|-------------|-------------------|------|
+| 100+ client screenshots (Outlook, Gmail, Apple Mail, mobile) | EOA API v5 — POST HTML, poll results, download screenshots | API (paid) |
+| Webmail rendering (Gmail/Outlook.com/Yahoo in Chrome/Edge/Firefox) | Playwright device emulation + logged-in webmail accounts | Local (free) |
+| Dark mode previews | Playwright `colorScheme: 'dark'` + EOA dark mode clients | Both |
+| Mobile viewport previews | Playwright 100+ device presets (iPhone/Pixel/iPad) | Local (free) |
+| Outlook Word rendering engine | EOA API only — no local emulator exists | API only |
+| Native mobile app rendering (Gmail app, Outlook app) | EOA API only — proprietary rendering engines | API only |
+| Spam filter testing (SpamAssassin, Barracuda, etc.) | EOA spam API (3 methods: eoa, smtp, seed) | API (paid) |
+| Accessibility checks (WCAG, contrast ratio, table roles) | axe-core via Playwright + custom email-specific rules | Local (free) |
+| Image validation (broken src, alt text, file sizes) | HTML parsing + URL validation | Local (free) |
+| Link validation | Playwright crawl or curl | Local (free) |
+| CSS inlining check | HTML parsing | Local (free) |
+| Subject line analysis | Custom rules (length, spam triggers, personalization) | Local (free) |
+| Unsubscribe header validation | Header parsing | Local (free) |
+| HTML weight/size analysis | File size + ratio calculations | Local (free) |
+| Campaign Precheck workflow | Orchestrated multi-step check | Local (free) |
+
+**Existing email agents (naming context):**
+
+| File | Purpose | Naming Pattern |
+|------|---------|---------------|
+| `services/email/email-health-check.md` | DNS/auth/blacklist validation | `email-health-check` |
+| `services/email/ses.md` | SES sending provider | `ses` |
+| `content/distribution/email.md` | Newsletter strategy/content | `email` (content) |
+| `services/hosting/cloudflare-platform/references/email-routing/` | CF email routing | infrastructure |
+
+**New agents follow the same `services/email/` pattern:**
+
+| New File | Purpose |
+|----------|---------|
+| `services/email/email-design-test.md` | Visual rendering testing |
+| `services/email/email-delivery-test.md` | Spam filter + inbox placement |
+
+**Email lifecycle in aidevops after this plan:**
+
+```text
+1. Infrastructure:   email-health-check (DNS, auth, blacklists)
+2. Sending:          ses.md (provider config, quotas)
+3. Design testing:   email-design-test (NEW — rendering across clients)
+4. Delivery testing: email-delivery-test (NEW — spam filters, inbox placement)
+5. Content:          content/distribution/email.md (strategy, copy)
+```
+
+**EOA API v5 key details:**
+
+- Base URL: `https://api.emailonacid.com/v5/`
+- Auth: HTTP Basic (API key + password, base64)
+- Sandbox: username/password both "sandbox" for testing
+- Create test: `POST /email/tests` with `{subject, html, clients[]}`
+- Poll results: `GET /email/tests/{id}` (completed/processing/bounced arrays)
+- Get screenshots: `GET /email/tests/{id}/results` (URLs with basic auth or 24h presigned)
+- Client list: `GET /email/clients` (id, client, os, category, rotate, image_blocking)
+- Spam test: `POST /spam/tests` with `{subject, html, test_method: "eoa"|"smtp"|"seed"}`
+- Spam results: `GET /spam/tests/{id}` (per-filter: client, type b2b/b2c, spam 1/0/-1, details)
+- Seed list: `GET /spam/seedlist` (reserve addresses before sending)
+- Results stored 90 days
+- Micro version v5.0.1 adds full_thumbnail field
+
+#### Phases
+
+**Phase 1: Email Design Test agent + helper script (t214.1, t214.2) ~5h**
+
+- Create `services/email/email-design-test.md` subagent
+- Create `scripts/email-design-test-helper.sh` CLI
+- Local tier: Playwright multi-device screenshots, dark mode, HTML/CSS lint, accessibility, link/image validation
+- API tier: EOA v5 integration (create test, poll, download screenshots, client list management)
+- Desktop tier: Apple Mail via AppleScript (macOS only)
+
+**Phase 2: Email Delivery Test agent + helper script (t214.3, t214.4) ~3.5h**
+
+- Create `services/email/email-delivery-test.md` subagent
+- Create `scripts/email-delivery-test-helper.sh` CLI
+- EOA spam API integration (3 test methods)
+- mail-tester.com automation via Playwright
+- Seed list management
+
+**Phase 3: Email Health Check enhancements (t214.5) ~1.5h**
+
+- Subject line analysis (length, spam triggers, personalization tokens)
+- HTML weight/size check + image-to-text ratio
+- Unsubscribe header validation (List-Unsubscribe, List-Unsubscribe-Post)
+- Plain text fallback verification
+- URL validation (resolve all links, flag shorteners/suspicious redirects)
+- Image hosting validation (CDN check, no temp URLs)
+- Domain age check for sender domain
+- Update email-health-check-helper.sh with new commands
+
+**Phase 4: Cross-references + integration (t214.6) ~30m**
+
+- Update AGENTS.md progressive disclosure table
+- Update subagent-index.toon
+- Update marketing.md troubleshooting references
+- Add pre-send checklist to content/distribution/email.md
+
+#### Decision Log
+
+- **2026-02-10**: Chose hybrid local+API approach over API-only. Rationale: Playwright gives instant free feedback during development; EOA API provides authoritative results for Outlook/native mobile that cannot be emulated locally. Best ROI = fast iteration locally, EOA for final pre-send validation.
+- **2026-02-10**: Named `email-design-test` and `email-delivery-test` (not `email-rendering` or `email-preview`) to match the existing `email-health-check` naming pattern and clearly distinguish design (visual) from delivery (spam/inbox) concerns.
+- **2026-02-10**: Decided to enhance existing `email-health-check` rather than create a separate agent for content-level checks. The health check already covers DNS/auth; adding subject line analysis, HTML weight, unsubscribe headers, and URL validation keeps all pre-send validation in one place.
+- **2026-02-10**: EOA API credentials stored via `aidevops secret set EOA_API_KEY` and `aidevops secret set EOA_API_PASSWORD`. Never in config files or conversation.
+
 ### [2026-02-09] Content Creation Agent Architecture
 
 **Status:** Planning
