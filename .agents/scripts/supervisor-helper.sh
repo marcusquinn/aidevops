@@ -6105,7 +6105,8 @@ Instructions:
 
 #######################################
 # Check PR CI and review status for a task
-# Returns: ready_to_merge, ci_pending, ci_failed, changes_requested, draft, no_pr
+# Returns: ready_to_merge, unstable_sonarcloud, ci_pending, ci_failed, changes_requested, draft, no_pr
+# t227: unstable_sonarcloud = SonarCloud GH Action passed but external quality gate failed
 #######################################
 check_pr_status() {
     local task_id="$1"
@@ -6220,7 +6221,29 @@ check_pr_status() {
         has_pending=$(echo "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
 
         if [[ "$has_failure" -gt 0 ]]; then
-            ci_status="failed"
+            # t227: Check for SonarCloud pattern: GH Action passes but external quality gate fails
+            # This is UNSTABLE but safe to merge with --admin flag
+            local sonar_action_pass
+            sonar_action_pass=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Analysis" and .conclusion == "SUCCESS")] | length' 2>/dev/null || echo "0")
+            local sonar_gate_fail
+            sonar_gate_fail=$(echo "$check_rollup" | jq '[.[] | select(.name == "SonarCloud Code Analysis" and .conclusion == "FAILURE")] | length' 2>/dev/null || echo "0")
+            
+            if [[ "$sonar_action_pass" -gt 0 && "$sonar_gate_fail" -gt 0 ]]; then
+                # Only the external SonarCloud quality gate failed, GH Action passed
+                # Check if there are any OTHER failures besides SonarCloud Code Analysis
+                local other_failures
+                other_failures=$(echo "$check_rollup" | jq '[.[] | select((.conclusion == "FAILURE" or .conclusion == "ERROR") and .name != "SonarCloud Code Analysis")] | length' 2>/dev/null || echo "0")
+                
+                if [[ "$other_failures" -eq 0 ]]; then
+                    # Only SonarCloud external gate failed, everything else passed
+                    ci_status="unstable_sonarcloud"
+                else
+                    # Other checks also failed
+                    ci_status="failed"
+                fi
+            else
+                ci_status="failed"
+            fi
         elif [[ "$has_pending" -gt 0 ]]; then
             ci_status="pending"
         fi
@@ -6228,6 +6251,11 @@ check_pr_status() {
 
     if [[ "$ci_status" == "failed" ]]; then
         echo "ci_failed"
+        return 0
+    fi
+    
+    if [[ "$ci_status" == "unstable_sonarcloud" ]]; then
+        echo "unstable_sonarcloud"
         return 0
     fi
 
@@ -6646,6 +6674,29 @@ merge_task_pr() {
         return 0
     fi
 
+    # t227: Check if this PR needs --admin flag due to SonarCloud external gate failure
+    local use_admin_flag="false"
+    local triage_result
+    triage_result=$(db "$SUPERVISOR_DB" "SELECT triage_result FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    if [[ -n "$triage_result" && "$triage_result" != "null" ]]; then
+        local sonarcloud_unstable
+        sonarcloud_unstable=$(echo "$triage_result" | jq -r '.sonarcloud_unstable // false' 2>/dev/null || echo "false")
+        if [[ "$sonarcloud_unstable" == "true" ]]; then
+            use_admin_flag="true"
+            log_info "SonarCloud external gate failed but GH Action passed - using --admin to bypass"
+        fi
+    fi
+    
+    # Also check current PR status for unstable_sonarcloud
+    if [[ "$use_admin_flag" == "false" ]]; then
+        local current_pr_status
+        current_pr_status=$(check_pr_status "$task_id")
+        if [[ "$current_pr_status" == "unstable_sonarcloud" ]]; then
+            use_admin_flag="true"
+            log_info "SonarCloud external gate failed but GH Action passed - using --admin to bypass"
+        fi
+    fi
+
     log_info "Merging PR #$pr_number in $repo_slug (squash)..."
 
     # Record pre-merge commit for targeted deploy (t213)
@@ -6658,8 +6709,14 @@ merge_task_pr() {
     fi
 
     # Squash merge without --delete-branch (worktree handles branch cleanup)
+    # t227: Add --admin flag if SonarCloud external gate failed
     local merge_output
-    if ! merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1); then
+    local merge_cmd="gh pr merge \"$pr_number\" --repo \"$repo_slug\" --squash"
+    if [[ "$use_admin_flag" == "true" ]]; then
+        merge_cmd="$merge_cmd --admin"
+    fi
+    
+    if ! merge_output=$(eval "$merge_cmd" 2>&1); then
         log_error "Failed to merge PR #$pr_number. Output from gh:"
         log_error "$merge_output"
         return 1
@@ -7052,13 +7109,21 @@ cmd_pr_lifecycle() {
         log_info "PR status: $pr_status"
 
         case "$pr_status" in
-            ready_to_merge)
+            ready_to_merge|unstable_sonarcloud)
+                # t227: unstable_sonarcloud = GH Action passed but external quality gate failed
+                # This is safe to merge with --admin flag
+                local merge_note=""
+                if [[ "$pr_status" == "unstable_sonarcloud" ]]; then
+                    merge_note=" (SonarCloud external gate failed but GH Action passed - using --admin)"
+                    log_info "SonarCloud pattern detected: GH Action passed, external quality gate failed - will merge with --admin"
+                fi
+                
                 # CI passed and no CHANGES_REQUESTED - but bot reviews post as
                 # COMMENTED, so we need to check unresolved threads directly (t148)
                 # t219: Fast-path optimization - check for zero review threads immediately
                 # If CI is green and no threads exist, skip review_triage state entirely
                 if [[ "$skip_review_triage" == "true" ]]; then
-                    log_info "Review triage skipped (--skip-review-triage) for $task_id"
+                    log_info "Review triage skipped (--skip-review-triage) for $task_id${merge_note}"
                     if [[ "$dry_run" == "false" ]]; then
                         cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
                     fi
@@ -7077,9 +7142,9 @@ cmd_pr_lifecycle() {
                         thread_count_fastpath=$(echo "$threads_json_fastpath" | jq 'length' 2>/dev/null || echo "0")
                         
                         if [[ "$thread_count_fastpath" -eq 0 ]]; then
-                            log_info "Fast-path: CI green + zero review threads - skipping review_triage, going directly to merge"
+                            log_info "Fast-path: CI green + zero review threads - skipping review_triage, going directly to merge${merge_note}"
                             if [[ "$dry_run" == "false" ]]; then
-                                db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '{\"action\":\"merge\",\"threads\":0,\"fast_path\":true}' WHERE id = '$escaped_id';"
+                                db "$SUPERVISOR_DB" "UPDATE tasks SET triage_result = '{\"action\":\"merge\",\"threads\":0,\"fast_path\":true,\"sonarcloud_unstable\":$(if [[ "$pr_status" == "unstable_sonarcloud" ]]; then echo "true"; else echo "false"; fi)}' WHERE id = '$escaped_id';"
                                 cmd_transition "$task_id" "merging" 2>>"$SUPERVISOR_LOG" || true
                             fi
                             tstatus="merging"
