@@ -284,24 +284,30 @@ const API_POLL_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes max wait
 // Map CLI model slugs to Higgsfield API model IDs.
 // Discovered from docs + cloud dashboard model gallery.
 // Not all web UI models have API equivalents — only those listed here.
+// Verified 2026-02-10 by probing platform.higgsfield.ai (404 = not found, else exists).
+// Web-UI-only models (no API): Nano Banana Pro, GPT Image, Flux Kontext, Seedream 4.5, Wan, Sora, Veo, Minimax Hailuo, Grok Video.
 const API_MODEL_MAP = {
-  // Text-to-image models
+  // Text-to-image models (verified: 403 "Not enough credits" = exists)
   'soul':           'higgsfield-ai/soul/standard',
   'soul-reference': 'higgsfield-ai/soul/reference',
   'soul-character': 'higgsfield-ai/soul/character',
   'popcorn':        'higgsfield-ai/popcorn/auto',
-  'seedream-4-5':   'bytedance/seedream/v4.5/text-to-image',
+  'popcorn-manual': 'higgsfield-ai/popcorn/manual',
   'seedream':       'bytedance/seedream/v4/text-to-image',
   'reve':           'reve/text-to-image',
-  // Image-to-video models
+  // Image-to-video models (verified: 422/400 = exists, needs image_url)
   'dop-standard':   'higgsfield-ai/dop/standard',
   'dop-lite':       'higgsfield-ai/dop/lite',
   'dop-turbo':      'higgsfield-ai/dop/turbo',
-  'dop-preview':    'higgsfield-ai/dop/preview',
+  'dop-standard-flf': 'higgsfield-ai/dop/standard/first-last-frame',
+  'dop-lite-flf':   'higgsfield-ai/dop/lite/first-last-frame',
+  'dop-turbo-flf':  'higgsfield-ai/dop/turbo/first-last-frame',
+  'kling-3.0':      'kling-video/v3.0/pro/image-to-video',
   'kling-2.6':      'kling-video/v2.6/pro/image-to-video',
-  'kling-2.5':      'kling-video/v2.5/turbo/image-to-video',
-  'kling-o1':       'kling-video/o1/pro/image-to-video',
+  'kling-2.1':      'kling-video/v2.1/pro/image-to-video',
+  'kling-2.1-master': 'kling-video/v2.1/master/image-to-video',
   'seedance':       'bytedance/seedance/v1/pro/image-to-video',
+  'seedance-lite':  'bytedance/seedance/v1/lite/image-to-video',
   // Image edit models
   'seedream-edit':  'bytedance/seedream/v4/edit',
 };
@@ -6217,14 +6223,20 @@ async function runSelfTests() {
   assert(parsed.options.useApi === undefined, 'No --api flag leaves useApi undefined');
   process.argv = origArgv;
 
-  // Test 13: API model ID mapping
+  // Test 13: API model ID mapping (verified against platform.higgsfield.ai 2026-02-10)
   console.log('\n--- API model ID mapping ---');
   assert(resolveApiModelId('soul', 'image') === 'higgsfield-ai/soul/standard', 'soul -> higgsfield-ai/soul/standard');
-  assert(resolveApiModelId('seedream-4-5', 'image') === 'bytedance/seedream/v4.5/text-to-image', 'seedream-4-5 maps correctly');
+  assert(resolveApiModelId('seedream', 'image') === 'bytedance/seedream/v4/text-to-image', 'seedream maps to v4');
   assert(resolveApiModelId('reve', 'image') === 'reve/text-to-image', 'reve maps correctly');
+  assert(resolveApiModelId('popcorn-manual', 'image') === 'higgsfield-ai/popcorn/manual', 'popcorn-manual maps correctly');
   assert(resolveApiModelId('dop-standard', 'video') === 'higgsfield-ai/dop/standard', 'dop-standard maps correctly');
+  assert(resolveApiModelId('dop-standard-flf', 'video') === 'higgsfield-ai/dop/standard/first-last-frame', 'dop-standard-flf maps correctly');
+  assert(resolveApiModelId('kling-3.0', 'video') === 'kling-video/v3.0/pro/image-to-video', 'kling-3.0 maps correctly');
   assert(resolveApiModelId('kling-2.6', 'video') === 'kling-video/v2.6/pro/image-to-video', 'kling-2.6 maps correctly');
+  assert(resolveApiModelId('kling-2.1', 'video') === 'kling-video/v2.1/pro/image-to-video', 'kling-2.1 maps correctly');
+  assert(resolveApiModelId('kling-2.1-master', 'video') === 'kling-video/v2.1/master/image-to-video', 'kling-2.1-master maps correctly');
   assert(resolveApiModelId('seedance', 'video') === 'bytedance/seedance/v1/pro/image-to-video', 'seedance maps correctly');
+  assert(resolveApiModelId('seedance-lite', 'video') === 'bytedance/seedance/v1/lite/image-to-video', 'seedance-lite maps correctly');
   assert(resolveApiModelId('nonexistent', 'image') === null, 'Unknown slug returns null');
   assert(resolveApiModelId('dop', 'video') === 'higgsfield-ai/dop/standard', 'dop shorthand resolves to dop-standard for video');
   assert(resolveApiModelId(null, 'image') === null, 'null slug returns null');
@@ -6241,12 +6253,12 @@ async function runSelfTests() {
     passed++; // Count as pass — absence is valid
   }
 
-  // Test 15: API_MODEL_MAP completeness
+  // Test 15: API_MODEL_MAP completeness (verified model counts 2026-02-10)
   console.log('\n--- API_MODEL_MAP structure ---');
   const apiImageModels = Object.entries(API_MODEL_MAP).filter(([k]) => !k.includes('dop') && !k.includes('kling') && !k.includes('seedance') && !k.includes('edit'));
   const apiVideoModels = Object.entries(API_MODEL_MAP).filter(([k]) => k.includes('dop') || k.includes('kling') || k.includes('seedance'));
-  assert(apiImageModels.length >= 5, `At least 5 image models in API map (got ${apiImageModels.length})`);
-  assert(apiVideoModels.length >= 6, `At least 6 video models in API map (got ${apiVideoModels.length})`);
+  assert(apiImageModels.length >= 7, `At least 7 image models in API map (got ${apiImageModels.length})`);
+  assert(apiVideoModels.length >= 11, `At least 11 video models in API map (got ${apiVideoModels.length})`);
   // All values should be non-empty strings containing '/'
   for (const [slug, modelId] of Object.entries(API_MODEL_MAP)) {
     assert(typeof modelId === 'string' && modelId.includes('/'), `API model ID for '${slug}' is valid path: ${modelId}`);

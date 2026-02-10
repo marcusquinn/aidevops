@@ -384,7 +384,17 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 | Feature | API (`higgsfield.md`) | UI (`higgsfield-ui.md`) |
 |---------|----------------------|------------------------|
 | Auth | API key + secret | Email/password login |
-| Credits | Pay-per-use API credits | Subscription credits (included in plan) |
-| Models | Soul, DOP, Kling, Seedance | Soul, Nano Banana, Seedream + 86 apps |
-| Speed | Direct API calls | Browser automation (~60s per generation) |
-| Best for | Programmatic pipelines | Using subscription credits, accessing UI-only features |
+| Credits | Pay-per-use API credits (separate pool) | Subscription credits (included in plan) |
+| Models | Soul, Popcorn, Reve, Seedream v4, DOP, Kling 2.1/2.6/3.0, Seedance | All API models + Nano Banana Pro, GPT Image, Flux Kontext, Wan, Sora, Veo, MiniMax, Grok + 86 apps |
+| Speed | Direct API calls (~5-30s) | Browser automation (~60s per generation) |
+| Best for | Programmatic pipelines, batch processing | Using subscription credits, accessing UI-only features |
+
+### Verified API Models (2026-02-10)
+
+**Text-to-image**: `soul`, `soul-reference`, `soul-character`, `popcorn`, `popcorn-manual`, `seedream` (v4), `reve`
+
+**Image-to-video**: `dop-standard`, `dop-lite`, `dop-turbo`, `dop-standard-flf`, `dop-lite-flf`, `dop-turbo-flf`, `kling-3.0`, `kling-2.6`, `kling-2.1`, `kling-2.1-master`, `seedance`, `seedance-lite`
+
+**Image edit**: `seedream-edit`
+
+**NOT on API** (web UI only): Nano Banana Pro, GPT Image, Flux Kontext, Seedream 4.5, Wan, Sora, Veo, MiniMax Hailuo, Grok Video
