@@ -5430,6 +5430,115 @@ discover_pr_by_branch() {
 }
 
 #######################################
+# Auto-create a PR for a task's orphaned branch (t247.2)
+#
+# When a worker exits with commits on its branch but no PR (e.g., context
+# exhaustion before gh pr create), the supervisor creates the PR on its
+# behalf instead of retrying. This saves ~300s per retry cycle.
+#
+# Prerequisites:
+#   - Branch has commits ahead of base (caller verified)
+#   - No existing PR for this branch (caller verified)
+#   - gh CLI available and authenticated
+#
+# Steps:
+#   1. Push branch to remote if not already pushed
+#   2. Create a draft PR via gh pr create
+#   3. Persist PR URL to DB via link_pr_to_task()
+#
+# $1: task_id
+# $2: repo_path (local filesystem path to the repo/worktree)
+# $3: branch_name
+# $4: repo_slug (owner/repo)
+#
+# Outputs: PR URL on stdout if created, empty if failed
+# Returns: 0 if PR created, 1 if failed
+#######################################
+auto_create_pr_for_task() {
+    local task_id="$1"
+    local repo_path="$2"
+    local branch_name="$3"
+    local repo_slug="$4"
+
+    if [[ -z "$task_id" || -z "$repo_path" || -z "$branch_name" || -z "$repo_slug" ]]; then
+        log_warn "auto_create_pr_for_task: missing required arguments (task=$task_id repo=$repo_path branch=$branch_name slug=$repo_slug)"
+        return 1
+    fi
+
+    if ! command -v gh &>/dev/null; then
+        log_warn "auto_create_pr_for_task: gh CLI not available — cannot create PR for $task_id"
+        return 1
+    fi
+
+    # Fetch task description for PR title/body
+    local escaped_id
+    escaped_id=$(sql_escape "$task_id")
+    local task_desc
+    task_desc=$(db "$SUPERVISOR_DB" "SELECT description FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+    if [[ -z "$task_desc" ]]; then
+        task_desc="Worker task $task_id"
+    fi
+
+    # Determine base branch
+    local base_branch
+    base_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
+
+    # Ensure branch is pushed to remote
+    local remote_branch_exists
+    remote_branch_exists=$(git -C "$repo_path" ls-remote --heads origin "$branch_name" 2>/dev/null | head -1 || echo "")
+    if [[ -z "$remote_branch_exists" ]]; then
+        log_info "auto_create_pr_for_task: pushing $branch_name to origin for $task_id"
+        if ! git -C "$repo_path" push -u origin "$branch_name" 2>>"${SUPERVISOR_LOG:-/dev/null}"; then
+            log_warn "auto_create_pr_for_task: failed to push $branch_name for $task_id"
+            return 1
+        fi
+    fi
+
+    # Build commit summary for PR body (last 10 commits on branch)
+    local commit_log
+    commit_log=$(git -C "$repo_path" log --oneline "${base_branch}..${branch_name}" 2>/dev/null | head -10 || echo "(no commits)")
+
+    # Create draft PR
+    local pr_body
+    pr_body="## Auto-created by supervisor (t247.2)
+
+Worker session ended with commits on branch but no PR (likely context exhaustion).
+Supervisor auto-created this PR to preserve work and enable review.
+
+### Commits
+
+\`\`\`
+${commit_log}
+\`\`\`
+
+### Task
+
+${task_desc}"
+
+    local pr_url
+    pr_url=$(gh pr create \
+        --repo "$repo_slug" \
+        --head "$branch_name" \
+        --base "$base_branch" \
+        --title "${task_id}: ${task_desc}" \
+        --body "$pr_body" \
+        --draft 2>>"${SUPERVISOR_LOG:-/dev/null}") || pr_url=""
+
+    if [[ -z "$pr_url" ]]; then
+        log_warn "auto_create_pr_for_task: gh pr create failed for $task_id ($branch_name)"
+        return 1
+    fi
+
+    log_success "auto_create_pr_for_task: created draft PR for $task_id: $pr_url"
+
+    # Persist via centralized link_pr_to_task (t232)
+    link_pr_to_task "$task_id" --url "$pr_url" --caller "auto_create_pr" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+
+    echo "$pr_url"
+    return 0
+}
+
+#######################################
 # Link a PR to a task — single source of truth (t232)
 #
 # Centralizes the full discover-validate-persist pipeline for PR-to-task
@@ -5948,7 +6057,7 @@ evaluate_worker() {
 
         # Decision matrix:
         # - Commits + PR URL → complete (worker finished, signal was lost)
-        # - Commits + no PR  → complete:task_only (PR creation may have failed)
+        # - Commits + no PR  → auto-create PR (t247.2), fallback to task_only
         # - No commits + uncommitted changes → retry:work_in_progress
         # - No commits + no changes → genuine ambiguity (fall through to AI/retry)
 
@@ -5956,7 +6065,17 @@ evaluate_worker() {
             if [[ -n "$meta_pr_url" ]]; then
                 echo "complete:${meta_pr_url}"
             else
-                echo "complete:task_only"
+                # t247.2: Auto-create PR instead of returning task_only.
+                # Saves ~300s per retry by preserving work for review.
+                local auto_pr_url=""
+                if [[ -n "$repo_slug_detect" && -n "$task_branch" ]]; then
+                    auto_pr_url=$(auto_create_pr_for_task "$task_id" "$git_dir" "$task_branch" "$repo_slug_detect" 2>>"${SUPERVISOR_LOG:-/dev/null}") || auto_pr_url=""
+                fi
+                if [[ -n "$auto_pr_url" ]]; then
+                    echo "complete:${auto_pr_url}"
+                else
+                    echo "complete:task_only"
+                fi
             fi
             return 0
         fi
