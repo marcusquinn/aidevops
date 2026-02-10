@@ -285,10 +285,10 @@ parse_accessibility_results() {
                 score: .value.score
             }
         ] | sort_by(.score)
-    ' "$report_file" 2>/dev/null)
+    ' "$report_file")
 
     local failed_count
-    failed_count=$(echo "$failed_audits" | jq 'length' 2>/dev/null || echo "0")
+    failed_count=$(echo "$failed_audits" | jq 'length' || echo "0")
 
     if [[ "$failed_count" -gt 0 ]]; then
         print_header "Failed Accessibility Audits ($failed_count)"
@@ -306,7 +306,7 @@ parse_accessibility_results() {
             select(.key as $k | $a11y_ids | index($k)) |
             select(.value.score == 1)
         ] | length
-    ' "$report_file" 2>/dev/null || echo "0")
+    ' "$report_file" || echo "0")
 
     print_info "Passing audits: $passing_count | Failed: $failed_count"
 
