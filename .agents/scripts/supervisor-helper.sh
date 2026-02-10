@@ -4086,11 +4086,12 @@ create_task_worktree() {
     local needs_cleanup=false
 
     if [[ "$force_fresh" == "true" ]]; then
-        # Even with force_fresh, check for open PRs to avoid destroying unmerged work
+        # (t229) Check for open PRs — reuse the branch to preserve review context
+        # instead of deleting and recreating (reduces PR churn)
         local open_pr_url
         open_pr_url=$(gh pr list --head "$branch_name" --state open --json url --jq '.[0].url' 2>/dev/null || echo "")
         if [[ -n "$open_pr_url" && "$open_pr_url" != "null" ]]; then
-            # Validate PR belongs to this task before merging (t223)
+            # Validate PR belongs to this task (t223)
             local repo_slug_ff
             repo_slug_ff=$(detect_repo_slug "$repo" 2>/dev/null || echo "")
             local validated_ff=""
@@ -4098,11 +4099,43 @@ create_task_worktree() {
                 validated_ff=$(validate_pr_belongs_to_task "$task_id" "$repo_slug_ff" "$open_pr_url") || validated_ff=""
             fi
             if [[ -n "$validated_ff" ]]; then
-                log_warn "Force-fresh requested but branch $branch_name has open PR: $open_pr_url" >&2
-                log_warn "Merging PR before cleanup to preserve work..." >&2
-                gh pr merge "$open_pr_url" --squash 2>/dev/null || log_warn "PR merge failed — work may be lost. Recover via: gh pr view NNN --json commits" >&2
+                # (t229) Reuse existing branch+PR: reset worktree to main content
+                # but keep the branch so the open PR and its review context survive.
+                log_info "Force-fresh with existing PR — resetting branch to main (preserving PR: $open_pr_url)" >&2
+                if [[ -d "$worktree_path" ]]; then
+                    # Reset worktree contents to match main (fresh code, same branch)
+                    if git -C "$worktree_path" fetch origin main &>/dev/null && \
+                       git -C "$worktree_path" reset --hard origin/main &>/dev/null; then
+                        log_info "Worktree $worktree_path reset to origin/main on branch $branch_name" >&2
+                        echo "$worktree_path"
+                        return 0
+                    else
+                        log_warn "Failed to reset worktree to main — falling back to recreate" >&2
+                    fi
+                else
+                    # No worktree but branch+PR exist — create worktree on existing branch
+                    # First fetch to ensure we have the remote branch
+                    git -C "$repo" fetch origin "$branch_name" &>/dev/null || true
+                    if git -C "$repo" worktree add "$worktree_path" "$branch_name" >&2 2>&1; then
+                        # Reset to main for fresh code
+                        if git -C "$worktree_path" fetch origin main &>/dev/null && \
+                           git -C "$worktree_path" reset --hard origin/main &>/dev/null; then
+                            register_worktree "$worktree_path" "$branch_name" --task "$task_id"
+                            log_info "Created worktree on existing branch $branch_name, reset to origin/main" >&2
+                            echo "$worktree_path"
+                            return 0
+                        else
+                            log_warn "Failed to reset new worktree to main — falling back to recreate" >&2
+                            git -C "$repo" worktree remove "$worktree_path" --force &>/dev/null || true
+                        fi
+                    else
+                        log_warn "Failed to create worktree on existing branch — falling back to recreate" >&2
+                    fi
+                fi
+                # If we get here, the reuse attempt failed — fall through to full cleanup
+                log_warn "Branch reuse failed for $task_id — falling back to delete+recreate" >&2
             else
-                log_warn "Force-fresh: open PR on $branch_name does not reference $task_id — skipping merge to prevent cross-contamination" >&2
+                log_warn "Force-fresh: open PR on $branch_name does not reference $task_id — skipping PR reuse to prevent cross-contamination" >&2
             fi
         fi
         needs_cleanup=true
@@ -5658,9 +5691,18 @@ cmd_reprompt() {
     if [[ -n "$prompt_override" ]]; then
         reprompt_msg="$prompt_override"
     elif [[ "$needs_fresh_worktree" == "true" ]]; then
+        # (t229) Check if there's an existing PR on this branch — tell the worker to reuse it
+        local existing_pr_url=""
+        existing_pr_url=$(gh pr list --head "feature/${task_id}" --state open --json url --jq '.[0].url' 2>/dev/null || echo "")
+        local pr_reuse_note=""
+        if [[ -n "$existing_pr_url" && "$existing_pr_url" != "null" ]]; then
+            pr_reuse_note="
+IMPORTANT: An existing PR is open on this branch: $existing_pr_url
+Push your commits to this branch and the PR will update automatically. Do NOT create a new PR — use the existing one. When done, run: gh pr ready"
+        fi
         reprompt_msg="/full-loop $task_id -- ${tdesc:-$task_id}
 
-NOTE: This is a clean-slate retry. The previous worktree was stale and has been recreated from main. Start fresh — do not look for previous work on this branch."
+NOTE: This is a clean-slate retry. The branch has been reset to main. Start fresh — do not look for previous work on this branch.${pr_reuse_note}"
     else
         reprompt_msg="The previous attempt for task $task_id encountered an issue: ${terror:-unknown error}.
 
