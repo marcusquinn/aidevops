@@ -804,6 +804,37 @@ else
 fi
 
 # ============================================================
+# SECTION: Backend Error in Retry Logs (t198)
+# ============================================================
+section "Backend Error in Retry Logs (t198)"
+
+# Integration test: backend error with REPROMPT METADATA header
+sup add integ-t198a --repo "$TEST_REPO" --description "Backend error retry test" --no-issue >/dev/null
+sup transition integ-t198a dispatched >/dev/null
+sup transition integ-t198a running >/dev/null
+
+create_log "integ-t198a" '=== REPROMPT METADATA (t183) ===
+task_id=integ-t198a
+timestamp=2026-02-09T23:30:27Z
+retry=1/3
+work_dir=/tmp/test
+previous_error=clean_exit_no_signal
+fresh_worktree=true
+=== END REPROMPT METADATA ===
+
+WORKER_STARTED task_id=integ-t198a retry=1 pid=$$ timestamp=2026-02-09T23:30:27Z
+{"type":"error","error":{"message":"Error: All Antigravity endpoints failed"}}
+EXIT:0' >/dev/null
+
+sup transition integ-t198a evaluating >/dev/null
+eval_result=$(sup evaluate integ-t198a --no-ai 2>&1 | grep "^Verdict:" || echo "")
+if echo "$eval_result" | grep -q "retry.*backend_quota_error"; then
+    pass "Backend error + REPROMPT METADATA -> backend_quota_error (t198)"
+else
+    fail "Backend error in retry log should be backend_quota_error" "Got: $eval_result"
+fi
+
+# ============================================================
 # SECTION 10: Concurrent Worktrees (parallel tasks)
 # ============================================================
 section "Concurrent Worktrees (parallel task isolation)"

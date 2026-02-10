@@ -4455,6 +4455,14 @@ extract_log_metadata() {
     echo "log_bytes=$(wc -c < "$log_file" | tr -d ' ')"
     echo "log_lines=$(wc -l < "$log_file" | tr -d ' ')"
 
+    # Content lines: exclude REPROMPT METADATA header (t198). Retry logs include
+    # an 8-line metadata block that inflates log_lines, causing the backend error
+    # threshold (< 10 lines) to miss short error-only logs. content_lines counts
+    # only the actual worker output.
+    local content_lines
+    content_lines=$(grep -cv '^=== \(REPROMPT METADATA\|END REPROMPT METADATA\)\|^task_id=\|^timestamp=\|^retry=\|^work_dir=\|^previous_error=\|^fresh_worktree=' "$log_file" 2>/dev/null || echo 0)
+    echo "content_lines=$content_lines"
+
     # Worker startup sentinel (t183)
     if grep -q 'WORKER_STARTED' "$log_file" 2>/dev/null; then
         echo "worker_started=true"
@@ -4494,6 +4502,18 @@ extract_log_metadata() {
         final_pr_url=$(echo "$last_text_line" | grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' | tail -1 || true)
     fi
     echo "pr_url=${final_pr_url}"
+
+    # Task obsolete detection (t198): workers that determine a task is already
+    # done or obsolete exit cleanly with no signal and no PR. Without this,
+    # the supervisor retries them as clean_exit_no_signal, wasting retries.
+    # Only check the final text entry (authoritative, same as PR URL extraction).
+    local task_obsolete="false"
+    if [[ -n "$last_text_line" ]]; then
+        if echo "$last_text_line" | grep -qiE 'already done|already complete[d]?|task.*(obsolete|no longer needed)|no (changes|PR) needed|nothing to (change|fix|do)|no work (needed|required|to do)'; then
+            task_obsolete="true"
+        fi
+    fi
+    echo "task_obsolete=$task_obsolete"
 
     # Exit code
     local exit_line
@@ -4811,14 +4831,32 @@ evaluate_worker() {
 
     # Backend infrastructure error with EXIT:0 (t095-diag-1): CLI wrappers like
     # OpenCode exit 0 even when the backend rejects the request (quota exceeded,
-    # backend down). A short log (< 10 lines) with backend errors means the
-    # worker never started - this is NOT content discussion, it's a real failure.
+    # backend down). A short log with backend errors means the worker never
+    # started - this is NOT content discussion, it's a real failure.
     # Must be checked BEFORE clean_exit_no_signal to avoid wasting retries.
+    # (t198): Use content_lines instead of log_lines to exclude REPROMPT METADATA
+    # headers that inflate the line count in retry logs (8-line header caused
+    # 12-line logs to miss the < 10 threshold).
     if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
-        local meta_log_lines
-        meta_log_lines=$(_meta_get "log_lines" "0")
-        if [[ "$meta_backend_error_count" -gt 0 && "$meta_log_lines" -lt 10 ]]; then
+        local meta_content_lines
+        meta_content_lines=$(_meta_get "content_lines" "0")
+        if [[ "$meta_backend_error_count" -gt 0 && "$meta_content_lines" -lt 10 ]]; then
             echo "retry:backend_quota_error"
+            return 0
+        fi
+    fi
+
+    # Task obsolete detection (t198): workers that determine a task is already
+    # done or obsolete exit cleanly with EXIT:0, no signal, and no PR. Without
+    # this check, the supervisor retries them as clean_exit_no_signal, wasting
+    # retry attempts on work that will never produce a PR.
+    # Uses the final "type":"text" entry (authoritative) to detect explicit
+    # "already done" / "no changes needed" language from the worker.
+    if [[ "$meta_exit_code" == "0" && "$meta_signal" == "none" ]]; then
+        local meta_task_obsolete
+        meta_task_obsolete=$(_meta_get "task_obsolete" "false")
+        if [[ "$meta_task_obsolete" == "true" ]]; then
+            echo "complete:task_obsolete"
             return 0
         fi
     fi
