@@ -2498,6 +2498,264 @@ async function seedBracket(options = {}) {
 //   "aspect": "9:16",
 //   "music": "/path/to/background.mp3"
 // }
+
+// Submit a video generation job on an already-open page (no browser open/close).
+// Used by the parallel pipeline to submit multiple jobs before waiting.
+// Returns the submitted prompt prefix for tracking, or null on failure.
+async function submitVideoJobOnPage(page, sceneOptions) {
+  const prompt = sceneOptions.prompt || '';
+  const model = sceneOptions.model || 'kling-2.6';
+
+  try {
+    // Navigate to video creation page
+    await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000);
+    await dismissAllModals(page);
+
+    // Upload start frame if provided
+    if (sceneOptions.imageFile) {
+      // Remove existing start frame if present
+      const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
+      if (await existingFrame.count() > 0) {
+        const smallButtons = await page.evaluate(() => {
+          const btns = [...document.querySelectorAll('main button')];
+          return btns
+            .filter(b => { const r = b.getBoundingClientRect(); return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300; })
+            .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
+        });
+        if (smallButtons.length > 0) {
+          await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
+          await page.waitForTimeout(1500);
+        }
+      }
+
+      // Upload via file chooser
+      let uploaded = false;
+      const uploadBtn = page.getByRole('button', { name: /Upload image/ });
+      if (!uploaded && await uploadBtn.count() > 0) {
+        try {
+          const [fileChooser] = await Promise.all([
+            page.waitForEvent('filechooser', { timeout: 10000 }),
+            uploadBtn.click({ force: true }),
+          ]);
+          await fileChooser.setFiles(sceneOptions.imageFile);
+          await page.waitForTimeout(3000);
+          uploaded = true;
+        } catch {}
+      }
+      if (!uploaded) {
+        const startFrameBtn = page.locator('text=Start frame').first();
+        if (await startFrameBtn.count() > 0) {
+          try {
+            const [fileChooser] = await Promise.all([
+              page.waitForEvent('filechooser', { timeout: 10000 }),
+              startFrameBtn.click({ force: true }),
+            ]);
+            await fileChooser.setFiles(sceneOptions.imageFile);
+            await page.waitForTimeout(3000);
+            uploaded = true;
+          } catch {}
+        }
+      }
+      if (!uploaded) {
+        console.log(`  WARNING: Could not upload start frame for: "${prompt.substring(0, 40)}..."`);
+      }
+    }
+
+    await page.waitForTimeout(2000);
+    await dismissAllModals(page);
+
+    // Select model
+    const modelNameMap = {
+      'kling-3.0': 'Kling 3.0', 'kling-2.6': 'Kling 2.6', 'kling-2.5': 'Kling 2.5',
+      'kling-2.1': 'Kling 2.1', 'kling-motion': 'Kling Motion Control',
+      'seedance': 'Seedance', 'grok': 'Grok Imagine', 'minimax': 'Minimax Hailuo',
+      'wan-2.1': 'Wan 2.1', 'sora': 'Sora', 'veo': 'Veo', 'veo-3': 'Veo 3',
+    };
+    const uiModelName = modelNameMap[model] || model;
+    const modelSelector = page.getByRole('button', { name: 'Model' });
+    if (await modelSelector.count() > 0) {
+      const currentModel = await modelSelector.textContent().catch(() => '');
+      if (!currentModel.includes(uiModelName)) {
+        await modelSelector.click({ force: true });
+        await page.waitForTimeout(1500);
+        const matchingBtns = await page.evaluate((mn) => {
+          return [...document.querySelectorAll('button')]
+            .filter(b => b.textContent?.includes(mn) && b.offsetParent !== null)
+            .map(b => { const r = b.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
+            .filter(b => b.x < 800 && b.x > 100);
+        }, uiModelName);
+        if (matchingBtns.length > 0) {
+          await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
+          await page.waitForTimeout(1500);
+        } else {
+          await page.keyboard.press('Escape');
+        }
+      }
+    }
+
+    // Enable unlimited mode
+    const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
+    if (await unlimitedSwitch.count() > 0) {
+      const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
+      if (!isChecked) {
+        await unlimitedSwitch.click({ force: true });
+        await page.waitForTimeout(500);
+      }
+    }
+
+    // Fill prompt
+    const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
+    if (await promptByRole.count() > 0) {
+      await promptByRole.click({ force: true });
+      await page.waitForTimeout(300);
+      await promptByRole.fill(prompt, { force: true });
+    }
+
+    // Click Generate
+    const generateBtn = page.locator('button:has-text("Generate")');
+    if (await generateBtn.count() > 0) {
+      await generateBtn.last().click({ force: true });
+      await page.waitForTimeout(3000);
+      console.log(`  Submitted: "${prompt.substring(0, 60)}..."`);
+      return prompt.substring(0, 60);
+    }
+
+    console.log(`  Failed to submit: "${prompt.substring(0, 40)}..." (no Generate button)`);
+    return null;
+  } catch (err) {
+    console.log(`  Submit error: ${err.message}`);
+    return null;
+  }
+}
+
+// Poll History tab for multiple submitted video prompts and download all via API.
+// Returns an array of { sceneIndex, path } for successfully downloaded videos.
+async function pollAndDownloadVideos(page, submittedJobs, outputDir, timeout = 600000) {
+  const results = new Map(); // sceneIndex -> path
+  const startTime = Date.now();
+  const pollInterval = 15000;
+
+  console.log(`Polling for ${submittedJobs.length} video(s) (timeout: ${timeout / 1000}s)...`);
+
+  // Switch to History tab
+  const historyTab = page.locator('[role="tab"]:has-text("History")');
+  if (await historyTab.count() > 0) {
+    await historyTab.click({ force: true });
+    await page.waitForTimeout(2000);
+  }
+
+  while (Date.now() - startTime < timeout && results.size < submittedJobs.length) {
+    await page.waitForTimeout(pollInterval);
+    await dismissAllModals(page);
+
+    // Get all History items with their prompt text and processing status
+    const historyItems = await page.evaluate(() => {
+      const items = document.querySelectorAll('main li');
+      return [...items].map((item, i) => {
+        const textbox = item.querySelector('[role="textbox"], textarea');
+        const promptText = textbox?.textContent?.trim()?.substring(0, 80) || '';
+        const itemText = item.textContent || '';
+        const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
+        return { index: i, promptText, isProcessing };
+      });
+    });
+
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
+    let completedThisPoll = 0;
+    let processingCount = 0;
+
+    for (const job of submittedJobs) {
+      if (results.has(job.sceneIndex)) continue; // Already downloaded
+
+      // Find matching History item by prompt prefix
+      const match = historyItems.find(h =>
+        h.promptText.substring(0, 40).includes(job.promptPrefix.substring(0, 40)) ||
+        job.promptPrefix.substring(0, 40).includes(h.promptText.substring(0, 40))
+      );
+
+      if (match && !match.isProcessing) {
+        completedThisPoll++;
+      } else if (match && match.isProcessing) {
+        processingCount++;
+      }
+    }
+
+    const pendingCount = submittedJobs.length - results.size;
+    console.log(`  ${elapsedSec}s: ${results.size} done, ${processingCount} processing, ${pendingCount - processingCount - completedThisPoll} waiting`);
+
+    // If any new completions detected, download them via API
+    if (completedThisPoll > 0) {
+      console.log(`  ${completedThisPoll} new completion(s) detected, downloading via API...`);
+
+      // Intercept API to get all video URLs
+      let projectApiData = null;
+      const apiHandler = async (response) => {
+        const url = response.url();
+        if (url.includes('fnf.higgsfield.ai/project')) {
+          try { projectApiData = await response.json(); } catch {}
+        }
+      };
+      page.on('response', apiHandler);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(6000);
+      page.off('response', apiHandler);
+
+      if (projectApiData?.job_sets?.length > 0) {
+        if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+
+        // Match API job_sets to our submitted jobs by prompt text
+        for (const jobSet of projectApiData.job_sets) {
+          const jobPrompt = jobSet.prompt?.substring(0, 60) || '';
+
+          // Find which of our submitted jobs this matches
+          for (const job of submittedJobs) {
+            if (results.has(job.sceneIndex)) continue;
+            if (!jobPrompt.includes(job.promptPrefix.substring(0, 30)) &&
+                !job.promptPrefix.includes(jobPrompt.substring(0, 30))) continue;
+
+            // Found a match — check for completed video URL
+            for (const j of (jobSet.jobs || [])) {
+              if (j.status === 'completed' && j.results?.raw?.url?.includes('cloudfront.net')) {
+                const videoUrl = j.results.raw.url;
+                const meta = { model: job.model, promptSnippet: job.promptPrefix };
+                const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
+                const savePath = join(outputDir, filename);
+                try {
+                  const curlResult = execSync(`curl -sL -w '%{http_code}' -o "${savePath}" "${videoUrl}"`, { timeout: 120000, encoding: 'utf-8' });
+                  const httpCode = curlResult.trim();
+                  if (httpCode === '200' && existsSync(savePath) && statSync(savePath).size > 10000) {
+                    const fileSize = statSync(savePath).size;
+                    console.log(`  Scene ${job.sceneIndex + 1}: downloaded (${(fileSize / 1024 / 1024).toFixed(1)}MB) ${filename}`);
+                    results.set(job.sceneIndex, savePath);
+                  }
+                } catch {}
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Re-click History tab after reload for continued polling
+      if (await historyTab.count() > 0) {
+        await historyTab.click({ force: true });
+        await page.waitForTimeout(2000);
+      }
+    }
+  }
+
+  if (results.size < submittedJobs.length) {
+    const missing = submittedJobs.filter(j => !results.has(j.sceneIndex)).map(j => j.sceneIndex + 1);
+    console.log(`Timeout: ${results.size}/${submittedJobs.length} videos downloaded. Missing scenes: ${missing.join(', ')}`);
+  } else {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    console.log(`All ${results.size} videos downloaded in ${elapsed}s`);
+  }
+
+  return results;
+}
+
 async function pipeline(options = {}) {
   // Load brief from file or construct from CLI options
   let brief;
@@ -2611,46 +2869,67 @@ async function pipeline(options = {}) {
   }
   pipelineState.steps.push({ step: 'scene-images', count: sceneImages.filter(Boolean).length, total: brief.scenes.length });
 
-  // Step 3: Animate each scene image into video (using unlimited Kling 2.6)
-  console.log(`\n--- Step 3: Animate scenes into video clips ---`);
-  const sceneVideos = [];
+  // Step 3: Animate scene images into video clips (PARALLEL submission)
+  // Instead of sequential generate-wait-generate-wait, we:
+  //   3a. Submit ALL video jobs in one browser session (fast, ~30s each)
+  //   3b. Poll History tab for ALL prompts simultaneously
+  //   3c. Download all completed videos via API interception
+  // This cuts N*4min to ~4min for N scenes.
+  const validScenes = brief.scenes
+    .map((scene, i) => ({ scene, index: i, image: sceneImages[i] }))
+    .filter(s => s.image);
+  const skippedScenes = brief.scenes.length - validScenes.length;
+  if (skippedScenes > 0) console.log(`Skipping ${skippedScenes} scene(s) with no image`);
 
-  for (let i = 0; i < brief.scenes.length; i++) {
-    const scene = brief.scenes[i];
-    const sceneImage = sceneImages[i];
+  console.log(`\n--- Step 3a: Submit ${validScenes.length} video job(s) in parallel ---`);
+  const sceneVideos = new Array(brief.scenes.length).fill(null);
 
-    if (!sceneImage) {
-      console.log(`Skipping scene ${i + 1} (no image)`);
-      sceneVideos.push(null);
-      continue;
+  if (validScenes.length > 0) {
+    const { browser: videoBrowser, context: videoCtx, page: videoPage } = await launchBrowser(options);
+
+    try {
+      const submittedJobs = [];
+
+      for (const { scene, index, image } of validScenes) {
+        console.log(`\n  Submitting scene ${index + 1}/${brief.scenes.length}...`);
+        const promptPrefix = await submitVideoJobOnPage(videoPage, {
+          prompt: scene.prompt,
+          imageFile: image,
+          model: brief.videoModel,
+          duration: String(scene.duration || 5),
+        });
+
+        if (promptPrefix) {
+          submittedJobs.push({
+            sceneIndex: index,
+            promptPrefix,
+            model: brief.videoModel,
+          });
+        }
+      }
+
+      if (submittedJobs.length > 0) {
+        console.log(`\n--- Step 3b: Polling for ${submittedJobs.length} video(s) ---`);
+        const videoResults = await pollAndDownloadVideos(
+          videoPage, submittedJobs, outputDir, options.timeout || 600000
+        );
+
+        // Map results back to scene order
+        for (const [sceneIndex, path] of videoResults) {
+          sceneVideos[sceneIndex] = path;
+        }
+      }
+
+      await videoCtx.storageState({ path: STATE_FILE });
+    } catch (err) {
+      console.error('Error during parallel video generation:', err.message);
     }
-
-    console.log(`\nAnimating scene ${i + 1}/${brief.scenes.length}...`);
-    const videoResult = await generateVideo({
-      ...options,
-      prompt: scene.prompt,
-      imageFile: sceneImage,
-      model: brief.videoModel,
-      duration: String(scene.duration || 5),
-      unlimited: true,
-      output: outputDir,
-    });
-
-    if (videoResult?.success) {
-      // Find the newest video file
-      const files = readdirSync(outputDir)
-          .filter(f => f.endsWith('.mp4'))
-          .map(f => ({ name: f, time: statSync(join(outputDir, f)).mtimeMs }))
-          .sort((a, b) => b.time - a.time);
-        const videoPath = files.length > 0 ? join(outputDir, files[0].name) : null;
-        sceneVideos.push(videoPath);
-        console.log(`Scene ${i + 1} video: ${videoPath || 'NOT FOUND'}`);
-    } else {
-      sceneVideos.push(null);
-      console.log(`Scene ${i + 1} video generation failed`);
-    }
+    try { await videoBrowser.close(); } catch {}
   }
-  pipelineState.steps.push({ step: 'scene-videos', count: sceneVideos.filter(Boolean).length, total: brief.scenes.length });
+
+  const videoCount = sceneVideos.filter(Boolean).length;
+  console.log(`\nVideo generation: ${videoCount}/${brief.scenes.length} scenes completed`);
+  pipelineState.steps.push({ step: 'scene-videos', count: videoCount, total: brief.scenes.length });
 
   // Step 4: Add lipsync dialogue to scenes that have it
   console.log(`\n--- Step 4: Add lipsync dialogue ---`);

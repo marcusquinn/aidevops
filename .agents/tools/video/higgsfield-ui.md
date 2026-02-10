@@ -289,7 +289,7 @@ Metadata is extracted from the Asset showcase dialog before downloading.
 
 ## Production Pipeline
 
-The `pipeline` command chains image generation, video animation, lipsync, and ffmpeg assembly into a single workflow. Provide a brief JSON file or use CLI options.
+The `pipeline` command chains image generation, video animation, lipsync, and ffmpeg assembly into a single workflow. Video generation uses **parallel submission** -- all scene videos are submitted to Higgsfield at once, then polled simultaneously, cutting total time from N*4min to ~4min regardless of scene count.
 
 ### Brief JSON Format
 
@@ -322,8 +322,11 @@ The `pipeline` command chains image generation, video animation, lipsync, and ff
 ### Pipeline Steps
 
 1. **Character image** - Generate or use provided character face
-2. **Scene images** - Generate one image per scene from prompts
-3. **Video animation** - Animate each scene image (Kling 2.6, unlimited)
+2. **Scene images** - Generate one image per scene from prompts (sequential)
+3. **Video animation** - Submit ALL scene videos in parallel, poll for all simultaneously
+   - 3a: Submit jobs (upload start frame + prompt + click Generate for each scene, ~30s each)
+   - 3b: Poll History tab for all submitted prompts at once
+   - 3c: Download completed videos via API interception (CloudFront, 1080p)
 4. **Lipsync** - Add dialogue to scenes that have it
 5. **Assembly** - Concatenate clips with ffmpeg, add background music
 
@@ -341,6 +344,17 @@ higgsfield-helper.sh pipeline --brief scenes.json --output ~/Projects/shorts/
 ```
 
 Output goes to `~/Downloads/pipeline-{timestamp}/` with all intermediate files and a `pipeline-state.json` manifest.
+
+### Performance
+
+| Scenes | Sequential | Parallel | Savings |
+|--------|-----------|----------|---------|
+| 1 | ~4 min | ~4 min | -- |
+| 2 | ~8 min | ~4 min | 50% |
+| 5 | ~20 min | ~4 min | 80% |
+| 10 | ~40 min | ~5 min | 87% |
+
+Video generation time is dominated by Higgsfield's server-side processing (~3-4 min per video). Parallel submission means all videos process concurrently.
 
 ## Seed Bracketing
 
