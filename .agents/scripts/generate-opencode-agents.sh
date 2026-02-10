@@ -430,6 +430,28 @@ if model_count > 0:
     print(f"  Model routing: {model_count} agents have model tier assignments")
 
 # =============================================================================
+# PROVIDER OPTIONS - Prompt caching and performance
+# =============================================================================
+# Enable prompt caching for Anthropic models (setCacheKey: true)
+# This caches the system prompt prefix (AGENTS.md + build.txt + tool definitions)
+# across requests, reducing input token costs by ~90% on cache hits.
+# Cache auto-invalidates when file content changes (content-based hashing).
+# Works on all Anthropic models (min 1024-4096 tokens depending on model).
+# See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+
+if 'provider' not in config:
+    config['provider'] = {}
+
+if 'anthropic' not in config['provider']:
+    config['provider']['anthropic'] = {}
+
+if 'options' not in config['provider']['anthropic']:
+    config['provider']['anthropic']['options'] = {}
+
+config['provider']['anthropic']['options']['setCacheKey'] = True
+print("  Enabled prompt caching for Anthropic (setCacheKey: true)")
+
+# =============================================================================
 # MCP SERVERS - Ensure required MCP servers are configured
 # =============================================================================
 # Loading strategy:
